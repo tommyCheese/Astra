@@ -1,0 +1,26 @@
+.DS_Store
+
+# Python
+.pycache/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.venv/
+venv/
+backend/*.egg-info/
+backend/*.db
+
+# Node
+node_modules/
+frontend/node_modules/
+frontend/dist/
+frontend/tsconfig.tsbuildinfo
+
+# Environment
+.env
+backend/.env
+
+# Build artifacts
+dist/
+coverage/
