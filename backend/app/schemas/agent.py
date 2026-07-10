@@ -49,6 +49,9 @@ class FinalAnswer(BaseModel):
     summary: str
     findings: List[Finding] = Field(default_factory=list)
     sources: List[SourceReference] = Field(default_factory=list)
+    failed_sources: List[Dict[str, Any]] = Field(default_factory=list)
+    source_quality: List[Dict[str, Any]] = Field(default_factory=list)
+    conflicts: List[Dict[str, Any]] = Field(default_factory=list)
     caveats: List[str] = Field(default_factory=list)
     verification_notes: List[str] = Field(default_factory=list)
 
@@ -58,6 +61,31 @@ class CandidateSource(BaseModel):
     title: str
     snippet: str
     provider: str = "mock"
+    rank: Optional[int] = None
+    display_link: Optional[str] = None
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+    retrieved_at: str
+
+
+class CrawlerPlan(BaseModel):
+    strategy: str = "readability"
+    selectors: List[str] = Field(default_factory=list)
+    exclude_selectors: List[str] = Field(default_factory=list)
+    target: str = "main_content"
+
+
+class ExtractedSource(BaseModel):
+    url: str
+    status_code: int
+    title: Optional[str] = None
+    description: Optional[str] = None
+    content: str
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+    extraction_strategy: str
+    quality_score: float
+    content_length: int
+    source_type: str = "web_page"
+    warnings: List[str] = Field(default_factory=list)
     retrieved_at: str
 
 
@@ -68,6 +96,15 @@ class FetchOutput(BaseModel):
     content: str
     metadata: Dict[str, Any] = Field(default_factory=dict)
     retrieved_at: str
+
+
+class EvidencePack(BaseModel):
+    query: str
+    candidates: List[CandidateSource] = Field(default_factory=list)
+    fetched_sources: List[ExtractedSource] = Field(default_factory=list)
+    failed_sources: List[Dict[str, Any]] = Field(default_factory=list)
+    dedupe: Dict[str, Any] = Field(default_factory=dict)
+    warnings: List[str] = Field(default_factory=list)
 
 
 class StepView(BaseModel):

@@ -12,6 +12,14 @@ class Settings(BaseSettings):
     model_base_url: str = "https://api.openai.com/v1"
     web_search_provider: str = "mock"
     web_search_api_key: str = ""
+    google_search_api_key: str = ""
+    google_search_engine_id: str = ""
+    google_search_result_count: int = 5
+    google_search_language: str = "lang_zh-CN"
+    google_search_region: str = ""
+    google_search_safe: str = "active"
+    crawler_max_content_chars: int = 12000
+    crawler_min_quality_chars: int = 240
     allow_network_read: bool = True
     cors_origins: str = "http://localhost:5173"
 

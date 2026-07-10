@@ -28,6 +28,14 @@ export type FinalResult = {
   summary: string;
   findings: Array<{ text: string; source_urls: string[] }>;
   sources: Array<{ url: string; title?: string | null; retrieved_at?: string | null }>;
+  failed_sources?: Array<{ url?: string; title?: string | null; category?: string; message?: string }>;
+  source_quality?: Array<{
+    url: string;
+    quality_score?: number | null;
+    extraction_strategy?: string | null;
+    warnings?: string[];
+  }>;
+  conflicts?: Array<Record<string, unknown>>;
   caveats: string[];
   verification_notes: string[];
 };

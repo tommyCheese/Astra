@@ -147,6 +147,33 @@ function ResultPanel({ run }: { run: RunView | null }) {
               </a>
             ))}
           </div>
+          {result.source_quality?.length ? (
+            <div className="block">
+              <h4>来源质量</h4>
+              {result.source_quality.map((source) => (
+                <div key={source.url} className="quality-row">
+                  <div>
+                    <strong>{formatScore(source.quality_score)}</strong>
+                    <span>{source.extraction_strategy || 'unknown'}</span>
+                  </div>
+                  <a href={source.url} target="_blank" rel="noreferrer">{source.url}</a>
+                  {source.warnings?.map((warning, index) => (
+                    <p key={index}>{warning}</p>
+                  ))}
+                </div>
+              ))}
+            </div>
+          ) : null}
+          {result.failed_sources?.length ? (
+            <div className="block">
+              <h4>失败来源</h4>
+              {result.failed_sources.map((source, index) => (
+                <p key={`${source.url ?? 'failed'}-${index}`}>
+                  {source.title || source.url || '未知来源'}：{source.category || 'failed'}
+                </p>
+              ))}
+            </div>
+          ) : null}
           <div className="block">
             <h4>限制与验证</h4>
             {[...result.caveats, ...result.verification_notes].map((item, index) => (
@@ -160,7 +187,7 @@ function ResultPanel({ run }: { run: RunView | null }) {
           <h4>工具调用</h4>
           {run.tool_calls.map((call) => (
             <div key={call.id} className="tool-call">
-              <span>{call.tool_name}</span>
+              <span>{call.tool_name}{toolCallDetail(call.output)}</span>
               <strong>{call.status}</strong>
             </div>
           ))}
@@ -168,6 +195,27 @@ function ResultPanel({ run }: { run: RunView | null }) {
       ) : null}
     </section>
   );
+}
+
+function formatScore(score?: number | null) {
+  if (typeof score !== 'number') {
+    return 'n/a';
+  }
+  return `${Math.round(score * 100)}%`;
+}
+
+function toolCallDetail(output?: Record<string, unknown> | null) {
+  if (!output) {
+    return '';
+  }
+  if (typeof output.candidate_count === 'number') {
+    return ` · ${output.candidate_count} candidates`;
+  }
+  if (typeof output.extraction_strategy === 'string') {
+    const score = typeof output.quality_score === 'number' ? ` · ${formatScore(output.quality_score)}` : '';
+    return ` · ${output.extraction_strategy}${score}`;
+  }
+  return '';
 }
 
 function mergeEvents(left: RunEvent[], right: RunEvent[]) {

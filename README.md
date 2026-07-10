@@ -61,7 +61,21 @@ MODEL_BASE_URL=https://api.openai.com/v1
 
 ### Web 搜索/抓取配置
 
-`web_fetch` 支持直接抓取 URL；`web_search` 默认使用 mock provider。接入 Brave Search 时配置：
+`web_fetch` 支持直接抓取 URL；`web_search` 默认使用 mock provider。接入 Google Programmable Search JSON API 时配置：
+
+```text
+WEB_SEARCH_PROVIDER=google
+GOOGLE_SEARCH_API_KEY=<your-google-api-key>
+GOOGLE_SEARCH_ENGINE_ID=<your-programmable-search-engine-id>
+GOOGLE_SEARCH_RESULT_COUNT=5
+GOOGLE_SEARCH_LANGUAGE=lang_zh-CN
+GOOGLE_SEARCH_REGION=
+GOOGLE_SEARCH_SAFE=active
+```
+
+Google API Key 只用于后端工具调用，不会写入 ToolCall input/output。`web_fetch` 会按候选来源动态选择抓取策略，并将正文长度、质量评分、抓取 warning 和失败来源写入 Evidence Pack；最终总结只基于本次 run 中已审计的工具输出和 artifact。
+
+接入 Brave Search 时配置：
 
 ```text
 WEB_SEARCH_PROVIDER=brave
@@ -69,3 +83,10 @@ WEB_SEARCH_API_KEY=<your-search-api-key>
 ```
 
 网络读取可以通过 `ALLOW_NETWORK_READ=false` 关闭。
+
+抓取内容上限和低质量阈值可通过以下配置调整：
+
+```text
+CRAWLER_MAX_CONTENT_CHARS=12000
+CRAWLER_MIN_QUALITY_CHARS=240
+```

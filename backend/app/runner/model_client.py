@@ -37,10 +37,22 @@ class MockModelClient(ModelClient):
                     success_criteria=["返回至少一个候选来源"],
                 ),
                 PlanStep(
+                    title="筛选和去重来源",
+                    intent="筛选搜索候选来源并去除重复 URL",
+                    required_tools=[],
+                    success_criteria=["记录筛选和去重数量"],
+                ),
+                PlanStep(
                     title="抓取来源内容",
                     intent="抓取候选来源并提取可用于回答的文本证据",
                     required_tools=["web_fetch"],
                     success_criteria=["至少一个来源被成功抓取"],
+                ),
+                PlanStep(
+                    title="构造证据包",
+                    intent="基于已审计工具调用构造 Evidence Pack",
+                    required_tools=[],
+                    success_criteria=["Evidence Pack 包含来源质量和失败来源"],
                 ),
                 PlanStep(
                     title="综合答案",
@@ -64,22 +76,62 @@ class MockModelClient(ModelClient):
         sources: List[SourceReference] = []
         findings: List[Finding] = []
         caveats: List[str] = []
+        failed_sources: List[Dict[str, Any]] = []
+        source_quality: List[Dict[str, Any]] = []
 
-        for output in tool_outputs:
-            if "candidates" in output:
-                continue
-            url = output.get("url")
-            content = output.get("content", "")
-            if url:
+        evidence_pack = next(
+            (output.get("evidence_pack") for output in tool_outputs if output.get("evidence_pack")),
+            None,
+        )
+        if evidence_pack:
+            for source in evidence_pack.get("fetched_sources", []):
+                url = source.get("url")
+                if not url:
+                    continue
                 sources.append(
                     SourceReference(
                         url=url,
-                        title=output.get("title"),
-                        retrieved_at=output.get("retrieved_at"),
+                        title=source.get("title"),
+                        retrieved_at=source.get("retrieved_at"),
                     )
                 )
-                excerpt = content[:220].strip() or "该来源没有返回可读正文。"
+                content = source.get("content", "")
+                excerpt = content[:260].strip() or "该来源没有返回可读正文。"
                 findings.append(Finding(text=excerpt, source_urls=[url]))
+                source_quality.append(
+                    {
+                        "url": url,
+                        "quality_score": source.get("quality_score"),
+                        "extraction_strategy": source.get("extraction_strategy"),
+                        "warnings": source.get("warnings", []),
+                    }
+                )
+            failed_sources = evidence_pack.get("failed_sources", [])
+            caveats.extend(evidence_pack.get("warnings", []))
+        else:
+            for output in tool_outputs:
+                if "candidates" in output:
+                    continue
+                url = output.get("url")
+                content = output.get("content", "")
+                if url:
+                    sources.append(
+                        SourceReference(
+                            url=url,
+                            title=output.get("title"),
+                            retrieved_at=output.get("retrieved_at"),
+                        )
+                    )
+                    excerpt = content[:220].strip() or "该来源没有返回可读正文。"
+                    findings.append(Finding(text=excerpt, source_urls=[url]))
+                    source_quality.append(
+                        {
+                            "url": url,
+                            "quality_score": output.get("quality_score"),
+                            "extraction_strategy": output.get("extraction_strategy"),
+                            "warnings": output.get("warnings", []),
+                        }
+                    )
 
         if not findings:
             caveats.append("未能获取足够的来源内容，结果只能报告证据不足。")
@@ -88,9 +140,12 @@ class MockModelClient(ModelClient):
             summary=f"已围绕目标完成 Web 数据查询：{goal}",
             findings=findings,
             sources=sources,
+            failed_sources=failed_sources,
+            source_quality=source_quality,
+            conflicts=[],
             caveats=caveats,
             verification_notes=[
-                "答案仅基于本次 run 中记录的 web_search 和 web_fetch 工具输出生成。"
+                "答案仅基于本次 run 中记录的 ToolCall、Artifact 和验证结果生成。"
             ],
         )
 
@@ -127,8 +182,12 @@ class OpenAICompatibleModelClient(ModelClient):
                     "role": "system",
                     "content": (
                         "You are Astra's synthesis engine. Return JSON only with keys: "
-                        "summary, findings, sources, caveats, verification_notes. "
-                        "Each finding has text and source_urls. Each source has url, title, retrieved_at."
+                        "summary, findings, sources, failed_sources, source_quality, "
+                        "conflicts, caveats, verification_notes. "
+                        "Each finding has text and source_urls. Each source has url, title, retrieved_at. "
+                        "Only use the audited evidence_pack from the provided tool_outputs. "
+                        "Do not use raw web content that is not in evidence_pack. "
+                        "Every important finding must cite source URLs."
                     ),
                 },
                 {

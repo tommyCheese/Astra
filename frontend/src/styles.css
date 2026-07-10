@@ -348,11 +348,43 @@ code {
   display: block;
   line-height: 1.48;
   margin-bottom: 8px;
+  overflow-wrap: anywhere;
 }
 
 .block a {
   color: #196d5d;
   text-decoration-color: rgba(25, 109, 93, 0.32);
+}
+
+.quality-row {
+  border-top: 1px solid rgba(255, 255, 255, 0.36);
+  padding: 10px 0;
+}
+
+.quality-row:first-of-type {
+  border-top: 0;
+  padding-top: 0;
+}
+
+.quality-row div {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.quality-row strong {
+  color: #176a52;
+  font-size: 18px;
+}
+
+.quality-row span {
+  background: rgba(255, 255, 255, 0.42);
+  border: 1px solid rgba(255, 255, 255, 0.4);
+  border-radius: 999px;
+  color: rgba(16, 32, 29, 0.62);
+  font-size: 12px;
+  padding: 4px 8px;
 }
 
 .tool-call {

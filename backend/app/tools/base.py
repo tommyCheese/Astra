@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
-from typing import Any, Dict
+from typing import Any, Dict, List
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class ToolExecutionError(RuntimeError):
@@ -17,10 +17,14 @@ class ToolExecutionError(RuntimeError):
 class ToolSpec(BaseModel):
     name: str
     version: str
+    description: str = ""
     input_schema: Dict[str, Any]
     output_schema: Dict[str, Any]
     permission: str
     side_effect_level: str
+    timeout_seconds: int = 20
+    retry_policy: Dict[str, Any] = Field(default_factory=dict)
+    error_categories: List[str] = Field(default_factory=list)
 
 
 class Tool(ABC):
