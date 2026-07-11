@@ -13,7 +13,7 @@ export function App() {
 
 function AppContent() {
   const { language, t } = useI18n();
-  const [goal, setGoal] = useState('帮我总结 Astra 当前 Web Agent 能验证哪些证据');
+  const [goal, setGoal] = useState('');
   const [run, setRun] = useState<RunView | null>(null);
   const [conversationHistory, setConversationHistory] = useState<ConversationEntry[]>([]);
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
@@ -198,8 +198,8 @@ function AppContent() {
           <div className="conversation">
             {!messages.length && (
               <div className="welcome">
-                <h2>{t('今天想研究什么？')}</h2>
-                <p>{t('我会使用 Web 搜索和自适应抓取，边行动边留下可审计证据。')}</p>
+                <h2>{t('今天想完成什么？')}</h2>
+                <p>{t('描述你的目标，Astra 会规划、执行、反思并验证结果。')}</p>
               </div>
             )}
             {messages.map((message) => (

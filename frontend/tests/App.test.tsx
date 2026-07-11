@@ -157,6 +157,7 @@ describe('App', () => {
   it('submits a goal and renders the result', async () => {
     render(<App />);
 
+    await userEvent.type(screen.getByRole('textbox'), '查询 Astra');
     await userEvent.click(screen.getByRole('button', { name: '↑' }));
 
     expect(await screen.findByText('已完成查询')).toBeInTheDocument();
@@ -171,6 +172,7 @@ describe('App', () => {
 
   it('sends selected reasoning policy with a run', async () => {
     render(<App />);
+    await userEvent.type(screen.getByRole('textbox'), '分析复杂问题');
     await userEvent.click(screen.getByRole('button', { name: '当前模型：gpt-5' }));
     await userEvent.click(screen.getByRole('button', { name: '深入' }));
     await userEvent.click(screen.getByRole('button', { name: '先规划' }));
@@ -205,6 +207,9 @@ describe('App', () => {
 
     expect(screen.getByText('暂无对话')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '暂无对话' })).not.toBeInTheDocument();
+    expect(screen.getByRole('textbox')).toHaveValue('');
+    expect(screen.getByText('今天想完成什么？')).toBeInTheDocument();
+    expect(screen.getByText('描述你的目标，Astra 会规划、执行、反思并验证结果。')).toBeInTheDocument();
   });
 
   it('reveals the local star burst after five quick logo clicks', async () => {
@@ -219,6 +224,7 @@ describe('App', () => {
   it('keeps follow-up messages in the same history conversation', async () => {
     render(<App />);
 
+    await userEvent.type(screen.getByRole('textbox'), '查询 Astra');
     await userEvent.click(screen.getByRole('button', { name: '↑' }));
     await screen.findByText('已完成查询');
     await userEvent.type(screen.getByRole('textbox'), '继续追问{Enter}');
