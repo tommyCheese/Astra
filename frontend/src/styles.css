@@ -1046,6 +1046,172 @@ code {
   font-size: 13px;
 }
 
+html[data-theme="dark"] :root,
+html[data-theme="dark"] {
+  background: #17191d;
+  color: #e7e9ed;
+}
+
+html[data-theme="dark"] .app-layout {
+  background: #17191d;
+}
+
+html[data-theme="dark"] .sidebar {
+  background: rgba(31, 35, 41, 0.96);
+  border-color: #343942;
+}
+
+html[data-theme="dark"] .brand strong,
+html[data-theme="dark"] h1,
+html[data-theme="dark"] .welcome h2,
+html[data-theme="dark"] .bubble,
+html[data-theme="dark"] .settings-group h2,
+html[data-theme="dark"] .usage-modal h2 {
+  color: #f1f3f5;
+}
+
+html[data-theme="dark"] .brand span,
+html[data-theme="dark"] .side-title,
+html[data-theme="dark"] .chat-topbar p,
+html[data-theme="dark"] .welcome,
+html[data-theme="dark"] .bubble-label,
+html[data-theme="dark"] .setting-row span,
+html[data-theme="dark"] .settings-group header p,
+html[data-theme="dark"] .usage-note,
+html[data-theme="dark"] .empty {
+  color: #9ca5b3;
+}
+
+html[data-theme="dark"] .history-item,
+html[data-theme="dark"] .side-action,
+html[data-theme="dark"] .settings-nav button,
+html[data-theme="dark"] .model-selector,
+html[data-theme="dark"] .floating-menu button {
+  color: #d9dde3;
+}
+
+html[data-theme="dark"] .history-item.active,
+html[data-theme="dark"] .side-action.active,
+html[data-theme="dark"] .settings-nav button:hover,
+html[data-theme="dark"] .settings-nav button.active,
+html[data-theme="dark"] .composer-icon-button:hover,
+html[data-theme="dark"] .model-selector:hover,
+html[data-theme="dark"] .close-button:hover {
+  background: #2a2f36;
+  color: #f3f4f6;
+  box-shadow: inset 0 0 0 1px #3b424c;
+}
+
+html[data-theme="dark"] .new-chat-button {
+  background: #293a4e;
+  color: #dce9f8;
+}
+
+html[data-theme="dark"] .new-chat-button span {
+  background: #354a61;
+}
+
+html[data-theme="dark"] .workspace,
+html[data-theme="dark"] .chat-surface,
+html[data-theme="dark"] .settings-page {
+  background: #17191d;
+}
+
+html[data-theme="dark"] .status,
+html[data-theme="dark"] .chat-composer,
+html[data-theme="dark"] .audit-drawer {
+  background: rgba(35, 39, 45, 0.9);
+  border-color: #3b424c;
+  color: #c8ced7;
+}
+
+html[data-theme="dark"] textarea,
+html[data-theme="dark"] select {
+  color: #eef0f3;
+}
+
+html[data-theme="dark"] .send-button {
+  background: #f1f3f5;
+  color: #17191d;
+}
+
+html[data-theme="dark"] .bubble.user {
+  background: #2b3440;
+  color: #eef0f3;
+}
+
+html[data-theme="dark"] .bubble.tool,
+html[data-theme="dark"] .tool-event,
+html[data-theme="dark"] .reflection-card,
+html[data-theme="dark"] .answer-block,
+html[data-theme="dark"] .source-card,
+html[data-theme="dark"] .capability-item {
+  background: #22262c;
+  border-color: #373e48;
+}
+
+html[data-theme="dark"] .source-card strong,
+html[data-theme="dark"] .tool-event strong,
+html[data-theme="dark"] .reflection-card strong,
+html[data-theme="dark"] .capability-item strong,
+html[data-theme="dark"] .setting-row strong,
+html[data-theme="dark"] .audit-row strong {
+  color: #e5e8ec;
+}
+
+html[data-theme="dark"] .floating-menu,
+html[data-theme="dark"] .usage-modal {
+  background: rgba(35, 39, 45, 0.97);
+  border-color: #444b56;
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.42);
+}
+
+html[data-theme="dark"] .floating-menu button:hover,
+html[data-theme="dark"] .floating-menu button.selected,
+html[data-theme="dark"] .segmented-control {
+  background: #2c3139;
+}
+
+html[data-theme="dark"] .floating-menu .segmented-control button.active {
+  background: #454c57;
+  color: #8dd3ba;
+}
+
+html[data-theme="dark"] .settings-header,
+html[data-theme="dark"] .settings-nav,
+html[data-theme="dark"] .settings-group > header,
+html[data-theme="dark"] .setting-row,
+html[data-theme="dark"] .audit-row,
+html[data-theme="dark"] .menu-divider {
+  border-color: #343a43;
+}
+
+html[data-theme="dark"] .setting-row select {
+  background: #24282f;
+  border-color: #454c57;
+  color: #edf0f3;
+}
+
+html[data-theme="dark"] .runtime-summary,
+html[data-theme="dark"] .usage-primary > div {
+  background: #242a31;
+  border-color: #3a424c;
+}
+
+html[data-theme="dark"] .runtime-summary > div {
+  background: rgba(255, 255, 255, 0.025);
+}
+
+html[data-theme="dark"] code {
+  background: #20242a;
+  border-color: #373e48;
+  color: #b7c0cc;
+}
+
+html[data-theme="dark"] .modal-backdrop {
+  background: rgba(0, 0, 0, 0.58);
+}
+
 @media (max-width: 860px) {
   .app-layout {
     grid-template-columns: 1fr;

@@ -213,6 +213,21 @@ describe('App', () => {
     expect(document.documentElement.lang).toBe('en');
   });
 
+  it('switches between system, dark, and light themes', async () => {
+    render(<App />);
+
+    await userEvent.click(screen.getByRole('button', { name: /设置/ }));
+    await userEvent.click(screen.getByRole('button', { name: '界面' }));
+    const themeSelect = screen.getByDisplayValue('跟随系统');
+
+    await userEvent.selectOptions(themeSelect, 'dark');
+    expect(document.documentElement.dataset.theme).toBe('dark');
+    expect(document.documentElement.style.colorScheme).toBe('dark');
+
+    await userEvent.selectOptions(themeSelect, 'light');
+    expect(document.documentElement.dataset.theme).toBe('light');
+  });
+
   it('keeps conversation reasoning controls in the model menu', async () => {
     render(<App />);
 
