@@ -20,6 +20,11 @@ class Settings(BaseSettings):
     google_search_safe: str = "active"
     crawler_max_content_chars: int = 12000
     crawler_min_quality_chars: int = 240
+    agent_max_turns: int = 12
+    agent_max_tool_calls: int = 8
+    agent_per_tool_retry_limit: int = 2
+    agent_memory_write_enabled: bool = True
+    agent_use_loop: bool = True
     allow_network_read: bool = True
     cors_origins: str = "http://localhost:5173"
 

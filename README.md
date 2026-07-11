@@ -18,6 +18,14 @@ Astra 是一个 AI 原生的通用 Agent 平台。
 用户目标 -> 创建 Task/Run -> 模型规划 -> 工具执行 -> 结果综合 -> 证据验证 -> 时间线报告
 ```
 
+当前默认执行路径已经演进为 Web-only Agent loop：
+
+```text
+用户消息 -> Agent 决策 -> 工具调用 -> Observation -> Reflection/继续执行 -> Evidence Pack -> Final Answer -> Verification Report
+```
+
+第一版 Agent loop 只开放低风险读取工具：`web_search` 和 `web_fetch`。后端 `ToolRouter` 会校验工具是否注册、是否在 allowlist、权限是否为 `network_read`、副作用等级是否为 `read_only`，以及必填输入是否完整。任何未授权工具请求都会被写入 Agent turn observation，而不会执行。
+
 ### 本地开发
 
 后端：
@@ -90,3 +98,19 @@ WEB_SEARCH_API_KEY=<your-search-api-key>
 CRAWLER_MAX_CONTENT_CHARS=12000
 CRAWLER_MIN_QUALITY_CHARS=240
 ```
+
+### Agent loop 配置
+
+Agent loop 默认开启：
+
+```text
+AGENT_USE_LOOP=true
+AGENT_MAX_TURNS=12
+AGENT_MAX_TOOL_CALLS=8
+AGENT_PER_TOOL_RETRY_LIMIT=2
+AGENT_MEMORY_WRITE_ENABLED=true
+```
+
+Memory 当前用于保存 run 内来源摘要和可审计观察。workspace/user 级 memory 写入必须带 `provenance` 和 `confidence`，缺失时会被拒绝并记录 `memory.write_rejected` 事件。第一版尚未引入 embedding memory 或向量召回，避免在来源审计和权限模型稳定前扩大记忆面。
+
+前端现在是聊天式 Agent 窗口：用户消息、工具调用、反思、来源卡片、memory 摘要和最终答案会聚合成对话流；“审计详情”抽屉保留 turns、tool calls、artifacts、Evidence Pack 与 verification report，便于调试和追溯。

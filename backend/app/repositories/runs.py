@@ -5,7 +5,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.db.models import (
+    AgentTurnRecord,
     ArtifactRecord,
+    MemoryRecord,
     RunEventRecord,
     RunRecord,
     StepRecord,
@@ -32,7 +34,7 @@ class RunRepository:
         run = RunRecord(
             task=task,
             status="created",
-            mode="web_data_query",
+            mode="web_agent",
             model_policy=model_policy,
             created_at=now,
             updated_at=now,
@@ -55,6 +57,8 @@ class RunRepository:
                 selectinload(RunRecord.tool_calls),
                 selectinload(RunRecord.artifacts),
                 selectinload(RunRecord.events),
+                selectinload(RunRecord.turns),
+                selectinload(RunRecord.memories),
             )
         )
         return result.scalar_one_or_none()
@@ -223,6 +227,161 @@ class RunRepository:
         await self.session.commit()
         return artifact
 
+    async def create_agent_turn(
+        self,
+        run_id: str,
+        turn_index: int,
+        decision_type: str,
+        reasoning_summary: str,
+        *,
+        selected_tool: Optional[str] = None,
+        decision: Optional[Dict[str, Any]] = None,
+        memory_reads: Optional[List[Dict[str, Any]]] = None,
+    ) -> AgentTurnRecord:
+        now = utc_now()
+        turn = AgentTurnRecord(
+            run_id=run_id,
+            turn_index=turn_index,
+            decision_type=decision_type,
+            reasoning_summary=reasoning_summary,
+            selected_tool=selected_tool,
+            decision=decision or {},
+            memory_reads=memory_reads or [],
+            memory_writes=[],
+            status="created",
+            created_at=now,
+            updated_at=now,
+        )
+        self.session.add(turn)
+        await self.session.flush()
+        await self.add_event(
+            run_id,
+            "agent_turn.created",
+            {
+                "turn_id": turn.id,
+                "turn_index": turn.turn_index,
+                "decision_type": decision_type,
+                "selected_tool": selected_tool,
+                "reasoning_summary": reasoning_summary,
+            },
+        )
+        await self.session.commit()
+        return turn
+
+    async def update_agent_turn(
+        self,
+        turn_id: str,
+        *,
+        status: Optional[str] = None,
+        observation: Optional[Dict[str, Any]] = None,
+        reflection: Optional[Dict[str, Any]] = None,
+        tool_call_id: Optional[str] = None,
+        artifact_id: Optional[str] = None,
+        memory_writes: Optional[List[Dict[str, Any]]] = None,
+    ) -> AgentTurnRecord:
+        turn = await self._require_agent_turn(turn_id)
+        if status is not None:
+            turn.status = status
+        if observation is not None:
+            turn.observation = observation
+        if reflection is not None:
+            turn.reflection = reflection
+        if tool_call_id is not None:
+            turn.tool_call_id = tool_call_id
+        if artifact_id is not None:
+            turn.artifact_id = artifact_id
+        if memory_writes is not None:
+            turn.memory_writes = memory_writes
+        turn.updated_at = utc_now()
+        await self.add_event(
+            turn.run_id,
+            "agent_turn.updated",
+            {
+                "turn_id": turn.id,
+                "turn_index": turn.turn_index,
+                "status": turn.status,
+                "observation": observation,
+                "reflection": reflection,
+            },
+        )
+        await self.session.commit()
+        return turn
+
+    async def create_memory(
+        self,
+        *,
+        scope: str,
+        kind: str,
+        content: str,
+        provenance: Dict[str, Any],
+        confidence: float,
+        run_id: Optional[str] = None,
+        workspace_id: Optional[str] = None,
+        created_by: Optional[str] = None,
+        structured_data: Optional[Dict[str, Any]] = None,
+        expires_at=None,
+    ) -> MemoryRecord:
+        if scope in {"workspace", "user"} and (not provenance or confidence is None):
+            if run_id:
+                await self.add_event(
+                    run_id,
+                    "memory.write_rejected",
+                    {"scope": scope, "kind": kind, "reason": "missing_provenance_or_confidence"},
+                )
+                await self.session.commit()
+            raise ValueError("Persistent memory requires provenance and confidence")
+        now = utc_now()
+        memory = MemoryRecord(
+            run_id=run_id,
+            workspace_id=workspace_id,
+            created_by=created_by,
+            scope=scope,
+            kind=kind,
+            content=content,
+            structured_data=structured_data or {},
+            provenance=provenance,
+            confidence=confidence,
+            created_at=now,
+            updated_at=now,
+            expires_at=expires_at,
+        )
+        self.session.add(memory)
+        await self.session.flush()
+        if run_id:
+            await self.add_event(
+                run_id,
+                "memory.write",
+                {
+                    "memory_id": memory.id,
+                    "scope": memory.scope,
+                    "kind": memory.kind,
+                    "confidence": memory.confidence,
+                    "provenance": memory.provenance,
+                },
+            )
+        await self.session.commit()
+        return memory
+
+    async def list_memories(
+        self,
+        *,
+        scope: Optional[str] = None,
+        kind: Optional[str] = None,
+        run_id: Optional[str] = None,
+        min_confidence: float = 0.0,
+        limit: int = 10,
+    ) -> List[MemoryRecord]:
+        query = select(MemoryRecord).where(MemoryRecord.confidence >= min_confidence)
+        if scope:
+            query = query.where(MemoryRecord.scope == scope)
+        if kind:
+            query = query.where(MemoryRecord.kind == kind)
+        if run_id:
+            query = query.where(MemoryRecord.run_id == run_id)
+        query = query.order_by(MemoryRecord.updated_at.desc()).limit(limit)
+        result = await self.session.execute(query)
+        return list(result.scalars().all())
+
     async def add_event(self, run_id: str, event_type: str, payload: Dict[str, Any]) -> RunEventRecord:
         event = RunEventRecord(run_id=run_id, type=event_type, payload=payload)
         self.session.add(event)
@@ -253,8 +412,19 @@ class RunRepository:
             raise ValueError(f"ToolCall not found: {tool_call_id}")
         return call
 
+    async def _require_agent_turn(self, turn_id: str) -> AgentTurnRecord:
+        result = await self.session.execute(
+            select(AgentTurnRecord).where(AgentTurnRecord.id == turn_id)
+        )
+        turn = result.scalar_one_or_none()
+        if turn is None:
+            raise ValueError(f"AgentTurn not found: {turn_id}")
+        return turn
+
 
 def run_to_view(run: RunRecord) -> Dict[str, Any]:
+    result = run.result or {}
+    verification_report = result.get("verification_report")
     return {
         "id": run.id,
         "task_id": run.task_id,
@@ -312,4 +482,86 @@ def run_to_view(run: RunRecord) -> Dict[str, Any]:
             }
             for event in run.events
         ],
+        "turns": [
+            {
+                "id": turn.id,
+                "run_id": turn.run_id,
+                "turn_index": turn.turn_index,
+                "decision_type": turn.decision_type,
+                "reasoning_summary": turn.reasoning_summary,
+                "selected_tool": turn.selected_tool,
+                "decision": turn.decision,
+                "observation": turn.observation,
+                "reflection": turn.reflection,
+                "tool_call_id": turn.tool_call_id,
+                "artifact_id": turn.artifact_id,
+                "memory_reads": turn.memory_reads,
+                "memory_writes": turn.memory_writes,
+                "status": turn.status,
+                "created_at": turn.created_at,
+                "updated_at": turn.updated_at,
+            }
+            for turn in sorted(run.turns, key=lambda item: item.turn_index)
+        ],
+        "memories": [
+            {
+                "id": memory.id,
+                "run_id": memory.run_id,
+                "scope": memory.scope,
+                "kind": memory.kind,
+                "content": memory.content,
+                "structured_data": memory.structured_data,
+                "provenance": memory.provenance,
+                "confidence": memory.confidence,
+                "created_at": memory.created_at,
+                "updated_at": memory.updated_at,
+                "expires_at": memory.expires_at,
+            }
+            for memory in run.memories
+        ],
+        "chat_messages": build_chat_messages(run),
+        "verification_report": verification_report,
     }
+
+
+def build_chat_messages(run: RunRecord) -> List[Dict[str, Any]]:
+    messages: List[Dict[str, Any]] = [
+        {
+            "id": f"{run.id}-user",
+            "role": "user",
+            "content": run.task.description,
+            "status": "completed",
+            "metadata": {"task_id": run.task_id},
+        }
+    ]
+    for turn in sorted(run.turns, key=lambda item: item.turn_index):
+        if turn.decision_type == "call_tool":
+            content = turn.reasoning_summary
+            role = "tool"
+        elif turn.decision_type == "reflect":
+            content = (turn.reflection or {}).get("summary", turn.reasoning_summary)
+            role = "reflection"
+        elif turn.decision_type == "finalize":
+            content = (run.result or {}).get("summary") or turn.reasoning_summary
+            role = "assistant"
+        else:
+            content = turn.reasoning_summary
+            role = "assistant"
+        messages.append(
+            {
+                "id": turn.id,
+                "role": role,
+                "content": content,
+                "status": turn.status,
+                "metadata": {
+                    "turn_index": turn.turn_index,
+                    "decision_type": turn.decision_type,
+                    "selected_tool": turn.selected_tool,
+                    "observation": turn.observation,
+                    "reflection": turn.reflection,
+                    "memory_reads": turn.memory_reads,
+                    "memory_writes": turn.memory_writes,
+                },
+            }
+        )
+    return messages

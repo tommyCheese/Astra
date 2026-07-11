@@ -29,3 +29,57 @@ async def test_run_lifecycle_persistence(session):
     assert len(view["tool_calls"]) == 1
     assert view["tool_calls"][0]["status"] == "succeeded"
     assert len(view["events"]) >= 5
+
+
+async def test_agent_turn_and_memory_persistence(session):
+    repo = RunRepository(session)
+    run = await repo.create_task_run("记住一个来源", {"provider": "mock", "model": "mock"})
+
+    turn = await repo.create_agent_turn(
+        run.id,
+        1,
+        "call_tool",
+        "搜索候选来源",
+        selected_tool="web_search",
+        decision={"decision_type": "call_tool", "tool_name": "web_search"},
+    )
+    memory = await repo.create_memory(
+        run_id=run.id,
+        scope="run",
+        kind="source_summary",
+        content="本次任务找到一个来源。",
+        provenance={"run_id": run.id, "turn_id": turn.id},
+        confidence=0.8,
+    )
+    await repo.update_agent_turn(
+        turn.id,
+        status="completed",
+        observation={"kind": "tool_result", "status": "succeeded"},
+        memory_writes=[{"id": memory.id}],
+    )
+
+    loaded = await repo.require_run(run.id)
+    view = run_to_view(loaded)
+
+    assert view["turns"][0]["selected_tool"] == "web_search"
+    assert view["memories"][0]["content"] == "本次任务找到一个来源。"
+    assert any(message["role"] == "tool" for message in view["chat_messages"])
+
+
+async def test_persistent_memory_requires_provenance(session):
+    repo = RunRepository(session)
+    run = await repo.create_task_run("偏好测试", {"provider": "mock", "model": "mock"})
+
+    try:
+        await repo.create_memory(
+            run_id=run.id,
+            scope="user",
+            kind="preference",
+            content="始终使用中文。",
+            provenance={},
+            confidence=0.9,
+        )
+    except ValueError as exc:
+        assert "provenance" in str(exc)
+    else:
+        raise AssertionError("Expected provenance validation to fail")

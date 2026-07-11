@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import List, Optional
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import DateTime, Float, ForeignKey, Integer, String, Text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 from sqlalchemy.types import JSON
@@ -61,6 +61,8 @@ class RunRecord(Base):
     tool_calls: Mapped[List["ToolCallRecord"]] = relationship(back_populates="run")
     artifacts: Mapped[List["ArtifactRecord"]] = relationship(back_populates="run")
     events: Mapped[List["RunEventRecord"]] = relationship(back_populates="run", order_by="RunEventRecord.id")
+    turns: Mapped[List["AgentTurnRecord"]] = relationship(back_populates="run", order_by="AgentTurnRecord.turn_index")
+    memories: Mapped[List["MemoryRecord"]] = relationship(back_populates="run")
 
 
 class StepRecord(Base):
@@ -126,3 +128,46 @@ class RunEventRecord(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
     run: Mapped[RunRecord] = relationship(back_populates="events")
+
+
+class AgentTurnRecord(Base):
+    __tablename__ = "agent_turns"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_str)
+    run_id: Mapped[str] = mapped_column(ForeignKey("runs.id"))
+    turn_index: Mapped[int] = mapped_column(Integer)
+    decision_type: Mapped[str] = mapped_column(String(40))
+    reasoning_summary: Mapped[str] = mapped_column(Text)
+    selected_tool: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
+    decision: Mapped[dict] = mapped_column(JsonType, default=dict)
+    observation: Mapped[Optional[dict]] = mapped_column(JsonType, nullable=True)
+    reflection: Mapped[Optional[dict]] = mapped_column(JsonType, nullable=True)
+    tool_call_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+    artifact_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+    memory_reads: Mapped[list] = mapped_column(JsonType, default=list)
+    memory_writes: Mapped[list] = mapped_column(JsonType, default=list)
+    status: Mapped[str] = mapped_column(String(40), default="created")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+    run: Mapped[RunRecord] = relationship(back_populates="turns")
+
+
+class MemoryRecord(Base):
+    __tablename__ = "memories"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_str)
+    run_id: Mapped[Optional[str]] = mapped_column(ForeignKey("runs.id"), nullable=True)
+    workspace_id: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
+    created_by: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
+    scope: Mapped[str] = mapped_column(String(40))
+    kind: Mapped[str] = mapped_column(String(80))
+    content: Mapped[str] = mapped_column(Text)
+    structured_data: Mapped[dict] = mapped_column(JsonType, default=dict)
+    provenance: Mapped[dict] = mapped_column(JsonType, default=dict)
+    confidence: Mapped[float] = mapped_column(Float)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    run: Mapped[Optional[RunRecord]] = relationship(back_populates="memories")

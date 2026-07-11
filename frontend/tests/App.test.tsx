@@ -9,7 +9,7 @@ vi.mock('../src/api', () => ({
     id: 'run-1',
     task_id: 'task-1',
     status: 'completed',
-    mode: 'web_data_query',
+    mode: 'web_agent',
     summary: '完成',
     result: {
       summary: '已完成查询',
@@ -27,6 +27,15 @@ vi.mock('../src/api', () => ({
       conflicts: [],
       caveats: ['部分来源抓取失败'],
       verification_notes: ['验证通过'],
+      verification_report: {
+        status: 'completed',
+        source_count: 1,
+        caveat_count: 1,
+        low_quality_sources: [],
+        failed_sources: [],
+        memory_references: [],
+        notes: ['至少一个抓取来源支撑了最终答案。'],
+      },
     },
     steps: [
       { id: 's1', index: 1, title: '搜索候选来源', intent: '调用 web_search', status: 'completed' },
@@ -47,6 +56,75 @@ vi.mock('../src/api', () => ({
         status: 'succeeded',
         input: {},
         output: { extraction_strategy: 'readability', quality_score: 0.92 },
+      },
+    ],
+    turns: [
+      {
+        id: 'turn-1',
+        run_id: 'run-1',
+        turn_index: 1,
+        decision_type: 'call_tool',
+        reasoning_summary: '先搜索候选来源',
+        selected_tool: 'web_search',
+        decision: {},
+        observation: { kind: 'tool_result', status: 'succeeded' },
+        reflection: null,
+        tool_call_id: 't1',
+        artifact_id: null,
+        memory_reads: [],
+        memory_writes: [],
+        status: 'completed',
+        created_at: 'now',
+        updated_at: 'now',
+      },
+      {
+        id: 'turn-2',
+        run_id: 'run-1',
+        turn_index: 2,
+        decision_type: 'finalize',
+        reasoning_summary: '基于证据生成最终回复',
+        selected_tool: null,
+        decision: {},
+        observation: { kind: 'final_answer', status: 'completed' },
+        reflection: null,
+        tool_call_id: null,
+        artifact_id: null,
+        memory_reads: [],
+        memory_writes: [{ id: 'm1' }],
+        status: 'completed',
+        created_at: 'now',
+        updated_at: 'now',
+      },
+    ],
+    memories: [
+      {
+        id: 'm1',
+        run_id: 'run-1',
+        scope: 'run',
+        kind: 'source_summary',
+        content: '记录本次来源摘要',
+        structured_data: {},
+        provenance: { run_id: 'run-1' },
+        confidence: 0.8,
+        created_at: 'now',
+        updated_at: 'now',
+      },
+    ],
+    chat_messages: [
+      { id: 'u1', role: 'user', content: '查询 Astra', status: 'completed', metadata: {} },
+      {
+        id: 'turn-1',
+        role: 'tool',
+        content: '先搜索候选来源',
+        status: 'completed',
+        metadata: { turn_index: 1 },
+      },
+      {
+        id: 'turn-2',
+        role: 'assistant',
+        content: '已完成查询',
+        status: 'completed',
+        metadata: { turn_index: 2 },
       },
     ],
     artifacts: [],
@@ -72,12 +150,13 @@ describe('App', () => {
   it('submits a goal and renders the result', async () => {
     render(<App />);
 
-    await userEvent.click(screen.getByRole('button', { name: 'Run' }));
+    await userEvent.click(screen.getByRole('button', { name: '↑' }));
 
     expect(await screen.findByText('已完成查询')).toBeInTheDocument();
     expect(screen.getByText('发现一条证据')).toBeInTheDocument();
-    expect(screen.getByText('92%')).toBeInTheDocument();
-    expect(screen.getByText('https://bad.example：fetch_failed')).toBeInTheDocument();
+    expect(screen.getByText(/92%/)).toBeInTheDocument();
+    expect(screen.getByText('记录本次来源摘要')).toBeInTheDocument();
+    expect(screen.getByText('审计详情')).toBeInTheDocument();
     expect(screen.getAllByText(/web_search/).length).toBeGreaterThan(0);
   });
 
@@ -86,7 +165,7 @@ describe('App', () => {
     const textbox = screen.getByRole('textbox');
 
     await userEvent.clear(textbox);
-    await userEvent.click(screen.getByRole('button', { name: 'Run' }));
+    await userEvent.click(screen.getByRole('button', { name: '↑' }));
 
     expect(screen.getByText('请输入任务目标')).toBeInTheDocument();
   });

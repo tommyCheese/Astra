@@ -5,6 +5,7 @@ from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 from app.core.config import Settings
 from app.db.session import SessionLocal
 from app.repositories.runs import RunRepository
+from app.runner.agent_loop import AgentLoop
 from app.runner.model_client import ModelConfigurationError, ModelOutputError, build_model_client
 from app.schemas.agent import FinalAnswer, PlanOutput
 from app.tools.base import ToolExecutionError, ToolRegistry
@@ -53,6 +54,54 @@ class RunEngine:
         await self._persist_plan(repo, run_id, plan)
 
         await repo.update_run_status(run_id, "executing")
+        if self.settings.agent_use_loop:
+            agent_loop = AgentLoop(
+                self.settings,
+                model_client=self.model_client,
+                tool_registry=self.tool_registry,
+            )
+            loop_result = await agent_loop.run(repo, run_id, goal)
+            final_answer = loop_result["answer"]
+            result = loop_result["result"]
+            status = loop_result["status"]
+
+            await repo.update_run_status(run_id, "synthesizing")
+            synth_step = await self._mark_named_step_running(repo, run_id, "综合")
+            await repo.create_artifact(
+                run_id,
+                "final_answer",
+                content_ref=final_answer.model_dump_json(),
+                metadata={"format": "json"},
+            )
+            if synth_step is not None:
+                await repo.update_step(
+                    synth_step.id,
+                    "completed",
+                    evidence={"finding_count": len(final_answer.findings), "handled_by": "agent_loop"},
+                )
+
+            await repo.update_run_status(run_id, "verifying")
+            verify_step = await self._mark_named_step_running(repo, run_id, "验证")
+            if verify_step is not None:
+                report = result.get("verification_report", {})
+                await repo.update_step(
+                    verify_step.id,
+                    "completed",
+                    evidence={
+                        "status": report.get("status", status),
+                        "source_count": report.get("source_count", len(result.get("sources", []))),
+                        "caveat_count": report.get("caveat_count", len(result.get("caveats", []))),
+                    },
+                )
+            await self._complete_pending_steps(repo, run_id)
+            await repo.update_run_status(
+                run_id,
+                status,
+                summary=final_answer.summary,
+                result=result,
+            )
+            return
+
         tool_outputs = await self._execute_web_query(repo, run_id, goal)
 
         await repo.update_run_status(run_id, "synthesizing")
@@ -360,6 +409,16 @@ class RunEngine:
                 await repo.update_step(step.id, "running")
                 return step
         return None
+
+    async def _complete_pending_steps(self, repo: RunRepository, run_id: str) -> None:
+        run = await repo.require_run(run_id)
+        for step in sorted(run.steps, key=lambda item: item.index):
+            if step.status in {"pending", "running"}:
+                await repo.update_step(
+                    step.id,
+                    "completed",
+                    evidence={"handled_by": "agent_loop"},
+                )
 
 
 async def start_run_in_process(run_id: str, settings: Settings) -> None:

@@ -5,7 +5,16 @@ from typing import Any, Dict, List
 import httpx
 
 from app.core.config import Settings
-from app.schemas.agent import FinalAnswer, Finding, PlanOutput, PlanStep, SourceReference
+from app.schemas.agent import (
+    AgentDecision,
+    AgentReflection,
+    FinalAnswer,
+    Finding,
+    MemoryRecord,
+    PlanOutput,
+    PlanStep,
+    SourceReference,
+)
 
 
 class ModelConfigurationError(RuntimeError):
@@ -23,6 +32,26 @@ class ModelClient(ABC):
 
     @abstractmethod
     async def synthesize(self, goal: str, tool_outputs: List[Dict[str, Any]]) -> FinalAnswer:
+        raise NotImplementedError
+
+    @abstractmethod
+    async def decide(self, goal: str, context: Dict[str, Any]) -> AgentDecision:
+        raise NotImplementedError
+
+    @abstractmethod
+    async def reflect(self, goal: str, context: Dict[str, Any]) -> AgentReflection:
+        raise NotImplementedError
+
+    @abstractmethod
+    async def finalize(self, goal: str, context: Dict[str, Any]) -> FinalAnswer:
+        raise NotImplementedError
+
+    @abstractmethod
+    async def extract_memory_candidates(
+        self,
+        goal: str,
+        context: Dict[str, Any],
+    ) -> List[MemoryRecord]:
         raise NotImplementedError
 
 
@@ -149,6 +178,90 @@ class MockModelClient(ModelClient):
             ],
         )
 
+    async def decide(self, goal: str, context: Dict[str, Any]) -> AgentDecision:
+        observations = context.get("observations", [])
+        fetched_urls = {
+            observation.get("data", {}).get("url")
+            for observation in observations
+            if observation.get("kind") == "tool_result"
+            and observation.get("data", {}).get("tool_name") == "web_fetch"
+        }
+        search_observation = next(
+            (
+                observation
+                for observation in observations
+                if observation.get("kind") == "tool_result"
+                and observation.get("data", {}).get("tool_name") == "web_search"
+            ),
+            None,
+        )
+        if search_observation is None:
+            return AgentDecision(
+                decision_type="call_tool",
+                reasoning_summary="先搜索候选来源，建立可抓取的证据候选集。",
+                tool_name="web_search",
+                tool_input={"query": goal},
+                expected_observation="返回候选来源和搜索 warning。",
+                stop_condition="获得候选来源后抓取正文。",
+            )
+        candidates = search_observation.get("data", {}).get("candidates", [])
+        for candidate in candidates:
+            url = candidate.get("url")
+            if url and url not in fetched_urls:
+                return AgentDecision(
+                    decision_type="call_tool",
+                    reasoning_summary="抓取候选来源正文，用于构造证据包和最终回答。",
+                    tool_name="web_fetch",
+                    tool_input={
+                        "url": url,
+                        "query": goal,
+                        "snippet": candidate.get("snippet", ""),
+                        "crawler_plan": context.get("crawler_plan", {}),
+                    },
+                    expected_observation="返回正文、质量评分、抓取策略和 warning。",
+                    stop_condition="抓取足够来源后进行综合验证。",
+                )
+        return AgentDecision(
+            decision_type="finalize",
+            reasoning_summary="已有搜索和抓取观察，可以基于证据包生成最终回复。",
+            expected_observation="最终答案包含来源、限制和验证备注。",
+        )
+
+    async def reflect(self, goal: str, context: Dict[str, Any]) -> AgentReflection:
+        last_observation = context.get("last_observation") or {}
+        return AgentReflection(
+            trigger=last_observation.get("status", "unknown"),
+            summary="工具结果未满足预期，尝试调整策略或带限制结束。",
+            next_action="retry_or_finalize_with_caveats",
+            retry=context.get("retry_count", 0) < 1,
+        )
+
+    async def finalize(self, goal: str, context: Dict[str, Any]) -> FinalAnswer:
+        return await self.synthesize(goal, [{"evidence_pack": context.get("evidence_pack", {})}])
+
+    async def extract_memory_candidates(
+        self,
+        goal: str,
+        context: Dict[str, Any],
+    ) -> List[MemoryRecord]:
+        evidence_pack = context.get("evidence_pack") or {}
+        fetched_sources = evidence_pack.get("fetched_sources", [])
+        if not fetched_sources:
+            return []
+        return [
+            MemoryRecord(
+                scope="run",
+                kind="source_summary",
+                content=f"本次任务围绕「{goal}」抓取了 {len(fetched_sources)} 个来源。",
+                structured_data={"source_count": len(fetched_sources)},
+                provenance={
+                    "run_id": context.get("run_id"),
+                    "artifact_id": evidence_pack.get("artifact_id"),
+                },
+                confidence=0.8,
+            )
+        ]
+
 
 class OpenAICompatibleModelClient(ModelClient):
     def __init__(self, settings: Settings):
@@ -203,6 +316,82 @@ class OpenAICompatibleModelClient(ModelClient):
             return FinalAnswer.model_validate(payload)
         except Exception as exc:
             raise ModelOutputError(f"Invalid final answer output: {exc}") from exc
+
+    async def decide(self, goal: str, context: Dict[str, Any]) -> AgentDecision:
+        payload = await self._chat_json(
+            [
+                {
+                    "role": "system",
+                    "content": (
+                        "You are Astra's Web Agent loop controller. Return JSON only. "
+                        "Required keys: decision_type, reasoning_summary. "
+                        "Allowed decision_type values: call_tool, reflect, replan, finalize, ask_user, blocked. "
+                        "Only request web_search or web_fetch tools. "
+                        "For call_tool include tool_name and tool_input. "
+                        "Do not include hidden chain-of-thought; reasoning_summary must be concise and user-auditable."
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": json.dumps({"goal": goal, "context": context}, ensure_ascii=False),
+                },
+            ]
+        )
+        try:
+            return AgentDecision.model_validate(payload)
+        except Exception as exc:
+            raise ModelOutputError(f"Invalid agent decision output: {exc}") from exc
+
+    async def reflect(self, goal: str, context: Dict[str, Any]) -> AgentReflection:
+        payload = await self._chat_json(
+            [
+                {
+                    "role": "system",
+                    "content": (
+                        "You are Astra's reflector. Return JSON only with keys: "
+                        "trigger, summary, next_action, retry, revised_tool_input. "
+                        "Use concise audit-safe summaries."
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": json.dumps({"goal": goal, "context": context}, ensure_ascii=False),
+                },
+            ]
+        )
+        try:
+            return AgentReflection.model_validate(payload)
+        except Exception as exc:
+            raise ModelOutputError(f"Invalid reflection output: {exc}") from exc
+
+    async def finalize(self, goal: str, context: Dict[str, Any]) -> FinalAnswer:
+        return await self.synthesize(goal, [{"evidence_pack": context.get("evidence_pack", {})}])
+
+    async def extract_memory_candidates(
+        self,
+        goal: str,
+        context: Dict[str, Any],
+    ) -> List[MemoryRecord]:
+        payload = await self._chat_json(
+            [
+                {
+                    "role": "system",
+                    "content": (
+                        "Extract durable memory candidates. Return JSON only with key memories. "
+                        "Each memory has scope, kind, content, structured_data, provenance, confidence. "
+                        "Only include memories with provenance."
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": json.dumps({"goal": goal, "context": context}, ensure_ascii=False),
+                },
+            ]
+        )
+        try:
+            return [MemoryRecord.model_validate(item) for item in payload.get("memories", [])]
+        except Exception as exc:
+            raise ModelOutputError(f"Invalid memory extraction output: {exc}") from exc
 
     async def _chat_json(self, messages: List[Dict[str, str]]) -> Dict[str, Any]:
         url = self.settings.model_base_url.rstrip("/") + "/chat/completions"

@@ -46,4 +46,9 @@ async def test_create_and_get_run(app_client):
 
     loaded = await app_client.get(f"/api/runs/{run_id}")
     assert loaded.status_code == 200
-    assert loaded.json()["id"] == run_id
+    body = loaded.json()
+    assert body["id"] == run_id
+    assert body["mode"] == "web_agent"
+    assert "turns" in body
+    assert "memories" in body
+    assert "chat_messages" in body

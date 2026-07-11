@@ -54,6 +54,75 @@ class FinalAnswer(BaseModel):
     conflicts: List[Dict[str, Any]] = Field(default_factory=list)
     caveats: List[str] = Field(default_factory=list)
     verification_notes: List[str] = Field(default_factory=list)
+    memory_references: List[Dict[str, Any]] = Field(default_factory=list)
+    audit_refs: Dict[str, Any] = Field(default_factory=dict)
+
+
+class AgentDecision(BaseModel):
+    decision_type: str
+    reasoning_summary: str
+    tool_name: Optional[str] = None
+    tool_input: Dict[str, Any] = Field(default_factory=dict)
+    expected_observation: Optional[str] = None
+    stop_condition: Optional[str] = None
+
+
+class AgentObservation(BaseModel):
+    kind: str
+    status: str
+    summary: str
+    data: Dict[str, Any] = Field(default_factory=dict)
+    error: Optional[Dict[str, Any]] = None
+
+
+class AgentReflection(BaseModel):
+    trigger: str
+    summary: str
+    next_action: str
+    retry: bool = False
+    revised_tool_input: Optional[Dict[str, Any]] = None
+
+
+class MemoryRecord(BaseModel):
+    id: Optional[str] = None
+    scope: str
+    kind: str
+    content: str
+    structured_data: Dict[str, Any] = Field(default_factory=dict)
+    provenance: Dict[str, Any] = Field(default_factory=dict)
+    confidence: float = 0.5
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+    expires_at: Optional[datetime] = None
+
+
+class AgentTurn(BaseModel):
+    id: Optional[str] = None
+    run_id: Optional[str] = None
+    turn_index: int
+    decision_type: str
+    reasoning_summary: str
+    selected_tool: Optional[str] = None
+    decision: Dict[str, Any] = Field(default_factory=dict)
+    observation: Optional[Dict[str, Any]] = None
+    reflection: Optional[Dict[str, Any]] = None
+    tool_call_id: Optional[str] = None
+    artifact_id: Optional[str] = None
+    memory_reads: List[Dict[str, Any]] = Field(default_factory=list)
+    memory_writes: List[Dict[str, Any]] = Field(default_factory=list)
+    status: str = "created"
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+
+class VerificationReport(BaseModel):
+    status: str
+    source_count: int = 0
+    caveat_count: int = 0
+    low_quality_sources: List[Dict[str, Any]] = Field(default_factory=list)
+    failed_sources: List[Dict[str, Any]] = Field(default_factory=list)
+    memory_references: List[Dict[str, Any]] = Field(default_factory=list)
+    notes: List[str] = Field(default_factory=list)
 
 
 class CandidateSource(BaseModel):
@@ -149,6 +218,47 @@ class RunEventView(BaseModel):
     created_at: datetime
 
 
+class AgentTurnView(BaseModel):
+    id: str
+    run_id: str
+    turn_index: int
+    decision_type: str
+    reasoning_summary: str
+    selected_tool: Optional[str] = None
+    decision: Dict[str, Any]
+    observation: Optional[Dict[str, Any]]
+    reflection: Optional[Dict[str, Any]]
+    tool_call_id: Optional[str]
+    artifact_id: Optional[str]
+    memory_reads: List[Dict[str, Any]]
+    memory_writes: List[Dict[str, Any]]
+    status: str
+    created_at: datetime
+    updated_at: datetime
+
+
+class MemoryView(BaseModel):
+    id: str
+    run_id: Optional[str]
+    scope: str
+    kind: str
+    content: str
+    structured_data: Dict[str, Any]
+    provenance: Dict[str, Any]
+    confidence: float
+    created_at: datetime
+    updated_at: datetime
+    expires_at: Optional[datetime]
+
+
+class ChatMessageView(BaseModel):
+    id: str
+    role: str
+    content: str
+    status: str = "completed"
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+
 class RunView(BaseModel):
     id: str
     task_id: str
@@ -160,3 +270,7 @@ class RunView(BaseModel):
     tool_calls: List[ToolCallView]
     artifacts: List[ArtifactView]
     events: List[RunEventView]
+    turns: List[AgentTurnView] = Field(default_factory=list)
+    memories: List[MemoryView] = Field(default_factory=list)
+    chat_messages: List[ChatMessageView] = Field(default_factory=list)
+    verification_report: Optional[VerificationReport] = None
