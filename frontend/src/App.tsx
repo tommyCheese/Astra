@@ -1,4 +1,5 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
+import { flushSync } from 'react-dom';
 import { createRun, getRun } from './api';
 import { I18nProvider, useI18n } from './i18n';
 import { ThemeProvider, useTheme } from './theme';
@@ -135,12 +136,25 @@ function AppContent() {
   const visibleEvents = useMemo(() => mergeEvents(events, run?.events ?? []), [events, run]);
   const messages = useMemo(() => buildConversation(run), [run]);
 
+  function changeView(nextView: 'chat' | 'settings') {
+    const transitionDocument = document as Document & {
+      startViewTransition?: (callback: () => void) => void;
+    };
+    if (!transitionDocument.startViewTransition) {
+      setView(nextView);
+      return;
+    }
+    transitionDocument.startViewTransition(() => {
+      flushSync(() => setView(nextView));
+    });
+  }
+
   function startNewChat() {
     setRun(null);
     setEvents([]);
     setError(null);
     setGoal('');
-    setView('chat');
+    changeView('chat');
   }
 
   return (
@@ -149,7 +163,7 @@ function AppContent() {
         run={run}
         activeView={view}
         onNewChat={startNewChat}
-        onOpenSettings={() => setView('settings')}
+        onOpenSettings={() => changeView('settings')}
         onOpenUsage={() => setUsageOpen(true)}
       />
 
@@ -158,7 +172,7 @@ function AppContent() {
           <SettingsView
             activeCategory={settingsCategory}
             onCategoryChange={setSettingsCategory}
-            onClose={() => setView('chat')}
+            onClose={() => changeView('chat')}
           />
         ) : <>
         <section className="chat-topbar">
