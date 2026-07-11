@@ -31,6 +31,16 @@ async def test_run_lifecycle_persistence(session):
     assert len(view["events"]) >= 5
 
 
+async def test_follow_up_run_reuses_task(session):
+    repo = RunRepository(session)
+    first = await repo.create_task_run("第一轮问题", {"provider": "mock"})
+    follow_up = await repo.create_task_run("继续追问", {"provider": "mock"}, first.task_id)
+
+    assert follow_up.task_id == first.task_id
+    assert follow_up.id != first.id
+    assert follow_up.model_policy["conversation_goal"] == "继续追问"
+
+
 async def test_agent_turn_and_memory_persistence(session):
     repo = RunRepository(session)
     run = await repo.create_task_run("记住一个来源", {"provider": "mock", "model": "mock"})

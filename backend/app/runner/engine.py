@@ -47,7 +47,17 @@ class RunEngine:
 
     async def _run_with_repo(self, repo: RunRepository, run_id: str) -> None:
         run = await repo.require_run(run_id)
-        goal = run.task.description
+        current_goal = run.model_policy.get("conversation_goal", run.task.description)
+        conversation_runs = await repo.list_task_runs(run.task_id)
+        previous_runs = [item for item in conversation_runs if item.id != run.id][-6:]
+        if previous_runs:
+            context_lines = []
+            for item in previous_runs:
+                previous_goal = item.model_policy.get("conversation_goal", "")
+                context_lines.extend([f"User: {previous_goal}", f"Assistant: {item.summary or ''}"])
+            goal = "Conversation context:\n" + "\n".join(context_lines) + f"\nCurrent user request: {current_goal}"
+        else:
+            goal = current_goal
 
         await repo.update_run_status(run_id, "planning")
         plan = await self.model_client.plan(goal)

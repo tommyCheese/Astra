@@ -1,10 +1,10 @@
 import type { RunView } from './types';
 
-export async function createRun(goal: string): Promise<{ run_id: string; task_id: string; status: string }> {
+export async function createRun(goal: string, taskId?: string): Promise<{ run_id: string; task_id: string; status: string }> {
   const response = await fetch('/api/runs', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ goal }),
+    body: JSON.stringify({ goal, task_id: taskId }),
   });
   if (!response.ok) {
     const detail = await response.text();

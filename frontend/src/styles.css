@@ -12,8 +12,10 @@
 html,
 body,
 #root {
+  height: 100%;
   margin: 0;
   min-height: 100%;
+  overflow: hidden;
 }
 
 button,
@@ -49,7 +51,9 @@ p {
     #f7f9fc;
   display: grid;
   grid-template-columns: 284px minmax(0, 1fr);
-  min-height: 100vh;
+  height: 100dvh;
+  min-height: 0;
+  overflow: hidden;
   transition: background-color 200ms ease, color 180ms ease;
 }
 
@@ -59,7 +63,10 @@ p {
   display: flex;
   flex-direction: column;
   gap: 18px;
-  min-height: 100vh;
+  height: 100%;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
   padding: 14px 12px;
   transition: background-color 200ms ease, border-color 180ms ease;
 }
@@ -142,6 +149,8 @@ p {
 .side-section {
   display: grid;
   gap: 8px;
+  min-width: 0;
+  overflow: hidden;
 }
 
 .side-title {
@@ -156,7 +165,24 @@ p {
   background: transparent;
   color: #344054;
   justify-content: space-between;
+  min-width: 0;
   padding: 8px 10px;
+}
+
+.history-item {
+  gap: 8px;
+  overflow: hidden;
+}
+
+.history-empty {
+  align-items: center;
+  color: #8490a0;
+  display: flex;
+  font-size: 12px;
+  justify-content: center;
+  min-height: 64px;
+  padding: 8px 10px;
+  text-align: center;
 }
 
 .history-item.active {
@@ -171,6 +197,8 @@ p {
 
 .history-item span,
 .side-action span {
+  flex: 1 1 auto;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -182,6 +210,10 @@ p {
   color: #697586;
   flex: 0 0 auto;
   font-size: 11px;
+  max-width: 72px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .capability-item {
@@ -242,23 +274,11 @@ p {
 .workspace {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto;
-  min-height: 100vh;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
   padding: 14px 18px 18px;
   transition: background-color 200ms ease;
-  view-transition-name: astra-workspace;
-}
-
-::view-transition-group(astra-workspace) {
-  animation-duration: 210ms;
-  animation-timing-function: cubic-bezier(0.2, 0.72, 0.2, 1);
-}
-
-::view-transition-old(astra-workspace) {
-  animation: workspace-leave 170ms ease both;
-}
-
-::view-transition-new(astra-workspace) {
-  animation: workspace-enter 210ms cubic-bezier(0.2, 0.72, 0.2, 1) both;
 }
 
 .chat-topbar {
@@ -266,9 +286,80 @@ p {
   display: flex;
   justify-content: space-between;
   margin: 0 auto;
-  max-width: 920px;
+  max-width: 1120px;
   min-height: 48px;
   width: 100%;
+}
+
+.topbar-actions {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+  min-width: 0;
+}
+
+.conversation-nav {
+  position: relative;
+}
+
+.conversation-nav-trigger {
+  align-items: center;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  color: #475467;
+  display: flex;
+  gap: 7px;
+  height: 34px;
+  max-width: 300px;
+  padding: 0 9px;
+}
+
+.conversation-nav-trigger:hover,
+.conversation-nav-trigger[aria-expanded="true"] {
+  background: rgba(255, 255, 255, 0.72);
+  border-color: rgba(203, 213, 225, 0.75);
+}
+
+.conversation-nav-trigger > span {
+  font-size: 12px;
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.conversation-nav-trigger small {
+  color: #8490a0;
+  font-size: 10px;
+}
+
+.conversation-nav-trigger b {
+  font-size: 10px;
+}
+
+.conversation-nav-menu {
+  bottom: auto;
+  max-height: min(420px, calc(100vh - 100px));
+  min-width: 340px;
+  overflow-y: auto;
+  right: 0;
+  top: calc(100% + 8px);
+  transform-origin: top right;
+}
+
+.conversation-nav-menu button strong {
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.conversation-nav-empty {
+  color: #7b8797;
+  font-size: 12px;
+  padding: 14px 10px;
+  text-align: center;
 }
 
 h1 {
@@ -310,9 +401,93 @@ h1 {
   display: grid;
   grid-template-rows: minmax(0, 1fr) auto auto;
   margin: 0 auto;
-  max-width: 920px;
+  max-width: 1120px;
   min-height: 0;
   width: 100%;
+}
+
+.question-rail {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  left: 296px;
+  max-height: 62vh;
+  padding: 10px 0;
+  position: fixed;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 6;
+}
+
+.question-rail > button {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  display: flex;
+  height: 12px;
+  padding: 0;
+  position: relative;
+  width: 42px;
+}
+
+.question-rail > button > span {
+  background: #c1c8d0;
+  display: block;
+  height: 2px;
+  transition: background-color 150ms ease, width 170ms ease;
+  width: 12px;
+}
+
+.question-rail > button:hover > span {
+  background: #667085;
+  width: 28px;
+}
+
+.question-rail > button.active > span {
+  background: #202124;
+  height: 3px;
+  width: 38px;
+}
+
+.question-preview {
+  animation: menu-enter 160ms ease both;
+  backdrop-filter: blur(18px) saturate(140%);
+  -webkit-backdrop-filter: blur(18px) saturate(140%);
+  background: rgba(255, 255, 255, 0.94);
+  border: 1px solid rgba(203, 213, 225, 0.86);
+  border-radius: 10px;
+  box-shadow: 0 12px 34px rgba(15, 23, 42, 0.13);
+  display: none;
+  left: 48px;
+  max-width: 360px;
+  min-width: 260px;
+  padding: 11px 12px;
+  position: absolute;
+  text-align: left;
+  top: 50%;
+  transform: translateY(-50%);
+}
+
+.question-rail > button:hover .question-preview,
+.question-rail > button:focus-visible .question-preview {
+  display: block;
+}
+
+.question-preview strong {
+  color: #263241;
+  display: block;
+  font-size: 12px;
+}
+
+.question-preview p {
+  color: #667085;
+  display: -webkit-box;
+  font-size: 13px;
+  line-height: 1.45;
+  margin-top: 4px;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
 }
 
 .conversation {
@@ -340,7 +515,7 @@ h1 {
   border-radius: 16px;
   color: #202124;
   margin: 0 0 12px;
-  max-width: 760px;
+  max-width: 900px;
   overflow: hidden;
   padding: 12px 14px;
 }
@@ -353,14 +528,14 @@ h1 {
   background: #e9eef6;
   color: #202124;
   margin-left: auto;
-  max-width: 640px;
+  max-width: 760px;
 }
 
 .bubble.tool {
   background: rgba(255, 255, 255, 0.66);
   border: 1px solid rgba(218, 225, 234, 0.78);
   margin-left: 24px;
-  max-width: 720px;
+  max-width: 860px;
 }
 
 .bubble-label {
@@ -784,9 +959,12 @@ textarea {
 }
 
 .settings-page {
-  height: calc(100vh - 28px);
+  animation: settings-page-enter 160ms ease both;
+  grid-row: 1 / -1;
+  height: 100%;
   margin: 0 auto;
   max-width: 1040px;
+  min-height: 0;
   overflow: hidden;
   width: 100%;
 }
@@ -825,6 +1003,7 @@ textarea {
   display: grid;
   grid-template-columns: 190px minmax(0, 1fr);
   height: calc(100% - 70px);
+  min-height: 0;
 }
 
 .settings-nav {
@@ -857,6 +1036,8 @@ textarea {
 }
 
 .settings-content {
+  min-height: 0;
+  overscroll-behavior: contain;
   overflow: auto;
   padding: 32px 0 60px 38px;
 }
@@ -1175,31 +1356,6 @@ textarea {
   padding: 8px 12px 0;
 }
 
-.audit-drawer {
-  background: rgba(255, 255, 255, 0.76);
-  border: 1px solid rgba(203, 213, 225, 0.72);
-  border-radius: 14px;
-  margin: 12px auto 0;
-  max-width: 920px;
-  padding: 11px 12px;
-  width: 100%;
-}
-
-.audit-drawer summary {
-  color: #344054;
-  cursor: pointer;
-  font-size: 13px;
-  font-weight: 720;
-}
-
-.audit-grid {
-  animation: settings-enter 180ms ease both;
-  display: grid;
-  gap: 12px;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-  margin-top: 12px;
-}
-
 @keyframes menu-enter {
   from {
     opacity: 0;
@@ -1249,71 +1405,13 @@ textarea {
   }
 }
 
-@keyframes workspace-enter {
+@keyframes settings-page-enter {
   from {
     opacity: 0;
-    transform: translateX(6px);
   }
   to {
     opacity: 1;
-    transform: translateX(0);
   }
-}
-
-@keyframes workspace-leave {
-  from {
-    opacity: 1;
-    transform: translateX(0);
-  }
-  to {
-    opacity: 0;
-    transform: translateX(-4px);
-  }
-}
-
-.audit-grid h3 {
-  color: #697586;
-  font-size: 12px;
-  margin-bottom: 7px;
-}
-
-.audit-row {
-  border-top: 1px solid #e4e9f0;
-  padding: 8px 0;
-}
-
-.audit-row strong,
-.audit-row span {
-  display: block;
-  overflow-wrap: anywhere;
-}
-
-.audit-row strong {
-  color: #263241;
-  font-size: 13px;
-}
-
-.audit-row span {
-  color: #697586;
-  font-size: 12px;
-  margin-top: 4px;
-}
-
-code {
-  background: #f8fafc;
-  border: 1px solid #dce3ec;
-  border-radius: 8px;
-  color: #52606d;
-  display: block;
-  font-size: 11px;
-  margin-top: 6px;
-  overflow-wrap: anywhere;
-  padding: 8px;
-}
-
-.empty {
-  color: #697586;
-  font-size: 13px;
 }
 
 html[data-theme="dark"] :root,
@@ -1356,6 +1454,7 @@ html[data-theme="dark"] .history-item,
 html[data-theme="dark"] .side-action,
 html[data-theme="dark"] .settings-nav button,
 html[data-theme="dark"] .model-selector,
+html[data-theme="dark"] .conversation-nav-trigger,
 html[data-theme="dark"] .floating-menu button {
   color: #d9dde3;
 }
@@ -1395,8 +1494,7 @@ html[data-theme="dark"] .settings-page {
 }
 
 html[data-theme="dark"] .status,
-html[data-theme="dark"] .chat-composer,
-html[data-theme="dark"] .audit-drawer {
+html[data-theme="dark"] .chat-composer {
   background: rgba(35, 39, 45, 0.9);
   border-color: #3b424c;
   color: #c8ced7;
@@ -1431,8 +1529,7 @@ html[data-theme="dark"] .source-card strong,
 html[data-theme="dark"] .tool-event strong,
 html[data-theme="dark"] .reflection-card strong,
 html[data-theme="dark"] .capability-item strong,
-html[data-theme="dark"] .setting-row strong,
-html[data-theme="dark"] .audit-row strong {
+html[data-theme="dark"] .setting-row strong {
   color: #e5e8ec;
 }
 
@@ -1467,6 +1564,12 @@ html[data-theme="dark"] .execution-mode-button:hover {
   background: #2a2f36;
 }
 
+html[data-theme="dark"] .conversation-nav-trigger:hover,
+html[data-theme="dark"] .conversation-nav-trigger[aria-expanded="true"] {
+  background: #2a2f36;
+  border-color: #444b56;
+}
+
 html[data-theme="dark"] .execution-mode-button.mode-bypass {
   background: #422824;
   color: #f2a99d;
@@ -1487,7 +1590,6 @@ html[data-theme="dark"] .settings-header,
 html[data-theme="dark"] .settings-nav,
 html[data-theme="dark"] .settings-group > header,
 html[data-theme="dark"] .setting-row,
-html[data-theme="dark"] .audit-row,
 html[data-theme="dark"] .menu-divider {
   border-color: #343a43;
 }
@@ -1508,14 +1610,33 @@ html[data-theme="dark"] .runtime-summary > div {
   background: rgba(255, 255, 255, 0.025);
 }
 
-html[data-theme="dark"] code {
-  background: #20242a;
-  border-color: #373e48;
-  color: #b7c0cc;
-}
-
 html[data-theme="dark"] .modal-backdrop {
   background: rgba(0, 0, 0, 0.58);
+}
+
+html[data-theme="dark"] .question-rail > button > span {
+  background: #59616d;
+}
+
+html[data-theme="dark"] .question-rail > button:hover > span {
+  background: #aeb6c2;
+}
+
+html[data-theme="dark"] .question-rail > button.active > span {
+  background: #f1f3f5;
+}
+
+html[data-theme="dark"] .question-preview {
+  background: rgba(35, 39, 45, 0.97);
+  border-color: #444b56;
+}
+
+html[data-theme="dark"] .question-preview strong {
+  color: #eef0f3;
+}
+
+html[data-theme="dark"] .question-preview p {
+  color: #aeb6c2;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -1536,15 +1657,21 @@ html[data-theme="dark"] .modal-backdrop {
     transform: none;
   }
 
-  ::view-transition-old(astra-workspace),
-  ::view-transition-new(astra-workspace) {
-    animation: none !important;
-  }
 }
 
 @media (max-width: 860px) {
+  html,
+  body,
+  #root {
+    height: auto;
+    overflow: auto;
+  }
+
   .app-layout {
     grid-template-columns: 1fr;
+    height: auto;
+    min-height: 100dvh;
+    overflow: visible;
   }
 
   .sidebar {
@@ -1562,7 +1689,9 @@ html[data-theme="dark"] .modal-backdrop {
   }
 
   .workspace {
+    height: auto;
     min-height: calc(100vh - 86px);
+    overflow: visible;
     padding: 10px 12px 14px;
   }
 
@@ -1589,7 +1718,12 @@ html[data-theme="dark"] .modal-backdrop {
     grid-template-columns: 1fr;
   }
 
+  .question-rail {
+    display: none;
+  }
+
   .settings-page {
+    grid-row: auto;
     height: auto;
   }
 
@@ -1649,6 +1783,18 @@ html[data-theme="dark"] .modal-backdrop {
 
   .usage-grid {
     grid-template-columns: repeat(2, 1fr);
+  }
+
+  .conversation-nav-trigger {
+    max-width: 150px;
+  }
+
+  .conversation-nav-trigger small {
+    display: none;
+  }
+
+  .conversation-nav-menu {
+    min-width: min(340px, calc(100vw - 32px));
   }
 
   .runtime-summary {

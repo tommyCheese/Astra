@@ -9,7 +9,9 @@ const english: Record<string, string> = {
   '添加内容': 'Add content', '上传文件': 'Upload file', '文档、代码与数据': 'Documents, code, and data',
   '添加图片': 'Add image', '分析图像内容': 'Analyze image content', '连接来源': 'Connect source', '即将支持': 'Coming soon',
   '输入任务 / 继续追问...': 'Enter a task or ask a follow-up...', '请输入任务目标': 'Enter a task goal', '创建 run 失败': 'Failed to create run',
-  '新对话': 'New chat', '历史对话': 'Chat history', '当前 Web Agent 会话': 'Current Web Agent chat', '暂无会话': 'No chats yet',
+  '新对话': 'New chat', '历史对话': 'Chat history', '当前 Web Agent 会话': 'Current Web Agent chat', '暂无会话': 'No chats yet', '暂无对话': 'No chats yet',
+  '切换对话': 'Switch chat', '最近对话': 'Recent chats', '未命名对话': 'Untitled chat', '还没有历史对话': 'No chat history yet',
+  '问题导航': 'Question navigation', '跳转到问题': 'Jump to question', '问题': 'Question',
   '用量统计': 'Usage', '设置': 'Settings', '本地配置': 'Local preferences', '工作区': 'Workspace', '关闭设置': 'Close settings', '设置类别': 'Settings categories',
   '工具': 'Tools', '运行时': 'Runtime', '记忆': 'Memory', '验证与安全': 'Verification & safety', '界面': 'Interface', '数据与隐私': 'Data & privacy',
   '管理 Agent 可用工具及其调用策略。': 'Manage the tools available to the agent and how they are invoked.',
@@ -49,6 +51,7 @@ const english: Record<string, string> = {
   '反思循环': 'Reflection loop', '检查结果并修订下一步策略': 'Review results and revise the next action', '触发方式': 'Trigger', '失败时': 'On failure', '按需': 'Adaptive', '每轮': 'Every turn', '反思关闭': 'Reflection off', '反思': 'reflection',
   '当前模型': 'Current model', '当前对话': 'Current chat', '关闭用量统计': 'Close usage', '模型调用': 'Model calls', '次决策 / 生成': 'decisions / generations', 'Token 用量': 'Token usage', '前端估算': 'Frontend estimate',
   '工具调用': 'Tool calls', '成功率': 'Success rate', '证据来源': 'Evidence sources', 'Agent 轮次': 'Agent turns', 'Memory 写入': 'Memory writes', '验证警告': 'Verification warnings', '精确输入、输出和缓存 Token 将在模型网关接入后由后端返回。': 'Exact input, output, and cached token usage will come from the model gateway.',
+  '任务步骤': 'Task steps', '消息轮次': 'Message turns',
   '你': 'You', '审计详情': 'Audit details', '暂无 Memory 写入。': 'No memory writes yet.', '提交了一个任务': 'Submitted a task',
   '正在搜索候选来源...': 'Searching for candidate sources...', '正在阅读和验证来源...': 'Reading and verifying sources...', '正在反思并调整策略...': 'Reflecting and adjusting strategy...', '正在验证证据...': 'Verifying evidence...', '正在处理...': 'Working...',
 };

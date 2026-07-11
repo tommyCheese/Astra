@@ -25,7 +25,10 @@ async def create_run(
     if not goal:
         raise HTTPException(status_code=422, detail="Goal must not be empty")
     repo = RunRepository(session)
-    run = await repo.create_task_run(goal, settings.model_policy)
+    try:
+        run = await repo.create_task_run(goal, settings.model_policy, payload.task_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
     asyncio.create_task(start_run_in_process(run.id, settings))
     return CreateRunResponse(task_id=run.task_id, run_id=run.id, status=run.status)
 

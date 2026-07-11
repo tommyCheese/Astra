@@ -21,21 +21,26 @@ class RunRepository:
     def __init__(self, session: AsyncSession):
         self.session = session
 
-    async def create_task_run(self, goal: str, model_policy: Dict[str, Any]) -> RunRecord:
+    async def create_task_run(self, goal: str, model_policy: Dict[str, Any], task_id: Optional[str] = None) -> RunRecord:
         now = utc_now()
-        task = TaskRecord(
-            title=goal[:240],
-            description=goal,
-            status="created",
-            risk_level="low",
-            created_at=now,
-            updated_at=now,
-        )
+        task = await self.session.get(TaskRecord, task_id) if task_id else None
+        if task_id and task is None:
+            raise ValueError(f"Task not found: {task_id}")
+        if task is None:
+            task = TaskRecord(
+                title=goal[:240],
+                description=goal,
+                status="created",
+                risk_level="low",
+                created_at=now,
+                updated_at=now,
+            )
+        run_policy = {**model_policy, "conversation_goal": goal}
         run = RunRecord(
             task=task,
             status="created",
             mode="web_agent",
-            model_policy=model_policy,
+            model_policy=run_policy,
             created_at=now,
             updated_at=now,
         )
@@ -68,6 +73,12 @@ class RunRepository:
         if run is None:
             raise ValueError(f"Run not found: {run_id}")
         return run
+
+    async def list_task_runs(self, task_id: str) -> List[RunRecord]:
+        result = await self.session.execute(
+            select(RunRecord).where(RunRecord.task_id == task_id).order_by(RunRecord.created_at)
+        )
+        return list(result.scalars().all())
 
     async def update_run_status(
         self,
@@ -529,7 +540,7 @@ def build_chat_messages(run: RunRecord) -> List[Dict[str, Any]]:
         {
             "id": f"{run.id}-user",
             "role": "user",
-            "content": run.task.description,
+            "content": run.model_policy.get("conversation_goal", run.task.description),
             "status": "completed",
             "metadata": {"task_id": run.task_id},
         }

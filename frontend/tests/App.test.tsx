@@ -2,6 +2,7 @@ import { cleanup, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { App } from '../src/App';
+import { createRun } from '../src/api';
 
 vi.mock('../src/api', () => ({
   createRun: vi.fn(async () => ({ run_id: 'run-1', task_id: 'task-1', status: 'created' })),
@@ -156,9 +157,10 @@ describe('App', () => {
     expect(await screen.findByText('已完成查询')).toBeInTheDocument();
     expect(screen.getByText('发现一条证据')).toBeInTheDocument();
     expect(screen.getByText(/92%/)).toBeInTheDocument();
-    expect(screen.getByText('记录本次来源摘要')).toBeInTheDocument();
-    expect(screen.getByText('审计详情')).toBeInTheDocument();
+    expect(screen.queryByText('审计详情')).not.toBeInTheDocument();
     expect(screen.getAllByText(/web_search/).length).toBeGreaterThan(0);
+    expect(screen.getByRole('navigation', { name: '问题导航' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '跳转到问题 1' })).toBeInTheDocument();
   });
 
   it('shows validation error for empty goal', async () => {
@@ -169,6 +171,38 @@ describe('App', () => {
     await userEvent.click(screen.getByRole('button', { name: '↑' }));
 
     expect(screen.getByText('请输入任务目标')).toBeInTheDocument();
+  });
+
+  it('submits with Enter and keeps Shift+Enter for a new line', async () => {
+    render(<App />);
+    const textbox = screen.getByRole('textbox');
+
+    await userEvent.clear(textbox);
+    await userEvent.type(textbox, '第一行{shift>}{enter}{/shift}第二行');
+    expect(textbox).toHaveValue('第一行\n第二行');
+
+    await userEvent.keyboard('{Enter}');
+    expect(await screen.findByText('已完成查询')).toBeInTheDocument();
+  });
+
+  it('renders empty chat history as a non-interactive background state', () => {
+    render(<App />);
+
+    expect(screen.getByText('暂无对话')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '暂无对话' })).not.toBeInTheDocument();
+  });
+
+  it('keeps follow-up messages in the same history conversation', async () => {
+    render(<App />);
+
+    await userEvent.click(screen.getByRole('button', { name: '↑' }));
+    await screen.findByText('已完成查询');
+    await userEvent.type(screen.getByRole('textbox'), '继续追问{Enter}');
+    await screen.findAllByText('已完成查询');
+
+    expect(vi.mocked(createRun)).toHaveBeenLastCalledWith('继续追问', 'task-1');
+    expect(screen.getAllByRole('button', { name: /完成 completed/ })).toHaveLength(1);
+    expect(screen.getAllByRole('button', { name: /跳转到问题/ })).toHaveLength(2);
   });
 
   it('opens settings and moves capabilities into the settings view', async () => {

@@ -1,11 +1,11 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
-import { flushSync } from 'react-dom';
 import { createRun, getRun } from './api';
 import { I18nProvider, useI18n } from './i18n';
 import { ThemeProvider, useTheme } from './theme';
-import type { AgentTurnView, ChatMessage, RunEvent, RunView, ToolCallView } from './types';
+import type { AgentTurnView, ChatMessage, RunView, ToolCallView } from './types';
 
 const terminalStatuses = new Set(['completed', 'completed_with_warnings', 'failed', 'blocked']);
+type ConversationEntry = { id: string; run: RunView; priorMessages: ChatMessage[] };
 
 export function App() {
   return <I18nProvider><ThemeProvider><AppContent /></ThemeProvider></I18nProvider>;
@@ -15,7 +15,9 @@ function AppContent() {
   const { language, t } = useI18n();
   const [goal, setGoal] = useState('帮我总结 Astra 当前 Web Agent 能验证哪些证据');
   const [run, setRun] = useState<RunView | null>(null);
-  const [events, setEvents] = useState<RunEvent[]>([]);
+  const [conversationHistory, setConversationHistory] = useState<ConversationEntry[]>([]);
+  const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
+  const [priorMessages, setPriorMessages] = useState<ChatMessage[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [view, setView] = useState<'chat' | 'settings'>('chat');
@@ -69,6 +71,12 @@ function AppContent() {
     };
   }, [attachOpen, modelOpen, executionMenuOpen]);
 
+  function rememberConversation(nextRun: RunView, previousMessages: ChatMessage[] = priorMessages) {
+    const conversationId = activeConversationId ?? nextRun.task_id;
+    setActiveConversationId(conversationId);
+    setConversationHistory((items) => [{ id: conversationId, run: nextRun, priorMessages: previousMessages }, ...items.filter((item) => item.id !== conversationId)]);
+  }
+
   async function submit(event: FormEvent) {
     event.preventDefault();
     const trimmedGoal = goal.trim();
@@ -78,11 +86,13 @@ function AppContent() {
     }
     setError(null);
     setLoading(true);
-    setEvents([]);
     try {
-      const created = await createRun(trimmedGoal);
+      const previousMessages = run ? messages : [];
+      const created = await createRun(trimmedGoal, run?.task_id);
       const current = await getRun(created.run_id);
+      setPriorMessages(previousMessages);
       setRun(current);
+      rememberConversation(current, previousMessages);
       setGoal('');
     } catch (err) {
       setError(err instanceof Error ? err.message : t('创建 run 失败'));
@@ -95,63 +105,32 @@ function AppContent() {
     if (!run || terminalStatuses.has(run.status)) {
       return;
     }
-    const source = new EventSource(`/api/runs/${run.id}/events`);
-    const eventTypes = [
-      'run.created',
-      'run.status_changed',
-      'step.created',
-      'step.updated',
-      'tool_call.started',
-      'tool_call.completed',
-      'artifact.created',
-      'agent_turn.created',
-      'agent_turn.updated',
-      'memory.read',
-      'memory.write',
-      'memory.write_rejected',
-      'reflection.created',
-      'verification.created',
-    ];
-    for (const type of eventTypes) {
-      source.addEventListener(type, (message) => {
-        const event = JSON.parse((message as MessageEvent).data) as RunEvent;
-        setEvents((items) => mergeEvents(items, [event]));
-      });
-    }
     const refresh = window.setInterval(async () => {
       const next = await getRun(run.id);
       setRun(next);
-      setEvents((items) => mergeEvents(items, next.events));
+      rememberConversation(next);
       if (terminalStatuses.has(next.status)) {
-        source.close();
         window.clearInterval(refresh);
       }
     }, 700);
     return () => {
-      source.close();
       window.clearInterval(refresh);
     };
   }, [run?.id, run?.status]);
 
-  const visibleEvents = useMemo(() => mergeEvents(events, run?.events ?? []), [events, run]);
-  const messages = useMemo(() => buildConversation(run), [run]);
+  const messages = useMemo(() => {
+    const currentMessages = buildConversation(run).map((message) => ({ ...message, id: `${run?.id ?? 'idle'}:${priorMessages.length}:${message.id}` }));
+    return [...priorMessages, ...currentMessages];
+  }, [priorMessages, run]);
 
   function changeView(nextView: 'chat' | 'settings') {
-    const transitionDocument = document as Document & {
-      startViewTransition?: (callback: () => void) => void;
-    };
-    if (!transitionDocument.startViewTransition) {
-      setView(nextView);
-      return;
-    }
-    transitionDocument.startViewTransition(() => {
-      flushSync(() => setView(nextView));
-    });
+    setView(nextView);
   }
 
   function startNewChat() {
     setRun(null);
-    setEvents([]);
+    setActiveConversationId(null);
+    setPriorMessages([]);
     setError(null);
     setGoal('');
     changeView('chat');
@@ -161,8 +140,15 @@ function AppContent() {
     <main className="app-layout">
       <Sidebar
         run={run}
+        conversations={conversationHistory}
         activeView={view}
         onNewChat={startNewChat}
+        onSelectConversation={(conversation) => {
+          setActiveConversationId(conversation.id);
+          setPriorMessages(conversation.priorMessages);
+          setRun(conversation.run);
+          changeView('chat');
+        }}
         onOpenSettings={() => changeView('settings')}
         onOpenUsage={() => setUsageOpen(true)}
       />
@@ -184,6 +170,7 @@ function AppContent() {
         </section>
 
         <section className="chat-surface">
+          <QuestionRail messages={messages} />
           <div className="conversation">
             {!messages.length && (
               <div className="welcome">
@@ -242,6 +229,12 @@ function AppContent() {
             <textarea
               value={goal}
               onChange={(event) => setGoal(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
+                  event.preventDefault();
+                  event.currentTarget.form?.requestSubmit();
+                }
+              }}
               placeholder={t('输入任务 / 继续追问...')}
             />
             <div className="model-menu-wrap" ref={modelMenuRef}>
@@ -272,7 +265,6 @@ function AppContent() {
           {error && <div className="notice error">{error}</div>}
         </section>
 
-        {run && <AuditDrawer run={run} events={visibleEvents} />}
         </>}
       </section>
       {usageOpen && <UsageModal run={run} onClose={() => setUsageOpen(false)} />}
@@ -285,10 +277,12 @@ function AppContent() {
   );
 }
 
-function Sidebar({ run, activeView, onNewChat, onOpenSettings, onOpenUsage }: {
+function Sidebar({ run, conversations, activeView, onNewChat, onSelectConversation, onOpenSettings, onOpenUsage }: {
   run: RunView | null;
+  conversations: ConversationEntry[];
   activeView: 'chat' | 'settings';
   onNewChat: () => void;
+  onSelectConversation: (conversation: ConversationEntry) => void;
   onOpenSettings: () => void;
   onOpenUsage: () => void;
 }) {
@@ -310,10 +304,7 @@ function Sidebar({ run, activeView, onNewChat, onOpenSettings, onOpenUsage }: {
 
       <nav className="side-section">
         <span className="side-title">{t('历史对话')}</span>
-        <button className={`history-item ${run ? 'active' : ''}`} type="button">
-          <span>{run ? run.summary || t('当前 Web Agent 会话') : t('暂无会话')}</span>
-          {run && <small>{statusLabel(run.status)}</small>}
-        </button>
+        {conversations.length ? conversations.slice(0, 6).map((conversation) => <button className={`history-item ${run?.task_id === conversation.id ? 'active' : ''}`} type="button" key={conversation.id} onClick={() => onSelectConversation(conversation)}><span>{conversationTitle(conversation.run, t('当前 Web Agent 会话'))}</span><small>{statusLabel(conversation.run.status)}</small></button>) : <div className="history-empty">{t('暂无对话')}</div>}
       </nav>
 
       <div className="sidebar-bottom">
@@ -328,6 +319,17 @@ function Sidebar({ run, activeView, onNewChat, onOpenSettings, onOpenUsage }: {
       </div>
     </aside>
   );
+}
+
+function conversationTitle(run: RunView, fallback: string) {
+  return run.summary?.trim() || run.chat_messages?.find((message) => message.role === 'user')?.content || fallback;
+}
+
+function QuestionRail({ messages }: { messages: ChatMessage[] }) {
+  const { t } = useI18n();
+  const questions = messages.filter((message) => message.role === 'user');
+  if (!questions.length) return null;
+  return <nav className="question-rail" aria-label={t('问题导航')}>{questions.map((question, index) => <button className={index === questions.length - 1 ? 'active' : ''} type="button" key={question.id} aria-label={`${t('跳转到问题')} ${index + 1}`} onClick={() => document.getElementById(`message-${question.id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })}><span /><div className="question-preview"><strong>{t('问题')} {index + 1}</strong><p>{question.content}</p></div></button>)}</nav>;
 }
 
 function CapabilityItem({ title, detail, state, enabled = true }: { title: string; detail: string; state: string; enabled?: boolean }) {
@@ -448,7 +450,7 @@ function UsageModal({ run, onClose }: { run: RunView | null; onClose: () => void
   const estimatedTokens = run ? Math.max(640, turns * 760 + calls * 420 + (run.result?.findings.length ?? 0) * 180) : 0;
   const succeeded = run?.tool_calls.filter((call) => call.status === 'succeeded').length ?? 0;
   const successRate = calls ? Math.round((succeeded / calls) * 100) : 0;
-  return <div className="modal-backdrop" role="presentation" onMouseDown={onClose}><section className="usage-modal" role="dialog" aria-modal="true" aria-label={t('用量统计')} onMouseDown={(event) => event.stopPropagation()}><header><div><span>{t('当前对话')}</span><h2>{t('用量统计')}</h2></div><button className="close-button" type="button" aria-label={t('关闭用量统计')} onClick={onClose}>×</button></header><div className="usage-primary"><div><span>{t('模型调用')}</span><strong>{turns}</strong><small>{t('次决策 / 生成')}</small></div><div><span>{t('Token 用量')}</span><strong>{estimatedTokens.toLocaleString(language)}</strong><small>{t('前端估算')}</small></div></div><div className="usage-grid"><div><span>{t('工具调用')}</span><strong>{calls}</strong></div><div><span>{t('成功率')}</span><strong>{successRate}%</strong></div><div><span>{t('证据来源')}</span><strong>{run?.result?.sources.length ?? 0}</strong></div><div><span>{t('Agent 轮次')}</span><strong>{turns}</strong></div><div><span>{t('Memory 写入')}</span><strong>{run?.memories?.length ?? 0}</strong></div><div><span>{t('验证警告')}</span><strong>{run?.verification_report?.caveat_count ?? 0}</strong></div></div><p className="usage-note">{t('精确输入、输出和缓存 Token 将在模型网关接入后由后端返回。')}</p></section></div>;
+  return <div className="modal-backdrop" role="presentation" onMouseDown={onClose}><section className="usage-modal" role="dialog" aria-modal="true" aria-label={t('用量统计')} onMouseDown={(event) => event.stopPropagation()}><header><div><span>{t('当前对话')}</span><h2>{t('用量统计')}</h2></div><button className="close-button" type="button" aria-label={t('关闭用量统计')} onClick={onClose}>×</button></header><div className="usage-primary"><div><span>{t('模型调用')}</span><strong>{turns}</strong><small>{t('次决策 / 生成')}</small></div><div><span>{t('Token 用量')}</span><strong>{estimatedTokens.toLocaleString(language)}</strong><small>{t('前端估算')}</small></div></div><div className="usage-grid"><div><span>{t('工具调用')}</span><strong>{calls}</strong></div><div><span>{t('成功率')}</span><strong>{successRate}%</strong></div><div><span>{t('任务步骤')}</span><strong>{run?.steps.length ?? 0}</strong></div><div><span>{t('Agent 轮次')}</span><strong>{turns}</strong></div><div><span>{t('消息轮次')}</span><strong>{run?.chat_messages?.filter((message) => message.role === 'user').length ?? 0}</strong></div><div><span>{t('Memory 写入')}</span><strong>{run?.memories?.length ?? 0}</strong></div></div><p className="usage-note">{t('精确输入、输出和缓存 Token 将在模型网关接入后由后端返回。')}</p></section></div>;
 }
 
 function MessageBubble({ message, run }: { message: ChatMessage; run: RunView | null }) {
@@ -458,7 +460,7 @@ function MessageBubble({ message, run }: { message: ChatMessage; run: RunView | 
   const turn = run?.turns?.find((item) => item.turn_index === turnIndex);
 
   return (
-    <article className={`bubble ${role}`}>
+    <article className={`bubble ${role}`} id={`message-${message.id}`}>
       <span className="bubble-label">{t(labelForRole(message.role))}</span>
       <p>{message.content}</p>
       {turn?.selected_tool && <ToolEvent turn={turn} toolCalls={run?.tool_calls ?? []} />}
@@ -523,53 +525,6 @@ function FinalAnswer({ run }: { run: RunView }) {
         <p key={`note-${index}`} className="note">{item}</p>
       ))}
     </div>
-  );
-}
-
-function AuditDrawer({ run, events }: { run: RunView; events: RunEvent[] }) {
-  const { t } = useI18n();
-  return (
-    <details className="audit-drawer">
-      <summary>{t('审计详情')}</summary>
-      <div className="audit-grid">
-        <section>
-          <h3>Turns</h3>
-          {run.turns?.map((turn) => (
-            <div className="audit-row" key={turn.id}>
-              <strong>{turn.turn_index}. {turn.decision_type}</strong>
-              <span>{turn.reasoning_summary}</span>
-            </div>
-          ))}
-        </section>
-        <section>
-          <h3>Memory</h3>
-          {run.memories?.length ? run.memories.map((memory) => (
-            <div className="audit-row" key={memory.id}>
-              <strong>{memory.scope}/{memory.kind} · {Math.round(memory.confidence * 100)}%</strong>
-              <span>{memory.content}</span>
-            </div>
-          )) : <p className="empty">{t('暂无 Memory 写入。')}</p>}
-        </section>
-        <section>
-          <h3>Timeline</h3>
-          {run.steps.map((step) => (
-            <div className="audit-row" key={step.id}>
-              <strong>{step.index}. {step.title}</strong>
-              <span>{step.status}</span>
-            </div>
-          ))}
-        </section>
-        <section>
-          <h3>Events</h3>
-          {events.slice(-10).map((event) => (
-            <div className="audit-row" key={event.id}>
-              <strong>{event.type}</strong>
-              <code>{JSON.stringify(event.payload)}</code>
-            </div>
-          ))}
-        </section>
-      </div>
-    </details>
   );
 }
 
@@ -650,12 +605,4 @@ function toolCallDetail(output?: Record<string, unknown> | null) {
     return ` · ${strategy}${score}`;
   }
   return '';
-}
-
-function mergeEvents(left: RunEvent[], right: RunEvent[]) {
-  const map = new Map<number, RunEvent>();
-  for (const event of [...left, ...right]) {
-    map.set(event.id, event);
-  }
-  return [...map.values()].sort((a, b) => a.id - b.id);
 }
