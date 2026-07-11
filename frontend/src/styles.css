@@ -721,6 +721,38 @@ textarea {
   line-height: 1.5;
 }
 
+.runtime-summary {
+  background: #edf3f7;
+  border: 1px solid #dbe3eb;
+  border-radius: 10px;
+  display: grid;
+  gap: 1px;
+  grid-template-columns: repeat(3, 1fr);
+  margin: 16px 0 4px;
+  overflow: hidden;
+}
+
+.runtime-summary > div {
+  background: rgba(255, 255, 255, 0.55);
+  padding: 12px;
+}
+
+.runtime-summary span,
+.runtime-summary strong {
+  display: block;
+}
+
+.runtime-summary span {
+  color: #697586;
+  font-size: 11px;
+}
+
+.runtime-summary strong {
+  color: #263241;
+  font-size: 13px;
+  margin-top: 4px;
+}
+
 .setting-row {
   align-items: center;
   border-bottom: 1px solid #e5e9ef;
@@ -1072,5 +1104,9 @@ code {
 
   .usage-grid {
     grid-template-columns: repeat(2, 1fr);
+  }
+
+  .runtime-summary {
+    grid-template-columns: 1fr;
   }
 }

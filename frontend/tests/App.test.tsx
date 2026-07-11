@@ -179,7 +179,33 @@ describe('App', () => {
 
     expect(screen.getByRole('heading', { name: '能力' })).toBeInTheDocument();
     expect(screen.getByText('Web Fetch')).toBeInTheDocument();
-    expect(screen.getByText('工具调用确认')).toBeInTheDocument();
+    expect(screen.getByText(/具体权限和执行限制由运行时统一管理/)).toBeInTheDocument();
+  });
+
+  it('shows sandbox and execution policies in runtime settings', async () => {
+    render(<App />);
+
+    await userEvent.click(screen.getByRole('button', { name: /设置/ }));
+    await userEvent.click(screen.getByRole('button', { name: '运行时' }));
+
+    expect(screen.getByRole('heading', { name: '运行时' })).toBeInTheDocument();
+    expect(screen.getByText('沙盒模式')).toBeInTheDocument();
+    expect(screen.getByText('最大 Agent 轮次')).toBeInTheDocument();
+    expect(screen.getByText('工具调用上限')).toBeInTheDocument();
+    expect(screen.getByText('并行工具调用')).toBeInTheDocument();
+    expect(screen.getByText('失败自动重试')).toBeInTheDocument();
+    expect(screen.getByText('保留运行工件')).toBeInTheDocument();
+  });
+
+  it('keeps reasoning strategy separate from runtime budgets', async () => {
+    render(<App />);
+
+    await userEvent.click(screen.getByRole('button', { name: /设置/ }));
+
+    expect(screen.getByText('规划策略')).toBeInTheDocument();
+    expect(screen.getByText('反思触发方式')).toBeInTheDocument();
+    expect(screen.queryByText('最大 Agent 轮次')).not.toBeInTheDocument();
+    expect(screen.queryByText('工具调用上限')).not.toBeInTheDocument();
   });
 
   it('opens usage statistics and changes the active model', async () => {
