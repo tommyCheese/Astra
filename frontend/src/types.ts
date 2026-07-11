@@ -48,6 +48,14 @@ export type AgentTurnView = {
   memory_reads: Array<Record<string, unknown>>;
   memory_writes: Array<Record<string, unknown>>;
   status: string;
+  evaluation?: Record<string, unknown> | null;
+  reflection_patch?: Record<string, unknown> | null;
+  state_version_before?: number | null;
+  state_version_after?: number | null;
+  plan_version?: number;
+  phase?: string;
+  idempotency_key?: string | null;
+  paused_node?: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -101,6 +109,7 @@ export type FinalResult = {
   memory_references?: Array<Record<string, unknown>>;
   audit_refs?: Record<string, unknown>;
   verification_report?: VerificationReport;
+  completion_decision?: Record<string, unknown>;
 };
 
 export type RunView = {
@@ -118,4 +127,12 @@ export type RunView = {
   memories?: MemoryView[];
   chat_messages?: ChatMessage[];
   verification_report?: VerificationReport | null;
+  reasoning_policy?: Record<string, unknown>;
+  task_contract?: Record<string, unknown>;
+  plan_graph?: Record<string, unknown>;
+  agent_state?: Record<string, unknown>;
+  state_version?: number;
+  terminal_reason?: Record<string, unknown> | null;
+  waiting_state?: Record<string, unknown> | null;
+  task_adapter?: string;
 };

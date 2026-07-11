@@ -1,4 +1,5 @@
 from typing import Any, Dict, List, Optional
+import uuid
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -21,7 +22,7 @@ class RunRepository:
     def __init__(self, session: AsyncSession):
         self.session = session
 
-    async def create_task_run(self, goal: str, model_policy: Dict[str, Any], task_id: Optional[str] = None) -> RunRecord:
+    async def create_task_run(self, goal: str, model_policy: Dict[str, Any], task_id: Optional[str] = None, *, reasoning_policy: Optional[Dict[str, Any]] = None) -> RunRecord:
         now = utc_now()
         task = await self.session.get(TaskRecord, task_id) if task_id else None
         if task_id and task is None:
@@ -41,6 +42,8 @@ class RunRepository:
             status="created",
             mode="web_agent",
             model_policy=run_policy,
+            reasoning_policy=reasoning_policy or {},
+            task_adapter="web",
             created_at=now,
             updated_at=now,
         )
@@ -48,6 +51,75 @@ class RunRepository:
         self.session.add(run)
         await self.session.flush()
         await self.add_event(run.id, "run.created", {"goal": goal, "status": run.status})
+        await self.session.commit()
+        return run
+
+    async def initialize_reasoning_state(self, run_id: str, *, task_contract: Dict[str, Any], plan_graph: Dict[str, Any], agent_state: Dict[str, Any]) -> RunRecord:
+        run = await self.require_run(run_id)
+        if run.state_version:
+            raise ValueError("Reasoning state is already initialized")
+        run.task_contract = task_contract
+        run.plan_graph = plan_graph
+        run.agent_state = agent_state
+        run.state_version = int(agent_state.get("version", 1))
+        run.updated_at = utc_now()
+        await self.add_event(run_id, "reasoning.state_initialized", {"state_version": run.state_version, "plan_version": plan_graph.get("version", 1)})
+        await self.session.commit()
+        return run
+
+    async def update_reasoning_state(self, run_id: str, *, expected_version: int, agent_state: Dict[str, Any], plan_graph: Optional[Dict[str, Any]] = None, terminal_reason: Optional[Dict[str, Any]] = None, waiting_state: Optional[Dict[str, Any]] = None) -> RunRecord:
+        run = await self.require_run(run_id)
+        if run.state_version != expected_version:
+            raise ValueError(f"State version conflict: expected {expected_version}, got {run.state_version}")
+        next_version = int(agent_state.get("version", expected_version + 1))
+        if next_version <= expected_version:
+            raise ValueError("State version must increase")
+        run.agent_state = agent_state
+        run.state_version = next_version
+        if plan_graph is not None:
+            run.plan_graph = plan_graph
+        if terminal_reason is not None:
+            run.terminal_reason = terminal_reason
+        run.waiting_state = waiting_state
+        run.updated_at = utc_now()
+        await self.add_event(run_id, "reasoning.state_updated", {"previous_version": expected_version, "state_version": next_version})
+        await self.session.commit()
+        return run
+
+    async def set_waiting_state(self, run_id: str, waiting_state: Dict[str, Any]) -> RunRecord:
+        run = await self.require_run(run_id)
+        waiting_state = {**waiting_state, "continuation_token": waiting_state.get("continuation_token") or str(uuid.uuid4())}
+        run.waiting_state = waiting_state
+        run.status = "waiting_user"
+        run.updated_at = utc_now()
+        await self.add_event(run_id, "run.waiting_user", waiting_state)
+        await self.session.commit()
+        return run
+
+    async def resume_waiting_run(self, run_id: str, observation: Dict[str, Any], *, continuation_token: Optional[str] = None) -> RunRecord:
+        run = await self.require_run(run_id)
+        if run.status != "waiting_user" or not run.waiting_state:
+            raise ValueError("Run is not waiting for user input")
+        expected_token = run.waiting_state.get("continuation_token")
+        if expected_token and continuation_token != expected_token:
+            raise ValueError("Invalid continuation token")
+        state = dict(run.agent_state or {})
+        observations = list(state.get("observations", []))
+        observations.append(observation)
+        state["observations"] = observations
+        state["version"] = int(state.get("version", run.state_version)) + 1
+        contract = dict(state.get("task_contract", run.task_contract or {}))
+        contract["ambiguity_status"] = "clear"
+        contract["clarification_question"] = None
+        state["task_contract"] = contract
+        run.task_contract = contract
+        run.agent_state = state
+        run.state_version = state["version"]
+        run.waiting_state = None
+        run.status = "executing"
+        run.completed_at = None
+        run.updated_at = utc_now()
+        await self.add_event(run_id, "run.resumed", {"observation": observation, "state_version": run.state_version})
         await self.session.commit()
         return run
 
@@ -248,6 +320,10 @@ class RunRepository:
         selected_tool: Optional[str] = None,
         decision: Optional[Dict[str, Any]] = None,
         memory_reads: Optional[List[Dict[str, Any]]] = None,
+        state_version_before: Optional[int] = None,
+        plan_version: int = 1,
+        phase: str = "created",
+        idempotency_key: Optional[str] = None,
     ) -> AgentTurnRecord:
         now = utc_now()
         turn = AgentTurnRecord(
@@ -260,6 +336,10 @@ class RunRepository:
             memory_reads=memory_reads or [],
             memory_writes=[],
             status="created",
+            state_version_before=state_version_before,
+            plan_version=plan_version,
+            phase=phase,
+            idempotency_key=idempotency_key,
             created_at=now,
             updated_at=now,
         )
@@ -289,6 +369,11 @@ class RunRepository:
         tool_call_id: Optional[str] = None,
         artifact_id: Optional[str] = None,
         memory_writes: Optional[List[Dict[str, Any]]] = None,
+        evaluation: Optional[Dict[str, Any]] = None,
+        reflection_patch: Optional[Dict[str, Any]] = None,
+        state_version_after: Optional[int] = None,
+        phase: Optional[str] = None,
+        paused_node: Optional[str] = None,
     ) -> AgentTurnRecord:
         turn = await self._require_agent_turn(turn_id)
         if status is not None:
@@ -303,6 +388,16 @@ class RunRepository:
             turn.artifact_id = artifact_id
         if memory_writes is not None:
             turn.memory_writes = memory_writes
+        if evaluation is not None:
+            turn.evaluation = evaluation
+        if reflection_patch is not None:
+            turn.reflection_patch = reflection_patch
+        if state_version_after is not None:
+            turn.state_version_after = state_version_after
+        if phase is not None:
+            turn.phase = phase
+        if paused_node is not None:
+            turn.paused_node = paused_node
         turn.updated_at = utc_now()
         await self.add_event(
             turn.run_id,
@@ -509,6 +604,14 @@ def run_to_view(run: RunRecord) -> Dict[str, Any]:
                 "memory_reads": turn.memory_reads,
                 "memory_writes": turn.memory_writes,
                 "status": turn.status,
+                "evaluation": turn.evaluation,
+                "reflection_patch": turn.reflection_patch,
+                "state_version_before": turn.state_version_before,
+                "state_version_after": turn.state_version_after,
+                "plan_version": turn.plan_version,
+                "phase": turn.phase,
+                "idempotency_key": turn.idempotency_key,
+                "paused_node": turn.paused_node,
                 "created_at": turn.created_at,
                 "updated_at": turn.updated_at,
             }
@@ -532,6 +635,14 @@ def run_to_view(run: RunRecord) -> Dict[str, Any]:
         ],
         "chat_messages": build_chat_messages(run),
         "verification_report": verification_report,
+        "reasoning_policy": run.reasoning_policy or {},
+        "task_contract": run.task_contract or {},
+        "plan_graph": run.plan_graph or {},
+        "agent_state": run.agent_state or {},
+        "state_version": run.state_version or 0,
+        "terminal_reason": run.terminal_reason,
+        "waiting_state": run.waiting_state,
+        "task_adapter": run.task_adapter or "legacy_web",
     }
 
 

@@ -52,3 +52,17 @@ async def test_create_and_get_run(app_client):
     assert "turns" in body
     assert "memories" in body
     assert "chat_messages" in body
+
+
+async def test_create_run_compiles_reasoning_policy(app_client):
+    created = await app_client.post("/api/runs", json={"goal": "分析复杂问题", "reasoning_policy": {"reasoning_effort": "deep", "planning_strategy": "plan_first", "reflection_enabled": False, "reflection_trigger": "adaptive", "execution_mode": "request_approval", "verification_level": "strict"}})
+    run_id = created.json()["run_id"]
+    body = (await app_client.get(f"/api/runs/{run_id}")).json()
+    assert body["reasoning_policy"]["requested"]["reasoning_effort"] == "deep"
+    assert body["reasoning_policy"]["effective"]["budgets"]["max_reflections"] == 6
+
+
+async def test_resume_requires_waiting_run(app_client):
+    created = await app_client.post("/api/runs", json={"goal": "普通任务"})
+    response = await app_client.post(f"/api/runs/{created.json()['run_id']}/resume", json={"content": "继续"})
+    assert response.status_code == 409

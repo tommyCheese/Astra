@@ -760,6 +760,42 @@ h1 {
   padding: 11px 12px;
 }
 
+.reasoning-audit {
+  border-top: 1px solid #e1e7ed;
+  margin-top: 14px;
+  padding-top: 10px;
+}
+
+.reasoning-audit summary {
+  color: #52606d;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.reasoning-audit-grid {
+  display: grid;
+  gap: 7px;
+  margin-top: 9px;
+}
+
+.reasoning-audit-grid > div {
+  background: rgba(237, 243, 247, 0.7);
+  border-radius: 8px;
+  display: grid;
+  gap: 2px;
+  padding: 8px 10px;
+}
+
+.reasoning-audit-grid strong,
+.reasoning-audit-grid span {
+  font-size: 11px;
+}
+
+.reasoning-audit-grid span {
+  color: #697586;
+}
+
 .tool-event div {
   align-items: center;
   display: flex;

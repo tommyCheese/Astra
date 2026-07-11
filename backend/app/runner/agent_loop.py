@@ -1,12 +1,15 @@
 import json
+import hashlib
 from typing import Any, Dict, List, Optional
-from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 from app.core.config import Settings
 from app.repositories.runs import RunRepository
 from app.runner.model_client import ModelClient, ModelOutputError
 from app.schemas.agent import AgentObservation, FinalAnswer, VerificationReport
+from app.schemas.agent import AgentState, CriterionStatus, TerminalState
 from app.tools.base import ToolExecutionError, ToolRegistry
+from app.runner.adapters import WebTaskAdapter
+from app.runner.reasoning import CompletionGate, ObservationEvaluator, ReflectionGate, failure_fingerprint
 
 
 class ToolRouter:
@@ -62,6 +65,10 @@ class ContextAssembler:
                 }
                 for memory in memories
             ],
+            "reasoning_policy": (await self.repo.require_run(run_id)).reasoning_policy or {},
+            "task_contract": (await self.repo.require_run(run_id)).task_contract or {},
+            "plan_graph": (await self.repo.require_run(run_id)).plan_graph or {},
+            "agent_state": (await self.repo.require_run(run_id)).agent_state or {},
         }
 
 
@@ -151,6 +158,10 @@ class AgentLoop:
         self.model_client = model_client
         self.tool_registry = tool_registry
         self.router = ToolRouter(tool_registry)
+        self.adapter = WebTaskAdapter()
+        self.evaluator = ObservationEvaluator()
+        self.reflection_gate = ReflectionGate()
+        self.completion_gate = CompletionGate()
 
     async def run(
         self,
@@ -161,7 +172,8 @@ class AgentLoop:
         assembler = ContextAssembler(repo)
         memory_manager = MemoryManager(self.settings, repo, self.model_client)
         verifier = VerificationEngine()
-        observations: List[Dict[str, Any]] = []
+        initial_run = await repo.require_run(run_id)
+        observations: List[Dict[str, Any]] = list((initial_run.agent_state or {}).get("observations", []))
         tool_outputs: List[Dict[str, Any]] = []
         filtered_candidates: List[Dict[str, Any]] = []
         fetched_sources: List[Dict[str, Any]] = []
@@ -170,7 +182,10 @@ class AgentLoop:
         dedupe: Dict[str, Any] = {}
         tool_call_count = 0
         retry_counts: Dict[str, int] = {}
+        failed_action_counts: Dict[str, int] = {}
         final_turn_id: Optional[str] = None
+        terminal_override: Optional[str] = None
+        terminal_summary: Optional[str] = None
 
         for turn_index in range(1, self.settings.agent_max_turns + 1):
             context = await assembler.assemble(
@@ -212,6 +227,10 @@ class AgentLoop:
                 await repo.session.commit()
                 continue
 
+            idempotency_key = None
+            if decision.decision_type == "call_tool":
+                encoded = json.dumps({"run_id": run_id, "turn_index": turn_index, "tool": decision.tool_name, "input": decision.tool_input}, sort_keys=True, ensure_ascii=False)
+                idempotency_key = hashlib.sha256(encoded.encode()).hexdigest()
             turn = await repo.create_agent_turn(
                 run_id,
                 turn_index,
@@ -220,7 +239,13 @@ class AgentLoop:
                 selected_tool=decision.tool_name,
                 decision=decision.model_dump(),
                 memory_reads=context["memory_reads"],
+                state_version_before=(await repo.require_run(run_id)).state_version,
+                plan_version=((await repo.require_run(run_id)).plan_graph or {}).get("version", 1),
+                phase="prepared" if decision.decision_type == "call_tool" else "created",
+                idempotency_key=idempotency_key,
             )
+            await repo.add_event(run_id, "reasoning.decision_validated", {"turn_index": turn_index, "decision_type": decision.decision_type, "target_step_id": decision.target_step_id})
+            await repo.session.commit()
 
             if decision.decision_type == "finalize":
                 final_turn_id = turn.id
@@ -240,6 +265,15 @@ class AgentLoop:
                     status=decision.decision_type,
                     observation=observation.model_dump(),
                 )
+                terminal_override = "waiting_user" if decision.decision_type == "ask_user" else "blocked"
+                terminal_summary = decision.reasoning_summary
+                if terminal_override == "waiting_user":
+                    await repo.set_waiting_state(run_id, {
+                        "paused_node": "select_action",
+                        "state_version": (await repo.require_run(run_id)).state_version,
+                        "plan_version": ((await repo.require_run(run_id)).plan_graph or {}).get("version", 1),
+                        "request": decision.expected_observation or decision.reasoning_summary,
+                    })
                 break
 
             if decision.decision_type != "call_tool":
@@ -264,6 +298,9 @@ class AgentLoop:
                 break
 
             try:
+                action_signature = json.dumps({"tool": decision.tool_name, "input": decision.tool_input}, sort_keys=True, ensure_ascii=False)
+                if failed_action_counts.get(action_signature, 0) >= self.settings.agent_per_tool_retry_limit:
+                    raise ToolExecutionError("retry_exhausted", "Equivalent failed strategy exhausted its retry budget")
                 tool = self.router.resolve(decision.tool_name, decision.tool_input)
                 step = await self._step_for_tool(repo, run_id, tool.spec.name)
                 await repo.update_step(step.id, "running")
@@ -276,6 +313,7 @@ class AgentLoop:
                     tool.spec.permission,
                     tool.spec.side_effect_level,
                 )
+                await repo.update_agent_turn(turn.id, phase="executing", tool_call_id=call.id)
                 try:
                     output = await tool.run(decision.tool_input)
                 except ToolExecutionError as exc:
@@ -286,7 +324,7 @@ class AgentLoop:
                 output = self._normalize_tool_output(tool.spec.name, output)
                 tool_outputs.append(output)
                 if tool.spec.name == "web_search":
-                    filtered_candidates, dedupe = filter_candidates(output.get("candidates", []))
+                    filtered_candidates, dedupe = self.adapter.filter_candidates(output.get("candidates", []))
                     output["candidates"] = filtered_candidates
                     output["dedupe"] = dedupe
                     search_warnings = output.get("warnings", [])
@@ -306,13 +344,10 @@ class AgentLoop:
                         "completed",
                         evidence={"fetched_count": len(fetched_sources), "last_quality": output.get("quality_score")},
                     )
-                observation = AgentObservation(
-                    kind="tool_result",
-                    status="succeeded",
-                    summary=f"{tool.spec.name} completed",
-                    data={"tool_name": tool.spec.name, **output},
-                )
+                observation = self.adapter.normalize_tool_result(tool.spec.name, output)
                 observations.append(observation.model_dump())
+                evaluation = self.evaluator.evaluate(observation, decision.expected, decision.success_criteria_refs)
+                await repo.add_event(run_id, "reasoning.evaluation_created", {"turn_index": turn_index, **evaluation.model_dump(mode="json")})
                 writes = await memory_manager.write_candidates(
                     run_id=run_id,
                     goal=goal,
@@ -328,8 +363,13 @@ class AgentLoop:
                     observation=observation.model_dump(),
                     tool_call_id=call.id,
                     memory_writes=writes,
+                    evaluation=evaluation.model_dump(mode="json"),
+                    phase="committed",
                 )
             except ToolExecutionError as exc:
+                action_signature = json.dumps({"tool": decision.tool_name, "input": decision.tool_input}, sort_keys=True, ensure_ascii=False)
+                failed_action_counts[action_signature] = failed_action_counts.get(action_signature, 0) + 1
+                fingerprint = failure_fingerprint(decision.tool_name, decision.tool_input, exc.category, decision.reasoning_summary)
                 retry_counts[decision.tool_name or "unknown"] = retry_counts.get(decision.tool_name or "unknown", 0) + 1
                 observation = AgentObservation(
                     kind="tool_error",
@@ -338,6 +378,7 @@ class AgentLoop:
                     error=exc.to_payload(),
                     data={"tool_name": decision.tool_name, "retry_count": retry_counts[decision.tool_name or "unknown"]},
                 )
+                observation.data["failure_fingerprint"] = fingerprint
                 observations.append(observation.model_dump())
                 if decision.tool_name == "web_fetch":
                     failed_sources.append(
@@ -359,13 +400,18 @@ class AgentLoop:
                     status="failed",
                     observation=observation.model_dump(),
                     reflection=reflection.model_dump(),
+                    reflection_patch=reflection.patch.model_dump(mode="json") if reflection.patch else None,
+                    phase="failed",
                 )
                 await repo.add_event(run_id, "reflection.created", reflection.model_dump())
+                await repo.add_event(run_id, "reasoning.failure_fingerprinted", {"fingerprint": fingerprint, "attempt_count": failed_action_counts[action_signature], "exhausted": failed_action_counts[action_signature] >= self.settings.agent_per_tool_retry_limit})
                 await repo.session.commit()
                 if retry_counts[decision.tool_name or "unknown"] >= self.settings.agent_per_tool_retry_limit:
+                    terminal_override = "blocked"
+                    terminal_summary = f"{decision.tool_name} 已达到重试上限。"
                     break
 
-        evidence_pack = build_evidence_pack(
+        evidence_pack = self.adapter.build_evidence(
             goal,
             filtered_candidates,
             fetched_sources,
@@ -390,19 +436,48 @@ class AgentLoop:
             "tool_outputs": tool_outputs,
             "evidence_pack": evidence_pack,
         }
-        final_answer = await self.model_client.finalize(goal, final_context)
+        if terminal_override:
+            final_answer = FinalAnswer(
+                summary=terminal_summary or "任务未能完成。",
+                caveats=["运行在满足全部成功条件前停止。"],
+                verification_notes=["该响应表示运行状态，不表示任务成功完成。"],
+            )
+        else:
+            final_answer = await self.model_client.finalize(goal, final_context)
         memory_writes = await memory_manager.write_candidates(
             run_id=run_id,
             goal=goal,
             context=final_context,
         )
         report = verifier.verify(final_answer, evidence_pack)
+        adapter_decision = self.adapter.validate(final_answer.model_dump(), evidence_pack)
+        run_record = await repo.require_run(run_id)
+        if run_record.agent_state:
+            state = AgentState.model_validate(run_record.agent_state)
+            if adapter_decision.state in {TerminalState.completed, TerminalState.completed_with_warnings}:
+                for criterion in state.task_contract.success_criteria:
+                    if criterion.mandatory:
+                        criterion.status = CriterionStatus.satisfied
+            gate_decision = self.completion_gate.evaluate(
+                state,
+                validator_passed=adapter_decision.state in {TerminalState.completed, TerminalState.completed_with_warnings},
+                warnings=adapter_decision.warnings,
+                required_user_action=(run_record.waiting_state or {}).get("request") if terminal_override == "waiting_user" else None,
+            )
+        else:
+            gate_decision = adapter_decision
+        if terminal_override == "blocked":
+            gate_decision = gate_decision.model_copy(update={"state": TerminalState.blocked, "reason": terminal_summary or gate_decision.reason})
+        final_status = gate_decision.state.value
+        report.status = final_status
         result = final_answer.model_dump()
         result["verification_report"] = report.model_dump()
         result["audit_refs"] = {
             "evidence_pack_artifact_id": artifact.id,
             "agent_turn_count": len(observations) + (1 if final_turn_id else 0),
         }
+        result["completion_decision"] = gate_decision.model_dump(mode="json")
+        await repo.add_event(run_id, "reasoning.completion_decided", gate_decision.model_dump(mode="json"))
         if final_turn_id:
             await repo.update_agent_turn(
                 final_turn_id,
@@ -417,7 +492,7 @@ class AgentLoop:
             )
         await repo.add_event(run_id, "verification.created", report.model_dump())
         await repo.session.commit()
-        return {"answer": final_answer, "result": result, "status": report.status}
+        return {"answer": final_answer, "result": result, "status": final_status}
 
     async def _step_for_tool(self, repo: RunRepository, run_id: str, tool_name: str):
         run = await repo.require_run(run_id)
@@ -433,66 +508,3 @@ class AgentLoop:
         normalized = dict(output)
         normalized["tool_name"] = tool_name
         return normalized
-
-
-def filter_candidates(candidates: List[Dict[str, Any]]):
-    filtered: List[Dict[str, Any]] = []
-    seen: set[str] = set()
-    skipped: List[Dict[str, Any]] = []
-    for candidate in candidates:
-        url = candidate.get("url", "")
-        parsed = urlparse(url)
-        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-            skipped.append({"url": url, "reason": "unsupported_url"})
-            continue
-        if parsed.path.lower().endswith((".zip", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".mp4", ".mov")):
-            skipped.append({"url": url, "reason": "unsupported_content_type"})
-            continue
-        canonical = canonical_url(url)
-        if canonical in seen:
-            skipped.append({"url": url, "reason": "duplicate"})
-            continue
-        seen.add(canonical)
-        enriched = dict(candidate)
-        enriched["canonical_url"] = canonical
-        filtered.append(enriched)
-    return filtered, {
-        "candidate_count": len(candidates),
-        "deduped_count": len(filtered),
-        "skipped_count": len(skipped),
-        "skipped": skipped[:8],
-    }
-
-
-def canonical_url(url: str) -> str:
-    parsed = urlparse(url)
-    query = [
-        (key, value)
-        for key, value in parse_qsl(parsed.query, keep_blank_values=True)
-        if not key.lower().startswith("utm_") and key.lower() not in {"fbclid", "gclid"}
-    ]
-    normalized_path = parsed.path.rstrip("/") or "/"
-    return urlunparse((parsed.scheme.lower(), parsed.netloc.lower(), normalized_path, "", urlencode(query), ""))
-
-
-def build_evidence_pack(
-    goal: str,
-    candidates: List[Dict[str, Any]],
-    fetched_sources: List[Dict[str, Any]],
-    failed_sources: List[Dict[str, Any]],
-    dedupe: Dict[str, Any],
-    search_warnings: List[str],
-) -> Dict[str, Any]:
-    warnings = list(search_warnings)
-    for source in fetched_sources:
-        warnings.extend(source.get("warnings", []))
-    if not fetched_sources:
-        warnings.append("没有可用于总结的成功抓取来源。")
-    return {
-        "query": goal,
-        "candidates": candidates,
-        "fetched_sources": fetched_sources,
-        "failed_sources": failed_sources,
-        "dedupe": dedupe,
-        "warnings": warnings,
-    }

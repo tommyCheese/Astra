@@ -14,6 +14,7 @@ from app.schemas.agent import (
     PlanOutput,
     PlanStep,
     SourceReference,
+    TaskContract,
 )
 
 
@@ -26,6 +27,10 @@ class ModelOutputError(RuntimeError):
 
 
 class ModelClient(ABC):
+    @abstractmethod
+    async def contract(self, goal: str) -> TaskContract:
+        raise NotImplementedError
+
     @abstractmethod
     async def plan(self, goal: str) -> PlanOutput:
         raise NotImplementedError
@@ -56,6 +61,10 @@ class ModelClient(ABC):
 
 
 class MockModelClient(ModelClient):
+    async def contract(self, goal: str) -> TaskContract:
+        from app.runner.reasoning import build_default_contract
+        return build_default_contract(goal)
+
     async def plan(self, goal: str) -> PlanOutput:
         return PlanOutput(
             steps=[
@@ -287,6 +296,26 @@ class OpenAICompatibleModelClient(ModelClient):
             return PlanOutput.model_validate(payload)
         except Exception as exc:
             raise ModelOutputError(f"Invalid plan output: {exc}") from exc
+
+    async def contract(self, goal: str) -> TaskContract:
+        payload = await self._chat_json(
+            [
+                {
+                    "role": "system",
+                    "content": (
+                        "Create an audit-safe task contract. Return JSON only with keys: original_goal, "
+                        "deliverables, constraints, prohibited_actions, assumptions, success_criteria, "
+                        "verification_requirements, risk_level, ambiguity_status, clarification_question. "
+                        "Each success criterion needs a stable id, description, mandatory, and verification_method."
+                    ),
+                },
+                {"role": "user", "content": goal},
+            ]
+        )
+        try:
+            return TaskContract.model_validate(payload)
+        except Exception as exc:
+            raise ModelOutputError(f"Invalid task contract output: {exc}") from exc
 
     async def synthesize(self, goal: str, tool_outputs: List[Dict[str, Any]]) -> FinalAnswer:
         payload = await self._chat_json(

@@ -8,6 +8,8 @@ from app.repositories.runs import RunRepository
 from app.runner.agent_loop import AgentLoop
 from app.runner.model_client import ModelConfigurationError, ModelOutputError, build_model_client
 from app.schemas.agent import FinalAnswer, PlanOutput
+from app.schemas.agent import AgentState, ReasoningPolicySnapshot
+from app.runner.reasoning import build_plan_graph, validate_contract
 from app.tools.base import ToolExecutionError, ToolRegistry
 from app.tools.web import build_web_registry
 
@@ -59,12 +61,45 @@ class RunEngine:
         else:
             goal = current_goal
 
+        if run.state_version and run.agent_state and not run.steps:
+            await repo.update_run_status(run_id, "executing")
+        elif run.state_version and run.agent_state:
+            await repo.update_run_status(run_id, "executing")
+            if self.settings.agent_use_loop and self.settings.agent_use_general_runtime:
+                agent_loop = AgentLoop(self.settings, model_client=self.model_client, tool_registry=self.tool_registry)
+                loop_result = await agent_loop.run(repo, run_id, goal)
+                await repo.update_run_status(run_id, loop_result["status"], summary=loop_result["answer"].summary, result=loop_result["result"])
+                return
+
         await repo.update_run_status(run_id, "planning")
+        contract = await self.model_client.contract(goal) if self.settings.agent_use_general_runtime else None
+        if contract:
+            validate_contract(contract)
         plan = await self.model_client.plan(goal)
         await self._persist_plan(repo, run_id, plan)
+        run = await repo.require_run(run_id)
+        if contract:
+            snapshot = ReasoningPolicySnapshot.model_validate(run.reasoning_policy or {})
+            graph = build_plan_graph(contract, snapshot.effective.planning_strategy, [step.model_dump() for step in plan.steps])
+            state = AgentState(task_contract=contract, policy_version=snapshot.version, plan=graph)
+        if contract and not run.state_version:
+            await repo.initialize_reasoning_state(
+                run_id,
+                task_contract=contract.model_dump(mode="json"),
+                plan_graph=graph.model_dump(mode="json"),
+                agent_state=state.model_dump(mode="json"),
+            )
+        if contract and contract.ambiguity_status != "clear":
+            await repo.set_waiting_state(run_id, {
+                "paused_node": "build_contract",
+                "state_version": state.version,
+                "plan_version": graph.version,
+                "request": contract.clarification_question,
+            })
+            return
 
         await repo.update_run_status(run_id, "executing")
-        if self.settings.agent_use_loop:
+        if self.settings.agent_use_loop and self.settings.agent_use_general_runtime:
             agent_loop = AgentLoop(
                 self.settings,
                 model_client=self.model_client,

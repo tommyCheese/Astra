@@ -25,6 +25,7 @@ class ToolSpec(BaseModel):
     timeout_seconds: int = 20
     retry_policy: Dict[str, Any] = Field(default_factory=dict)
     error_categories: List[str] = Field(default_factory=list)
+    idempotent: bool = True
 
 
 class Tool(ABC):

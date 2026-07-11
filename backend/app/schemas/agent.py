@@ -1,18 +1,253 @@
 from datetime import datetime
+from enum import Enum
 from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
 
 
+class ReasoningEffort(str, Enum):
+    fast = "fast"
+    balanced = "balanced"
+    deep = "deep"
+
+
+class PlanningStrategy(str, Enum):
+    direct = "direct"
+    adaptive = "adaptive"
+    plan_first = "plan_first"
+
+
+class ReflectionTrigger(str, Enum):
+    failure_only = "failure_only"
+    adaptive = "adaptive"
+    every_turn = "every_turn"
+
+
+class ExecutionMode(str, Enum):
+    plan_only = "plan_only"
+    request_approval = "request_approval"
+    auto_approval = "auto_approval"
+
+
+class VerificationLevel(str, Enum):
+    basic = "basic"
+    standard = "standard"
+    strict = "strict"
+
+
+class CriterionStatus(str, Enum):
+    pending = "pending"
+    satisfied = "satisfied"
+    failed = "failed"
+    waived = "waived"
+
+
+class EvaluationOutcome(str, Enum):
+    matched = "matched"
+    partial = "partial"
+    mismatch = "mismatch"
+    conflict = "conflict"
+    inconclusive = "inconclusive"
+
+
+class TerminalState(str, Enum):
+    continue_run = "continue"
+    completed = "completed"
+    completed_with_warnings = "completed_with_warnings"
+    waiting_user = "waiting_user"
+    blocked = "blocked"
+    failed = "failed"
+
+
+class RunBudgets(BaseModel):
+    max_plan_depth: int = 6
+    max_candidate_strategies: int = 2
+    max_model_calls: int = 24
+    max_reflections: int = 3
+    max_replans: int = 2
+    max_turns: int = 12
+    max_tool_calls: int = 8
+    verification_coverage: int = 2
+
+
+class RequestedReasoningPolicy(BaseModel):
+    reasoning_effort: ReasoningEffort = ReasoningEffort.balanced
+    planning_strategy: PlanningStrategy = PlanningStrategy.adaptive
+    reflection_enabled: bool = True
+    reflection_trigger: ReflectionTrigger = ReflectionTrigger.adaptive
+    execution_mode: ExecutionMode = ExecutionMode.request_approval
+    verification_level: VerificationLevel = VerificationLevel.standard
+
+
+class EffectiveReasoningPolicy(RequestedReasoningPolicy):
+    budgets: RunBudgets = Field(default_factory=RunBudgets)
+
+
+class PolicyAdjustment(BaseModel):
+    field: str
+    requested: Any
+    effective: Any
+    rule: str
+    reason: str
+
+
+class ReasoningPolicySnapshot(BaseModel):
+    requested: RequestedReasoningPolicy = Field(default_factory=RequestedReasoningPolicy)
+    effective: EffectiveReasoningPolicy = Field(default_factory=EffectiveReasoningPolicy)
+    adjustments: List[PolicyAdjustment] = Field(default_factory=list)
+    version: int = 1
+
+
+class SuccessCriterion(BaseModel):
+    id: str
+    description: str
+    mandatory: bool = True
+    verification_method: str
+    status: CriterionStatus = CriterionStatus.pending
+    evidence_refs: List[str] = Field(default_factory=list)
+
+
+class TaskAssumption(BaseModel):
+    id: str
+    statement: str
+    confidence: float = Field(default=0.5, ge=0, le=1)
+    provenance: Dict[str, Any] = Field(default_factory=dict)
+    valid: bool = True
+
+
+class VerificationRequirement(BaseModel):
+    id: str
+    validator: str
+    mandatory: bool = True
+    config: Dict[str, Any] = Field(default_factory=dict)
+
+
+class TaskContract(BaseModel):
+    original_goal: str
+    deliverables: List[str] = Field(default_factory=list)
+    constraints: List[str] = Field(default_factory=list)
+    prohibited_actions: List[str] = Field(default_factory=list)
+    assumptions: List[TaskAssumption] = Field(default_factory=list)
+    success_criteria: List[SuccessCriterion] = Field(default_factory=list)
+    verification_requirements: List[VerificationRequirement] = Field(default_factory=list)
+    risk_level: str = "low"
+    ambiguity_status: str = "clear"
+    clarification_question: Optional[str] = None
+
+
+class ExpectedObservation(BaseModel):
+    kind: str
+    success_condition: str
+    required_fields: List[str] = Field(default_factory=list)
+
+
+class PlanGraphStep(BaseModel):
+    id: str
+    title: str
+    intent: str
+    depends_on: List[str] = Field(default_factory=list)
+    required_capabilities: List[str] = Field(default_factory=list)
+    success_criteria_refs: List[str] = Field(default_factory=list)
+    expected_outcome: Optional[ExpectedObservation] = None
+    risk_level: str = "low"
+    status: str = "pending"
+    evidence_refs: List[str] = Field(default_factory=list)
+
+
+class PlanGraph(BaseModel):
+    version: int = 1
+    strategy: PlanningStrategy = PlanningStrategy.adaptive
+    steps: List[PlanGraphStep] = Field(default_factory=list)
+
+    def ready_steps(self) -> List[PlanGraphStep]:
+        completed = {step.id for step in self.steps if step.status == "completed"}
+        return [step for step in self.steps if step.status == "pending" and set(step.depends_on) <= completed]
+
+
+class AcceptedFact(BaseModel):
+    id: str
+    statement: str
+    provenance: Dict[str, Any]
+    confidence: float = Field(default=0.5, ge=0, le=1)
+    conflicts_with: List[str] = Field(default_factory=list)
+
+
+class FailureFingerprint(BaseModel):
+    fingerprint: str
+    tool_name: Optional[str] = None
+    error_category: str
+    attempt_count: int = 1
+    exhausted: bool = False
+
+
+class AgentState(BaseModel):
+    version: int = 1
+    task_contract: TaskContract
+    policy_version: int = 1
+    plan: PlanGraph
+    accepted_facts: List[AcceptedFact] = Field(default_factory=list)
+    open_questions: List[str] = Field(default_factory=list)
+    observations: List[Dict[str, Any]] = Field(default_factory=list)
+    evaluations: List[Dict[str, Any]] = Field(default_factory=list)
+    failures: List[FailureFingerprint] = Field(default_factory=list)
+    budget_usage: Dict[str, int] = Field(default_factory=dict)
+    terminal_intent: Optional[str] = None
+
+
+class Evaluation(BaseModel):
+    outcome: EvaluationOutcome
+    summary: str
+    expected: Optional[ExpectedObservation] = None
+    observation_refs: List[str] = Field(default_factory=list)
+    criterion_updates: Dict[str, CriterionStatus] = Field(default_factory=dict)
+    conflicts: List[Dict[str, Any]] = Field(default_factory=list)
+
+
+class ReflectionPatch(BaseModel):
+    level: str
+    revised_tool_input: Optional[Dict[str, Any]] = None
+    invalidated_assumption_ids: List[str] = Field(default_factory=list)
+    fact_updates: List[AcceptedFact] = Field(default_factory=list)
+    criterion_updates: Dict[str, CriterionStatus] = Field(default_factory=dict)
+    replacement_plan: Optional[PlanGraph] = None
+    added_verification_requirements: List[VerificationRequirement] = Field(default_factory=list)
+    terminal_intent: Optional[str] = None
+
+    def actionable(self) -> bool:
+        return any((self.revised_tool_input, self.invalidated_assumption_ids, self.fact_updates, self.criterion_updates, self.replacement_plan, self.added_verification_requirements, self.terminal_intent))
+
+
+class CompletionDecision(BaseModel):
+    state: TerminalState
+    reason: str
+    unmet_criteria: List[str] = Field(default_factory=list)
+    warnings: List[str] = Field(default_factory=list)
+    required_user_action: Optional[str] = None
+
+
+class NodeResult(BaseModel):
+    next_node: str
+    state_patch: Dict[str, Any] = Field(default_factory=dict)
+    events: List[Dict[str, Any]] = Field(default_factory=list)
+    error: Optional[Dict[str, Any]] = None
+
+
 class CreateRunRequest(BaseModel):
     goal: str = Field(min_length=1, max_length=4000)
     task_id: Optional[str] = None
+    reasoning_policy: RequestedReasoningPolicy = Field(default_factory=RequestedReasoningPolicy)
 
 
 class CreateRunResponse(BaseModel):
     task_id: str
     run_id: str
     status: str
+
+
+class ContinueRunRequest(BaseModel):
+    content: str = Field(min_length=1, max_length=4000)
+    approved: Optional[bool] = None
+    continuation_token: Optional[str] = None
 
 
 class PlanStep(BaseModel):
@@ -66,6 +301,12 @@ class AgentDecision(BaseModel):
     tool_input: Dict[str, Any] = Field(default_factory=dict)
     expected_observation: Optional[str] = None
     stop_condition: Optional[str] = None
+    target_step_id: Optional[str] = None
+    success_criteria_refs: List[str] = Field(default_factory=list)
+    expected: Optional[ExpectedObservation] = None
+    risk_level: str = "low"
+    confidence: float = Field(default=0.5, ge=0, le=1)
+    fallback: Optional[str] = None
 
 
 class AgentObservation(BaseModel):
@@ -82,6 +323,11 @@ class AgentReflection(BaseModel):
     next_action: str
     retry: bool = False
     revised_tool_input: Optional[Dict[str, Any]] = None
+    level: str = "local"
+    diagnosis: Optional[str] = None
+    invalidated_assumptions: List[str] = Field(default_factory=list)
+    violated_criteria: List[str] = Field(default_factory=list)
+    patch: Optional[ReflectionPatch] = None
 
 
 class MemoryRecord(BaseModel):
@@ -234,6 +480,14 @@ class AgentTurnView(BaseModel):
     memory_reads: List[Dict[str, Any]]
     memory_writes: List[Dict[str, Any]]
     status: str
+    evaluation: Optional[Dict[str, Any]] = None
+    reflection_patch: Optional[Dict[str, Any]] = None
+    state_version_before: Optional[int] = None
+    state_version_after: Optional[int] = None
+    plan_version: int = 1
+    phase: str = "created"
+    idempotency_key: Optional[str] = None
+    paused_node: Optional[str] = None
     created_at: datetime
     updated_at: datetime
 
@@ -275,3 +529,11 @@ class RunView(BaseModel):
     memories: List[MemoryView] = Field(default_factory=list)
     chat_messages: List[ChatMessageView] = Field(default_factory=list)
     verification_report: Optional[VerificationReport] = None
+    reasoning_policy: Dict[str, Any] = Field(default_factory=dict)
+    task_contract: Dict[str, Any] = Field(default_factory=dict)
+    plan_graph: Dict[str, Any] = Field(default_factory=dict)
+    agent_state: Dict[str, Any] = Field(default_factory=dict)
+    state_version: int = 0
+    terminal_reason: Optional[Dict[str, Any]] = None
+    waiting_state: Optional[Dict[str, Any]] = None
+    task_adapter: str = "legacy_web"

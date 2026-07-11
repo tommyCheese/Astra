@@ -109,7 +109,31 @@ AGENT_MAX_TURNS=12
 AGENT_MAX_TOOL_CALLS=8
 AGENT_PER_TOOL_RETRY_LIMIT=2
 AGENT_MEMORY_WRITE_ENABLED=true
+AGENT_USE_GENERAL_RUNTIME=true
+AGENT_REASONING_SHADOW_MODE=false
 ```
+
+### 通用推理与反思内核
+
+每个新 Run 会冻结用户请求的推理策略，并由后端编译出受安全下限约束的生效策略。默认组合为均衡推理、自适应规划、按需反思、请求批准和标准验证。快速/均衡/深入会改变计划深度、候选策略、模型调用、反思、重规划和验证预算，但不会关闭权限门控、基础错误恢复或完成验证。
+
+```text
+PolicyCompiler → TaskContract → PlanGraph → Decision
+  → PolicyGate → Tool → Observation → Evaluation
+  → AgentState → ReflectionGate → CompletionGate
+```
+
+模型只能提出结构化行动和终止意图；运行时固定节点顺序，不能跳过权限、观察评估或完成闸门。反思分为局部、计划和目标层级，只有能够产生合法 `ReflectionPatch` 的反思才会改变状态。同一失败策略由 fingerprint 限制重试，无进展时停止继续消耗预算。
+
+终态语义：
+
+- `completed`：强制成功准则和任务验证全部通过。
+- `completed_with_warnings`：允许交付，但存在明确的非关键缺口。
+- `waiting_user`：需要澄清或批准，可使用同一个 Run 恢复。
+- `blocked`：目标已理解，但安全、能力或预算内没有可行策略。
+- `failed`：内部或基础设施错误导致无法受控继续。
+
+Web 搜索通过 `WebTaskAdapter` 接入通用完成语义。将 `AGENT_USE_GENERAL_RUNTIME=false` 可回退到旧 Web 编排路径；新增审计字段保持只读兼容。外部行动在执行前保存 turn phase 和稳定幂等键，结果未知的非幂等行动不会被自动重试。
 
 Memory 当前用于保存 run 内来源摘要和可审计观察。workspace/user 级 memory 写入必须带 `provenance` 和 `confidence`，缺失时会被拒绝并记录 `memory.write_rejected` 事件。第一版尚未引入 embedding memory 或向量召回，避免在来源审计和权限模型稳定前扩大记忆面。
 

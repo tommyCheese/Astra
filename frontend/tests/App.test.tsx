@@ -6,6 +6,7 @@ import { createRun } from '../src/api';
 
 vi.mock('../src/api', () => ({
   createRun: vi.fn(async () => ({ run_id: 'run-1', task_id: 'task-1', status: 'created' })),
+  resumeRun: vi.fn(async () => ({ run_id: 'run-1', task_id: 'task-1', status: 'executing' })),
   getRun: vi.fn(async () => ({
     id: 'run-1',
     task_id: 'task-1',
@@ -130,6 +131,10 @@ vi.mock('../src/api', () => ({
     ],
     artifacts: [],
     events: [{ id: 1, type: 'run.created', payload: { status: 'created' }, created_at: 'now' }],
+    reasoning_policy: { effective: { reasoning_effort: 'balanced', planning_strategy: 'adaptive', execution_mode: 'request_approval' }, adjustments: [] },
+    task_contract: { success_criteria: [{ id: 'criterion-result', description: '完成查询', status: 'satisfied' }] },
+    plan_graph: { version: 1 },
+    state_version: 2,
   })),
 }));
 
@@ -161,6 +166,16 @@ describe('App', () => {
     expect(screen.getAllByText(/web_search/).length).toBeGreaterThan(0);
     expect(screen.getByRole('navigation', { name: '问题导航' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '跳转到问题 1' })).toBeInTheDocument();
+    expect(screen.getByText('运行策略与验证')).toBeInTheDocument();
+  });
+
+  it('sends selected reasoning policy with a run', async () => {
+    render(<App />);
+    await userEvent.click(screen.getByRole('button', { name: '当前模型：gpt-5' }));
+    await userEvent.click(screen.getByRole('button', { name: '深入' }));
+    await userEvent.click(screen.getByRole('button', { name: '先规划' }));
+    await userEvent.click(screen.getByRole('button', { name: '↑' }));
+    expect(vi.mocked(createRun)).toHaveBeenLastCalledWith(expect.any(String), undefined, expect.objectContaining({ reasoning_effort: 'deep', planning_strategy: 'plan_first' }));
   });
 
   it('shows validation error for empty goal', async () => {
@@ -209,7 +224,12 @@ describe('App', () => {
     await userEvent.type(screen.getByRole('textbox'), '继续追问{Enter}');
     await screen.findAllByText('已完成查询');
 
-    expect(vi.mocked(createRun)).toHaveBeenLastCalledWith('继续追问', 'task-1');
+    expect(vi.mocked(createRun)).toHaveBeenLastCalledWith('继续追问', 'task-1', expect.objectContaining({
+      reasoning_effort: 'balanced',
+      planning_strategy: 'adaptive',
+      reflection_enabled: true,
+      execution_mode: 'request_approval',
+    }));
     expect(screen.getAllByRole('button', { name: /完成 completed/ })).toHaveLength(1);
     expect(screen.getAllByRole('button', { name: /跳转到问题/ })).toHaveLength(2);
   });

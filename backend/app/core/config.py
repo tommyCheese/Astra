@@ -25,6 +25,8 @@ class Settings(BaseSettings):
     agent_per_tool_retry_limit: int = 2
     agent_memory_write_enabled: bool = True
     agent_use_loop: bool = True
+    agent_reasoning_shadow_mode: bool = False
+    agent_use_general_runtime: bool = True
     allow_network_read: bool = True
     cors_origins: str = "http://localhost:5173"
 

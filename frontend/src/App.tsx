@@ -1,10 +1,10 @@
 import { FormEvent, ReactNode, useEffect, useMemo, useRef, useState } from 'react';
-import { createRun, getRun } from './api';
+import { createRun, getRun, resumeRun } from './api';
 import { I18nProvider, useI18n } from './i18n';
 import { ThemeProvider, useTheme } from './theme';
 import type { AgentTurnView, ChatMessage, RunView, ToolCallView } from './types';
 
-const terminalStatuses = new Set(['completed', 'completed_with_warnings', 'failed', 'blocked']);
+const terminalStatuses = new Set(['completed', 'completed_with_warnings', 'failed', 'blocked', 'waiting_user']);
 type ConversationEntry = { id: string; run: RunView; priorMessages: ChatMessage[] };
 
 export function App() {
@@ -101,7 +101,16 @@ function AppContent() {
     setLoading(true);
     try {
       const previousMessages = run ? messages : [];
-      const created = await createRun(trimmedGoal, run?.task_id);
+      const created = run?.status === 'waiting_user'
+        ? await resumeRun(run.id, trimmedGoal, typeof run.waiting_state?.continuation_token === 'string' ? run.waiting_state.continuation_token : undefined)
+        : await createRun(trimmedGoal, run?.task_id, {
+        reasoning_effort: reasoningEffort === '快速' ? 'fast' : reasoningEffort === '深入' ? 'deep' : 'balanced',
+        planning_strategy: planningStrategy === '直接' ? 'direct' : planningStrategy === '先规划' ? 'plan_first' : 'adaptive',
+        reflection_enabled: reflectionEnabled,
+        reflection_trigger: reflectionTrigger === '失败时' ? 'failure_only' : reflectionTrigger === '每轮' ? 'every_turn' : 'adaptive',
+        execution_mode: executionMode === 'plan' ? 'plan_only' : executionMode === 'bypass' ? 'auto_approval' : 'request_approval',
+        verification_level: 'standard',
+        });
       const current = await getRun(created.run_id);
       setPriorMessages(previousMessages);
       setRun(current);
@@ -741,8 +750,22 @@ function FinalAnswer({ run }: { run: RunView }) {
       {[...result.caveats, ...result.verification_notes, ...(report?.notes ?? [])].map((item, index) => (
         <p key={`note-${index}`} className="note">{item}</p>
       ))}
+      <ReasoningAuditSummary run={run} />
     </div>
   );
+}
+
+function ReasoningAuditSummary({ run }: { run: RunView }) {
+  const policy = run.reasoning_policy as { effective?: Record<string, unknown>; adjustments?: Array<Record<string, unknown>> } | undefined;
+  const criteria = Array.isArray(run.task_contract?.success_criteria) ? run.task_contract.success_criteria as Array<Record<string, unknown>> : [];
+  if (!policy?.effective && !criteria.length && !run.terminal_reason) return null;
+  return <details className="reasoning-audit"><summary>运行策略与验证</summary><div className="reasoning-audit-grid">
+    {policy?.effective && <div><strong>生效策略</strong><span>{String(policy.effective.reasoning_effort ?? 'balanced')} · {String(policy.effective.planning_strategy ?? 'adaptive')} · {String(policy.effective.execution_mode ?? 'request_approval')}</span></div>}
+    <div><strong>状态版本</strong><span>State {run.state_version ?? 0} · Plan {String(run.plan_graph?.version ?? 1)}</span></div>
+    {criteria.map((criterion) => <div key={String(criterion.id)}><strong>{String(criterion.description)}</strong><span>{String(criterion.status ?? 'pending')}</span></div>)}
+    {policy?.adjustments?.map((adjustment, index) => <div key={`adjust-${index}`}><strong>策略调整</strong><span>{String(adjustment.reason ?? adjustment.rule)}</span></div>)}
+    {run.terminal_reason && <div><strong>终态原因</strong><span>{String(run.terminal_reason.reason ?? run.status)}</span></div>}
+  </div></details>;
 }
 
 function buildConversation(run: RunView | null): ChatMessage[] {

@@ -41,7 +41,7 @@ async def test_agent_loop_blocks_at_turn_limit(session):
 
     output = await loop.run(repo, run.id, run.task.description)
 
-    assert output["status"] == "completed_with_warnings"
+    assert output["status"] == "blocked"
     assert "没有成功抓取到可用来源" in " ".join(output["result"]["verification_report"]["notes"])
 
 

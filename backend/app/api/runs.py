@@ -10,7 +10,8 @@ from app.core.config import Settings, get_settings
 from app.db.session import get_session
 from app.repositories.runs import RunRepository, run_to_view
 from app.runner.engine import start_run_in_process
-from app.schemas.agent import CreateRunRequest, CreateRunResponse, RunView
+from app.runner.reasoning import PolicyCompiler
+from app.schemas.agent import ContinueRunRequest, CreateRunRequest, CreateRunResponse, RunView
 
 router = APIRouter(prefix="/api", tags=["runs"])
 
@@ -26,7 +27,11 @@ async def create_run(
         raise HTTPException(status_code=422, detail="Goal must not be empty")
     repo = RunRepository(session)
     try:
-        run = await repo.create_task_run(goal, settings.model_policy, payload.task_id)
+        policy = PolicyCompiler().compile(payload.reasoning_policy)
+        run = await repo.create_task_run(goal, settings.model_policy, payload.task_id, reasoning_policy=policy.model_dump(mode="json"))
+        for adjustment in policy.adjustments:
+            await repo.add_event(run.id, "reasoning.policy_adjusted", adjustment.model_dump(mode="json"))
+        await session.commit()
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     asyncio.create_task(start_run_in_process(run.id, settings))
@@ -43,6 +48,31 @@ async def get_run(
     if run is None:
         raise HTTPException(status_code=404, detail="Run not found")
     return RunView.model_validate(run_to_view(run))
+
+
+@router.post("/runs/{run_id}/resume", response_model=CreateRunResponse)
+async def resume_run(
+    run_id: str,
+    payload: ContinueRunRequest,
+    session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+) -> CreateRunResponse:
+    repo = RunRepository(session)
+    try:
+        run = await repo.resume_waiting_run(
+            run_id,
+            {
+                "kind": "approval_result" if payload.approved is not None else "user_response",
+                "status": "approved" if payload.approved else "rejected" if payload.approved is False else "received",
+                "summary": payload.content,
+                "data": {"approved": payload.approved},
+            },
+            continuation_token=payload.continuation_token,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    asyncio.create_task(start_run_in_process(run.id, settings))
+    return CreateRunResponse(task_id=run.task_id, run_id=run.id, status=run.status)
 
 
 @router.get("/runs/{run_id}/events")
@@ -69,7 +99,7 @@ async def stream_run_events(
                 }
                 yield f"id: {event.id}\nevent: {event.type}\ndata: {json.dumps(payload)}\n\n"
             run = await repo.get_run(run_id)
-            if run and run.status in {"completed", "completed_with_warnings", "failed", "blocked"}:
+            if run and run.status in {"completed", "completed_with_warnings", "failed", "blocked", "waiting_user"}:
                 if not events:
                     yield "event: heartbeat\ndata: {}\n\n"
                 break
