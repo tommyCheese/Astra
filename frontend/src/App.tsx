@@ -210,12 +210,12 @@ function AppContent() {
               )}
             </div>
             <div className="execution-menu-wrap" ref={executionMenuRef}>
-              <button className={`execution-mode-button mode-${executionMode}`} type="button" onClick={() => {
+              <button className={`execution-mode-button mode-${executionMode} ${language === 'zh-CN' && executionMode === 'default' ? 'localized-label' : ''}`} type="button" onClick={() => {
                 setExecutionMenuOpen((open) => !open);
                 setAttachOpen(false);
                 setModelOpen(false);
               }}>
-                <span>{executionMode === 'plan' ? 'Plan' : executionMode === 'bypass' ? 'ByPass' : t('默认')}</span><b>⌄</b>
+                <span>{executionMode === 'plan' ? t('仅规划') : executionMode === 'bypass' ? t('全自动') : t('默认')}</span><b>⌄</b>
               </button>
               {executionMenuOpen && <ExecutionModeMenu value={executionMode} onChange={(mode) => {
                 if (mode === 'bypass') setBypassConfirmOpen(true);
@@ -394,16 +394,16 @@ function Toggle({ checked = false, onChange }: { checked?: boolean; onChange?: (
 function ExecutionModeMenu({ value, onChange }: { value: 'plan' | 'default' | 'bypass'; onChange: (mode: 'plan' | 'default' | 'bypass') => void }) {
   const { t } = useI18n();
   const modes = [
-    { id: 'plan' as const, title: 'Plan', detail: '只规划任务，不调用工具或执行命令' },
+    { id: 'plan' as const, title: '仅规划', detail: '只规划任务，不调用工具或执行命令' },
     { id: 'default' as const, title: '默认', detail: '自动执行低风险操作，高风险权限需要确认' },
-    { id: 'bypass' as const, title: 'ByPass', detail: '自动执行所有命令和工具，不再请求确认' },
+    { id: 'bypass' as const, title: '全自动', detail: '自动执行所有命令和工具，不再请求确认' },
   ];
   return <div className="floating-menu execution-menu"><div className="menu-heading">{t('执行模式')}</div>{modes.map((mode) => <button className={value === mode.id ? 'selected' : ''} type="button" key={mode.id} onClick={() => onChange(mode.id)}><div><strong>{t(mode.title)}</strong><small>{t(mode.detail)}</small></div><span>{value === mode.id ? '✓' : ''}</span></button>)}</div>;
 }
 
 function BypassConfirmation({ onCancel, onConfirm }: { onCancel: () => void; onConfirm: () => void }) {
   const { t } = useI18n();
-  return <div className="modal-backdrop" role="presentation" onMouseDown={onCancel}><section className="confirmation-modal" role="alertdialog" aria-modal="true" aria-labelledby="bypass-title" onMouseDown={(event) => event.stopPropagation()}><div className="warning-mark">!</div><h2 id="bypass-title">{t('启用 ByPass 模式？')}</h2><p>{t('ByPass 将允许 Agent 自动执行所有命令和工具，包括可能修改文件、访问网络或影响外部系统的高风险操作。')}</p><div className="confirmation-note"><strong>{t('仅在你信任当前任务和运行环境时启用。')}</strong></div><div className="confirmation-actions"><button className="secondary-button" type="button" onClick={onCancel}>{t('取消')}</button><button className="danger-confirm-button" type="button" onClick={onConfirm}>{t('确认启用 ByPass')}</button></div></section></div>;
+  return <div className="modal-backdrop" role="presentation" onMouseDown={onCancel}><section className="confirmation-modal" role="alertdialog" aria-modal="true" aria-labelledby="bypass-title" onMouseDown={(event) => event.stopPropagation()}><div className="warning-mark">!</div><h2 id="bypass-title">{t('启用全自动模式？')}</h2><p>{t('全自动模式将允许 Agent 自动执行所有命令和工具，包括可能修改文件、访问网络或影响外部系统的高风险操作。')}</p><div className="confirmation-note"><strong>{t('仅在你信任当前任务和运行环境时启用。')}</strong></div><div className="confirmation-actions"><button className="secondary-button" type="button" onClick={onCancel}>{t('取消')}</button><button className="danger-confirm-button" type="button" onClick={onConfirm}>{t('确认启用全自动')}</button></div></section></div>;
 }
 
 function ModelMenu({ selectedModel, onModelChange, reasoningEffort, onReasoningEffortChange, planningStrategy, onPlanningStrategyChange, reflectionEnabled, onReflectionChange, reflectionTrigger, onReflectionTriggerChange }: {

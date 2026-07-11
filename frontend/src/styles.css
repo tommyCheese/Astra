@@ -522,16 +522,30 @@ h1 {
   display: flex;
   gap: 6px;
   height: 40px;
+  justify-content: center;
+  min-width: 68px;
   padding: 0 9px;
 }
 
 .execution-mode-button span {
+  align-items: center;
+  display: inline-flex;
   font-size: 12px;
   font-weight: 700;
+  height: 16px;
+  line-height: 16px;
 }
 
 .execution-mode-button b {
+  align-items: center;
+  display: inline-flex;
   font-size: 11px;
+  height: 16px;
+  line-height: 16px;
+}
+
+.execution-mode-button.localized-label span {
+  transform: translateY(-1px);
 }
 
 .execution-mode-button:hover {
