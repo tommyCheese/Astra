@@ -416,7 +416,10 @@ h1 {
   box-shadow: 0 16px 38px rgba(15, 23, 42, 0.08);
   display: grid;
   gap: 8px;
-  grid-template-columns: 40px minmax(180px, 1fr) auto 42px;
+  grid-template-areas:
+    "input input input input"
+    "attach spacer model send";
+  grid-template-columns: 40px minmax(0, 1fr) auto 42px;
   margin: 0 auto;
   padding: 8px;
   position: sticky;
@@ -428,6 +431,14 @@ h1 {
 .model-menu-wrap {
   align-self: end;
   position: relative;
+}
+
+.composer-menu-wrap {
+  grid-area: attach;
+}
+
+.model-menu-wrap {
+  grid-area: model;
 }
 
 .composer-icon-button {
@@ -514,6 +525,12 @@ h1 {
   width: 100%;
 }
 
+.floating-menu .toggle {
+  min-height: 24px;
+  padding: 3px;
+  width: 42px;
+}
+
 .floating-menu button:hover,
 .floating-menu button.selected {
   background: #eef3f8;
@@ -586,6 +603,12 @@ textarea {
   resize: vertical;
 }
 
+.chat-composer textarea {
+  grid-area: input;
+  min-height: 54px;
+  width: 100%;
+}
+
 .send-button {
   align-self: end;
   aspect-ratio: 1;
@@ -596,6 +619,7 @@ textarea {
   font-size: 18px;
   font-weight: 760;
   min-width: 42px;
+  grid-area: send;
 }
 
 .settings-page {
@@ -1022,16 +1046,14 @@ code {
 
 @media (max-width: 620px) {
   .chat-composer {
-    grid-template-columns: 40px minmax(0, 1fr) 42px;
-  }
-
-  .model-menu-wrap {
-    grid-column: 1 / 4;
-    grid-row: 2;
+    grid-template-areas:
+      "input input input input"
+      "attach spacer model send";
+    grid-template-columns: 40px minmax(0, 1fr) auto 42px;
   }
 
   .model-selector {
-    width: 100%;
+    max-width: 148px;
   }
 
   .model-menu {

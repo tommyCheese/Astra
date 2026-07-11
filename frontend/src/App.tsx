@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useMemo, useState } from 'react';
+import { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { createRun, getRun } from './api';
 import type { AgentTurnView, ChatMessage, RunEvent, RunView, ToolCallView } from './types';
 
@@ -17,6 +17,38 @@ export function App() {
   const [selectedModel, setSelectedModel] = useState('Astra Pro');
   const [reflectionEnabled, setReflectionEnabled] = useState(true);
   const [settingsCategory, setSettingsCategory] = useState('模型与推理');
+  const attachMenuRef = useRef<HTMLDivElement>(null);
+  const modelMenuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!attachOpen && !modelOpen) {
+      return;
+    }
+
+    function closeOnOutsideInteraction(event: PointerEvent) {
+      const target = event.target as Node;
+      if (!attachMenuRef.current?.contains(target)) {
+        setAttachOpen(false);
+      }
+      if (!modelMenuRef.current?.contains(target)) {
+        setModelOpen(false);
+      }
+    }
+
+    function closeOnEscape(event: KeyboardEvent) {
+      if (event.key === 'Escape') {
+        setAttachOpen(false);
+        setModelOpen(false);
+      }
+    }
+
+    document.addEventListener('pointerdown', closeOnOutsideInteraction);
+    document.addEventListener('keydown', closeOnEscape);
+    return () => {
+      document.removeEventListener('pointerdown', closeOnOutsideInteraction);
+      document.removeEventListener('keydown', closeOnEscape);
+    };
+  }, [attachOpen, modelOpen]);
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -143,13 +175,16 @@ export function App() {
           </div>
 
           <form className="chat-composer" onSubmit={submit}>
-            <div className="composer-menu-wrap">
+            <div className="composer-menu-wrap" ref={attachMenuRef}>
               <button
                 className="composer-icon-button"
                 type="button"
                 aria-label="添加内容"
                 title="添加内容"
-                onClick={() => setAttachOpen((open) => !open)}
+                onClick={() => {
+                  setAttachOpen((open) => !open);
+                  setModelOpen(false);
+                }}
               >+</button>
               {attachOpen && (
                 <div className="floating-menu attachment-menu">
@@ -164,8 +199,11 @@ export function App() {
               onChange={(event) => setGoal(event.target.value)}
               placeholder="输入任务 / 继续追问..."
             />
-            <div className="model-menu-wrap">
-              <button className="model-selector" type="button" onClick={() => setModelOpen((open) => !open)}>
+            <div className="model-menu-wrap" ref={modelMenuRef}>
+              <button className="model-selector" type="button" onClick={() => {
+                setModelOpen((open) => !open);
+                setAttachOpen(false);
+              }}>
                 <span>{selectedModel}</span><small>{reflectionEnabled ? '反思开启' : '快速模式'}</small><b>⌄</b>
               </button>
               {modelOpen && (

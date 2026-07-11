@@ -194,4 +194,18 @@ describe('App', () => {
     await userEvent.click(screen.getByRole('button', { name: /Astra Flash/ }));
     expect(screen.getByRole('button', { name: /Astra Flash/ })).toBeInTheDocument();
   });
+
+  it('closes composer menus when clicking outside or pressing escape', async () => {
+    render(<App />);
+
+    await userEvent.click(screen.getByRole('button', { name: '添加内容' }));
+    expect(screen.getByText('上传文件')).toBeInTheDocument();
+    await userEvent.click(document.body);
+    expect(screen.queryByText('上传文件')).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: /Astra Pro/ }));
+    expect(screen.getByText('选择模型')).toBeInTheDocument();
+    await userEvent.keyboard('{Escape}');
+    expect(screen.queryByText('选择模型')).not.toBeInTheDocument();
+  });
 });
