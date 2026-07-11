@@ -24,6 +24,11 @@ select {
 
 button {
   cursor: pointer;
+  transition: background-color 150ms ease, border-color 150ms ease, color 150ms ease, opacity 150ms ease, transform 120ms ease, box-shadow 180ms ease;
+}
+
+button:active:not(:disabled) {
+  transform: scale(0.975);
 }
 
 button:disabled {
@@ -45,6 +50,7 @@ p {
   display: grid;
   grid-template-columns: 284px minmax(0, 1fr);
   min-height: 100vh;
+  transition: background-color 200ms ease, color 180ms ease;
 }
 
 .sidebar {
@@ -55,6 +61,7 @@ p {
   gap: 18px;
   min-height: 100vh;
   padding: 14px 12px;
+  transition: background-color 200ms ease, border-color 180ms ease;
 }
 
 .brand {
@@ -115,6 +122,12 @@ p {
   padding: 0 16px;
 }
 
+.new-chat-button:hover {
+  background: rgba(200, 219, 252, 0.96);
+  box-shadow: 0 4px 12px rgba(40, 73, 112, 0.08);
+  transform: translateY(-1px);
+}
+
 .new-chat-button span {
   align-items: center;
   background: rgba(255, 255, 255, 0.72);
@@ -151,6 +164,11 @@ p {
   box-shadow: inset 0 0 0 1px rgba(203, 213, 225, 0.62);
 }
 
+.history-item:hover,
+.side-action:hover {
+  background: rgba(255, 255, 255, 0.52);
+}
+
 .history-item span,
 .side-action span {
   overflow: hidden;
@@ -174,6 +192,13 @@ p {
   display: flex;
   justify-content: space-between;
   padding: 9px 10px;
+  transition: background-color 160ms ease, border-color 160ms ease, transform 160ms ease;
+}
+
+.capability-item:hover {
+  background: rgba(255, 255, 255, 0.82);
+  border-color: rgba(174, 186, 201, 0.72);
+  transform: translateY(-1px);
 }
 
 .capability-settings {
@@ -219,6 +244,7 @@ p {
   grid-template-rows: auto minmax(0, 1fr) auto;
   min-height: 100vh;
   padding: 14px 18px 18px;
+  transition: background-color 200ms ease;
 }
 
 .chat-topbar {
@@ -295,6 +321,7 @@ h1 {
 }
 
 .bubble {
+  animation: message-enter 220ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
   background: transparent;
   border-radius: 16px;
   color: #202124;
@@ -425,6 +452,12 @@ h1 {
   position: sticky;
   bottom: 0;
   width: 100%;
+  transition: border-color 180ms ease, box-shadow 220ms ease, background-color 180ms ease;
+}
+
+.chat-composer:focus-within {
+  border-color: rgba(116, 139, 166, 0.9);
+  box-shadow: 0 18px 44px rgba(15, 23, 42, 0.11), 0 0 0 3px rgba(83, 121, 160, 0.08);
 }
 
 .composer-menu-wrap,
@@ -499,6 +532,7 @@ h1 {
 }
 
 .floating-menu {
+  animation: menu-enter 170ms cubic-bezier(0.2, 0.75, 0.25, 1) both;
   backdrop-filter: blur(22px) saturate(150%);
   -webkit-backdrop-filter: blur(22px) saturate(150%);
   background: rgba(255, 255, 255, 0.94);
@@ -509,6 +543,7 @@ h1 {
   padding: 6px;
   position: absolute;
   z-index: 10;
+  transform-origin: bottom center;
 }
 
 .floating-menu button {
@@ -666,6 +701,16 @@ textarea {
   grid-area: send;
 }
 
+.send-button:hover:not(:disabled) {
+  box-shadow: 0 5px 14px rgba(15, 23, 42, 0.2);
+  transform: translateY(-1px);
+}
+
+.send-button:active:not(:disabled) {
+  box-shadow: 0 2px 7px rgba(15, 23, 42, 0.18);
+  transform: translateY(0) scale(0.96);
+}
+
 .settings-page {
   height: calc(100vh - 28px);
   margin: 0 auto;
@@ -745,6 +790,7 @@ textarea {
 }
 
 .settings-group {
+  animation: settings-enter 200ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
   max-width: 720px;
 }
 
@@ -853,8 +899,12 @@ textarea {
   border-radius: 50%;
   height: 18px;
   margin: 0;
-  transition: transform 160ms ease;
+  transition: transform 170ms cubic-bezier(0.2, 0.8, 0.2, 1), box-shadow 170ms ease;
   width: 18px;
+}
+
+.toggle:active span {
+  box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.22);
 }
 
 .toggle.on {
@@ -876,6 +926,7 @@ textarea {
 }
 
 .modal-backdrop {
+  animation: backdrop-enter 180ms ease both;
   align-items: center;
   background: rgba(27, 35, 46, 0.28);
   display: flex;
@@ -887,6 +938,7 @@ textarea {
 }
 
 .usage-modal {
+  animation: modal-enter 210ms cubic-bezier(0.2, 0.75, 0.2, 1) both;
   backdrop-filter: blur(24px) saturate(140%);
   -webkit-backdrop-filter: blur(24px) saturate(140%);
   background: rgba(253, 254, 255, 0.96);
@@ -995,10 +1047,60 @@ textarea {
 }
 
 .audit-grid {
+  animation: settings-enter 180ms ease both;
   display: grid;
   gap: 12px;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
   margin-top: 12px;
+}
+
+@keyframes menu-enter {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes modal-enter {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.99);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes backdrop-enter {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes message-enter {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes settings-enter {
+  from {
+    opacity: 0;
+    transform: translateX(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
 }
 
 .audit-grid h3 {
@@ -1100,6 +1202,13 @@ html[data-theme="dark"] .close-button:hover {
   background: #2a2f36;
   color: #f3f4f6;
   box-shadow: inset 0 0 0 1px #3b424c;
+}
+
+html[data-theme="dark"] .history-item:hover,
+html[data-theme="dark"] .side-action:hover,
+html[data-theme="dark"] .capability-item:hover {
+  background: #292e35;
+  border-color: #454c57;
 }
 
 html[data-theme="dark"] .new-chat-button {
@@ -1210,6 +1319,25 @@ html[data-theme="dark"] code {
 
 html[data-theme="dark"] .modal-backdrop {
   background: rgba(0, 0, 0, 0.58);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+  }
+
+  button:active:not(:disabled),
+  .new-chat-button:hover,
+  .capability-item:hover,
+  .send-button:hover:not(:disabled),
+  .send-button:active:not(:disabled) {
+    transform: none;
+  }
 }
 
 @media (max-width: 860px) {
