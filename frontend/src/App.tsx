@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
+import { FormEvent, ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import { createRun, getRun } from './api';
 import { I18nProvider, useI18n } from './i18n';
 import { ThemeProvider, useTheme } from './theme';
@@ -231,7 +231,8 @@ function AppContent() {
                 setAttachOpen(false);
                 setModelOpen(false);
               }}>
-                <span>{executionMode === 'plan' ? t('仅规划') : executionMode === 'bypass' ? t('全自动') : t('默认')}</span>
+                <Icon name={executionMode === 'plan' ? 'route' : executionMode === 'bypass' ? 'autoApprove' : 'requestApprove'} />
+                <span>{executionMode === 'plan' ? t('仅规划') : executionMode === 'bypass' ? t('自动批准') : t('请求批准')}</span>
                 <i className="execution-mode-chevron" aria-hidden="true" />
               </button>
               {executionMenuOpen && <ExecutionModeMenu value={executionMode} onChange={(mode) => {
@@ -315,21 +316,23 @@ function Sidebar({ run, conversations, activeView, onNewChat, onSelectConversati
       </div>
 
       <button className="new-chat-button" type="button" onClick={onNewChat}>
-        <span>+</span>
+        <span className="button-icon"><Icon name="plus" /></span>
         {t('新对话')}
       </button>
 
       <nav className="side-section">
         <span className="side-title">{t('历史对话')}</span>
-        {conversations.length ? conversations.slice(0, 6).map((conversation) => <button className={`history-item ${run?.task_id === conversation.id ? 'active' : ''}`} type="button" key={conversation.id} onClick={() => onSelectConversation(conversation)}><span>{conversationTitle(conversation.run, t('当前 Web Agent 会话'))}</span><small>{statusLabel(conversation.run.status)}</small></button>) : <div className="history-empty">{t('暂无对话')}</div>}
+        {conversations.length ? conversations.slice(0, 6).map((conversation) => <button className={`history-item ${run?.task_id === conversation.id ? 'active' : ''}`} type="button" key={conversation.id} onClick={() => onSelectConversation(conversation)}><Icon name="message" /><span>{conversationTitle(conversation.run, t('当前 Web Agent 会话'))}</span><small>{statusLabel(conversation.run.status)}</small></button>) : <div className="history-empty">{t('暂无对话')}</div>}
       </nav>
 
       <div className="sidebar-bottom">
         <button className="side-action" type="button" onClick={onOpenUsage}>
+          <Icon name="chart" />
           <span>{t('用量统计')}</span>
           <small>{run?.tool_calls.length ?? 0} calls</small>
         </button>
         <button className={`side-action ${activeView === 'settings' ? 'active' : ''}`} type="button" onClick={onOpenSettings}>
+          <Icon name="settings" />
           <span>{t('设置')}</span>
           <small>{t('本地配置')}</small>
         </button>
@@ -405,6 +408,15 @@ function AstraBrandIcon() {
 }
 
 const settingCategories = ['模型管理', '工具', '运行时', '记忆', '验证与安全', '界面', '数据与隐私'];
+const settingCategoryIcons: Record<string, IconName> = {
+  '模型管理': 'sparkle',
+  '工具': 'tools',
+  '运行时': 'terminal',
+  '记忆': 'brain',
+  '验证与安全': 'shield',
+  '界面': 'palette',
+  '数据与隐私': 'lock',
+};
 
 function SettingsView({ activeCategory, onCategoryChange, onClose, providerConfigs, onProviderConfigsChange }: {
   activeCategory: string;
@@ -423,7 +435,7 @@ function SettingsView({ activeCategory, onCategoryChange, onClose, providerConfi
       <div className="settings-layout">
         <nav className="settings-nav" aria-label={t('设置类别')}>
           {settingCategories.map((category) => (
-            <button className={category === activeCategory ? 'active' : ''} type="button" key={category} onClick={() => onCategoryChange(category)}>{t(category)}</button>
+            <button className={category === activeCategory ? 'active' : ''} type="button" key={category} onClick={() => onCategoryChange(category)}><Icon name={settingCategoryIcons[category]} /><span>{t(category)}</span></button>
           ))}
         </nav>
         <div className="settings-content">
@@ -583,16 +595,16 @@ function Toggle({ checked = false, onChange }: { checked?: boolean; onChange?: (
 function ExecutionModeMenu({ value, onChange }: { value: 'plan' | 'default' | 'bypass'; onChange: (mode: 'plan' | 'default' | 'bypass') => void }) {
   const { t } = useI18n();
   const modes = [
-    { id: 'plan' as const, title: '仅规划', detail: '只规划任务，不调用工具或执行命令' },
-    { id: 'default' as const, title: '默认', detail: '自动执行低风险操作，高风险权限需要确认' },
-    { id: 'bypass' as const, title: '全自动', detail: '自动执行所有命令和工具，不再请求确认' },
+    { id: 'plan' as const, title: '仅规划', detail: '只规划任务，不调用工具或执行命令', icon: 'route' as const },
+    { id: 'default' as const, title: '请求批准', detail: '自动执行低风险操作，高风险权限需要确认', icon: 'requestApprove' as const },
+    { id: 'bypass' as const, title: '自动批准', detail: '自动执行所有命令和工具，不再请求确认', icon: 'autoApprove' as const },
   ];
-  return <div className="floating-menu execution-menu"><div className="menu-heading">{t('执行模式')}</div>{modes.map((mode) => <button className={value === mode.id ? 'selected' : ''} type="button" key={mode.id} onClick={() => onChange(mode.id)}><div><strong>{t(mode.title)}</strong><small>{t(mode.detail)}</small></div><span>{value === mode.id ? '✓' : ''}</span></button>)}</div>;
+  return <div className="floating-menu execution-menu"><div className="menu-heading">{t('执行模式')}</div>{modes.map((mode) => <button className={value === mode.id ? 'selected' : ''} type="button" key={mode.id} onClick={() => onChange(mode.id)}><Icon name={mode.icon} /><div><strong>{t(mode.title)}</strong><small>{t(mode.detail)}</small></div><span className="mode-selected-mark">{value === mode.id ? '✓' : ''}</span></button>)}</div>;
 }
 
 function BypassConfirmation({ onCancel, onConfirm }: { onCancel: () => void; onConfirm: () => void }) {
   const { t } = useI18n();
-  return <div className="modal-backdrop" role="presentation" onMouseDown={onCancel}><section className="confirmation-modal" role="alertdialog" aria-modal="true" aria-labelledby="bypass-title" onMouseDown={(event) => event.stopPropagation()}><div className="warning-mark">!</div><h2 id="bypass-title">{t('启用全自动模式？')}</h2><p>{t('全自动模式将允许 Agent 自动执行所有命令和工具，包括可能修改文件、访问网络或影响外部系统的高风险操作。')}</p><div className="confirmation-note"><strong>{t('仅在你信任当前任务和运行环境时启用。')}</strong></div><div className="confirmation-actions"><button className="secondary-button" type="button" onClick={onCancel}>{t('取消')}</button><button className="danger-confirm-button" type="button" onClick={onConfirm}>{t('确认启用全自动')}</button></div></section></div>;
+  return <div className="modal-backdrop" role="presentation" onMouseDown={onCancel}><section className="confirmation-modal" role="alertdialog" aria-modal="true" aria-labelledby="bypass-title" onMouseDown={(event) => event.stopPropagation()}><div className="warning-mark">!</div><h2 id="bypass-title">{t('启用自动批准模式？')}</h2><p>{t('自动批准模式将允许 Agent 自动执行所有命令和工具，包括可能修改文件、访问网络或影响外部系统的高风险操作。')}</p><div className="confirmation-note"><strong>{t('仅在你信任当前任务和运行环境时启用。')}</strong></div><div className="confirmation-actions"><button className="secondary-button" type="button" onClick={onCancel}>{t('取消')}</button><button className="danger-confirm-button" type="button" onClick={onConfirm}>{t('确认启用自动批准')}</button></div></section></div>;
 }
 
 function ModelMenu({ selectedModelKey, onModelChange, modelOptions, reasoningEffort, onReasoningEffortChange, planningStrategy, onPlanningStrategyChange, reflectionEnabled, onReflectionChange, reflectionTrigger, onReflectionTriggerChange }: {
@@ -630,7 +642,32 @@ function UsageModal({ run, onClose }: { run: RunView | null; onClose: () => void
   const estimatedTokens = run ? Math.max(640, turns * 760 + calls * 420 + (run.result?.findings.length ?? 0) * 180) : 0;
   const succeeded = run?.tool_calls.filter((call) => call.status === 'succeeded').length ?? 0;
   const successRate = calls ? Math.round((succeeded / calls) * 100) : 0;
-  return <div className="modal-backdrop" role="presentation" onMouseDown={onClose}><section className="usage-modal" role="dialog" aria-modal="true" aria-label={t('用量统计')} onMouseDown={(event) => event.stopPropagation()}><header><div><span>{t('当前对话')}</span><h2>{t('用量统计')}</h2></div><button className="close-button" type="button" aria-label={t('关闭用量统计')} onClick={onClose}>×</button></header><div className="usage-primary"><div><span>{t('模型调用')}</span><strong>{turns}</strong><small>{t('次决策 / 生成')}</small></div><div><span>{t('Token 用量')}</span><strong>{estimatedTokens.toLocaleString(language)}</strong><small>{t('前端估算')}</small></div></div><div className="usage-grid"><div><span>{t('工具调用')}</span><strong>{calls}</strong></div><div><span>{t('成功率')}</span><strong>{successRate}%</strong></div><div><span>{t('任务步骤')}</span><strong>{run?.steps.length ?? 0}</strong></div><div><span>{t('Agent 轮次')}</span><strong>{turns}</strong></div><div><span>{t('消息轮次')}</span><strong>{run?.chat_messages?.filter((message) => message.role === 'user').length ?? 0}</strong></div><div><span>{t('Memory 写入')}</span><strong>{run?.memories?.length ?? 0}</strong></div></div><p className="usage-note">{t('精确输入、输出和缓存 Token 将在模型网关接入后由后端返回。')}</p></section></div>;
+  return <div className="modal-backdrop" role="presentation" onMouseDown={onClose}><section className="usage-modal" role="dialog" aria-modal="true" aria-label={t('用量统计')} onMouseDown={(event) => event.stopPropagation()}><header><div><span>{t('当前对话')}</span><h2><Icon name="chart" />{t('用量统计')}</h2></div><button className="close-button" type="button" aria-label={t('关闭用量统计')} onClick={onClose}>×</button></header><div className="usage-primary"><div><Icon name="sparkle" /><span>{t('模型调用')}</span><strong>{turns}</strong><small>{t('次决策 / 生成')}</small></div><div><Icon name="token" /><span>{t('Token 用量')}</span><strong>{estimatedTokens.toLocaleString(language)}</strong><small>{t('前端估算')}</small></div></div><div className="usage-grid"><div><Icon name="tools" /><span>{t('工具调用')}</span><strong>{calls}</strong></div><div><Icon name="check" /><span>{t('成功率')}</span><strong>{successRate}%</strong></div><div><Icon name="route" /><span>{t('任务步骤')}</span><strong>{run?.steps.length ?? 0}</strong></div><div><Icon name="refresh" /><span>{t('Agent 轮次')}</span><strong>{turns}</strong></div><div><Icon name="message" /><span>{t('消息轮次')}</span><strong>{run?.chat_messages?.filter((message) => message.role === 'user').length ?? 0}</strong></div><div><Icon name="brain" /><span>{t('Memory 写入')}</span><strong>{run?.memories?.length ?? 0}</strong></div></div><p className="usage-note">{t('精确输入、输出和缓存 Token 将在模型网关接入后由后端返回。')}</p></section></div>;
+}
+
+type IconName = 'plus' | 'message' | 'chart' | 'settings' | 'sparkle' | 'tools' | 'terminal' | 'brain' | 'shield' | 'palette' | 'lock' | 'token' | 'check' | 'route' | 'refresh' | 'requestApprove' | 'autoApprove';
+
+function Icon({ name }: { name: IconName }) {
+  const paths: Record<IconName, ReactNode> = {
+    plus: <path d="M12 5v14M5 12h14" />,
+    message: <path d="M20 11.5a7.5 7.5 0 0 1-8 7.48 8.9 8.9 0 0 1-3.63-.78L4 20l1.34-3.58A7.34 7.34 0 0 1 4 12a7.5 7.5 0 0 1 8-7.48A7.5 7.5 0 0 1 20 11.5Z" />,
+    chart: <><path d="M4 19V5M4 19h16" /><path d="m7 15 3-3 3 2 5-6" /></>,
+    settings: <><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.06 2.06-.06-.06a1.7 1.7 0 0 0-1.88-.34 1.7 1.7 0 0 0-1 1.55V20h-2.9v-.09a1.7 1.7 0 0 0-1-1.55 1.7 1.7 0 0 0-1.88.34l-.06.06-2.06-2.06.06-.06A1.7 1.7 0 0 0 7.3 14.8a1.7 1.7 0 0 0-1.55-1H5.7v-2.9h.09a1.7 1.7 0 0 0 1.55-1 1.7 1.7 0 0 0-.34-1.88l-.06-.06L9 5.9l.06.06a1.7 1.7 0 0 0 1.88.34 1.7 1.7 0 0 0 1-1.55V4.7h2.9v.09a1.7 1.7 0 0 0 1 1.55 1.7 1.7 0 0 0 1.88-.34l.06-.06 2.06 2.06-.06.06a1.7 1.7 0 0 0-.34 1.88 1.7 1.7 0 0 0 1.55 1h.09v2.9h-.09a1.7 1.7 0 0 0-1.55 1Z" /></>,
+    sparkle: <path d="m12 3 .9 5.1L18 9l-5.1.9L12 15l-.9-5.1L6 9l5.1-.9L12 3Zm6 12 .45 2.55L21 18l-2.55.45L18 21l-.45-2.55L15 18l2.55-.45L18 15Z" />,
+    tools: <><path d="M14 6a4 4 0 0 0-5.48 5.48L3.5 16.5a2.12 2.12 0 0 0 3 3l5.02-5.02A4 4 0 0 0 17 9l-3 1-2-2 1-3Z" /><path d="m15 15 4 4" /></>,
+    terminal: <><path d="m5 7 4 4-4 4M12 17h7" /><rect x="3" y="4" width="18" height="16" rx="2" /></>,
+    brain: <path d="M9 5.2A3.4 3.4 0 0 0 4.7 8.5 3.2 3.2 0 0 0 5 14.7 3.1 3.1 0 0 0 8 19h1.2V5.2Zm6 0a3.4 3.4 0 0 1 4.3 3.3 3.2 3.2 0 0 1-.3 6.2 3.1 3.1 0 0 1-3 4.3h-1.2V5.2ZM9 9H7m2 4H6m9-4h2m-2 4h3" />,
+    shield: <path d="M12 3 19 6v5c0 4.6-3 7.7-7 10-4-2.3-7-5.4-7-10V6l7-3Zm-3 9 2 2 4-4" />,
+    palette: <path d="M12 3a9 9 0 1 0 0 18h1.1a1.9 1.9 0 0 0 .5-3.73 1.5 1.5 0 0 1 .4-2.95H16A5 5 0 0 0 21 9c0-3.3-4-6-9-6ZM7.5 11.5h.01M9 7.5h.01m6 0h.01m1.5 4h.01" />,
+    lock: <><rect x="5" y="10" width="14" height="10" rx="2" /><path d="M8 10V7a4 4 0 0 1 8 0v3m-4 4v2" /></>,
+    token: <><circle cx="12" cy="12" r="8" /><path d="M9 9h6v6H9zM12 6v3m0 6v3m-6-6h3m6 0h3" /></>,
+    check: <><circle cx="12" cy="12" r="8" /><path d="m8.5 12 2.2 2.2 4.8-5" /></>,
+    route: <><circle cx="6" cy="6" r="2" /><circle cx="18" cy="18" r="2" /><path d="M8 6h4a3 3 0 0 1 3 3v6" /></>,
+    refresh: <><path d="M20 11a8 8 0 0 0-14.8-3M4 5v3h3" /><path d="M4 13a8 8 0 0 0 14.8 3M20 19v-3h-3" /></>,
+    requestApprove: <><path d="M12 3 19 6v5c0 4.6-3 7.7-7 10-4-2.3-7-5.4-7-10V6l7-3Z" /><path d="M12 8v4m0 4h.01" /></>,
+    autoApprove: <><circle cx="12" cy="12" r="9" /><path d="m8 12 2.5 2.5L16 9" /><path d="M17.5 4.5 19 3m.5 4H22" /></>,
+  };
+  return <svg className="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{paths[name]}</svg>;
 }
 
 function MessageBubble({ message, run }: { message: ChatMessage; run: RunView | null }) {

@@ -38,6 +38,13 @@ button:disabled {
   opacity: 0.65;
 }
 
+.ui-icon {
+  display: block;
+  flex: 0 0 auto;
+  height: 18px;
+  width: 18px;
+}
+
 h1,
 h2,
 h3,
@@ -308,15 +315,20 @@ p {
   transform: translateY(-1px);
 }
 
-.new-chat-button span {
+.new-chat-button .button-icon {
   align-items: center;
   background: rgba(255, 255, 255, 0.72);
   border-radius: 50%;
   display: flex;
-  font-size: 18px;
   height: 24px;
   justify-content: center;
   width: 24px;
+}
+
+.new-chat-button .ui-icon {
+  height: 15px;
+  stroke-width: 2.3;
+  width: 15px;
 }
 
 .side-section {
@@ -375,6 +387,19 @@ p {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.history-item > .ui-icon,
+.side-action > .ui-icon {
+  color: #78909f;
+  height: 17px;
+  width: 17px;
+}
+
+.history-item.active > .ui-icon,
+.side-action:hover > .ui-icon,
+.side-action.active > .ui-icon {
+  color: #256c85;
 }
 
 .history-item small,
@@ -886,8 +911,13 @@ h1 {
   height: 34px;
   justify-content: center;
   margin-bottom: 3px;
-  min-width: 56px;
+  min-width: 96px;
   padding: 0 8px;
+}
+
+.execution-mode-button > .ui-icon {
+  height: 15px;
+  width: 15px;
 }
 
 .execution-mode-button span {
@@ -1006,6 +1036,28 @@ h1 {
 .execution-menu {
   left: 0;
   min-width: 320px;
+}
+
+.execution-menu button > .ui-icon {
+  color: #65788b;
+  height: 19px;
+  width: 19px;
+}
+
+.execution-menu button > div {
+  flex: 1;
+}
+
+.execution-menu button.selected > .ui-icon {
+  color: #247364;
+}
+
+.mode-selected-mark {
+  color: #247364;
+  flex: 0 0 16px;
+  font-size: 13px;
+  font-weight: 800;
+  text-align: center;
 }
 
 .attachment-menu button > span {
@@ -1216,14 +1268,27 @@ textarea {
 }
 
 .settings-nav button {
+  align-items: center;
   background: transparent;
   border: 0;
   border-radius: 8px;
   color: #52606d;
+  display: flex;
   font-size: 13px;
+  gap: 10px;
   min-height: 38px;
   padding: 0 12px;
   text-align: left;
+}
+
+.settings-nav .ui-icon {
+  color: #81909f;
+  height: 16px;
+  width: 16px;
+}
+
+.settings-nav button.active .ui-icon {
+  color: #247364;
 }
 
 .settings-nav button:hover,
@@ -1773,7 +1838,16 @@ textarea {
 }
 
 .usage-modal h2 {
+  align-items: center;
+  display: flex;
   font-size: 20px;
+  gap: 8px;
+}
+
+.usage-modal h2 .ui-icon {
+  color: #247364;
+  height: 21px;
+  width: 21px;
 }
 
 .usage-primary {
@@ -1787,6 +1861,23 @@ textarea {
   background: #edf3f7;
   border-radius: 10px;
   padding: 14px;
+}
+
+.usage-primary .ui-icon,
+.usage-grid .ui-icon {
+  color: #37806f;
+  margin-bottom: 7px;
+}
+
+.usage-primary .ui-icon {
+  height: 18px;
+  width: 18px;
+}
+
+.usage-grid .ui-icon {
+  height: 15px;
+  margin-bottom: 6px;
+  width: 15px;
 }
 
 .usage-primary span,

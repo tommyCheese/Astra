@@ -335,35 +335,35 @@ describe('App', () => {
   it('switches execution modes and confirms before enabling bypass', async () => {
     render(<App />);
 
-    await userEvent.click(screen.getByRole('button', { name: /默认/ }));
+    await userEvent.click(screen.getByRole('button', { name: /请求批准/ }));
     await userEvent.click(screen.getByRole('button', { name: /仅规划/ }));
     expect(screen.getByRole('button', { name: /仅规划/ })).toBeInTheDocument();
 
     await userEvent.click(screen.getByRole('button', { name: /仅规划/ }));
-    await userEvent.click(screen.getByRole('button', { name: /全自动/ }));
+    await userEvent.click(screen.getByRole('button', { name: /自动批准/ }));
     expect(screen.getByRole('alertdialog')).toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: '取消' }));
     expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
 
     await userEvent.click(screen.getByRole('button', { name: /仅规划/ }));
-    await userEvent.click(screen.getByRole('button', { name: /全自动/ }));
-    await userEvent.click(screen.getByRole('button', { name: '确认启用全自动' }));
-    expect(screen.getByRole('button', { name: /全自动/ })).toHaveClass('mode-bypass');
+    await userEvent.click(screen.getByRole('button', { name: /自动批准/ }));
+    await userEvent.click(screen.getByRole('button', { name: '确认启用自动批准' }));
+    expect(screen.getByRole('button', { name: /自动批准/ })).toHaveClass('mode-bypass');
   });
 
-  it('uses Plan and ByPass names only in the English interface', async () => {
+  it('uses translated execution mode names in the English interface', async () => {
     render(<App />);
 
     await userEvent.click(screen.getByRole('button', { name: /设置/ }));
     await userEvent.click(screen.getByRole('button', { name: '界面' }));
     await userEvent.selectOptions(screen.getByDisplayValue('中文'), 'en');
     await userEvent.click(screen.getByRole('button', { name: 'Close settings' }));
-    await userEvent.click(screen.getByRole('button', { name: /Default/ }));
+    await userEvent.click(screen.getByRole('button', { name: /Request approval/ }));
 
     expect(screen.getByRole('button', { name: /Plan/ })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /ByPass/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Auto approve/ })).toBeInTheDocument();
     expect(screen.queryByText('仅规划')).not.toBeInTheDocument();
-    expect(screen.queryByText('全自动')).not.toBeInTheDocument();
+    expect(screen.queryByText('自动批准')).not.toBeInTheDocument();
   });
 
   it('hides reflection trigger choices when reflection is disabled', async () => {
