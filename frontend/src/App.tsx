@@ -27,7 +27,8 @@ function AppContent() {
   const [executionMenuOpen, setExecutionMenuOpen] = useState(false);
   const [executionMode, setExecutionMode] = useState<'plan' | 'default' | 'bypass'>('default');
   const [bypassConfirmOpen, setBypassConfirmOpen] = useState(false);
-  const [selectedModel, setSelectedModel] = useState('Astra Pro');
+  const [providerConfigs, setProviderConfigs] = useState<ModelProviderConfig[]>(() => initialProviderConfigs);
+  const [selectedModelKey, setSelectedModelKey] = useState('openai:gpt-5');
   const [reflectionEnabled, setReflectionEnabled] = useState(true);
   const [reasoningEffort, setReasoningEffort] = useState('均衡');
   const [planningStrategy, setPlanningStrategy] = useState('自适应');
@@ -36,6 +37,18 @@ function AppContent() {
   const attachMenuRef = useRef<HTMLDivElement>(null);
   const executionMenuRef = useRef<HTMLDivElement>(null);
   const modelMenuRef = useRef<HTMLDivElement>(null);
+  const availableModels = useMemo(() => providerConfigs
+    .filter((provider) => provider.enabled)
+    .flatMap((provider) => parseModelIds(provider.models).map((model) => ({ key: `${provider.id}:${model}`, model, providerId: provider.id, providerName: provider.name }))), [providerConfigs]);
+  const selectedModel = availableModels.find((item) => item.key === selectedModelKey)?.model ?? '';
+
+  useEffect(() => {
+    if (availableModels.length && !availableModels.some((item) => item.key === selectedModelKey)) {
+      setSelectedModelKey(availableModels[0].key);
+    } else if (!availableModels.length && selectedModelKey) {
+      setSelectedModelKey('');
+    }
+  }, [availableModels, selectedModelKey]);
 
   useEffect(() => {
     if (!attachOpen && !modelOpen && !executionMenuOpen) {
@@ -159,6 +172,8 @@ function AppContent() {
             activeCategory={settingsCategory}
             onCategoryChange={setSettingsCategory}
             onClose={() => changeView('chat')}
+            providerConfigs={providerConfigs}
+            onProviderConfigsChange={setProviderConfigs}
           />
         ) : <>
         <section className="chat-topbar">
@@ -239,17 +254,18 @@ function AppContent() {
               placeholder={t('输入任务 / 继续追问...')}
             />
             <div className="model-menu-wrap" ref={modelMenuRef}>
-              <button className="model-selector" type="button" aria-label={`${t('当前模型')}${language === 'zh-CN' ? '：' : ': '}${selectedModel}`} onClick={() => {
+              <button className="model-selector" type="button" aria-label={`${t('当前模型')}${language === 'zh-CN' ? '：' : ': '}${selectedModel || t('未配置模型')}`} onClick={() => {
                 setModelOpen((open) => !open);
                 setAttachOpen(false);
                 setExecutionMenuOpen(false);
               }}>
-                <span>{selectedModel}</span><small>{t(reasoningEffort)} · {reflectionEnabled ? `${t(reflectionTrigger)} ${t('反思')}` : t('反思关闭')}</small><b>⌄</b>
+                <span>{selectedModel || t('未配置模型')}</span><small>{t(reasoningEffort)} · {reflectionEnabled ? `${t(reflectionTrigger)} ${t('反思')}` : t('反思关闭')}</small><b>⌄</b>
               </button>
               {modelOpen && (
                 <ModelMenu
-                  selectedModel={selectedModel}
-                  onModelChange={setSelectedModel}
+                  selectedModelKey={selectedModelKey}
+                  onModelChange={setSelectedModelKey}
+                  modelOptions={availableModels}
                   reasoningEffort={reasoningEffort}
                   onReasoningEffortChange={setReasoningEffort}
                   planningStrategy={planningStrategy}
@@ -388,12 +404,14 @@ function AstraBrandIcon() {
   );
 }
 
-const settingCategories = ['工具', '运行时', '记忆', '验证与安全', '界面', '数据与隐私'];
+const settingCategories = ['模型管理', '工具', '运行时', '记忆', '验证与安全', '界面', '数据与隐私'];
 
-function SettingsView({ activeCategory, onCategoryChange, onClose }: {
+function SettingsView({ activeCategory, onCategoryChange, onClose, providerConfigs, onProviderConfigsChange }: {
   activeCategory: string;
   onCategoryChange: (category: string) => void;
   onClose: () => void;
+  providerConfigs: ModelProviderConfig[];
+  onProviderConfigsChange: (configs: ModelProviderConfig[]) => void;
 }) {
   const { t } = useI18n();
   return (
@@ -409,16 +427,17 @@ function SettingsView({ activeCategory, onCategoryChange, onClose }: {
           ))}
         </nav>
         <div className="settings-content">
-          <SettingSection category={activeCategory} />
+          <SettingSection category={activeCategory} providerConfigs={providerConfigs} onProviderConfigsChange={onProviderConfigsChange} />
         </div>
       </div>
     </section>
   );
 }
 
-function SettingSection({ category }: { category: string }) {
+function SettingSection({ category, providerConfigs, onProviderConfigsChange }: { category: string; providerConfigs: ModelProviderConfig[]; onProviderConfigsChange: (configs: ModelProviderConfig[]) => void }) {
   const { language, setLanguage, t } = useI18n();
   const { mode, setMode } = useTheme();
+  if (category === '模型管理') return <ModelManagement providers={providerConfigs} onChange={onProviderConfigsChange} />;
   if (category === '工具') return <SettingsGroup title="工具" description="管理 Agent 可用工具及其调用策略。"><div className="capability-settings"><CapabilityItem title="Web Search" detail="搜索公开网页并生成候选来源" state="已启用" /><CapabilityItem title="Web Fetch" detail="自适应提取页面主要内容" state="已启用" /><CapabilityItem title="文件分析" detail="解析上传的文档、代码与数据" state="即将支持" enabled={false} /><CapabilityItem title="图像理解" detail="识别并分析图片内容" state="即将支持" enabled={false} /></div><SettingRow title="工具调用确认" description="工具可能修改数据、产生费用或影响外部系统时请求确认"><TranslatedSelect defaultValue="risk" options={[['risk', '仅高风险工具'], ['always', '每次调用'], ['never', '从不确认']]} /></SettingRow><SettingRow title="工具调用上限" description="限制单次任务可执行的工具调用总数"><TranslatedSelect defaultValue="10" options={['5', '10', '20']} /></SettingRow><SettingRow title="并行工具调用" description="并发执行相互独立且无副作用冲突的工具"><Toggle checked /></SettingRow><SettingRow title="工具失败重试" description="仅重试临时网络错误和明确标记为可恢复的工具错误"><TranslatedSelect defaultValue="2" options={[['0', '不重试'], ['1', '1'], ['2', '2'], ['3', '3']]} /></SettingRow></SettingsGroup>;
   if (category === '运行时') return <SettingsGroup title="运行时" description="管理 Agent 的执行环境、生命周期和任务级资源边界。"><div className="runtime-summary"><div><span>{t('执行环境')}</span><strong>{t('本地沙盒')}</strong></div><div><span>{t('任务状态')}</span><strong>{t('可恢复')}</strong></div><div><span>{t('网络')}</span><strong>{t('按需授权')}</strong></div></div><SettingRow title="沙盒模式" description="限定 Agent 可读取和修改的文件系统范围"><TranslatedSelect defaultValue="workspace" options={[['readonly', '只读'], ['workspace', '工作区可写'], ['container', '隔离容器']]} /></SettingRow><SettingRow title="网络策略" description="限制运行环境可访问的外部网络范围"><TranslatedSelect defaultValue="approval" options={[['off', '禁用'], ['approval', '公开网络，按需授权'], ['allowlist', '仅允许列表']]} /></SettingRow><SettingRow title="命令执行确认" description="命令可能修改环境或影响外部系统时请求确认"><TranslatedSelect defaultValue="risk" options={[['risk', '仅高风险命令'], ['always', '每次执行'], ['never', '从不确认']]} /></SettingRow><SettingRow title="最大 Agent 轮次" description="达到上限后停止循环并输出当前结果"><TranslatedSelect defaultValue="12" options={['6', '12', '20']} /></SettingRow><SettingRow title="单次运行时限" description="超时后停止任务并保留可恢复的运行状态"><TranslatedSelect defaultValue="30" options={[['10', `10 ${t('分钟')}`], ['30', `30 ${t('分钟')}`], ['60', `60 ${t('分钟')}`]]} /></SettingRow><SettingRow title="后台继续运行" description="离开当前对话后继续执行，并保留状态通知"><Toggle checked /></SettingRow><SettingRow title="保留运行工件" description="保存运行状态、验证报告和失败现场用于审计"><Toggle checked /></SettingRow></SettingsGroup>;
   if (category === '记忆') return <SettingsGroup title="记忆" description="管理 Agent 在单次任务和不同对话之间保留的信息。"><SettingRow title="运行记忆" description="在当前任务中保留来源摘要和决策线索"><Toggle checked /></SettingRow><SettingRow title="跨对话记忆" description="在新对话中使用已确认的偏好与事实"><Toggle /></SettingRow><SettingRow title="写入阈值" description="仅保存高于该置信度的结构化记忆"><TranslatedSelect defaultValue="80" options={[['70', '70%'], ['80', '80%'], ['90', '90%']]} /></SettingRow><SettingRow title="记忆保留期" description="到期后自动清理非固定记忆"><TranslatedSelect defaultValue="30" options={[['7', `7 ${t('天')}`], ['30', `30 ${t('天')}`], ['forever', '永久']]} /></SettingRow></SettingsGroup>;
@@ -426,6 +445,117 @@ function SettingSection({ category }: { category: string }) {
   if (category === '界面') return <SettingsGroup title="界面" description="调整工作区的信息密度和运行过程展示。"><SettingRow title="语言" description="选择界面显示语言"><select value={language} onChange={(event) => setLanguage(event.target.value as 'zh-CN' | 'en')}><option value="zh-CN">中文</option><option value="en">English</option></select></SettingRow><SettingRow title="主题模式" description="选择界面外观，或随操作系统自动切换"><select value={mode} onChange={(event) => setMode(event.target.value as 'system' | 'light' | 'dark')}><option value="system">{t('跟随系统')}</option><option value="light">{t('浅色模式')}</option><option value="dark">{t('暗色模式')}</option></select></SettingRow><SettingRow title="过程展示" description="在对话中显示工具调用和反思摘要"><Toggle checked /></SettingRow><SettingRow title="审计面板" description="任务完成后显示证据、事件和记忆"><Toggle checked /></SettingRow><SettingRow title="信息密度" description="控制对话和面板的间距"><TranslatedSelect defaultValue="compact" options={[['compact', '紧凑'], ['comfortable', '舒适']]} /></SettingRow></SettingsGroup>;
   if (category === '数据与隐私') return <SettingsGroup title="数据与隐私" description="控制任务记录、工具内容和诊断信息的保存方式。"><SettingRow title="保存运行记录" description="保留对话、工具调用元数据和验证报告"><Toggle checked /></SettingRow><SettingRow title="工具内容保留" description="决定是否保存工具返回的正文、文件内容或结构化结果"><TranslatedSelect defaultValue="metadata" options={[['none', '不保留内容'], ['metadata', '仅保留元数据'], ['full', '保留完整输出']]} /></SettingRow><SettingRow title="诊断日志" description="记录不包含工具内容的性能与错误信息"><Toggle checked /></SettingRow><button className="danger-button" type="button">{t('清除本地运行数据')}</button></SettingsGroup>;
   return null;
+}
+
+type ModelProviderId = 'openai' | 'anthropic' | 'google' | 'deepseek' | 'qwen' | 'siliconflow' | 'azure' | 'compatible';
+type ModelProviderConfig = {
+  id: ModelProviderId;
+  name: string;
+  enabled: boolean;
+  endpoint: string;
+  models: string;
+  organization: string;
+  apiKey: string;
+};
+
+const modelProviders: Array<{ id: ModelProviderId; name: string; detail: string; mark: string }> = [
+  { id: 'openai', name: 'OpenAI', detail: 'Responses API', mark: 'O' },
+  { id: 'anthropic', name: 'Anthropic', detail: 'Claude API', mark: 'A' },
+  { id: 'google', name: 'Google Gemini', detail: 'Generative Language API', mark: 'G' },
+  { id: 'deepseek', name: 'DeepSeek', detail: 'DeepSeek 开放平台', mark: 'D' },
+  { id: 'qwen', name: '通义千问', detail: '阿里云百炼', mark: 'Q' },
+  { id: 'siliconflow', name: 'SiliconFlow', detail: '硅基流动模型广场', mark: 'S' },
+  { id: 'azure', name: 'Azure OpenAI', detail: 'Azure AI Foundry', mark: 'Az' },
+  { id: 'compatible', name: 'OpenAI 兼容', detail: 'Ollama、vLLM、OpenRouter', mark: '↗' },
+];
+
+const providerDefaults: Record<ModelProviderId, { endpoint: string; models: string; organization: string }> = {
+  openai: { endpoint: 'https://api.openai.com/v1', models: 'gpt-5, gpt-5-mini', organization: '' },
+  anthropic: { endpoint: 'https://api.anthropic.com', models: 'claude-sonnet-4, claude-opus-4', organization: '' },
+  google: { endpoint: 'https://generativelanguage.googleapis.com', models: 'gemini-2.5-pro, gemini-2.5-flash', organization: '' },
+  deepseek: { endpoint: 'https://api.deepseek.com', models: 'deepseek-v4-pro, deepseek-v4-flash', organization: '' },
+  qwen: { endpoint: 'https://dashscope.aliyuncs.com/compatible-mode/v1', models: 'qwen3.7-plus, qwen-plus', organization: '' },
+  siliconflow: { endpoint: 'https://api.siliconflow.cn/v1', models: 'deepseek-ai/DeepSeek-V3, Qwen/Qwen2.5-72B-Instruct', organization: '' },
+  azure: { endpoint: '', models: '', organization: '2025-04-01-preview' },
+  compatible: { endpoint: 'http://127.0.0.1:11434/v1', models: '', organization: '' },
+};
+
+const initialProviderConfigs: ModelProviderConfig[] = modelProviders.map((provider) => ({
+  id: provider.id,
+  name: provider.name,
+  enabled: provider.id === 'openai',
+  ...providerDefaults[provider.id],
+  apiKey: '',
+}));
+
+function parseModelIds(models: string) {
+  return [...new Set(models.split(',').map((model) => model.trim()).filter(Boolean))];
+}
+
+function ModelManagement({ providers, onChange }: { providers: ModelProviderConfig[]; onChange: (providers: ModelProviderConfig[]) => void }) {
+  const { t } = useI18n();
+  const [selectedProvider, setSelectedProvider] = useState<ModelProviderId>('openai');
+  const [showKey, setShowKey] = useState(false);
+  const [connectionState, setConnectionState] = useState('未验证');
+  const provider = providers.find((item) => item.id === selectedProvider)!;
+  const providerMeta = modelProviders.find((item) => item.id === selectedProvider)!;
+
+  function selectProvider(id: ModelProviderId) {
+    setSelectedProvider(id);
+    setShowKey(false);
+    setConnectionState('未验证');
+  }
+
+  function updateProvider(patch: Partial<ModelProviderConfig>) {
+    onChange(providers.map((item) => item.id === selectedProvider ? { ...item, ...patch } : item));
+    setConnectionState('未验证');
+  }
+
+  function toggleProvider() {
+    updateProvider({ enabled: !provider.enabled });
+  }
+
+  return (
+    <SettingsGroup title="模型管理" description="配置模型供应商连接、凭据和 Agent 可选模型。">
+      <div className="provider-workspace">
+        <aside className="provider-list" aria-label={t('模型供应商')}>
+          <div className="provider-list-heading"><span>{t('供应商')}</span><button type="button" aria-label={t('添加供应商')} title={t('添加供应商')} onClick={() => selectProvider('compatible')}>+</button></div>
+          {modelProviders.map((item) => (
+            <button className={`provider-item ${item.id === selectedProvider ? 'active' : ''}`} type="button" key={item.id} onClick={() => selectProvider(item.id)}>
+              <span className={`provider-mark provider-${item.id}`}>{item.mark}</span>
+              <span><strong>{item.name}</strong><small>{t(item.detail)}</small></span>
+              <i className={providers.find((provider) => provider.id === item.id)?.enabled ? 'connected' : ''} />
+            </button>
+          ))}
+        </aside>
+
+        <section className="provider-editor">
+          <header className="provider-editor-header">
+            <div><span className={`provider-mark provider-${provider.id}`}>{providerMeta.mark}</span><div><h3>{provider.name}</h3><p>{t(providerMeta.detail)}</p></div></div>
+            <label className="provider-enabled"><span>{t('启用')}</span><Toggle checked={provider.enabled} onChange={toggleProvider} /></label>
+          </header>
+
+          <div className="provider-form">
+            <label><span>{t('API 地址')}</span><small>{t('供应商 API 的基础地址')}</small><input value={provider.endpoint} onChange={(event) => updateProvider({ endpoint: event.target.value })} spellCheck={false} /></label>
+            <label><span>{t('API Key')}</span><small>{t('凭据仅在当前页面内存中暂存，接入后端后应写入加密密钥存储')}</small><div className="secret-input"><input type={showKey ? 'text' : 'password'} value={provider.apiKey} onChange={(event) => updateProvider({ apiKey: event.target.value })} placeholder={selectedProvider === 'google' ? 'AIza...' : 'sk-...'} autoComplete="off" /><button type="button" onClick={() => setShowKey((visible) => !visible)}>{t(showKey ? '隐藏' : '显示')}</button></div></label>
+            <label><span>{t(selectedProvider === 'azure' ? 'API 版本' : '组织或项目 ID')}</span><small>{t(selectedProvider === 'azure' ? 'Azure OpenAI 请求使用的 API 版本' : '可选，用于供应商侧的项目隔离与计费')}</small><input value={provider.organization} onChange={(event) => updateProvider({ organization: event.target.value })} placeholder={selectedProvider === 'azure' ? '2025-04-01-preview' : t('可选')} /></label>
+            <label><span>{t('可用模型 ID')}</span><small>{t('使用逗号分隔，模型选择器将使用这些标识')}</small><textarea value={provider.models} onChange={(event) => updateProvider({ models: event.target.value })} placeholder="model-id-1, model-id-2" /></label>
+          </div>
+
+          <div className="provider-advanced">
+            <div><strong>{t('请求兼容性')}</strong><small>{t(selectedProvider === 'anthropic' ? 'Anthropic Messages API' : selectedProvider === 'google' ? 'Google generateContent API' : 'OpenAI Responses / Chat Completions')}</small></div>
+            <TranslatedSelect defaultValue="auto" options={[['auto', '自动检测'], ['responses', 'Responses API'], ['chat', 'Chat Completions']]} />
+          </div>
+
+          <footer className="provider-actions">
+            <span className={`connection-state ${connectionState === '连接正常' ? 'success' : ''}`}><i />{t(connectionState)}</span>
+            <button className="secondary-button" type="button" onClick={() => setConnectionState(provider.endpoint && (provider.apiKey || selectedProvider === 'compatible') ? '连接正常' : '缺少连接信息')}>{t('测试连接')}</button>
+            <button className="primary-button" type="button" onClick={() => setConnectionState('配置已更新')}>{t('保存配置')}</button>
+          </footer>
+        </section>
+      </div>
+    </SettingsGroup>
+  );
 }
 
 function TranslatedSelect({ defaultValue, options }: { defaultValue: string; options: Array<string | [string, string]> }) {
@@ -465,9 +595,10 @@ function BypassConfirmation({ onCancel, onConfirm }: { onCancel: () => void; onC
   return <div className="modal-backdrop" role="presentation" onMouseDown={onCancel}><section className="confirmation-modal" role="alertdialog" aria-modal="true" aria-labelledby="bypass-title" onMouseDown={(event) => event.stopPropagation()}><div className="warning-mark">!</div><h2 id="bypass-title">{t('启用全自动模式？')}</h2><p>{t('全自动模式将允许 Agent 自动执行所有命令和工具，包括可能修改文件、访问网络或影响外部系统的高风险操作。')}</p><div className="confirmation-note"><strong>{t('仅在你信任当前任务和运行环境时启用。')}</strong></div><div className="confirmation-actions"><button className="secondary-button" type="button" onClick={onCancel}>{t('取消')}</button><button className="danger-confirm-button" type="button" onClick={onConfirm}>{t('确认启用全自动')}</button></div></section></div>;
 }
 
-function ModelMenu({ selectedModel, onModelChange, reasoningEffort, onReasoningEffortChange, planningStrategy, onPlanningStrategyChange, reflectionEnabled, onReflectionChange, reflectionTrigger, onReflectionTriggerChange }: {
-  selectedModel: string;
-  onModelChange: (model: string) => void;
+function ModelMenu({ selectedModelKey, onModelChange, modelOptions, reasoningEffort, onReasoningEffortChange, planningStrategy, onPlanningStrategyChange, reflectionEnabled, onReflectionChange, reflectionTrigger, onReflectionTriggerChange }: {
+  selectedModelKey: string;
+  onModelChange: (modelKey: string) => void;
+  modelOptions: Array<{ key: string; model: string; providerId: ModelProviderId; providerName: string }>;
   reasoningEffort: string;
   onReasoningEffortChange: (effort: string) => void;
   planningStrategy: string;
@@ -478,7 +609,13 @@ function ModelMenu({ selectedModel, onModelChange, reasoningEffort, onReasoningE
   onReflectionTriggerChange: (trigger: string) => void;
 }) {
   const { t } = useI18n();
-  return <div className="floating-menu model-menu"><div className="menu-heading">{t('模型')}</div>{[['Astra Pro', '复杂研究与多步任务'], ['Astra Flash', '快速问答与轻量搜索'], ['GPT-5', '通用推理模型']].map(([model, detail]) => <button className={`model-option ${selectedModel === model ? 'selected' : ''}`} type="button" key={model} onClick={() => onModelChange(model)}><div><strong>{model}</strong><small>{t(detail)}</small></div><span>{selectedModel === model ? '✓' : ''}</span></button>)}<div className="menu-divider" /><div className="menu-heading">{t('对话策略')}</div><MenuChoice label="推理强度" value={reasoningEffort} options={['快速', '均衡', '深入']} onChange={onReasoningEffortChange} /><MenuChoice label="规划策略" value={planningStrategy} options={['直接', '自适应', '先规划']} onChange={onPlanningStrategyChange} /><div className="menu-toggle"><div><strong>{t('反思循环')}</strong><small>{t('检查结果并修订下一步策略')}</small></div><Toggle checked={reflectionEnabled} onChange={onReflectionChange} /></div>{reflectionEnabled && <MenuChoice label="触发方式" value={reflectionTrigger} options={['失败时', '按需', '每轮']} onChange={onReflectionTriggerChange} />}</div>;
+  const groups = modelOptions.reduce<Array<{ providerId: ModelProviderId; providerName: string; models: Array<{ key: string; model: string }> }>>((result, option) => {
+    const group = result.find((item) => item.providerId === option.providerId);
+    if (group) group.models.push({ key: option.key, model: option.model });
+    else result.push({ providerId: option.providerId, providerName: option.providerName, models: [{ key: option.key, model: option.model }] });
+    return result;
+  }, []);
+  return <div className="floating-menu model-menu"><div className="menu-heading">{t('模型')}</div>{groups.length ? groups.map((group) => <div className="model-provider-group" key={group.providerId}><div className="model-provider-heading"><span className={`provider-mark provider-${group.providerId}`}>{modelProviders.find((provider) => provider.id === group.providerId)?.mark}</span><span>{group.providerName}</span></div>{group.models.map((item) => <button className={`model-option ${selectedModelKey === item.key ? 'selected' : ''}`} type="button" key={item.key} onClick={() => onModelChange(item.key)}><div><strong>{item.model}</strong><small>{group.providerName}</small></div><span>{selectedModelKey === item.key ? '✓' : ''}</span></button>)}</div>) : <div className="model-menu-empty">{t('请先在模型管理中启用供应商并配置模型')}</div>}<div className="menu-divider" /><div className="menu-heading">{t('对话策略')}</div><MenuChoice label="推理强度" value={reasoningEffort} options={['快速', '均衡', '深入']} onChange={onReasoningEffortChange} /><MenuChoice label="规划策略" value={planningStrategy} options={['直接', '自适应', '先规划']} onChange={onPlanningStrategyChange} /><div className="menu-toggle"><div><strong>{t('反思循环')}</strong><small>{t('检查结果并修订下一步策略')}</small></div><Toggle checked={reflectionEnabled} onChange={onReflectionChange} /></div>{reflectionEnabled && <MenuChoice label="触发方式" value={reflectionTrigger} options={['失败时', '按需', '每轮']} onChange={onReflectionTriggerChange} />}</div>;
 }
 
 function MenuChoice({ label, value, options, onChange }: { label: string; value: string; options: string[]; onChange: (value: string) => void }) {

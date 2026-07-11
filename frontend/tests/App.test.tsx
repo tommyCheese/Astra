@@ -228,6 +228,39 @@ describe('App', () => {
     expect(screen.getByText('工具失败重试')).toBeInTheDocument();
   });
 
+  it('manages model providers and keeps API credentials masked by default', async () => {
+    render(<App />);
+    await userEvent.click(screen.getByRole('button', { name: /设置/ }));
+    await userEvent.click(screen.getByRole('button', { name: '模型管理' }));
+
+    expect(screen.getByRole('heading', { name: '模型管理' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Anthropic/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /DeepSeek/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /通义千问/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /SiliconFlow/ })).toBeInTheDocument();
+    const keyInput = screen.getByPlaceholderText('sk-...');
+    expect(keyInput).toHaveAttribute('type', 'password');
+
+    await userEvent.type(keyInput, 'secret-key');
+    await userEvent.click(screen.getByRole('button', { name: '显示' }));
+    expect(keyInput).toHaveAttribute('type', 'text');
+    await userEvent.click(screen.getByRole('button', { name: '测试连接' }));
+    expect(screen.getByText('连接正常')).toBeInTheDocument();
+  });
+
+  it('syncs enabled provider models into the chat model selector', async () => {
+    render(<App />);
+    await userEvent.click(screen.getByRole('button', { name: /设置/ }));
+    await userEvent.click(screen.getByRole('button', { name: '模型管理' }));
+    await userEvent.click(screen.getByRole('button', { name: /DeepSeek/ }));
+    await userEvent.click(screen.getByRole('switch'));
+    await userEvent.click(screen.getByRole('button', { name: '关闭设置' }));
+    await userEvent.click(screen.getByRole('button', { name: /当前模型/ }));
+
+    expect(screen.getByRole('button', { name: /deepseek-v4-pro/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /deepseek-v4-flash/ })).toBeInTheDocument();
+  });
+
   it('shows sandbox and execution policies in runtime settings', async () => {
     render(<App />);
 
@@ -290,7 +323,7 @@ describe('App', () => {
   it('keeps conversation reasoning controls in the model menu', async () => {
     render(<App />);
 
-    await userEvent.click(screen.getByRole('button', { name: '当前模型：Astra Pro' }));
+    await userEvent.click(screen.getByRole('button', { name: '当前模型：gpt-5' }));
 
     expect(screen.getByText('规划策略')).toBeInTheDocument();
     expect(screen.getByText('触发方式')).toBeInTheDocument();
@@ -336,7 +369,7 @@ describe('App', () => {
   it('hides reflection trigger choices when reflection is disabled', async () => {
     render(<App />);
 
-    await userEvent.click(screen.getByRole('button', { name: '当前模型：Astra Pro' }));
+    await userEvent.click(screen.getByRole('button', { name: '当前模型：gpt-5' }));
     expect(screen.getByText('触发方式')).toBeInTheDocument();
     await userEvent.click(screen.getByRole('switch'));
     expect(screen.queryByText('触发方式')).not.toBeInTheDocument();
@@ -350,9 +383,9 @@ describe('App', () => {
     expect(screen.getByText('Token 用量')).toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: '关闭用量统计' }));
 
-    await userEvent.click(screen.getByRole('button', { name: '当前模型：Astra Pro' }));
-    await userEvent.click(screen.getByRole('button', { name: /Astra Flash/ }));
-    expect(screen.getByRole('button', { name: '当前模型：Astra Flash' })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: '当前模型：gpt-5' }));
+    await userEvent.click(screen.getByRole('button', { name: /gpt-5-mini/ }));
+    expect(screen.getByRole('button', { name: '当前模型：gpt-5-mini' })).toBeInTheDocument();
   });
 
   it('closes composer menus when clicking outside or pressing escape', async () => {
@@ -363,7 +396,7 @@ describe('App', () => {
     await userEvent.click(document.body);
     expect(screen.queryByText('上传文件')).not.toBeInTheDocument();
 
-    await userEvent.click(screen.getByRole('button', { name: '当前模型：Astra Pro' }));
+    await userEvent.click(screen.getByRole('button', { name: '当前模型：gpt-5' }));
     expect(screen.getByText('对话策略')).toBeInTheDocument();
     await userEvent.keyboard('{Escape}');
     expect(screen.queryByText('对话策略')).not.toBeInTheDocument();
