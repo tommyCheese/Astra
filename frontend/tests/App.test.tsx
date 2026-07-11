@@ -145,6 +145,7 @@ Object.defineProperty(window, 'EventSource', {
 describe('App', () => {
   afterEach(() => {
     cleanup();
+    globalThis.localStorage?.clear();
   });
 
   it('submits a goal and renders the result', async () => {
@@ -197,6 +198,19 @@ describe('App', () => {
     expect(screen.queryByText('并行工具调用')).not.toBeInTheDocument();
     expect(screen.queryByText('工具失败重试')).not.toBeInTheDocument();
     expect(screen.getByText('保留运行工件')).toBeInTheDocument();
+  });
+
+  it('switches the interface between Chinese and English', async () => {
+    render(<App />);
+
+    await userEvent.click(screen.getByRole('button', { name: /设置/ }));
+    await userEvent.click(screen.getByRole('button', { name: '界面' }));
+    await userEvent.selectOptions(screen.getByDisplayValue('中文'), 'en');
+
+    expect(screen.getByRole('heading', { name: 'Settings' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Tools' })).toBeInTheDocument();
+    expect(screen.getByText('Choose the interface language')).toBeInTheDocument();
+    expect(document.documentElement.lang).toBe('en');
   });
 
   it('keeps conversation reasoning controls in the model menu', async () => {
