@@ -568,7 +568,9 @@ h1 {
 }
 
 .model-menu {
-  min-width: 276px;
+  max-height: min(620px, calc(100vh - 120px));
+  min-width: 360px;
+  overflow-y: auto;
   right: 0;
 }
 
@@ -590,6 +592,48 @@ h1 {
   display: flex;
   justify-content: space-between;
   padding: 8px 10px;
+}
+
+.menu-choice {
+  padding: 7px 10px;
+}
+
+.menu-choice > span {
+  color: #52606d;
+  display: block;
+  font-size: 11px;
+  font-weight: 700;
+  margin-bottom: 6px;
+}
+
+.segmented-control {
+  background: #edf1f5;
+  border-radius: 8px;
+  display: grid;
+  gap: 2px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  padding: 2px;
+}
+
+.floating-menu .segmented-control button {
+  background: transparent;
+  border-radius: 6px;
+  display: block;
+  font-size: 11px;
+  min-height: 30px;
+  padding: 5px 4px;
+  text-align: center;
+}
+
+.floating-menu .segmented-control button:hover {
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.floating-menu .segmented-control button.active {
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.12);
+  color: #176a52;
+  font-weight: 700;
 }
 
 textarea {
@@ -1090,6 +1134,7 @@ code {
 
   .model-menu {
     left: 0;
+    min-width: min(360px, calc(100vw - 40px));
     right: auto;
   }
 

@@ -16,7 +16,10 @@ export function App() {
   const [attachOpen, setAttachOpen] = useState(false);
   const [selectedModel, setSelectedModel] = useState('Astra Pro');
   const [reflectionEnabled, setReflectionEnabled] = useState(true);
-  const [settingsCategory, setSettingsCategory] = useState('模型与推理');
+  const [reasoningEffort, setReasoningEffort] = useState('均衡');
+  const [planningStrategy, setPlanningStrategy] = useState('自适应');
+  const [reflectionTrigger, setReflectionTrigger] = useState('按需');
+  const [settingsCategory, setSettingsCategory] = useState('工具');
   const attachMenuRef = useRef<HTMLDivElement>(null);
   const modelMenuRef = useRef<HTMLDivElement>(null);
 
@@ -140,10 +143,6 @@ export function App() {
           <SettingsView
             activeCategory={settingsCategory}
             onCategoryChange={setSettingsCategory}
-            selectedModel={selectedModel}
-            onModelChange={setSelectedModel}
-            reflectionEnabled={reflectionEnabled}
-            onReflectionChange={setReflectionEnabled}
             onClose={() => setView('chat')}
           />
         ) : <>
@@ -200,18 +199,24 @@ export function App() {
               placeholder="输入任务 / 继续追问..."
             />
             <div className="model-menu-wrap" ref={modelMenuRef}>
-              <button className="model-selector" type="button" onClick={() => {
+              <button className="model-selector" type="button" aria-label={`当前模型：${selectedModel}`} onClick={() => {
                 setModelOpen((open) => !open);
                 setAttachOpen(false);
               }}>
-                <span>{selectedModel}</span><small>{reflectionEnabled ? '反思开启' : '快速模式'}</small><b>⌄</b>
+                <span>{selectedModel}</span><small>{reasoningEffort} · {reflectionEnabled ? `${reflectionTrigger}反思` : '反思关闭'}</small><b>⌄</b>
               </button>
               {modelOpen && (
                 <ModelMenu
                   selectedModel={selectedModel}
-                  onModelChange={(model) => { setSelectedModel(model); setModelOpen(false); }}
+                  onModelChange={setSelectedModel}
+                  reasoningEffort={reasoningEffort}
+                  onReasoningEffortChange={setReasoningEffort}
+                  planningStrategy={planningStrategy}
+                  onPlanningStrategyChange={setPlanningStrategy}
                   reflectionEnabled={reflectionEnabled}
                   onReflectionChange={setReflectionEnabled}
+                  reflectionTrigger={reflectionTrigger}
+                  onReflectionTriggerChange={setReflectionTrigger}
                 />
               )}
             </div>
@@ -284,15 +289,11 @@ function CapabilityItem({ title, detail, state, enabled = true }: { title: strin
   );
 }
 
-const settingCategories = ['模型与推理', '工具', '运行时', '记忆', '验证与安全', '界面', '数据与隐私'];
+const settingCategories = ['工具', '运行时', '记忆', '验证与安全', '界面', '数据与隐私'];
 
-function SettingsView({ activeCategory, onCategoryChange, selectedModel, onModelChange, reflectionEnabled, onReflectionChange, onClose }: {
+function SettingsView({ activeCategory, onCategoryChange, onClose }: {
   activeCategory: string;
   onCategoryChange: (category: string) => void;
-  selectedModel: string;
-  onModelChange: (model: string) => void;
-  reflectionEnabled: boolean;
-  onReflectionChange: (enabled: boolean) => void;
   onClose: () => void;
 }) {
   return (
@@ -308,27 +309,21 @@ function SettingsView({ activeCategory, onCategoryChange, selectedModel, onModel
           ))}
         </nav>
         <div className="settings-content">
-          <SettingSection category={activeCategory} selectedModel={selectedModel} onModelChange={onModelChange} reflectionEnabled={reflectionEnabled} onReflectionChange={onReflectionChange} />
+          <SettingSection category={activeCategory} />
         </div>
       </div>
     </section>
   );
 }
 
-function SettingSection({ category, selectedModel, onModelChange, reflectionEnabled, onReflectionChange }: {
-  category: string;
-  selectedModel: string;
-  onModelChange: (model: string) => void;
-  reflectionEnabled: boolean;
-  onReflectionChange: (enabled: boolean) => void;
-}) {
+function SettingSection({ category }: { category: string }) {
   if (category === '工具') return <SettingsGroup title="工具" description="管理 Agent 可用工具及其调用策略。"><div className="capability-settings"><CapabilityItem title="Web Search" detail="搜索公开网页并生成候选来源" state="已启用" /><CapabilityItem title="Web Fetch" detail="自适应提取页面主要内容" state="已启用" /><CapabilityItem title="文件分析" detail="解析上传的文档、代码与数据" state="即将支持" enabled={false} /><CapabilityItem title="图像理解" detail="识别并分析图片内容" state="即将支持" enabled={false} /></div><SettingRow title="工具调用确认" description="工具可能修改数据、产生费用或影响外部系统时请求确认"><select defaultValue="risk"><option value="risk">仅高风险工具</option><option value="always">每次调用</option><option value="never">从不确认</option></select></SettingRow><SettingRow title="工具调用上限" description="限制单次任务可执行的工具调用总数"><select defaultValue="10"><option>5</option><option>10</option><option>20</option></select></SettingRow><SettingRow title="并行工具调用" description="并发执行相互独立且无副作用冲突的工具"><Toggle checked /></SettingRow><SettingRow title="工具失败重试" description="仅重试临时网络错误和明确标记为可恢复的工具错误"><select defaultValue="2"><option value="0">不重试</option><option value="1">1 次</option><option value="2">2 次</option><option value="3">3 次</option></select></SettingRow></SettingsGroup>;
   if (category === '运行时') return <SettingsGroup title="运行时" description="管理 Agent 的执行环境、生命周期和任务级资源边界。"><div className="runtime-summary"><div><span>执行环境</span><strong>本地沙盒</strong></div><div><span>任务状态</span><strong>可恢复</strong></div><div><span>网络</span><strong>按需授权</strong></div></div><SettingRow title="沙盒模式" description="限定 Agent 可读取和修改的文件系统范围"><select defaultValue="workspace"><option value="readonly">只读</option><option value="workspace">工作区可写</option><option value="container">隔离容器</option></select></SettingRow><SettingRow title="网络策略" description="限制运行环境可访问的外部网络范围"><select defaultValue="approval"><option value="off">禁用</option><option value="approval">公开网络，按需授权</option><option value="allowlist">仅允许列表</option></select></SettingRow><SettingRow title="命令执行确认" description="命令可能修改环境或影响外部系统时请求确认"><select defaultValue="risk"><option value="risk">仅高风险命令</option><option value="always">每次执行</option><option value="never">从不确认</option></select></SettingRow><SettingRow title="最大 Agent 轮次" description="达到上限后停止循环并输出当前结果"><select defaultValue="12"><option>6</option><option>12</option><option>20</option></select></SettingRow><SettingRow title="单次运行时限" description="超时后停止任务并保留可恢复的运行状态"><select defaultValue="30"><option value="10">10 分钟</option><option value="30">30 分钟</option><option value="60">60 分钟</option></select></SettingRow><SettingRow title="后台继续运行" description="离开当前对话后继续执行，并保留状态通知"><Toggle checked /></SettingRow><SettingRow title="保留运行工件" description="保存运行状态、验证报告和失败现场用于审计"><Toggle checked /></SettingRow></SettingsGroup>;
   if (category === '记忆') return <SettingsGroup title="记忆" description="管理 Agent 在单次任务和不同对话之间保留的信息。"><SettingRow title="运行记忆" description="在当前任务中保留来源摘要和决策线索"><Toggle checked /></SettingRow><SettingRow title="跨对话记忆" description="在新对话中使用已确认的偏好与事实"><Toggle /></SettingRow><SettingRow title="写入阈值" description="仅保存高于该置信度的结构化记忆"><select defaultValue="80"><option value="70">70%</option><option value="80">80%</option><option value="90">90%</option></select></SettingRow><SettingRow title="记忆保留期" description="到期后自动清理非固定记忆"><select defaultValue="30"><option value="7">7 天</option><option value="30">30 天</option><option value="forever">永久</option></select></SettingRow></SettingsGroup>;
   if (category === '验证与安全') return <SettingsGroup title="验证与安全" description="定义最终答案必须满足的证据和质量标准。"><SettingRow title="回答前验证" description="生成最终答案前检查证据覆盖、来源冲突和失败项"><Toggle checked /></SettingRow><SettingRow title="最低独立来源数" description="总结类任务至少需要多少个相互独立的来源"><select defaultValue="2"><option>1</option><option>2</option><option>3</option></select></SettingRow><SettingRow title="来源质量阈值" description="低于阈值的来源会被标记，并降低其证据权重"><select defaultValue="70"><option value="50">50%</option><option value="70">70%</option><option value="85">85%</option></select></SettingRow><SettingRow title="冲突处理" description="来源结论不一致时保留分歧，不强行合并为单一答案"><select defaultValue="disclose"><option value="disclose">披露冲突</option><option value="retry">继续查证</option><option value="block">阻止回答</option></select></SettingRow></SettingsGroup>;
   if (category === '界面') return <SettingsGroup title="界面" description="调整工作区的信息密度和运行过程展示。"><SettingRow title="过程展示" description="在对话中显示工具调用和反思摘要"><Toggle checked /></SettingRow><SettingRow title="审计面板" description="任务完成后显示证据、事件和记忆"><Toggle checked /></SettingRow><SettingRow title="信息密度" description="控制对话和面板的间距"><select defaultValue="compact"><option value="compact">紧凑</option><option value="comfortable">舒适</option></select></SettingRow></SettingsGroup>;
   if (category === '数据与隐私') return <SettingsGroup title="数据与隐私" description="控制运行数据、抓取内容和诊断信息的保存方式。"><SettingRow title="保存运行记录" description="保留对话、工具调用和验证报告"><Toggle checked /></SettingRow><SettingRow title="保存抓取正文" description="将网页正文写入本地工件存储"><Toggle /></SettingRow><SettingRow title="诊断日志" description="记录不包含正文的性能与错误信息"><Toggle checked /></SettingRow><button className="danger-button" type="button">清除本地运行数据</button></SettingsGroup>;
-  return <SettingsGroup title="模型与推理" description="决定 Agent 使用什么模型，以及如何规划、推理和反思。"><SettingRow title="默认模型" description="新对话默认使用的基础模型"><select value={selectedModel} onChange={(event) => onModelChange(event.target.value)}><option>Astra Pro</option><option>Astra Flash</option><option>GPT-5</option></select></SettingRow><SettingRow title="推理强度" description="控制模型在速度、Token 消耗和复杂任务质量之间的取舍"><select defaultValue="balanced"><option value="fast">快速</option><option value="balanced">均衡</option><option value="deep">深入</option></select></SettingRow><SettingRow title="规划策略" description="决定 Agent 在行动前生成完整计划，还是根据观察动态推进"><select defaultValue="adaptive"><option value="adaptive">自适应</option><option value="plan-first">先规划后执行</option><option value="direct">直接行动</option></select></SettingRow><SettingRow title="反思循环" description="分析工具结果和失败原因，必要时修订下一步策略"><Toggle checked={reflectionEnabled} onChange={onReflectionChange} /></SettingRow><SettingRow title="反思触发方式" description="选择每轮检查，或仅在失败和证据不足时反思"><select defaultValue="adaptive"><option value="adaptive">按需触发</option><option value="always">每轮触发</option><option value="failure">仅失败时</option></select></SettingRow></SettingsGroup>;
+  return null;
 }
 
 function SettingsGroup({ title, description, children }: { title: string; description: string; children: React.ReactNode }) {
@@ -345,8 +340,23 @@ function Toggle({ checked = false, onChange }: { checked?: boolean; onChange?: (
   return <button className={`toggle ${value ? 'on' : ''}`} type="button" role="switch" aria-checked={value} onClick={() => onChange ? onChange(!value) : setLocalChecked(!value)}><span /></button>;
 }
 
-function ModelMenu({ selectedModel, onModelChange, reflectionEnabled, onReflectionChange }: { selectedModel: string; onModelChange: (model: string) => void; reflectionEnabled: boolean; onReflectionChange: (enabled: boolean) => void }) {
-  return <div className="floating-menu model-menu"><div className="menu-heading">选择模型</div>{[['Astra Pro', '复杂研究与多步任务'], ['Astra Flash', '快速问答与轻量搜索'], ['GPT-5', '通用推理模型']].map(([model, detail]) => <button className={selectedModel === model ? 'selected' : ''} type="button" key={model} onClick={() => onModelChange(model)}><div><strong>{model}</strong><small>{detail}</small></div><span>{selectedModel === model ? '✓' : ''}</span></button>)}<div className="menu-divider" /><div className="menu-toggle"><div><strong>反思模式</strong><small>执行后自检并调整策略</small></div><Toggle checked={reflectionEnabled} onChange={onReflectionChange} /></div></div>;
+function ModelMenu({ selectedModel, onModelChange, reasoningEffort, onReasoningEffortChange, planningStrategy, onPlanningStrategyChange, reflectionEnabled, onReflectionChange, reflectionTrigger, onReflectionTriggerChange }: {
+  selectedModel: string;
+  onModelChange: (model: string) => void;
+  reasoningEffort: string;
+  onReasoningEffortChange: (effort: string) => void;
+  planningStrategy: string;
+  onPlanningStrategyChange: (strategy: string) => void;
+  reflectionEnabled: boolean;
+  onReflectionChange: (enabled: boolean) => void;
+  reflectionTrigger: string;
+  onReflectionTriggerChange: (trigger: string) => void;
+}) {
+  return <div className="floating-menu model-menu"><div className="menu-heading">模型</div>{[['Astra Pro', '复杂研究与多步任务'], ['Astra Flash', '快速问答与轻量搜索'], ['GPT-5', '通用推理模型']].map(([model, detail]) => <button className={`model-option ${selectedModel === model ? 'selected' : ''}`} type="button" key={model} onClick={() => onModelChange(model)}><div><strong>{model}</strong><small>{detail}</small></div><span>{selectedModel === model ? '✓' : ''}</span></button>)}<div className="menu-divider" /><div className="menu-heading">对话策略</div><MenuChoice label="推理强度" value={reasoningEffort} options={['快速', '均衡', '深入']} onChange={onReasoningEffortChange} /><MenuChoice label="规划策略" value={planningStrategy} options={['直接', '自适应', '先规划']} onChange={onPlanningStrategyChange} /><div className="menu-toggle"><div><strong>反思循环</strong><small>检查结果并修订下一步策略</small></div><Toggle checked={reflectionEnabled} onChange={onReflectionChange} /></div>{reflectionEnabled && <MenuChoice label="触发方式" value={reflectionTrigger} options={['失败时', '按需', '每轮']} onChange={onReflectionTriggerChange} />}</div>;
+}
+
+function MenuChoice({ label, value, options, onChange }: { label: string; value: string; options: string[]; onChange: (value: string) => void }) {
+  return <div className="menu-choice"><span>{label}</span><div className="segmented-control">{options.map((option) => <button className={value === option ? 'active' : ''} type="button" key={option} onClick={() => onChange(option)}>{option}</button>)}</div></div>;
 }
 
 function UsageModal({ run, onClose }: { run: RunView | null; onClose: () => void }) {

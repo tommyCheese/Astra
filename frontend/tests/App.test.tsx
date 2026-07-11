@@ -199,15 +199,25 @@ describe('App', () => {
     expect(screen.getByText('保留运行工件')).toBeInTheDocument();
   });
 
-  it('keeps reasoning strategy separate from runtime budgets', async () => {
+  it('keeps conversation reasoning controls in the model menu', async () => {
     render(<App />);
 
-    await userEvent.click(screen.getByRole('button', { name: /设置/ }));
+    await userEvent.click(screen.getByRole('button', { name: '当前模型：Astra Pro' }));
 
     expect(screen.getByText('规划策略')).toBeInTheDocument();
-    expect(screen.getByText('反思触发方式')).toBeInTheDocument();
+    expect(screen.getByText('触发方式')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '深入' })).toBeInTheDocument();
     expect(screen.queryByText('最大 Agent 轮次')).not.toBeInTheDocument();
     expect(screen.queryByText('工具调用上限')).not.toBeInTheDocument();
+  });
+
+  it('hides reflection trigger choices when reflection is disabled', async () => {
+    render(<App />);
+
+    await userEvent.click(screen.getByRole('button', { name: '当前模型：Astra Pro' }));
+    expect(screen.getByText('触发方式')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('switch'));
+    expect(screen.queryByText('触发方式')).not.toBeInTheDocument();
   });
 
   it('opens usage statistics and changes the active model', async () => {
@@ -218,9 +228,9 @@ describe('App', () => {
     expect(screen.getByText('Token 用量')).toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: '关闭用量统计' }));
 
-    await userEvent.click(screen.getByRole('button', { name: /Astra Pro/ }));
+    await userEvent.click(screen.getByRole('button', { name: '当前模型：Astra Pro' }));
     await userEvent.click(screen.getByRole('button', { name: /Astra Flash/ }));
-    expect(screen.getByRole('button', { name: /Astra Flash/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '当前模型：Astra Flash' })).toBeInTheDocument();
   });
 
   it('closes composer menus when clicking outside or pressing escape', async () => {
@@ -231,9 +241,9 @@ describe('App', () => {
     await userEvent.click(document.body);
     expect(screen.queryByText('上传文件')).not.toBeInTheDocument();
 
-    await userEvent.click(screen.getByRole('button', { name: /Astra Pro/ }));
-    expect(screen.getByText('选择模型')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: '当前模型：Astra Pro' }));
+    expect(screen.getByText('对话策略')).toBeInTheDocument();
     await userEvent.keyboard('{Escape}');
-    expect(screen.queryByText('选择模型')).not.toBeInTheDocument();
+    expect(screen.queryByText('对话策略')).not.toBeInTheDocument();
   });
 });
