@@ -21,6 +21,9 @@ function AppContent() {
   const [usageOpen, setUsageOpen] = useState(false);
   const [modelOpen, setModelOpen] = useState(false);
   const [attachOpen, setAttachOpen] = useState(false);
+  const [executionMenuOpen, setExecutionMenuOpen] = useState(false);
+  const [executionMode, setExecutionMode] = useState<'plan' | 'default' | 'bypass'>('default');
+  const [bypassConfirmOpen, setBypassConfirmOpen] = useState(false);
   const [selectedModel, setSelectedModel] = useState('Astra Pro');
   const [reflectionEnabled, setReflectionEnabled] = useState(true);
   const [reasoningEffort, setReasoningEffort] = useState('均衡');
@@ -28,10 +31,11 @@ function AppContent() {
   const [reflectionTrigger, setReflectionTrigger] = useState('按需');
   const [settingsCategory, setSettingsCategory] = useState('工具');
   const attachMenuRef = useRef<HTMLDivElement>(null);
+  const executionMenuRef = useRef<HTMLDivElement>(null);
   const modelMenuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    if (!attachOpen && !modelOpen) {
+    if (!attachOpen && !modelOpen && !executionMenuOpen) {
       return;
     }
 
@@ -43,12 +47,16 @@ function AppContent() {
       if (!modelMenuRef.current?.contains(target)) {
         setModelOpen(false);
       }
+      if (!executionMenuRef.current?.contains(target)) {
+        setExecutionMenuOpen(false);
+      }
     }
 
     function closeOnEscape(event: KeyboardEvent) {
       if (event.key === 'Escape') {
         setAttachOpen(false);
         setModelOpen(false);
+        setExecutionMenuOpen(false);
       }
     }
 
@@ -58,7 +66,7 @@ function AppContent() {
       document.removeEventListener('pointerdown', closeOnOutsideInteraction);
       document.removeEventListener('keydown', closeOnEscape);
     };
-  }, [attachOpen, modelOpen]);
+  }, [attachOpen, modelOpen, executionMenuOpen]);
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -190,6 +198,7 @@ function AppContent() {
                 onClick={() => {
                   setAttachOpen((open) => !open);
                   setModelOpen(false);
+                  setExecutionMenuOpen(false);
                 }}
               >+</button>
               {attachOpen && (
@@ -200,6 +209,22 @@ function AppContent() {
                 </div>
               )}
             </div>
+            <div className="execution-menu-wrap" ref={executionMenuRef}>
+              <button className={`execution-mode-button mode-${executionMode}`} type="button" onClick={() => {
+                setExecutionMenuOpen((open) => !open);
+                setAttachOpen(false);
+                setModelOpen(false);
+              }}>
+                <span>{executionMode === 'plan' ? 'Plan' : executionMode === 'bypass' ? 'ByPass' : t('默认')}</span><b>⌄</b>
+              </button>
+              {executionMenuOpen && <ExecutionModeMenu value={executionMode} onChange={(mode) => {
+                if (mode === 'bypass') setBypassConfirmOpen(true);
+                else {
+                  setExecutionMode(mode);
+                  setExecutionMenuOpen(false);
+                }
+              }} />}
+            </div>
             <textarea
               value={goal}
               onChange={(event) => setGoal(event.target.value)}
@@ -209,6 +234,7 @@ function AppContent() {
               <button className="model-selector" type="button" aria-label={`${t('当前模型')}${language === 'zh-CN' ? '：' : ': '}${selectedModel}`} onClick={() => {
                 setModelOpen((open) => !open);
                 setAttachOpen(false);
+                setExecutionMenuOpen(false);
               }}>
                 <span>{selectedModel}</span><small>{t(reasoningEffort)} · {reflectionEnabled ? `${t(reflectionTrigger)} ${t('反思')}` : t('反思关闭')}</small><b>⌄</b>
               </button>
@@ -236,6 +262,11 @@ function AppContent() {
         </>}
       </section>
       {usageOpen && <UsageModal run={run} onClose={() => setUsageOpen(false)} />}
+      {bypassConfirmOpen && <BypassConfirmation onCancel={() => setBypassConfirmOpen(false)} onConfirm={() => {
+        setExecutionMode('bypass');
+        setExecutionMenuOpen(false);
+        setBypassConfirmOpen(false);
+      }} />}
     </main>
   );
 }
@@ -332,9 +363,9 @@ function SettingSection({ category }: { category: string }) {
   if (category === '工具') return <SettingsGroup title="工具" description="管理 Agent 可用工具及其调用策略。"><div className="capability-settings"><CapabilityItem title="Web Search" detail="搜索公开网页并生成候选来源" state="已启用" /><CapabilityItem title="Web Fetch" detail="自适应提取页面主要内容" state="已启用" /><CapabilityItem title="文件分析" detail="解析上传的文档、代码与数据" state="即将支持" enabled={false} /><CapabilityItem title="图像理解" detail="识别并分析图片内容" state="即将支持" enabled={false} /></div><SettingRow title="工具调用确认" description="工具可能修改数据、产生费用或影响外部系统时请求确认"><TranslatedSelect defaultValue="risk" options={[['risk', '仅高风险工具'], ['always', '每次调用'], ['never', '从不确认']]} /></SettingRow><SettingRow title="工具调用上限" description="限制单次任务可执行的工具调用总数"><TranslatedSelect defaultValue="10" options={['5', '10', '20']} /></SettingRow><SettingRow title="并行工具调用" description="并发执行相互独立且无副作用冲突的工具"><Toggle checked /></SettingRow><SettingRow title="工具失败重试" description="仅重试临时网络错误和明确标记为可恢复的工具错误"><TranslatedSelect defaultValue="2" options={[['0', '不重试'], ['1', '1'], ['2', '2'], ['3', '3']]} /></SettingRow></SettingsGroup>;
   if (category === '运行时') return <SettingsGroup title="运行时" description="管理 Agent 的执行环境、生命周期和任务级资源边界。"><div className="runtime-summary"><div><span>{t('执行环境')}</span><strong>{t('本地沙盒')}</strong></div><div><span>{t('任务状态')}</span><strong>{t('可恢复')}</strong></div><div><span>{t('网络')}</span><strong>{t('按需授权')}</strong></div></div><SettingRow title="沙盒模式" description="限定 Agent 可读取和修改的文件系统范围"><TranslatedSelect defaultValue="workspace" options={[['readonly', '只读'], ['workspace', '工作区可写'], ['container', '隔离容器']]} /></SettingRow><SettingRow title="网络策略" description="限制运行环境可访问的外部网络范围"><TranslatedSelect defaultValue="approval" options={[['off', '禁用'], ['approval', '公开网络，按需授权'], ['allowlist', '仅允许列表']]} /></SettingRow><SettingRow title="命令执行确认" description="命令可能修改环境或影响外部系统时请求确认"><TranslatedSelect defaultValue="risk" options={[['risk', '仅高风险命令'], ['always', '每次执行'], ['never', '从不确认']]} /></SettingRow><SettingRow title="最大 Agent 轮次" description="达到上限后停止循环并输出当前结果"><TranslatedSelect defaultValue="12" options={['6', '12', '20']} /></SettingRow><SettingRow title="单次运行时限" description="超时后停止任务并保留可恢复的运行状态"><TranslatedSelect defaultValue="30" options={[['10', `10 ${t('分钟')}`], ['30', `30 ${t('分钟')}`], ['60', `60 ${t('分钟')}`]]} /></SettingRow><SettingRow title="后台继续运行" description="离开当前对话后继续执行，并保留状态通知"><Toggle checked /></SettingRow><SettingRow title="保留运行工件" description="保存运行状态、验证报告和失败现场用于审计"><Toggle checked /></SettingRow></SettingsGroup>;
   if (category === '记忆') return <SettingsGroup title="记忆" description="管理 Agent 在单次任务和不同对话之间保留的信息。"><SettingRow title="运行记忆" description="在当前任务中保留来源摘要和决策线索"><Toggle checked /></SettingRow><SettingRow title="跨对话记忆" description="在新对话中使用已确认的偏好与事实"><Toggle /></SettingRow><SettingRow title="写入阈值" description="仅保存高于该置信度的结构化记忆"><TranslatedSelect defaultValue="80" options={[['70', '70%'], ['80', '80%'], ['90', '90%']]} /></SettingRow><SettingRow title="记忆保留期" description="到期后自动清理非固定记忆"><TranslatedSelect defaultValue="30" options={[['7', `7 ${t('天')}`], ['30', `30 ${t('天')}`], ['forever', '永久']]} /></SettingRow></SettingsGroup>;
-  if (category === '验证与安全') return <SettingsGroup title="验证与安全" description="定义最终答案必须满足的证据和质量标准。"><SettingRow title="回答前验证" description="生成最终答案前检查证据覆盖、来源冲突和失败项"><Toggle checked /></SettingRow><SettingRow title="最低独立来源数" description="总结类任务至少需要多少个相互独立的来源"><TranslatedSelect defaultValue="2" options={['1', '2', '3']} /></SettingRow><SettingRow title="来源质量阈值" description="低于阈值的来源会被标记，并降低其证据权重"><TranslatedSelect defaultValue="70" options={[['50', '50%'], ['70', '70%'], ['85', '85%']]} /></SettingRow><SettingRow title="冲突处理" description="来源结论不一致时保留分歧，不强行合并为单一答案"><TranslatedSelect defaultValue="disclose" options={[['disclose', '披露冲突'], ['retry', '继续查证'], ['block', '阻止回答']]} /></SettingRow></SettingsGroup>;
+  if (category === '验证与安全') return <SettingsGroup title="验证与安全" description="定义 Agent 在报告完成前必须满足的通用验证要求。"><SettingRow title="完成前验证" description="提交结果前运行与任务类型匹配的验证器"><Toggle checked /></SettingRow><SettingRow title="验证强度" description="控制验证覆盖范围以及失败后的检查深度"><TranslatedSelect defaultValue="standard" options={[['basic', '基础'], ['standard', '标准'], ['strict', '严格']]} /></SettingRow><SettingRow title="验证失败处理" description="验证未通过时决定继续修复、带警告返回或停止任务"><TranslatedSelect defaultValue="repair" options={[['repair', '自动修复'], ['warn', '带警告返回'], ['block', '停止任务']]} /></SettingRow></SettingsGroup>;
   if (category === '界面') return <SettingsGroup title="界面" description="调整工作区的信息密度和运行过程展示。"><SettingRow title="语言" description="选择界面显示语言"><select value={language} onChange={(event) => setLanguage(event.target.value as 'zh-CN' | 'en')}><option value="zh-CN">中文</option><option value="en">English</option></select></SettingRow><SettingRow title="主题模式" description="选择界面外观，或随操作系统自动切换"><select value={mode} onChange={(event) => setMode(event.target.value as 'system' | 'light' | 'dark')}><option value="system">{t('跟随系统')}</option><option value="light">{t('浅色模式')}</option><option value="dark">{t('暗色模式')}</option></select></SettingRow><SettingRow title="过程展示" description="在对话中显示工具调用和反思摘要"><Toggle checked /></SettingRow><SettingRow title="审计面板" description="任务完成后显示证据、事件和记忆"><Toggle checked /></SettingRow><SettingRow title="信息密度" description="控制对话和面板的间距"><TranslatedSelect defaultValue="compact" options={[['compact', '紧凑'], ['comfortable', '舒适']]} /></SettingRow></SettingsGroup>;
-  if (category === '数据与隐私') return <SettingsGroup title="数据与隐私" description="控制运行数据、抓取内容和诊断信息的保存方式。"><SettingRow title="保存运行记录" description="保留对话、工具调用和验证报告"><Toggle checked /></SettingRow><SettingRow title="保存抓取正文" description="将网页正文写入本地工件存储"><Toggle /></SettingRow><SettingRow title="诊断日志" description="记录不包含正文的性能与错误信息"><Toggle checked /></SettingRow><button className="danger-button" type="button">{t('清除本地运行数据')}</button></SettingsGroup>;
+  if (category === '数据与隐私') return <SettingsGroup title="数据与隐私" description="控制任务记录、工具内容和诊断信息的保存方式。"><SettingRow title="保存运行记录" description="保留对话、工具调用元数据和验证报告"><Toggle checked /></SettingRow><SettingRow title="工具内容保留" description="决定是否保存工具返回的正文、文件内容或结构化结果"><TranslatedSelect defaultValue="metadata" options={[['none', '不保留内容'], ['metadata', '仅保留元数据'], ['full', '保留完整输出']]} /></SettingRow><SettingRow title="诊断日志" description="记录不包含工具内容的性能与错误信息"><Toggle checked /></SettingRow><button className="danger-button" type="button">{t('清除本地运行数据')}</button></SettingsGroup>;
   return null;
 }
 
@@ -350,6 +381,7 @@ function SettingsGroup({ title, description, children }: { title: string; descri
 
 function SettingRow({ title, description, children }: { title: string; description: string; children: React.ReactNode }) {
   const { t } = useI18n();
+  if (title === '命令执行确认') return null;
   return <div className="setting-row"><div><strong>{t(title)}</strong><span>{t(description)}</span></div>{children}</div>;
 }
 
@@ -357,6 +389,21 @@ function Toggle({ checked = false, onChange }: { checked?: boolean; onChange?: (
   const [localChecked, setLocalChecked] = useState(checked);
   const value = onChange ? checked : localChecked;
   return <button className={`toggle ${value ? 'on' : ''}`} type="button" role="switch" aria-checked={value} onClick={() => onChange ? onChange(!value) : setLocalChecked(!value)}><span /></button>;
+}
+
+function ExecutionModeMenu({ value, onChange }: { value: 'plan' | 'default' | 'bypass'; onChange: (mode: 'plan' | 'default' | 'bypass') => void }) {
+  const { t } = useI18n();
+  const modes = [
+    { id: 'plan' as const, title: 'Plan', detail: '只规划任务，不调用工具或执行命令' },
+    { id: 'default' as const, title: '默认', detail: '自动执行低风险操作，高风险权限需要确认' },
+    { id: 'bypass' as const, title: 'ByPass', detail: '自动执行所有命令和工具，不再请求确认' },
+  ];
+  return <div className="floating-menu execution-menu"><div className="menu-heading">{t('执行模式')}</div>{modes.map((mode) => <button className={value === mode.id ? 'selected' : ''} type="button" key={mode.id} onClick={() => onChange(mode.id)}><div><strong>{t(mode.title)}</strong><small>{t(mode.detail)}</small></div><span>{value === mode.id ? '✓' : ''}</span></button>)}</div>;
+}
+
+function BypassConfirmation({ onCancel, onConfirm }: { onCancel: () => void; onConfirm: () => void }) {
+  const { t } = useI18n();
+  return <div className="modal-backdrop" role="presentation" onMouseDown={onCancel}><section className="confirmation-modal" role="alertdialog" aria-modal="true" aria-labelledby="bypass-title" onMouseDown={(event) => event.stopPropagation()}><div className="warning-mark">!</div><h2 id="bypass-title">{t('启用 ByPass 模式？')}</h2><p>{t('ByPass 将允许 Agent 自动执行所有命令和工具，包括可能修改文件、访问网络或影响外部系统的高风险操作。')}</p><div className="confirmation-note"><strong>{t('仅在你信任当前任务和运行环境时启用。')}</strong></div><div className="confirmation-actions"><button className="secondary-button" type="button" onClick={onCancel}>{t('取消')}</button><button className="danger-confirm-button" type="button" onClick={onConfirm}>{t('确认启用 ByPass')}</button></div></section></div>;
 }
 
 function ModelMenu({ selectedModel, onModelChange, reasoningEffort, onReasoningEffortChange, planningStrategy, onPlanningStrategyChange, reflectionEnabled, onReflectionChange, reflectionTrigger, onReflectionTriggerChange }: {

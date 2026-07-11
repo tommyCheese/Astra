@@ -197,7 +197,23 @@ describe('App', () => {
     expect(screen.queryByText('工具调用上限')).not.toBeInTheDocument();
     expect(screen.queryByText('并行工具调用')).not.toBeInTheDocument();
     expect(screen.queryByText('工具失败重试')).not.toBeInTheDocument();
+    expect(screen.queryByText('命令执行确认')).not.toBeInTheDocument();
     expect(screen.getByText('保留运行工件')).toBeInTheDocument();
+  });
+
+  it('keeps validation and data settings task agnostic', async () => {
+    render(<App />);
+
+    await userEvent.click(screen.getByRole('button', { name: /设置/ }));
+    await userEvent.click(screen.getByRole('button', { name: '验证与安全' }));
+    expect(screen.getByText('验证强度')).toBeInTheDocument();
+    expect(screen.getByText('验证失败处理')).toBeInTheDocument();
+    expect(screen.queryByText('冲突处理')).not.toBeInTheDocument();
+    expect(screen.queryByText('最低独立来源数')).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: '数据与隐私' }));
+    expect(screen.getByText('工具内容保留')).toBeInTheDocument();
+    expect(screen.queryByText('保存抓取正文')).not.toBeInTheDocument();
   });
 
   it('switches the interface between Chinese and English', async () => {
@@ -238,6 +254,25 @@ describe('App', () => {
     expect(screen.getByRole('button', { name: '深入' })).toBeInTheDocument();
     expect(screen.queryByText('最大 Agent 轮次')).not.toBeInTheDocument();
     expect(screen.queryByText('工具调用上限')).not.toBeInTheDocument();
+  });
+
+  it('switches execution modes and confirms before enabling bypass', async () => {
+    render(<App />);
+
+    await userEvent.click(screen.getByRole('button', { name: /默认/ }));
+    await userEvent.click(screen.getByRole('button', { name: /Plan/ }));
+    expect(screen.getByRole('button', { name: /Plan/ })).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: /Plan/ }));
+    await userEvent.click(screen.getByRole('button', { name: /ByPass/ }));
+    expect(screen.getByRole('alertdialog')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: '取消' }));
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: /Plan/ }));
+    await userEvent.click(screen.getByRole('button', { name: /ByPass/ }));
+    await userEvent.click(screen.getByRole('button', { name: '确认启用 ByPass' }));
+    expect(screen.getByRole('button', { name: /ByPass/ })).toHaveClass('mode-bypass');
   });
 
   it('hides reflection trigger choices when reflection is disabled', async () => {

@@ -444,9 +444,9 @@ h1 {
   display: grid;
   gap: 8px;
   grid-template-areas:
-    "input input input input"
-    "attach spacer model send";
-  grid-template-columns: 40px minmax(0, 1fr) auto 42px;
+    "input input input input input"
+    "attach mode spacer model send";
+  grid-template-columns: 40px auto minmax(0, 1fr) auto 42px;
   margin: 0 auto;
   padding: 8px;
   position: sticky;
@@ -461,6 +461,7 @@ h1 {
 }
 
 .composer-menu-wrap,
+.execution-menu-wrap,
 .model-menu-wrap {
   align-self: end;
   position: relative;
@@ -468,6 +469,10 @@ h1 {
 
 .composer-menu-wrap {
   grid-area: attach;
+}
+
+.execution-menu-wrap {
+  grid-area: mode;
 }
 
 .model-menu-wrap {
@@ -506,6 +511,40 @@ h1 {
   min-height: 40px;
   padding: 5px 8px 5px 10px;
   text-align: left;
+}
+
+.execution-mode-button {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  border-radius: 9px;
+  color: #52606d;
+  display: flex;
+  gap: 6px;
+  height: 40px;
+  padding: 0 9px;
+}
+
+.execution-mode-button span {
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.execution-mode-button b {
+  font-size: 11px;
+}
+
+.execution-mode-button:hover {
+  background: #edf1f6;
+}
+
+.execution-mode-button.mode-plan {
+  color: #315f8a;
+}
+
+.execution-mode-button.mode-bypass {
+  background: #fff0ed;
+  color: #a43b2d;
 }
 
 .model-selector span,
@@ -589,6 +628,11 @@ h1 {
 .attachment-menu {
   left: 0;
   min-width: 224px;
+}
+
+.execution-menu {
+  left: 0;
+  min-width: 320px;
 }
 
 .attachment-menu button > span {
@@ -950,6 +994,80 @@ textarea {
   width: 100%;
 }
 
+.confirmation-modal {
+  animation: modal-enter 210ms cubic-bezier(0.2, 0.75, 0.2, 1) both;
+  background: rgba(255, 255, 255, 0.97);
+  border: 1px solid rgba(255, 255, 255, 0.9);
+  border-radius: 14px;
+  box-shadow: 0 26px 80px rgba(15, 23, 42, 0.24);
+  max-width: 480px;
+  padding: 24px;
+  width: 100%;
+}
+
+.warning-mark {
+  align-items: center;
+  background: #fff0ed;
+  border: 1px solid #f0c5bd;
+  border-radius: 50%;
+  color: #a43b2d;
+  display: flex;
+  font-size: 18px;
+  font-weight: 800;
+  height: 36px;
+  justify-content: center;
+  margin-bottom: 16px;
+  width: 36px;
+}
+
+.confirmation-modal h2 {
+  color: #202124;
+  font-size: 20px;
+}
+
+.confirmation-modal > p {
+  color: #5d6878;
+  font-size: 13px;
+  line-height: 1.6;
+  margin-top: 10px;
+}
+
+.confirmation-note {
+  background: #f6f7f9;
+  border-radius: 8px;
+  color: #3d4652;
+  font-size: 12px;
+  margin-top: 16px;
+  padding: 11px 12px;
+}
+
+.confirmation-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-top: 22px;
+}
+
+.secondary-button,
+.danger-confirm-button {
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 700;
+  padding: 9px 13px;
+}
+
+.secondary-button {
+  background: #fff;
+  border: 1px solid #cfd7e2;
+  color: #344054;
+}
+
+.danger-confirm-button {
+  background: #a43b2d;
+  border: 1px solid #a43b2d;
+  color: #fff;
+}
+
 .usage-modal header {
   align-items: flex-start;
   display: flex;
@@ -1269,10 +1387,39 @@ html[data-theme="dark"] .audit-row strong {
 }
 
 html[data-theme="dark"] .floating-menu,
-html[data-theme="dark"] .usage-modal {
+html[data-theme="dark"] .usage-modal,
+html[data-theme="dark"] .confirmation-modal {
   background: rgba(35, 39, 45, 0.97);
   border-color: #444b56;
   box-shadow: 0 24px 70px rgba(0, 0, 0, 0.42);
+}
+
+html[data-theme="dark"] .confirmation-modal h2 {
+  color: #f1f3f5;
+}
+
+html[data-theme="dark"] .confirmation-modal > p {
+  color: #aeb6c2;
+}
+
+html[data-theme="dark"] .confirmation-note {
+  background: #292e35;
+  color: #d7dce3;
+}
+
+html[data-theme="dark"] .secondary-button {
+  background: #292e35;
+  border-color: #454c57;
+  color: #e5e8ec;
+}
+
+html[data-theme="dark"] .execution-mode-button:hover {
+  background: #2a2f36;
+}
+
+html[data-theme="dark"] .execution-mode-button.mode-bypass {
+  background: #422824;
+  color: #f2a99d;
 }
 
 html[data-theme="dark"] .floating-menu button:hover,
@@ -1417,9 +1564,9 @@ html[data-theme="dark"] .modal-backdrop {
 @media (max-width: 620px) {
   .chat-composer {
     grid-template-areas:
-      "input input input input"
-      "attach spacer model send";
-    grid-template-columns: 40px minmax(0, 1fr) auto 42px;
+      "input input input input input"
+      "attach mode spacer model send";
+    grid-template-columns: 40px auto minmax(0, 1fr) auto 42px;
   }
 
   .model-selector {
@@ -1430,6 +1577,10 @@ html[data-theme="dark"] .modal-backdrop {
     left: 0;
     min-width: min(360px, calc(100vw - 40px));
     right: auto;
+  }
+
+  .execution-menu {
+    min-width: min(320px, calc(100vw - 40px));
   }
 
   .setting-row {
