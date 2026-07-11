@@ -169,4 +169,29 @@ describe('App', () => {
 
     expect(screen.getByText('请输入任务目标')).toBeInTheDocument();
   });
+
+  it('opens settings and moves capabilities into the settings view', async () => {
+    render(<App />);
+
+    expect(screen.queryByText('Web Fetch')).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: /设置/ }));
+    await userEvent.click(screen.getByRole('button', { name: '能力' }));
+
+    expect(screen.getByRole('heading', { name: '能力' })).toBeInTheDocument();
+    expect(screen.getByText('Web Fetch')).toBeInTheDocument();
+    expect(screen.getByText('工具调用确认')).toBeInTheDocument();
+  });
+
+  it('opens usage statistics and changes the active model', async () => {
+    render(<App />);
+
+    await userEvent.click(screen.getByRole('button', { name: /用量统计/ }));
+    expect(screen.getByRole('dialog', { name: '用量统计' })).toBeInTheDocument();
+    expect(screen.getByText('Token 用量')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: '关闭用量统计' }));
+
+    await userEvent.click(screen.getByRole('button', { name: /Astra Pro/ }));
+    await userEvent.click(screen.getByRole('button', { name: /Astra Flash/ }));
+    expect(screen.getByRole('button', { name: /Astra Flash/ })).toBeInTheDocument();
+  });
 });

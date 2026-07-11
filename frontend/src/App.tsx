@@ -10,6 +10,13 @@ export function App() {
   const [events, setEvents] = useState<RunEvent[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [view, setView] = useState<'chat' | 'settings'>('chat');
+  const [usageOpen, setUsageOpen] = useState(false);
+  const [modelOpen, setModelOpen] = useState(false);
+  const [attachOpen, setAttachOpen] = useState(false);
+  const [selectedModel, setSelectedModel] = useState('Astra Pro');
+  const [reflectionEnabled, setReflectionEnabled] = useState(true);
+  const [settingsCategory, setSettingsCategory] = useState('模型与推理');
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -83,13 +90,31 @@ export function App() {
     setEvents([]);
     setError(null);
     setGoal('');
+    setView('chat');
   }
 
   return (
     <main className="app-layout">
-      <Sidebar run={run} onNewChat={startNewChat} />
+      <Sidebar
+        run={run}
+        activeView={view}
+        onNewChat={startNewChat}
+        onOpenSettings={() => setView('settings')}
+        onOpenUsage={() => setUsageOpen(true)}
+      />
 
       <section className="workspace">
+        {view === 'settings' ? (
+          <SettingsView
+            activeCategory={settingsCategory}
+            onCategoryChange={setSettingsCategory}
+            selectedModel={selectedModel}
+            onModelChange={setSelectedModel}
+            reflectionEnabled={reflectionEnabled}
+            onReflectionChange={setReflectionEnabled}
+            onClose={() => setView('chat')}
+          />
+        ) : <>
         <section className="chat-topbar">
           <div>
             <h1>Astra</h1>
@@ -118,23 +143,60 @@ export function App() {
           </div>
 
           <form className="chat-composer" onSubmit={submit}>
+            <div className="composer-menu-wrap">
+              <button
+                className="composer-icon-button"
+                type="button"
+                aria-label="添加内容"
+                title="添加内容"
+                onClick={() => setAttachOpen((open) => !open)}
+              >+</button>
+              {attachOpen && (
+                <div className="floating-menu attachment-menu">
+                  <button type="button"><span>↥</span><div><strong>上传文件</strong><small>文档、代码与数据</small></div></button>
+                  <button type="button"><span>▧</span><div><strong>添加图片</strong><small>分析图像内容</small></div></button>
+                  <button type="button"><span>⌁</span><div><strong>连接来源</strong><small>即将支持</small></div></button>
+                </div>
+              )}
+            </div>
             <textarea
               value={goal}
               onChange={(event) => setGoal(event.target.value)}
               placeholder="输入任务 / 继续追问..."
             />
+            <div className="model-menu-wrap">
+              <button className="model-selector" type="button" onClick={() => setModelOpen((open) => !open)}>
+                <span>{selectedModel}</span><small>{reflectionEnabled ? '反思开启' : '快速模式'}</small><b>⌄</b>
+              </button>
+              {modelOpen && (
+                <ModelMenu
+                  selectedModel={selectedModel}
+                  onModelChange={(model) => { setSelectedModel(model); setModelOpen(false); }}
+                  reflectionEnabled={reflectionEnabled}
+                  onReflectionChange={setReflectionEnabled}
+                />
+              )}
+            </div>
             <button className="send-button" type="submit" disabled={loading}>{loading ? '...' : '↑'}</button>
           </form>
           {error && <div className="notice error">{error}</div>}
         </section>
 
         {run && <AuditDrawer run={run} events={visibleEvents} />}
+        </>}
       </section>
+      {usageOpen && <UsageModal run={run} onClose={() => setUsageOpen(false)} />}
     </main>
   );
 }
 
-function Sidebar({ run, onNewChat }: { run: RunView | null; onNewChat: () => void }) {
+function Sidebar({ run, activeView, onNewChat, onOpenSettings, onOpenUsage }: {
+  run: RunView | null;
+  activeView: 'chat' | 'settings';
+  onNewChat: () => void;
+  onOpenSettings: () => void;
+  onOpenUsage: () => void;
+}) {
   return (
     <aside className="sidebar">
       <div className="brand">
@@ -158,22 +220,12 @@ function Sidebar({ run, onNewChat }: { run: RunView | null; onNewChat: () => voi
         </button>
       </nav>
 
-      <section className="side-section">
-        <span className="side-title">能力</span>
-        <div className="capability-list">
-          <CapabilityItem title="Web Search" detail="Google / Mock" state="ready" />
-          <CapabilityItem title="Web Fetch" detail="自适应抓取" state="ready" />
-          <CapabilityItem title="Memory" detail="审计型记忆" state="beta" />
-          <CapabilityItem title="Reflection" detail="ReAct loop" state="ready" />
-        </div>
-      </section>
-
       <div className="sidebar-bottom">
-        <button className="side-action" type="button">
+        <button className="side-action" type="button" onClick={onOpenUsage}>
           <span>用量统计</span>
           <small>{run?.tool_calls.length ?? 0} calls</small>
         </button>
-        <button className="side-action" type="button">
+        <button className={`side-action ${activeView === 'settings' ? 'active' : ''}`} type="button" onClick={onOpenSettings}>
           <span>设置</span>
           <small>本地配置</small>
         </button>
@@ -182,16 +234,89 @@ function Sidebar({ run, onNewChat }: { run: RunView | null; onNewChat: () => voi
   );
 }
 
-function CapabilityItem({ title, detail, state }: { title: string; detail: string; state: string }) {
+function CapabilityItem({ title, detail, state, enabled = true }: { title: string; detail: string; state: string; enabled?: boolean }) {
   return (
     <div className="capability-item">
       <div>
         <strong>{title}</strong>
         <span>{detail}</span>
       </div>
-      <small>{state}</small>
+      <span className={`capability-state ${enabled ? 'enabled' : ''}`}>{state}</span>
     </div>
   );
+}
+
+const settingCategories = ['模型与推理', '能力', '记忆', '验证与安全', '界面', '数据与隐私'];
+
+function SettingsView({ activeCategory, onCategoryChange, selectedModel, onModelChange, reflectionEnabled, onReflectionChange, onClose }: {
+  activeCategory: string;
+  onCategoryChange: (category: string) => void;
+  selectedModel: string;
+  onModelChange: (model: string) => void;
+  reflectionEnabled: boolean;
+  onReflectionChange: (enabled: boolean) => void;
+  onClose: () => void;
+}) {
+  return (
+    <section className="settings-page">
+      <header className="settings-header">
+        <div><span>工作区</span><h1>设置</h1></div>
+        <button className="close-button" type="button" aria-label="关闭设置" onClick={onClose}>×</button>
+      </header>
+      <div className="settings-layout">
+        <nav className="settings-nav" aria-label="设置类别">
+          {settingCategories.map((category) => (
+            <button className={category === activeCategory ? 'active' : ''} type="button" key={category} onClick={() => onCategoryChange(category)}>{category}</button>
+          ))}
+        </nav>
+        <div className="settings-content">
+          <SettingSection category={activeCategory} selectedModel={selectedModel} onModelChange={onModelChange} reflectionEnabled={reflectionEnabled} onReflectionChange={onReflectionChange} />
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function SettingSection({ category, selectedModel, onModelChange, reflectionEnabled, onReflectionChange }: {
+  category: string;
+  selectedModel: string;
+  onModelChange: (model: string) => void;
+  reflectionEnabled: boolean;
+  onReflectionChange: (enabled: boolean) => void;
+}) {
+  if (category === '能力') return <SettingsGroup title="能力" description="控制 Agent 可以调用的工具和数据边界。"><div className="capability-settings"><CapabilityItem title="Web Search" detail="搜索公开网页并生成候选来源" state="已启用" /><CapabilityItem title="Web Fetch" detail="自适应提取页面主要内容" state="已启用" /><CapabilityItem title="文件分析" detail="解析上传的文档、代码与数据" state="即将支持" enabled={false} /><CapabilityItem title="图像理解" detail="识别并分析图片内容" state="即将支持" enabled={false} /></div><SettingRow title="工具调用确认" description="只读工具自动执行，高风险操作需要确认"><select defaultValue="risk"><option value="risk">仅高风险操作</option><option value="always">每次调用</option><option value="never">从不确认</option></select></SettingRow></SettingsGroup>;
+  if (category === '记忆') return <SettingsGroup title="记忆" description="管理 Agent 在单次任务和不同对话之间保留的信息。"><SettingRow title="运行记忆" description="在当前任务中保留来源摘要和决策线索"><Toggle checked /></SettingRow><SettingRow title="跨对话记忆" description="在新对话中使用已确认的偏好与事实"><Toggle /></SettingRow><SettingRow title="写入阈值" description="仅保存高于该置信度的结构化记忆"><select defaultValue="80"><option value="70">70%</option><option value="80">80%</option><option value="90">90%</option></select></SettingRow><SettingRow title="记忆保留期" description="到期后自动清理非固定记忆"><select defaultValue="30"><option value="7">7 天</option><option value="30">30 天</option><option value="forever">永久</option></select></SettingRow></SettingsGroup>;
+  if (category === '验证与安全') return <SettingsGroup title="验证与安全" description="定义回答的证据要求、来源质量和执行限制。"><SettingRow title="回答前验证" description="检查来源覆盖、冲突和低质量证据"><Toggle checked /></SettingRow><SettingRow title="最低来源数" description="总结任务至少需要的独立来源"><select defaultValue="2"><option>1</option><option>2</option><option>3</option></select></SettingRow><SettingRow title="来源质量阈值" description="低于阈值的来源会被标记并降低权重"><select defaultValue="70"><option value="50">50%</option><option value="70">70%</option><option value="85">85%</option></select></SettingRow><SettingRow title="域名访问策略" description="限制工具可访问的网络范围"><select defaultValue="public"><option value="public">仅公开网络</option><option value="allowlist">仅允许列表</option></select></SettingRow></SettingsGroup>;
+  if (category === '界面') return <SettingsGroup title="界面" description="调整工作区的信息密度和运行过程展示。"><SettingRow title="过程展示" description="在对话中显示工具调用和反思摘要"><Toggle checked /></SettingRow><SettingRow title="审计面板" description="任务完成后显示证据、事件和记忆"><Toggle checked /></SettingRow><SettingRow title="信息密度" description="控制对话和面板的间距"><select defaultValue="compact"><option value="compact">紧凑</option><option value="comfortable">舒适</option></select></SettingRow></SettingsGroup>;
+  if (category === '数据与隐私') return <SettingsGroup title="数据与隐私" description="控制运行数据、抓取内容和诊断信息的保存方式。"><SettingRow title="保存运行记录" description="保留对话、工具调用和验证报告"><Toggle checked /></SettingRow><SettingRow title="保存抓取正文" description="将网页正文写入本地工件存储"><Toggle /></SettingRow><SettingRow title="诊断日志" description="记录不包含正文的性能与错误信息"><Toggle checked /></SettingRow><button className="danger-button" type="button">清除本地运行数据</button></SettingsGroup>;
+  return <SettingsGroup title="模型与推理" description="设置默认模型、Agent 循环和计算预算。"><SettingRow title="默认模型" description="新对话使用的推理模型"><select value={selectedModel} onChange={(event) => onModelChange(event.target.value)}><option>Astra Pro</option><option>Astra Flash</option><option>GPT-5</option></select></SettingRow><SettingRow title="反思循环" description="工具调用后检查结果并调整下一步策略"><Toggle checked={reflectionEnabled} onChange={onReflectionChange} /></SettingRow><SettingRow title="最大 Agent 轮次" description="防止任务陷入无效循环"><select defaultValue="12"><option>6</option><option>12</option><option>20</option></select></SettingRow><SettingRow title="工具调用预算" description="单次任务允许的最大工具调用次数"><select defaultValue="10"><option>5</option><option>10</option><option>20</option></select></SettingRow><SettingRow title="推理强度" description="在响应速度和复杂任务质量间取舍"><select defaultValue="balanced"><option value="fast">快速</option><option value="balanced">均衡</option><option value="deep">深入</option></select></SettingRow></SettingsGroup>;
+}
+
+function SettingsGroup({ title, description, children }: { title: string; description: string; children: React.ReactNode }) {
+  return <section className="settings-group"><header><h2>{title}</h2><p>{description}</p></header>{children}</section>;
+}
+
+function SettingRow({ title, description, children }: { title: string; description: string; children: React.ReactNode }) {
+  return <div className="setting-row"><div><strong>{title}</strong><span>{description}</span></div>{children}</div>;
+}
+
+function Toggle({ checked = false, onChange }: { checked?: boolean; onChange?: (checked: boolean) => void }) {
+  const [localChecked, setLocalChecked] = useState(checked);
+  const value = onChange ? checked : localChecked;
+  return <button className={`toggle ${value ? 'on' : ''}`} type="button" role="switch" aria-checked={value} onClick={() => onChange ? onChange(!value) : setLocalChecked(!value)}><span /></button>;
+}
+
+function ModelMenu({ selectedModel, onModelChange, reflectionEnabled, onReflectionChange }: { selectedModel: string; onModelChange: (model: string) => void; reflectionEnabled: boolean; onReflectionChange: (enabled: boolean) => void }) {
+  return <div className="floating-menu model-menu"><div className="menu-heading">选择模型</div>{[['Astra Pro', '复杂研究与多步任务'], ['Astra Flash', '快速问答与轻量搜索'], ['GPT-5', '通用推理模型']].map(([model, detail]) => <button className={selectedModel === model ? 'selected' : ''} type="button" key={model} onClick={() => onModelChange(model)}><div><strong>{model}</strong><small>{detail}</small></div><span>{selectedModel === model ? '✓' : ''}</span></button>)}<div className="menu-divider" /><div className="menu-toggle"><div><strong>反思模式</strong><small>执行后自检并调整策略</small></div><Toggle checked={reflectionEnabled} onChange={onReflectionChange} /></div></div>;
+}
+
+function UsageModal({ run, onClose }: { run: RunView | null; onClose: () => void }) {
+  const calls = run?.tool_calls.length ?? 0;
+  const turns = run?.turns?.length ?? 0;
+  const estimatedTokens = run ? Math.max(640, turns * 760 + calls * 420 + (run.result?.findings.length ?? 0) * 180) : 0;
+  const succeeded = run?.tool_calls.filter((call) => call.status === 'succeeded').length ?? 0;
+  const successRate = calls ? Math.round((succeeded / calls) * 100) : 0;
+  return <div className="modal-backdrop" role="presentation" onMouseDown={onClose}><section className="usage-modal" role="dialog" aria-modal="true" aria-label="用量统计" onMouseDown={(event) => event.stopPropagation()}><header><div><span>当前对话</span><h2>用量统计</h2></div><button className="close-button" type="button" aria-label="关闭用量统计" onClick={onClose}>×</button></header><div className="usage-primary"><div><span>模型调用</span><strong>{turns}</strong><small>次决策 / 生成</small></div><div><span>Token 用量</span><strong>{estimatedTokens.toLocaleString()}</strong><small>前端估算</small></div></div><div className="usage-grid"><div><span>工具调用</span><strong>{calls}</strong></div><div><span>成功率</span><strong>{successRate}%</strong></div><div><span>证据来源</span><strong>{run?.result?.sources.length ?? 0}</strong></div><div><span>Agent 轮次</span><strong>{turns}</strong></div><div><span>Memory 写入</span><strong>{run?.memories?.length ?? 0}</strong></div><div><span>验证警告</span><strong>{run?.verification_report?.caveat_count ?? 0}</strong></div></div><p className="usage-note">精确输入、输出和缓存 Token 将在模型网关接入后由后端返回。</p></section></div>;
 }
 
 function MessageBubble({ message, run }: { message: ChatMessage; run: RunView | null }) {
