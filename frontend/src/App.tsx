@@ -78,48 +78,119 @@ export function App() {
   const visibleEvents = useMemo(() => mergeEvents(events, run?.events ?? []), [events, run]);
   const messages = useMemo(() => buildConversation(run), [run]);
 
+  function startNewChat() {
+    setRun(null);
+    setEvents([]);
+    setError(null);
+    setGoal('');
+  }
+
   return (
-    <main className="shell chat-shell">
-      <section className="chat-topbar">
-        <div>
-          <h1>Astra</h1>
-          <p>Web Agent</p>
-        </div>
-        <span className={`status status-${run?.status ?? 'idle'}`}>{statusLabel(run?.status)}</span>
+    <main className="app-layout">
+      <Sidebar run={run} onNewChat={startNewChat} />
+
+      <section className="workspace">
+        <section className="chat-topbar">
+          <div>
+            <h1>Astra</h1>
+            <p>Web Agent · 可审计搜索与抓取</p>
+          </div>
+          <span className={`status status-${run?.status ?? 'idle'}`}>{statusLabel(run?.status)}</span>
+        </section>
+
+        <section className="chat-surface">
+          <div className="conversation">
+            {!messages.length && (
+              <div className="welcome">
+                <h2>今天想研究什么？</h2>
+                <p>我会使用 Web 搜索和自适应抓取，边行动边留下可审计证据。</p>
+              </div>
+            )}
+            {messages.map((message) => (
+              <MessageBubble key={message.id} message={message} run={run} />
+            ))}
+            {run && !terminalStatuses.has(run.status) && (
+              <div className="bubble assistant">
+                <span className="bubble-label">Astra</span>
+                <p>{activeState(run)}</p>
+              </div>
+            )}
+          </div>
+
+          <form className="chat-composer" onSubmit={submit}>
+            <textarea
+              value={goal}
+              onChange={(event) => setGoal(event.target.value)}
+              placeholder="输入任务 / 继续追问..."
+            />
+            <button className="send-button" type="submit" disabled={loading}>{loading ? '...' : '↑'}</button>
+          </form>
+          {error && <div className="notice error">{error}</div>}
+        </section>
+
+        {run && <AuditDrawer run={run} events={visibleEvents} />}
       </section>
-
-      <section className="chat-surface">
-        <div className="conversation">
-          {!messages.length && (
-            <div className="welcome">
-              <h2>今天想研究什么？</h2>
-              <p>我会使用 Web 搜索和自适应抓取，边行动边留下可审计证据。</p>
-            </div>
-          )}
-          {messages.map((message) => (
-            <MessageBubble key={message.id} message={message} run={run} />
-          ))}
-          {run && !terminalStatuses.has(run.status) && (
-            <div className="bubble assistant">
-              <span className="bubble-label">Astra</span>
-              <p>{activeState(run)}</p>
-            </div>
-          )}
-        </div>
-
-        <form className="chat-composer" onSubmit={submit}>
-          <textarea
-            value={goal}
-            onChange={(event) => setGoal(event.target.value)}
-            placeholder="输入任务 / 继续追问..."
-          />
-          <button type="submit" disabled={loading}>{loading ? '...' : '↑'}</button>
-        </form>
-        {error && <div className="notice error">{error}</div>}
-      </section>
-
-      {run && <AuditDrawer run={run} events={visibleEvents} />}
     </main>
+  );
+}
+
+function Sidebar({ run, onNewChat }: { run: RunView | null; onNewChat: () => void }) {
+  return (
+    <aside className="sidebar">
+      <div className="brand">
+        <div className="brand-mark">A</div>
+        <div>
+          <strong>Astra</strong>
+          <span>Agent Console</span>
+        </div>
+      </div>
+
+      <button className="new-chat-button" type="button" onClick={onNewChat}>
+        <span>+</span>
+        新对话
+      </button>
+
+      <nav className="side-section">
+        <span className="side-title">历史对话</span>
+        <button className={`history-item ${run ? 'active' : ''}`} type="button">
+          <span>{run ? run.summary || '当前 Web Agent 会话' : '暂无会话'}</span>
+          {run && <small>{statusLabel(run.status)}</small>}
+        </button>
+      </nav>
+
+      <section className="side-section">
+        <span className="side-title">能力</span>
+        <div className="capability-list">
+          <CapabilityItem title="Web Search" detail="Google / Mock" state="ready" />
+          <CapabilityItem title="Web Fetch" detail="自适应抓取" state="ready" />
+          <CapabilityItem title="Memory" detail="审计型记忆" state="beta" />
+          <CapabilityItem title="Reflection" detail="ReAct loop" state="ready" />
+        </div>
+      </section>
+
+      <div className="sidebar-bottom">
+        <button className="side-action" type="button">
+          <span>用量统计</span>
+          <small>{run?.tool_calls.length ?? 0} calls</small>
+        </button>
+        <button className="side-action" type="button">
+          <span>设置</span>
+          <small>本地配置</small>
+        </button>
+      </div>
+    </aside>
+  );
+}
+
+function CapabilityItem({ title, detail, state }: { title: string; detail: string; state: string }) {
+  return (
+    <div className="capability-item">
+      <div>
+        <strong>{title}</strong>
+        <span>{detail}</span>
+      </div>
+      <small>{state}</small>
+    </div>
   );
 }
 
