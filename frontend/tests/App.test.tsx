@@ -192,6 +192,15 @@ describe('App', () => {
     expect(screen.queryByRole('button', { name: '暂无对话' })).not.toBeInTheDocument();
   });
 
+  it('reveals the local star burst after five quick logo clicks', async () => {
+    render(<App />);
+    const logo = screen.getByRole('button', { name: 'Astra 图标' });
+
+    for (let index = 0; index < 5; index += 1) await userEvent.click(logo);
+
+    expect(screen.getByTestId('astra-burst')).toBeInTheDocument();
+  });
+
   it('keeps follow-up messages in the same history conversation', async () => {
     render(<App />);
 

@@ -9,7 +9,7 @@ const english: Record<string, string> = {
   '添加内容': 'Add content', '上传文件': 'Upload file', '文档、代码与数据': 'Documents, code, and data',
   '添加图片': 'Add image', '分析图像内容': 'Analyze image content', '连接来源': 'Connect source', '即将支持': 'Coming soon',
   '输入任务 / 继续追问...': 'Enter a task or ask a follow-up...', '请输入任务目标': 'Enter a task goal', '创建 run 失败': 'Failed to create run',
-  '新对话': 'New chat', '历史对话': 'Chat history', '当前 Web Agent 会话': 'Current Web Agent chat', '暂无会话': 'No chats yet', '暂无对话': 'No chats yet',
+  '新对话': 'New chat', '历史对话': 'Chat history', '当前 Web Agent 会话': 'Current Web Agent chat', '暂无会话': 'No chats yet', '暂无对话': 'No chats yet', 'Astra 图标': 'Astra icon',
   '切换对话': 'Switch chat', '最近对话': 'Recent chats', '未命名对话': 'Untitled chat', '还没有历史对话': 'No chat history yet',
   '问题导航': 'Question navigation', '跳转到问题': 'Jump to question', '问题': 'Question',
   '用量统计': 'Usage', '设置': 'Settings', '本地配置': 'Local preferences', '工作区': 'Workspace', '关闭设置': 'Close settings', '设置类别': 'Settings categories',

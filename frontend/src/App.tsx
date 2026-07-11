@@ -211,12 +211,13 @@ function AppContent() {
               )}
             </div>
             <div className="execution-menu-wrap" ref={executionMenuRef}>
-              <button className={`execution-mode-button mode-${executionMode} ${language === 'zh-CN' && executionMode === 'default' ? 'localized-label' : ''}`} type="button" onClick={() => {
+              <button className={`execution-mode-button mode-${executionMode}`} type="button" onClick={() => {
                 setExecutionMenuOpen((open) => !open);
                 setAttachOpen(false);
                 setModelOpen(false);
               }}>
-                <span>{executionMode === 'plan' ? t('仅规划') : executionMode === 'bypass' ? t('全自动') : t('默认')}</span><b>⌄</b>
+                <span>{executionMode === 'plan' ? t('仅规划') : executionMode === 'bypass' ? t('全自动') : t('默认')}</span>
+                <i className="execution-mode-chevron" aria-hidden="true" />
               </button>
               {executionMenuOpen && <ExecutionModeMenu value={executionMode} onChange={(mode) => {
                 if (mode === 'bypass') setBypassConfirmOpen(true);
@@ -290,7 +291,7 @@ function Sidebar({ run, conversations, activeView, onNewChat, onSelectConversati
   return (
     <aside className="sidebar">
       <div className="brand">
-        <div className="brand-mark">A</div>
+        <AstraBrandIcon />
         <div>
           <strong>Astra</strong>
           <span>Agent Console</span>
@@ -341,6 +342,48 @@ function CapabilityItem({ title, detail, state, enabled = true }: { title: strin
         <span>{t(detail)}</span>
       </div>
       <span className={`capability-state ${enabled ? 'enabled' : ''}`}>{t(state)}</span>
+    </div>
+  );
+}
+
+function AstraBrandIcon() {
+  const { t } = useI18n();
+  const clickTimes = useRef<number[]>([]);
+  const clearEffectTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [burstId, setBurstId] = useState<number | null>(null);
+
+  useEffect(() => () => {
+    if (clearEffectTimer.current) clearTimeout(clearEffectTimer.current);
+  }, []);
+
+  function handleClick() {
+    const now = Date.now();
+    clickTimes.current = [...clickTimes.current.filter((time) => now - time < 1200), now];
+    if (clickTimes.current.length < 5) return;
+
+    clickTimes.current = [];
+    setBurstId((current) => (current ?? 0) + 1);
+    if (clearEffectTimer.current) clearTimeout(clearEffectTimer.current);
+    clearEffectTimer.current = setTimeout(() => setBurstId(null), 1600);
+  }
+
+  return (
+    <div className="brand-icon-wrap">
+      <button className="brand-mark-trigger" type="button" aria-label={t('Astra 图标')} onClick={handleClick}>
+        <img className="brand-mark" src="/astra.svg" alt="" />
+      </button>
+      {burstId !== null && (
+        <div className="astra-burst" data-testid="astra-burst" key={burstId} aria-hidden="true">
+          <span className="astra-core-flash" />
+          <span className="astra-glow" />
+          <span className="astra-orbit" />
+          <span className="astra-orbit orbit-two" />
+          <span className="astra-firework firework-one" />
+          <span className="astra-firework firework-two" />
+          <span className="astra-firework firework-three" />
+          {Array.from({ length: 22 }, (_, index) => <i className={`astra-star star-${index + 1}`} key={index} />)}
+        </div>
+      )}
     </div>
   );
 }
