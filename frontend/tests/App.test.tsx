@@ -175,11 +175,13 @@ describe('App', () => {
 
     expect(screen.queryByText('Web Fetch')).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: /设置/ }));
-    await userEvent.click(screen.getByRole('button', { name: '能力' }));
+    await userEvent.click(screen.getByRole('button', { name: '工具' }));
 
-    expect(screen.getByRole('heading', { name: '能力' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: '工具' })).toBeInTheDocument();
     expect(screen.getByText('Web Fetch')).toBeInTheDocument();
-    expect(screen.getByText(/具体权限和执行限制由运行时统一管理/)).toBeInTheDocument();
+    expect(screen.getByText('工具调用上限')).toBeInTheDocument();
+    expect(screen.getByText('并行工具调用')).toBeInTheDocument();
+    expect(screen.getByText('工具失败重试')).toBeInTheDocument();
   });
 
   it('shows sandbox and execution policies in runtime settings', async () => {
@@ -191,9 +193,9 @@ describe('App', () => {
     expect(screen.getByRole('heading', { name: '运行时' })).toBeInTheDocument();
     expect(screen.getByText('沙盒模式')).toBeInTheDocument();
     expect(screen.getByText('最大 Agent 轮次')).toBeInTheDocument();
-    expect(screen.getByText('工具调用上限')).toBeInTheDocument();
-    expect(screen.getByText('并行工具调用')).toBeInTheDocument();
-    expect(screen.getByText('失败自动重试')).toBeInTheDocument();
+    expect(screen.queryByText('工具调用上限')).not.toBeInTheDocument();
+    expect(screen.queryByText('并行工具调用')).not.toBeInTheDocument();
+    expect(screen.queryByText('工具失败重试')).not.toBeInTheDocument();
     expect(screen.getByText('保留运行工件')).toBeInTheDocument();
   });
 
