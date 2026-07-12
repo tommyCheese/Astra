@@ -478,3 +478,8 @@ uvicorn 导入 main
 ```
 
 这也是 Astra 当前 Agent 实现最核心的设计思想：模型负责提出结构化意图和内容，确定性代码负责权限、执行、证据、状态、重试、验证和最终能否宣布完成；数据库则把每一步变成可以查询、恢复和审计的事实。
+# 通用工具与沙箱补充
+
+工具 manifest 声明 capabilities、permissions、risk、execution backend、resource profile 与 artifact behavior。AgentLoop 在 ToolCall 建立后注入 `ToolExecutionContext`，使计算型工具通过授权 service 创建 `SandboxJob` 和 Artifact，避免工具使用全局数据库状态。Web 的候选过滤、证据聚合与验证由可注册 processor 承担，非 Web 任务不再被 Web Evidence Gate 阻塞。
+
+`SandboxExecutor` 是厂商无关边界，首个 adapter 使用 Docker/OCI，生产可强制 gVisor `runsc`。Python 与 ECharts 使用独立 runtime；默认无网络、非 root、只读根文件系统，仅挂载本 Job 输入与输出目录。文件通过 Artifact collector 校验后才进入 Artifact Store。

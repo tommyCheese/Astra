@@ -456,6 +456,14 @@ class ArtifactView(BaseModel):
     path: Optional[str]
     content_ref: Optional[str]
     metadata: Dict[str, Any]
+    mime_type: Optional[str] = None
+    size_bytes: int = 0
+    checksum: Optional[str] = None
+    security_status: str = "pending"
+    tool_call_id: Optional[str] = None
+    sandbox_job_id: Optional[str] = None
+    provenance: Dict[str, Any] = Field(default_factory=dict)
+    content_url: Optional[str] = None
     created_at: datetime
 
 
@@ -515,6 +523,26 @@ class ChatMessageView(BaseModel):
     metadata: Dict[str, Any] = Field(default_factory=dict)
 
 
+class SandboxJobView(BaseModel):
+    id: str
+    tool_call_id: Optional[str] = None
+    status: str
+    executor: str
+    runtime_profile: Dict[str, Any]
+    resource_limits: Dict[str, Any]
+    runtime_name: Optional[str] = None
+    image_digest: Optional[str] = None
+    exit_reason: Optional[str] = None
+    error: Optional[Dict[str, Any]] = None
+    stdout_summary: Optional[str] = None
+    stderr_summary: Optional[str] = None
+    input_artifact_ids: List[str] = Field(default_factory=list)
+    output_artifact_ids: List[str] = Field(default_factory=list)
+    created_at: datetime
+    started_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
+
+
 class RunView(BaseModel):
     id: str
     task_id: str
@@ -525,6 +553,7 @@ class RunView(BaseModel):
     steps: List[StepView]
     tool_calls: List[ToolCallView]
     artifacts: List[ArtifactView]
+    sandbox_jobs: List[SandboxJobView] = Field(default_factory=list)
     events: List[RunEventView]
     turns: List[AgentTurnView] = Field(default_factory=list)
     memories: List[MemoryView] = Field(default_factory=list)

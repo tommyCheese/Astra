@@ -4,6 +4,7 @@ import remarkGfm from 'remark-gfm';
 import { AstraApiError, ApiErrorPayload, createRun, getRun, listRuns, resumeRun, streamRunEvents } from './api';
 import { I18nProvider, useI18n } from './i18n';
 import { ThemeProvider, useTheme } from './theme';
+import { FloatingAd } from './plugins/floating-ad';
 import type { ChatMessage, RunView } from './types';
 
 const terminalStatuses = new Set(['completed', 'completed_with_warnings', 'failed', 'blocked', 'waiting_user']);
@@ -397,6 +398,7 @@ function AppContent() {
         setExecutionMenuOpen(false);
         setBypassConfirmOpen(false);
       }} />}
+      <FloatingAd id="shaolin-womens-soccer-2026" imageSrc="/ads/astra-shaolin-womens-soccer.png" imageAlt="Astra 与少林女足联名海报" />
     </main>
   );
 }
@@ -926,6 +928,7 @@ function FinalAnswer({ run, fallback }: { run: RunView; fallback: string }) {
       {findings.map((finding, index) => (
         <MarkdownContent content={finding.text} key={index} />
       ))}
+      <ArtifactGallery artifacts={run.artifacts} />
       {result.sources.length ? (
         <details className="answer-support"><summary>{`来源 · ${result.sources.length}`}</summary><div className="source-grid">
           {result.sources.map((source) => {
@@ -944,6 +947,21 @@ function FinalAnswer({ run, fallback }: { run: RunView; fallback: string }) {
       {notes.length > 0 && <div className="answer-notes">{notes.map((item, index) => <p key={`note-${index}`}>{item}</p>)}</div>}
     </div>
   );
+}
+
+function ArtifactGallery({ artifacts }: { artifacts: RunView['artifacts'] }) {
+  const visible = artifacts.filter((artifact) => artifact.security_status === 'verified' && artifact.content_url);
+  if (!visible.length) return null;
+  return <section className="artifact-gallery" aria-label="运行工件">{visible.map((artifact) => {
+    const label = String(artifact.metadata?.filename ?? artifact.type);
+    if (artifact.mime_type === 'image/png' || artifact.mime_type === 'image/svg+xml') {
+      return <figure className="artifact-card" key={artifact.id}><img src={artifact.content_url ?? ''} alt={label} onError={(event) => event.currentTarget.parentElement?.classList.add('load-failed')} /><span className="artifact-error" role="status">预览加载失败</span><figcaption><strong>{label}</strong><span>{artifact.size_bytes?.toLocaleString() ?? 0} bytes</span></figcaption></figure>;
+    }
+    if (artifact.mime_type === 'text/html') {
+      return <figure className="artifact-card interactive" key={artifact.id}><iframe src={artifact.content_url ?? ''} title={label} sandbox="allow-scripts" referrerPolicy="no-referrer" /><figcaption><strong>{label}</strong><span>隔离预览</span></figcaption></figure>;
+    }
+    return <a className="artifact-card file" href={artifact.content_url ?? ''} key={artifact.id} target="_blank" rel="noreferrer"><strong>{label}</strong><span>{artifact.mime_type ?? artifact.type}</span></a>;
+  })}</section>;
 }
 
 function MarkdownContent({ content }: { content: string }) {
@@ -972,6 +990,7 @@ function ReasoningAuditSummary({ run }: { run: RunView }) {
     {criteria.map((criterion) => <div key={String(criterion.id)}><strong>{String(criterion.description)}</strong><span>{String(criterion.status ?? 'pending')}</span></div>)}
     {policy?.adjustments?.map((adjustment, index) => <div key={`adjust-${index}`}><strong>策略调整</strong><span>{String(adjustment.reason ?? adjustment.rule)}</span></div>)}
     {run.terminal_reason && <div><strong>终态原因</strong><span>{String(run.terminal_reason.reason ?? run.status)}</span></div>}
+    {(run.sandbox_jobs ?? []).map((job) => <div key={job.id}><strong>Sandbox · {job.status}</strong><span>{job.runtime_name ?? job.executor} · {job.image_digest ?? String(job.runtime_profile.image ?? '未记录镜像')} · {job.output_artifact_ids.length} artifacts{job.exit_reason ? ` · ${job.exit_reason}` : ''}</span>{(job.stdout_summary || job.stderr_summary) && <details><summary>截断日志</summary><pre>{job.stderr_summary || job.stdout_summary}</pre></details>}</div>)}
   </div>;
 }
 

@@ -377,7 +377,7 @@ class OpenAICompatibleModelClient(ModelClient):
                         "Allowed decision_type values: call_tool, reflect, replan, finalize, ask_user, blocked. "
                         "Choose among the tools in context.tool_manifests only when external or current evidence is needed. "
                         "For stable general knowledge, explanation, writing, or conversation, finalize without tools. "
-                        "Use web_search for current or externally verifiable information and web_fetch only for a URL from context. "
+                        "Select tools only from context.tool_manifests and follow each manifest's description, schema, capabilities, and permissions. "
                         "For call_tool include tool_name and tool_input. "
                         "Do not include hidden chain-of-thought; reasoning_summary must be concise and user-auditable."
                     ),

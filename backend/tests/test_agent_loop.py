@@ -40,6 +40,21 @@ async def test_agent_loop_completes_mock_web_run(session):
     assert loaded.memories
 
 
+async def test_agent_loop_injects_auditable_tool_execution_context(session):
+    settings = Settings(model_provider="mock")
+    repo = RunRepository(session)
+    run = await repo.create_task_run("查询上下文", settings.model_policy)
+    registry = fake_web_registry()
+    search = registry.get("web_search")
+
+    await AgentLoop(settings, model_client=MockModelClient(), tool_registry=registry).run(repo, run.id, run.task.description)
+
+    assert search.last_context.run_id == run.id
+    assert search.last_context.tool_call_id
+    assert search.last_context.artifact_service
+    assert search.last_context.sandbox_service
+
+
 async def test_agent_loop_blocks_at_turn_limit(session):
     settings = Settings(
         model_provider="mock",
@@ -64,6 +79,20 @@ def test_tool_router_rejects_disallowed_tool():
         router.resolve("shell.run", {"cmd": "date"})
 
     assert exc_info.value.category == "tool_not_allowed"
+
+
+def test_tool_router_rejects_unavailable_backend():
+    registry = fake_web_registry()
+    tool = registry.get("web_search")
+    original = tool.spec
+    tool.spec = original.model_copy(update={"execution_backend": "sandbox.python"})
+    router = ToolRouter(registry, available_backends={"in_process"})
+
+    with pytest.raises(ToolExecutionError) as exc_info:
+        router.resolve("web_search", {"query": "Astra"})
+
+    assert exc_info.value.category == "sandbox_unavailable"
+    tool.spec = original
 
 
 class ContinueDecisionClient(MockModelClient):

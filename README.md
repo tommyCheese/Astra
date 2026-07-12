@@ -6,11 +6,15 @@ Astra 是一个 AI 原生的通用 Agent 平台。
 
 从这里开始：
 
-- [Astra Agent Platform v0.1](docs/astra-agent-platform-v0.1.md)
+- [Astra 文档中心](docs/README.md)
+- [完整软件开发生命周期](docs/software-development-lifecycle/README.md)
+- [跟着一次请求读懂 Astra Agent](docs/agent-implementation-execution-walkthrough.md)
 
 ## 第一条纵向切片
 
 当前实现方向是 `implement-web-data-query-task-runner`：一个由 Python 后端支撑的 Web App，用真实模型接口和 `web_search` / `web_fetch` 工具运行通用 Web 数据查询任务。
+
+工具系统已开始迁移为策略驱动的通用 Runtime：Web 领域处理从 AgentLoop 解耦，计算型工具通过 `ToolExecutionContext`、`SandboxJob` 和 `ArtifactRef` 保留审计关联。声明式 `chart.render` 支持 Matplotlib、Seaborn 和 ECharts；绘图能力默认关闭，启用后必须通过一次性 OCI 容器执行，不在 API 进程内执行任意 Python 或 JavaScript。部署要求见 [沙箱与图表 Runtime 运维指南](docs/sandbox-and-chart-runtime-operations.md)。
 
 核心闭环：
 

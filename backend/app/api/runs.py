@@ -3,8 +3,8 @@ import json
 import logging
 from typing import AsyncIterator
 
-from fastapi import APIRouter, Depends, Query
-from fastapi.responses import StreamingResponse
+from fastapi import APIRouter, Depends, Header, Query
+from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings, get_settings
@@ -14,9 +14,24 @@ from app.runner.engine import start_run_in_process
 from app.runner.reasoning import PolicyCompiler
 from app.core.errors import ResourceError, StateError, ValidationError
 from app.schemas.agent import ContinueRunRequest, CreateRunRequest, CreateRunResponse, RunView
+from app.artifacts import LocalArtifactStore
 
 router = APIRouter(prefix="/api", tags=["runs"])
 logger = logging.getLogger("astra.runs")
+
+
+@router.get("/artifacts/{artifact_id}/content")
+async def get_artifact_content(artifact_id: str, session: AsyncSession = Depends(get_session), settings: Settings = Depends(get_settings), workspace_id: str | None = Header(default=None, alias="X-Astra-Workspace-Id")):
+    scoped = await RunRepository(session).get_artifact_with_workspace(artifact_id)
+    artifact, required_workspace = scoped if scoped else (None, None)
+    if artifact is None or not artifact.storage_key or artifact.security_status != "verified":
+        raise ResourceError("ARTIFACT_NOT_FOUND", "找不到可访问的工件。")
+    if required_workspace and workspace_id != required_workspace:
+        raise ResourceError("ARTIFACT_NOT_FOUND", "找不到可访问的工件。")
+    path = LocalArtifactStore(settings.artifact_store_path).resolve(artifact.storage_key)
+    if not path.is_file():
+        raise ResourceError("ARTIFACT_NOT_FOUND", "工件内容已不可用。")
+    return FileResponse(path, media_type=artifact.mime_type, filename=artifact.metadata_.get("filename"))
 
 
 @router.get("/runs", response_model=list[RunView])

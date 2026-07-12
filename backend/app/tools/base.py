@@ -1,5 +1,6 @@
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List
+from dataclasses import dataclass
+from typing import Any, Dict, Iterable, List, Optional
 
 from pydantic import BaseModel, Field
 
@@ -26,13 +27,59 @@ class ToolSpec(BaseModel):
     retry_policy: Dict[str, Any] = Field(default_factory=dict)
     error_categories: List[str] = Field(default_factory=list)
     idempotent: bool = True
+    capabilities: List[str] = Field(default_factory=list)
+    permissions: List[str] = Field(default_factory=list)
+    risk: str = "low"
+    execution_backend: str = "in_process"
+    resource_profile: Dict[str, Any] = Field(default_factory=dict)
+    artifact_behavior: Dict[str, Any] = Field(default_factory=dict)
+
+    def model_post_init(self, __context: Any) -> None:
+        if not self.permissions:
+            self.permissions = [self.permission]
+        if not self.capabilities:
+            self.capabilities = [self.permission]
+
+
+class ArtifactRef(BaseModel):
+    id: str
+    type: str
+    mime_type: str
+    content_url: Optional[str] = None
+    size_bytes: int = 0
+    checksum: str = ""
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+
+class ToolResultEnvelope(BaseModel):
+    status: str = "succeeded"
+    data: Dict[str, Any] = Field(default_factory=dict)
+    warnings: List[str] = Field(default_factory=list)
+    metrics: Dict[str, Any] = Field(default_factory=dict)
+    artifacts: List[ArtifactRef] = Field(default_factory=list)
+
+
+class CapabilityAvailability(BaseModel):
+    capability: str
+    available: bool
+    reason: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class ToolExecutionContext:
+    run_id: str
+    tool_call_id: str
+    step_id: Optional[str]
+    trace_id: str
+    artifact_service: Any
+    sandbox_service: Any
 
 
 class Tool(ABC):
     spec: ToolSpec
 
     @abstractmethod
-    async def run(self, tool_input: Dict[str, Any]) -> Dict[str, Any]:
+    async def run(self, tool_input: Dict[str, Any], *, context: Optional[ToolExecutionContext] = None) -> Dict[str, Any]:
         raise NotImplementedError
 
 
@@ -51,3 +98,15 @@ class ToolRegistry:
 
     def specs(self) -> Dict[str, ToolSpec]:
         return {name: tool.spec for name, tool in self._tools.items()}
+
+    def extend(self, tools: Iterable[Tool]) -> "ToolRegistry":
+        for tool in tools:
+            self.register(tool)
+        return self
+
+    @classmethod
+    def compose(cls, *registries: "ToolRegistry") -> "ToolRegistry":
+        combined = cls()
+        for registry in registries:
+            combined.extend(registry._tools.values())
+        return combined

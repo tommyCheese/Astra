@@ -8,8 +8,11 @@ from app.repositories.runs import RunRepository
 from app.runner.model_client import ModelClient, ModelOutputError
 from app.schemas.agent import AgentObservation, FinalAnswer, VerificationReport
 from app.schemas.agent import AgentState, CriterionStatus, ReasoningPolicySnapshot, TerminalState
-from app.tools.base import ToolExecutionError, ToolRegistry
-from app.runner.adapters import WebTaskAdapter
+from app.tools.base import CapabilityAvailability, ToolExecutionContext, ToolExecutionError, ToolRegistry
+from app.artifacts import ArtifactService, LocalArtifactStore
+from app.sandbox.oci import OCIContainerExecutor
+from app.sandbox.runtime import SandboxJobService, SandboxSupervisor
+from app.runner.adapters import ChartTaskAdapter, ProcessorRegistry, WebTaskAdapter
 from app.runner.reasoning import (
     CompletionGate,
     ObservationEvaluator,
@@ -22,23 +25,52 @@ logger = logging.getLogger("astra.agent_loop")
 
 
 class ToolRouter:
-    def __init__(self, registry: ToolRegistry, allowed_tools: Optional[set[str]] = None):
+    def __init__(self, registry: ToolRegistry, allowed_tools: Optional[set[str]] = None, *, allowed_capabilities: Optional[set[str]] = None, allowed_permissions: Optional[set[str]] = None, allowed_risks: Optional[set[str]] = None, available_backends: Optional[set[str]] = None):
         self.registry = registry
-        self.allowed_tools = allowed_tools or {"web_search", "web_fetch"}
+        self.allowed_tools = allowed_tools
+        self.allowed_capabilities = allowed_capabilities or {"network_read", "sandboxed_compute", "artifact_write"}
+        self.allowed_permissions = allowed_permissions or {"network_read", "sandboxed_compute", "artifact_write"}
+        self.allowed_risks = allowed_risks or {"low", "sandboxed"}
+        self.available_backends = available_backends or {"in_process"}
 
     def resolve(self, tool_name: Optional[str], tool_input: Dict[str, Any]):
         if not tool_name:
             raise ToolExecutionError("invalid_decision", "Agent decision did not include a tool")
-        if tool_name not in self.allowed_tools:
-            raise ToolExecutionError("tool_not_allowed", f"Tool is not allowed in Web Agent mode: {tool_name}")
         tool = self.registry.get(tool_name)
+        if self.allowed_tools is not None and tool_name not in self.allowed_tools:
+            raise ToolExecutionError("tool_not_allowed", f"Tool is not allowed: {tool_name}")
         required = tool.spec.input_schema.get("required", [])
         missing = [key for key in required if not tool_input.get(key)]
         if missing:
             raise ToolExecutionError("invalid_input", f"Missing required tool input: {', '.join(missing)}")
-        if tool.spec.permission != "network_read" or tool.spec.side_effect_level != "read_only":
+        if not set(tool.spec.capabilities) <= self.allowed_capabilities:
+            raise ToolExecutionError("tool_not_allowed", f"Tool capability is not allowed: {tool_name}")
+        if not set(tool.spec.permissions) <= self.allowed_permissions:
             raise ToolExecutionError("permission_denied", f"Tool permission is not allowed: {tool_name}")
+        if tool.spec.risk not in self.allowed_risks:
+            raise ToolExecutionError("permission_denied", f"Tool risk is not allowed: {tool_name}")
+        if tool.spec.execution_backend not in self.available_backends:
+            raise ToolExecutionError("sandbox_unavailable", f"Tool backend is unavailable: {tool.spec.execution_backend}")
         return tool
+
+    def availability(self, tool_name: str) -> CapabilityAvailability:
+        try:
+            spec = self.registry.get(tool_name).spec
+            probe = {key: "__manifest_probe__" for key in spec.input_schema.get("required", [])}
+            self.resolve(tool_name, probe)
+            return CapabilityAvailability(capability=tool_name, available=True)
+        except ToolExecutionError as exc:
+            return CapabilityAvailability(capability=tool_name, available=False, reason=exc.category)
+
+    def eligible_specs(self):
+        eligible, unavailable = {}, {}
+        for name, spec in self.registry.specs().items():
+            status = self.availability(name)
+            if status.available:
+                eligible[name] = spec
+            else:
+                unavailable[name] = status.model_dump()
+        return eligible, unavailable
 
 
 class ContextAssembler:
@@ -51,17 +83,23 @@ class ContextAssembler:
         run_id: str,
         goal: str,
         tool_registry: ToolRegistry,
+        sandbox_executor=None,
+        tool_router: Optional[ToolRouter] = None,
         observations: List[Dict[str, Any]],
         evidence_pack: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         memories = await self.repo.list_memories(run_id=run_id, min_confidence=0.0, limit=8)
         run = await self.repo.require_run(run_id)
+        specs, unavailable = tool_registry.specs(), {}
+        if tool_router is not None:
+            specs, unavailable = tool_router.eligible_specs()
         return {
             "run_id": run_id,
             "goal": goal,
             "tool_manifests": {
-                name: spec.model_dump() for name, spec in tool_registry.specs().items()
+                name: spec.model_dump() for name, spec in specs.items()
             },
+            "unavailable_capabilities": unavailable,
             "observations": observations,
             "evidence_pack": evidence_pack or {},
             "memory_reads": [
@@ -183,12 +221,19 @@ class AgentLoop:
         *,
         model_client: ModelClient,
         tool_registry: ToolRegistry,
+        sandbox_executor=None,
     ):
         self.settings = settings
         self.model_client = model_client
         self.tool_registry = tool_registry
-        self.router = ToolRouter(tool_registry)
+        self.sandbox_executor = sandbox_executor
+        backends = {"in_process"}
+        if settings.sandbox_enabled:
+            backends.add("sandbox.oci")
+        self.router = ToolRouter(tool_registry, available_backends=backends)
         self.adapter = WebTaskAdapter()
+        self.chart_adapter = ChartTaskAdapter()
+        self.processors = ProcessorRegistry([self.adapter, self.chart_adapter])
         self.evaluator = ObservationEvaluator()
         self.reflection_gate = ReflectionGate()
         self.completion_gate = CompletionGate()
@@ -203,6 +248,9 @@ class AgentLoop:
         assembler = ContextAssembler(repo)
         memory_manager = MemoryManager(self.settings, repo, self.model_client)
         verifier = VerificationEngine()
+        artifact_service = ArtifactService(repo, LocalArtifactStore(self.settings.artifact_store_path), max_files=self.settings.artifact_max_files, max_bytes=self.settings.artifact_max_bytes)
+        executor = self.sandbox_executor or OCIContainerExecutor(self.settings.sandbox_executor, require_gvisor=self.settings.sandbox_require_gvisor)
+        sandbox_service = SandboxJobService(repo, SandboxSupervisor(executor), artifact_service)
         initial_run = await repo.require_run(run_id)
         policy_snapshot = ReasoningPolicySnapshot.model_validate(initial_run.reasoning_policy or {})
         policy = policy_snapshot.effective
@@ -212,11 +260,6 @@ class AgentLoop:
         max_replans = min(policy.budgets.max_replans, self.settings.agent_max_replans)
         observations: List[Dict[str, Any]] = list((initial_run.agent_state or {}).get("observations", []))
         tool_outputs: List[Dict[str, Any]] = []
-        filtered_candidates: List[Dict[str, Any]] = []
-        fetched_sources: List[Dict[str, Any]] = []
-        failed_sources: List[Dict[str, Any]] = []
-        search_warnings: List[str] = []
-        dedupe: Dict[str, Any] = {}
         tool_call_count = 0
         retry_counts: Dict[str, int] = {}
         failed_action_counts: Dict[str, int] = {}
@@ -324,6 +367,7 @@ class AgentLoop:
                 run_id=run_id,
                 goal=goal,
                 tool_registry=self.tool_registry,
+                tool_router=self.router,
                 observations=observations,
             )
             try:
@@ -475,7 +519,8 @@ class AgentLoop:
                 tool_call_count += 1
                 await repo.update_agent_turn(turn.id, phase="executing", tool_call_id=call.id)
                 try:
-                    output = await tool.run(decision.tool_input)
+                    execution_context = ToolExecutionContext(run_id=run_id, tool_call_id=call.id, step_id=step.id, trace_id=f"{run_id}:{call.id}", artifact_service=artifact_service, sandbox_service=sandbox_service)
+                    output = await tool.run(decision.tool_input, context=execution_context)
                 except ToolExecutionError as exc:
                     await repo.finish_tool_call(call.id, error=exc.to_payload())
                     raise
@@ -483,28 +528,13 @@ class AgentLoop:
                 logger.info("tool.complete run_id=%s turn=%s tool=%s call_id=%s", run_id, turn_index, tool.spec.name, call.id)
                 output = self._normalize_tool_output(tool.spec.name, output)
                 tool_outputs.append(output)
-                if tool.spec.name == "web_search":
-                    filtered_candidates, dedupe = self.adapter.filter_candidates(output.get("candidates", []))
-                    output["candidates"] = filtered_candidates
-                    output["dedupe"] = dedupe
-                    search_warnings = output.get("warnings", [])
-                    await repo.update_step(
-                        step.id,
-                        "completed" if filtered_candidates else "failed",
-                        evidence={
-                            "candidate_count": output.get("candidate_count", len(filtered_candidates)),
-                            "deduped_count": len(filtered_candidates),
-                            "warnings": search_warnings,
-                        },
-                    )
-                elif tool.spec.name == "web_fetch":
-                    fetched_sources.append(output)
-                    await repo.update_step(
-                        step.id,
-                        "completed",
-                        evidence={"fetched_count": len(fetched_sources), "last_quality": output.get("quality_score")},
-                    )
-                observation = self.adapter.normalize_tool_result(tool.spec.name, output)
+                processor = self.processors.for_tool(tool.spec.name)
+                if processor:
+                    observation, step_evidence = processor.process(tool.spec.name, output)
+                else:
+                    observation = AgentObservation(kind="tool_result", status="succeeded", summary=f"{tool.spec.name} completed", data={"tool_name": tool.spec.name, **output})
+                    step_evidence = {}
+                await repo.update_step(step.id, "completed", evidence=step_evidence)
                 observations.append(observation.model_dump())
                 evaluation = self.evaluator.evaluate(observation, decision.expected, decision.success_criteria_refs)
                 await repo.add_event(run_id, "reasoning.evaluation_created", {"turn_index": turn_index, **evaluation.model_dump(mode="json")})
@@ -544,14 +574,9 @@ class AgentLoop:
                 )
                 observation.data["failure_fingerprint"] = fingerprint
                 observations.append(observation.model_dump())
-                if decision.tool_name == "web_fetch":
-                    failed_sources.append(
-                        {
-                            "url": decision.tool_input.get("url"),
-                            "category": exc.category,
-                            "message": exc.message,
-                        }
-                    )
+                processor = self.processors.for_tool(decision.tool_name or "")
+                if processor:
+                    processor.record_failure(decision.tool_name or "", decision.tool_input, exc.to_payload())
                 reflection = await maybe_reflect("tool_failed", {
                     "last_observation": observation.model_dump(),
                     "retry_count": retry_counts[decision.tool_name or "unknown"],
@@ -571,15 +596,7 @@ class AgentLoop:
                     terminal_summary = f"{decision.tool_name} 已达到重试上限。"
                     break
 
-        evidence_pack = self.adapter.build_evidence(
-            goal,
-            filtered_candidates,
-            fetched_sources,
-            failed_sources,
-            dedupe,
-            search_warnings,
-        )
-        evidence_pack["external_evidence_attempted"] = bool(tool_call_count or failed_action_counts)
+        evidence_pack = self.adapter.build_evidence(goal, self.adapter.attempted)
         artifact = await repo.create_artifact(
             run_id,
             "evidence_pack",
@@ -587,7 +604,7 @@ class AgentLoop:
             metadata={
                 "format": "json",
                 "audited_sources": len(evidence_pack["fetched_sources"]),
-                "failed_sources": len(failed_sources),
+                "failed_sources": len(evidence_pack["failed_sources"]),
             },
         )
         evidence_pack["artifact_id"] = artifact.id
@@ -613,7 +630,7 @@ class AgentLoop:
             context=final_context,
         )
         report = verifier.verify(final_answer, evidence_pack)
-        adapter_decision = self.adapter.validate(final_answer.model_dump(), evidence_pack)
+        adapter_decision = self.chart_adapter.validate(final_answer.model_dump(), {}) if self.chart_adapter.attempted and not self.adapter.attempted else self.adapter.validate(final_answer.model_dump(), evidence_pack)
         run_record = await repo.require_run(run_id)
         if run_record.agent_state:
             state = AgentState.model_validate(run_record.agent_state)
@@ -686,7 +703,8 @@ class AgentLoop:
 
     async def _step_for_tool(self, repo: RunRepository, run_id: str, tool_name: str):
         run = await repo.require_run(run_id)
-        keywords = ["搜索"] if tool_name == "web_search" else ["抓取"]
+        spec = self.tool_registry.get(tool_name).spec
+        keywords = [tool_name, *spec.capabilities]
         for step in sorted(run.steps, key=lambda item: item.index):
             if tool_name in step.intent or tool_name in step.title:
                 return step

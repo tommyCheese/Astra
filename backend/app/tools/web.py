@@ -70,7 +70,7 @@ class WebSearchTool(Tool):
     def __init__(self, settings: Settings):
         self.settings = settings
 
-    async def run(self, tool_input: Dict[str, Any]) -> Dict[str, Any]:
+    async def run(self, tool_input: Dict[str, Any], *, context=None) -> Dict[str, Any]:
         query = str(tool_input.get("query", "")).strip()
         if not query:
             raise ToolExecutionError("invalid_input", "web_search requires a non-empty query")
@@ -203,7 +203,7 @@ class WebFetchTool(Tool):
     def __init__(self, settings: Settings):
         self.settings = settings
 
-    async def run(self, tool_input: Dict[str, Any]) -> Dict[str, Any]:
+    async def run(self, tool_input: Dict[str, Any], *, context=None) -> Dict[str, Any]:
         url = str(tool_input.get("url", "")).strip()
         if not url:
             raise ToolExecutionError("invalid_input", "web_fetch requires a URL")

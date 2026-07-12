@@ -4,7 +4,7 @@ import pytest
 import httpx
 
 from app.core.config import Settings
-from app.tools.base import ToolExecutionError
+from app.tools.base import ArtifactRef, Tool, ToolExecutionError, ToolRegistry, ToolResultEnvelope, ToolSpec
 from app.tools.web import (
     WebFetchTool,
     WebSearchTool,
@@ -117,6 +117,27 @@ def test_web_tool_manifest_contains_operational_fields():
     assert specs["web_search"].retry_policy
     assert "missing_credentials" in specs["web_search"].error_categories
     assert specs["web_fetch"].description
+    assert specs["web_search"].capabilities == ["network_read"]
+    assert specs["web_search"].permissions == ["network_read"]
+
+
+def test_tool_contract_serializes_artifact_envelope_and_legacy_permissions():
+    spec = ToolSpec(name="legacy", version="1", input_schema={}, output_schema={}, permission="network_read", side_effect_level="read_only")
+    result = ToolResultEnvelope(artifacts=[ArtifactRef(id="a1", type="chart", mime_type="image/png")])
+    assert spec.capabilities == ["network_read"]
+    assert result.model_dump()["artifacts"][0]["id"] == "a1"
+
+
+def test_tool_registries_are_composable():
+    class ExampleTool(Tool):
+        spec = ToolSpec(name="example", version="1", input_schema={}, output_schema={}, permission="network_read", side_effect_level="read_only")
+
+        async def run(self, tool_input, *, context=None):
+            return {}
+
+    extra = ToolRegistry().extend([ExampleTool()])
+    registry = ToolRegistry.compose(build_web_registry(Settings()), extra)
+    assert {"web_search", "web_fetch", "example"} <= set(registry.specs())
 
 
 async def test_web_fetch_respects_network_permission():

@@ -15,7 +15,7 @@ from app.schemas.agent import FinalAnswer, PlanOutput, PlanStep
 from app.schemas.agent import AgentState, ReasoningPolicySnapshot
 from app.runner.reasoning import build_default_contract, build_plan_graph, normalize_contract, validate_contract
 from app.tools.base import ToolExecutionError, ToolRegistry
-from app.tools.web import build_web_registry
+from app.tools.registry import build_tool_registry
 from app.core.errors import run_error_from_exception
 
 logger = logging.getLogger("astra.engine")
@@ -31,7 +31,7 @@ class RunEngine:
     ):
         self.settings = settings
         self.model_client = model_client or build_model_client(settings)
-        self.tool_registry = tool_registry or build_web_registry(settings)
+        self.tool_registry = tool_registry or build_tool_registry(settings)
 
     async def run(self, run_id: str) -> None:
         logger.info("run.engine.start run_id=%s provider=%s model=%s", run_id, self.settings.model_provider, self.settings.model_name)
@@ -78,7 +78,7 @@ class RunEngine:
 
         if run.state_version and run.agent_state:
             await repo.update_run_status(run_id, "executing")
-            if self.settings.agent_use_loop and self.settings.agent_use_general_runtime:
+            if self.settings.agent_use_general_runtime:
                 agent_loop = AgentLoop(self.settings, model_client=self.model_client, tool_registry=self.tool_registry)
                 await self._start_answer_stream(repo, run_id)
                 loop_result = await agent_loop.run(repo, run_id, goal, on_answer_delta=lambda delta: self._handle_answer_delta(repo, run_id, delta))
@@ -187,7 +187,7 @@ class RunEngine:
 
         logger.info("run.phase run_id=%s phase=executing", run_id)
         await repo.update_run_status(run_id, "executing")
-        if self.settings.agent_use_loop and self.settings.agent_use_general_runtime:
+        if self.settings.agent_use_general_runtime:
             agent_loop = AgentLoop(
                 self.settings,
                 model_client=self.model_client,
@@ -238,45 +238,7 @@ class RunEngine:
             logger.info("run.complete run_id=%s status=%s findings=%s sources=%s", run_id, status, len(final_answer.findings), len(final_answer.sources))
             return
 
-        tool_outputs = await self._execute_web_query(repo, run_id, goal)
-
-        await repo.update_run_status(run_id, "synthesizing")
-        synth_step = await self._mark_named_step_running(repo, run_id, "综合")
-        await self._start_answer_stream(repo, run_id)
-        final_answer = await self.model_client.synthesize(goal, tool_outputs, on_delta=lambda delta: self._answer_delta(repo, run_id, delta))
-        await self._complete_answer_stream(repo, run_id, final_answer.summary)
-        await repo.create_artifact(
-            run_id,
-            "final_answer",
-            content_ref=final_answer.model_dump_json(),
-            metadata={"format": "json"},
-        )
-        if synth_step is not None:
-            await repo.update_step(
-                synth_step.id,
-                "completed",
-                evidence={"finding_count": len(final_answer.findings)},
-            )
-
-        await repo.update_run_status(run_id, "verifying")
-        verify_step = await self._mark_named_step_running(repo, run_id, "验证")
-        result, status = self._verify(final_answer, tool_outputs)
-        if verify_step is not None:
-            await repo.update_step(
-                verify_step.id,
-                "completed",
-                evidence={
-                    "status": status,
-                    "source_count": len(result.get("sources", [])),
-                    "caveat_count": len(result.get("caveats", [])),
-                },
-            )
-        await repo.update_run_status(
-            run_id,
-            status,
-            summary=final_answer.summary,
-            result=result,
-        )
+        raise RuntimeError("The general Agent runtime is required; the legacy Web workflow has been removed")
 
     async def _persist_plan(self, repo: RunRepository, run_id: str, plan: PlanOutput) -> None:
         if not plan.steps:

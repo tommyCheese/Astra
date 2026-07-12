@@ -71,6 +71,7 @@ class RunRecord(Base):
     events: Mapped[List["RunEventRecord"]] = relationship(back_populates="run", order_by="RunEventRecord.id")
     turns: Mapped[List["AgentTurnRecord"]] = relationship(back_populates="run", order_by="AgentTurnRecord.turn_index")
     memories: Mapped[List["MemoryRecord"]] = relationship(back_populates="run")
+    sandbox_jobs: Mapped[List["SandboxJobRecord"]] = relationship(back_populates="run")
 
 
 class StepRecord(Base):
@@ -120,10 +121,44 @@ class ArtifactRecord(Base):
     type: Mapped[str] = mapped_column(String(80))
     path: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
     content_ref: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    tool_call_id: Mapped[Optional[str]] = mapped_column(ForeignKey("tool_calls.id"), nullable=True)
+    sandbox_job_id: Mapped[Optional[str]] = mapped_column(ForeignKey("sandbox_jobs.id"), nullable=True)
+    mime_type: Mapped[Optional[str]] = mapped_column(String(160), nullable=True)
+    size_bytes: Mapped[int] = mapped_column(Integer, default=0)
+    checksum: Mapped[Optional[str]] = mapped_column(String(80), nullable=True)
+    storage_key: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    preview_key: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    security_status: Mapped[str] = mapped_column(String(40), default="pending")
+    provenance: Mapped[dict] = mapped_column(JsonType, default=dict)
     metadata_: Mapped[dict] = mapped_column("metadata", JsonType, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
     run: Mapped[RunRecord] = relationship(back_populates="artifacts")
+
+
+class SandboxJobRecord(Base):
+    __tablename__ = "sandbox_jobs"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_str)
+    run_id: Mapped[str] = mapped_column(ForeignKey("runs.id"))
+    tool_call_id: Mapped[Optional[str]] = mapped_column(ForeignKey("tool_calls.id"), nullable=True)
+    status: Mapped[str] = mapped_column(String(40), default="queued")
+    runtime_profile: Mapped[dict] = mapped_column(JsonType, default=dict)
+    resource_limits: Mapped[dict] = mapped_column(JsonType, default=dict)
+    input_artifact_ids: Mapped[list] = mapped_column(JsonType, default=list)
+    output_artifact_ids: Mapped[list] = mapped_column(JsonType, default=list)
+    executor: Mapped[str] = mapped_column(String(80))
+    runtime_name: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
+    image_digest: Mapped[Optional[str]] = mapped_column(String(240), nullable=True)
+    exit_reason: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
+    error: Mapped[Optional[dict]] = mapped_column(JsonType, nullable=True)
+    stdout_summary: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    stderr_summary: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    started_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    run: Mapped[RunRecord] = relationship(back_populates="sandbox_jobs")
 
 
 class RunEventRecord(Base):

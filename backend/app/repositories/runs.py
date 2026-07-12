@@ -11,6 +11,7 @@ from app.db.models import (
     MemoryRecord,
     RunEventRecord,
     RunRecord,
+    SandboxJobRecord,
     StepRecord,
     TaskRecord,
     ToolCallRecord,
@@ -136,6 +137,7 @@ class RunRepository:
                 selectinload(RunRecord.events),
                 selectinload(RunRecord.turns),
                 selectinload(RunRecord.memories),
+                selectinload(RunRecord.sandbox_jobs),
             )
         )
         return result.scalar_one_or_none()
@@ -153,6 +155,7 @@ class RunRepository:
                 selectinload(RunRecord.events),
                 selectinload(RunRecord.turns),
                 selectinload(RunRecord.memories),
+                selectinload(RunRecord.sandbox_jobs),
             )
         )
         return list(result.scalars().all())
@@ -309,6 +312,14 @@ class RunRepository:
         content_ref: Optional[str] = None,
         path: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
+        tool_call_id: Optional[str] = None,
+        sandbox_job_id: Optional[str] = None,
+        mime_type: Optional[str] = None,
+        size_bytes: int = 0,
+        checksum: Optional[str] = None,
+        storage_key: Optional[str] = None,
+        security_status: str = "pending",
+        provenance: Optional[Dict[str, Any]] = None,
     ) -> ArtifactRecord:
         artifact = ArtifactRecord(
             run_id=run_id,
@@ -316,6 +327,14 @@ class RunRepository:
             path=path,
             content_ref=content_ref,
             metadata_=metadata or {},
+            tool_call_id=tool_call_id,
+            sandbox_job_id=sandbox_job_id,
+            mime_type=mime_type,
+            size_bytes=size_bytes,
+            checksum=checksum,
+            storage_key=storage_key,
+            security_status=security_status,
+            provenance=provenance or {},
         )
         self.session.add(artifact)
         await self.session.flush()
@@ -326,6 +345,42 @@ class RunRepository:
         )
         await self.session.commit()
         return artifact
+
+    async def get_artifact(self, artifact_id: str) -> Optional[ArtifactRecord]:
+        return await self.session.get(ArtifactRecord, artifact_id)
+
+    async def get_artifact_with_workspace(self, artifact_id: str):
+        result = await self.session.execute(select(ArtifactRecord, TaskRecord.workspace_id).join(RunRecord, ArtifactRecord.run_id == RunRecord.id).join(TaskRecord, RunRecord.task_id == TaskRecord.id).where(ArtifactRecord.id == artifact_id))
+        return result.one_or_none()
+
+    async def list_artifacts(self) -> List[ArtifactRecord]:
+        result = await self.session.execute(select(ArtifactRecord))
+        return list(result.scalars().all())
+
+    async def create_sandbox_job(self, run_id: str, *, tool_call_id: Optional[str], executor: str, runtime_profile: Dict[str, Any], resource_limits: Dict[str, Any], input_artifact_ids: Optional[List[str]] = None) -> SandboxJobRecord:
+        job = SandboxJobRecord(run_id=run_id, tool_call_id=tool_call_id, executor=executor, runtime_profile=runtime_profile, resource_limits=resource_limits, input_artifact_ids=input_artifact_ids or [], output_artifact_ids=[])
+        self.session.add(job)
+        await self.session.flush()
+        await self.add_event(run_id, "sandbox_job.created", {"sandbox_job_id": job.id, "tool_call_id": tool_call_id, "status": job.status})
+        await self.session.commit()
+        return job
+
+    async def transition_sandbox_job(self, job_id: str, status: str, **updates) -> SandboxJobRecord:
+        from app.sandbox.runtime import transition
+        job = await self.session.get(SandboxJobRecord, job_id)
+        if job is None:
+            raise ValueError(f"SandboxJob not found: {job_id}")
+        transition(job.status, status)
+        job.status = status
+        if status == "running":
+            job.started_at = utc_now()
+        if status in {"succeeded", "failed", "timed_out", "cancelled"}:
+            job.completed_at = utc_now()
+        for key, value in updates.items():
+            setattr(job, key, value)
+        await self.add_event(job.run_id, "sandbox_job.status_changed", {"sandbox_job_id": job.id, "status": status, "exit_reason": job.exit_reason})
+        await self.session.commit()
+        return job
 
     async def create_agent_turn(
         self,
@@ -592,9 +647,21 @@ def run_to_view(run: RunRecord) -> Dict[str, Any]:
                 "path": artifact.path,
                 "content_ref": artifact.content_ref,
                 "metadata": artifact.metadata_,
+                "mime_type": artifact.mime_type,
+                "size_bytes": artifact.size_bytes,
+                "checksum": artifact.checksum,
+                "security_status": artifact.security_status,
+                "tool_call_id": artifact.tool_call_id,
+                "sandbox_job_id": artifact.sandbox_job_id,
+                "provenance": artifact.provenance,
+                "content_url": f"/api/artifacts/{artifact.id}/content" if artifact.storage_key and artifact.security_status == "verified" else None,
                 "created_at": artifact.created_at,
             }
             for artifact in run.artifacts
+        ],
+        "sandbox_jobs": [
+            {"id": job.id, "tool_call_id": job.tool_call_id, "status": job.status, "executor": job.executor, "runtime_profile": job.runtime_profile, "resource_limits": job.resource_limits, "runtime_name": job.runtime_name, "image_digest": job.image_digest, "exit_reason": job.exit_reason, "error": job.error, "stdout_summary": job.stdout_summary, "stderr_summary": job.stderr_summary, "input_artifact_ids": job.input_artifact_ids, "output_artifact_ids": job.output_artifact_ids, "created_at": job.created_at, "started_at": job.started_at, "completed_at": job.completed_at}
+            for job in run.sandbox_jobs
         ],
         "events": [
             {

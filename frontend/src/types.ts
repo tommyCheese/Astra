@@ -31,6 +31,14 @@ export type ArtifactView = {
   content_ref?: string | null;
   metadata: Record<string, unknown>;
   created_at: string;
+  mime_type?: string | null;
+  size_bytes?: number;
+  checksum?: string | null;
+  security_status?: string;
+  tool_call_id?: string | null;
+  sandbox_job_id?: string | null;
+  provenance?: Record<string, unknown>;
+  content_url?: string | null;
 };
 
 export type AgentTurnView = {
@@ -122,6 +130,7 @@ export type RunView = {
   steps: StepView[];
   tool_calls: ToolCallView[];
   artifacts: ArtifactView[];
+  sandbox_jobs?: Array<{ id: string; tool_call_id?: string | null; status: string; executor: string; runtime_profile: Record<string, unknown>; resource_limits: Record<string, unknown>; runtime_name?: string | null; image_digest?: string | null; exit_reason?: string | null; error?: Record<string, unknown> | null; stdout_summary?: string | null; stderr_summary?: string | null; input_artifact_ids: string[]; output_artifact_ids: string[] }>;
   events: RunEvent[];
   turns?: AgentTurnView[];
   memories?: MemoryView[];

@@ -130,7 +130,7 @@ vi.mock('../src/api', () => ({
         metadata: { turn_index: 2, decision_type: 'finalize' },
       },
     ],
-    artifacts: [],
+    artifacts: [{ id: 'a-chart', type: 'sandbox_output', metadata: { filename: 'chart.png' }, created_at: 'now', mime_type: 'image/png', size_bytes: 128, checksum: 'sha256', security_status: 'verified', content_url: '/api/artifacts/a-chart/content' }, { id: 'a-html', type: 'sandbox_output', metadata: { filename: 'chart.html' }, created_at: 'now', mime_type: 'text/html', size_bytes: 256, checksum: 'sha256-html', security_status: 'verified', content_url: '/api/artifacts/a-html/content' }],
     events: [{ id: 1, type: 'run.created', payload: { status: 'created' }, created_at: 'now' }],
     reasoning_policy: { effective: { reasoning_effort: 'balanced', planning_strategy: 'adaptive', execution_mode: 'request_approval' }, adjustments: [] },
     task_contract: { success_criteria: [{ id: 'criterion-result', description: '完成查询', status: 'satisfied' }] },
@@ -189,6 +189,8 @@ describe('App', () => {
     expect(screen.getAllByText('已完成查询')).toHaveLength(1);
     expect(screen.getByText('web_search').closest('details')).not.toHaveAttribute('open');
     expect(document.querySelectorAll('.answer-message')).toHaveLength(1);
+    expect(screen.getByRole('img', { name: 'chart.png' })).toHaveAttribute('src', '/api/artifacts/a-chart/content');
+    expect(screen.getByTitle('chart.html')).toHaveAttribute('sandbox', 'allow-scripts');
     expect(document.querySelectorAll('.process-panel')).toHaveLength(1);
   });
 

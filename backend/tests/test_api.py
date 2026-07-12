@@ -10,7 +10,7 @@ from app.main import create_app
 
 
 @pytest.fixture
-async def app_client(monkeypatch):
+async def app_client(monkeypatch, tmp_path):
     engine = create_async_engine("sqlite+aiosqlite:///:memory:", future=True)
     async with engine.begin() as connection:
         await connection.run_sync(Base.metadata.create_all)
@@ -26,9 +26,12 @@ async def app_client(monkeypatch):
     monkeypatch.setattr(runs_api, "start_run_in_process", noop_runner)
     app = create_app()
     app.dependency_overrides[get_session] = override_session
-    app.dependency_overrides[get_settings] = lambda: Settings(model_provider="mock")
+    settings = Settings(model_provider="mock", artifact_store_path=str(tmp_path / "artifacts"))
+    app.dependency_overrides[get_settings] = lambda: settings
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        client._astra_session = Session
+        client._astra_settings = settings
         yield client
     await engine.dispose()
 
@@ -41,6 +44,29 @@ async def test_create_run_rejects_empty_goal(app_client):
     assert error["code"] == "GOAL_REQUIRED"
     assert error["type"] == "validation.input_invalid"
     assert error["trace_id"].startswith("req_")
+
+
+async def test_artifact_content_enforces_workspace_scope_without_leaking_storage_key(app_client, tmp_path):
+    from app.artifacts import LocalArtifactStore
+    from app.repositories.runs import RunRepository
+
+    source = tmp_path / "chart.png"
+    source.write_bytes(b"\x89PNG\r\n\x1a\nmock")
+    store = LocalArtifactStore(app_client._astra_settings.artifact_store_path)
+    key = store.put(source, ".png")
+    async with app_client._astra_session() as session:
+        repo = RunRepository(session)
+        run = await repo.create_task_run("workspace chart", {"provider": "mock"})
+        run.task.workspace_id = "workspace-a"
+        artifact = await repo.create_artifact(run.id, "chart_image", storage_key=key, mime_type="image/png", size_bytes=12, checksum="checksum", security_status="verified")
+        artifact_id = artifact.id
+        await session.commit()
+
+    denied = await app_client.get(f"/api/artifacts/{artifact_id}/content", headers={"X-Astra-Workspace-Id": "workspace-b"})
+    allowed = await app_client.get(f"/api/artifacts/{artifact_id}/content", headers={"X-Astra-Workspace-Id": "workspace-a"})
+    assert denied.status_code == 404
+    assert key not in denied.text
+    assert allowed.status_code == 200
 
 
 async def test_create_and_get_run(app_client):
