@@ -208,8 +208,8 @@ describe('App', () => {
     expect(screen.getByText('暂无对话')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '暂无对话' })).not.toBeInTheDocument();
     expect(screen.getByRole('textbox')).toHaveValue('');
-    expect(screen.getByText('今天想完成什么？')).toBeInTheDocument();
-    expect(screen.getByText('描述你的目标，Astra 会规划、执行、反思并验证结果。')).toBeInTheDocument();
+    expect(screen.getByText('Navigate Ideas. Create Reality.')).toBeInTheDocument();
+    expect(screen.getByText('今天想完成点什么？')).toBeInTheDocument();
   });
 
   it('reveals the local star burst after five quick logo clicks', async () => {

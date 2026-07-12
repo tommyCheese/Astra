@@ -135,6 +135,10 @@ PolicyCompiler → TaskContract → PlanGraph → Decision
 
 Web 搜索通过 `WebTaskAdapter` 接入通用完成语义。将 `AGENT_USE_GENERAL_RUNTIME=false` 可回退到旧 Web 编排路径；新增审计字段保持只读兼容。外部行动在执行前保存 turn phase 和稳定幂等键，结果未知的非幂等行动不会被自动重试。
 
+### 错误响应
+
+所有 API 失败均返回安全的错误信封：`error.type`、稳定的 `error.code`、用户可见的 `error.message`、`error.retryable` 和 `error.trace_id`。验证错误使用 422，资源不存在使用 404，状态冲突使用 409，依赖或数据库不可用使用 503，未分类运行时错误使用 500。响应不会包含堆栈、连接字符串或密钥；请使用 trace ID 在服务端日志中定位技术问题。后台 Run 失败也在 `result.error` 与 `run.error` 事件中使用相同字段。
+
 Memory 当前用于保存 run 内来源摘要和可审计观察。workspace/user 级 memory 写入必须带 `provenance` 和 `confidence`，缺失时会被拒绝并记录 `memory.write_rejected` 事件。第一版尚未引入 embedding memory 或向量召回，避免在来源审计和权限模型稳定前扩大记忆面。
 
 前端现在是聊天式 Agent 窗口：用户消息、工具调用、反思、来源卡片、memory 摘要和最终答案会聚合成对话流；“审计详情”抽屉保留 turns、tool calls、artifacts、Evidence Pack 与 verification report，便于调试和追溯。

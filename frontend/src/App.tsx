@@ -1,5 +1,5 @@
 import { FormEvent, ReactNode, useEffect, useMemo, useRef, useState } from 'react';
-import { createRun, getRun, resumeRun } from './api';
+import { AstraApiError, ApiErrorPayload, createRun, getRun, resumeRun } from './api';
 import { I18nProvider, useI18n } from './i18n';
 import { ThemeProvider, useTheme } from './theme';
 import type { AgentTurnView, ChatMessage, RunView, ToolCallView } from './types';
@@ -19,7 +19,7 @@ function AppContent() {
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
   const [priorMessages, setPriorMessages] = useState<ChatMessage[]>([]);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<ApiErrorPayload | null>(null);
   const [view, setView] = useState<'chat' | 'settings'>('chat');
   const [usageOpen, setUsageOpen] = useState(false);
   const [modelOpen, setModelOpen] = useState(false);
@@ -94,7 +94,7 @@ function AppContent() {
     event.preventDefault();
     const trimmedGoal = goal.trim();
     if (!trimmedGoal) {
-      setError(t('请输入任务目标'));
+      setError({ type: 'validation.input_invalid', code: 'GOAL_REQUIRED', message: t('请输入你想完成的目标。'), retryable: false, trace_id: 'local' });
       return;
     }
     setError(null);
@@ -117,7 +117,7 @@ function AppContent() {
       rememberConversation(current, previousMessages);
       setGoal('');
     } catch (err) {
-      setError(err instanceof Error ? err.message : t('创建 run 失败'));
+      setError(err instanceof AstraApiError ? err.payload : { type: 'runtime.internal_error', code: 'REQUEST_FAILED', message: t('服务暂时出现异常，请稍后重试。'), retryable: true, trace_id: 'unavailable' });
     } finally {
       setLoading(false);
     }
@@ -198,8 +198,8 @@ function AppContent() {
           <div className="conversation">
             {!messages.length && (
               <div className="welcome">
-                <h2>{t('今天想完成什么？')}</h2>
-                <p>{t('描述你的目标，Astra 会规划、执行、反思并验证结果。')}</p>
+                <h2>{t('Navigate Ideas. Create Reality.')}</h2>
+                <p>{t('今天想完成点什么？')}</p>
               </div>
             )}
             {messages.map((message) => (
@@ -289,7 +289,7 @@ function AppContent() {
             </div>
             <button className="send-button" type="submit" disabled={loading}>{loading ? '...' : '↑'}</button>
           </form>
-          {error && <div className="notice error">{error}</div>}
+          {error && <ErrorDialog error={error} onClose={() => setError(null)} onRetry={error.retryable ? () => document.querySelector<HTMLFormElement>('.chat-composer')?.requestSubmit() : undefined} />}
         </section>
 
         </>}
@@ -642,6 +642,19 @@ function ModelMenu({ selectedModelKey, onModelChange, modelOptions, reasoningEff
 function MenuChoice({ label, value, options, onChange }: { label: string; value: string; options: string[]; onChange: (value: string) => void }) {
   const { t } = useI18n();
   return <div className="menu-choice"><span>{t(label)}</span><div className="segmented-control">{options.map((option) => <button className={value === option ? 'active' : ''} type="button" key={option} onClick={() => onChange(option)}>{t(option)}</button>)}</div></div>;
+}
+
+function ErrorDialog({ error, onClose, onRetry }: { error: ApiErrorPayload; onClose: () => void; onRetry?: () => void }) {
+  const technical = error.type.startsWith('infrastructure.') || error.type.startsWith('configuration.') || error.type.startsWith('dependency.') || error.type.startsWith('runtime.');
+  const technicalTitle = error.type.startsWith('infrastructure.database') ? '数据存储不可用'
+    : error.type.startsWith('configuration.model') ? '大模型尚未配置'
+    : error.type.startsWith('dependency.model') ? '大模型服务异常'
+    : error.type.startsWith('dependency.search') ? '搜索服务异常'
+    : error.type.startsWith('dependency.fetch') ? '网页访问服务异常'
+    : error.type === 'runtime.unclassified_response' ? '后端错误未分类'
+    : '内部运行时异常';
+  const title = error.code === 'GOAL_REQUIRED' ? '请输入任务目标' : technical ? technicalTitle : '无法完成此操作';
+  return <div className="modal-backdrop" role="presentation" onMouseDown={onClose}><section className="confirmation-modal error-dialog" role="alertdialog" aria-modal="true" aria-labelledby="error-title" onMouseDown={(event) => event.stopPropagation()}><div className="warning-mark">!</div><h2 id="error-title">{title}</h2><p>{error.message}</p>{technical && <div className="confirmation-note">错误类型：<code>{error.type}</code><br />诊断编号：<code>{error.trace_id}</code></div>}<div className="confirmation-actions">{onRetry && <button className="secondary-button" type="button" onClick={onRetry}>重试</button>}<button className="danger-confirm-button" type="button" onClick={onClose}>知道了</button></div></section></div>;
 }
 
 function UsageModal({ run, onClose }: { run: RunView | null; onClose: () => void }) {

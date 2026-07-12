@@ -2,7 +2,7 @@ import asyncio
 import json
 from typing import AsyncIterator
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -11,6 +11,7 @@ from app.db.session import get_session
 from app.repositories.runs import RunRepository, run_to_view
 from app.runner.engine import start_run_in_process
 from app.runner.reasoning import PolicyCompiler
+from app.core.errors import ResourceError, StateError, ValidationError
 from app.schemas.agent import ContinueRunRequest, CreateRunRequest, CreateRunResponse, RunView
 
 router = APIRouter(prefix="/api", tags=["runs"])
@@ -24,7 +25,7 @@ async def create_run(
 ) -> CreateRunResponse:
     goal = payload.goal.strip()
     if not goal:
-        raise HTTPException(status_code=422, detail="Goal must not be empty")
+        raise ValidationError("GOAL_REQUIRED", "请输入你想完成的目标。", {"field": "goal"})
     repo = RunRepository(session)
     try:
         policy = PolicyCompiler().compile(payload.reasoning_policy)
@@ -33,7 +34,10 @@ async def create_run(
             await repo.add_event(run.id, "reasoning.policy_adjusted", adjustment.model_dump(mode="json"))
         await session.commit()
     except ValueError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+        message = str(exc)
+        if message.startswith("Task not found"):
+            raise ResourceError("TASK_NOT_FOUND", "找不到指定任务。") from exc
+        raise ValidationError("RUN_REQUEST_INVALID", "无法创建任务。") from exc
     asyncio.create_task(start_run_in_process(run.id, settings))
     return CreateRunResponse(task_id=run.task_id, run_id=run.id, status=run.status)
 
@@ -46,7 +50,7 @@ async def get_run(
     repo = RunRepository(session)
     run = await repo.get_run(run_id)
     if run is None:
-        raise HTTPException(status_code=404, detail="Run not found")
+        raise ResourceError("RUN_NOT_FOUND", "找不到指定运行记录。")
     return RunView.model_validate(run_to_view(run))
 
 
@@ -70,7 +74,12 @@ async def resume_run(
             continuation_token=payload.continuation_token,
         )
     except ValueError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
+        message = str(exc)
+        if "not waiting" in message:
+            raise StateError("RUN_NOT_WAITING", "该任务当前不需要补充信息。") from exc
+        if "continuation token" in message:
+            raise StateError("CONTINUATION_INVALID", "任务恢复凭据已失效，请刷新后重试。") from exc
+        raise StateError("RUN_RESUME_CONFLICT", "当前任务无法恢复。") from exc
     asyncio.create_task(start_run_in_process(run.id, settings))
     return CreateRunResponse(task_id=run.task_id, run_id=run.id, status=run.status)
 
@@ -83,7 +92,7 @@ async def stream_run_events(
 ) -> StreamingResponse:
     repo = RunRepository(session)
     if await repo.get_run(run_id) is None:
-        raise HTTPException(status_code=404, detail="Run not found")
+        raise ResourceError("RUN_NOT_FOUND", "找不到指定运行记录。")
 
     async def event_stream() -> AsyncIterator[str]:
         last_id = after_id

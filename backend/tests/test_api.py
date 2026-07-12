@@ -37,6 +37,10 @@ async def test_create_run_rejects_empty_goal(app_client):
     response = await app_client.post("/api/runs", json={"goal": " "})
 
     assert response.status_code == 422
+    error = response.json()["error"]
+    assert error["code"] == "GOAL_REQUIRED"
+    assert error["type"] == "validation.input_invalid"
+    assert error["trace_id"].startswith("req_")
 
 
 async def test_create_and_get_run(app_client):
@@ -66,3 +70,17 @@ async def test_resume_requires_waiting_run(app_client):
     created = await app_client.post("/api/runs", json={"goal": "普通任务"})
     response = await app_client.post(f"/api/runs/{created.json()['run_id']}/resume", json={"content": "继续"})
     assert response.status_code == 409
+    assert response.json()["error"]["code"] == "RUN_NOT_WAITING"
+
+
+async def test_missing_run_uses_safe_error_envelope(app_client):
+    response = await app_client.get("/api/runs/missing")
+    assert response.status_code == 404
+    assert response.json()["error"] == {
+        "type": "resource.not_found",
+        "code": "RUN_NOT_FOUND",
+        "message": "找不到指定运行记录。",
+        "retryable": False,
+        "trace_id": response.json()["error"]["trace_id"],
+        "details": {},
+    }

@@ -12,6 +12,7 @@ from app.schemas.agent import AgentState, ReasoningPolicySnapshot
 from app.runner.reasoning import build_plan_graph, validate_contract
 from app.tools.base import ToolExecutionError, ToolRegistry
 from app.tools.web import build_web_registry
+from app.core.errors import run_error_from_exception
 
 
 class RunEngine:
@@ -32,18 +33,23 @@ class RunEngine:
             try:
                 await self._run_with_repo(repo, run_id)
             except (ModelConfigurationError, ModelOutputError) as exc:
-                await repo.update_run_status(run_id, "blocked", summary=str(exc))
+                error = run_error_from_exception(exc)
+                await repo.add_event(run_id, "run.error", error)
+                await repo.update_run_status(run_id, "blocked", summary=error["message"], result={"summary": error["message"], "error": error})
             except Exception as exc:
+                error = run_error_from_exception(exc)
+                await repo.add_event(run_id, "run.error", error)
                 await repo.update_run_status(
                     run_id,
                     "failed",
-                    summary=f"Run failed: {exc}",
+                    summary=error["message"],
                     result={
-                        "summary": "运行失败。",
+                        "summary": error["message"],
                         "findings": [],
                         "sources": [],
-                        "caveats": [str(exc)],
+                        "caveats": [],
                         "verification_notes": ["运行未能完成。"],
+                        "error": error,
                     },
                 )
 

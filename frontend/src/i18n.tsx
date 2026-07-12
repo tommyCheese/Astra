@@ -4,8 +4,8 @@ export type Language = 'zh-CN' | 'en';
 
 const english: Record<string, string> = {
   'Web Agent · 可审计搜索与抓取': 'Web Agent · Auditable search and retrieval',
-  '今天想完成什么？': 'What would you like to accomplish?',
-  '描述你的目标，Astra 会规划、执行、反思并验证结果。': 'Describe your goal. Astra will plan, act, reflect, and verify the result.',
+  'Navigate Ideas. Create Reality.': 'Navigate Ideas. Create Reality.',
+  '今天想完成点什么？': 'What would you like to accomplish today?',
   '添加内容': 'Add content', '上传文件': 'Upload file', '文档、代码与数据': 'Documents, code, and data',
   '添加图片': 'Add image', '分析图像内容': 'Analyze image content', '连接来源': 'Connect source', '即将支持': 'Coming soon',
   '输入任务 / 继续追问...': 'Enter a task or ask a follow-up...', '请输入任务目标': 'Enter a task goal', '创建 run 失败': 'Failed to create run',
