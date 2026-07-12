@@ -55,6 +55,34 @@ export type RuntimeProfile = {
   build: RuntimeBuild | null;
 };
 
+export type ToolSetting = {
+  name: 'web_search' | 'web_fetch' | 'chart_render';
+  label: string;
+  description: string;
+  enabled: boolean;
+  available: boolean;
+  unavailable_reason?: string | null;
+};
+
+export type ToolSettings = { tools: ToolSetting[] };
+
+export async function getToolSettings(signal?: AbortSignal): Promise<ToolSettings> {
+  const response = await fetch('/api/tools', { signal });
+  if (!response.ok) throw await responseError(response);
+  return response.json();
+}
+
+export async function updateToolSettings(tools: ToolSetting[]): Promise<ToolSettings> {
+  const enabled = Object.fromEntries(tools.map((tool) => [tool.name, tool.enabled]));
+  const response = await fetch('/api/tools', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(enabled),
+  });
+  if (!response.ok) throw await responseError(response);
+  return response.json();
+}
+
 export type TokenTotals = { input: number; cached_input: number; output: number; reasoning: number; total: number };
 export type UsageSummary = {
   scope: 'all' | 'task' | 'run';

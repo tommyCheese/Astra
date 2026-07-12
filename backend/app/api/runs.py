@@ -12,6 +12,11 @@ from app.core.config import Settings, get_settings
 from app.core.errors import ResourceError, StateError, ValidationError
 from app.db.session import SessionLocal, get_session
 from app.repositories.runs import RunRepository, run_to_view
+from app.repositories.tool_settings import (
+    ToolSettingsRepository,
+    apply_tool_states,
+    default_tool_states,
+)
 from app.runner.engine import start_run_in_process
 from app.runner.reasoning import PolicyCompiler
 from app.schemas.agent import ContinueRunRequest, CreateRunRequest, CreateRunResponse, RunView
@@ -94,14 +99,18 @@ async def create_run(
         len(goal),
     )
     try:
-        run_settings = settings
+        tool_states = await ToolSettingsRepository(session).get_or_create(
+            default_tool_states(settings)
+        )
+        # Keep the database-backed tool configuration active at creation time.
+        run_settings = apply_tool_states(settings, tool_states)
         if payload.model:
             provider = payload.model.get("provider", "")
             if provider not in {"openai", "deepseek", "qwen", "siliconflow", "compatible", "azure"}:
                 raise ValidationError(
                     "MODEL_PROVIDER_UNSUPPORTED", "当前模型供应商尚未接入通用运行时。"
                 )
-            run_settings = settings.model_copy(
+            run_settings = run_settings.model_copy(
                 update={
                     "model_provider": provider,
                     "model_name": payload.model.get("name", ""),

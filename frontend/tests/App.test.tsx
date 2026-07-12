@@ -2,9 +2,15 @@ import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { App } from '../src/App';
-import { buildRuntime, cancelRuntimeBuild, createRun, getRun, getRuntimeProfile, listRuns, streamRunEvents } from '../src/api';
+import { buildRuntime, cancelRuntimeBuild, createRun, getRun, getRuntimeProfile, listRuns, streamRunEvents, updateToolSettings } from '../src/api';
 
 vi.mock('../src/api', () => ({
+  getToolSettings: vi.fn(async () => ({ tools: [
+    { name: 'web_search', label: 'Web Search', description: '搜索公开网页并生成候选来源', enabled: true, available: true },
+    { name: 'web_fetch', label: 'Web Fetch', description: '自适应提取页面主要内容', enabled: true, available: true },
+    { name: 'chart_render', label: 'Chart Render', description: '在隔离的 Docker 运行时中生成图表', enabled: true, available: false, unavailable_reason: '需要先启用 Docker 沙箱。' },
+  ] })),
+  updateToolSettings: vi.fn(async (tools) => ({ tools })),
   getRuntimeProfile: vi.fn(async () => ({ dependencies: [], core_dependencies: [{ name: 'numpy', version: '2.2.6' }, { name: 'matplotlib', version: '3.10.3' }], active_image: 'astra-data-viz:0.1.0', dependency_digest: 'base', build: null })),
   buildRuntime: vi.fn(async () => ({ dependencies: [{ name: 'polars', version: '' }], core_dependencies: [], active_image: 'astra-data-viz:0.1.0', dependency_digest: 'base', build: { id: 'build-1', status: 'queued', phase: '等待构建', progress: 0, log: '等待构建' } })),
   cancelRuntimeBuild: vi.fn(async () => ({ dependencies: [{ name: 'polars', version: '' }], core_dependencies: [], active_image: 'astra-data-viz:0.1.0', dependency_digest: 'base', build: { id: 'build-1', status: 'cancelled', phase: '已取消', progress: 12, log: '构建已由用户取消' } })),
@@ -327,10 +333,13 @@ describe('App', () => {
 
     expect(screen.getByRole('heading', { name: '工具' })).toBeInTheDocument();
     expect(screen.getByText('Web Fetch')).toBeInTheDocument();
-    expect(screen.getByText('工具调用上限')).toBeInTheDocument();
-    expect(screen.getByText('并行工具调用')).toBeInTheDocument();
-    expect(screen.getByText('工具失败重试')).toBeInTheDocument();
-    expect(screen.queryByText('工具调用确认')).not.toBeInTheDocument();
+    expect(screen.getByText('Chart Render')).toBeInTheDocument();
+    expect(screen.getByText('需要先启用 Docker 沙箱。')).toBeInTheDocument();
+    const searchSwitch = screen.getByRole('switch', { name: /Web Search/ });
+    await userEvent.click(searchSwitch);
+    await waitFor(() => expect(updateToolSettings).toHaveBeenCalled());
+    expect(searchSwitch).toHaveAttribute('aria-checked', 'false');
+    expect(screen.getByText('工具已停用，之后新建的任务不会调用它。')).toBeInTheDocument();
   });
 
   it('manages model providers and keeps API credentials masked by default', async () => {

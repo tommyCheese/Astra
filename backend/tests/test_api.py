@@ -49,6 +49,44 @@ async def test_create_run_rejects_empty_goal(app_client):
     assert error["trace_id"].startswith("req_")
 
 
+async def test_tool_settings_can_be_read_and_updated(app_client):
+    loaded = await app_client.get("/api/tools")
+    assert loaded.status_code == 200
+    assert {tool["name"] for tool in loaded.json()["tools"]} == {
+        "web_search", "web_fetch", "chart_render"
+    }
+
+    updated = await app_client.put(
+        "/api/tools",
+        json={"web_search": False, "web_fetch": True, "chart_render": False},
+    )
+    assert updated.status_code == 200
+    states = {tool["name"]: tool["enabled"] for tool in updated.json()["tools"]}
+    assert states == {"web_search": False, "web_fetch": True, "chart_render": False}
+    reloaded = await app_client.get("/api/tools")
+    persisted = {tool["name"]: tool["enabled"] for tool in reloaded.json()["tools"]}
+    assert persisted == states
+
+
+async def test_new_run_uses_persisted_tool_settings(app_client, monkeypatch):
+    captured = []
+
+    async def capture_runner(run_id, settings):
+        captured.append(settings)
+
+    monkeypatch.setattr(runs_api, "start_run_in_process", capture_runner)
+    await app_client.put(
+        "/api/tools",
+        json={"web_search": False, "web_fetch": True, "chart_render": False},
+    )
+    created = await app_client.post("/api/runs", json={"goal": "使用持久化工具设置"})
+    assert created.status_code == 200
+    await asyncio.sleep(0)
+    assert captured[0].tool_web_search_enabled is False
+    assert captured[0].tool_web_fetch_enabled is True
+    assert captured[0].tool_chart_render_enabled is False
+
+
 async def test_runtime_build_uses_stable_validation_error_contract(app_client):
     response = await app_client.post(
         "/api/runtime/build",

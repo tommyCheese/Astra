@@ -1,6 +1,20 @@
 from app.repositories.runs import RunRepository, run_to_view
+from app.repositories.tool_settings import ToolSettingsRepository
 from app.runner.reasoning import build_default_contract, build_plan_graph
 from app.schemas.agent import AgentState, PlanningStrategy
+
+
+async def test_tool_settings_are_created_and_persisted(session):
+    repo = ToolSettingsRepository(session)
+    defaults = {"web_search": True, "web_fetch": True, "chart_render": False}
+    assert await repo.get_or_create(defaults) == defaults
+    await session.commit()
+
+    updated = {"web_search": False, "web_fetch": True, "chart_render": True}
+    assert await repo.set_all(updated, defaults) == updated
+    await session.commit()
+
+    assert await repo.get_or_create(defaults) == updated
 
 
 async def test_run_lifecycle_persistence(session):

@@ -484,6 +484,11 @@ p {
   margin-top: 2px;
 }
 
+.capability-item small.capability-warning { color: #9a651d; }
+.capability-item.unavailable { background: rgba(248, 246, 241, 0.72); }
+.tool-settings-message { color: #52606d; font-size: 12px; margin: 10px 2px 0; }
+.tool-settings-note { border-top: 1px solid #e5e9ef; color: #7a8694; font-size: 11px; line-height: 1.5; margin-top: 14px; padding: 14px 2px 0; }
+
 .sidebar-bottom {
   display: grid;
   gap: 6px;
@@ -1912,6 +1917,8 @@ textarea {
 .toggle.on span {
   transform: translateX(18px);
 }
+
+.toggle:disabled { cursor: wait; opacity: 0.6; }
 
 .danger-button {
   background: transparent;

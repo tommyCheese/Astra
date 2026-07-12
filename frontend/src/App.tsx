@@ -1,7 +1,7 @@
 import { FormEvent, ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { AstraApiError, ApiErrorPayload, buildRuntime, cancelRuntimeBuild, createRun, getRun, getRuntimeProfile, listRuns, resumeRun, streamRunEvents } from './api';
+import { AstraApiError, ApiErrorPayload, buildRuntime, cancelRuntimeBuild, createRun, getRun, getRuntimeProfile, getToolSettings, listRuns, resumeRun, streamRunEvents, updateToolSettings, type ToolSetting } from './api';
 import { I18nProvider, useI18n } from './i18n';
 import { ThemeProvider, useTheme } from './theme';
 import type { ChatMessage, RunView } from './types';
@@ -576,15 +576,17 @@ function QuestionRail({ messages }: { messages: ChatMessage[] }) {
   }}><span /><div className="question-preview"><p>{question.content}</p></div></button>)}</nav>;
 }
 
-function CapabilityItem({ title, detail, state, enabled = true }: { title: string; detail: string; state: string; enabled?: boolean }) {
+function CapabilityItem({ tool, busy, onChange }: { tool: ToolSetting; busy: boolean; onChange: (enabled: boolean) => void }) {
   const { t } = useI18n();
+  const state = !tool.available ? tool.unavailable_reason ?? '当前不可用' : tool.enabled ? '已启用' : '已停用';
   return (
-    <div className="capability-item">
+    <div className={`capability-item ${!tool.available ? 'unavailable' : ''}`}>
       <div>
-        <strong>{t(title)}</strong>
-        <span>{t(detail)}</span>
+        <strong>{t(tool.label)}</strong>
+        <span>{t(tool.description)}</span>
+        <small className={tool.available ? '' : 'capability-warning'}>{t(state)}</small>
       </div>
-      <span className={`capability-state ${enabled ? 'enabled' : ''}`}>{t(state)}</span>
+      <Toggle checked={tool.enabled} onChange={onChange} disabled={busy} label={`${t(tool.label)} · ${t(state)}`} />
     </div>
   );
 }
@@ -675,12 +677,55 @@ function SettingSection({ category, providerConfigs, onProviderConfigsChange }: 
   const { mode, setMode } = useTheme();
   if (category === '模型管理') return <ModelManagement providers={providerConfigs} onChange={onProviderConfigsChange} />;
   if (category === '运行时') return <RuntimeSettings />;
-  if (category === '工具') return <SettingsGroup title="工具" description="管理 Agent 可用工具及其调用策略。"><div className="capability-settings"><CapabilityItem title="Web Search" detail="搜索公开网页并生成候选来源" state="已启用" /><CapabilityItem title="Web Fetch" detail="自适应提取页面主要内容" state="已启用" /><CapabilityItem title="文件分析" detail="解析上传的文档、代码与数据" state="即将支持" enabled={false} /><CapabilityItem title="图像理解" detail="识别并分析图片内容" state="即将支持" enabled={false} /></div><SettingRow title="工具调用上限" description="限制单次任务可执行的工具调用总数"><TranslatedSelect defaultValue="10" options={['5', '10', '20']} /></SettingRow><SettingRow title="并行工具调用" description="并发执行相互独立且无副作用冲突的工具"><Toggle checked /></SettingRow><SettingRow title="工具失败重试" description="仅重试临时网络错误和明确标记为可恢复的工具错误"><TranslatedSelect defaultValue="2" options={[['0', '不重试'], ['1', '1'], ['2', '2'], ['3', '3']]} /></SettingRow></SettingsGroup>;
+  if (category === '工具') return <ToolSettings />;
   if (category === '记忆') return <SettingsGroup title="记忆" description="管理 Agent 在单次任务和不同对话之间保留的信息。"><SettingRow title="运行记忆" description="在当前任务中保留来源摘要和决策线索"><Toggle checked /></SettingRow><SettingRow title="跨对话记忆" description="在新对话中使用已确认的偏好与事实"><Toggle /></SettingRow><SettingRow title="写入阈值" description="仅保存高于该置信度的结构化记忆"><TranslatedSelect defaultValue="80" options={[['70', '70%'], ['80', '80%'], ['90', '90%']]} /></SettingRow><SettingRow title="记忆保留期" description="到期后自动清理非固定记忆"><TranslatedSelect defaultValue="30" options={[['7', `7 ${t('天')}`], ['30', `30 ${t('天')}`], ['forever', '永久']]} /></SettingRow></SettingsGroup>;
   if (category === '验证与安全') return <SettingsGroup title="验证与安全" description="定义 Agent 在报告完成前必须满足的通用验证要求。"><SettingRow title="完成前验证" description="提交结果前运行与任务类型匹配的验证器"><Toggle checked /></SettingRow><SettingRow title="验证强度" description="控制验证覆盖范围以及失败后的检查深度"><TranslatedSelect defaultValue="standard" options={[['basic', '基础'], ['standard', '标准'], ['strict', '严格']]} /></SettingRow><SettingRow title="验证失败处理" description="验证未通过时决定继续修复、带警告返回或停止任务"><TranslatedSelect defaultValue="repair" options={[['repair', '自动修复'], ['warn', '带警告返回'], ['block', '停止任务']]} /></SettingRow></SettingsGroup>;
   if (category === '界面') return <SettingsGroup title="界面" description="调整工作区的信息密度和运行过程展示。"><SettingRow title="语言" description="选择界面显示语言"><select value={language} onChange={(event) => setLanguage(event.target.value as 'zh-CN' | 'en')}><option value="zh-CN">中文</option><option value="en">English</option></select></SettingRow><SettingRow title="主题模式" description="选择界面外观，或随操作系统自动切换"><select value={mode} onChange={(event) => setMode(event.target.value as 'system' | 'light' | 'dark')}><option value="system">{t('跟随系统')}</option><option value="light">{t('浅色模式')}</option><option value="dark">{t('暗色模式')}</option></select></SettingRow><SettingRow title="过程展示" description="在对话中显示工具调用和反思摘要"><Toggle checked /></SettingRow><SettingRow title="审计面板" description="任务完成后显示证据、事件和记忆"><Toggle checked /></SettingRow><SettingRow title="信息密度" description="控制对话和面板的间距"><TranslatedSelect defaultValue="compact" options={[['compact', '紧凑'], ['comfortable', '舒适']]} /></SettingRow></SettingsGroup>;
   if (category === '数据与隐私') return <SettingsGroup title="数据与隐私" description="控制任务记录、工具内容和诊断信息的保存方式。"><SettingRow title="保存运行记录" description="保留对话、工具调用元数据和验证报告"><Toggle checked /></SettingRow><SettingRow title="工具内容保留" description="决定是否保存工具返回的正文、文件内容或结构化结果"><TranslatedSelect defaultValue="metadata" options={[['none', '不保留内容'], ['metadata', '仅保留元数据'], ['full', '保留完整输出']]} /></SettingRow><SettingRow title="诊断日志" description="记录不包含工具内容的性能与错误信息"><Toggle checked /></SettingRow><button className="danger-button" type="button">{t('清除本地运行数据')}</button></SettingsGroup>;
   return null;
+}
+
+function ToolSettings() {
+  const { t } = useI18n();
+  const [tools, setTools] = useState<ToolSetting[]>([]);
+  const [busyTool, setBusyTool] = useState<string | null>(null);
+  const [message, setMessage] = useState('正在读取工具配置…');
+  useEffect(() => {
+    const controller = new AbortController();
+    void getToolSettings(controller.signal).then((value) => {
+      setTools(value.tools);
+      setMessage('');
+    }).catch((error) => {
+      if (error instanceof DOMException && error.name === 'AbortError') return;
+      setMessage('无法读取工具配置');
+    });
+    return () => controller.abort();
+  }, []);
+  async function changeTool(name: ToolSetting['name'], enabled: boolean) {
+    const previous = tools;
+    const next = tools.map((tool) => tool.name === name ? { ...tool, enabled } : tool);
+    setTools(next);
+    setBusyTool(name);
+    setMessage('');
+    try {
+      const saved = await updateToolSettings(next);
+      setTools(saved.tools);
+      setMessage(enabled ? '工具已启用，将用于之后新建的任务。' : '工具已停用，之后新建的任务不会调用它。');
+    } catch {
+      setTools(previous);
+      setMessage('保存工具配置失败，已恢复原状态。');
+    } finally {
+      setBusyTool(null);
+    }
+  }
+  return <SettingsGroup title="工具" description="管理 Agent 可用工具。修改会应用到之后新建的任务，运行中的任务不受影响。">
+    <div className="capability-settings">
+      {tools.map((tool) => <CapabilityItem key={tool.name} tool={tool} busy={busyTool !== null} onChange={(enabled) => void changeTool(tool.name, enabled)} />)}
+      {!tools.length && <p className="tool-settings-message">{t(message)}</p>}
+    </div>
+    {tools.length > 0 && message && <p className="tool-settings-message" role="status">{t(message)}</p>}
+    <p className="tool-settings-note">{t('开关保存在数据库中，服务重启后仍会保持当前状态。')}</p>
+  </SettingsGroup>;
 }
 
 function RuntimeSettings() {
@@ -1011,10 +1056,10 @@ function SettingRow({ title, description, children }: { title: string; descripti
   return <div className="setting-row"><div><strong>{t(title)}</strong><span>{t(description)}</span></div>{children}</div>;
 }
 
-function Toggle({ checked = false, onChange }: { checked?: boolean; onChange?: (checked: boolean) => void }) {
+function Toggle({ checked = false, onChange, disabled = false, label }: { checked?: boolean; onChange?: (checked: boolean) => void; disabled?: boolean; label?: string }) {
   const [localChecked, setLocalChecked] = useState(checked);
   const value = onChange ? checked : localChecked;
-  return <button className={`toggle ${value ? 'on' : ''}`} type="button" role="switch" aria-checked={value} onClick={() => onChange ? onChange(!value) : setLocalChecked(!value)}><span /></button>;
+  return <button className={`toggle ${value ? 'on' : ''}`} type="button" role="switch" aria-checked={value} aria-label={label} disabled={disabled} onClick={() => onChange ? onChange(!value) : setLocalChecked(!value)}><span /></button>;
 }
 
 function ExecutionModeMenu({ value, onChange }: { value: 'plan' | 'default' | 'bypass'; onChange: (mode: 'plan' | 'default' | 'bypass') => void }) {
