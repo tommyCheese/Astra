@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 import hashlib
 import json
 import re
@@ -29,7 +30,11 @@ def normalize_dependencies(values):
     for item in values:
         name, version = str(item.get("name", "")).strip(), str(item.get("version", "")).strip()
         normalized = re.sub(r"[-_.]+", "-", name).lower()
-        if not NAME.fullmatch(name) or (version and not VERSION.fullmatch(version)) or normalized in PROTECTED:
+        if (
+            not NAME.fullmatch(name)
+            or (version and not VERSION.fullmatch(version))
+            or normalized in PROTECTED
+        ):
             raise ValueError(f"不允许的依赖：{name}")
         if normalized in seen:
             raise ValueError(f"依赖重复：{name}")
@@ -39,9 +44,10 @@ def normalize_dependencies(values):
 
 
 class RuntimeProfileService:
-    def __init__(self, settings):
+    def __init__(self, settings, *, recover_interrupted: bool = False):
         self.settings, self.path, self.tasks = settings, Path(settings.runtime_profile_path), {}
-        self._recover_interrupted_build()
+        if recover_interrupted:
+            self._recover_interrupted_build()
 
     def _recover_interrupted_build(self):
         if not self.path.exists():
@@ -65,14 +71,20 @@ class RuntimeProfileService:
         if self.path.exists():
             state = json.loads(self.path.read_text())
         else:
-            state = {"dependencies": [], "active_image": self.settings.sandbox_runtime_image, "dependency_digest": self.settings.sandbox_runtime_lock_digest, "build": None}
-        state["core_dependencies"] = CORE_DEPENDENCIES
+            state = {
+                "dependencies": [],
+                "active_image": self.settings.sandbox_runtime_image,
+                "dependency_digest": self.settings.sandbox_runtime_lock_digest,
+                "build": None,
+            }
+        state["core_dependencies"] = [item.copy() for item in CORE_DEPENDENCIES]
         return state
 
     def write(self, value):
         self.path.parent.mkdir(parents=True, exist_ok=True)
         temporary = self.path.with_suffix(f"{self.path.suffix}.tmp")
-        temporary.write_text(json.dumps(value, ensure_ascii=False, indent=2))
+        persisted = {key: item for key, item in value.items() if key != "core_dependencies"}
+        temporary.write_text(json.dumps(persisted, ensure_ascii=False, indent=2))
         temporary.replace(self.path)
 
     async def start(self, dependencies):
@@ -112,10 +124,8 @@ class RuntimeProfileService:
                 image=None,
             )
         task.cancel()
-        try:
+        with contextlib.suppress(asyncio.CancelledError):
             await task
-        except asyncio.CancelledError:
-            pass
         state = self.read()
         if (state.get("build") or {}).get("status") in {"queued", "building"}:
             state = self._update_build(
@@ -191,7 +201,11 @@ class RuntimeProfileService:
                     f"{item['name']}=={item['version']}" if item["version"] else item["name"]
                     for item in deps
                 )
-                install = f"RUN uv pip install --python /opt/astra/runtime/.venv/bin/python {requirements}\n" if requirements else ""
+                install = (
+                    f"RUN uv pip install --python /opt/astra/runtime/.venv/bin/python {requirements}\n"
+                    if requirements
+                    else ""
+                )
                 Path(root, "Dockerfile").write_text(
                     f"FROM {self.settings.sandbox_runtime_image}\nUSER root\n{install}USER 65532:65532\n"
                 )
@@ -215,7 +229,9 @@ class RuntimeProfileService:
                 if returncode:
                     raise RuntimeError("镜像构建失败")
                 package_names = json.dumps([item["name"] for item in deps])
-                smoke_code = f"import importlib.metadata as m; [m.version(name) for name in {package_names}]"
+                smoke_code = (
+                    f"import importlib.metadata as m; [m.version(name) for name in {package_names}]"
+                )
                 self._update_build(
                     build_id,
                     phase="验证依赖导入",

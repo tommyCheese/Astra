@@ -3,7 +3,8 @@ import logging
 import re
 import time
 from abc import ABC, abstractmethod
-from typing import Any, Awaitable, Callable, Dict, List, Optional
+from collections.abc import Awaitable, Callable
+from typing import Any
 
 import httpx
 
@@ -42,42 +43,51 @@ class ModelClient(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    async def synthesize(self, goal: str, tool_outputs: List[Dict[str, Any]], *, on_delta: Optional[AnswerDeltaCallback] = None) -> FinalAnswer:
+    async def synthesize(
+        self,
+        goal: str,
+        tool_outputs: list[dict[str, Any]],
+        *,
+        on_delta: AnswerDeltaCallback | None = None,
+    ) -> FinalAnswer:
         raise NotImplementedError
 
     @abstractmethod
-    async def decide(self, goal: str, context: Dict[str, Any]) -> AgentDecision:
+    async def decide(self, goal: str, context: dict[str, Any]) -> AgentDecision:
         raise NotImplementedError
 
     async def decide_with_answer(
         self,
         goal: str,
-        context: Dict[str, Any],
+        context: dict[str, Any],
         *,
-        on_delta: Optional[AnswerDeltaCallback] = None,
-    ) -> tuple[AgentDecision, Optional[FinalAnswer]]:
+        on_delta: AnswerDeltaCallback | None = None,
+    ) -> tuple[AgentDecision, FinalAnswer | None]:
         return await self.decide(goal, context), None
 
     @abstractmethod
-    async def reflect(self, goal: str, context: Dict[str, Any]) -> AgentReflection:
+    async def reflect(self, goal: str, context: dict[str, Any]) -> AgentReflection:
         raise NotImplementedError
 
     @abstractmethod
-    async def finalize(self, goal: str, context: Dict[str, Any], *, on_delta: Optional[AnswerDeltaCallback] = None) -> FinalAnswer:
+    async def finalize(
+        self, goal: str, context: dict[str, Any], *, on_delta: AnswerDeltaCallback | None = None
+    ) -> FinalAnswer:
         raise NotImplementedError
 
     @abstractmethod
     async def extract_memory_candidates(
         self,
         goal: str,
-        context: Dict[str, Any],
-    ) -> List[MemoryRecord]:
+        context: dict[str, Any],
+    ) -> list[MemoryRecord]:
         raise NotImplementedError
 
 
 class MockModelClient(ModelClient):
     async def contract(self, goal: str) -> TaskContract:
         from app.runner.reasoning import build_default_contract
+
         return build_default_contract(goal)
 
     async def plan(self, goal: str) -> PlanOutput:
@@ -125,12 +135,18 @@ class MockModelClient(ModelClient):
             risk_level="low",
         )
 
-    async def synthesize(self, goal: str, tool_outputs: List[Dict[str, Any]], *, on_delta: Optional[AnswerDeltaCallback] = None) -> FinalAnswer:
-        sources: List[SourceReference] = []
-        findings: List[Finding] = []
-        caveats: List[str] = []
-        failed_sources: List[Dict[str, Any]] = []
-        source_quality: List[Dict[str, Any]] = []
+    async def synthesize(
+        self,
+        goal: str,
+        tool_outputs: list[dict[str, Any]],
+        *,
+        on_delta: AnswerDeltaCallback | None = None,
+    ) -> FinalAnswer:
+        sources: list[SourceReference] = []
+        findings: list[Finding] = []
+        caveats: list[str] = []
+        failed_sources: list[dict[str, Any]] = []
+        source_quality: list[dict[str, Any]] = []
 
         evidence_pack = next(
             (output.get("evidence_pack") for output in tool_outputs if output.get("evidence_pack")),
@@ -197,15 +213,13 @@ class MockModelClient(ModelClient):
             source_quality=source_quality,
             conflicts=[],
             caveats=caveats,
-            verification_notes=[
-                "答案仅基于本次 run 中记录的 ToolCall、Artifact 和验证结果生成。"
-            ],
+            verification_notes=["答案仅基于本次 run 中记录的 ToolCall、Artifact 和验证结果生成。"],
         )
         if on_delta:
             await on_delta(answer.summary)
         return answer
 
-    async def decide(self, goal: str, context: Dict[str, Any]) -> AgentDecision:
+    async def decide(self, goal: str, context: dict[str, Any]) -> AgentDecision:
         observations = context.get("observations", [])
         fetched_urls = {
             observation.get("data", {}).get("url")
@@ -254,7 +268,7 @@ class MockModelClient(ModelClient):
             expected_observation="最终答案包含来源、限制和验证备注。",
         )
 
-    async def reflect(self, goal: str, context: Dict[str, Any]) -> AgentReflection:
+    async def reflect(self, goal: str, context: dict[str, Any]) -> AgentReflection:
         last_observation = context.get("last_observation") or {}
         return AgentReflection(
             trigger=last_observation.get("status", "unknown"),
@@ -263,14 +277,18 @@ class MockModelClient(ModelClient):
             retry=context.get("retry_count", 0) < 1,
         )
 
-    async def finalize(self, goal: str, context: Dict[str, Any], *, on_delta: Optional[AnswerDeltaCallback] = None) -> FinalAnswer:
-        return await self.synthesize(goal, [{"evidence_pack": context.get("evidence_pack", {})}], on_delta=on_delta)
+    async def finalize(
+        self, goal: str, context: dict[str, Any], *, on_delta: AnswerDeltaCallback | None = None
+    ) -> FinalAnswer:
+        return await self.synthesize(
+            goal, [{"evidence_pack": context.get("evidence_pack", {})}], on_delta=on_delta
+        )
 
     async def extract_memory_candidates(
         self,
         goal: str,
-        context: Dict[str, Any],
-    ) -> List[MemoryRecord]:
+        context: dict[str, Any],
+    ) -> list[MemoryRecord]:
         evidence_pack = context.get("evidence_pack") or {}
         fetched_sources = evidence_pack.get("fetched_sources", [])
         if not fetched_sources:
@@ -335,7 +353,13 @@ class OpenAICompatibleModelClient(ModelClient):
         except Exception as exc:
             raise ModelOutputError(f"Invalid task contract output: {exc}") from exc
 
-    async def synthesize(self, goal: str, tool_outputs: List[Dict[str, Any]], *, on_delta: Optional[AnswerDeltaCallback] = None) -> FinalAnswer:
+    async def synthesize(
+        self,
+        goal: str,
+        tool_outputs: list[dict[str, Any]],
+        *,
+        on_delta: AnswerDeltaCallback | None = None,
+    ) -> FinalAnswer:
         payload = await self._chat_json(
             [
                 {
@@ -366,7 +390,7 @@ class OpenAICompatibleModelClient(ModelClient):
         except Exception as exc:
             raise ModelOutputError(f"Invalid final answer output: {exc}") from exc
 
-    async def decide(self, goal: str, context: Dict[str, Any]) -> AgentDecision:
+    async def decide(self, goal: str, context: dict[str, Any]) -> AgentDecision:
         payload = await self._chat_json(
             [
                 {
@@ -396,10 +420,10 @@ class OpenAICompatibleModelClient(ModelClient):
     async def decide_with_answer(
         self,
         goal: str,
-        context: Dict[str, Any],
+        context: dict[str, Any],
         *,
-        on_delta: Optional[AnswerDeltaCallback] = None,
-    ) -> tuple[AgentDecision, Optional[FinalAnswer]]:
+        on_delta: AnswerDeltaCallback | None = None,
+    ) -> tuple[AgentDecision, FinalAnswer | None]:
         payload = await self._chat_json(
             [
                 {
@@ -418,7 +442,10 @@ class OpenAICompatibleModelClient(ModelClient):
                         "Do not expose hidden chain-of-thought; reasoning_summary must be concise."
                     ),
                 },
-                {"role": "user", "content": json.dumps({"goal": goal, "context": context}, ensure_ascii=False)},
+                {
+                    "role": "user",
+                    "content": json.dumps({"goal": goal, "context": context}, ensure_ascii=False),
+                },
             ],
             stream_field="summary",
             on_field_delta=on_delta,
@@ -426,12 +453,16 @@ class OpenAICompatibleModelClient(ModelClient):
         try:
             decision = AgentDecision.model_validate(payload)
             raw_answer = payload.get("final_answer")
-            answer = FinalAnswer.model_validate(normalize_final_answer_payload(raw_answer)) if decision.decision_type == "finalize" and isinstance(raw_answer, dict) else None
+            answer = (
+                FinalAnswer.model_validate(normalize_final_answer_payload(raw_answer))
+                if decision.decision_type == "finalize" and isinstance(raw_answer, dict)
+                else None
+            )
             return decision, answer
         except Exception as exc:
             raise ModelOutputError(f"Invalid combined decision output: {exc}") from exc
 
-    async def reflect(self, goal: str, context: Dict[str, Any]) -> AgentReflection:
+    async def reflect(self, goal: str, context: dict[str, Any]) -> AgentReflection:
         payload = await self._chat_json(
             [
                 {
@@ -456,14 +487,18 @@ class OpenAICompatibleModelClient(ModelClient):
         except Exception as exc:
             raise ModelOutputError(f"Invalid reflection output: {exc}") from exc
 
-    async def finalize(self, goal: str, context: Dict[str, Any], *, on_delta: Optional[AnswerDeltaCallback] = None) -> FinalAnswer:
-        return await self.synthesize(goal, [{"evidence_pack": context.get("evidence_pack", {})}], on_delta=on_delta)
+    async def finalize(
+        self, goal: str, context: dict[str, Any], *, on_delta: AnswerDeltaCallback | None = None
+    ) -> FinalAnswer:
+        return await self.synthesize(
+            goal, [{"evidence_pack": context.get("evidence_pack", {})}], on_delta=on_delta
+        )
 
     async def extract_memory_candidates(
         self,
         goal: str,
-        context: Dict[str, Any],
-    ) -> List[MemoryRecord]:
+        context: dict[str, Any],
+    ) -> list[MemoryRecord]:
         payload = await self._chat_json(
             [
                 {
@@ -487,15 +522,27 @@ class OpenAICompatibleModelClient(ModelClient):
 
     async def _chat_json(
         self,
-        messages: List[Dict[str, str]],
+        messages: list[dict[str, str]],
         *,
         attempt: int = 0,
-        stream_field: Optional[str] = None,
-        on_field_delta: Optional[AnswerDeltaCallback] = None,
-    ) -> Dict[str, Any]:
+        stream_field: str | None = None,
+        on_field_delta: AnswerDeltaCallback | None = None,
+    ) -> dict[str, Any]:
         url = self.settings.model_base_url.rstrip("/") + "/chat/completions"
         system_prompt = messages[0].get("content", "") if messages else ""
-        operation = "contract" if "task contract" in system_prompt else "plan" if "planner" in system_prompt else "decision" if "controller" in system_prompt else "reflection" if "reflector" in system_prompt else "memory" if "memory" in system_prompt else "synthesis"
+        operation = (
+            "contract"
+            if "task contract" in system_prompt
+            else "plan"
+            if "planner" in system_prompt
+            else "decision"
+            if "controller" in system_prompt
+            else "reflection"
+            if "reflector" in system_prompt
+            else "memory"
+            if "memory" in system_prompt
+            else "synthesis"
+        )
         started = time.perf_counter()
         logger.info(
             "model.request.start operation=%s provider=%s model=%s endpoint=%s messages=%s",
@@ -505,8 +552,9 @@ class OpenAICompatibleModelClient(ModelClient):
             url,
             len(messages),
         )
-        async with httpx.AsyncClient(timeout=60) as client:
-            async with client.stream(
+        async with (
+            httpx.AsyncClient(timeout=60) as client,
+            client.stream(
                 "POST",
                 url,
                 headers={"Authorization": f"Bearer {self.settings.model_api_key}"},
@@ -516,41 +564,53 @@ class OpenAICompatibleModelClient(ModelClient):
                     "response_format": {"type": "json_object"},
                     "stream": True,
                 },
-            ) as response:
-                try:
-                    response.raise_for_status()
-                except httpx.HTTPStatusError as exc:
-                    logger.error("model.request.http_error operation=%s status=%s duration_ms=%.1f", operation, response.status_code, (time.perf_counter() - started) * 1000)
-                    raise ModelOutputError(f"Model endpoint returned HTTP {response.status_code}") from exc
-                if "text/event-stream" in response.headers.get("content-type", ""):
-                    chunks: List[str] = []
-                    streamed_value = ""
-                    async for line in response.aiter_lines():
-                        if not line.startswith("data:"):
-                            continue
-                        data = line[5:].strip()
-                        if not data or data == "[DONE]":
-                            continue
-                        try:
-                            delta = json.loads(data)["choices"][0]["delta"].get("content")
-                        except (KeyError, IndexError, TypeError, ValueError):
-                            continue
-                        if delta:
-                            chunks.append(delta)
-                            if stream_field and on_field_delta:
-                                current_value = extract_partial_json_string("".join(chunks), stream_field)
-                                if len(current_value) > len(streamed_value):
-                                    await on_field_delta(current_value[len(streamed_value):])
-                                    streamed_value = current_value
-                    content = "".join(chunks)
-                    chunk_count = len(chunks)
-                else:
+            ) as response,
+        ):
+            try:
+                response.raise_for_status()
+            except httpx.HTTPStatusError as exc:
+                logger.error(
+                    "model.request.http_error operation=%s status=%s duration_ms=%.1f",
+                    operation,
+                    response.status_code,
+                    (time.perf_counter() - started) * 1000,
+                )
+                raise ModelOutputError(
+                    f"Model endpoint returned HTTP {response.status_code}"
+                ) from exc
+            if "text/event-stream" in response.headers.get("content-type", ""):
+                chunks: list[str] = []
+                streamed_value = ""
+                async for line in response.aiter_lines():
+                    if not line.startswith("data:"):
+                        continue
+                    data = line[5:].strip()
+                    if not data or data == "[DONE]":
+                        continue
                     try:
-                        body = json.loads((await response.aread()).decode())
-                        content = body["choices"][0]["message"]["content"]
-                    except (KeyError, IndexError, TypeError, ValueError, UnicodeDecodeError) as exc:
-                        raise ModelOutputError("Model endpoint returned an unsupported response shape") from exc
-                    chunk_count = 1
+                        delta = json.loads(data)["choices"][0]["delta"].get("content")
+                    except (KeyError, IndexError, TypeError, ValueError):
+                        continue
+                    if delta:
+                        chunks.append(delta)
+                        if stream_field and on_field_delta:
+                            current_value = extract_partial_json_string(
+                                "".join(chunks), stream_field
+                            )
+                            if len(current_value) > len(streamed_value):
+                                await on_field_delta(current_value[len(streamed_value) :])
+                                streamed_value = current_value
+                content = "".join(chunks)
+                chunk_count = len(chunks)
+            else:
+                try:
+                    body = json.loads((await response.aread()).decode())
+                    content = body["choices"][0]["message"]["content"]
+                except (KeyError, IndexError, TypeError, ValueError, UnicodeDecodeError) as exc:
+                    raise ModelOutputError(
+                        "Model endpoint returned an unsupported response shape"
+                    ) from exc
+                chunk_count = 1
         logger.info(
             "model.request.complete operation=%s status=%s chunks=%s content_chars=%s duration_ms=%.1f",
             operation,
@@ -589,7 +649,7 @@ def build_model_client(settings: Settings) -> ModelClient:
     return OpenAICompatibleModelClient(settings)
 
 
-def parse_json_object(content: str) -> Dict[str, Any]:
+def parse_json_object(content: str) -> dict[str, Any]:
     try:
         payload = json.loads(content)
     except json.JSONDecodeError:
@@ -608,8 +668,17 @@ def extract_partial_json_string(content: str, field: str) -> str:
     if not match:
         return ""
     index = match.end()
-    decoded: List[str] = []
-    escapes = {'"': '"', "\\": "\\", "/": "/", "b": "\b", "f": "\f", "n": "\n", "r": "\r", "t": "\t"}
+    decoded: list[str] = []
+    escapes = {
+        '"': '"',
+        "\\": "\\",
+        "/": "/",
+        "b": "\b",
+        "f": "\f",
+        "n": "\n",
+        "r": "\r",
+        "t": "\t",
+    }
     while index < len(content):
         char = content[index]
         if char == '"':
@@ -624,7 +693,7 @@ def extract_partial_json_string(content: str, field: str) -> str:
         if escaped == "u":
             if index + 6 > len(content):
                 break
-            codepoint = content[index + 2:index + 6]
+            codepoint = content[index + 2 : index + 6]
             if not re.fullmatch(r"[0-9a-fA-F]{4}", codepoint):
                 break
             decoded.append(chr(int(codepoint, 16)))
@@ -637,7 +706,7 @@ def extract_partial_json_string(content: str, field: str) -> str:
     return "".join(decoded)
 
 
-def normalize_contract_payload(payload: Dict[str, Any], goal: str) -> Dict[str, Any]:
+def normalize_contract_payload(payload: dict[str, Any], goal: str) -> dict[str, Any]:
     reported_goal = str(payload.get("original_goal") or "").strip()
     if reported_goal and normalize_goal_text(reported_goal) != normalize_goal_text(goal):
         logger.warning(
@@ -651,12 +720,14 @@ def normalize_contract_payload(payload: Dict[str, Any], goal: str) -> Dict[str, 
             "constraints": [],
             "prohibited_actions": ["执行未注册或未授权的工具"],
             "assumptions": [],
-            "success_criteria": [{
-                "id": "criterion-result",
-                "description": f"正确回应用户请求：{goal.strip()}",
-                "mandatory": True,
-                "verification_method": "task_adapter",
-            }],
+            "success_criteria": [
+                {
+                    "id": "criterion-result",
+                    "description": f"正确回应用户请求：{goal.strip()}",
+                    "mandatory": True,
+                    "verification_method": "task_adapter",
+                }
+            ],
             "verification_requirements": [{"id": "verify-result", "validator": "task_adapter"}],
             "risk_level": "low",
             "ambiguity_status": "clear",
@@ -670,28 +741,40 @@ def normalize_contract_payload(payload: Dict[str, Any], goal: str) -> Dict[str, 
     assumptions = normalized.get("assumptions") or []
     normalized["assumptions"] = [
         item if isinstance(item, dict) else {"id": f"assumption-{index}", "statement": str(item)}
-        for index, item in enumerate(assumptions if isinstance(assumptions, list) else [assumptions], start=1)
+        for index, item in enumerate(
+            assumptions if isinstance(assumptions, list) else [assumptions], start=1
+        )
     ]
     for index, item in enumerate(normalized["assumptions"], start=1):
         item["id"] = str(item.get("id") or f"assumption-{index}")
         item["statement"] = str(item.get("statement") or item.get("description") or "未声明的假设")
     criteria = normalized.get("success_criteria") or []
     normalized["success_criteria"] = [
-        item if isinstance(item, dict) else {
+        item
+        if isinstance(item, dict)
+        else {
             "id": f"criterion-{index}",
             "description": str(item),
             "verification_method": "task_adapter",
         }
-        for index, item in enumerate(criteria if isinstance(criteria, list) else [criteria], start=1)
+        for index, item in enumerate(
+            criteria if isinstance(criteria, list) else [criteria], start=1
+        )
     ]
     for index, item in enumerate(normalized["success_criteria"], start=1):
         item["id"] = str(item.get("id") or f"criterion-{index}")
-        item["description"] = str(item.get("description") or item.get("criterion") or f"正确回应用户请求：{goal}")
+        item["description"] = str(
+            item.get("description") or item.get("criterion") or f"正确回应用户请求：{goal}"
+        )
         item["verification_method"] = str(item.get("verification_method") or "task_adapter")
     requirements = normalized.get("verification_requirements") or []
     normalized["verification_requirements"] = [
-        item if isinstance(item, dict) else {"id": f"verify-{index}", "validator": str(item) or "task_adapter"}
-        for index, item in enumerate(requirements if isinstance(requirements, list) else [requirements], start=1)
+        item
+        if isinstance(item, dict)
+        else {"id": f"verify-{index}", "validator": str(item) or "task_adapter"}
+        for index, item in enumerate(
+            requirements if isinstance(requirements, list) else [requirements], start=1
+        )
     ]
     for index, item in enumerate(normalized["verification_requirements"], start=1):
         item["id"] = str(item.get("id") or f"verify-{index}")
@@ -707,7 +790,7 @@ def normalize_goal_text(value: str) -> str:
     return "".join(value.lower().split()).strip("。！？!?.,，")
 
 
-def normalize_plan_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
+def normalize_plan_payload(payload: dict[str, Any]) -> dict[str, Any]:
     normalized = dict(payload)
     for field in ("required_tools", "success_criteria"):
         value = normalized.get(field) or []
@@ -726,7 +809,7 @@ def normalize_plan_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
     return normalized
 
 
-def normalize_final_answer_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
+def normalize_final_answer_payload(payload: dict[str, Any]) -> dict[str, Any]:
     normalized = dict(payload)
     normalized["summary"] = str(normalized.get("summary") or "已完成回复。")
     findings = normalized.get("findings") or []
@@ -743,13 +826,26 @@ def normalize_final_answer_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
         item if isinstance(item, dict) else {"url": str(item)}
         for item in (sources if isinstance(sources, list) else [sources])
     ]
-    for field in ("failed_sources", "source_quality", "conflicts", "caveats", "verification_notes", "memory_references"):
+    for field in (
+        "failed_sources",
+        "source_quality",
+        "conflicts",
+        "caveats",
+        "verification_notes",
+        "memory_references",
+    ):
         value = normalized.get(field) or []
         normalized[field] = value if isinstance(value, list) else [value]
-    normalized["failed_sources"] = [item for item in normalized["failed_sources"] if isinstance(item, dict)]
-    normalized["source_quality"] = [item for item in normalized["source_quality"] if isinstance(item, dict)]
+    normalized["failed_sources"] = [
+        item for item in normalized["failed_sources"] if isinstance(item, dict)
+    ]
+    normalized["source_quality"] = [
+        item for item in normalized["source_quality"] if isinstance(item, dict)
+    ]
     normalized["conflicts"] = [item for item in normalized["conflicts"] if isinstance(item, dict)]
-    normalized["memory_references"] = [item for item in normalized["memory_references"] if isinstance(item, dict)]
+    normalized["memory_references"] = [
+        item for item in normalized["memory_references"] if isinstance(item, dict)
+    ]
     normalized["caveats"] = [str(item) for item in normalized["caveats"]]
     normalized["verification_notes"] = [str(item) for item in normalized["verification_notes"]]
     return normalized

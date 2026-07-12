@@ -1,10 +1,11 @@
 import hashlib
+import json
 import mimetypes
 import shutil
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Protocol
+from typing import ClassVar, Protocol
 
 from app.tools.base import ArtifactRef, ToolExecutionError
 
@@ -38,7 +39,12 @@ class LocalArtifactStore:
 
 
 class ArtifactCollector:
-    MAGIC = {".png": (b"\x89PNG\r\n\x1a\n", "image/png"), ".svg": (b"<", "image/svg+xml"), ".json": (b"", "application/json"), ".html": (b"", "text/html")}
+    MAGIC: ClassVar[dict[str, tuple[bytes, str]]] = {
+        ".png": (b"\x89PNG\r\n\x1a\n", "image/png"),
+        ".svg": (b"<", "image/svg+xml"),
+        ".json": (b"", "application/json"),
+        ".html": (b"", "text/html"),
+    }
 
     def __init__(self, output_dir: Path, *, max_files: int, max_bytes: int):
         self.output_dir = output_dir.resolve()
@@ -47,8 +53,12 @@ class ArtifactCollector:
 
     def collect(self) -> list[dict]:
         if any(path.is_symlink() for path in self.output_dir.rglob("*")):
-            raise ToolExecutionError("sandbox_policy_violation", "Artifact symlinks are not allowed")
-        files = [path for path in self.output_dir.rglob("*") if path.is_file() and not path.is_symlink()]
+            raise ToolExecutionError(
+                "sandbox_policy_violation", "Artifact symlinks are not allowed"
+            )
+        files = [
+            path for path in self.output_dir.rglob("*") if path.is_file() and not path.is_symlink()
+        ]
         if len(files) > self.max_files:
             raise ToolExecutionError("artifact_limit_exceeded", "Artifact file count exceeded")
         total = sum(path.stat().st_size for path in files)
@@ -59,7 +69,9 @@ class ArtifactCollector:
     def inspect(self, path: Path) -> dict:
         resolved = path.resolve(strict=True)
         if not resolved.is_relative_to(self.output_dir):
-            raise ToolExecutionError("sandbox_policy_violation", "Artifact escaped output directory")
+            raise ToolExecutionError(
+                "sandbox_policy_violation", "Artifact escaped output directory"
+            )
         suffix = resolved.suffix.lower()
         if suffix not in self.MAGIC:
             raise ToolExecutionError("invalid_artifact", "Unsupported artifact type")
@@ -68,16 +80,53 @@ class ArtifactCollector:
         if not data or (prefix and not data.lstrip().startswith(prefix)):
             raise ToolExecutionError("invalid_artifact", "Artifact content does not match its type")
         lowered = data.lower()
-        if suffix == ".svg" and any(token in lowered for token in (b"<script", b"javascript:", b"onload=", b"onerror=", b"http://", b"https://")):
+        if suffix == ".json":
+            try:
+                json.loads(data)
+            except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+                raise ToolExecutionError("invalid_artifact", "JSON artifact is malformed") from exc
+        if suffix == ".svg" and any(
+            token in lowered
+            for token in (
+                b"<script",
+                b"javascript:",
+                b"onload=",
+                b"onerror=",
+                b"http://",
+                b"https://",
+            )
+        ):
             raise ToolExecutionError("invalid_artifact", "SVG contains active or external content")
-        if suffix == ".html" and (b"content-security-policy" not in lowered or b"default-src 'none'" not in lowered):
-            raise ToolExecutionError("invalid_artifact", "HTML artifact is missing restrictive CSP")
+        if suffix == ".html":
+            csp_index = lowered.find(b"content-security-policy")
+            script_index = lowered.find(b"<script")
+            if (
+                csp_index < 0
+                or b"default-src 'none'" not in lowered
+                or (script_index >= 0 and csp_index > script_index)
+            ):
+                raise ToolExecutionError(
+                    "invalid_artifact", "HTML artifact is missing an effective restrictive CSP"
+                )
         guessed = mimetypes.guess_type(resolved.name)[0]
-        return {"path": resolved, "mime_type": expected_mime or guessed, "size_bytes": len(data), "checksum": hashlib.sha256(data).hexdigest()}
+        return {
+            "path": resolved,
+            "mime_type": expected_mime or guessed,
+            "size_bytes": len(data),
+            "checksum": hashlib.sha256(data).hexdigest(),
+        }
 
 
 def artifact_ref(record) -> ArtifactRef:
-    return ArtifactRef(id=record.id, type=record.type, mime_type=record.mime_type or "application/octet-stream", content_url=f"/api/artifacts/{record.id}/content", size_bytes=record.size_bytes, checksum=record.checksum or "", metadata=record.metadata_ or {})
+    return ArtifactRef(
+        id=record.id,
+        type=record.type,
+        mime_type=record.mime_type or "application/octet-stream",
+        content_url=f"/api/artifacts/{record.id}/content",
+        size_bytes=record.size_bytes,
+        checksum=record.checksum or "",
+        metadata=record.metadata_ or {},
+    )
 
 
 class ArtifactService:
@@ -85,12 +134,37 @@ class ArtifactService:
         self.repo, self.store = repo, store
         self.max_files, self.max_bytes = max_files, max_bytes
 
-    async def persist_output(self, *, run_id: str, tool_call_id: str, sandbox_job_id: str, output_dir: Path, provenance: dict) -> list[ArtifactRef]:
+    async def persist_output(
+        self,
+        *,
+        run_id: str,
+        tool_call_id: str,
+        sandbox_job_id: str,
+        output_dir: Path,
+        provenance: dict,
+    ) -> list[ArtifactRef]:
         refs = []
-        for item in ArtifactCollector(output_dir, max_files=self.max_files, max_bytes=self.max_bytes).collect():
+        for item in ArtifactCollector(
+            output_dir, max_files=self.max_files, max_bytes=self.max_bytes
+        ).collect():
             path = item.pop("path")
             key = self.store.put(path, path.suffix.lower())
-            record = await self.repo.create_artifact(run_id, "sandbox_output", path=None, tool_call_id=tool_call_id, sandbox_job_id=sandbox_job_id, storage_key=key, security_status="verified", provenance=provenance, metadata={"filename": path.name}, **item)
+            try:
+                record = await self.repo.create_artifact(
+                    run_id,
+                    "sandbox_output",
+                    path=None,
+                    tool_call_id=tool_call_id,
+                    sandbox_job_id=sandbox_job_id,
+                    storage_key=key,
+                    security_status="verified",
+                    provenance=provenance,
+                    metadata={"filename": path.name},
+                    **item,
+                )
+            except BaseException:
+                self.store.delete(key)
+                raise
             refs.append(artifact_ref(record))
         return refs
 

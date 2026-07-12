@@ -10,10 +10,12 @@ from app.runtime_profiles import CORE_DEPENDENCIES, RuntimeProfileService, norma
 
 
 def test_dependencies_are_normalized_sorted_and_pinned():
-    assert normalize_dependencies([
-        {"name": "OpenPyXL", "version": "3.1.5"},
-        {"name": "polars", "version": "1.31.0"},
-    ]) == [
+    assert normalize_dependencies(
+        [
+            {"name": "OpenPyXL", "version": "3.1.5"},
+            {"name": "polars", "version": "1.31.0"},
+        ]
+    ) == [
         {"name": "openpyxl", "version": "3.1.5"},
         {"name": "polars", "version": "1.31.0"},
     ]
@@ -30,18 +32,29 @@ def test_runtime_profile_exposes_locked_core_dependency_versions(tmp_path):
 
     assert service.read()["core_dependencies"] == CORE_DEPENDENCIES
     assert {item["name"] for item in CORE_DEPENDENCIES} == {
-        "matplotlib", "numpy", "pandas", "pillow", "pyarrow", "scipy", "seaborn",
+        "matplotlib",
+        "numpy",
+        "pandas",
+        "pillow",
+        "pyarrow",
+        "scipy",
+        "seaborn",
     }
-    runtime_project = (Path(__file__).parents[2] / "runtimes" / "data-viz" / "pyproject.toml").read_text()
+    runtime_project = (
+        Path(__file__).parents[2] / "runtimes" / "data-viz" / "pyproject.toml"
+    ).read_text()
     for item in CORE_DEPENDENCIES:
-        assert f'{item["name"]}=={item["version"]}' in runtime_project
+        assert f"{item['name']}=={item['version']}" in runtime_project
 
 
-@pytest.mark.parametrize("dependency", [
-    {"name": "requests", "version": "*"},
-    {"name": "pkg @ https://example.com/pkg.whl", "version": "1.0.0"},
-    {"name": "numpy", "version": "2.0.0"},
-])
+@pytest.mark.parametrize(
+    "dependency",
+    [
+        {"name": "requests", "version": "*"},
+        {"name": "pkg @ https://example.com/pkg.whl", "version": "1.0.0"},
+        {"name": "numpy", "version": "2.0.0"},
+    ],
+)
 def test_dependencies_reject_unsafe_or_protected_values(dependency):
     with pytest.raises(ValueError):
         normalize_dependencies([dependency])
@@ -49,10 +62,12 @@ def test_dependencies_reject_unsafe_or_protected_values(dependency):
 
 def test_dependencies_reject_duplicates_after_normalization():
     with pytest.raises(ValueError, match="依赖重复"):
-        normalize_dependencies([
-            {"name": "my_pkg", "version": "1.0.0"},
-            {"name": "my-pkg", "version": "1.0.0"},
-        ])
+        normalize_dependencies(
+            [
+                {"name": "my_pkg", "version": "1.0.0"},
+                {"name": "my-pkg", "version": "1.0.0"},
+            ]
+        )
 
 
 async def test_profile_write_is_atomic_and_finished_tasks_are_removed(tmp_path, monkeypatch):
@@ -75,18 +90,22 @@ async def test_profile_write_is_atomic_and_finished_tasks_are_removed(tmp_path, 
     assert state["build"]["status"] == "queued"
     assert service.read()["build"]["status"] == "succeeded"
     assert service.tasks == {}
-    assert json.loads((tmp_path / "runtime" / "profile.json").read_text())["dependencies"] == []
+    persisted = json.loads((tmp_path / "runtime" / "profile.json").read_text())
+    assert persisted["dependencies"] == []
+    assert "core_dependencies" not in persisted
     assert not (tmp_path / "runtime" / "profile.json.tmp").exists()
 
 
 async def test_build_progress_uses_live_subprocess_output(tmp_path):
     service = RuntimeProfileService(Settings(runtime_profile_path=str(tmp_path / "profile.json")))
-    service.write({
-        "dependencies": [],
-        "active_image": "base",
-        "dependency_digest": "base",
-        "build": {"id": "build-1", "status": "building", "progress": 5, "log": "start"},
-    })
+    service.write(
+        {
+            "dependencies": [],
+            "active_image": "base",
+            "dependency_digest": "base",
+            "build": {"id": "build-1", "status": "building", "progress": 5, "log": "start"},
+        }
+    )
 
     returncode = await service._run_with_progress(
         "build-1",
@@ -104,10 +123,12 @@ async def test_build_progress_uses_live_subprocess_output(tmp_path):
 
 
 async def test_active_build_can_be_cancelled(tmp_path, monkeypatch):
-    service = RuntimeProfileService(Settings(
-        runtime_profile_path=str(tmp_path / "profile.json"),
-        sandbox_runtime_image="astra-data-viz:test",
-    ))
+    service = RuntimeProfileService(
+        Settings(
+            runtime_profile_path=str(tmp_path / "profile.json"),
+            sandbox_runtime_image="astra-data-viz:test",
+        )
+    )
 
     async def wait_forever(*args, **kwargs):
         await asyncio.Event().wait()
@@ -124,14 +145,38 @@ async def test_active_build_can_be_cancelled(tmp_path, monkeypatch):
 
 def test_interrupted_build_is_recovered_as_cancelled(tmp_path):
     profile_path = tmp_path / "profile.json"
-    profile_path.write_text(json.dumps({
-        "dependencies": [{"name": "polars", "version": ""}],
-        "active_image": "base",
-        "dependency_digest": "base",
-        "build": {"id": "old-build", "status": "building", "log": "installing"},
-    }))
+    profile_path.write_text(
+        json.dumps(
+            {
+                "dependencies": [{"name": "polars", "version": ""}],
+                "active_image": "base",
+                "dependency_digest": "base",
+                "build": {"id": "old-build", "status": "building", "log": "installing"},
+            }
+        )
+    )
 
-    service = RuntimeProfileService(Settings(runtime_profile_path=str(profile_path)))
+    service = RuntimeProfileService(
+        Settings(runtime_profile_path=str(profile_path)), recover_interrupted=True
+    )
 
     assert service.read()["build"]["status"] == "cancelled"
     assert service.read()["build"]["phase"] == "构建已中断"
+
+
+def test_read_only_profile_service_does_not_cancel_an_active_build(tmp_path):
+    profile_path = tmp_path / "profile.json"
+    profile_path.write_text(
+        json.dumps(
+            {
+                "dependencies": [{"name": "polars", "version": ""}],
+                "active_image": "base",
+                "dependency_digest": "base",
+                "build": {"id": "active-build", "status": "building", "log": "installing"},
+            }
+        )
+    )
+
+    service = RuntimeProfileService(Settings(runtime_profile_path=str(profile_path)))
+
+    assert service.read()["build"]["status"] == "building"

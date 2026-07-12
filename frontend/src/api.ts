@@ -25,10 +25,25 @@ export type ReasoningPolicyRequest = {
 
 export type RunModelConfig = { provider: string; name: string; api_key: string; base_url: string };
 export type RuntimeDependency = { name: string; version: string };
-export type RuntimeProfile = { dependencies: RuntimeDependency[]; core_dependencies: RuntimeDependency[]; active_image: string; dependency_digest: string; build: null | { id: string; status: string; phase?: string; progress?: number; log: string; image?: string | null } };
+export type RuntimeBuildStatus = 'queued' | 'building' | 'succeeded' | 'failed' | 'cancelled';
+export type RuntimeBuild = {
+  id: string;
+  status: RuntimeBuildStatus;
+  phase?: string;
+  progress?: number;
+  log: string;
+  image?: string | null;
+};
+export type RuntimeProfile = {
+  dependencies: RuntimeDependency[];
+  core_dependencies: RuntimeDependency[];
+  active_image: string;
+  dependency_digest: string;
+  build: RuntimeBuild | null;
+};
 
-export async function getRuntimeProfile(): Promise<RuntimeProfile> {
-  const response = await fetch('/api/runtime');
+export async function getRuntimeProfile(signal?: AbortSignal): Promise<RuntimeProfile> {
+  const response = await fetch('/api/runtime', { signal });
   if (!response.ok) throw await responseError(response);
   return response.json();
 }
@@ -57,8 +72,8 @@ export async function createRun(goal: string, taskId?: string, reasoningPolicy?:
   return response.json();
 }
 
-export async function getRun(runId: string): Promise<RunView> {
-  const response = await fetch(`/api/runs/${runId}`);
+export async function getRun(runId: string, signal?: AbortSignal): Promise<RunView> {
+  const response = await fetch(`/api/runs/${runId}`, { signal });
   if (!response.ok) {
     throw await responseError(response);
   }

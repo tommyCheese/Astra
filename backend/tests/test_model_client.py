@@ -2,8 +2,8 @@ import pytest
 
 from app.core.config import Settings
 from app.runner.model_client import (
-    ModelConfigurationError,
     MockModelClient,
+    ModelConfigurationError,
     build_model_client,
     extract_partial_json_string,
     normalize_contract_payload,
@@ -115,16 +115,27 @@ def test_partial_json_string_streams_only_complete_characters():
 
 
 def test_model_payload_normalization_accepts_shorthand_contract_and_plan():
-    contract = TaskContract.model_validate(normalize_contract_payload({
-        "original_goal": "你好",
-        "assumptions": ["用户希望得到问候"],
-        "success_criteria": ["自然回应"],
-        "verification_requirements": ["task_adapter"],
-    }, "你好"))
-    plan = PlanOutput.model_validate(normalize_plan_payload({
-        "steps": [{"title": "生成回复", "intent": "问候", "success_criteria": "用户收到回复"}],
-        "success_criteria": "用户感到被回应",
-    }))
+    contract = TaskContract.model_validate(
+        normalize_contract_payload(
+            {
+                "original_goal": "你好",
+                "assumptions": ["用户希望得到问候"],
+                "success_criteria": ["自然回应"],
+                "verification_requirements": ["task_adapter"],
+            },
+            "你好",
+        )
+    )
+    plan = PlanOutput.model_validate(
+        normalize_plan_payload(
+            {
+                "steps": [
+                    {"title": "生成回复", "intent": "问候", "success_criteria": "用户收到回复"}
+                ],
+                "success_criteria": "用户感到被回应",
+            }
+        )
+    )
 
     assert contract.assumptions[0].statement == "用户希望得到问候"
     assert contract.success_criteria[0].verification_method == "task_adapter"
@@ -134,12 +145,17 @@ def test_model_payload_normalization_accepts_shorthand_contract_and_plan():
 
 
 def test_contract_goal_mismatch_falls_back_to_user_request():
-    contract = TaskContract.model_validate(normalize_contract_payload({
-        "original_goal": "开发一个用户登录功能",
-        "deliverables": ["登录 API"],
-        "ambiguity_status": "低",
-        "clarification_question": "是否支持 OAuth？",
-    }, "你好"))
+    contract = TaskContract.model_validate(
+        normalize_contract_payload(
+            {
+                "original_goal": "开发一个用户登录功能",
+                "deliverables": ["登录 API"],
+                "ambiguity_status": "低",
+                "clarification_question": "是否支持 OAuth？",
+            },
+            "你好",
+        )
+    )
 
     assert contract.original_goal == "你好"
     assert contract.deliverables == ["回复用户请求：你好"]
@@ -148,14 +164,18 @@ def test_contract_goal_mismatch_falls_back_to_user_request():
 
 
 def test_final_answer_normalization_accepts_nullable_and_scalar_fields():
-    answer = FinalAnswer.model_validate(normalize_final_answer_payload({
-        "summary": "递归是自我调用。",
-        "findings": "递归会调用自身",
-        "sources": None,
-        "source_quality": None,
-        "caveats": "这是简化解释",
-        "verification_notes": "无需外部来源",
-    }))
+    answer = FinalAnswer.model_validate(
+        normalize_final_answer_payload(
+            {
+                "summary": "递归是自我调用。",
+                "findings": "递归会调用自身",
+                "sources": None,
+                "source_quality": None,
+                "caveats": "这是简化解释",
+                "verification_notes": "无需外部来源",
+            }
+        )
+    )
 
     assert answer.findings[0].text == "递归会调用自身"
     assert answer.caveats == ["这是简化解释"]
@@ -163,13 +183,17 @@ def test_final_answer_normalization_accepts_nullable_and_scalar_fields():
 
 
 def test_final_answer_normalization_drops_scalar_record_placeholders():
-    answer = FinalAnswer.model_validate(normalize_final_answer_payload({
-        "summary": "完成",
-        "source_quality": ["N/A"],
-        "failed_sources": ["none"],
-        "conflicts": "none",
-        "memory_references": "none",
-    }))
+    answer = FinalAnswer.model_validate(
+        normalize_final_answer_payload(
+            {
+                "summary": "完成",
+                "source_quality": ["N/A"],
+                "failed_sources": ["none"],
+                "conflicts": "none",
+                "memory_references": "none",
+            }
+        )
+    )
 
     assert answer.source_quality == []
     assert answer.failed_sources == []

@@ -1,11 +1,18 @@
 import asyncio
+import contextlib
 import json
 import os
 import shutil
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
-from app.sandbox.runtime import SandboxError, SandboxHandle, SandboxProvider, SandboxRequest, SandboxResult
+from app.sandbox.runtime import (
+    SandboxError,
+    SandboxHandle,
+    SandboxProvider,
+    SandboxRequest,
+    SandboxResult,
+)
 
 
 class DockerSandboxProvider(SandboxProvider):
@@ -13,17 +20,47 @@ class DockerSandboxProvider(SandboxProvider):
 
     name = "docker"
 
-    def __init__(self, binary: str = "docker", *, memory_mb: int = 1024, cpus: float = 1.0, pids: int = 128):
+    def __init__(
+        self, binary: str = "docker", *, memory_mb: int = 1024, cpus: float = 1.0, pids: int = 128
+    ):
         self.binary, self.memory_mb, self.cpus, self.pids = binary, memory_mb, cpus, pids
 
-    async def _run(self, *args: str, timeout: int = 30, check: bool = True, input_data: Optional[bytes] = None):
+    @staticmethod
+    async def _stop_process(process: asyncio.subprocess.Process) -> None:
+        if process.returncode is not None:
+            return
+        process.terminate()
         try:
-            stdin = asyncio.subprocess.PIPE if input_data is not None else asyncio.subprocess.DEVNULL
-            process = await asyncio.create_subprocess_exec(self.binary, *args, stdin=stdin, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, env={"PATH": os.environ.get("PATH", "")})
-            stdout, stderr = await asyncio.wait_for(process.communicate(input_data), timeout=timeout)
+            await asyncio.wait_for(process.wait(), timeout=5)
+        except asyncio.TimeoutError:
+            process.kill()
+            await process.wait()
+
+    async def _run(
+        self, *args: str, timeout: int = 30, check: bool = True, input_data: bytes | None = None
+    ):
+        process = None
+        try:
+            stdin = (
+                asyncio.subprocess.PIPE if input_data is not None else asyncio.subprocess.DEVNULL
+            )
+            process = await asyncio.create_subprocess_exec(
+                self.binary,
+                *args,
+                stdin=stdin,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                env={"PATH": os.environ.get("PATH", "")},
+            )
+            stdout, stderr = await asyncio.wait_for(
+                process.communicate(input_data), timeout=timeout
+            )
         except FileNotFoundError as exc:
             raise SandboxError("sandbox_unavailable", "Docker Engine is unavailable") from exc
-        except asyncio.TimeoutError:
+        except (asyncio.CancelledError, asyncio.TimeoutError):
+            if process is not None:
+                with contextlib.suppress(ProcessLookupError):
+                    await self._stop_process(process)
             raise
         if check and process.returncode != 0:
             message = stderr.decode(errors="replace")
@@ -35,29 +72,69 @@ class DockerSandboxProvider(SandboxProvider):
         if shutil.which(self.binary) is None:
             return False
         try:
-            code, _, _ = await self._run("info", "--format", "{{json .ServerVersion}}", timeout=3, check=False)
+            code, _, _ = await self._run(
+                "info", "--format", "{{json .ServerVersion}}", timeout=3, check=False
+            )
             return code == 0
-        except SandboxError:
+        except (SandboxError, asyncio.TimeoutError):
             return False
 
     async def create(self, request: SandboxRequest) -> SandboxHandle:
         network = "none" if not request.allow_internet_access else "bridge"
         _, stdout, _ = await self._run(
-            "create", "--rm", "--network", network, "--read-only", "--user", "65532:65532",
-            "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--pids-limit", str(self.pids),
-            "--memory", f"{self.memory_mb}m", "--cpus", str(self.cpus),
-            "--tmpfs", "/input:rw,noexec,nosuid,nodev,mode=1777", "--tmpfs", "/output:rw,noexec,nosuid,nodev,mode=1777",
-            "--tmpfs", "/tmp:rw,nosuid,nodev,mode=1777",
-            request.template, "sleep", "infinity",
+            "create",
+            "--rm",
+            "--network",
+            network,
+            "--read-only",
+            "--user",
+            "65532:65532",
+            "--cap-drop",
+            "ALL",
+            "--security-opt",
+            "no-new-privileges",
+            "--pids-limit",
+            str(self.pids),
+            "--memory",
+            f"{self.memory_mb}m",
+            "--cpus",
+            str(self.cpus),
+            "--tmpfs",
+            "/input:rw,noexec,nosuid,nodev,mode=1777",
+            "--tmpfs",
+            "/output:rw,noexec,nosuid,nodev,mode=1777",
+            "--tmpfs",
+            "/tmp:rw,nosuid,nodev,mode=1777",
+            request.template,
+            "sleep",
+            "infinity",
         )
         container_id = stdout.decode().strip()
-        await self._run("start", container_id)
+        if not container_id:
+            raise SandboxError("render_failed", "Docker did not return a container ID")
+        try:
+            await self._run("start", container_id)
+        except BaseException:
+            await self._run("rm", "--force", container_id, timeout=10, check=False)
+            raise
         return SandboxHandle(container_id, self.name)
 
     async def upload(self, handle: SandboxHandle, local_path: Path, remote_path: str) -> None:
-        await self._run("exec", "-i", handle.id, "sh", "-c", 'cat > "$1"', "sh", remote_path, input_data=local_path.read_bytes())
+        await self._run(
+            "exec",
+            "-i",
+            handle.id,
+            "sh",
+            "-c",
+            'mkdir -p -- "$(dirname -- "$1")" && cat > "$1"',
+            "sh",
+            remote_path,
+            input_data=local_path.read_bytes(),
+        )
 
-    async def execute(self, handle: SandboxHandle, command: list[str], timeout: int, environment: dict[str, str]) -> SandboxResult:
+    async def execute(
+        self, handle: SandboxHandle, command: list[str], timeout: int, environment: dict[str, str]
+    ) -> SandboxResult:
         args = ["exec"]
         for key, value in environment.items():
             args.extend(["--env", f"{key}={value}"])
@@ -65,14 +142,20 @@ class DockerSandboxProvider(SandboxProvider):
         code, stdout, stderr = await self._run(*args, timeout=timeout, check=False)
         return SandboxResult(code, stdout.decode(errors="replace"), stderr.decode(errors="replace"))
 
-    async def download_dir(self, handle: SandboxHandle, remote_dir: str, local_dir: Path) -> list[Path]:
+    async def download_dir(
+        self, handle: SandboxHandle, remote_dir: str, local_dir: Path
+    ) -> list[Path]:
         local_dir.mkdir(parents=True, exist_ok=True)
-        _, stdout, _ = await self._run("exec", handle.id, "find", remote_dir, "-type", "f", "-print")
+        _, stdout, _ = await self._run(
+            "exec", handle.id, "find", remote_dir, "-type", "f", "-print"
+        )
         downloaded = []
         for remote_path in stdout.decode().splitlines():
             relative = Path(remote_path).relative_to(remote_dir)
             if ".." in relative.parts:
-                raise SandboxError("sandbox_policy_violation", "Sandbox output path escaped its directory")
+                raise SandboxError(
+                    "sandbox_policy_violation", "Sandbox output path escaped its directory"
+                )
             destination = local_dir / relative
             destination.parent.mkdir(parents=True, exist_ok=True)
             _, content, _ = await self._run("exec", handle.id, "cat", remote_path)
@@ -81,7 +164,9 @@ class DockerSandboxProvider(SandboxProvider):
         return downloaded
 
     async def metrics(self, handle: SandboxHandle) -> dict[str, Any]:
-        code, stdout, _ = await self._run("stats", "--no-stream", "--format", "{{json .}}", handle.id, check=False)
+        code, stdout, _ = await self._run(
+            "stats", "--no-stream", "--format", "{{json .}}", handle.id, check=False
+        )
         if code != 0:
             return {}
         try:
@@ -95,5 +180,12 @@ class DockerSandboxProvider(SandboxProvider):
 
 def build_sandbox_provider(settings):
     if settings.sandbox_provider != "docker":
-        raise SandboxError("sandbox_unavailable", f"Unsupported sandbox provider: {settings.sandbox_provider}")
-    return DockerSandboxProvider(settings.docker_binary, memory_mb=settings.sandbox_memory_mb, cpus=settings.sandbox_cpus, pids=settings.sandbox_pids)
+        raise SandboxError(
+            "sandbox_unavailable", f"Unsupported sandbox provider: {settings.sandbox_provider}"
+        )
+    return DockerSandboxProvider(
+        settings.docker_binary,
+        memory_mb=settings.sandbox_memory_mb,
+        cpus=settings.sandbox_cpus,
+        pids=settings.sandbox_pids,
+    )

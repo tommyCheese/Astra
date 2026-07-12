@@ -1,5 +1,5 @@
-from typing import Any, Dict, List, Optional
 import uuid
+from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -23,7 +23,14 @@ class RunRepository:
     def __init__(self, session: AsyncSession):
         self.session = session
 
-    async def create_task_run(self, goal: str, model_policy: Dict[str, Any], task_id: Optional[str] = None, *, reasoning_policy: Optional[Dict[str, Any]] = None) -> RunRecord:
+    async def create_task_run(
+        self,
+        goal: str,
+        model_policy: dict[str, Any],
+        task_id: str | None = None,
+        *,
+        reasoning_policy: dict[str, Any] | None = None,
+    ) -> RunRecord:
         now = utc_now()
         task = await self.session.get(TaskRecord, task_id) if task_id else None
         if task_id and task is None:
@@ -55,7 +62,14 @@ class RunRepository:
         await self.session.commit()
         return run
 
-    async def initialize_reasoning_state(self, run_id: str, *, task_contract: Dict[str, Any], plan_graph: Dict[str, Any], agent_state: Dict[str, Any]) -> RunRecord:
+    async def initialize_reasoning_state(
+        self,
+        run_id: str,
+        *,
+        task_contract: dict[str, Any],
+        plan_graph: dict[str, Any],
+        agent_state: dict[str, Any],
+    ) -> RunRecord:
         run = await self.require_run(run_id)
         if run.state_version:
             raise ValueError("Reasoning state is already initialized")
@@ -64,14 +78,29 @@ class RunRepository:
         run.agent_state = agent_state
         run.state_version = int(agent_state.get("version", 1))
         run.updated_at = utc_now()
-        await self.add_event(run_id, "reasoning.state_initialized", {"state_version": run.state_version, "plan_version": plan_graph.get("version", 1)})
+        await self.add_event(
+            run_id,
+            "reasoning.state_initialized",
+            {"state_version": run.state_version, "plan_version": plan_graph.get("version", 1)},
+        )
         await self.session.commit()
         return run
 
-    async def update_reasoning_state(self, run_id: str, *, expected_version: int, agent_state: Dict[str, Any], plan_graph: Optional[Dict[str, Any]] = None, terminal_reason: Optional[Dict[str, Any]] = None, waiting_state: Optional[Dict[str, Any]] = None) -> RunRecord:
+    async def update_reasoning_state(
+        self,
+        run_id: str,
+        *,
+        expected_version: int,
+        agent_state: dict[str, Any],
+        plan_graph: dict[str, Any] | None = None,
+        terminal_reason: dict[str, Any] | None = None,
+        waiting_state: dict[str, Any] | None = None,
+    ) -> RunRecord:
         run = await self.require_run(run_id)
         if run.state_version != expected_version:
-            raise ValueError(f"State version conflict: expected {expected_version}, got {run.state_version}")
+            raise ValueError(
+                f"State version conflict: expected {expected_version}, got {run.state_version}"
+            )
         next_version = int(agent_state.get("version", expected_version + 1))
         if next_version <= expected_version:
             raise ValueError("State version must increase")
@@ -83,13 +112,20 @@ class RunRepository:
             run.terminal_reason = terminal_reason
         run.waiting_state = waiting_state
         run.updated_at = utc_now()
-        await self.add_event(run_id, "reasoning.state_updated", {"previous_version": expected_version, "state_version": next_version})
+        await self.add_event(
+            run_id,
+            "reasoning.state_updated",
+            {"previous_version": expected_version, "state_version": next_version},
+        )
         await self.session.commit()
         return run
 
-    async def set_waiting_state(self, run_id: str, waiting_state: Dict[str, Any]) -> RunRecord:
+    async def set_waiting_state(self, run_id: str, waiting_state: dict[str, Any]) -> RunRecord:
         run = await self.require_run(run_id)
-        waiting_state = {**waiting_state, "continuation_token": waiting_state.get("continuation_token") or str(uuid.uuid4())}
+        waiting_state = {
+            **waiting_state,
+            "continuation_token": waiting_state.get("continuation_token") or str(uuid.uuid4()),
+        }
         run.waiting_state = waiting_state
         run.status = "waiting_user"
         run.updated_at = utc_now()
@@ -97,7 +133,9 @@ class RunRepository:
         await self.session.commit()
         return run
 
-    async def resume_waiting_run(self, run_id: str, observation: Dict[str, Any], *, continuation_token: Optional[str] = None) -> RunRecord:
+    async def resume_waiting_run(
+        self, run_id: str, observation: dict[str, Any], *, continuation_token: str | None = None
+    ) -> RunRecord:
         run = await self.require_run(run_id)
         if run.status != "waiting_user" or not run.waiting_state:
             raise ValueError("Run is not waiting for user input")
@@ -120,11 +158,13 @@ class RunRepository:
         run.status = "executing"
         run.completed_at = None
         run.updated_at = utc_now()
-        await self.add_event(run_id, "run.resumed", {"observation": observation, "state_version": run.state_version})
+        await self.add_event(
+            run_id, "run.resumed", {"observation": observation, "state_version": run.state_version}
+        )
         await self.session.commit()
         return run
 
-    async def get_run(self, run_id: str) -> Optional[RunRecord]:
+    async def get_run(self, run_id: str) -> RunRecord | None:
         result = await self.session.execute(
             select(RunRecord)
             .where(RunRecord.id == run_id)
@@ -142,7 +182,7 @@ class RunRepository:
         )
         return result.scalar_one_or_none()
 
-    async def list_recent_runs(self, limit: int = 100) -> List[RunRecord]:
+    async def list_recent_runs(self, limit: int = 100) -> list[RunRecord]:
         result = await self.session.execute(
             select(RunRecord)
             .order_by(RunRecord.created_at.desc())
@@ -166,7 +206,7 @@ class RunRepository:
             raise ValueError(f"Run not found: {run_id}")
         return run
 
-    async def list_task_runs(self, task_id: str) -> List[RunRecord]:
+    async def list_task_runs(self, task_id: str) -> list[RunRecord]:
         result = await self.session.execute(
             select(RunRecord).where(RunRecord.task_id == task_id).order_by(RunRecord.created_at)
         )
@@ -177,8 +217,8 @@ class RunRepository:
         run_id: str,
         status: str,
         *,
-        summary: Optional[str] = None,
-        result: Optional[Dict[str, Any]] = None,
+        summary: str | None = None,
+        result: dict[str, Any] | None = None,
     ) -> None:
         run = await self.require_run(run_id)
         run.status = status
@@ -201,7 +241,7 @@ class RunRepository:
         title: str,
         intent: str,
         *,
-        depends_on: Optional[List[str]] = None,
+        depends_on: list[str] | None = None,
     ) -> StepRecord:
         step = StepRecord(
             run_id=run_id,
@@ -226,7 +266,7 @@ class RunRepository:
         step_id: str,
         status: str,
         *,
-        evidence: Optional[Dict[str, Any]] = None,
+        evidence: dict[str, Any] | None = None,
     ) -> StepRecord:
         step = await self._require_step(step_id)
         step.status = status
@@ -250,10 +290,10 @@ class RunRepository:
     async def start_tool_call(
         self,
         run_id: str,
-        step_id: Optional[str],
+        step_id: str | None,
         tool_name: str,
         tool_version: str,
-        tool_input: Dict[str, Any],
+        tool_input: dict[str, Any],
         permission: str,
         side_effect_level: str,
     ) -> ToolCallRecord:
@@ -282,8 +322,8 @@ class RunRepository:
         self,
         tool_call_id: str,
         *,
-        output: Optional[Dict[str, Any]] = None,
-        error: Optional[Dict[str, Any]] = None,
+        output: dict[str, Any] | None = None,
+        error: dict[str, Any] | None = None,
     ) -> ToolCallRecord:
         call = await self._require_tool_call(tool_call_id)
         call.output = output
@@ -309,17 +349,17 @@ class RunRepository:
         run_id: str,
         artifact_type: str,
         *,
-        content_ref: Optional[str] = None,
-        path: Optional[str] = None,
-        metadata: Optional[Dict[str, Any]] = None,
-        tool_call_id: Optional[str] = None,
-        sandbox_job_id: Optional[str] = None,
-        mime_type: Optional[str] = None,
+        content_ref: str | None = None,
+        path: str | None = None,
+        metadata: dict[str, Any] | None = None,
+        tool_call_id: str | None = None,
+        sandbox_job_id: str | None = None,
+        mime_type: str | None = None,
         size_bytes: int = 0,
-        checksum: Optional[str] = None,
-        storage_key: Optional[str] = None,
+        checksum: str | None = None,
+        storage_key: str | None = None,
         security_status: str = "pending",
-        provenance: Optional[Dict[str, Any]] = None,
+        provenance: dict[str, Any] | None = None,
     ) -> ArtifactRecord:
         artifact = ArtifactRecord(
             run_id=run_id,
@@ -346,27 +386,54 @@ class RunRepository:
         await self.session.commit()
         return artifact
 
-    async def get_artifact(self, artifact_id: str) -> Optional[ArtifactRecord]:
+    async def get_artifact(self, artifact_id: str) -> ArtifactRecord | None:
         return await self.session.get(ArtifactRecord, artifact_id)
 
     async def get_artifact_with_workspace(self, artifact_id: str):
-        result = await self.session.execute(select(ArtifactRecord, TaskRecord.workspace_id).join(RunRecord, ArtifactRecord.run_id == RunRecord.id).join(TaskRecord, RunRecord.task_id == TaskRecord.id).where(ArtifactRecord.id == artifact_id))
+        result = await self.session.execute(
+            select(ArtifactRecord, TaskRecord.workspace_id)
+            .join(RunRecord, ArtifactRecord.run_id == RunRecord.id)
+            .join(TaskRecord, RunRecord.task_id == TaskRecord.id)
+            .where(ArtifactRecord.id == artifact_id)
+        )
         return result.one_or_none()
 
-    async def list_artifacts(self) -> List[ArtifactRecord]:
+    async def list_artifacts(self) -> list[ArtifactRecord]:
         result = await self.session.execute(select(ArtifactRecord))
         return list(result.scalars().all())
 
-    async def create_sandbox_job(self, run_id: str, *, tool_call_id: Optional[str], executor: str, runtime_profile: Dict[str, Any], resource_limits: Dict[str, Any], input_artifact_ids: Optional[List[str]] = None) -> SandboxJobRecord:
-        job = SandboxJobRecord(run_id=run_id, tool_call_id=tool_call_id, executor=executor, runtime_profile=runtime_profile, resource_limits=resource_limits, input_artifact_ids=input_artifact_ids or [], output_artifact_ids=[])
+    async def create_sandbox_job(
+        self,
+        run_id: str,
+        *,
+        tool_call_id: str | None,
+        executor: str,
+        runtime_profile: dict[str, Any],
+        resource_limits: dict[str, Any],
+        input_artifact_ids: list[str] | None = None,
+    ) -> SandboxJobRecord:
+        job = SandboxJobRecord(
+            run_id=run_id,
+            tool_call_id=tool_call_id,
+            executor=executor,
+            runtime_profile=runtime_profile,
+            resource_limits=resource_limits,
+            input_artifact_ids=input_artifact_ids or [],
+            output_artifact_ids=[],
+        )
         self.session.add(job)
         await self.session.flush()
-        await self.add_event(run_id, "sandbox_job.created", {"sandbox_job_id": job.id, "tool_call_id": tool_call_id, "status": job.status})
+        await self.add_event(
+            run_id,
+            "sandbox_job.created",
+            {"sandbox_job_id": job.id, "tool_call_id": tool_call_id, "status": job.status},
+        )
         await self.session.commit()
         return job
 
     async def transition_sandbox_job(self, job_id: str, status: str, **updates) -> SandboxJobRecord:
         from app.sandbox.runtime import transition
+
         job = await self.session.get(SandboxJobRecord, job_id)
         if job is None:
             raise ValueError(f"SandboxJob not found: {job_id}")
@@ -378,7 +445,11 @@ class RunRepository:
             job.completed_at = utc_now()
         for key, value in updates.items():
             setattr(job, key, value)
-        await self.add_event(job.run_id, "sandbox_job.status_changed", {"sandbox_job_id": job.id, "status": status, "exit_reason": job.exit_reason})
+        await self.add_event(
+            job.run_id,
+            "sandbox_job.status_changed",
+            {"sandbox_job_id": job.id, "status": status, "exit_reason": job.exit_reason},
+        )
         await self.session.commit()
         return job
 
@@ -389,13 +460,13 @@ class RunRepository:
         decision_type: str,
         reasoning_summary: str,
         *,
-        selected_tool: Optional[str] = None,
-        decision: Optional[Dict[str, Any]] = None,
-        memory_reads: Optional[List[Dict[str, Any]]] = None,
-        state_version_before: Optional[int] = None,
+        selected_tool: str | None = None,
+        decision: dict[str, Any] | None = None,
+        memory_reads: list[dict[str, Any]] | None = None,
+        state_version_before: int | None = None,
         plan_version: int = 1,
         phase: str = "created",
-        idempotency_key: Optional[str] = None,
+        idempotency_key: str | None = None,
     ) -> AgentTurnRecord:
         now = utc_now()
         turn = AgentTurnRecord(
@@ -435,17 +506,17 @@ class RunRepository:
         self,
         turn_id: str,
         *,
-        status: Optional[str] = None,
-        observation: Optional[Dict[str, Any]] = None,
-        reflection: Optional[Dict[str, Any]] = None,
-        tool_call_id: Optional[str] = None,
-        artifact_id: Optional[str] = None,
-        memory_writes: Optional[List[Dict[str, Any]]] = None,
-        evaluation: Optional[Dict[str, Any]] = None,
-        reflection_patch: Optional[Dict[str, Any]] = None,
-        state_version_after: Optional[int] = None,
-        phase: Optional[str] = None,
-        paused_node: Optional[str] = None,
+        status: str | None = None,
+        observation: dict[str, Any] | None = None,
+        reflection: dict[str, Any] | None = None,
+        tool_call_id: str | None = None,
+        artifact_id: str | None = None,
+        memory_writes: list[dict[str, Any]] | None = None,
+        evaluation: dict[str, Any] | None = None,
+        reflection_patch: dict[str, Any] | None = None,
+        state_version_after: int | None = None,
+        phase: str | None = None,
+        paused_node: str | None = None,
     ) -> AgentTurnRecord:
         turn = await self._require_agent_turn(turn_id)
         if status is not None:
@@ -491,12 +562,12 @@ class RunRepository:
         scope: str,
         kind: str,
         content: str,
-        provenance: Dict[str, Any],
+        provenance: dict[str, Any],
         confidence: float,
-        run_id: Optional[str] = None,
-        workspace_id: Optional[str] = None,
-        created_by: Optional[str] = None,
-        structured_data: Optional[Dict[str, Any]] = None,
+        run_id: str | None = None,
+        workspace_id: str | None = None,
+        created_by: str | None = None,
+        structured_data: dict[str, Any] | None = None,
         expires_at=None,
     ) -> MemoryRecord:
         if scope in {"workspace", "user"} and (not provenance or confidence is None):
@@ -543,12 +614,12 @@ class RunRepository:
     async def list_memories(
         self,
         *,
-        scope: Optional[str] = None,
-        kind: Optional[str] = None,
-        run_id: Optional[str] = None,
+        scope: str | None = None,
+        kind: str | None = None,
+        run_id: str | None = None,
         min_confidence: float = 0.0,
         limit: int = 10,
-    ) -> List[MemoryRecord]:
+    ) -> list[MemoryRecord]:
         query = select(MemoryRecord).where(MemoryRecord.confidence >= min_confidence)
         if scope:
             query = query.where(MemoryRecord.scope == scope)
@@ -560,13 +631,15 @@ class RunRepository:
         result = await self.session.execute(query)
         return list(result.scalars().all())
 
-    async def add_event(self, run_id: str, event_type: str, payload: Dict[str, Any]) -> RunEventRecord:
+    async def add_event(
+        self, run_id: str, event_type: str, payload: dict[str, Any]
+    ) -> RunEventRecord:
         event = RunEventRecord(run_id=run_id, type=event_type, payload=payload)
         self.session.add(event)
         await self.session.flush()
         return event
 
-    async def list_events(self, run_id: str, after_id: int = 0) -> List[RunEventRecord]:
+    async def list_events(self, run_id: str, after_id: int = 0) -> list[RunEventRecord]:
         result = await self.session.execute(
             select(RunEventRecord)
             .where(RunEventRecord.run_id == run_id, RunEventRecord.id > after_id)
@@ -600,7 +673,7 @@ class RunRepository:
         return turn
 
 
-def run_to_view(run: RunRecord) -> Dict[str, Any]:
+def run_to_view(run: RunRecord) -> dict[str, Any]:
     result = run.result or {}
     verification_report = result.get("verification_report")
     return {
@@ -654,13 +727,33 @@ def run_to_view(run: RunRecord) -> Dict[str, Any]:
                 "tool_call_id": artifact.tool_call_id,
                 "sandbox_job_id": artifact.sandbox_job_id,
                 "provenance": artifact.provenance,
-                "content_url": f"/api/artifacts/{artifact.id}/content" if artifact.storage_key and artifact.security_status == "verified" else None,
+                "content_url": f"/api/artifacts/{artifact.id}/content"
+                if artifact.storage_key and artifact.security_status == "verified"
+                else None,
                 "created_at": artifact.created_at,
             }
             for artifact in run.artifacts
         ],
         "sandbox_jobs": [
-            {"id": job.id, "tool_call_id": job.tool_call_id, "status": job.status, "executor": job.executor, "runtime_profile": job.runtime_profile, "resource_limits": job.resource_limits, "runtime_name": job.runtime_name, "image_digest": job.image_digest, "exit_reason": job.exit_reason, "error": job.error, "stdout_summary": job.stdout_summary, "stderr_summary": job.stderr_summary, "input_artifact_ids": job.input_artifact_ids, "output_artifact_ids": job.output_artifact_ids, "created_at": job.created_at, "started_at": job.started_at, "completed_at": job.completed_at}
+            {
+                "id": job.id,
+                "tool_call_id": job.tool_call_id,
+                "status": job.status,
+                "executor": job.executor,
+                "runtime_profile": job.runtime_profile,
+                "resource_limits": job.resource_limits,
+                "runtime_name": job.runtime_name,
+                "image_digest": job.image_digest,
+                "exit_reason": job.exit_reason,
+                "error": job.error,
+                "stdout_summary": job.stdout_summary,
+                "stderr_summary": job.stderr_summary,
+                "input_artifact_ids": job.input_artifact_ids,
+                "output_artifact_ids": job.output_artifact_ids,
+                "created_at": job.created_at,
+                "started_at": job.started_at,
+                "completed_at": job.completed_at,
+            }
             for job in run.sandbox_jobs
         ],
         "events": [
@@ -730,8 +823,8 @@ def run_to_view(run: RunRecord) -> Dict[str, Any]:
     }
 
 
-def build_chat_messages(run: RunRecord) -> List[Dict[str, Any]]:
-    messages: List[Dict[str, Any]] = [
+def build_chat_messages(run: RunRecord) -> list[dict[str, Any]]:
+    messages: list[dict[str, Any]] = [
         {
             "id": f"{run.id}-user",
             "role": "user",
@@ -771,10 +864,16 @@ def build_chat_messages(run: RunRecord) -> List[Dict[str, Any]]:
             }
         )
     terminal_statuses = {"completed", "completed_with_warnings", "blocked", "failed"}
-    if run.status in terminal_statuses and run.result and not any(message["role"] == "assistant" for message in messages[1:]):
+    if (
+        run.status in terminal_statuses
+        and run.result
+        and not any(message["role"] == "assistant" for message in messages[1:])
+    ):
         messages.append(
             {
-                "id": f"{run.id}-terminal" if run.status in {"blocked", "failed"} else f"{run.id}-answer",
+                "id": f"{run.id}-terminal"
+                if run.status in {"blocked", "failed"}
+                else f"{run.id}-answer",
                 "role": "assistant",
                 "content": run.result.get("summary") or run.summary or "任务已完成。",
                 "status": run.status,

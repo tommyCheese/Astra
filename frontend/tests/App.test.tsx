@@ -423,6 +423,21 @@ describe('App', () => {
     });
   });
 
+  it('keeps dependency edits pending when a build request fails', async () => {
+    vi.mocked(buildRuntime).mockRejectedValueOnce(new Error('Docker 服务不可用'));
+    render(<App />);
+
+    await userEvent.click(screen.getByRole('button', { name: /设置/ }));
+    await userEvent.click(screen.getByRole('button', { name: '运行时' }));
+    await userEvent.click(screen.getByRole('button', { name: '添加依赖' }));
+    await userEvent.type(screen.getByLabelText('依赖名称'), 'polars');
+    await userEvent.click(screen.getByRole('button', { name: '构建并激活' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Docker 服务不可用');
+    expect(screen.getByLabelText('依赖名称')).toHaveValue('polars');
+    expect(screen.getByRole('button', { name: '构建并激活' })).toBeEnabled();
+  });
+
   it('keeps validation and data settings task agnostic', async () => {
     render(<App />);
 

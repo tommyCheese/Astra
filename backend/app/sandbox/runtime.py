@@ -1,14 +1,28 @@
 import asyncio
 import re
+import sys
 import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-
-ERROR_CATEGORIES = {"sandbox_unavailable", "runtime_image_missing", "sandbox_timeout", "sandbox_oom", "sandbox_policy_violation", "artifact_limit_exceeded", "invalid_artifact", "render_failed"}
-TRANSITIONS = {"queued": {"preparing", "cancelled"}, "preparing": {"running", "failed", "cancelled"}, "running": {"collecting", "failed", "timed_out", "cancelled"}, "collecting": {"succeeded", "failed"}}
+ERROR_CATEGORIES = {
+    "sandbox_unavailable",
+    "runtime_image_missing",
+    "sandbox_timeout",
+    "sandbox_oom",
+    "sandbox_policy_violation",
+    "artifact_limit_exceeded",
+    "invalid_artifact",
+    "render_failed",
+}
+TRANSITIONS = {
+    "queued": {"preparing", "failed", "cancelled"},
+    "preparing": {"running", "failed", "cancelled"},
+    "running": {"collecting", "failed", "timed_out", "cancelled"},
+    "collecting": {"succeeded", "failed", "cancelled"},
+}
 
 
 class SandboxError(RuntimeError):
@@ -25,7 +39,12 @@ def transition(current: str, target: str) -> str:
 
 
 def sanitize_log(value: str, limit: int = 4000) -> str:
-    value = re.sub(r"(?i)(api[_-]?key|token|authorization)\s*[:=]\s*\S+", r"\1=[REDACTED]", value)
+    value = re.sub(
+        r"(?i)(authorization)\s*[:=]\s*(?:bearer\s+)?\S+",
+        r"\1=[REDACTED]",
+        value,
+    )
+    value = re.sub(r"(?i)(api[_-]?key|token)\s*[:=]\s*\S+", r"\1=[REDACTED]", value)
     value = re.sub(r"/(Users|home|var|tmp)/[^\s]+", "[PATH]", value)
     return value[:limit]
 
@@ -70,9 +89,13 @@ class SandboxProvider(ABC):
     @abstractmethod
     async def upload(self, handle: SandboxHandle, local_path: Path, remote_path: str) -> None: ...
     @abstractmethod
-    async def execute(self, handle: SandboxHandle, command: list[str], timeout: int, environment: dict[str, str]) -> SandboxResult: ...
+    async def execute(
+        self, handle: SandboxHandle, command: list[str], timeout: int, environment: dict[str, str]
+    ) -> SandboxResult: ...
     @abstractmethod
-    async def download_dir(self, handle: SandboxHandle, remote_dir: str, local_dir: Path) -> list[Path]: ...
+    async def download_dir(
+        self, handle: SandboxHandle, remote_dir: str, local_dir: Path
+    ) -> list[Path]: ...
     @abstractmethod
     async def metrics(self, handle: SandboxHandle) -> dict[str, Any]: ...
     @abstractmethod
@@ -91,9 +114,13 @@ class SandboxSupervisor:
             handle = await self.provider.create(request)
             for path in request.input_dir.rglob("*"):
                 if path.is_file():
-                    await self.provider.upload(handle, path, f"/input/{path.relative_to(request.input_dir).as_posix()}")
+                    await self.provider.upload(
+                        handle, path, f"/input/{path.relative_to(request.input_dir).as_posix()}"
+                    )
             result = await asyncio.wait_for(
-                self.provider.execute(handle, request.command, request.wall_time_seconds, request.environment),
+                self.provider.execute(
+                    handle, request.command, request.wall_time_seconds, request.environment
+                ),
                 timeout=request.wall_time_seconds + 2,
             )
             if result.exit_code != 0:
@@ -108,31 +135,140 @@ class SandboxSupervisor:
             raise SandboxError("sandbox_timeout", "Sandbox process timed out") from exc
         finally:
             if handle is not None:
-                await self.provider.terminate(handle)
+                had_error = sys.exc_info()[0] is not None
+                try:
+                    await self.provider.terminate(handle)
+                except Exception:
+                    if not had_error:
+                        raise
 
 
 class SandboxJobService:
     def __init__(self, repo, supervisor: SandboxSupervisor, artifact_service):
         self.repo, self.supervisor, self.artifact_service = repo, supervisor, artifact_service
 
-    async def execute(self, request: SandboxRequest, *, run_id: str, tool_call_id: str, runtime_profile: dict, resource_limits: dict):
+    async def _record_terminal_state(
+        self,
+        job,
+        *,
+        run_id: str,
+        started: float,
+        status: str,
+        category: str,
+        message: str,
+    ) -> None:
+        if job.status in {"succeeded", "failed", "timed_out", "cancelled"}:
+            return
+        await self.repo.transition_sandbox_job(
+            job.id,
+            status,
+            exit_reason=category,
+            error={"category": category, "message": message},
+        )
+        await self.repo.add_event(
+            run_id,
+            "sandbox_job.metrics",
+            {
+                "sandbox_job_id": job.id,
+                "duration_ms": round((time.perf_counter() - started) * 1000, 2),
+                "artifact_bytes": 0,
+                "provider": self.supervisor.provider.name,
+                "status": status,
+                "error_category": category,
+            },
+        )
+        await self.repo.session.commit()
+
+    async def execute(
+        self,
+        request: SandboxRequest,
+        *,
+        run_id: str,
+        tool_call_id: str,
+        runtime_profile: dict,
+        resource_limits: dict,
+    ):
         started = time.perf_counter()
         provider = self.supervisor.provider
-        job = await self.repo.create_sandbox_job(run_id, tool_call_id=tool_call_id, executor=provider.name, runtime_profile=runtime_profile, resource_limits=resource_limits)
-        await self.repo.transition_sandbox_job(job.id, "preparing")
-        await self.repo.transition_sandbox_job(job.id, "running")
+        job = await self.repo.create_sandbox_job(
+            run_id,
+            tool_call_id=tool_call_id,
+            executor=provider.name,
+            runtime_profile=runtime_profile,
+            resource_limits=resource_limits,
+        )
         try:
+            await self.repo.transition_sandbox_job(job.id, "preparing")
+            await self.repo.transition_sandbox_job(job.id, "running")
             result = await self.supervisor.run(request)
-            await self.repo.transition_sandbox_job(job.id, "collecting", runtime_name=result.provider, image_digest=result.template)
-            provenance = {"provider": result.provider, "template": result.template, "metrics": result.metrics, **runtime_profile}
-            refs = await self.artifact_service.persist_output(run_id=run_id, tool_call_id=tool_call_id, sandbox_job_id=job.id, output_dir=request.output_dir, provenance=provenance)
-            await self.repo.transition_sandbox_job(job.id, "succeeded", output_artifact_ids=[ref.id for ref in refs], stdout_summary=sanitize_log(result.stdout), stderr_summary=sanitize_log(result.stderr))
-            await self.repo.add_event(run_id, "sandbox_job.metrics", {"sandbox_job_id": job.id, "duration_ms": round((time.perf_counter() - started) * 1000, 2), "artifact_bytes": sum(ref.size_bytes for ref in refs), "backend": runtime_profile.get("backend"), "provider": result.provider, "status": "succeeded", **result.metrics})
+            await self.repo.transition_sandbox_job(
+                job.id, "collecting", runtime_name=result.provider, image_digest=result.template
+            )
+            provenance = {
+                "provider": result.provider,
+                "template": result.template,
+                "metrics": result.metrics,
+                **runtime_profile,
+            }
+            refs = await self.artifact_service.persist_output(
+                run_id=run_id,
+                tool_call_id=tool_call_id,
+                sandbox_job_id=job.id,
+                output_dir=request.output_dir,
+                provenance=provenance,
+            )
+            await self.repo.transition_sandbox_job(
+                job.id,
+                "succeeded",
+                output_artifact_ids=[ref.id for ref in refs],
+                stdout_summary=sanitize_log(result.stdout),
+                stderr_summary=sanitize_log(result.stderr),
+            )
+            await self.repo.add_event(
+                run_id,
+                "sandbox_job.metrics",
+                {
+                    "sandbox_job_id": job.id,
+                    "duration_ms": round((time.perf_counter() - started) * 1000, 2),
+                    "artifact_bytes": sum(ref.size_bytes for ref in refs),
+                    "backend": runtime_profile.get("backend"),
+                    "provider": result.provider,
+                    "status": "succeeded",
+                    **result.metrics,
+                },
+            )
             await self.repo.session.commit()
             return job, refs
         except SandboxError as exc:
             status = "timed_out" if exc.category == "sandbox_timeout" else "failed"
-            await self.repo.transition_sandbox_job(job.id, status, exit_reason=exc.category, error={"category": exc.category, "message": exc.safe_message})
-            await self.repo.add_event(run_id, "sandbox_job.metrics", {"sandbox_job_id": job.id, "duration_ms": round((time.perf_counter() - started) * 1000, 2), "artifact_bytes": 0, "provider": provider.name, "status": status, "error_category": exc.category})
-            await self.repo.session.commit()
+            await self._record_terminal_state(
+                job,
+                run_id=run_id,
+                started=started,
+                status=status,
+                category=exc.category,
+                message=exc.safe_message,
+            )
+            raise
+        except asyncio.CancelledError:
+            await self._record_terminal_state(
+                job,
+                run_id=run_id,
+                started=started,
+                status="cancelled",
+                category="cancelled",
+                message="Sandbox job was cancelled",
+            )
+            raise
+        except Exception as exc:
+            category = getattr(exc, "category", "render_failed")
+            message = getattr(exc, "message", "Sandbox job failed")
+            await self._record_terminal_state(
+                job,
+                run_id=run_id,
+                started=started,
+                status="failed",
+                category=category,
+                message=message,
+            )
             raise

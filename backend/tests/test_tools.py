@@ -1,10 +1,17 @@
 import os
 
-import pytest
 import httpx
+import pytest
 
 from app.core.config import Settings
-from app.tools.base import ArtifactRef, Tool, ToolExecutionError, ToolRegistry, ToolResultEnvelope, ToolSpec
+from app.tools.base import (
+    ArtifactRef,
+    Tool,
+    ToolExecutionError,
+    ToolRegistry,
+    ToolResultEnvelope,
+    ToolSpec,
+)
 from app.tools.web import (
     WebFetchTool,
     WebSearchTool,
@@ -89,6 +96,46 @@ async def test_google_web_search_api_error(monkeypatch):
     assert exc_info.value.category == "search_failed"
 
 
+async def test_google_web_search_rejects_invalid_result_count():
+    tool = WebSearchTool(
+        Settings(
+            web_search_provider="google",
+            google_search_api_key="secret",
+            google_search_engine_id="cx",
+        )
+    )
+
+    with pytest.raises(ToolExecutionError) as exc_info:
+        await tool.run({"query": "Astra", "num_results": "many"})
+
+    assert exc_info.value.category == "invalid_input"
+
+
+async def test_brave_web_search_wraps_provider_errors(monkeypatch):
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            return False
+
+        async def get(self, *args, **kwargs):
+            request = httpx.Request("GET", "https://api.search.brave.com/res/v1/web/search")
+            response = httpx.Response(503, request=request)
+            raise httpx.HTTPStatusError("unavailable", request=request, response=response)
+
+    monkeypatch.setattr("app.tools.web.httpx.AsyncClient", FakeClient)
+    tool = WebSearchTool(Settings(web_search_provider="brave", web_search_api_key="secret"))
+
+    with pytest.raises(ToolExecutionError) as exc_info:
+        await tool.run({"query": "Astra"})
+
+    assert exc_info.value.category == "search_failed"
+
+
 @pytest.mark.skipif(
     os.getenv("ASTRA_RUN_GOOGLE_INTEGRATION") != "1",
     reason="Set ASTRA_RUN_GOOGLE_INTEGRATION=1 with Google credentials to run.",
@@ -122,15 +169,31 @@ def test_web_tool_manifest_contains_operational_fields():
 
 
 def test_tool_contract_serializes_artifact_envelope_and_legacy_permissions():
-    spec = ToolSpec(name="legacy", version="1", input_schema={}, output_schema={}, permission="network_read", side_effect_level="read_only")
-    result = ToolResultEnvelope(artifacts=[ArtifactRef(id="a1", type="chart", mime_type="image/png")])
+    spec = ToolSpec(
+        name="legacy",
+        version="1",
+        input_schema={},
+        output_schema={},
+        permission="network_read",
+        side_effect_level="read_only",
+    )
+    result = ToolResultEnvelope(
+        artifacts=[ArtifactRef(id="a1", type="chart", mime_type="image/png")]
+    )
     assert spec.capabilities == ["network_read"]
     assert result.model_dump()["artifacts"][0]["id"] == "a1"
 
 
 def test_tool_registries_are_composable():
     class ExampleTool(Tool):
-        spec = ToolSpec(name="example", version="1", input_schema={}, output_schema={}, permission="network_read", side_effect_level="read_only")
+        spec = ToolSpec(
+            name="example",
+            version="1",
+            input_schema={},
+            output_schema={},
+            permission="network_read",
+            side_effect_level="read_only",
+        )
 
         async def run(self, tool_input, *, context=None):
             return {}
@@ -152,6 +215,39 @@ async def test_web_fetch_rejects_empty_url():
 
     with pytest.raises(ToolExecutionError):
         await tool.run({"url": ""})
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "file:///etc/passwd",
+        "http://localhost/admin",
+        "http://127.0.0.1/admin",
+        "http://169.254.169.254/latest/meta-data",
+        "http://user:password@example.com/",
+    ],
+)
+async def test_web_fetch_rejects_unsafe_targets(url):
+    tool = WebFetchTool(Settings())
+
+    with pytest.raises(ToolExecutionError) as exc_info:
+        await tool.run({"url": url})
+
+    assert exc_info.value.category in {"invalid_input", "permission_denied"}
+
+
+async def test_web_fetch_revalidates_redirect_targets():
+    def respond(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            302, headers={"location": "http://127.0.0.1/private"}, request=request
+        )
+
+    tool = WebFetchTool(Settings())
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
+        with pytest.raises(ToolExecutionError) as exc_info:
+            await tool._get_with_safe_redirects(client, "https://example.com/source")
+
+    assert exc_info.value.category == "permission_denied"
 
 
 def test_selector_extraction_and_metadata_fixture():

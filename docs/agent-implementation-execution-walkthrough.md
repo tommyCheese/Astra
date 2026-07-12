@@ -213,7 +213,7 @@ Mock 客户端则按已观察到的工具结果确定下一步：通常先 web_s
 5. permission 是否为 network_read。
 6. side_effect_level 是否为 read_only。
 
-这些字符串在 `app/models/domain.py` 中分别由 `Permission` 与 `SideEffectLevel` 枚举表达；`RunStatus`、`StepStatus`、`ToolCallStatus` 则描述持久化生命周期。当前代码实际还使用 waiting_user，虽然 `RunStatus` 枚举尚未纳入它。
+权限、副作用和运行状态均由 ToolSpec、Pydantic Schema 与数据库模型中的受约束字符串统一校验，不再维护一套未被运行时引用的重复枚举。
 
 只有通过门控，Loop 才找到对应 Step，把它更新为 running，创建 `ToolCallRecord(status="running")`，并把 AgentTurn phase 从 prepared 改为 executing。
 

@@ -1,8 +1,9 @@
+import ipaddress
 import re
 from datetime import datetime, timezone
 from html.parser import HTMLParser
-from typing import Any, Dict, List, Optional, Tuple
-from urllib.parse import urlparse
+from typing import Any
+from urllib.parse import urljoin, urlparse
 
 import httpx
 
@@ -18,7 +19,7 @@ def display_link(url: str) -> str:
     return urlparse(url).netloc
 
 
-def normalize_google_items(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
+def normalize_google_items(payload: dict[str, Any]) -> list[dict[str, Any]]:
     candidates = []
     retrieved_at = iso_now()
     for rank, item in enumerate(payload.get("items", []), start=1):
@@ -70,7 +71,7 @@ class WebSearchTool(Tool):
     def __init__(self, settings: Settings):
         self.settings = settings
 
-    async def run(self, tool_input: Dict[str, Any], *, context=None) -> Dict[str, Any]:
+    async def run(self, tool_input: dict[str, Any], *, context=None) -> dict[str, Any]:
         query = str(tool_input.get("query", "")).strip()
         if not query:
             raise ToolExecutionError("invalid_input", "web_search requires a non-empty query")
@@ -84,7 +85,7 @@ class WebSearchTool(Tool):
             f"Unsupported web search provider: {self.settings.web_search_provider}",
         )
 
-    async def _google_search(self, query: str, tool_input: Dict[str, Any]) -> Dict[str, Any]:
+    async def _google_search(self, query: str, tool_input: dict[str, Any]) -> dict[str, Any]:
         api_key = self.settings.google_search_api_key or self.settings.web_search_api_key
         search_engine_id = self.settings.google_search_engine_id
         if not api_key or not search_engine_id:
@@ -93,7 +94,12 @@ class WebSearchTool(Tool):
                 "GOOGLE_SEARCH_API_KEY and GOOGLE_SEARCH_ENGINE_ID are required",
             )
 
-        num_results = int(tool_input.get("num_results") or self.settings.google_search_result_count)
+        try:
+            num_results = int(
+                tool_input.get("num_results") or self.settings.google_search_result_count
+            )
+        except (TypeError, ValueError) as exc:
+            raise ToolExecutionError("invalid_input", "num_results must be an integer") from exc
         num_results = max(1, min(num_results, 10))
         language = str(tool_input.get("language") or self.settings.google_search_language or "")
         region = str(tool_input.get("region") or self.settings.google_search_region or "")
@@ -137,18 +143,21 @@ class WebSearchTool(Tool):
             "candidates": candidates,
         }
 
-    async def _brave_search(self, query: str) -> Dict[str, Any]:
+    async def _brave_search(self, query: str) -> dict[str, Any]:
         if not self.settings.web_search_api_key:
             raise ToolExecutionError("missing_credentials", "WEB_SEARCH_API_KEY is required")
-        async with httpx.AsyncClient(timeout=self.spec.timeout_seconds) as client:
-            response = await client.get(
-                "https://api.search.brave.com/res/v1/web/search",
-                params={"q": query, "count": 5},
-                headers={"X-Subscription-Token": self.settings.web_search_api_key},
-            )
-            response.raise_for_status()
+        try:
+            async with httpx.AsyncClient(timeout=self.spec.timeout_seconds) as client:
+                response = await client.get(
+                    "https://api.search.brave.com/res/v1/web/search",
+                    params={"q": query, "count": 5},
+                    headers={"X-Subscription-Token": self.settings.web_search_api_key},
+                )
+                response.raise_for_status()
+        except httpx.HTTPError as exc:
+            raise ToolExecutionError("search_failed", str(exc)) from exc
         data = response.json()
-        candidates: List[Dict[str, Any]] = []
+        candidates: list[dict[str, Any]] = []
         now = iso_now()
         for rank, item in enumerate(data.get("web", {}).get("results", []), start=1):
             url = item.get("url", "")
@@ -203,10 +212,11 @@ class WebFetchTool(Tool):
     def __init__(self, settings: Settings):
         self.settings = settings
 
-    async def run(self, tool_input: Dict[str, Any], *, context=None) -> Dict[str, Any]:
+    async def run(self, tool_input: dict[str, Any], *, context=None) -> dict[str, Any]:
         url = str(tool_input.get("url", "")).strip()
         if not url:
             raise ToolExecutionError("invalid_input", "web_fetch requires a URL")
+        validate_public_http_url(url)
         query = str(tool_input.get("query", "") or "")
         snippet = str(tool_input.get("snippet", "") or "")
         crawler_plan = validate_crawler_plan(tool_input.get("crawler_plan"))
@@ -216,10 +226,9 @@ class WebFetchTool(Tool):
         try:
             async with httpx.AsyncClient(
                 timeout=self.spec.timeout_seconds,
-                follow_redirects=True,
                 headers={"User-Agent": "AstraBot/0.1 (+https://github.com/tommyCheese/Astra)"},
             ) as client:
-                response = await client.get(url)
+                response = await self._get_with_safe_redirects(client, url)
                 response.raise_for_status()
         except httpx.HTTPError as exc:
             raise ToolExecutionError("fetch_failed", str(exc)) from exc
@@ -236,35 +245,98 @@ class WebFetchTool(Tool):
             min_quality_chars=self.settings.crawler_min_quality_chars,
         )
 
+    async def _get_with_safe_redirects(
+        self,
+        client: httpx.AsyncClient,
+        url: str,
+        *,
+        max_redirects: int = 5,
+    ) -> httpx.Response:
+        current_url = url
+        for _ in range(max_redirects + 1):
+            validate_public_http_url(current_url)
+            response = await client.get(current_url, follow_redirects=False)
+            if not response.is_redirect:
+                return response
+            location = response.headers.get("location")
+            if not location:
+                return response
+            current_url = urljoin(str(response.url), location)
+        raise ToolExecutionError("fetch_failed", "Too many redirects")
+
+
+def validate_public_http_url(url: str) -> None:
+    """Reject obviously unsafe fetch targets before issuing a request."""
+    parsed = urlparse(url)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        raise ToolExecutionError("invalid_input", "web_fetch only supports HTTP(S) URLs")
+    if parsed.username or parsed.password:
+        raise ToolExecutionError("permission_denied", "URLs containing credentials are not allowed")
+    hostname = parsed.hostname.rstrip(".").lower()
+    if hostname == "localhost" or hostname.endswith((".localhost", ".local")):
+        raise ToolExecutionError("permission_denied", "Local network targets are not allowed")
+    try:
+        address = ipaddress.ip_address(hostname)
+    except ValueError:
+        return
+    if not address.is_global:
+        raise ToolExecutionError(
+            "permission_denied", "Private or reserved network targets are not allowed"
+        )
+
 
 class ContentExtractor(HTMLParser):
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)
-        self.title_parts: List[str] = []
-        self.metadata: Dict[str, Any] = {}
-        self.elements: List[Dict[str, Any]] = []
-        self._stack: List[Tuple[str, Dict[str, str]]] = []
+        self.title_parts: list[str] = []
+        self.metadata: dict[str, Any] = {}
+        self.elements: list[dict[str, Any]] = []
+        self._stack: list[tuple[str, dict[str, str]]] = []
         self._skip_depth = 0
         self._current_title = False
 
-    def handle_starttag(self, tag: str, attrs: List[Tuple[str, Optional[str]]]) -> None:
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         attr_dict = {key.lower(): value or "" for key, value in attrs}
+        if self._skip_depth:
+            if tag in {"script", "style", "svg", "noscript"}:
+                self._skip_depth += 1
+            return
         if tag in {"script", "style", "svg", "noscript"}:
             self._skip_depth += 1
+            return
         if tag == "title":
             self._current_title = True
         if tag == "meta":
             self._capture_meta(attr_dict)
-        if self._skip_depth == 0:
+            return
+        if tag not in {
+            "area",
+            "base",
+            "br",
+            "col",
+            "embed",
+            "hr",
+            "img",
+            "input",
+            "link",
+            "param",
+            "source",
+            "track",
+            "wbr",
+        }:
             self._stack.append((tag, attr_dict))
 
     def handle_endtag(self, tag: str) -> None:
-        if tag in {"script", "style", "svg", "noscript"} and self._skip_depth:
-            self._skip_depth -= 1
+        if self._skip_depth:
+            if tag in {"script", "style", "svg", "noscript"}:
+                self._skip_depth -= 1
+            return
         if tag == "title":
             self._current_title = False
-        if self._stack:
-            self._stack.pop()
+        for index in range(len(self._stack) - 1, -1, -1):
+            if self._stack[index][0] == tag:
+                del self._stack[index:]
+                break
 
     def handle_data(self, data: str) -> None:
         text = normalize_space(data)
@@ -286,22 +358,35 @@ class ContentExtractor(HTMLParser):
                 }
             )
 
-    def _capture_meta(self, attrs: Dict[str, str]) -> None:
+    def _capture_meta(self, attrs: dict[str, str]) -> None:
         key = attrs.get("property") or attrs.get("name") or attrs.get("itemprop")
         content = attrs.get("content")
         if key and content:
             self.metadata[key.lower()] = content
 
 
-def validate_crawler_plan(raw_plan: Any) -> Dict[str, Any]:
-    allowed = {"readability", "metadata_first", "selector_extract", "plain_text", "fallback_snippet"}
+def validate_crawler_plan(raw_plan: Any) -> dict[str, Any]:
+    allowed = {
+        "readability",
+        "metadata_first",
+        "selector_extract",
+        "plain_text",
+        "fallback_snippet",
+    }
     if not isinstance(raw_plan, dict):
-        return {"strategy": "readability", "selectors": [], "exclude_selectors": [], "target": "main_content"}
+        return {
+            "strategy": "readability",
+            "selectors": [],
+            "exclude_selectors": [],
+            "target": "main_content",
+        }
     strategy = raw_plan.get("strategy", "readability")
     if strategy not in allowed:
         strategy = "readability"
     selectors = [item for item in raw_plan.get("selectors", []) if is_safe_selector(item)]
-    exclude_selectors = [item for item in raw_plan.get("exclude_selectors", []) if is_safe_selector(item)]
+    exclude_selectors = [
+        item for item in raw_plan.get("exclude_selectors", []) if is_safe_selector(item)
+    ]
     return {
         "strategy": strategy,
         "selectors": selectors[:8],
@@ -324,10 +409,10 @@ def extract_source(
     content_type: str,
     query: str,
     snippet: str,
-    crawler_plan: Dict[str, Any],
+    crawler_plan: dict[str, Any],
     max_chars: int,
     min_quality_chars: int,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     retrieved_at = iso_now()
     if "html" not in content_type and "<html" not in body[:500].lower():
         content = normalize_space(body)[:max_chars]
@@ -390,7 +475,9 @@ def extract_source(
     )
 
 
-def choose_strategy(crawler_plan: Dict[str, Any], parser: ContentExtractor, description: Optional[str]) -> str:
+def choose_strategy(
+    crawler_plan: dict[str, Any], parser: ContentExtractor, description: str | None
+) -> str:
     strategy = crawler_plan.get("strategy", "readability")
     if strategy == "selector_extract" and crawler_plan.get("selectors"):
         return strategy
@@ -402,9 +489,9 @@ def choose_strategy(crawler_plan: Dict[str, Any], parser: ContentExtractor, desc
 def extract_content_by_strategy(
     strategy: str,
     parser: ContentExtractor,
-    description: Optional[str],
+    description: str | None,
     snippet: str,
-    selectors: List[str],
+    selectors: list[str],
 ) -> str:
     if strategy == "metadata_first":
         return normalize_space(" ".join([description or "", snippet]))
@@ -422,21 +509,23 @@ def extract_content_by_strategy(
 
 
 def select_text(
-    elements: List[Dict[str, Any]],
-    selectors: List[str],
+    elements: list[dict[str, Any]],
+    selectors: list[str],
 ) -> str:
     if not selectors:
         return ""
-    selected: List[str] = []
+    selected: list[str] = []
     for element in elements:
         tag = element["tag"]
         attrs = element["attrs"]
         for selector in selectors:
-            if selector == tag:
-                selected.append(element["text"])
-            elif selector.startswith(".") and selector[1:] in attrs.get("class", "").split():
-                selected.append(element["text"])
-            elif selector.startswith("#") and attrs.get("id") == selector[1:]:
+            if (
+                selector == tag
+                or selector.startswith(".")
+                and selector[1:] in attrs.get("class", "").split()
+                or selector.startswith("#")
+                and attrs.get("id") == selector[1:]
+            ):
                 selected.append(element["text"])
             elif "." in selector:
                 selector_tag, selector_class = selector.split(".", 1)
@@ -448,15 +537,15 @@ def select_text(
 def build_fetch_output(
     url: str,
     status_code: int,
-    title: Optional[str],
-    description: Optional[str],
+    title: str | None,
+    description: str | None,
     content: str,
-    metadata: Dict[str, Any],
+    metadata: dict[str, Any],
     strategy: str,
-    warnings: List[str],
+    warnings: list[str],
     retrieved_at: str,
     min_quality_chars: int,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     content = normalize_space(content)
     quality_score = min(1.0, len(content) / max(float(min_quality_chars), 1.0))
     return {
@@ -475,7 +564,7 @@ def build_fetch_output(
     }
 
 
-def quality_warnings(content: str, query: str, min_quality_chars: int) -> List[str]:
+def quality_warnings(content: str, query: str, min_quality_chars: int) -> list[str]:
     warnings = []
     if len(content) < min_quality_chars:
         warnings.append("正文过短，可能不足以支撑总结。")
@@ -490,7 +579,7 @@ def has_query_overlap(query: str, content: str) -> bool:
     return any(term in content_lower for term in list(query_terms)[:6])
 
 
-def infer_source_type(url: str, metadata: Dict[str, Any]) -> str:
+def infer_source_type(url: str, metadata: dict[str, Any]) -> str:
     if metadata.get("published_at"):
         return "article"
     path = urlparse(url).path.lower()
@@ -499,7 +588,7 @@ def infer_source_type(url: str, metadata: Dict[str, Any]) -> str:
     return "web_page"
 
 
-def first_present(metadata: Dict[str, Any], keys: List[str]) -> Optional[str]:
+def first_present(metadata: dict[str, Any], keys: list[str]) -> str | None:
     for key in keys:
         if metadata.get(key):
             return metadata[key]

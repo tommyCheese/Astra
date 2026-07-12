@@ -1,4 +1,6 @@
 .DS_Store
+.idea/
+backend/.idea/
 
 # Python
 .pycache/
@@ -10,6 +12,7 @@ __pycache__/
 venv/
 backend/*.egg-info/
 backend/*.db
+backend/runtime-profile.json
 
 # Node
 node_modules/
@@ -24,3 +27,4 @@ backend/.env
 # Build artifacts
 dist/
 coverage/
+openspec/changes/*.zip

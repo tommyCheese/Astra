@@ -50,6 +50,7 @@ function AppContent() {
   const conversationRef = useRef<HTMLDivElement>(null);
   const followLatestRef = useRef(true);
   const jumpingToLatestRef = useRef(false);
+  const jumpResetTimerRef = useRef<number>();
   const availableModels = useMemo(() => providerConfigs
     .filter((provider) => provider.enabled)
     .flatMap((provider) => parseModelIds(provider.models).map((model) => ({ key: `${provider.id}:${model}`, model, providerId: provider.id, providerName: provider.name }))), [providerConfigs]);
@@ -58,6 +59,10 @@ function AppContent() {
   useEffect(() => writeLocalJson(STORAGE_KEYS.conversations, conversationHistory), [conversationHistory]);
   useEffect(() => writeLocalJson(STORAGE_KEYS.modelProviders, providerConfigs), [providerConfigs]);
   useEffect(() => writeLocalString(STORAGE_KEYS.selectedModel, selectedModelKey), [selectedModelKey]);
+
+  useEffect(() => () => {
+    if (jumpResetTimerRef.current !== undefined) window.clearTimeout(jumpResetTimerRef.current);
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -128,6 +133,7 @@ function AppContent() {
 
   async function submit(event: FormEvent) {
     event.preventDefault();
+    if (loading) return;
     const trimmedGoal = goal.trim();
     if (!trimmedGoal) {
       setError({ type: 'validation.input_invalid', code: 'GOAL_REQUIRED', message: t('请输入你想完成的目标。'), retryable: false, trace_id: 'local' });
@@ -175,16 +181,26 @@ function AppContent() {
     }
     let active = true;
     let fallback: number | undefined;
+    let refreshing = false;
     let closeStream: () => void = () => {};
+    const controller = new AbortController();
     const refreshRun = async () => {
-      const next = normalizeRunView(await getRun(run.id));
-      if (!active) return;
-      setRun(next);
-      rememberConversation(next);
-      if (terminalStatuses.has(next.status)) {
-        setStreamingAnswer('');
-        closeStream();
-        if (fallback !== undefined) window.clearInterval(fallback);
+      if (refreshing || !active) return;
+      refreshing = true;
+      try {
+        const next = normalizeRunView(await getRun(run.id, controller.signal));
+        if (!active) return;
+        setRun(next);
+        rememberConversation(next);
+        if (terminalStatuses.has(next.status)) {
+          setStreamingAnswer('');
+          closeStream();
+          if (fallback !== undefined) window.clearInterval(fallback);
+        }
+      } catch {
+        // Keep polling so a transient backend outage can recover automatically.
+      } finally {
+        refreshing = false;
       }
     };
     closeStream = streamRunEvents(run.id, (event) => {
@@ -193,7 +209,12 @@ function AppContent() {
       if (event.type !== 'answer.delta' && event.type !== 'heartbeat') void refreshRun();
     }, () => { void refreshRun(); });
     fallback = window.setInterval(() => { void refreshRun(); }, 3000);
-    return () => { active = false; closeStream(); if (fallback !== undefined) window.clearInterval(fallback); };
+    return () => {
+      active = false;
+      controller.abort();
+      closeStream();
+      if (fallback !== undefined) window.clearInterval(fallback);
+    };
   }, [run?.id]);
 
   const messages = useMemo(() => {
@@ -231,7 +252,8 @@ function AppContent() {
     setShowJumpToLatest(false);
     if (typeof element.scrollTo === 'function') element.scrollTo({ top: element.scrollHeight, behavior: 'smooth' });
     else element.scrollTop = element.scrollHeight;
-    window.setTimeout(() => { jumpingToLatestRef.current = false; }, 450);
+    if (jumpResetTimerRef.current !== undefined) window.clearTimeout(jumpResetTimerRef.current);
+    jumpResetTimerRef.current = window.setTimeout(() => { jumpingToLatestRef.current = false; }, 450);
   }
 
   function changeView(nextView: 'chat' | 'settings') {
@@ -317,6 +339,8 @@ function AppContent() {
                 className="composer-icon-button"
                 type="button"
                 aria-label={t('添加内容')}
+                aria-expanded={attachOpen}
+                aria-haspopup="menu"
                 title={t('添加内容')}
                 onClick={() => {
                   setAttachOpen((open) => !open);
@@ -333,7 +357,7 @@ function AppContent() {
               )}
             </div>
             <div className="execution-menu-wrap" ref={executionMenuRef}>
-              <button className={`execution-mode-button mode-${executionMode}`} type="button" onClick={() => {
+              <button className={`execution-mode-button mode-${executionMode}`} type="button" aria-expanded={executionMenuOpen} aria-haspopup="menu" onClick={() => {
                 setExecutionMenuOpen((open) => !open);
                 setAttachOpen(false);
                 setModelOpen(false);
@@ -362,7 +386,7 @@ function AppContent() {
               placeholder={t('输入任务 / 继续追问...')}
             />
             <div className="model-menu-wrap" ref={modelMenuRef}>
-              <button className="model-selector" type="button" aria-label={`${t('当前模型')}${language === 'zh-CN' ? '：' : ': '}${selectedModel || t('未配置模型')}`} onClick={() => {
+              <button className="model-selector" type="button" aria-expanded={modelOpen} aria-haspopup="menu" aria-label={`${t('当前模型')}${language === 'zh-CN' ? '：' : ': '}${selectedModel || t('未配置模型')}`} onClick={() => {
                 setModelOpen((open) => !open);
                 setAttachOpen(false);
                 setExecutionMenuOpen(false);
@@ -543,7 +567,7 @@ function SettingsView({ activeCategory, onCategoryChange, onClose, providerConfi
       <div className="settings-layout">
         <nav className="settings-nav" aria-label={t('设置类别')}>
           {settingCategories.map((category) => (
-            <button className={category === activeCategory ? 'active' : ''} type="button" key={category} onClick={() => onCategoryChange(category)}><Icon name={settingCategoryIcons[category]} /><span>{t(category)}</span></button>
+            <button className={category === activeCategory ? 'active' : ''} type="button" key={category} aria-current={category === activeCategory ? 'page' : undefined} onClick={() => onCategoryChange(category)}><Icon name={settingCategoryIcons[category]} /><span>{t(category)}</span></button>
           ))}
         </nav>
         <div className="settings-content">
@@ -575,19 +599,40 @@ function RuntimeSettings() {
   const [showBatch, setShowBatch] = useState(false);
   const [message, setMessage] = useState('');
   const [dirty, setDirty] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
   const nextDependencyId = useRef(0);
+  const dirtyRef = useRef(dirty);
+  dirtyRef.current = dirty;
   const building = profile?.build?.status === 'queued' || profile?.build?.status === 'building';
+  const controlsDisabled = building || submitting;
   const makeDependency = (name = '', version = '') => ({ id: `dependency-${nextDependencyId.current++}`, name, version });
   useEffect(() => {
     let active = true;
-    const refresh = () => void getRuntimeProfile().then((value) => {
-      if (!active) return;
-      setProfile(value);
-      if (!dirty) setDependencies(value.dependencies.map((item) => ({ id: `saved-${item.name}`, name: item.name, version: item.version ?? '' })));
-    }).catch(() => setMessage('无法读取 Runtime 配置'));
-    refresh(); const timer = window.setInterval(refresh, building ? 1500 : 5000);
-    return () => { active = false; window.clearInterval(timer); };
-  }, [building, dirty]);
+    let timer: number | undefined;
+    const controller = new AbortController();
+    const refresh = async () => {
+      try {
+        const value = await getRuntimeProfile(controller.signal);
+        if (!active) return;
+        setProfile(value);
+        setMessage((current) => current === '无法读取 Runtime 配置' ? '' : current);
+        if (!dirtyRef.current) {
+          setDependencies(value.dependencies.map((item) => ({ id: `saved-${item.name}`, name: item.name, version: item.version ?? '' })));
+        }
+      } catch (error) {
+        if (!active || (error instanceof DOMException && error.name === 'AbortError')) return;
+        setMessage('无法读取 Runtime 配置');
+      } finally {
+        if (active) timer = window.setTimeout(refresh, building ? 1500 : 5000);
+      }
+    };
+    void refresh();
+    return () => {
+      active = false;
+      controller.abort();
+      if (timer !== undefined) window.clearTimeout(timer);
+    };
+  }, [building]);
   function updateDependency(id: string, field: 'name' | 'version', value: string) {
     setDependencies((current) => current.map((item) => item.id === id ? { ...item, [field]: value } : item));
     setMessage('');
@@ -615,8 +660,16 @@ function RuntimeSettings() {
     try {
       const values = dependencies.map(({ name, version }) => ({ name: name.trim(), version: version.trim() }));
       if (values.some((item) => !item.name)) throw new Error('依赖名称不能为空');
-      setMessage(''); setDirty(false); setProfile(await buildRuntime(values));
-    } catch (error) { setMessage(error instanceof Error ? error.message : '构建请求失败'); }
+      setMessage('');
+      setSubmitting(true);
+      const value = await buildRuntime(values);
+      setProfile(value);
+      setDirty(false);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : '构建请求失败');
+    } finally {
+      setSubmitting(false);
+    }
   }
   async function cancelBuild() {
     if (!profile?.build?.id) return;
@@ -627,7 +680,7 @@ function RuntimeSettings() {
   }
   const buildStatus = profile?.build?.status ?? 'ready';
   const buildStatusLabel: Record<string, string> = { ready: '已就绪', queued: '等待构建', building: '构建中', succeeded: '构建成功', failed: '构建失败', cancelled: '已取消' };
-  const buildProgress = profile?.build?.progress ?? (buildStatus === 'queued' ? 0 : 5);
+  const buildProgress = Math.min(100, Math.max(0, profile?.build?.progress ?? (buildStatus === 'queued' ? 0 : 5)));
   return <SettingsGroup title="Docker 运行时" description="管理绘图工具使用的隔离镜像与 Python 依赖。只有构建阶段联网，工具执行始终断网。">
     <section className="runtime-overview" aria-label="Docker 运行状态">
       <div className="runtime-engine"><div><span>运行引擎</span><strong><span className="runtime-health-dot" aria-hidden="true" />Docker Ready</strong><small>一次性强化容器</small></div><span className={`runtime-status-badge runtime-status-${buildStatus}`}>{buildStatusLabel[buildStatus] ?? buildStatus}</span></div>
@@ -644,13 +697,13 @@ function RuntimeSettings() {
       <div className="runtime-custom-dependencies">
         <div className="runtime-custom-heading"><div><strong>自定义依赖</strong><span>可编辑、删除，并在下一次构建后生效</span></div><span>{dependencies.length} 项</span></div>
         <div className="runtime-dependency-list">
-          {dependencies.length > 0 && <><div className="runtime-dependency-toolbar"><label><input type="checkbox" aria-label="选择全部依赖" checked={selected.size === dependencies.length} onChange={(event) => setSelected(event.target.checked ? new Set(dependencies.map((item) => item.id)) : new Set())} />选择全部</label><button type="button" disabled={!selected.size || building} onClick={() => removeDependencies(selected)}>删除所选{selected.size ? ` (${selected.size})` : ''}</button></div><div className="runtime-dependency-columns" aria-hidden="true"><span /><span>依赖名称</span><span>版本</span><span /></div></>}
-          {dependencies.length === 0 ? <div className="runtime-dependency-empty"><strong>尚未添加自定义依赖</strong><span>可以添加额外的 Python 包扩展工具能力。</span></div> : dependencies.map((item) => <div className="runtime-dependency-row" key={item.id}><input type="checkbox" aria-label={`选择 ${item.name || '未命名依赖'}`} checked={selected.has(item.id)} onChange={(event) => setSelected((current) => { const next = new Set(current); if (event.target.checked) next.add(item.id); else next.delete(item.id); return next; })} /><input aria-label="依赖名称" value={item.name} onChange={(event) => updateDependency(item.id, 'name', event.target.value)} placeholder="例如 polars" disabled={building} /><input aria-label={`${item.name || '依赖'}版本`} value={item.version} onChange={(event) => updateDependency(item.id, 'version', event.target.value)} placeholder="最新版本" disabled={building} /><button className="runtime-remove-dependency" type="button" aria-label={`删除 ${item.name || '未命名依赖'}`} onClick={() => removeDependencies(new Set([item.id]))} disabled={building}>−</button></div>)}
-          <div className="runtime-dependency-add-actions"><button type="button" aria-label="添加依赖" onClick={() => { setDependencies((current) => [...current, makeDependency()]); setMessage(''); setDirty(true); }}><span aria-hidden="true">+</span>添加依赖</button><button type="button" onClick={() => setShowBatch((value) => !value)}>批量添加</button></div>
+          {dependencies.length > 0 && <><div className="runtime-dependency-toolbar"><label><input type="checkbox" aria-label="选择全部依赖" checked={selected.size === dependencies.length} disabled={controlsDisabled} onChange={(event) => setSelected(event.target.checked ? new Set(dependencies.map((item) => item.id)) : new Set())} />选择全部</label><button type="button" disabled={!selected.size || controlsDisabled} onClick={() => removeDependencies(selected)}>删除所选{selected.size ? ` (${selected.size})` : ''}</button></div><div className="runtime-dependency-columns" aria-hidden="true"><span /><span>依赖名称</span><span>版本</span><span /></div></>}
+          {dependencies.length === 0 ? <div className="runtime-dependency-empty"><strong>尚未添加自定义依赖</strong><span>可以添加额外的 Python 包扩展工具能力。</span></div> : dependencies.map((item) => <div className="runtime-dependency-row" key={item.id}><input type="checkbox" aria-label={`选择 ${item.name || '未命名依赖'}`} checked={selected.has(item.id)} disabled={controlsDisabled} onChange={(event) => setSelected((current) => { const next = new Set(current); if (event.target.checked) next.add(item.id); else next.delete(item.id); return next; })} /><input aria-label="依赖名称" value={item.name} onChange={(event) => updateDependency(item.id, 'name', event.target.value)} placeholder="例如 polars" disabled={controlsDisabled} /><input aria-label={`${item.name || '依赖'}版本`} value={item.version} onChange={(event) => updateDependency(item.id, 'version', event.target.value)} placeholder="最新版本" disabled={controlsDisabled} /><button className="runtime-remove-dependency" type="button" aria-label={`删除 ${item.name || '未命名依赖'}`} onClick={() => removeDependencies(new Set([item.id]))} disabled={controlsDisabled}>−</button></div>)}
+          <div className="runtime-dependency-add-actions"><button type="button" aria-label="添加依赖" disabled={controlsDisabled} onClick={() => { setDependencies((current) => [...current, makeDependency()]); setMessage(''); setDirty(true); }}><span aria-hidden="true">+</span>添加依赖</button><button type="button" disabled={controlsDisabled} aria-expanded={showBatch} onClick={() => setShowBatch((value) => !value)}>批量添加</button></div>
         </div>
-        {showBatch && <div className="runtime-batch-panel"><label htmlFor="runtime-batch-input">每行一个依赖，可填写 `package` 或 `package==version`</label><textarea id="runtime-batch-input" rows={4} value={batchInput} onChange={(event) => setBatchInput(event.target.value)} placeholder={'polars==1.31.0\nopenpyxl'} spellCheck={false} /><div><button type="button" onClick={() => setShowBatch(false)}>取消</button><button className="primary-button" type="button" onClick={addBatch}>添加到列表</button></div></div>}
+        {showBatch && <div className="runtime-batch-panel"><label htmlFor="runtime-batch-input">每行一个依赖，可填写 `package` 或 `package==version`</label><textarea id="runtime-batch-input" rows={4} value={batchInput} onChange={(event) => setBatchInput(event.target.value)} placeholder={'polars==1.31.0\nopenpyxl'} spellCheck={false} disabled={controlsDisabled} /><div><button type="button" disabled={controlsDisabled} onClick={() => setShowBatch(false)}>取消</button><button className="primary-button" type="button" disabled={controlsDisabled} onClick={addBatch}>添加到列表</button></div></div>}
       </div>
-      {building ? <div className="runtime-build-progress" role="status" aria-live="polite"><div className="runtime-build-progress-heading"><div><strong>{profile?.build?.phase ?? '准备构建'}</strong><span>{dependencies.length} 个自定义依赖</span></div><b>{buildProgress}%</b></div><div className="runtime-progress-track" role="progressbar" aria-label="依赖构建进度" aria-valuemin={0} aria-valuemax={100} aria-valuenow={buildProgress}><span style={{ width: `${buildProgress}%` }} /></div><p>{profile?.build?.log ?? '正在等待构建输出'}</p><button className="secondary-button" type="button" onClick={() => void cancelBuild()}>取消构建</button></div> : <div className="runtime-build-actions"><div><span>{dependencies.length} 个自定义依赖{dirty ? ' · 有未应用修改' : ''}</span>{profile?.build?.log && <small role="status">{profile.build.log}</small>}</div><button className="primary-button" type="button" onClick={() => void build()} disabled={!dirty}>{dirty ? '构建并激活' : '配置已同步'}</button></div>}
+      {building ? <div className="runtime-build-progress" role="status" aria-live="polite"><div className="runtime-build-progress-heading"><div><strong>{profile?.build?.phase ?? '准备构建'}</strong><span>{dependencies.length} 个自定义依赖</span></div><b>{buildProgress}%</b></div><div className="runtime-progress-track" role="progressbar" aria-label="依赖构建进度" aria-valuemin={0} aria-valuemax={100} aria-valuenow={buildProgress}><span style={{ width: `${buildProgress}%` }} /></div><p>{profile?.build?.log ?? '正在等待构建输出'}</p><button className="secondary-button" type="button" onClick={() => void cancelBuild()}>取消构建</button></div> : <div className="runtime-build-actions"><div><span>{dependencies.length} 个自定义依赖{dirty ? ' · 有未应用修改' : ''}</span>{profile?.build?.log && <small role="status">{profile.build.log}</small>}</div><button className="primary-button" type="button" onClick={() => void build()} disabled={!dirty || submitting}>{submitting ? '正在提交…' : dirty ? '构建并激活' : '配置已同步'}</button></div>}
       {message && <p className="runtime-build-error" role="alert">{message}</p>}
     </section>
   </SettingsGroup>;
@@ -860,7 +913,6 @@ function SettingsGroup({ title, description, children }: { title: string; descri
 
 function SettingRow({ title, description, children }: { title: string; description: string; children: React.ReactNode }) {
   const { t } = useI18n();
-  if (title === '命令执行确认') return null;
   return <div className="setting-row"><div><strong>{t(title)}</strong><span>{t(description)}</span></div>{children}</div>;
 }
 

@@ -1,10 +1,10 @@
+from collections.abc import Iterable
 from dataclasses import dataclass, field
-from typing import Any, Dict, Iterable, Optional
+from typing import Any
 
 from app.schemas.agent import AgentObservation, NodeResult
 
-
-TRANSITIONS: Dict[str, set[str]] = {
+TRANSITIONS: dict[str, set[str]] = {
     "init": {"compile_policy"},
     "compile_policy": {"build_contract", "failed"},
     "build_contract": {"plan", "waiting_user", "failed"},
@@ -17,21 +17,34 @@ TRANSITIONS: Dict[str, set[str]] = {
     "update_state": {"reflection_gate", "failed"},
     "reflection_gate": {"apply_reflection", "completion_gate"},
     "apply_reflection": {"select_action", "completion_gate", "waiting_user", "blocked"},
-    "completion_gate": {"select_action", "plan", "finalize_response", "waiting_user", "blocked", "failed"},
+    "completion_gate": {
+        "select_action",
+        "plan",
+        "finalize_response",
+        "waiting_user",
+        "blocked",
+        "failed",
+    },
     "finalize_response": {"completed", "completed_with_warnings", "blocked", "failed"},
 }
 
-PATCH_AUTHORITIES: Dict[str, set[str]] = {
+PATCH_AUTHORITIES: dict[str, set[str]] = {
     "compile_policy": {"reasoning_policy"},
     "build_contract": {"task_contract", "waiting_state"},
     "plan": {"plan"},
     "evaluate": {"evaluations"},
     "update_state": {"observations", "accepted_facts", "task_contract", "budget_usage"},
-    "apply_reflection": {"plan", "accepted_facts", "task_contract", "terminal_intent", "waiting_state"},
+    "apply_reflection": {
+        "plan",
+        "accepted_facts",
+        "task_contract",
+        "terminal_intent",
+        "waiting_state",
+    },
     "completion_gate": {"terminal_intent", "terminal_reason", "waiting_state"},
 }
 
-ERROR_EXITS: Dict[str, set[str]] = {
+ERROR_EXITS: dict[str, set[str]] = {
     "model_output": {"select_action", "blocked"},
     "policy_denied": {"waiting_user", "blocked"},
     "tool_transient": {"select_action", "apply_reflection", "blocked"},
@@ -54,7 +67,9 @@ class LoopOrchestrator:
         allowed = PATCH_AUTHORITIES.get(current_node, set())
         unauthorized = set(result.state_patch) - allowed
         if unauthorized:
-            raise InvalidTransition(f"Node {current_node} cannot patch: {', '.join(sorted(unauthorized))}")
+            raise InvalidTransition(
+                f"Node {current_node} cannot patch: {', '.join(sorted(unauthorized))}"
+            )
         if result.error:
             category = result.error.get("category", "runtime_internal")
             if result.next_node not in ERROR_EXITS.get(category, {"failed"}):
@@ -73,14 +88,28 @@ class LoopOrchestrator:
 
 
 class ObservationNormalizer:
-    def normalize(self, source: str, *, status: str, summary: str, data: Optional[Dict[str, Any]] = None, error: Optional[Dict[str, Any]] = None) -> AgentObservation:
+    def normalize(
+        self,
+        source: str,
+        *,
+        status: str,
+        summary: str,
+        data: dict[str, Any] | None = None,
+        error: dict[str, Any] | None = None,
+    ) -> AgentObservation:
         kinds = {
             "tool": "tool_result" if status == "succeeded" else "tool_error",
             "user": "user_response",
             "approval": "approval_result",
             "validator": "validator_result",
         }
-        return AgentObservation(kind=kinds.get(source, source), status=status, summary=summary, data=data or {}, error=error)
+        return AgentObservation(
+            kind=kinds.get(source, source),
+            status=status,
+            summary=summary,
+            data=data or {},
+            error=error,
+        )
 
 
 @dataclass
@@ -88,7 +117,24 @@ class NoProgressDetector:
     threshold: int = 3
     signatures: list[str] = field(default_factory=list)
 
-    def record(self, *, evidence_refs: Iterable[str], criterion_changes: Dict[str, Any], completed_steps: Iterable[str], plan_version: int) -> bool:
-        signature = repr((sorted(evidence_refs), sorted(criterion_changes.items()), sorted(completed_steps), plan_version))
+    def record(
+        self,
+        *,
+        evidence_refs: Iterable[str],
+        criterion_changes: dict[str, Any],
+        completed_steps: Iterable[str],
+        plan_version: int,
+    ) -> bool:
+        signature = repr(
+            (
+                sorted(evidence_refs),
+                sorted(criterion_changes.items()),
+                sorted(completed_steps),
+                plan_version,
+            )
+        )
         self.signatures.append(signature)
-        return len(self.signatures) >= self.threshold and len(set(self.signatures[-self.threshold:])) == 1
+        return (
+            len(self.signatures) >= self.threshold
+            and len(set(self.signatures[-self.threshold :])) == 1
+        )

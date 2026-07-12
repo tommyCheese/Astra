@@ -31,7 +31,10 @@ async def test_run_lifecycle_persistence(session):
     assert len(view["tool_calls"]) == 1
     assert view["tool_calls"][0]["status"] == "succeeded"
     assert len(view["events"]) >= 5
-    assert any(message["role"] == "assistant" and message["content"] == "done" for message in view["chat_messages"])
+    assert any(
+        message["role"] == "assistant" and message["content"] == "done"
+        for message in view["chat_messages"]
+    )
 
 
 async def test_follow_up_run_reuses_task(session):
@@ -100,17 +103,31 @@ async def test_persistent_memory_requires_provenance(session):
 
 async def test_reasoning_state_is_versioned_and_waiting_run_resumes(session):
     repo = RunRepository(session)
-    run = await repo.create_task_run("需要选择", {"provider": "mock"}, reasoning_policy={"version": 1})
+    run = await repo.create_task_run(
+        "需要选择", {"provider": "mock"}, reasoning_policy={"version": 1}
+    )
     contract = build_default_contract("需要选择")
     graph = build_plan_graph(contract, PlanningStrategy.adaptive)
     state = AgentState(task_contract=contract, plan=graph)
-    await repo.initialize_reasoning_state(run.id, task_contract=contract.model_dump(mode="json"), plan_graph=graph.model_dump(mode="json"), agent_state=state.model_dump(mode="json"))
+    await repo.initialize_reasoning_state(
+        run.id,
+        task_contract=contract.model_dump(mode="json"),
+        plan_graph=graph.model_dump(mode="json"),
+        agent_state=state.model_dump(mode="json"),
+    )
     await repo.set_waiting_state(run.id, {"paused_node": "build_contract", "request": "请选择"})
     waiting = await repo.require_run(run.id)
     waiting_view = run_to_view(waiting)
-    assert any(message["role"] == "assistant" and message["content"] == "请选择" for message in waiting_view["chat_messages"])
+    assert any(
+        message["role"] == "assistant" and message["content"] == "请选择"
+        for message in waiting_view["chat_messages"]
+    )
     token = waiting.waiting_state["continuation_token"]
-    resumed = await repo.resume_waiting_run(run.id, {"kind": "user_response", "status": "received", "summary": "选 A"}, continuation_token=token)
+    resumed = await repo.resume_waiting_run(
+        run.id,
+        {"kind": "user_response", "status": "received", "summary": "选 A"},
+        continuation_token=token,
+    )
     assert resumed.status == "executing"
     assert resumed.state_version == 2
     assert resumed.agent_state["observations"][-1]["summary"] == "选 A"
@@ -122,9 +139,18 @@ async def test_reasoning_state_rejects_stale_version(session):
     contract = build_default_contract("版本测试")
     graph = build_plan_graph(contract, PlanningStrategy.direct)
     state = AgentState(task_contract=contract, plan=graph)
-    await repo.initialize_reasoning_state(run.id, task_contract=contract.model_dump(mode="json"), plan_graph=graph.model_dump(mode="json"), agent_state=state.model_dump(mode="json"))
+    await repo.initialize_reasoning_state(
+        run.id,
+        task_contract=contract.model_dump(mode="json"),
+        plan_graph=graph.model_dump(mode="json"),
+        agent_state=state.model_dump(mode="json"),
+    )
     try:
-        await repo.update_reasoning_state(run.id, expected_version=0, agent_state=state.model_copy(update={"version": 2}).model_dump(mode="json"))
+        await repo.update_reasoning_state(
+            run.id,
+            expected_version=0,
+            agent_state=state.model_copy(update={"version": 2}).model_dump(mode="json"),
+        )
     except ValueError as exc:
         assert "version conflict" in str(exc)
     else:

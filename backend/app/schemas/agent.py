@@ -1,6 +1,6 @@
 from datetime import datetime
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -94,7 +94,7 @@ class PolicyAdjustment(BaseModel):
 class ReasoningPolicySnapshot(BaseModel):
     requested: RequestedReasoningPolicy = Field(default_factory=RequestedReasoningPolicy)
     effective: EffectiveReasoningPolicy = Field(default_factory=EffectiveReasoningPolicy)
-    adjustments: List[PolicyAdjustment] = Field(default_factory=list)
+    adjustments: list[PolicyAdjustment] = Field(default_factory=list)
     version: int = 1
 
 
@@ -104,14 +104,14 @@ class SuccessCriterion(BaseModel):
     mandatory: bool = True
     verification_method: str
     status: CriterionStatus = CriterionStatus.pending
-    evidence_refs: List[str] = Field(default_factory=list)
+    evidence_refs: list[str] = Field(default_factory=list)
 
 
 class TaskAssumption(BaseModel):
     id: str
     statement: str
     confidence: float = Field(default=0.5, ge=0, le=1)
-    provenance: Dict[str, Any] = Field(default_factory=dict)
+    provenance: dict[str, Any] = Field(default_factory=dict)
     valid: bool = True
 
 
@@ -119,62 +119,66 @@ class VerificationRequirement(BaseModel):
     id: str
     validator: str
     mandatory: bool = True
-    config: Dict[str, Any] = Field(default_factory=dict)
+    config: dict[str, Any] = Field(default_factory=dict)
 
 
 class TaskContract(BaseModel):
     original_goal: str
-    deliverables: List[str] = Field(default_factory=list)
-    constraints: List[str] = Field(default_factory=list)
-    prohibited_actions: List[str] = Field(default_factory=list)
-    assumptions: List[TaskAssumption] = Field(default_factory=list)
-    success_criteria: List[SuccessCriterion] = Field(default_factory=list)
-    verification_requirements: List[VerificationRequirement] = Field(default_factory=list)
+    deliverables: list[str] = Field(default_factory=list)
+    constraints: list[str] = Field(default_factory=list)
+    prohibited_actions: list[str] = Field(default_factory=list)
+    assumptions: list[TaskAssumption] = Field(default_factory=list)
+    success_criteria: list[SuccessCriterion] = Field(default_factory=list)
+    verification_requirements: list[VerificationRequirement] = Field(default_factory=list)
     risk_level: str = "low"
     ambiguity_status: str = "clear"
-    clarification_question: Optional[str] = None
+    clarification_question: str | None = None
 
 
 class ExpectedObservation(BaseModel):
     kind: str
     success_condition: str
-    required_fields: List[str] = Field(default_factory=list)
+    required_fields: list[str] = Field(default_factory=list)
 
 
 class PlanGraphStep(BaseModel):
     id: str
     title: str
     intent: str
-    depends_on: List[str] = Field(default_factory=list)
-    required_capabilities: List[str] = Field(default_factory=list)
-    success_criteria_refs: List[str] = Field(default_factory=list)
-    expected_outcome: Optional[ExpectedObservation] = None
+    depends_on: list[str] = Field(default_factory=list)
+    required_capabilities: list[str] = Field(default_factory=list)
+    success_criteria_refs: list[str] = Field(default_factory=list)
+    expected_outcome: ExpectedObservation | None = None
     risk_level: str = "low"
     status: str = "pending"
-    evidence_refs: List[str] = Field(default_factory=list)
+    evidence_refs: list[str] = Field(default_factory=list)
 
 
 class PlanGraph(BaseModel):
     version: int = 1
     strategy: PlanningStrategy = PlanningStrategy.adaptive
-    steps: List[PlanGraphStep] = Field(default_factory=list)
+    steps: list[PlanGraphStep] = Field(default_factory=list)
 
-    def ready_steps(self) -> List[PlanGraphStep]:
+    def ready_steps(self) -> list[PlanGraphStep]:
         completed = {step.id for step in self.steps if step.status == "completed"}
-        return [step for step in self.steps if step.status == "pending" and set(step.depends_on) <= completed]
+        return [
+            step
+            for step in self.steps
+            if step.status == "pending" and set(step.depends_on) <= completed
+        ]
 
 
 class AcceptedFact(BaseModel):
     id: str
     statement: str
-    provenance: Dict[str, Any]
+    provenance: dict[str, Any]
     confidence: float = Field(default=0.5, ge=0, le=1)
-    conflicts_with: List[str] = Field(default_factory=list)
+    conflicts_with: list[str] = Field(default_factory=list)
 
 
 class FailureFingerprint(BaseModel):
     fingerprint: str
-    tool_name: Optional[str] = None
+    tool_name: str | None = None
     error_category: str
     attempt_count: int = 1
     exhausted: bool = False
@@ -185,58 +189,68 @@ class AgentState(BaseModel):
     task_contract: TaskContract
     policy_version: int = 1
     plan: PlanGraph
-    accepted_facts: List[AcceptedFact] = Field(default_factory=list)
-    open_questions: List[str] = Field(default_factory=list)
-    observations: List[Dict[str, Any]] = Field(default_factory=list)
-    evaluations: List[Dict[str, Any]] = Field(default_factory=list)
-    failures: List[FailureFingerprint] = Field(default_factory=list)
-    budget_usage: Dict[str, int] = Field(default_factory=dict)
-    terminal_intent: Optional[str] = None
+    accepted_facts: list[AcceptedFact] = Field(default_factory=list)
+    open_questions: list[str] = Field(default_factory=list)
+    observations: list[dict[str, Any]] = Field(default_factory=list)
+    evaluations: list[dict[str, Any]] = Field(default_factory=list)
+    failures: list[FailureFingerprint] = Field(default_factory=list)
+    budget_usage: dict[str, int] = Field(default_factory=dict)
+    terminal_intent: str | None = None
 
 
 class Evaluation(BaseModel):
     outcome: EvaluationOutcome
     summary: str
-    expected: Optional[ExpectedObservation] = None
-    observation_refs: List[str] = Field(default_factory=list)
-    criterion_updates: Dict[str, CriterionStatus] = Field(default_factory=dict)
-    conflicts: List[Dict[str, Any]] = Field(default_factory=list)
+    expected: ExpectedObservation | None = None
+    observation_refs: list[str] = Field(default_factory=list)
+    criterion_updates: dict[str, CriterionStatus] = Field(default_factory=dict)
+    conflicts: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class ReflectionPatch(BaseModel):
     level: str
-    revised_tool_input: Optional[Dict[str, Any]] = None
-    invalidated_assumption_ids: List[str] = Field(default_factory=list)
-    fact_updates: List[AcceptedFact] = Field(default_factory=list)
-    criterion_updates: Dict[str, CriterionStatus] = Field(default_factory=dict)
-    replacement_plan: Optional[PlanGraph] = None
-    added_verification_requirements: List[VerificationRequirement] = Field(default_factory=list)
-    terminal_intent: Optional[str] = None
+    revised_tool_input: dict[str, Any] | None = None
+    invalidated_assumption_ids: list[str] = Field(default_factory=list)
+    fact_updates: list[AcceptedFact] = Field(default_factory=list)
+    criterion_updates: dict[str, CriterionStatus] = Field(default_factory=dict)
+    replacement_plan: PlanGraph | None = None
+    added_verification_requirements: list[VerificationRequirement] = Field(default_factory=list)
+    terminal_intent: str | None = None
 
     def actionable(self) -> bool:
-        return any((self.revised_tool_input, self.invalidated_assumption_ids, self.fact_updates, self.criterion_updates, self.replacement_plan, self.added_verification_requirements, self.terminal_intent))
+        return any(
+            (
+                self.revised_tool_input,
+                self.invalidated_assumption_ids,
+                self.fact_updates,
+                self.criterion_updates,
+                self.replacement_plan,
+                self.added_verification_requirements,
+                self.terminal_intent,
+            )
+        )
 
 
 class CompletionDecision(BaseModel):
     state: TerminalState
     reason: str
-    unmet_criteria: List[str] = Field(default_factory=list)
-    warnings: List[str] = Field(default_factory=list)
-    required_user_action: Optional[str] = None
+    unmet_criteria: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    required_user_action: str | None = None
 
 
 class NodeResult(BaseModel):
     next_node: str
-    state_patch: Dict[str, Any] = Field(default_factory=dict)
-    events: List[Dict[str, Any]] = Field(default_factory=list)
-    error: Optional[Dict[str, Any]] = None
+    state_patch: dict[str, Any] = Field(default_factory=dict)
+    events: list[dict[str, Any]] = Field(default_factory=list)
+    error: dict[str, Any] | None = None
 
 
 class CreateRunRequest(BaseModel):
     goal: str = Field(min_length=1, max_length=4000)
-    task_id: Optional[str] = None
+    task_id: str | None = None
     reasoning_policy: RequestedReasoningPolicy = Field(default_factory=RequestedReasoningPolicy)
-    model: Optional[Dict[str, str]] = None
+    model: dict[str, str] | None = None
 
 
 class CreateRunResponse(BaseModel):
@@ -247,75 +261,75 @@ class CreateRunResponse(BaseModel):
 
 class ContinueRunRequest(BaseModel):
     content: str = Field(min_length=1, max_length=4000)
-    approved: Optional[bool] = None
-    continuation_token: Optional[str] = None
+    approved: bool | None = None
+    continuation_token: str | None = None
 
 
 class PlanStep(BaseModel):
     title: str
     intent: str
-    required_tools: List[str] = Field(default_factory=list)
-    success_criteria: List[str] = Field(default_factory=list)
+    required_tools: list[str] = Field(default_factory=list)
+    success_criteria: list[str] = Field(default_factory=list)
 
 
 class PlanOutput(BaseModel):
-    steps: List[PlanStep]
-    required_tools: List[str] = Field(default_factory=list)
-    success_criteria: List[str] = Field(default_factory=list)
+    steps: list[PlanStep]
+    required_tools: list[str] = Field(default_factory=list)
+    success_criteria: list[str] = Field(default_factory=list)
     risk_level: str = "low"
 
 
 class ToolDecision(BaseModel):
     tool_name: str
-    input: Dict[str, Any]
+    input: dict[str, Any]
     reason: str
 
 
 class SourceReference(BaseModel):
     url: str
-    title: Optional[str] = None
-    retrieved_at: Optional[str] = None
+    title: str | None = None
+    retrieved_at: str | None = None
 
 
 class Finding(BaseModel):
     text: str
-    source_urls: List[str] = Field(default_factory=list)
+    source_urls: list[str] = Field(default_factory=list)
 
 
 class FinalAnswer(BaseModel):
     summary: str
-    findings: List[Finding] = Field(default_factory=list)
-    sources: List[SourceReference] = Field(default_factory=list)
-    failed_sources: List[Dict[str, Any]] = Field(default_factory=list)
-    source_quality: List[Dict[str, Any]] = Field(default_factory=list)
-    conflicts: List[Dict[str, Any]] = Field(default_factory=list)
-    caveats: List[str] = Field(default_factory=list)
-    verification_notes: List[str] = Field(default_factory=list)
-    memory_references: List[Dict[str, Any]] = Field(default_factory=list)
-    audit_refs: Dict[str, Any] = Field(default_factory=dict)
+    findings: list[Finding] = Field(default_factory=list)
+    sources: list[SourceReference] = Field(default_factory=list)
+    failed_sources: list[dict[str, Any]] = Field(default_factory=list)
+    source_quality: list[dict[str, Any]] = Field(default_factory=list)
+    conflicts: list[dict[str, Any]] = Field(default_factory=list)
+    caveats: list[str] = Field(default_factory=list)
+    verification_notes: list[str] = Field(default_factory=list)
+    memory_references: list[dict[str, Any]] = Field(default_factory=list)
+    audit_refs: dict[str, Any] = Field(default_factory=dict)
 
 
 class AgentDecision(BaseModel):
     decision_type: str
     reasoning_summary: str
-    tool_name: Optional[str] = None
-    tool_input: Dict[str, Any] = Field(default_factory=dict)
-    expected_observation: Optional[str] = None
-    stop_condition: Optional[str] = None
-    target_step_id: Optional[str] = None
-    success_criteria_refs: List[str] = Field(default_factory=list)
-    expected: Optional[ExpectedObservation] = None
+    tool_name: str | None = None
+    tool_input: dict[str, Any] = Field(default_factory=dict)
+    expected_observation: str | None = None
+    stop_condition: str | None = None
+    target_step_id: str | None = None
+    success_criteria_refs: list[str] = Field(default_factory=list)
+    expected: ExpectedObservation | None = None
     risk_level: str = "low"
     confidence: float = Field(default=0.5, ge=0, le=1)
-    fallback: Optional[str] = None
+    fallback: str | None = None
 
 
 class AgentObservation(BaseModel):
     kind: str
     status: str
     summary: str
-    data: Dict[str, Any] = Field(default_factory=dict)
-    error: Optional[Dict[str, Any]] = None
+    data: dict[str, Any] = Field(default_factory=dict)
+    error: dict[str, Any] | None = None
 
 
 class AgentReflection(BaseModel):
@@ -323,54 +337,54 @@ class AgentReflection(BaseModel):
     summary: str
     next_action: str
     retry: bool = False
-    revised_tool_input: Optional[Dict[str, Any]] = None
+    revised_tool_input: dict[str, Any] | None = None
     level: str = "local"
-    diagnosis: Optional[str] = None
-    invalidated_assumptions: List[str] = Field(default_factory=list)
-    violated_criteria: List[str] = Field(default_factory=list)
-    patch: Optional[ReflectionPatch] = None
+    diagnosis: str | None = None
+    invalidated_assumptions: list[str] = Field(default_factory=list)
+    violated_criteria: list[str] = Field(default_factory=list)
+    patch: ReflectionPatch | None = None
 
 
 class MemoryRecord(BaseModel):
-    id: Optional[str] = None
+    id: str | None = None
     scope: str
     kind: str
     content: str
-    structured_data: Dict[str, Any] = Field(default_factory=dict)
-    provenance: Dict[str, Any] = Field(default_factory=dict)
+    structured_data: dict[str, Any] = Field(default_factory=dict)
+    provenance: dict[str, Any] = Field(default_factory=dict)
     confidence: float = 0.5
-    created_at: Optional[datetime] = None
-    updated_at: Optional[datetime] = None
-    expires_at: Optional[datetime] = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+    expires_at: datetime | None = None
 
 
 class AgentTurn(BaseModel):
-    id: Optional[str] = None
-    run_id: Optional[str] = None
+    id: str | None = None
+    run_id: str | None = None
     turn_index: int
     decision_type: str
     reasoning_summary: str
-    selected_tool: Optional[str] = None
-    decision: Dict[str, Any] = Field(default_factory=dict)
-    observation: Optional[Dict[str, Any]] = None
-    reflection: Optional[Dict[str, Any]] = None
-    tool_call_id: Optional[str] = None
-    artifact_id: Optional[str] = None
-    memory_reads: List[Dict[str, Any]] = Field(default_factory=list)
-    memory_writes: List[Dict[str, Any]] = Field(default_factory=list)
+    selected_tool: str | None = None
+    decision: dict[str, Any] = Field(default_factory=dict)
+    observation: dict[str, Any] | None = None
+    reflection: dict[str, Any] | None = None
+    tool_call_id: str | None = None
+    artifact_id: str | None = None
+    memory_reads: list[dict[str, Any]] = Field(default_factory=list)
+    memory_writes: list[dict[str, Any]] = Field(default_factory=list)
     status: str = "created"
-    created_at: Optional[datetime] = None
-    updated_at: Optional[datetime] = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
 
 
 class VerificationReport(BaseModel):
     status: str
     source_count: int = 0
     caveat_count: int = 0
-    low_quality_sources: List[Dict[str, Any]] = Field(default_factory=list)
-    failed_sources: List[Dict[str, Any]] = Field(default_factory=list)
-    memory_references: List[Dict[str, Any]] = Field(default_factory=list)
-    notes: List[str] = Field(default_factory=list)
+    low_quality_sources: list[dict[str, Any]] = Field(default_factory=list)
+    failed_sources: list[dict[str, Any]] = Field(default_factory=list)
+    memory_references: list[dict[str, Any]] = Field(default_factory=list)
+    notes: list[str] = Field(default_factory=list)
 
 
 class CandidateSource(BaseModel):
@@ -378,50 +392,50 @@ class CandidateSource(BaseModel):
     title: str
     snippet: str
     provider: str = "mock"
-    rank: Optional[int] = None
-    display_link: Optional[str] = None
-    metadata: Dict[str, Any] = Field(default_factory=dict)
+    rank: int | None = None
+    display_link: str | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
     retrieved_at: str
 
 
 class CrawlerPlan(BaseModel):
     strategy: str = "readability"
-    selectors: List[str] = Field(default_factory=list)
-    exclude_selectors: List[str] = Field(default_factory=list)
+    selectors: list[str] = Field(default_factory=list)
+    exclude_selectors: list[str] = Field(default_factory=list)
     target: str = "main_content"
 
 
 class ExtractedSource(BaseModel):
     url: str
     status_code: int
-    title: Optional[str] = None
-    description: Optional[str] = None
+    title: str | None = None
+    description: str | None = None
     content: str
-    metadata: Dict[str, Any] = Field(default_factory=dict)
+    metadata: dict[str, Any] = Field(default_factory=dict)
     extraction_strategy: str
     quality_score: float
     content_length: int
     source_type: str = "web_page"
-    warnings: List[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
     retrieved_at: str
 
 
 class FetchOutput(BaseModel):
     url: str
     status_code: int
-    title: Optional[str] = None
+    title: str | None = None
     content: str
-    metadata: Dict[str, Any] = Field(default_factory=dict)
+    metadata: dict[str, Any] = Field(default_factory=dict)
     retrieved_at: str
 
 
 class EvidencePack(BaseModel):
     query: str
-    candidates: List[CandidateSource] = Field(default_factory=list)
-    fetched_sources: List[ExtractedSource] = Field(default_factory=list)
-    failed_sources: List[Dict[str, Any]] = Field(default_factory=list)
-    dedupe: Dict[str, Any] = Field(default_factory=dict)
-    warnings: List[str] = Field(default_factory=list)
+    candidates: list[CandidateSource] = Field(default_factory=list)
+    fetched_sources: list[ExtractedSource] = Field(default_factory=list)
+    failed_sources: list[dict[str, Any]] = Field(default_factory=list)
+    dedupe: dict[str, Any] = Field(default_factory=dict)
+    warnings: list[str] = Field(default_factory=list)
 
 
 class StepView(BaseModel):
@@ -430,47 +444,47 @@ class StepView(BaseModel):
     title: str
     intent: str
     status: str
-    evidence: Optional[Dict[str, Any]] = None
-    started_at: Optional[datetime] = None
-    completed_at: Optional[datetime] = None
+    evidence: dict[str, Any] | None = None
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
 
 
 class ToolCallView(BaseModel):
     id: str
-    step_id: Optional[str]
+    step_id: str | None
     tool_name: str
     tool_version: str
-    input: Dict[str, Any]
-    output: Optional[Dict[str, Any]]
+    input: dict[str, Any]
+    output: dict[str, Any] | None
     status: str
     permission: str
     side_effect_level: str
     started_at: datetime
-    completed_at: Optional[datetime]
-    error: Optional[Dict[str, Any]]
+    completed_at: datetime | None
+    error: dict[str, Any] | None
 
 
 class ArtifactView(BaseModel):
     id: str
     type: str
-    path: Optional[str]
-    content_ref: Optional[str]
-    metadata: Dict[str, Any]
-    mime_type: Optional[str] = None
+    path: str | None
+    content_ref: str | None
+    metadata: dict[str, Any]
+    mime_type: str | None = None
     size_bytes: int = 0
-    checksum: Optional[str] = None
+    checksum: str | None = None
     security_status: str = "pending"
-    tool_call_id: Optional[str] = None
-    sandbox_job_id: Optional[str] = None
-    provenance: Dict[str, Any] = Field(default_factory=dict)
-    content_url: Optional[str] = None
+    tool_call_id: str | None = None
+    sandbox_job_id: str | None = None
+    provenance: dict[str, Any] = Field(default_factory=dict)
+    content_url: str | None = None
     created_at: datetime
 
 
 class RunEventView(BaseModel):
     id: int
     type: str
-    payload: Dict[str, Any]
+    payload: dict[str, Any]
     created_at: datetime
 
 
@@ -480,39 +494,39 @@ class AgentTurnView(BaseModel):
     turn_index: int
     decision_type: str
     reasoning_summary: str
-    selected_tool: Optional[str] = None
-    decision: Dict[str, Any]
-    observation: Optional[Dict[str, Any]]
-    reflection: Optional[Dict[str, Any]]
-    tool_call_id: Optional[str]
-    artifact_id: Optional[str]
-    memory_reads: List[Dict[str, Any]]
-    memory_writes: List[Dict[str, Any]]
+    selected_tool: str | None = None
+    decision: dict[str, Any]
+    observation: dict[str, Any] | None
+    reflection: dict[str, Any] | None
+    tool_call_id: str | None
+    artifact_id: str | None
+    memory_reads: list[dict[str, Any]]
+    memory_writes: list[dict[str, Any]]
     status: str
-    evaluation: Optional[Dict[str, Any]] = None
-    reflection_patch: Optional[Dict[str, Any]] = None
-    state_version_before: Optional[int] = None
-    state_version_after: Optional[int] = None
+    evaluation: dict[str, Any] | None = None
+    reflection_patch: dict[str, Any] | None = None
+    state_version_before: int | None = None
+    state_version_after: int | None = None
     plan_version: int = 1
     phase: str = "created"
-    idempotency_key: Optional[str] = None
-    paused_node: Optional[str] = None
+    idempotency_key: str | None = None
+    paused_node: str | None = None
     created_at: datetime
     updated_at: datetime
 
 
 class MemoryView(BaseModel):
     id: str
-    run_id: Optional[str]
+    run_id: str | None
     scope: str
     kind: str
     content: str
-    structured_data: Dict[str, Any]
-    provenance: Dict[str, Any]
+    structured_data: dict[str, Any]
+    provenance: dict[str, Any]
     confidence: float
     created_at: datetime
     updated_at: datetime
-    expires_at: Optional[datetime]
+    expires_at: datetime | None
 
 
 class ChatMessageView(BaseModel):
@@ -520,27 +534,27 @@ class ChatMessageView(BaseModel):
     role: str
     content: str
     status: str = "completed"
-    metadata: Dict[str, Any] = Field(default_factory=dict)
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 class SandboxJobView(BaseModel):
     id: str
-    tool_call_id: Optional[str] = None
+    tool_call_id: str | None = None
     status: str
     executor: str
-    runtime_profile: Dict[str, Any]
-    resource_limits: Dict[str, Any]
-    runtime_name: Optional[str] = None
-    image_digest: Optional[str] = None
-    exit_reason: Optional[str] = None
-    error: Optional[Dict[str, Any]] = None
-    stdout_summary: Optional[str] = None
-    stderr_summary: Optional[str] = None
-    input_artifact_ids: List[str] = Field(default_factory=list)
-    output_artifact_ids: List[str] = Field(default_factory=list)
+    runtime_profile: dict[str, Any]
+    resource_limits: dict[str, Any]
+    runtime_name: str | None = None
+    image_digest: str | None = None
+    exit_reason: str | None = None
+    error: dict[str, Any] | None = None
+    stdout_summary: str | None = None
+    stderr_summary: str | None = None
+    input_artifact_ids: list[str] = Field(default_factory=list)
+    output_artifact_ids: list[str] = Field(default_factory=list)
     created_at: datetime
-    started_at: Optional[datetime] = None
-    completed_at: Optional[datetime] = None
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
 
 
 class RunView(BaseModel):
@@ -548,22 +562,22 @@ class RunView(BaseModel):
     task_id: str
     status: str
     mode: str
-    summary: Optional[str]
-    result: Optional[Dict[str, Any]]
-    steps: List[StepView]
-    tool_calls: List[ToolCallView]
-    artifacts: List[ArtifactView]
-    sandbox_jobs: List[SandboxJobView] = Field(default_factory=list)
-    events: List[RunEventView]
-    turns: List[AgentTurnView] = Field(default_factory=list)
-    memories: List[MemoryView] = Field(default_factory=list)
-    chat_messages: List[ChatMessageView] = Field(default_factory=list)
-    verification_report: Optional[VerificationReport] = None
-    reasoning_policy: Dict[str, Any] = Field(default_factory=dict)
-    task_contract: Dict[str, Any] = Field(default_factory=dict)
-    plan_graph: Dict[str, Any] = Field(default_factory=dict)
-    agent_state: Dict[str, Any] = Field(default_factory=dict)
+    summary: str | None
+    result: dict[str, Any] | None
+    steps: list[StepView]
+    tool_calls: list[ToolCallView]
+    artifacts: list[ArtifactView]
+    sandbox_jobs: list[SandboxJobView] = Field(default_factory=list)
+    events: list[RunEventView]
+    turns: list[AgentTurnView] = Field(default_factory=list)
+    memories: list[MemoryView] = Field(default_factory=list)
+    chat_messages: list[ChatMessageView] = Field(default_factory=list)
+    verification_report: VerificationReport | None = None
+    reasoning_policy: dict[str, Any] = Field(default_factory=dict)
+    task_contract: dict[str, Any] = Field(default_factory=dict)
+    plan_graph: dict[str, Any] = Field(default_factory=dict)
+    agent_state: dict[str, Any] = Field(default_factory=dict)
     state_version: int = 0
-    terminal_reason: Optional[Dict[str, Any]] = None
-    waiting_state: Optional[Dict[str, Any]] = None
+    terminal_reason: dict[str, Any] | None = None
+    waiting_state: dict[str, Any] | None = None
     task_adapter: str = "legacy_web"

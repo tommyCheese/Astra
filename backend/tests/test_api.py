@@ -1,3 +1,5 @@
+import asyncio
+
 import pytest
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
@@ -68,13 +70,17 @@ async def test_runtime_build_defaults_missing_version_to_latest(app_client, monk
         return {"dependencies": dependencies, "build": {"status": "queued"}}
 
     monkeypatch.setattr(runtime_api.service, "start", start)
-    response = await app_client.post("/api/runtime/build", json={"dependencies": [{"name": "polars"}]})
+    response = await app_client.post(
+        "/api/runtime/build", json={"dependencies": [{"name": "polars"}]}
+    )
 
     assert response.status_code == 200
     assert captured == [{"name": "polars", "version": ""}]
 
 
-async def test_artifact_content_enforces_workspace_scope_without_leaking_storage_key(app_client, tmp_path):
+async def test_artifact_content_enforces_workspace_scope_without_leaking_storage_key(
+    app_client, tmp_path
+):
     from app.artifacts import LocalArtifactStore
     from app.repositories.runs import RunRepository
 
@@ -86,12 +92,24 @@ async def test_artifact_content_enforces_workspace_scope_without_leaking_storage
         repo = RunRepository(session)
         run = await repo.create_task_run("workspace chart", {"provider": "mock"})
         run.task.workspace_id = "workspace-a"
-        artifact = await repo.create_artifact(run.id, "chart_image", storage_key=key, mime_type="image/png", size_bytes=12, checksum="checksum", security_status="verified")
+        artifact = await repo.create_artifact(
+            run.id,
+            "chart_image",
+            storage_key=key,
+            mime_type="image/png",
+            size_bytes=12,
+            checksum="checksum",
+            security_status="verified",
+        )
         artifact_id = artifact.id
         await session.commit()
 
-    denied = await app_client.get(f"/api/artifacts/{artifact_id}/content", headers={"X-Astra-Workspace-Id": "workspace-b"})
-    allowed = await app_client.get(f"/api/artifacts/{artifact_id}/content", headers={"X-Astra-Workspace-Id": "workspace-a"})
+    denied = await app_client.get(
+        f"/api/artifacts/{artifact_id}/content", headers={"X-Astra-Workspace-Id": "workspace-b"}
+    )
+    allowed = await app_client.get(
+        f"/api/artifacts/{artifact_id}/content", headers={"X-Astra-Workspace-Id": "workspace-a"}
+    )
     assert denied.status_code == 404
     assert key not in denied.text
     assert allowed.status_code == 200
@@ -112,8 +130,41 @@ async def test_create_and_get_run(app_client):
     assert "chat_messages" in body
 
 
+async def test_run_task_is_retained_until_background_execution_finishes(app_client, monkeypatch):
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def delayed_runner(run_id, settings):
+        started.set()
+        await release.wait()
+
+    monkeypatch.setattr(runs_api, "start_run_in_process", delayed_runner)
+    created = await app_client.post("/api/runs", json={"goal": "后台任务引用测试"})
+    run_id = created.json()["run_id"]
+    await started.wait()
+
+    assert any(task.get_name() == f"astra-run-{run_id}" for task in runs_api._background_tasks)
+    release.set()
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+    assert not any(task.get_name() == f"astra-run-{run_id}" for task in runs_api._background_tasks)
+
+
 async def test_create_run_compiles_reasoning_policy(app_client):
-    created = await app_client.post("/api/runs", json={"goal": "分析复杂问题", "reasoning_policy": {"reasoning_effort": "deep", "planning_strategy": "plan_first", "reflection_enabled": False, "reflection_trigger": "adaptive", "execution_mode": "request_approval", "verification_level": "strict"}})
+    created = await app_client.post(
+        "/api/runs",
+        json={
+            "goal": "分析复杂问题",
+            "reasoning_policy": {
+                "reasoning_effort": "deep",
+                "planning_strategy": "plan_first",
+                "reflection_enabled": False,
+                "reflection_trigger": "adaptive",
+                "execution_mode": "request_approval",
+                "verification_level": "strict",
+            },
+        },
+    )
     run_id = created.json()["run_id"]
     body = (await app_client.get(f"/api/runs/{run_id}")).json()
     assert body["reasoning_policy"]["requested"]["reasoning_effort"] == "deep"
@@ -122,7 +173,9 @@ async def test_create_run_compiles_reasoning_policy(app_client):
 
 async def test_resume_requires_waiting_run(app_client):
     created = await app_client.post("/api/runs", json={"goal": "普通任务"})
-    response = await app_client.post(f"/api/runs/{created.json()['run_id']}/resume", json={"content": "继续"})
+    response = await app_client.post(
+        f"/api/runs/{created.json()['run_id']}/resume", json={"content": "继续"}
+    )
     assert response.status_code == 409
     assert response.json()["error"]["code"] == "RUN_NOT_WAITING"
 

@@ -1,6 +1,7 @@
 from abc import ABC, abstractmethod
+from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -11,7 +12,7 @@ class ToolExecutionError(RuntimeError):
         self.category = category
         self.message = message
 
-    def to_payload(self) -> Dict[str, str]:
+    def to_payload(self) -> dict[str, str]:
         return {"category": self.category, "message": self.message}
 
 
@@ -19,20 +20,20 @@ class ToolSpec(BaseModel):
     name: str
     version: str
     description: str = ""
-    input_schema: Dict[str, Any]
-    output_schema: Dict[str, Any]
+    input_schema: dict[str, Any]
+    output_schema: dict[str, Any]
     permission: str
     side_effect_level: str
     timeout_seconds: int = 20
-    retry_policy: Dict[str, Any] = Field(default_factory=dict)
-    error_categories: List[str] = Field(default_factory=list)
+    retry_policy: dict[str, Any] = Field(default_factory=dict)
+    error_categories: list[str] = Field(default_factory=list)
     idempotent: bool = True
-    capabilities: List[str] = Field(default_factory=list)
-    permissions: List[str] = Field(default_factory=list)
+    capabilities: list[str] = Field(default_factory=list)
+    permissions: list[str] = Field(default_factory=list)
     risk: str = "low"
     execution_backend: str = "in_process"
-    resource_profile: Dict[str, Any] = Field(default_factory=dict)
-    artifact_behavior: Dict[str, Any] = Field(default_factory=dict)
+    resource_profile: dict[str, Any] = Field(default_factory=dict)
+    artifact_behavior: dict[str, Any] = Field(default_factory=dict)
 
     def model_post_init(self, __context: Any) -> None:
         if not self.permissions:
@@ -45,31 +46,31 @@ class ArtifactRef(BaseModel):
     id: str
     type: str
     mime_type: str
-    content_url: Optional[str] = None
+    content_url: str | None = None
     size_bytes: int = 0
     checksum: str = ""
-    metadata: Dict[str, Any] = Field(default_factory=dict)
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 class ToolResultEnvelope(BaseModel):
     status: str = "succeeded"
-    data: Dict[str, Any] = Field(default_factory=dict)
-    warnings: List[str] = Field(default_factory=list)
-    metrics: Dict[str, Any] = Field(default_factory=dict)
-    artifacts: List[ArtifactRef] = Field(default_factory=list)
+    data: dict[str, Any] = Field(default_factory=dict)
+    warnings: list[str] = Field(default_factory=list)
+    metrics: dict[str, Any] = Field(default_factory=dict)
+    artifacts: list[ArtifactRef] = Field(default_factory=list)
 
 
 class CapabilityAvailability(BaseModel):
     capability: str
     available: bool
-    reason: Optional[str] = None
+    reason: str | None = None
 
 
 @dataclass(frozen=True)
 class ToolExecutionContext:
     run_id: str
     tool_call_id: str
-    step_id: Optional[str]
+    step_id: str | None
     trace_id: str
     artifact_service: Any
     sandbox_service: Any
@@ -79,13 +80,15 @@ class Tool(ABC):
     spec: ToolSpec
 
     @abstractmethod
-    async def run(self, tool_input: Dict[str, Any], *, context: Optional[ToolExecutionContext] = None) -> Dict[str, Any]:
+    async def run(
+        self, tool_input: dict[str, Any], *, context: ToolExecutionContext | None = None
+    ) -> dict[str, Any]:
         raise NotImplementedError
 
 
 class ToolRegistry:
     def __init__(self) -> None:
-        self._tools: Dict[str, Tool] = {}
+        self._tools: dict[str, Tool] = {}
 
     def register(self, tool: Tool) -> None:
         self._tools[tool.spec.name] = tool
@@ -96,7 +99,7 @@ class ToolRegistry:
         except KeyError as exc:
             raise ToolExecutionError("tool_not_allowed", f"Tool is not registered: {name}") from exc
 
-    def specs(self) -> Dict[str, ToolSpec]:
+    def specs(self) -> dict[str, ToolSpec]:
         return {name: tool.spec for name, tool in self._tools.items()}
 
     def extend(self, tools: Iterable[Tool]) -> "ToolRegistry":

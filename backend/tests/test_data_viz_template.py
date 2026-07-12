@@ -1,6 +1,5 @@
 from pathlib import Path
 
-
 RUNTIME = Path(__file__).parents[2] / "runtimes" / "data-viz"
 
 
@@ -15,7 +14,9 @@ def test_data_viz_template_has_reproducible_dependency_contract():
 
 
 def test_data_viz_renderer_is_declarative_and_offline_at_job_time():
-    sources = "\n".join((RUNTIME / name).read_text() for name in ("render", "python.py", "echarts.mjs"))
+    sources = "\n".join(
+        (RUNTIME / name).read_text() for name in ("render", "python.py", "echarts.mjs")
+    )
     assert "pip install" not in sources
     assert "npm install" not in sources
     assert "eval(" not in sources
