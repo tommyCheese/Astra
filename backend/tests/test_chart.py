@@ -79,5 +79,6 @@ async def test_chart_only_agent_run_creates_sandbox_artifact_without_web_evidenc
     assert any(call.tool_name == "chart.render" for call in loaded.tool_calls)
 
 
-def test_chart_tool_is_hidden_when_provider_is_not_configured():
+def test_chart_tool_is_hidden_when_provider_is_not_configured(monkeypatch):
+    monkeypatch.setattr("app.tools.registry.shutil.which", lambda _: None)
     assert "chart.render" not in build_tool_registry(Settings(sandbox_enabled=True)).specs()

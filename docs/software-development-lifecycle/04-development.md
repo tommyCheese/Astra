@@ -6,7 +6,7 @@
 
 ## 2. 本地环境
 
-后端基线：Python 3.9+、FastAPI、SQLAlchemy、Alembic。前端基线：Node.js、React、TypeScript、Vite。常用流程：
+后端基线：Python 3.10+、FastAPI、SQLAlchemy、Alembic。前端基线：Node.js、React、TypeScript、Vite。常用流程：
 
 ```bash
 cd backend

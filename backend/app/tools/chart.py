@@ -9,6 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from app.core.config import Settings
 from app.sandbox.runtime import SandboxError, SandboxRequest
 from app.tools.base import Tool, ToolExecutionError, ToolResultEnvelope, ToolSpec
+from app.runtime_profiles import RuntimeProfileService
 
 
 class ChartData(BaseModel):
@@ -77,10 +78,11 @@ class ChartRenderTool(Tool):
         input_dir.mkdir()
         output_dir.mkdir()
         (input_dir / "request.json").write_text(json.dumps({**request.model_dump(mode="json"), "backend": backend}, ensure_ascii=False), encoding="utf-8")
-        template = self.settings.e2b_template_id
-        sandbox_request = SandboxRequest(template=template, command=["/opt/astra/bin/render"], input_dir=input_dir, output_dir=output_dir, wall_time_seconds=self.settings.sandbox_wall_time_seconds, secure=self.settings.e2b_secure, allow_internet_access=self.settings.e2b_allow_internet_access, environment={"TZ": "UTC", "PYTHONHASHSEED": "0"}, metadata={"tool": "chart.render", "backend": backend})
+        profile = RuntimeProfileService(self.settings).read()
+        template = profile.get("active_image", self.settings.sandbox_runtime_image)
+        sandbox_request = SandboxRequest(template=template, command=["/opt/astra/bin/render"], input_dir=input_dir, output_dir=output_dir, wall_time_seconds=self.settings.sandbox_wall_time_seconds, secure=True, allow_internet_access=False, environment={"TZ": "UTC", "PYTHONHASHSEED": "0"}, metadata={"tool": "chart.render", "backend": backend})
         try:
-            job, refs = await context.sandbox_service.execute(sandbox_request, run_id=context.run_id, tool_call_id=context.tool_call_id, runtime_profile={"backend": backend, "template": template, "lock_digest": self.settings.e2b_template_lock_digest, "trace_id": context.trace_id}, resource_limits={"wall_time_seconds": sandbox_request.wall_time_seconds, "network": "none"})
+            job, refs = await context.sandbox_service.execute(sandbox_request, run_id=context.run_id, tool_call_id=context.tool_call_id, runtime_profile={"backend": backend, "image": template, "lock_digest": profile.get("dependency_digest", self.settings.sandbox_runtime_lock_digest), "trace_id": context.trace_id}, resource_limits={"wall_time_seconds": sandbox_request.wall_time_seconds, "memory_mb": self.settings.sandbox_memory_mb, "cpus": self.settings.sandbox_cpus, "pids": self.settings.sandbox_pids, "network": "none"})
         except SandboxError as exc:
             raise ToolExecutionError(exc.category, exc.safe_message) from exc
         finally:

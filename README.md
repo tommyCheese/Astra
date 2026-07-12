@@ -14,7 +14,7 @@ Astra 是一个 AI 原生的通用 Agent 平台。
 
 当前实现方向是 `implement-web-data-query-task-runner`：一个由 Python 后端支撑的 Web App，用真实模型接口和 `web_search` / `web_fetch` 工具运行通用 Web 数据查询任务。
 
-工具系统已开始迁移为策略驱动的通用 Runtime：Web 领域处理从 AgentLoop 解耦，计算型工具通过 `ToolExecutionContext`、`SandboxJob` 和 `ArtifactRef` 保留审计关联。声明式 `chart.render` 支持 Matplotlib、Seaborn 和 ECharts；绘图能力默认关闭，启用后通过 E2B Firecracker Sandbox 执行，不在 API 进程内执行任意 Python 或 JavaScript，也不要求 Linux/macOS 宿主机安装 Docker。部署要求见 [沙箱与图表 Runtime 运维指南](docs/sandbox-and-chart-runtime-operations.md)。
+工具系统已开始迁移为策略驱动的通用 Runtime：Web 领域处理从 AgentLoop 解耦，计算型工具通过 `ToolExecutionContext`、`SandboxJob` 和 `ArtifactRef` 保留审计关联。声明式 `chart.render` 支持 Matplotlib、Seaborn 和 ECharts；绘图能力默认关闭，启用后通过 Docker Engine 执行，不在 API 进程内执行任意 Python 或 JavaScript。本地、CI 和 Linux 部署共用相同镜像与安全参数。部署要求见 [沙箱与图表 Runtime 运维指南](docs/sandbox-and-chart-runtime-operations.md)。
 
 核心闭环：
 

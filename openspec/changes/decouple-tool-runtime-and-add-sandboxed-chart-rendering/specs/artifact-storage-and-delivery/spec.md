@@ -8,7 +8,7 @@
 - **THEN** 文件进入 Artifact Store，数据库记录 identity、storage key、MIME、size、checksum 和 provenance，ToolCall 返回 ArtifactRef
 
 ### Requirement: Complete artifact provenance
-每个工具生成的 Artifact SHALL 关联 Run、ToolCall、可选 SandboxJob、Provider、Template ID、lock digest、生成时间和输入 Artifact。
+每个工具生成的 Artifact SHALL 关联 Run、ToolCall、可选 SandboxJob、Provider、OCI image digest、lock digest、生成时间和输入 Artifact。
 
 #### Scenario: Inspect chart provenance
 - **WHEN** 用户在审计面板查看图表 Artifact

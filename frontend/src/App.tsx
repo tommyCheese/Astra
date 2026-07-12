@@ -1,7 +1,7 @@
 import { FormEvent, ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { AstraApiError, ApiErrorPayload, createRun, getRun, listRuns, resumeRun, streamRunEvents } from './api';
+import { AstraApiError, ApiErrorPayload, buildRuntime, createRun, getRun, getRuntimeProfile, listRuns, resumeRun, streamRunEvents } from './api';
 import { I18nProvider, useI18n } from './i18n';
 import { ThemeProvider, useTheme } from './theme';
 import { FloatingAd } from './plugins/floating-ad';
@@ -558,13 +558,85 @@ function SettingSection({ category, providerConfigs, onProviderConfigsChange }: 
   const { language, setLanguage, t } = useI18n();
   const { mode, setMode } = useTheme();
   if (category === '模型管理') return <ModelManagement providers={providerConfigs} onChange={onProviderConfigsChange} />;
+  if (category === '运行时') return <RuntimeSettings />;
   if (category === '工具') return <SettingsGroup title="工具" description="管理 Agent 可用工具及其调用策略。"><div className="capability-settings"><CapabilityItem title="Web Search" detail="搜索公开网页并生成候选来源" state="已启用" /><CapabilityItem title="Web Fetch" detail="自适应提取页面主要内容" state="已启用" /><CapabilityItem title="文件分析" detail="解析上传的文档、代码与数据" state="即将支持" enabled={false} /><CapabilityItem title="图像理解" detail="识别并分析图片内容" state="即将支持" enabled={false} /></div><SettingRow title="工具调用上限" description="限制单次任务可执行的工具调用总数"><TranslatedSelect defaultValue="10" options={['5', '10', '20']} /></SettingRow><SettingRow title="并行工具调用" description="并发执行相互独立且无副作用冲突的工具"><Toggle checked /></SettingRow><SettingRow title="工具失败重试" description="仅重试临时网络错误和明确标记为可恢复的工具错误"><TranslatedSelect defaultValue="2" options={[['0', '不重试'], ['1', '1'], ['2', '2'], ['3', '3']]} /></SettingRow></SettingsGroup>;
-  if (category === '运行时') return <SettingsGroup title="运行时" description="管理 Agent 的执行环境、生命周期和任务级资源边界。"><div className="runtime-summary"><div><span>{t('执行环境')}</span><strong>{t('本地沙盒')}</strong></div><div><span>{t('任务状态')}</span><strong>{t('可恢复')}</strong></div><div><span>{t('网络')}</span><strong>{t('按需授权')}</strong></div></div><SettingRow title="沙盒模式" description="限定 Agent 可读取和修改的文件系统范围"><TranslatedSelect defaultValue="workspace" options={[['readonly', '只读'], ['workspace', '工作区可写'], ['container', '隔离容器']]} /></SettingRow><SettingRow title="网络策略" description="限制运行环境可访问的外部网络范围"><TranslatedSelect defaultValue="approval" options={[['off', '禁用'], ['approval', '公开网络，按需授权'], ['allowlist', '仅允许列表']]} /></SettingRow><SettingRow title="命令执行确认" description="命令可能修改环境或影响外部系统时请求确认"><TranslatedSelect defaultValue="risk" options={[['risk', '仅高风险命令'], ['always', '每次执行'], ['never', '从不确认']]} /></SettingRow><SettingRow title="最大 Agent 轮次" description="达到上限后停止循环并输出当前结果"><TranslatedSelect defaultValue="12" options={['6', '12', '20']} /></SettingRow><SettingRow title="单次运行时限" description="超时后停止任务并保留可恢复的运行状态"><TranslatedSelect defaultValue="30" options={[['10', `10 ${t('分钟')}`], ['30', `30 ${t('分钟')}`], ['60', `60 ${t('分钟')}`]]} /></SettingRow><SettingRow title="后台继续运行" description="离开当前对话后继续执行，并保留状态通知"><Toggle checked /></SettingRow><SettingRow title="保留运行工件" description="保存运行状态、验证报告和失败现场用于审计"><Toggle checked /></SettingRow></SettingsGroup>;
   if (category === '记忆') return <SettingsGroup title="记忆" description="管理 Agent 在单次任务和不同对话之间保留的信息。"><SettingRow title="运行记忆" description="在当前任务中保留来源摘要和决策线索"><Toggle checked /></SettingRow><SettingRow title="跨对话记忆" description="在新对话中使用已确认的偏好与事实"><Toggle /></SettingRow><SettingRow title="写入阈值" description="仅保存高于该置信度的结构化记忆"><TranslatedSelect defaultValue="80" options={[['70', '70%'], ['80', '80%'], ['90', '90%']]} /></SettingRow><SettingRow title="记忆保留期" description="到期后自动清理非固定记忆"><TranslatedSelect defaultValue="30" options={[['7', `7 ${t('天')}`], ['30', `30 ${t('天')}`], ['forever', '永久']]} /></SettingRow></SettingsGroup>;
   if (category === '验证与安全') return <SettingsGroup title="验证与安全" description="定义 Agent 在报告完成前必须满足的通用验证要求。"><SettingRow title="完成前验证" description="提交结果前运行与任务类型匹配的验证器"><Toggle checked /></SettingRow><SettingRow title="验证强度" description="控制验证覆盖范围以及失败后的检查深度"><TranslatedSelect defaultValue="standard" options={[['basic', '基础'], ['standard', '标准'], ['strict', '严格']]} /></SettingRow><SettingRow title="验证失败处理" description="验证未通过时决定继续修复、带警告返回或停止任务"><TranslatedSelect defaultValue="repair" options={[['repair', '自动修复'], ['warn', '带警告返回'], ['block', '停止任务']]} /></SettingRow></SettingsGroup>;
   if (category === '界面') return <SettingsGroup title="界面" description="调整工作区的信息密度和运行过程展示。"><SettingRow title="语言" description="选择界面显示语言"><select value={language} onChange={(event) => setLanguage(event.target.value as 'zh-CN' | 'en')}><option value="zh-CN">中文</option><option value="en">English</option></select></SettingRow><SettingRow title="主题模式" description="选择界面外观，或随操作系统自动切换"><select value={mode} onChange={(event) => setMode(event.target.value as 'system' | 'light' | 'dark')}><option value="system">{t('跟随系统')}</option><option value="light">{t('浅色模式')}</option><option value="dark">{t('暗色模式')}</option></select></SettingRow><SettingRow title="过程展示" description="在对话中显示工具调用和反思摘要"><Toggle checked /></SettingRow><SettingRow title="审计面板" description="任务完成后显示证据、事件和记忆"><Toggle checked /></SettingRow><SettingRow title="信息密度" description="控制对话和面板的间距"><TranslatedSelect defaultValue="compact" options={[['compact', '紧凑'], ['comfortable', '舒适']]} /></SettingRow></SettingsGroup>;
   if (category === '数据与隐私') return <SettingsGroup title="数据与隐私" description="控制任务记录、工具内容和诊断信息的保存方式。"><SettingRow title="保存运行记录" description="保留对话、工具调用元数据和验证报告"><Toggle checked /></SettingRow><SettingRow title="工具内容保留" description="决定是否保存工具返回的正文、文件内容或结构化结果"><TranslatedSelect defaultValue="metadata" options={[['none', '不保留内容'], ['metadata', '仅保留元数据'], ['full', '保留完整输出']]} /></SettingRow><SettingRow title="诊断日志" description="记录不包含工具内容的性能与错误信息"><Toggle checked /></SettingRow><button className="danger-button" type="button">{t('清除本地运行数据')}</button></SettingsGroup>;
   return null;
+}
+
+function RuntimeSettings() {
+  const [profile, setProfile] = useState<Awaited<ReturnType<typeof getRuntimeProfile>> | null>(null);
+  const [dependencies, setDependencies] = useState<Array<{ id: string; name: string; version: string }>>([]);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [batchInput, setBatchInput] = useState('');
+  const [showBatch, setShowBatch] = useState(false);
+  const [message, setMessage] = useState('');
+  const [dirty, setDirty] = useState(false);
+  const nextDependencyId = useRef(0);
+  const building = profile?.build?.status === 'queued' || profile?.build?.status === 'building';
+  const makeDependency = (name = '', version = '') => ({ id: `dependency-${nextDependencyId.current++}`, name, version });
+  useEffect(() => {
+    let active = true;
+    const refresh = () => void getRuntimeProfile().then((value) => {
+      if (!active) return;
+      setProfile(value);
+      if (!dirty) setDependencies(value.dependencies.map((item) => ({ id: `saved-${item.name}`, name: item.name, version: item.version ?? '' })));
+    }).catch(() => setMessage('无法读取 Runtime 配置'));
+    refresh(); const timer = window.setInterval(refresh, building ? 1500 : 5000);
+    return () => { active = false; window.clearInterval(timer); };
+  }, [building, dirty]);
+  function updateDependency(id: string, field: 'name' | 'version', value: string) {
+    setDependencies((current) => current.map((item) => item.id === id ? { ...item, [field]: value } : item));
+    setMessage('');
+    setDirty(true);
+  }
+  function removeDependencies(ids: Set<string>) {
+    setDependencies((current) => current.filter((item) => !ids.has(item.id)));
+    setSelected(new Set());
+    setMessage('');
+    setDirty(true);
+  }
+  function addBatch() {
+    try {
+      const additions = batchInput.split(/\n+/).map((line) => line.trim()).filter(Boolean).map((line) => {
+        const match = line.match(/^([A-Za-z0-9._-]+)(?:={1,2}([A-Za-z0-9.+-]+))?$/);
+        if (!match) throw new Error(`格式错误：${line}`);
+        return makeDependency(match[1], match[2] ?? '');
+      });
+      if (!additions.length) throw new Error('请输入至少一个依赖');
+      setDependencies((current) => [...current, ...additions]);
+      setBatchInput(''); setShowBatch(false); setMessage(''); setDirty(true);
+    } catch (error) { setMessage(error instanceof Error ? error.message : '批量添加失败'); }
+  }
+  async function build() {
+    try {
+      const values = dependencies.map(({ name, version }) => ({ name: name.trim(), version: version.trim() }));
+      if (values.some((item) => !item.name)) throw new Error('依赖名称不能为空');
+      setMessage(''); setDirty(false); setProfile(await buildRuntime(values));
+    } catch (error) { setMessage(error instanceof Error ? error.message : '构建请求失败'); }
+  }
+  const buildStatus = profile?.build?.status ?? 'ready';
+  const buildStatusLabel: Record<string, string> = { ready: '已就绪', queued: '等待构建', building: '构建中', succeeded: '构建成功', failed: '构建失败' };
+  return <SettingsGroup title="Docker 运行时" description="管理绘图工具使用的隔离镜像与 Python 依赖。只有构建阶段联网，工具执行始终断网。">
+    <section className="runtime-overview" aria-label="Docker 运行状态">
+      <div className="runtime-engine"><div><span>运行引擎</span><strong><span className="runtime-health-dot" aria-hidden="true" />Docker Ready</strong><small>一次性强化容器</small></div><span className={`runtime-status-badge runtime-status-${buildStatus}`}>{buildStatusLabel[buildStatus] ?? buildStatus}</span></div>
+      <div className="runtime-overview-details"><div><span>当前镜像</span><strong>{profile?.active_image ?? '读取中'}</strong></div><div><span>依赖摘要</span><strong>{profile?.dependency_digest?.slice(0, 16) ?? '基础依赖'}</strong></div></div>
+      <div className="runtime-security-strip"><span>断网执行</span><span>只读根目录</span><span>非 root</span><span>资源受限</span></div>
+    </section>
+    <section className="runtime-dependencies" aria-labelledby="runtime-dependencies-title">
+      <div className="runtime-dependency-heading"><div><strong id="runtime-dependencies-title">Python 依赖管理</strong><span>版本可留空，构建时将安装最新版本。核心绘图库由基础镜像锁定。</span></div><div><button type="button" onClick={() => { setDependencies((current) => [...current, makeDependency()]); setMessage(''); setDirty(true); }}>＋ 添加依赖</button><button type="button" onClick={() => setShowBatch((value) => !value)}>批量添加</button></div></div>
+      {showBatch && <div className="runtime-batch-panel"><label htmlFor="runtime-batch-input">每行一个依赖，可填写 `package` 或 `package==version`</label><textarea id="runtime-batch-input" rows={4} value={batchInput} onChange={(event) => setBatchInput(event.target.value)} placeholder={'polars==1.31.0\nopenpyxl'} spellCheck={false} /><div><button type="button" onClick={() => setShowBatch(false)}>取消</button><button className="primary-button" type="button" onClick={addBatch}>添加到列表</button></div></div>}
+      <div className="runtime-dependency-list">
+        {dependencies.length > 0 && <><div className="runtime-dependency-toolbar"><label><input type="checkbox" aria-label="选择全部依赖" checked={selected.size === dependencies.length} onChange={(event) => setSelected(event.target.checked ? new Set(dependencies.map((item) => item.id)) : new Set())} />已配置 {dependencies.length} 项</label><button type="button" disabled={!selected.size || building} onClick={() => removeDependencies(selected)}>删除所选{selected.size ? ` (${selected.size})` : ''}</button></div><div className="runtime-dependency-columns" aria-hidden="true"><span /><span>依赖名称</span><span>版本</span><span /></div></>}
+        {dependencies.length === 0 ? <div className="runtime-dependency-empty"><strong>尚未添加自定义依赖</strong><span>基础镜像已经包含 Matplotlib、Seaborn 与 ECharts。</span></div> : dependencies.map((item) => <div className="runtime-dependency-row" key={item.id}><input type="checkbox" aria-label={`选择 ${item.name || '未命名依赖'}`} checked={selected.has(item.id)} onChange={(event) => setSelected((current) => { const next = new Set(current); if (event.target.checked) next.add(item.id); else next.delete(item.id); return next; })} /><input aria-label="依赖名称" value={item.name} onChange={(event) => updateDependency(item.id, 'name', event.target.value)} placeholder="例如 polars" disabled={building} /><input aria-label={`${item.name || '依赖'}版本`} value={item.version} onChange={(event) => updateDependency(item.id, 'version', event.target.value)} placeholder="最新版本" disabled={building} /><button className="runtime-remove-dependency" type="button" aria-label={`删除 ${item.name || '未命名依赖'}`} onClick={() => removeDependencies(new Set([item.id]))} disabled={building}>×</button></div>)}
+      </div>
+      <div className="runtime-build-actions"><div><span>{dependencies.length} 个自定义依赖{dirty ? ' · 有未应用修改' : ''}</span>{profile?.build?.log && <small role="status">{profile.build.log}</small>}</div><button className="primary-button" type="button" onClick={() => void build()} disabled={building || !dirty}>{building ? '构建中…' : dirty ? '构建并激活' : '配置已同步'}</button></div>
+      {message && <p className="runtime-build-error" role="alert">{message}</p>}
+    </section>
+  </SettingsGroup>;
 }
 
 type ModelProviderId = 'openai' | 'anthropic' | 'google' | 'deepseek' | 'qwen' | 'siliconflow' | 'azure' | 'compatible';

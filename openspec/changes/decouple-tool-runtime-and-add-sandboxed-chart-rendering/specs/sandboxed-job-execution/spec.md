@@ -10,16 +10,16 @@
 ### Requirement: Pluggable sandbox provider
 Sandbox Supervisor SHALL 通过供应商无关的 `SandboxProvider` 协议管理 create、upload、execute、collect、metrics 和 terminate 阶段。
 
-#### Scenario: Use E2B provider
-- **WHEN** 部署配置有效 E2B API key 与 data-viz template ID
-- **THEN** Supervisor 创建安全 E2B Sandbox，而上层工具不依赖 E2B SDK 类型
+#### Scenario: Use Docker provider
+- **WHEN** 部署配置可用的 Docker Engine 与固定 data-viz image
+- **THEN** Supervisor 创建 hardened OCI 容器，而上层工具不依赖 Docker SDK 类型
 
 #### Scenario: Use mock provider in tests
 - **WHEN** 测试环境未配置外部 Sandbox 服务
 - **THEN** Supervisor 使用确定性 Mock Provider 验证生命周期、Artifact 和错误映射
 
 ### Requirement: Secure-by-default execution profile
-Sandbox Job MUST 使用安全通信、默认关闭公网、有限 TTL、独立文件系统和仅当前 Sandbox 有效的访问凭据，且只能上传当前 Job 输入和收集声明的输出目录。
+Sandbox Job MUST 使用 rootless 模式、默认关闭公网、只读 rootfs、独立 tmpfs 输入输出，且只能上传当前 Job 输入和收集声明的输出目录。
 
 #### Scenario: Attempt outbound network access
 - **WHEN** 沙箱内进程尝试访问公网
@@ -41,11 +41,11 @@ Executor MUST 强制 wall time、CPU、内存、PID、打开文件、输出文�
 - **THEN** Executor 终止并清理容器，将 Job 标记为 `timed_out`
 
 ### Requirement: Immutable runtime profiles
-每个 Sandbox Job SHALL 引用固定的 E2B template ID、uv/npm lock digest，并记录运行时、依赖版本、locale、timezone 和可复现性参数；正常沙箱不得在执行期间联网安装依赖。
+每个 Sandbox Job SHALL 引用固定的 OCI image digest、uv/npm lock digest，并记录运行时、依赖版本、locale、timezone 和可复现性参数；正常沙箱不得在执行期间联网安装依赖。
 
 #### Scenario: Execute Python chart runtime
 - **WHEN** Python 图表 Job 启动
-- **THEN** 它使用配置的不可变 E2B Template ID、uv/npm lock digest、非 GUI Matplotlib backend 和预安装依赖
+- **THEN** 它使用配置的不可变 OCI image digest、uv/npm lock digest、非 GUI Matplotlib backend 和预安装依赖
 
 ### Requirement: Auditable lifecycle and cleanup
 SandboxJob SHALL 遵循 `queued`、`preparing`、`running`、`collecting` 和终态状态机，并在任何终态后销毁一次性执行环境和临时可写层。
@@ -58,5 +58,5 @@ SandboxJob SHALL 遵循 `queued`、`preparing`、`running`、`collecting` 和终
 系统 SHALL 将 executor 和 runtime 故障映射为稳定、安全的错误类别，并截断、脱敏 stdout 与 stderr。
 
 #### Scenario: Runtime image missing
-- **WHEN** 配置的 Template ID 无法取得
+- **WHEN** 配置的 OCI image 无法取得
 - **THEN** ToolCall 以 `runtime_image_missing` 失败，用户响应不泄露宿主路径或内部命令

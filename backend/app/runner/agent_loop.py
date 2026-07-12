@@ -10,7 +10,7 @@ from app.schemas.agent import AgentObservation, FinalAnswer, VerificationReport
 from app.schemas.agent import AgentState, CriterionStatus, ReasoningPolicySnapshot, TerminalState
 from app.tools.base import CapabilityAvailability, ToolExecutionContext, ToolExecutionError, ToolRegistry
 from app.artifacts import ArtifactService, LocalArtifactStore
-from app.sandbox.e2b_provider import build_sandbox_provider
+from app.sandbox.docker_provider import build_sandbox_provider
 from app.sandbox.runtime import SandboxJobService, SandboxSupervisor
 from app.runner.adapters import ChartTaskAdapter, ProcessorRegistry, WebTaskAdapter
 from app.runner.reasoning import (

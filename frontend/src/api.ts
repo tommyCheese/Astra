@@ -24,6 +24,20 @@ export type ReasoningPolicyRequest = {
 };
 
 export type RunModelConfig = { provider: string; name: string; api_key: string; base_url: string };
+export type RuntimeDependency = { name: string; version: string };
+export type RuntimeProfile = { dependencies: RuntimeDependency[]; active_image: string; dependency_digest: string; build: null | { id: string; status: string; log: string; image?: string | null } };
+
+export async function getRuntimeProfile(): Promise<RuntimeProfile> {
+  const response = await fetch('/api/runtime');
+  if (!response.ok) throw await responseError(response);
+  return response.json();
+}
+
+export async function buildRuntime(dependencies: RuntimeDependency[]): Promise<RuntimeProfile> {
+  const response = await fetch('/api/runtime/build', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ dependencies }) });
+  if (!response.ok) throw await responseError(response);
+  return response.json();
+}
 
 export async function createRun(goal: string, taskId?: string, reasoningPolicy?: ReasoningPolicyRequest, model?: RunModelConfig): Promise<{ run_id: string; task_id: string; status: string }> {
   const response = await fetch('/api/runs', {

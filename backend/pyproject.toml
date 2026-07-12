@@ -2,11 +2,10 @@
 name = "astra-backend"
 version = "0.1.0"
 description = "Astra web data query task runner backend"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 dependencies = [
   "alembic>=1.13.0",
   "asyncpg>=0.29.0",
-  "e2b>=2.5.0,<3.0.0",
   "fastapi>=0.110.0",
   "httpx>=0.27.0",
   "pydantic>=2.6.0",

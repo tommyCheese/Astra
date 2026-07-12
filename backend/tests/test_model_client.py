@@ -96,6 +96,12 @@ def test_real_model_requires_credentials():
         build_model_client(settings)
 
 
+def test_mock_model_requires_no_credentials():
+    client = build_model_client(Settings(model_provider="mock", model_api_key=""))
+
+    assert isinstance(client, MockModelClient)
+
+
 def test_model_json_parser_accepts_fences_and_leading_text():
     assert parse_json_object('```json\n{"answer": "ok"}\n```') == {"answer": "ok"}
     assert parse_json_object('Here is the JSON: {"answer": "ok"}') == {"answer": "ok"}

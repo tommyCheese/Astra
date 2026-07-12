@@ -3,6 +3,7 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.api import runs as runs_api
+from app.api import runtime as runtime_api
 from app.core.config import Settings, get_settings
 from app.db.models import Base
 from app.db.session import get_session
@@ -44,6 +45,33 @@ async def test_create_run_rejects_empty_goal(app_client):
     assert error["code"] == "GOAL_REQUIRED"
     assert error["type"] == "validation.input_invalid"
     assert error["trace_id"].startswith("req_")
+
+
+async def test_runtime_build_uses_stable_validation_error_contract(app_client):
+    response = await app_client.post(
+        "/api/runtime/build",
+        json={"dependencies": [{"name": "unsafe package", "version": "latest"}]},
+    )
+
+    assert response.status_code == 422
+    error = response.json()["error"]
+    assert error["code"] == "RUNTIME_DEPENDENCY_INVALID"
+    assert error["type"] == "validation.input_invalid"
+    assert error["trace_id"].startswith("req_")
+
+
+async def test_runtime_build_defaults_missing_version_to_latest(app_client, monkeypatch):
+    captured = []
+
+    async def start(dependencies):
+        captured.extend(dependencies)
+        return {"dependencies": dependencies, "build": {"status": "queued"}}
+
+    monkeypatch.setattr(runtime_api.service, "start", start)
+    response = await app_client.post("/api/runtime/build", json={"dependencies": [{"name": "polars"}]})
+
+    assert response.status_code == 200
+    assert captured == [{"name": "polars", "version": ""}]
 
 
 async def test_artifact_content_enforces_workspace_scope_without_leaking_storage_key(app_client, tmp_path):

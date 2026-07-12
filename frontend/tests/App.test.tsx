@@ -2,9 +2,11 @@ import { cleanup, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { App } from '../src/App';
-import { createRun, listRuns } from '../src/api';
+import { buildRuntime, createRun, listRuns } from '../src/api';
 
 vi.mock('../src/api', () => ({
+  getRuntimeProfile: vi.fn(async () => ({ dependencies: [], active_image: 'astra-data-viz:0.1.0', dependency_digest: 'base', build: null })),
+  buildRuntime: vi.fn(async () => ({ dependencies: [], active_image: 'astra-data-viz:0.1.0', dependency_digest: 'base', build: { id: 'build-1', status: 'queued', log: '等待构建' } })),
   createRun: vi.fn(async () => ({ run_id: 'run-1', task_id: 'task-1', status: 'created' })),
   listRuns: vi.fn(async () => []),
   resumeRun: vi.fn(async () => ({ run_id: 'run-1', task_id: 'task-1', status: 'executing' })),
@@ -366,14 +368,27 @@ describe('App', () => {
     await userEvent.click(screen.getByRole('button', { name: /设置/ }));
     await userEvent.click(screen.getByRole('button', { name: '运行时' }));
 
-    expect(screen.getByRole('heading', { name: '运行时' })).toBeInTheDocument();
-    expect(screen.getByText('沙盒模式')).toBeInTheDocument();
-    expect(screen.getByText('最大 Agent 轮次')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Docker 运行时' })).toBeInTheDocument();
+    expect(screen.getByText('Docker Ready')).toBeInTheDocument();
+    expect(screen.getByText('尚未添加自定义依赖')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '配置已同步' })).toBeDisabled();
+    await userEvent.click(screen.getByRole('button', { name: '＋ 添加依赖' }));
+    await userEvent.type(screen.getByLabelText('依赖名称'), 'polars');
+    expect(screen.getByLabelText('polars版本')).toHaveAttribute('placeholder', '最新版本');
+    await userEvent.click(screen.getByRole('button', { name: '批量添加' }));
+    await userEvent.type(screen.getByLabelText(/每行一个依赖/), 'openpyxl==3.1.5');
+    await userEvent.click(screen.getByRole('button', { name: '添加到列表' }));
+    expect(screen.getAllByLabelText('依赖名称')).toHaveLength(2);
+    await userEvent.click(screen.getByRole('button', { name: '删除 openpyxl' }));
+    expect(screen.getAllByLabelText('依赖名称')).toHaveLength(1);
+    expect(screen.getByRole('button', { name: '构建并激活' })).toBeEnabled();
+    await userEvent.click(screen.getByRole('button', { name: '构建并激活' }));
+    expect(vi.mocked(buildRuntime)).toHaveBeenCalledWith([{ name: 'polars', version: '' }]);
     expect(screen.queryByText('工具调用上限')).not.toBeInTheDocument();
     expect(screen.queryByText('并行工具调用')).not.toBeInTheDocument();
     expect(screen.queryByText('工具失败重试')).not.toBeInTheDocument();
     expect(screen.queryByText('命令执行确认')).not.toBeInTheDocument();
-    expect(screen.getByText('保留运行工件')).toBeInTheDocument();
+    expect(screen.getByText('当前镜像')).toBeInTheDocument();
   });
 
   it('keeps validation and data settings task agnostic', async () => {

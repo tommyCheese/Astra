@@ -10,7 +10,7 @@ import seaborn as sns
 request = json.loads(Path("/input/request.json").read_text(encoding="utf-8"))
 frame = pd.DataFrame(request["data"]["rows"], columns=request["data"]["columns"])
 kind = request["chart_type"]
-plt.rcParams["font.family"] = ["Noto Sans CJK SC", "DejaVu Sans"]
+plt.rcParams["font.family"] = ["Noto Sans CJK JP", "DejaVu Sans"]
 figure, axis = plt.subplots(figsize=(request["width"] / 100, request["height"] / 100), dpi=100)
 for y in request["y"]:
     if request["backend"] == "seaborn" and kind == "regression":

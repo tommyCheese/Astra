@@ -584,6 +584,8 @@ class OpenAICompatibleModelClient(ModelClient):
 
 
 def build_model_client(settings: Settings) -> ModelClient:
+    if settings.model_provider == "mock":
+        return MockModelClient()
     return OpenAICompatibleModelClient(settings)
 
 

@@ -8,6 +8,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.runs import router as runs_router
+from app.api.runtime import router as runtime_router
 from app.core.config import get_settings
 from app.core.errors import AstraError, ErrorEnvelope, InfrastructureError, ValidationError, run_error_from_exception
 
@@ -29,6 +30,7 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
     app.include_router(runs_router)
+    app.include_router(runtime_router)
 
     @app.middleware("http")
     async def request_log(request: Request, call_next):

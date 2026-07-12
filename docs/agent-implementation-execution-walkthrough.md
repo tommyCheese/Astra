@@ -482,4 +482,4 @@ uvicorn 导入 main
 
 工具 manifest 声明 capabilities、permissions、risk、execution backend、resource profile 与 artifact behavior。AgentLoop 在 ToolCall 建立后注入 `ToolExecutionContext`，使计算型工具通过授权 service 创建 `SandboxJob` 和 Artifact，避免工具使用全局数据库状态。Web 的候选过滤、证据聚合与验证由可注册 processor 承担，非 Web 任务不再被 Web Evidence Gate 阻塞。
 
-`SandboxProvider` 是厂商无关边界，首个生产 adapter 使用 E2B Firecracker microVM。Python 与 ECharts 共用版本化 `astra-data-viz` Template；默认断网、有限 TTL，只上传本 Job 输入并收集输出。文件通过 Artifact collector 校验后才进入 Artifact Store。
+`SandboxProvider` 是厂商无关边界，首个生产 adapter 使用 Docker Engine。Python 与 ECharts 共用版本化 `astra-data-viz` OCI image；默认断网、只读 rootfs，只上传本 Job 输入并收集输出。文件通过 Artifact collector 校验后才进入 Artifact Store。

@@ -1,0 +1,11 @@
+{
+  "dependencies": [],
+  "active_image": "astra-data-viz:custom-4f53cda18c2baa0c",
+  "dependency_digest": "4f53cda18c2baa0c",
+  "build": {
+    "id": "8f092cb7-0b93-45d7-934c-f2f9ab1dcbab",
+    "status": "succeeded",
+    "log": "构建与导入验证成功",
+    "image": "astra-data-viz:custom-4f53cda18c2baa0c"
+  }
+}

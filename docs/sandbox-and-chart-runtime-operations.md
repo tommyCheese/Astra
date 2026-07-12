@@ -1,19 +1,27 @@
-# E2B 沙箱与图表 Runtime 运维指南
+# Docker 沙箱与图表 Runtime 运维指南
 
-## 配置
+## 运行模型
 
-绘图 capability 默认关闭。先从 `runtimes/data-viz` 构建版本化 E2B Template，随后配置 `SANDBOX_ENABLED=true`、`SANDBOX_PROVIDER=e2b`、`E2B_API_KEY`、`E2B_TEMPLATE_ID` 与 `E2B_TEMPLATE_LOCK_DIGEST`。API key 只放入服务端 secret store，不得进入数据库、日志、Artifact provenance 或前端配置。
+Astra 通过统一 Docker CLI 调用 Docker Engine。本地 macOS 可使用 Docker Desktop 或 Docker CLI + Colima；Linux 部署使用原生 Docker Engine。两端共用同一 Dockerfile、image tag/digest 和 hardening 参数，运行期不需要云端沙箱账户。
 
-本方案在 Linux 与 macOS 使用相同远程 Provider，不依赖本机 Docker、虚拟化框架或操作系统特定沙箱。启动时若 key 或 Template ID 缺失，`chart.render` 不进入模型上下文。
+## 构建与配置
 
-## Template 发布
+```bash
+docker build -t astra-data-viz:0.1.0 runtimes/data-viz
+```
 
-Python 使用 `pyproject.toml` + `uv.lock`，Node 使用 `package.json` + `package-lock.json`。依赖变更必须更新 lock、运行 contract/security tests、生成 SBOM 并构建新 Template；验证后再切换 Template ID 与 lock digest。普通 Job 禁止运行时安装依赖。
+```dotenv
+SANDBOX_ENABLED=true
+SANDBOX_PROVIDER=docker
+DOCKER_BINARY=docker
+SANDBOX_RUNTIME_IMAGE=astra-data-viz:0.1.0
+SANDBOX_RUNTIME_LOCK_DIGEST=sha256:...
+```
 
-## 运行安全
+## 安全边界
 
-每个 Job 创建一次性 Sandbox，固定 `secure=true`、`allow_internet_access=false` 和有限 TTL。只上传声明式输入到 `/input`，只从 `/output` 收集文件；结束、超时或异常路径都调用 terminate。Artifact collector 继续执行路径、symlink、MIME、数量、大小、checksum 与主动内容检查。
+每个 Job 使用一次性容器，强制默认断网、只读 rootfs、非 root 用户、drop all capabilities、no-new-privileges、独立 tmpfs 输入输出，以及 CPU、内存、PID 和 wall-time 限制。结束、异常或超时后统一 `docker rm --force`。不得将 Docker socket 或宿主目录挂入 Job 容器。
 
-## 监控与事故处置
+## 依赖与发布
 
-监控创建/排队/执行时长、成功率、timeout/OOM、Artifact 字节数、Template ID、lock digest 与 Provider 指标。E2B 不可用时关闭 capability 并返回稳定 `sandbox_unavailable`，不在 API 进程中降级执行。疑似 key 泄露时立即关闭 capability、撤销并轮换 key、检查 Sandbox 创建审计与配额；运行时漏洞则冻结 Template、保留脱敏事件和 Artifact provenance，再发布修复版本。
+Python 使用 `pyproject.toml` + `uv.lock`，Node 使用 `package.json` + `package-lock.json`。依赖变更必须更新 lock、运行测试和安全审计、构建新 image，并记录 image digest 与 lock digest。普通 Job 禁止联网安装依赖。
