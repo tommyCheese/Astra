@@ -654,6 +654,8 @@ function SettingSection({ category, providerConfigs, onProviderConfigsChange }: 
 }
 
 function RuntimeSettings() {
+  const { t } = useI18n();
+  const tr = (key: string, values: Record<string, string | number>) => Object.entries(values).reduce((text, [name, value]) => text.replace(`{${name}}`, String(value)), t(key));
   const [profile, setProfile] = useState<Awaited<ReturnType<typeof getRuntimeProfile>> | null>(null);
   const [dependencies, setDependencies] = useState<Array<{ id: string; name: string; version: string }>>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -744,28 +746,28 @@ function RuntimeSettings() {
   const buildStatusLabel: Record<string, string> = { ready: '已就绪', queued: '等待构建', building: '构建中', succeeded: '构建成功', failed: '构建失败', cancelled: '已取消' };
   const buildProgress = Math.min(100, Math.max(0, profile?.build?.progress ?? (buildStatus === 'queued' ? 0 : 5)));
   return <SettingsGroup title="Docker 运行时" description="管理绘图工具使用的隔离镜像与 Python 依赖。只有构建阶段联网，工具执行始终断网。">
-    <section className="runtime-overview" aria-label="Docker 运行状态">
-      <div className="runtime-engine"><div><span>运行引擎</span><strong><span className="runtime-health-dot" aria-hidden="true" />Docker Ready</strong><small>一次性强化容器</small></div><span className={`runtime-status-badge runtime-status-${buildStatus}`}>{buildStatusLabel[buildStatus] ?? buildStatus}</span></div>
-      <div className="runtime-overview-details"><div><span>当前镜像</span><strong>{profile?.active_image ?? '读取中'}</strong></div><div><span>依赖摘要</span><strong>{profile?.dependency_digest?.slice(0, 16) ?? '基础依赖'}</strong></div></div>
-      <div className="runtime-security-strip"><span>断网执行</span><span>只读根目录</span><span>非 root</span><span>资源受限</span></div>
+    <section className="runtime-overview" aria-label={t('Docker 运行状态')}>
+      <div className="runtime-engine"><div><span>{t('运行引擎')}</span><strong><span className="runtime-health-dot" aria-hidden="true" />Docker Ready</strong><small>{t('一次性强化容器')}</small></div><span className={`runtime-status-badge runtime-status-${buildStatus}`}>{t(buildStatusLabel[buildStatus] ?? buildStatus)}</span></div>
+      <div className="runtime-overview-details"><div><span>{t('当前镜像')}</span><strong>{profile?.active_image ?? t('读取中')}</strong></div><div><span>{t('依赖摘要')}</span><strong>{profile?.dependency_digest?.slice(0, 16) ?? t('基础依赖')}</strong></div></div>
+      <div className="runtime-security-strip"><span>{t('断网执行')}</span><span>{t('只读根目录')}</span><span>{t('非 root')}</span><span>{t('资源受限')}</span></div>
     </section>
     <section className="runtime-dependencies" aria-labelledby="runtime-dependencies-title">
-      <div className="runtime-dependency-heading"><div><strong id="runtime-dependencies-title">Python 依赖管理</strong><span>版本可留空，构建时将安装最新版本。核心绘图库由基础镜像锁定。</span></div></div>
-      <div className="runtime-core-dependencies" aria-label="基础镜像核心依赖">
-        <div className="runtime-core-heading"><div><strong>核心依赖</strong><span>随基础镜像提供，不允许修改或删除</span></div><span>{profile?.core_dependencies?.length ?? 0} 项已锁定</span></div>
-        <div className="runtime-core-columns" aria-hidden="true"><span /><span>依赖名称</span><span>锁定版本</span><span>状态</span></div>
-        {(profile?.core_dependencies ?? []).map((item) => <div className="runtime-core-row" key={item.name}><span className="runtime-lock" aria-label={`${item.name} 已锁定`}><Icon name="lock" /></span><strong>{item.name}</strong><code>{item.version}</code><span className="runtime-locked-badge">已锁定</span></div>)}
+      <div className="runtime-dependency-heading"><div><strong id="runtime-dependencies-title">{t('Python 依赖管理')}</strong><span>{t('版本可留空，构建时将安装最新版本。核心绘图库由基础镜像锁定。')}</span></div></div>
+      <div className="runtime-core-dependencies" aria-label={t('基础镜像核心依赖')}>
+        <div className="runtime-core-heading"><div><strong>{t('核心依赖')}</strong><span>{t('随基础镜像提供，不允许修改或删除')}</span></div><span>{tr('{count} 项已锁定', { count: profile?.core_dependencies?.length ?? 0 })}</span></div>
+        <div className="runtime-core-columns" aria-hidden="true"><span /><span>{t('依赖名称')}</span><span>{t('锁定版本')}</span><span>{t('状态')}</span></div>
+        {(profile?.core_dependencies ?? []).map((item) => <div className="runtime-core-row" key={item.name}><span className="runtime-lock" aria-label={`${item.name} ${t('已锁定')}`}><Icon name="lock" /></span><strong>{item.name}</strong><code>{item.version}</code><span className="runtime-locked-badge">{t('已锁定')}</span></div>)}
       </div>
       <div className="runtime-custom-dependencies">
-        <div className="runtime-custom-heading"><div><strong>自定义依赖</strong><span>可编辑、删除，并在下一次构建后生效</span></div><span>{dependencies.length} 项</span></div>
+        <div className="runtime-custom-heading"><div><strong>{t('自定义依赖')}</strong><span>{t('可编辑、删除，并在下一次构建后生效')}</span></div><span>{tr('{count} 项', { count: dependencies.length })}</span></div>
         <div className="runtime-dependency-list">
-          {dependencies.length > 0 && <><div className="runtime-dependency-toolbar"><label><input type="checkbox" aria-label="选择全部依赖" checked={selected.size === dependencies.length} disabled={controlsDisabled} onChange={(event) => setSelected(event.target.checked ? new Set(dependencies.map((item) => item.id)) : new Set())} />选择全部</label><button type="button" disabled={!selected.size || controlsDisabled} onClick={() => removeDependencies(selected)}>删除所选{selected.size ? ` (${selected.size})` : ''}</button></div><div className="runtime-dependency-columns" aria-hidden="true"><span /><span>依赖名称</span><span>版本</span><span /></div></>}
-          {dependencies.length === 0 ? <div className="runtime-dependency-empty"><strong>尚未添加自定义依赖</strong><span>可以添加额外的 Python 包扩展工具能力。</span></div> : dependencies.map((item) => <div className="runtime-dependency-row" key={item.id}><input type="checkbox" aria-label={`选择 ${item.name || '未命名依赖'}`} checked={selected.has(item.id)} disabled={controlsDisabled} onChange={(event) => setSelected((current) => { const next = new Set(current); if (event.target.checked) next.add(item.id); else next.delete(item.id); return next; })} /><input aria-label="依赖名称" value={item.name} onChange={(event) => updateDependency(item.id, 'name', event.target.value)} placeholder="例如 polars" disabled={controlsDisabled} /><input aria-label={`${item.name || '依赖'}版本`} value={item.version} onChange={(event) => updateDependency(item.id, 'version', event.target.value)} placeholder="最新版本" disabled={controlsDisabled} /><button className="runtime-remove-dependency" type="button" aria-label={`删除 ${item.name || '未命名依赖'}`} onClick={() => removeDependencies(new Set([item.id]))} disabled={controlsDisabled}>−</button></div>)}
-          <div className="runtime-dependency-add-actions"><button type="button" aria-label="添加依赖" disabled={controlsDisabled} onClick={() => { setDependencies((current) => [...current, makeDependency()]); setMessage(''); setDirty(true); }}><span aria-hidden="true">+</span>添加依赖</button><button type="button" disabled={controlsDisabled} aria-expanded={showBatch} onClick={() => setShowBatch((value) => !value)}>批量添加</button></div>
+          {dependencies.length > 0 && <><div className="runtime-dependency-toolbar"><label><input type="checkbox" aria-label={t('选择全部依赖')} checked={selected.size === dependencies.length} disabled={controlsDisabled} onChange={(event) => setSelected(event.target.checked ? new Set(dependencies.map((item) => item.id)) : new Set())} />{t('选择全部')}</label><button type="button" disabled={!selected.size || controlsDisabled} onClick={() => removeDependencies(selected)}>{t('删除所选')}{selected.size ? ` (${selected.size})` : ''}</button></div><div className="runtime-dependency-columns" aria-hidden="true"><span /><span>{t('依赖名称')}</span><span>{t('版本')}</span><span /></div></>}
+          {dependencies.length === 0 ? <div className="runtime-dependency-empty"><strong>{t('尚未添加自定义依赖')}</strong><span>{t('可以添加额外的 Python 包扩展工具能力。')}</span></div> : dependencies.map((item) => { const name = item.name || t('未命名依赖'); return <div className="runtime-dependency-row" key={item.id}><input type="checkbox" aria-label={tr('选择 {name}', { name })} checked={selected.has(item.id)} disabled={controlsDisabled} onChange={(event) => setSelected((current) => { const next = new Set(current); if (event.target.checked) next.add(item.id); else next.delete(item.id); return next; })} /><input aria-label={t('依赖名称')} value={item.name} onChange={(event) => updateDependency(item.id, 'name', event.target.value)} placeholder={t('例如 polars')} disabled={controlsDisabled} /><input aria-label={tr('{name}版本', { name: item.name || t('依赖') })} value={item.version} onChange={(event) => updateDependency(item.id, 'version', event.target.value)} placeholder={t('最新版本')} disabled={controlsDisabled} /><button className="runtime-remove-dependency" type="button" aria-label={tr('删除 {name}', { name })} onClick={() => removeDependencies(new Set([item.id]))} disabled={controlsDisabled}>−</button></div>; })}
+          <div className="runtime-dependency-add-actions"><button type="button" aria-label={t('添加依赖')} disabled={controlsDisabled} onClick={() => { setDependencies((current) => [...current, makeDependency()]); setMessage(''); setDirty(true); }}><span aria-hidden="true">+</span>{t('添加依赖')}</button><button type="button" disabled={controlsDisabled} aria-expanded={showBatch} onClick={() => setShowBatch((value) => !value)}>{t('批量添加')}</button></div>
         </div>
-        {showBatch && <div className="runtime-batch-panel"><label htmlFor="runtime-batch-input">每行一个依赖，可填写 `package` 或 `package==version`</label><textarea id="runtime-batch-input" rows={4} value={batchInput} onChange={(event) => setBatchInput(event.target.value)} placeholder={'polars==1.31.0\nopenpyxl'} spellCheck={false} disabled={controlsDisabled} /><div><button type="button" disabled={controlsDisabled} onClick={() => setShowBatch(false)}>取消</button><button className="primary-button" type="button" disabled={controlsDisabled} onClick={addBatch}>添加到列表</button></div></div>}
+        {showBatch && <div className="runtime-batch-panel"><label htmlFor="runtime-batch-input">{t('每行一个依赖，可填写 `package` 或 `package==version`')}</label><textarea id="runtime-batch-input" rows={4} value={batchInput} onChange={(event) => setBatchInput(event.target.value)} placeholder={'polars==1.31.0\nopenpyxl'} spellCheck={false} disabled={controlsDisabled} /><div><button type="button" disabled={controlsDisabled} onClick={() => setShowBatch(false)}>{t('取消')}</button><button className="primary-button" type="button" disabled={controlsDisabled} onClick={addBatch}>{t('添加到列表')}</button></div></div>}
       </div>
-      {building ? <div className="runtime-build-progress" role="status" aria-live="polite"><div className="runtime-build-progress-heading"><div><strong>{profile?.build?.phase ?? '准备构建'}</strong><span>{dependencies.length} 个自定义依赖</span></div><b>{buildProgress}%</b></div><div className="runtime-progress-track" role="progressbar" aria-label="依赖构建进度" aria-valuemin={0} aria-valuemax={100} aria-valuenow={buildProgress}><span style={{ width: `${buildProgress}%` }} /></div><p>{profile?.build?.log ?? '正在等待构建输出'}</p><button className="secondary-button" type="button" onClick={() => void cancelBuild()}>取消构建</button></div> : <div className="runtime-build-actions"><div><span>{dependencies.length} 个自定义依赖{dirty ? ' · 有未应用修改' : ''}</span>{profile?.build?.log && <small role="status">{profile.build.log}</small>}</div><button className="primary-button" type="button" onClick={() => void build()} disabled={!dirty || submitting}>{submitting ? '正在提交…' : dirty ? '构建并激活' : '配置已同步'}</button></div>}
+      {building ? <div className="runtime-build-progress" role="status" aria-live="polite"><div className="runtime-build-progress-heading"><div><strong>{t(profile?.build?.phase ?? '准备构建')}</strong><span>{tr('{count} 个自定义依赖', { count: dependencies.length })}</span></div><b>{buildProgress}%</b></div><div className="runtime-progress-track" role="progressbar" aria-label={t('依赖构建进度')} aria-valuemin={0} aria-valuemax={100} aria-valuenow={buildProgress}><span style={{ width: `${buildProgress}%` }} /></div><p>{t(profile?.build?.log ?? '正在等待构建输出')}</p><button className="secondary-button" type="button" onClick={() => void cancelBuild()}>{t('取消构建')}</button></div> : <div className="runtime-build-actions"><div><span>{tr('{count} 个自定义依赖', { count: dependencies.length })}{dirty ? ` · ${t('有未应用修改')}` : ''}</span>{profile?.build?.log && <small role="status">{t(profile.build.log)}</small>}</div><button className="primary-button" type="button" onClick={() => void build()} disabled={!dirty || submitting}>{t(submitting ? '正在提交…' : dirty ? '构建并激活' : '配置已同步')}</button></div>}
       {message && <p className="runtime-build-error" role="alert">{message}</p>}
     </section>
   </SettingsGroup>;
@@ -1028,6 +1030,7 @@ function MenuChoice({ label, value, options, onChange }: { label: string; value:
 }
 
 function ErrorDialog({ error, onClose, onRetry }: { error: ApiErrorPayload; onClose: () => void; onRetry?: () => void }) {
+  const { t } = useI18n();
   const technical = error.type.startsWith('infrastructure.') || error.type.startsWith('configuration.') || error.type.startsWith('dependency.') || error.type.startsWith('runtime.');
   const technicalTitle = error.type.startsWith('infrastructure.database') ? '数据存储不可用'
     : error.type.startsWith('configuration.model') ? '大模型尚未配置'
@@ -1037,7 +1040,7 @@ function ErrorDialog({ error, onClose, onRetry }: { error: ApiErrorPayload; onCl
     : error.type === 'runtime.unclassified_response' ? '后端错误未分类'
     : '内部运行时异常';
   const title = error.code === 'GOAL_REQUIRED' ? '请输入任务目标' : technical ? technicalTitle : '无法完成此操作';
-  return <div className="modal-backdrop" role="presentation" onMouseDown={onClose}><section className="confirmation-modal error-dialog" role="alertdialog" aria-modal="true" aria-labelledby="error-title" onMouseDown={(event) => event.stopPropagation()}><div className="warning-mark">!</div><h2 id="error-title">{title}</h2><p>{error.message}</p>{technical && <div className="confirmation-note">错误类型：<code>{error.type}</code><br />诊断编号：<code>{error.trace_id}</code></div>}<div className="confirmation-actions">{onRetry && <button className="secondary-button" type="button" onClick={onRetry}>重试</button>}<button className="danger-confirm-button" type="button" onClick={onClose}>知道了</button></div></section></div>;
+  return <div className="modal-backdrop" role="presentation" onMouseDown={onClose}><section className="confirmation-modal error-dialog" role="alertdialog" aria-modal="true" aria-labelledby="error-title" onMouseDown={(event) => event.stopPropagation()}><div className="warning-mark">!</div><h2 id="error-title">{t(title)}</h2><p>{error.message}</p>{technical && <div className="confirmation-note">{t('错误类型：')}<code>{error.type}</code><br />{t('诊断编号：')}<code>{error.trace_id}</code></div>}<div className="confirmation-actions">{onRetry && <button className="secondary-button" type="button" onClick={onRetry}>{t('重试')}</button>}<button className="danger-confirm-button" type="button" onClick={onClose}>{t('知道了')}</button></div></section></div>;
 }
 
 type IconName = 'plus' | 'message' | 'chart' | 'settings' | 'sparkle' | 'tools' | 'terminal' | 'brain' | 'shield' | 'palette' | 'lock' | 'token' | 'check' | 'route' | 'refresh' | 'requestApprove' | 'autoApprove';
@@ -1095,20 +1098,22 @@ function MessageBubble({ message, run }: { message: ChatMessage; run: RunView | 
 }
 
 function ProcessPanel({ run, messageId }: { run: RunView; messageId: string }) {
+  const { t } = useI18n();
   const turns = [...(run.turns ?? [])].sort((a, b) => a.turn_index - b.turn_index);
   const report = run.verification_report ?? run.result?.verification_report;
   const notes = [...new Set([...(run.result?.verification_notes ?? []), ...(report?.notes ?? [])])];
-  return <article className="process-entry" id={`message-${messageId}`}><details className="process-panel"><summary><Icon name="brain" /><span>思考过程</span><small>{turns.length} 个步骤 · {run.tool_calls.length} 次工具调用</small></summary><div className="process-timeline">
+  return <article className="process-entry" id={`message-${messageId}`}><details className="process-panel"><summary><Icon name="brain" /><span>{t('思考过程')}</span><small>{t('{steps} 个步骤 · {tools} 次工具调用').replace('{steps}', String(turns.length)).replace('{tools}', String(run.tool_calls.length))}</small></summary><div className="process-timeline">
     {turns.map((turn) => {
       const call = run.tool_calls.find((item) => item.id === turn.tool_call_id);
-      return <div className="process-step" key={turn.id}><span className={`process-dot ${turn.selected_tool ? 'tool' : ''}`}><Icon name={turn.selected_tool ? 'tools' : 'brain'} /></span><div><strong>{turn.selected_tool ? turn.selected_tool : turn.decision_type === 'reflect' ? '反思' : '思考'}</strong><p>{turn.reflection ? String(turn.reflection.summary ?? turn.reasoning_summary) : turn.reasoning_summary}</p>{call && <small>{call.status}{toolCallDetail(call.output)}</small>}</div></div>;
+      return <div className="process-step" key={turn.id}><span className={`process-dot ${turn.selected_tool ? 'tool' : ''}`}><Icon name={turn.selected_tool ? 'tools' : 'brain'} /></span><div><strong>{turn.selected_tool ? turn.selected_tool : t(turn.decision_type === 'reflect' ? '反思' : '思考')}</strong><p>{turn.reflection ? String(turn.reflection.summary ?? turn.reasoning_summary) : turn.reasoning_summary}</p>{call && <small>{call.status}{toolCallDetail(call.output)}</small>}</div></div>;
     })}
-    {notes.map((note, index) => <div className="process-step verification" key={`verification-${index}`}><span className="process-dot"><Icon name="check" /></span><div><strong>验证</strong><p>{note}</p></div></div>)}
+    {notes.map((note, index) => <div className="process-step verification" key={`verification-${index}`}><span className="process-dot"><Icon name="check" /></span><div><strong>{t('验证')}</strong><p>{note}</p></div></div>)}
     <ReasoningAuditSummary run={run} />
   </div></details></article>;
 }
 
 function FinalAnswer({ run, fallback }: { run: RunView; fallback: string }) {
+  const { t } = useI18n();
   const result = run.result;
   if (!result) {
     return null;
@@ -1123,7 +1128,7 @@ function FinalAnswer({ run, fallback }: { run: RunView; fallback: string }) {
       ))}
       <ArtifactGallery artifacts={run.artifacts} />
       {result.sources.length ? (
-        <details className="answer-support"><summary>{`来源 · ${result.sources.length}`}</summary><div className="source-grid">
+        <details className="answer-support"><summary>{t('来源 · {count}').replace('{count}', String(result.sources.length))}</summary><div className="source-grid">
           {result.sources.map((source) => {
             const quality = result.source_quality?.find((item) => item.url === source.url);
             return (
@@ -1143,15 +1148,16 @@ function FinalAnswer({ run, fallback }: { run: RunView; fallback: string }) {
 }
 
 function ArtifactGallery({ artifacts }: { artifacts: RunView['artifacts'] }) {
+  const { t } = useI18n();
   const visible = artifacts.filter((artifact) => artifact.security_status === 'verified' && artifact.content_url);
   if (!visible.length) return null;
-  return <section className="artifact-gallery" aria-label="运行工件">{visible.map((artifact) => {
+  return <section className="artifact-gallery" aria-label={t('运行工件')}>{visible.map((artifact) => {
     const label = String(artifact.metadata?.filename ?? artifact.type);
     if (artifact.mime_type === 'image/png' || artifact.mime_type === 'image/svg+xml') {
-      return <figure className="artifact-card" key={artifact.id}><img src={artifact.content_url ?? ''} alt={label} onError={(event) => event.currentTarget.parentElement?.classList.add('load-failed')} /><span className="artifact-error" role="status">预览加载失败</span><figcaption><strong>{label}</strong><span>{artifact.size_bytes?.toLocaleString() ?? 0} bytes</span></figcaption></figure>;
+      return <figure className="artifact-card" key={artifact.id}><img src={artifact.content_url ?? ''} alt={label} onError={(event) => event.currentTarget.parentElement?.classList.add('load-failed')} /><span className="artifact-error" role="status">{t('预览加载失败')}</span><figcaption><strong>{label}</strong><span>{artifact.size_bytes?.toLocaleString() ?? 0} bytes</span></figcaption></figure>;
     }
     if (artifact.mime_type === 'text/html') {
-      return <figure className="artifact-card interactive" key={artifact.id}><iframe src={artifact.content_url ?? ''} title={label} sandbox="allow-scripts" referrerPolicy="no-referrer" /><figcaption><strong>{label}</strong><span>隔离预览</span></figcaption></figure>;
+      return <figure className="artifact-card interactive" key={artifact.id}><iframe src={artifact.content_url ?? ''} title={label} sandbox="allow-scripts" referrerPolicy="no-referrer" /><figcaption><strong>{label}</strong><span>{t('隔离预览')}</span></figcaption></figure>;
     }
     return <a className="artifact-card file" href={artifact.content_url ?? ''} key={artifact.id} target="_blank" rel="noreferrer"><strong>{label}</strong><span>{artifact.mime_type ?? artifact.type}</span></a>;
   })}</section>;
@@ -1174,16 +1180,17 @@ function externalHref(value: string) {
 }
 
 function ReasoningAuditSummary({ run }: { run: RunView }) {
+  const { t } = useI18n();
   const policy = run.reasoning_policy as { effective?: Record<string, unknown>; adjustments?: Array<Record<string, unknown>> } | undefined;
   const criteria = Array.isArray(run.task_contract?.success_criteria) ? run.task_contract.success_criteria as Array<Record<string, unknown>> : [];
   if (!policy?.effective && !criteria.length && !run.terminal_reason) return null;
   return <div className="reasoning-audit-grid">
-    {policy?.effective && <div><strong>生效策略</strong><span>{String(policy.effective.reasoning_effort ?? 'balanced')} · {String(policy.effective.planning_strategy ?? 'adaptive')} · {String(policy.effective.execution_mode ?? 'request_approval')}</span></div>}
-    <div><strong>状态版本</strong><span>State {run.state_version ?? 0} · Plan {String(run.plan_graph?.version ?? 1)}</span></div>
+    {policy?.effective && <div><strong>{t('生效策略')}</strong><span>{String(policy.effective.reasoning_effort ?? 'balanced')} · {String(policy.effective.planning_strategy ?? 'adaptive')} · {String(policy.effective.execution_mode ?? 'request_approval')}</span></div>}
+    <div><strong>{t('状态版本')}</strong><span>State {run.state_version ?? 0} · Plan {String(run.plan_graph?.version ?? 1)}</span></div>
     {criteria.map((criterion) => <div key={String(criterion.id)}><strong>{String(criterion.description)}</strong><span>{String(criterion.status ?? 'pending')}</span></div>)}
-    {policy?.adjustments?.map((adjustment, index) => <div key={`adjust-${index}`}><strong>策略调整</strong><span>{String(adjustment.reason ?? adjustment.rule)}</span></div>)}
-    {run.terminal_reason && <div><strong>终态原因</strong><span>{String(run.terminal_reason.reason ?? run.status)}</span></div>}
-    {(run.sandbox_jobs ?? []).map((job) => <div key={job.id}><strong>Sandbox · {job.status}</strong><span>{job.runtime_name ?? job.executor} · {job.image_digest ?? String(job.runtime_profile.image ?? '未记录镜像')} · {job.output_artifact_ids.length} artifacts{job.exit_reason ? ` · ${job.exit_reason}` : ''}</span>{(job.stdout_summary || job.stderr_summary) && <details><summary>截断日志</summary><pre>{job.stderr_summary || job.stdout_summary}</pre></details>}</div>)}
+    {policy?.adjustments?.map((adjustment, index) => <div key={`adjust-${index}`}><strong>{t('策略调整')}</strong><span>{String(adjustment.reason ?? adjustment.rule)}</span></div>)}
+    {run.terminal_reason && <div><strong>{t('终态原因')}</strong><span>{String(run.terminal_reason.reason ?? run.status)}</span></div>}
+    {(run.sandbox_jobs ?? []).map((job) => <div key={job.id}><strong>Sandbox · {job.status}</strong><span>{job.runtime_name ?? job.executor} · {job.image_digest ?? String(job.runtime_profile.image ?? t('未记录镜像'))} · {job.output_artifact_ids.length} artifacts{job.exit_reason ? ` · ${job.exit_reason}` : ''}</span>{(job.stdout_summary || job.stderr_summary) && <details><summary>{t('截断日志')}</summary><pre>{job.stderr_summary || job.stdout_summary}</pre></details>}</div>)}
   </div>;
 }
 

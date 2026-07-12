@@ -479,6 +479,11 @@ describe('App', () => {
     expect(screen.getByRole('button', { name: 'Tools' })).toBeInTheDocument();
     expect(screen.getByText('Choose the interface language')).toBeInTheDocument();
     expect(document.documentElement.lang).toBe('en');
+    await userEvent.click(screen.getByRole('button', { name: 'Close settings' }));
+    await userEvent.click(screen.getByRole('button', { name: /^Usage/ }));
+    expect(screen.getByRole('dialog', { name: 'Usage' })).toBeInTheDocument();
+    expect(await screen.findByText('Total tokens')).toBeInTheDocument();
+    expect(screen.getByText('Token reporting coverage 100%')).toBeInTheDocument();
   });
 
   it('switches between system, dark, and light themes', async () => {

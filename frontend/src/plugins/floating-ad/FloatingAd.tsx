@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useI18n } from '../../i18n';
 import './floating-ad.css';
 
 export type FloatingAdProps = {
@@ -19,6 +20,7 @@ function wasDismissed(id: string) {
 }
 
 export function FloatingAd({ id, imageSrc, imageAlt, href }: FloatingAdProps) {
+  const { t } = useI18n();
   const [visible, setVisible] = useState(() => !wasDismissed(id));
 
   if (!visible) return null;
@@ -35,9 +37,9 @@ export function FloatingAd({ id, imageSrc, imageAlt, href }: FloatingAdProps) {
   }
 
   return (
-    <aside className="floating-ad" aria-label="推广内容">
-      <span className="floating-ad__label">广告</span>
-      <button className="floating-ad__close" type="button" onClick={dismiss} aria-label="关闭广告" title="关闭广告">
+    <aside className="floating-ad" aria-label={t('推广内容')}>
+      <span className="floating-ad__label">{t('广告')}</span>
+      <button className="floating-ad__close" type="button" onClick={dismiss} aria-label={t('关闭广告')} title={t('关闭广告')}>
         <span aria-hidden="true">×</span>
       </button>
       {href ? <a href={href} target="_blank" rel="noreferrer">{poster}</a> : poster}

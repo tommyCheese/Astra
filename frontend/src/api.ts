@@ -6,6 +6,19 @@ export class AstraApiError extends Error {
   constructor(public readonly payload: ApiErrorPayload) { super(payload.message); }
 }
 
+async function fetchWithTimeout(input: RequestInfo | URL, init: RequestInit = {}, timeoutMs = 15000): Promise<Response> {
+  const controller = new AbortController();
+  const timer = window.setTimeout(() => controller.abort(), timeoutMs);
+  const abort = () => controller.abort();
+  init.signal?.addEventListener('abort', abort, { once: true });
+  try {
+    return await fetch(input, { ...init, signal: controller.signal });
+  } finally {
+    window.clearTimeout(timer);
+    init.signal?.removeEventListener('abort', abort);
+  }
+}
+
 async function responseError(response: Response): Promise<AstraApiError> {
   try {
     const body = await response.json() as { error?: ApiErrorPayload };
@@ -88,7 +101,7 @@ export async function cancelRuntimeBuild(buildId: string): Promise<RuntimeProfil
 }
 
 export async function createRun(goal: string, taskId?: string, reasoningPolicy?: ReasoningPolicyRequest, model?: RunModelConfig): Promise<{ run_id: string; task_id: string; status: string }> {
-  const response = await fetch('/api/runs', {
+  const response = await fetchWithTimeout('/api/runs', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ goal, task_id: taskId, reasoning_policy: reasoningPolicy, model }),
@@ -133,7 +146,7 @@ export function streamRunEvents(runId: string, onEvent: (event: RunStreamEvent) 
 }
 
 export async function resumeRun(runId: string, content: string, continuationToken?: string): Promise<{ run_id: string; task_id: string; status: string }> {
-  const response = await fetch(`/api/runs/${runId}/resume`, {
+  const response = await fetchWithTimeout(`/api/runs/${runId}/resume`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ content, continuation_token: continuationToken }),

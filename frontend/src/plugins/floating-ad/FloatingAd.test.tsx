@@ -1,7 +1,11 @@
 import { cleanup, render, screen } from '@testing-library/react';
+import type { ComponentProps } from 'react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { FloatingAd } from './FloatingAd';
+import { I18nProvider } from '../../i18n';
+
+const renderAd = (props: ComponentProps<typeof FloatingAd>) => render(<I18nProvider><FloatingAd {...props} /></I18nProvider>);
 
 describe('FloatingAd', () => {
   beforeEach(() => {
@@ -20,14 +24,14 @@ describe('FloatingAd', () => {
 
   it('can be permanently dismissed by the user', async () => {
     const props = { id: 'campaign', imageSrc: '/poster.png', imageAlt: '活动海报' };
-    const { unmount } = render(<FloatingAd {...props} />);
+    const { unmount } = renderAd(props);
 
     expect(screen.getByRole('complementary', { name: '推广内容' })).toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: '关闭广告' }));
     expect(screen.queryByRole('complementary', { name: '推广内容' })).not.toBeInTheDocument();
 
     unmount();
-    render(<FloatingAd {...props} />);
+    renderAd(props);
     expect(screen.queryByRole('complementary', { name: '推广内容' })).not.toBeInTheDocument();
   });
 });
