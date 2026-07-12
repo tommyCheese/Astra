@@ -1,0 +1,1 @@
+{"name":"astra-data-viz-runtime","private":true,"version":"0.1.0","dependencies":{"echarts":"6.1.0","playwright":"1.61.1"}}

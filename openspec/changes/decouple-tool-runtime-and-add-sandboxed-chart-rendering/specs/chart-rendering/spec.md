@@ -30,7 +30,7 @@
 - **THEN** 系统选择 ECharts runtime，且不得回退为未隔离的进程内浏览器渲染
 
 ### Requirement: Static chart outputs
-Matplotlib、Seaborn 和 ECharts backend SHALL 根据能力支持 PNG 和 SVG 输出，并记录宽度、高度、MIME、checksum、backend、依赖版本和 runtime image digest。
+Matplotlib、Seaborn 和 ECharts backend SHALL 根据能力支持 PNG 和 SVG 输出，并记录宽度、高度、MIME、checksum、backend、依赖版本、Provider、Template ID 和 lock digest。
 
 #### Scenario: Render a PNG with Chinese labels
 - **WHEN** 请求包含中文标题和轴标签

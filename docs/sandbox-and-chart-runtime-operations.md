@@ -1,26 +1,19 @@
-# Astra 沙箱与图表 Runtime 运维指南
+# E2B 沙箱与图表 Runtime 运维指南
 
-## 本地 Docker
+## 配置
 
-绘图 capability 默认关闭。构建两个固定版本 runtime 后，通过 `SANDBOX_ENABLED=true` 启用，并设置 `SANDBOX_EXECUTOR=docker`、`SANDBOX_PYTHON_IMAGE` 与 `SANDBOX_ECHARTS_IMAGE`。本地构建命令：
+绘图 capability 默认关闭。先从 `runtimes/data-viz` 构建版本化 E2B Template，随后配置 `SANDBOX_ENABLED=true`、`SANDBOX_PROVIDER=e2b`、`E2B_API_KEY`、`E2B_TEMPLATE_ID` 与 `E2B_TEMPLATE_LOCK_DIGEST`。API key 只放入服务端 secret store，不得进入数据库、日志、Artifact provenance 或前端配置。
 
-```bash
-docker build -t astra-runtime-python:0.1.0 runtimes/python
-docker build -t astra-runtime-echarts:0.1.0 runtimes/echarts
-```
+本方案在 Linux 与 macOS 使用相同远程 Provider，不依赖本机 Docker、虚拟化框架或操作系统特定沙箱。启动时若 key 或 Template ID 缺失，`chart.render` 不进入模型上下文。
 
-生产发布不得只使用可变 tag。构建和扫描后必须换成 registry 返回的不可变 digest并保存 SBOM。运行期间禁止安装依赖和访问公网。
+## Template 发布
 
-## Linux 与 gVisor
+Python 使用 `pyproject.toml` + `uv.lock`，Node 使用 `package.json` + `package-lock.json`。依赖变更必须更新 lock、运行 contract/security tests、生成 SBOM 并构建新 Template；验证后再切换 Template ID 与 lock digest。普通 Job 禁止运行时安装依赖。
 
-宿主机注册 `runsc` 后设置 `SANDBOX_REQUIRE_GVISOR=true` 和 `SANDBOX_OCI_RUNTIME=runsc`。要求 gVisor 时不得静默降级到 `runc`。部署检查应验证 Docker daemon、`runsc`、runtime image、Artifact Store 空间与清理任务。
+## 运行安全
 
-## 威胁模型与控制
+每个 Job 创建一次性 Sandbox，固定 `secure=true`、`allow_internet_access=false` 和有限 TTL。只上传声明式输入到 `/input`，只从 `/output` 收集文件；结束、超时或异常路径都调用 terminate。Artifact collector 继续执行路径、symlink、MIME、数量、大小、checksum 与主动内容检查。
 
-主要威胁包括恶意数据、解析器漏洞、路径穿越、symlink 逃逸、资源耗尽、SVG/HTML 主动内容、容器逃逸和 Artifact 越权。安全边界是一次性 OCI sandbox，而不是 Python `venv` 或 import 过滤。
+## 监控与事故处置
 
-强制控制包括：默认无网络、非 root、只读 rootfs、drop all capabilities、`no-new-privileges`、seccomp、只读输入、唯一可写输出，以及 wall time、CPU、内存、PID、nofile、文件数量和总字节配额。API 只通过 Artifact ID 交付已验证内容，不返回 storage key。
-
-## 发布、漏洞响应与事故处置
-
-每次 runtime 更新必须重新锁定依赖、生成 SBOM、扫描漏洞、执行 image contract 与恶意输入测试，再发布新 digest。发现高危漏洞或疑似逃逸时，立即关闭 sandbox capability、隔离 worker、保存脱敏事件与 image digest、轮换凭据，并检查 Artifact checksum/provenance。stdout/stderr 必须截断脱敏，禁止直接发送给模型或用户。
+监控创建/排队/执行时长、成功率、timeout/OOM、Artifact 字节数、Template ID、lock digest 与 Provider 指标。E2B 不可用时关闭 capability 并返回稳定 `sandbox_unavailable`，不在 API 进程中降级执行。疑似 key 泄露时立即关闭 capability、撤销并轮换 key、检查 Sandbox 创建审计与配额；运行时漏洞则冻结 Template、保留脱敏事件和 Artifact provenance，再发布修复版本。

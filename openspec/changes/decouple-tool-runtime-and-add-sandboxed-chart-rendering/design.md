@@ -10,8 +10,8 @@
 
 - 让 Agent Kernel 与 Web 工具名称、结果格式、Evidence Pack 和验证规则解耦。
 - 通过 capability、permission、risk、execution backend 和 policy 选择工具，而不是维护硬编码名称列表。
-- 建立与具体容器平台解耦的 `SandboxExecutor` 协议和可审计 `SandboxJob` 生命周期。
-- 以一次性 OCI 容器提供默认断网、非 root、只读根文件系统、受限挂载和资源配额的执行环境。
+- 建立与具体供应商解耦的 `SandboxProvider` 协议和可审计 `SandboxJob` 生命周期。
+- 以一次性 E2B Firecracker microVM 提供默认断网、隔离文件系统、有限 TTL 和资源观测能力。
 - 提供声明式 `chart.render`，统一支持 Matplotlib、Seaborn 和 ECharts。
 - 将大体积或可展示输出保存为 Artifact，并以 `ArtifactRef` 进入 Tool observation、最终答案和 UI。
 - 保持 `web_search`、`web_fetch` 的现有名称、审计和通用问答能力兼容。
@@ -22,7 +22,7 @@
 - 不允许沙箱直接访问公网；外部数据必须先由授权工具转为输入 Artifact。
 - 不在本 change 中建设任意用户插件市场或第三方 runtime image 上传。
 - 不保证第一版支持所有 Matplotlib、Seaborn 或 ECharts 原生参数；只支持声明式 schema 中稳定、可验证的子集。
-- 不在第一版采用 Firecracker；仅保留 executor 可替换边界。
+- 不在第一版建设自托管虚拟化集群；仅保留 Provider 可替换边界。
 
 ## Decisions
 
@@ -42,26 +42,27 @@
 
 工具执行接口接收由 Agent Runtime 构造的 `ToolExecutionContext`，至少包含 `run_id`、`tool_call_id`、可选 `step_id`、`trace_id`、Artifact service 和 Sandbox service。工具不得通过全局数据库 session 或进程级可变状态获取这些关联。现有只读 Web 工具在迁移期可忽略 context，但所有产生 SandboxJob 或 Artifact 的工具必须使用它，以保持 `Run → ToolCall → SandboxJob → Artifact` 的完整 provenance。
 
-### 3. 使用 SandboxJob + SandboxExecutor，而非进程内执行
+### 3. 使用 SandboxJob + SandboxProvider，而非进程内执行
 
-API/Agent 进程创建 `SandboxJob`，记录 run、tool call、runtime profile、输入 Artifact、资源限制、状态、timestamps、exit reason 和输出 Artifact。Sandbox Supervisor 通过 `SandboxExecutor` 执行 Job。
+API/Agent 进程创建 `SandboxJob`，记录 run、tool call、runtime profile、输入 Artifact、资源限制、状态、timestamps、exit reason 和输出 Artifact。Sandbox Supervisor 通过 `SandboxProvider` 执行 Job。
 
-首个 executor 是 OCI Container Executor：
+首个生产 Provider 是 E2B：本地开发和生产均调用远程 Firecracker microVM，不要求宿主机安装 Docker 或特定虚拟化能力。每个 Job 创建一次性 Sandbox，上传声明式输入，仅下载 `/output`，结束、超时或异常后都必须 terminate。Provider 接口不暴露 E2B SDK 对象，未来可用相同契约接入其他远程或自托管实现。
 
-- 本地开发使用 Docker Desktop/Docker Engine。
-- Linux 生产允许配置 gVisor `runsc` 作为 OCI runtime。
-- executor 接口不暴露 Docker 特有对象，以便未来替换为 containerd、Kubernetes Job 或 Firecracker。
-- 每个 Job 使用一次性容器，执行结束或超时后销毁。
-
-生产策略默认：无网络、非 root、只读 rootfs、drop all capabilities、no-new-privileges、seccomp、独立临时目录、只读输入挂载、唯一可写输出挂载、禁止宿主 socket、限制 CPU/内存/PID/wall time/文件数/输出字节数。
+生产策略默认：`secure=true`、`allow_internet_access=false`、有限 TTL、固定 Template、隔离文件系统、wall time/输出文件数/输出字节限制和资源指标采集。
 
 仅依靠 `venv` 或 Python AST/import 过滤无法隔离文件系统、子进程和内核资源，因此不作为安全边界。
 
-### 4. Python 与 ECharts 使用独立、固定版本的 runtime image
+#### 2026-07 E2B Provider 决策
 
-`astra-runtime-python` 包含固定 Python、NumPy、Pandas、SciPy、Matplotlib、Seaborn、Pillow、PyArrow、中文字体和 Astra runtime SDK，并强制 Matplotlib `Agg` backend。`astra-runtime-echarts` 包含固定 Node.js、ECharts 与 Headless Chromium。
+实现阶段经过托管 Agent Sandbox、自托管 Firecracker、gVisor、Daytona、Modal 和 Cloudflare Sandbox 对比后，首个生产 Provider 改为 E2B。抽象重命名为 `SandboxProvider`，业务层只依赖 create、upload、execute、collect、metrics 和 terminate；测试使用 Mock Provider。E2B 以 Firecracker microVM 执行工作负载，Astra 创建 Sandbox 时必须使用固定 Template、`secure=true`、`allow_internet_access=false` 和有限 TTL。
 
-Job 记录不可变 image digest、runtime 版本、依赖版本、locale、timezone 和随机种子。运行时禁止联网安装依赖。两个 image 共享 Sandbox Job 和 Artifact 协议，但保持依赖与攻击面隔离。
+先前 OCI/Docker/gVisor executor 不再属于第一版实现，也不作为本地前置条件。未来 BYOC 或自托管实现必须作为新的 Provider 接入，不得改变 Tool、SandboxJob 或 Artifact 契约。
+
+### 4. Python 与 ECharts 使用版本化 E2B Template
+
+`astra-data-viz` Template 包含 Python 3.12、uv、NumPy、Pandas、SciPy、Matplotlib、Seaborn、Pillow、PyArrow、中文字体、Node.js、ECharts、Headless Chromium 和 Astra renderer，并强制 Matplotlib `Agg` backend。
+
+Job 记录 E2B template ID、uv/npm lock digest、runtime 版本、依赖版本、locale、timezone 和随机种子。正常 Job 禁止联网安装依赖；新增依赖必须生成新的 lock 并构建派生 Template，以 lock digest 缓存。
 
 ### 5. 暴露声明式 chart.render，而非三个库级工具
 
@@ -85,23 +86,23 @@ Job 状态为 `queued → preparing → running → collecting → succeeded|fai
 
 ## Risks / Trade-offs
 
-- [Risk] Docker socket 等同高权限，Supervisor 被攻破可能影响宿主机。→ 将 Docker 访问限制在独立 worker；生产使用受控 daemon、gVisor 和最小权限部署，不向 API 容器挂载 socket。
-- [Risk] macOS Docker 与 Linux/gVisor 行为存在差异。→ 建立 Linux CI 和生产 runtime contract tests，并按 image digest 验证。
+- [Risk] E2B API key 泄露会允许创建远程 Sandbox。→ key 只进入服务端 secret store，按环境轮换并限制配额；日志与 Job metadata 禁止记录 key。
+- [Risk] 云端网络或供应商故障使绘图能力不可用。→ capability 探测时关闭工具暴露，使用稳定错误码，并保留 Provider 边界以支持后续替换。
 - [Risk] Headless Chromium 增加镜像体积与漏洞面。→ 与 Python runtime 分离、固定版本、定期扫描，仅在 ECharts job 中启动。
 - [Risk] 声明式 schema 限制高级绘图表达能力。→ 第一版优先安全与确定性，保留版本化 schema 和后续受审批高级计算能力。
 - [Risk] Web 解耦可能改变现有证据验证结果。→ 保留 Web processor 的输出契约，增加 legacy/general 双路径回归测试后再删除旧路径。
 - [Risk] Artifact 文件导致磁盘或对象存储膨胀。→ 强制单 Job 配额、retention policy、按 run 清理和内容 checksum。
 - [Risk] SVG/HTML 可携带脚本或外链。→ SVG 清洗或图片化；HTML 仅由受控模板生成，并使用隔离 origin、iframe sandbox 和 CSP。
-- [Trade-off] 每次启动一次性容器增加延迟。→ 使用预拉取 image、受控 warm worker/容器池优化，但不跨 Job 复用可写文件系统。
+- [Trade-off] 每次创建一次性 microVM 增加延迟与云端成本。→ 使用 E2B Template 快照和受控生命周期优化，但不跨 Job 复用可写文件系统。
 
 ## Migration Plan
 
 1. 扩展 Tool manifest 和 Router policy，同时提供旧字段兼容映射；Web 工具先迁移且保持 API 行为不变。
 2. 引入通用 Tool result envelope、processor/validator 注册机制，将 Web 后处理从 AgentLoop 移出，并运行 legacy/general 对照测试。
 3. 增加 Artifact 数据迁移和 storage service；先支持本地存储，再接入前端静态预览。
-4. 增加 SandboxJob 数据模型、Supervisor、OCI executor、Python/ECharts image 与 runtime contract tests；默认功能开关关闭。
-5. 实现 `chart.render` 和 Artifact 展示，在本地 Docker 环境启用端到端测试。
-6. 在 Linux staging 使用 gVisor 验证权限、资源耗尽、网络隔离和恶意输出场景，再逐步启用生产功能开关。
+4. 增加 SandboxJob、Supervisor、E2B Provider、Mock Provider 和 `astra-data-viz` Template contract tests；默认功能开关关闭。
+5. 实现 `chart.render` 和 Artifact 展示，在具备 E2B 凭证的测试环境启用端到端测试。
+6. 在 staging 验证 TTL、断网、资源指标、异常终止和恶意输出场景，再逐步启用生产功能开关。
 7. 通用工具路径稳定后删除 `_execute_web_query` fallback 和 Web-only 配置命名。
 
 回滚时关闭 chart/sandbox capability，保留数据库记录和 Artifact 只读访问；Web 工具继续走已验证的兼容路径。数据库迁移必须允许旧服务忽略新增 nullable 字段。
@@ -110,4 +111,4 @@ Job 状态为 `queued → preparing → running → collecting → succeeded|fai
 
 - 生产首个 Artifact Store 使用本地持久卷还是对象存储，由部署环境在实现前确定；接口不依赖具体选择。
 - ECharts 交互式 HTML 是否在第一阶段对所有部署启用，还是仅在具备独立 Artifact origin 时启用。
-- gVisor 不可用的生产环境是否允许退化到标准 OCI runtime；默认建议拒绝 sandboxed capability，而不是静默降低隔离等级。
+- 是否增加第二个自托管 Provider 作为 E2B 故障或合规场景的替代实现；第一版不做静默降级。

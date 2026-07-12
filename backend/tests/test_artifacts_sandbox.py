@@ -3,7 +3,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from app.artifacts import ArtifactCollector, LocalArtifactStore, prune_store
-from app.sandbox.runtime import SandboxError, SandboxExecutor, SandboxRequest, SandboxResult, SandboxSupervisor, sanitize_log, transition
+from app.sandbox.runtime import SandboxError, SandboxHandle, SandboxProvider, SandboxRequest, SandboxSupervisor, sanitize_log, transition
 from app.tools.base import ToolExecutionError
 
 
@@ -62,46 +62,36 @@ def test_sandbox_log_is_redacted_and_truncated():
     assert "/Users" not in output
 
 
-class TimeoutExecutor(SandboxExecutor):
-    cleaned = False
+class TimeoutProvider(SandboxProvider):
+    name = "mock"
     terminated = False
 
     async def available(self): return True
-    async def prepare(self, request): return request
-    async def start(self, prepared): return object()
-    async def wait(self, handle, timeout): raise asyncio.TimeoutError
+    async def create(self, request): return SandboxHandle("test", self.name)
+    async def upload(self, handle, local_path, remote_path): return None
+    async def execute(self, handle, command, timeout, environment): raise asyncio.TimeoutError
+    async def download_dir(self, handle, remote_dir, local_dir): return []
+    async def metrics(self, handle): return {}
     async def terminate(self, handle): self.terminated = True
-    async def collect(self, handle): return SandboxResult(0)
-    async def cleanup(self, handle): self.cleaned = True
 
 
 async def test_supervisor_terminates_and_cleans_timeout(tmp_path):
-    executor = TimeoutExecutor()
-    request = SandboxRequest("image@sha256:test", ["render"], tmp_path, tmp_path / "out")
+    provider = TimeoutProvider()
+    request = SandboxRequest("template-test", ["render"], tmp_path, tmp_path / "out")
     with pytest.raises(SandboxError) as exc_info:
-        await SandboxSupervisor(executor).run(request)
+        await SandboxSupervisor(provider).run(request)
     assert exc_info.value.category == "sandbox_timeout"
-    assert executor.terminated and executor.cleaned
+    assert provider.terminated
 
 
-class CrashExecutor(TimeoutExecutor):
-    async def wait(self, handle, timeout):
+class CrashProvider(TimeoutProvider):
+    async def execute(self, handle, command, timeout, environment):
         raise RuntimeError("worker crashed")
 
 
 async def test_supervisor_always_cleans_worker_crash(tmp_path):
-    executor = CrashExecutor()
-    request = SandboxRequest("image", ["render"], tmp_path, tmp_path / "out")
+    provider = CrashProvider()
+    request = SandboxRequest("template", ["render"], tmp_path, tmp_path / "out")
     with pytest.raises(RuntimeError):
-        await SandboxSupervisor(executor).run(request)
-    assert executor.cleaned
-
-
-async def test_executor_collect_and_cleanup_are_repeatable(tmp_path):
-    executor = TimeoutExecutor()
-    handle = object()
-    assert (await executor.collect(handle)).exit_code == 0
-    assert (await executor.collect(handle)).exit_code == 0
-    await executor.cleanup(handle)
-    await executor.cleanup(handle)
-    assert executor.cleaned
+        await SandboxSupervisor(provider).run(request)
+    assert provider.terminated

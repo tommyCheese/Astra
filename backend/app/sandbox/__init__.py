@@ -1,3 +1,3 @@
-from app.sandbox.runtime import SandboxError, SandboxExecutor, SandboxSupervisor
+from app.sandbox.runtime import SandboxError, SandboxProvider, SandboxSupervisor
 
-__all__ = ["SandboxError", "SandboxExecutor", "SandboxSupervisor"]
+__all__ = ["SandboxError", "SandboxProvider", "SandboxSupervisor"]

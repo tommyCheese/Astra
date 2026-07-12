@@ -38,15 +38,13 @@ class Settings(BaseSettings):
     artifact_retention_days: int = 30
     sandbox_enabled: bool = False
     sandbox_skip_availability_check: bool = False
-    sandbox_executor: str = "docker"
-    sandbox_oci_runtime: str = "runc"
-    sandbox_require_gvisor: bool = False
-    sandbox_python_image: str = "astra-runtime-python:0.1.0"
-    sandbox_echarts_image: str = "astra-runtime-echarts:0.1.0"
+    sandbox_provider: str = "e2b"
+    e2b_api_key: str = ""
+    e2b_template_id: str = "astra-data-viz"
+    e2b_template_lock_digest: str = ""
+    e2b_secure: bool = True
+    e2b_allow_internet_access: bool = False
     sandbox_wall_time_seconds: int = 30
-    sandbox_memory_mb: int = 512
-    sandbox_cpus: float = 1.0
-    sandbox_pids: int = 64
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 

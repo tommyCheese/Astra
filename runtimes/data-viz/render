@@ -1,0 +1,7 @@
+#!/usr/bin/env sh
+set -eu
+backend="$(node -e 'console.log(JSON.parse(require("fs").readFileSync("/input/request.json","utf8")).backend)')"
+if [ "$backend" = "echarts" ]; then
+  exec node /opt/astra/runtime/echarts.mjs
+fi
+exec /opt/astra/runtime/.venv/bin/python /opt/astra/runtime/python.py

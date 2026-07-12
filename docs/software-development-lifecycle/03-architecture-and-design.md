@@ -12,7 +12,7 @@ Astra 架构应支持通用任务而不牺牲控制力：模型负责理解和�
 - `backend/app/api/`：HTTP 资源与输入输出协议。
 - `backend/app/runner/`：Run 编排、Agent loop、推理策略和模型适配。
 - `backend/app/tools/`：工具 manifest、注册、路由和实现。
-- `backend/app/sandbox/`：隔离任务生命周期与 OCI executor。
+- `backend/app/sandbox/`：隔离任务生命周期、供应商无关 Provider 与 E2B adapter。
 - `backend/app/artifacts.py`：Artifact 校验、存储和交付引用。
 - `backend/app/repositories/` 与 `db/`：事务和持久化。
 - `openspec/changes/`：需求、设计、规范场景和实施任务。
@@ -45,7 +45,7 @@ Astra 架构应支持通用任务而不牺牲控制力：模型负责理解和�
 
 `ToolSpec` 应声明输入输出 schema、capability、permission set、risk、side effect、execution backend、资源上限、超时、重试和 Artifact 行为。Tool Router 的顺序应保持确定性：注册 → enablement → schema → capability → permission/risk → budget → backend availability。
 
-网络读取、文件写入、代码执行和外部业务操作使用不同权限。要求 gVisor 等隔离时不可静默回退。输出目录必须防路径逃逸；Artifact 验证 MIME、内容、大小、数量、checksum 和 provenance。交互 HTML 使用隔离 origin 或严格 sandboxed iframe + CSP，不能继承主站 cookie 或访问父 DOM。
+网络读取、文件写入、沙箱计算和外部业务操作使用不同权限。E2B 不可用时不得静默回退到进程内执行。输出目录必须防路径逃逸；Artifact 验证 MIME、内容、大小、数量、checksum 和 provenance。交互 HTML 使用隔离 origin 或严格 sandboxed iframe + CSP，不能继承主站 cookie 或访问父 DOM。
 
 ## 7. 可靠性、性能与成本
 

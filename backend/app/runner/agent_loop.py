@@ -10,7 +10,7 @@ from app.schemas.agent import AgentObservation, FinalAnswer, VerificationReport
 from app.schemas.agent import AgentState, CriterionStatus, ReasoningPolicySnapshot, TerminalState
 from app.tools.base import CapabilityAvailability, ToolExecutionContext, ToolExecutionError, ToolRegistry
 from app.artifacts import ArtifactService, LocalArtifactStore
-from app.sandbox.oci import OCIContainerExecutor
+from app.sandbox.e2b_provider import build_sandbox_provider
 from app.sandbox.runtime import SandboxJobService, SandboxSupervisor
 from app.runner.adapters import ChartTaskAdapter, ProcessorRegistry, WebTaskAdapter
 from app.runner.reasoning import (
@@ -83,7 +83,7 @@ class ContextAssembler:
         run_id: str,
         goal: str,
         tool_registry: ToolRegistry,
-        sandbox_executor=None,
+        sandbox_provider=None,
         tool_router: Optional[ToolRouter] = None,
         observations: List[Dict[str, Any]],
         evidence_pack: Optional[Dict[str, Any]] = None,
@@ -221,15 +221,15 @@ class AgentLoop:
         *,
         model_client: ModelClient,
         tool_registry: ToolRegistry,
-        sandbox_executor=None,
+        sandbox_provider=None,
     ):
         self.settings = settings
         self.model_client = model_client
         self.tool_registry = tool_registry
-        self.sandbox_executor = sandbox_executor
+        self.sandbox_provider = sandbox_provider
         backends = {"in_process"}
         if settings.sandbox_enabled:
-            backends.add("sandbox.oci")
+            backends.add("sandbox.remote")
         self.router = ToolRouter(tool_registry, available_backends=backends)
         self.adapter = WebTaskAdapter()
         self.chart_adapter = ChartTaskAdapter()
@@ -249,8 +249,8 @@ class AgentLoop:
         memory_manager = MemoryManager(self.settings, repo, self.model_client)
         verifier = VerificationEngine()
         artifact_service = ArtifactService(repo, LocalArtifactStore(self.settings.artifact_store_path), max_files=self.settings.artifact_max_files, max_bytes=self.settings.artifact_max_bytes)
-        executor = self.sandbox_executor or OCIContainerExecutor(self.settings.sandbox_executor, require_gvisor=self.settings.sandbox_require_gvisor)
-        sandbox_service = SandboxJobService(repo, SandboxSupervisor(executor), artifact_service)
+        provider = self.sandbox_provider or build_sandbox_provider(self.settings)
+        sandbox_service = SandboxJobService(repo, SandboxSupervisor(provider), artifact_service)
         initial_run = await repo.require_run(run_id)
         policy_snapshot = ReasoningPolicySnapshot.model_validate(initial_run.reasoning_policy or {})
         policy = policy_snapshot.effective
