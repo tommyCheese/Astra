@@ -1,7 +1,7 @@
 import json
 import hashlib
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Awaitable, Callable, Dict, List, Optional
 
 from app.core.config import Settings
 from app.repositories.runs import RunRepository
@@ -90,7 +90,13 @@ class MemoryManager:
     ) -> List[Dict[str, Any]]:
         if not self.settings.agent_memory_write_enabled:
             return []
-        candidates = await self.model_client.extract_memory_candidates(goal, context)
+        try:
+            candidates = await self.model_client.extract_memory_candidates(goal, context)
+        except ModelOutputError as exc:
+            logger.warning("memory.extraction.skipped run_id=%s reason=%s", run_id, str(exc))
+            await self.repo.add_event(run_id, "memory.extraction_skipped", {"reason": "invalid_model_output"})
+            await self.repo.session.commit()
+            return []
         writes = []
         for candidate in candidates:
             memory = await self.repo.create_memory(
@@ -124,6 +130,20 @@ class VerificationEngine:
         ]
         notes = list(final_answer.verification_notes)
         status = "completed"
+        external_evidence_attempted = bool(
+            evidence_pack.get("external_evidence_attempted")
+            or evidence_pack.get("candidates")
+            or fetched_sources
+            or evidence_pack.get("failed_sources")
+        )
+        if not external_evidence_attempted:
+            return VerificationReport(
+                status=status,
+                source_count=0,
+                caveat_count=len(final_answer.caveats),
+                memory_references=final_answer.memory_references,
+                notes=list(dict.fromkeys(notes)),
+            )
         if not fetched_sources:
             status = "completed_with_warnings"
             notes.append("没有成功抓取到可用来源。")
@@ -145,7 +165,7 @@ class VerificationEngine:
             low_quality_sources=low_quality,
             failed_sources=evidence_pack.get("failed_sources", []),
             memory_references=final_answer.memory_references,
-            notes=notes,
+            notes=list(dict.fromkeys(notes)),
         )
 
 
@@ -171,6 +191,7 @@ class AgentLoop:
         repo: RunRepository,
         run_id: str,
         goal: str,
+        on_answer_delta: Optional[Callable[[str], Awaitable[None]]] = None,
     ) -> Dict[str, Any]:
         assembler = ContextAssembler(repo)
         memory_manager = MemoryManager(self.settings, repo, self.model_client)
@@ -189,6 +210,7 @@ class AgentLoop:
         final_turn_id: Optional[str] = None
         terminal_override: Optional[str] = None
         terminal_summary: Optional[str] = None
+        streamed_final_answer: Optional[FinalAnswer] = None
 
         for turn_index in range(1, self.settings.agent_max_turns + 1):
             context = await assembler.assemble(
@@ -198,9 +220,15 @@ class AgentLoop:
                 observations=observations,
             )
             try:
-                decision = await self.model_client.decide(goal, context)
+                decision, candidate_answer = await self.model_client.decide_with_answer(
+                    goal,
+                    context,
+                    on_delta=on_answer_delta,
+                )
             except ModelOutputError as exc:
                 logger.exception("agent.decision.invalid run_id=%s turn=%s", run_id, turn_index)
+                if on_answer_delta:
+                    await on_answer_delta("\0")
                 decision = None
                 observation = AgentObservation(
                     kind="model_error",
@@ -262,6 +290,7 @@ class AgentLoop:
 
             if decision.decision_type == "finalize":
                 final_turn_id = turn.id
+                streamed_final_answer = candidate_answer
                 await repo.update_agent_turn(turn.id, status="completed")
                 break
 
@@ -434,6 +463,7 @@ class AgentLoop:
             dedupe,
             search_warnings,
         )
+        evidence_pack["external_evidence_attempted"] = bool(tool_call_count or failed_action_counts)
         artifact = await repo.create_artifact(
             run_id,
             "evidence_pack",
@@ -457,8 +487,10 @@ class AgentLoop:
                 caveats=["运行在满足全部成功条件前停止。"],
                 verification_notes=["该响应表示运行状态，不表示任务成功完成。"],
             )
+        elif streamed_final_answer is not None:
+            final_answer = streamed_final_answer
         else:
-            final_answer = await self.model_client.finalize(goal, final_context)
+            final_answer = await self.model_client.finalize(goal, final_context, on_delta=on_answer_delta)
         memory_writes = await memory_manager.write_candidates(
             run_id=run_id,
             goal=goal,

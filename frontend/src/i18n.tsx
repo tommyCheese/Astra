@@ -25,6 +25,7 @@ const english: Record<string, string> = {
   '请求兼容性': 'API compatibility', '自动检测': 'Auto detect', '未验证': 'Not verified', '连接正常': 'Connected', '缺少连接信息': 'Connection details required', '配置已更新': 'Configuration updated',
   '测试连接': 'Test connection', '保存配置': 'Save configuration', '未配置模型': 'No model configured', '请先在模型管理中启用供应商并配置模型': 'Enable a provider and configure models in Model providers first.',
   '管理 Agent 可用工具及其调用策略。': 'Manage the tools available to the agent and how they are invoked.',
+  '凭据保存在当前浏览器本地，不会写入运行记录': 'Credentials are stored in this browser only and are never written to run history.',
   '搜索公开网页并生成候选来源': 'Search the public web for candidate sources', '自适应提取页面主要内容': 'Adaptively extract primary page content',
   '文件分析': 'File analysis', '解析上传的文档、代码与数据': 'Parse uploaded documents, code, and data', '图像理解': 'Image understanding', '识别并分析图片内容': 'Understand and analyze images',
   '已启用': 'Enabled', '工具调用确认': 'Tool confirmation', '工具可能修改数据、产生费用或影响外部系统时请求确认': 'Ask before tools modify data, incur costs, or affect external systems',

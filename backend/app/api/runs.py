@@ -142,12 +142,14 @@ async def stream_run_events(
                         "created_at": event.created_at.isoformat(),
                     }
                     yield f"id: {event.id}\ndata: {json.dumps(payload)}\n\n"
+                    if event.type == "answer.delta":
+                        await asyncio.sleep(0.008)
                 run = await stream_repo.get_run(run_id)
                 if run and run.status in {"completed", "completed_with_warnings", "failed", "blocked", "waiting_user"}:
                     if not events:
                         yield "data: {\"type\": \"heartbeat\", \"payload\": {}}\n\n"
                     break
-                await asyncio.sleep(0.25)
+                await asyncio.sleep(0.05)
         logger.info("sse.close run_id=%s last_id=%s", run_id, last_id)
 
     return StreamingResponse(event_stream(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})

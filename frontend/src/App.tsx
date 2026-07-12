@@ -165,21 +165,27 @@ function AppContent() {
       return;
     }
     let active = true;
+    let fallback: number | undefined;
+    let closeStream: () => void = () => {};
     const refreshRun = async () => {
       const next = normalizeRunView(await getRun(run.id));
       if (!active) return;
       setRun(next);
       rememberConversation(next);
-      if (terminalStatuses.has(next.status)) setStreamingAnswer('');
+      if (terminalStatuses.has(next.status)) {
+        setStreamingAnswer('');
+        closeStream();
+        if (fallback !== undefined) window.clearInterval(fallback);
+      }
     };
-    const close = streamRunEvents(run.id, (event) => {
+    closeStream = streamRunEvents(run.id, (event) => {
       if (event.type === 'answer.started') setStreamingAnswer('');
       if (event.type === 'answer.delta') setStreamingAnswer((value) => value + String(event.payload.delta ?? ''));
-      void refreshRun();
+      if (event.type !== 'answer.delta' && event.type !== 'heartbeat') void refreshRun();
     }, () => { void refreshRun(); });
-    const fallback = window.setInterval(() => { void refreshRun(); }, 3000);
-    return () => { active = false; close(); window.clearInterval(fallback); };
-  }, [run?.id, run?.status]);
+    fallback = window.setInterval(() => { void refreshRun(); }, 3000);
+    return () => { active = false; closeStream(); if (fallback !== undefined) window.clearInterval(fallback); };
+  }, [run?.id]);
 
   const messages = useMemo(() => {
     const currentMessages = buildConversation(run).map((message) => ({ ...message, id: `${run?.id ?? 'idle'}:${priorMessages.length}:${message.id}` }));
@@ -685,7 +691,7 @@ function ModelManagement({ providers, onChange }: { providers: ModelProviderConf
 
           <div className="provider-form">
             <label><span>{t('API 地址')}</span><small>{t('供应商 API 的基础地址')}</small><input value={provider.endpoint} onChange={(event) => updateProvider({ endpoint: event.target.value })} spellCheck={false} /></label>
-            <label><span>{t('API Key')}</span><small>{t('凭据仅在当前页面内存中暂存，接入后端后应写入加密密钥存储')}</small><div className="secret-input"><input type={showKey ? 'text' : 'password'} value={provider.apiKey} onChange={(event) => updateProvider({ apiKey: event.target.value })} placeholder={selectedProvider === 'google' ? 'AIza...' : 'sk-...'} autoComplete="off" /><button type="button" onClick={() => setShowKey((visible) => !visible)}>{t(showKey ? '隐藏' : '显示')}</button></div></label>
+            <label><span>{t('API Key')}</span><small>{t('凭据保存在当前浏览器本地，不会写入运行记录')}</small><div className="secret-input"><input type={showKey ? 'text' : 'password'} value={provider.apiKey} onChange={(event) => updateProvider({ apiKey: event.target.value })} placeholder={selectedProvider === 'google' ? 'AIza...' : 'sk-...'} autoComplete="off" /><button type="button" onClick={() => setShowKey((visible) => !visible)}>{t(showKey ? '隐藏' : '显示')}</button></div></label>
             <label><span>{t(selectedProvider === 'azure' ? 'API 版本' : '组织或项目 ID')}</span><small>{t(selectedProvider === 'azure' ? 'Azure OpenAI 请求使用的 API 版本' : '可选，用于供应商侧的项目隔离与计费')}</small><input value={provider.organization} onChange={(event) => updateProvider({ organization: event.target.value })} placeholder={selectedProvider === 'azure' ? '2025-04-01-preview' : t('可选')} /></label>
             <label><span>{t('可用模型 ID')}</span><small>{t('使用逗号分隔，模型选择器将使用这些标识')}</small><textarea value={provider.models} onChange={(event) => updateProvider({ models: event.target.value })} placeholder="model-id-1, model-id-2" /></label>
           </div>
@@ -821,24 +827,32 @@ function Icon({ name }: { name: IconName }) {
 
 function MessageBubble({ message, run }: { message: ChatMessage; run: RunView | null }) {
   const { t } = useI18n();
-  const role = message.role === 'user' ? 'user' : message.role === 'tool' ? 'tool' : 'assistant';
   const turnIndex = Number(message.metadata.turn_index ?? 0);
   const turn = run?.turns?.find((item) => item.turn_index === turnIndex);
+  const isFinalAnswer = message.role === 'assistant' && Boolean(run?.result) && (message.metadata?.decision_type === 'finalize' || message.id.endsWith('-answer') || message.id.endsWith('-terminal'));
+
+  if (message.role === 'user') {
+    return <article className="bubble user" id={`message-${message.id}`}><span className="bubble-label">{t('你')}</span><p>{message.content}</p></article>;
+  }
+
+  if (message.role === 'assistant' && message.status === 'streaming') {
+    return <article className="bubble assistant answer-message streaming-message" id={`message-${message.id}`}><span className="bubble-label">Astra</span><div className="answer-content"><p>{message.content}<span className="stream-cursor" aria-hidden="true" /></p></div></article>;
+  }
+
+  if (isFinalAnswer && run) {
+    return <article className="bubble assistant answer-message" id={`message-${message.id}`}><span className="bubble-label">Astra</span><FinalAnswer run={run} fallback={message.content} /></article>;
+  }
 
   return (
-    <article className={`bubble ${role}`} id={`message-${message.id}`}>
-      <span className="bubble-label">{t(labelForRole(message.role))}</span>
-      <p>{message.content}</p>
+    <article className="process-entry" id={`message-${message.id}`}>
       {turn?.selected_tool && <ToolEvent turn={turn} toolCalls={run?.tool_calls ?? []} />}
-      {turn?.reflection && (
-        <div className="reflection-card">
-          <strong>{t('反思')}</strong>
-          <span>{String(turn.reflection.summary ?? message.content)}</span>
-        </div>
-      )}
-      {message.role === 'assistant' && run?.result && <FinalAnswer run={run} />}
+      {!turn?.selected_tool && <ThinkingEvent title={turn?.reflection ? t('反思') : t('思考')} content={String(turn?.reflection?.summary ?? turn?.reasoning_summary ?? message.content)} />}
     </article>
   );
+}
+
+function ThinkingEvent({ title, content }: { title: string; content: string }) {
+  return <details className="process-details"><summary><Icon name="brain" /><span>{title}</span></summary><p>{content}</p></details>;
 }
 
 function ToolEvent({ turn, toolCalls }: { turn: AgentTurnView; toolCalls: ToolCallView[] }) {
@@ -848,32 +862,33 @@ function ToolEvent({ turn, toolCalls }: { turn: AgentTurnView; toolCalls: ToolCa
   const warnings = Array.isArray(output.warnings) ? output.warnings : [];
 
   return (
-    <div className="tool-event">
-      <div>
-        <strong>{turn.selected_tool}</strong>
-        <span>{call?.status ?? turn.status}{toolCallDetail(output)}</span>
-      </div>
+    <details className="process-details tool-event">
+      <summary><Icon name="tools" /><span>{turn.selected_tool}</span><small>{call?.status ?? turn.status}{toolCallDetail(output)}</small></summary>
+      {turn.reasoning_summary && <p>{turn.reasoning_summary}</p>}
       {url && <a href={url} target="_blank" rel="noreferrer">{url}</a>}
       {warnings.map((warning, index) => (
         <p key={index}>{String(warning)}</p>
       ))}
-    </div>
+    </details>
   );
 }
 
-function FinalAnswer({ run }: { run: RunView }) {
+function FinalAnswer({ run, fallback }: { run: RunView; fallback: string }) {
   const result = run.result;
   if (!result) {
     return null;
   }
   const report = run.verification_report ?? result.verification_report;
+  const findings = result.findings.filter((finding) => finding.text.trim() !== result.summary.trim());
+  const notes = [...new Set([...result.caveats, ...result.verification_notes, ...(report?.notes ?? [])])];
   return (
-    <div className="answer-block">
-      {result.findings.map((finding, index) => (
+    <div className="answer-content">
+      <p>{result.summary || fallback}</p>
+      {findings.map((finding, index) => (
         <p key={index}>{finding.text}</p>
       ))}
       {result.sources.length ? (
-        <div className="source-grid">
+        <details className="answer-support"><summary>{`来源 · ${result.sources.length}`}</summary><div className="source-grid">
           {result.sources.map((source) => {
             const quality = result.source_quality?.find((item) => item.url === source.url);
             return (
@@ -885,12 +900,13 @@ function FinalAnswer({ run }: { run: RunView }) {
               </a>
             );
           })}
-        </div>
+        </div></details>
       ) : null}
-      {[...result.caveats, ...result.verification_notes, ...(report?.notes ?? [])].map((item, index) => (
-        <p key={`note-${index}`} className="note">{item}</p>
-      ))}
-      <ReasoningAuditSummary run={run} />
+      {(notes.length > 0 || run.turns?.length || run.terminal_reason) && <details className="answer-support reasoning-audit"><summary>{'思考与验证'}</summary><div className="answer-support-content">
+        {run.turns?.map((turn) => <div key={turn.id}><strong>{turn.selected_tool ? `工具 · ${turn.selected_tool}` : turn.decision_type === 'reflect' ? '反思' : '思考'}</strong><span>{turn.reasoning_summary}</span></div>)}
+        {notes.map((item, index) => <div key={`note-${index}`}><strong>验证</strong><span>{item}</span></div>)}
+        <ReasoningAuditSummary run={run} />
+      </div></details>}
     </div>
   );
 }
@@ -899,13 +915,13 @@ function ReasoningAuditSummary({ run }: { run: RunView }) {
   const policy = run.reasoning_policy as { effective?: Record<string, unknown>; adjustments?: Array<Record<string, unknown>> } | undefined;
   const criteria = Array.isArray(run.task_contract?.success_criteria) ? run.task_contract.success_criteria as Array<Record<string, unknown>> : [];
   if (!policy?.effective && !criteria.length && !run.terminal_reason) return null;
-  return <details className="reasoning-audit"><summary>运行策略与验证</summary><div className="reasoning-audit-grid">
+  return <div className="reasoning-audit-grid">
     {policy?.effective && <div><strong>生效策略</strong><span>{String(policy.effective.reasoning_effort ?? 'balanced')} · {String(policy.effective.planning_strategy ?? 'adaptive')} · {String(policy.effective.execution_mode ?? 'request_approval')}</span></div>}
     <div><strong>状态版本</strong><span>State {run.state_version ?? 0} · Plan {String(run.plan_graph?.version ?? 1)}</span></div>
     {criteria.map((criterion) => <div key={String(criterion.id)}><strong>{String(criterion.description)}</strong><span>{String(criterion.status ?? 'pending')}</span></div>)}
     {policy?.adjustments?.map((adjustment, index) => <div key={`adjust-${index}`}><strong>策略调整</strong><span>{String(adjustment.reason ?? adjustment.rule)}</span></div>)}
     {run.terminal_reason && <div><strong>终态原因</strong><span>{String(run.terminal_reason.reason ?? run.status)}</span></div>}
-  </div></details>;
+  </div>;
 }
 
 function buildConversation(run: RunView | null): ChatMessage[] {

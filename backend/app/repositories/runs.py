@@ -703,14 +703,25 @@ def build_chat_messages(run: RunRecord) -> List[Dict[str, Any]]:
                 },
             }
         )
-    if run.status in {"blocked", "failed"} and run.result and not any(message["role"] == "assistant" for message in messages[1:]):
+    terminal_statuses = {"completed", "completed_with_warnings", "blocked", "failed"}
+    if run.status in terminal_statuses and run.result and not any(message["role"] == "assistant" for message in messages[1:]):
         messages.append(
             {
-                "id": f"{run.id}-terminal",
+                "id": f"{run.id}-terminal" if run.status in {"blocked", "failed"} else f"{run.id}-answer",
                 "role": "assistant",
-                "content": run.result.get("summary") or run.summary or "任务未能完成。",
+                "content": run.result.get("summary") or run.summary or "任务已完成。",
                 "status": run.status,
                 "metadata": {"error": run.result.get("error")},
+            }
+        )
+    if run.status == "waiting_user" and run.waiting_state and run.waiting_state.get("request"):
+        messages.append(
+            {
+                "id": f"{run.id}-waiting",
+                "role": "assistant",
+                "content": str(run.waiting_state["request"]),
+                "status": "waiting_user",
+                "metadata": {"waiting_state": run.waiting_state},
             }
         )
     return messages

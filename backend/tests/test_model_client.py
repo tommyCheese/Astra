@@ -5,11 +5,13 @@ from app.runner.model_client import (
     ModelConfigurationError,
     MockModelClient,
     build_model_client,
+    extract_partial_json_string,
     normalize_contract_payload,
+    normalize_final_answer_payload,
     normalize_plan_payload,
     parse_json_object,
 )
-from app.schemas.agent import PlanOutput, TaskContract
+from app.schemas.agent import FinalAnswer, PlanOutput, TaskContract
 
 
 async def test_mock_model_client_returns_structured_outputs():
@@ -99,6 +101,13 @@ def test_model_json_parser_accepts_fences_and_leading_text():
     assert parse_json_object('Here is the JSON: {"answer": "ok"}') == {"answer": "ok"}
 
 
+def test_partial_json_string_streams_only_complete_characters():
+    assert extract_partial_json_string('{"summary":"你好，世', "summary") == "你好，世"
+    assert extract_partial_json_string('{"summary":"line\\nnext', "summary") == "line\nnext"
+    assert extract_partial_json_string('{"summary":"A\\u4f6', "summary") == "A"
+    assert extract_partial_json_string('{"summary":"A\\u4f60', "summary") == "A你"
+
+
 def test_model_payload_normalization_accepts_shorthand_contract_and_plan():
     contract = TaskContract.model_validate(normalize_contract_payload({
         "original_goal": "你好",
@@ -116,3 +125,47 @@ def test_model_payload_normalization_accepts_shorthand_contract_and_plan():
     assert plan.steps[0].intent == "问候"
     assert plan.steps[0].success_criteria == ["用户收到回复"]
     assert plan.success_criteria == ["用户感到被回应"]
+
+
+def test_contract_goal_mismatch_falls_back_to_user_request():
+    contract = TaskContract.model_validate(normalize_contract_payload({
+        "original_goal": "开发一个用户登录功能",
+        "deliverables": ["登录 API"],
+        "ambiguity_status": "低",
+        "clarification_question": "是否支持 OAuth？",
+    }, "你好"))
+
+    assert contract.original_goal == "你好"
+    assert contract.deliverables == ["回复用户请求：你好"]
+    assert contract.ambiguity_status == "clear"
+    assert contract.clarification_question is None
+
+
+def test_final_answer_normalization_accepts_nullable_and_scalar_fields():
+    answer = FinalAnswer.model_validate(normalize_final_answer_payload({
+        "summary": "递归是自我调用。",
+        "findings": "递归会调用自身",
+        "sources": None,
+        "source_quality": None,
+        "caveats": "这是简化解释",
+        "verification_notes": "无需外部来源",
+    }))
+
+    assert answer.findings[0].text == "递归会调用自身"
+    assert answer.caveats == ["这是简化解释"]
+    assert answer.source_quality == []
+
+
+def test_final_answer_normalization_drops_scalar_record_placeholders():
+    answer = FinalAnswer.model_validate(normalize_final_answer_payload({
+        "summary": "完成",
+        "source_quality": ["N/A"],
+        "failed_sources": ["none"],
+        "conflicts": "none",
+        "memory_references": "none",
+    }))
+
+    assert answer.source_quality == []
+    assert answer.failed_sources == []
+    assert answer.conflicts == []
+    assert answer.memory_references == []

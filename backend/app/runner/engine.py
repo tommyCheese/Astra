@@ -4,6 +4,8 @@ import logging
 from typing import Any, Dict, List, Optional
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
+import httpx
+
 from app.core.config import Settings
 from app.db.session import SessionLocal
 from app.repositories.runs import RunRepository
@@ -11,7 +13,7 @@ from app.runner.agent_loop import AgentLoop
 from app.runner.model_client import ModelConfigurationError, ModelOutputError, build_model_client
 from app.schemas.agent import FinalAnswer, PlanOutput, PlanStep
 from app.schemas.agent import AgentState, ReasoningPolicySnapshot
-from app.runner.reasoning import build_plan_graph, normalize_contract, validate_contract
+from app.runner.reasoning import build_default_contract, build_plan_graph, normalize_contract, validate_contract
 from app.tools.base import ToolExecutionError, ToolRegistry
 from app.tools.web import build_web_registry
 from app.core.errors import run_error_from_exception
@@ -37,7 +39,7 @@ class RunEngine:
             repo = RunRepository(session)
             try:
                 await self._run_with_repo(repo, run_id)
-            except (ModelConfigurationError, ModelOutputError) as exc:
+            except (ModelConfigurationError, ModelOutputError, httpx.RequestError) as exc:
                 logger.exception("run.engine.model_error run_id=%s cause=%s", run_id, str(exc))
                 error = run_error_from_exception(exc)
                 await repo.add_event(run_id, "run.error", error)
@@ -80,25 +82,81 @@ class RunEngine:
             await repo.update_run_status(run_id, "executing")
             if self.settings.agent_use_loop and self.settings.agent_use_general_runtime:
                 agent_loop = AgentLoop(self.settings, model_client=self.model_client, tool_registry=self.tool_registry)
-                loop_result = await agent_loop.run(repo, run_id, goal)
+                await self._start_answer_stream(repo, run_id)
+                loop_result = await agent_loop.run(repo, run_id, goal, on_answer_delta=lambda delta: self._handle_answer_delta(repo, run_id, delta))
+                await self._complete_answer_stream(repo, run_id, loop_result["answer"].summary)
                 await repo.update_run_status(run_id, loop_result["status"], summary=loop_result["answer"].summary, result=loop_result["result"])
                 return
 
         logger.info("run.phase run_id=%s phase=planning", run_id)
         await repo.update_run_status(run_id, "planning")
-        contract = await self.model_client.contract(goal) if self.settings.agent_use_general_runtime else None
+        initial_snapshot = ReasoningPolicySnapshot.model_validate(run.reasoning_policy or {})
+        fast_start = (
+            initial_snapshot.effective.execution_mode.value != "plan_only"
+            and initial_snapshot.effective.planning_strategy.value in {"direct", "adaptive"}
+        )
+        if fast_start:
+            contract_result = build_default_contract(goal)
+            plan_result = PlanOutput(
+                steps=[PlanStep(title="处理请求", intent="根据任务需要直接回答或选择工具")],
+                success_criteria=["正确回应用户当前请求"],
+                risk_level="low",
+            )
+            logger.info("run.plan.fast_start run_id=%s strategy=%s", run_id, initial_snapshot.effective.planning_strategy.value)
+        elif self.settings.agent_use_general_runtime:
+            contract_result, plan_result = await asyncio.gather(
+                self.model_client.contract(goal),
+                self.model_client.plan(goal),
+                return_exceptions=True,
+            )
+        else:
+            contract_result, plan_result = None, await self.model_client.plan(goal)
+        if isinstance(contract_result, Exception):
+            if not isinstance(contract_result, ModelOutputError):
+                raise contract_result
+            logger.warning("run.contract.fallback run_id=%s reason=%s", run_id, str(contract_result))
+            contract = build_default_contract(goal)
+        else:
+            contract = contract_result
         if contract:
             contract = normalize_contract(contract, goal)
             try:
                 validate_contract(contract)
             except ValueError as exc:
                 raise ModelOutputError(f"Invalid task contract: {exc}") from exc
-        plan = await self.model_client.plan(goal)
+        if isinstance(plan_result, Exception):
+            if not isinstance(plan_result, ModelOutputError):
+                raise plan_result
+            logger.warning("run.plan.fallback run_id=%s reason=%s", run_id, str(plan_result))
+            plan = PlanOutput(
+                steps=[PlanStep(title="生成回复", intent="直接回应用户当前请求")],
+                success_criteria=["正确回应用户当前请求"],
+                risk_level="low",
+            )
+        else:
+            plan = plan_result
         logger.info("run.plan.ready run_id=%s steps=%s tools=%s", run_id, len(plan.steps), len(plan.required_tools))
         await self._persist_plan(repo, run_id, plan)
         run = await repo.require_run(run_id)
+        snapshot = ReasoningPolicySnapshot.model_validate(run.reasoning_policy or {})
+        if snapshot.effective.execution_mode.value == "plan_only":
+            summary = "规划已生成，未执行工具或外部操作。"
+            result = {
+                "summary": summary,
+                "findings": [{"text": f"{step.title}：{step.intent}", "source_urls": []} for step in plan.steps],
+                "sources": [],
+                "failed_sources": [],
+                "source_quality": [],
+                "conflicts": [],
+                "caveats": ["当前运行使用仅规划模式。"],
+                "verification_notes": ["已在执行前停止。"],
+            }
+            await self._complete_pending_steps(repo, run_id)
+            await self._emit_answer_stream(repo, run_id, summary)
+            await repo.update_run_status(run_id, "completed", summary=summary, result=result)
+            logger.info("run.complete run_id=%s status=completed mode=plan_only steps=%s", run_id, len(plan.steps))
+            return
         if contract:
-            snapshot = ReasoningPolicySnapshot.model_validate(run.reasoning_policy or {})
             graph = build_plan_graph(contract, snapshot.effective.planning_strategy, [step.model_dump() for step in plan.steps])
             state = AgentState(task_contract=contract, policy_version=snapshot.version, plan=graph)
         if contract and not run.state_version:
@@ -125,7 +183,9 @@ class RunEngine:
                 model_client=self.model_client,
                 tool_registry=self.tool_registry,
             )
-            loop_result = await agent_loop.run(repo, run_id, goal)
+            await self._start_answer_stream(repo, run_id)
+            loop_result = await agent_loop.run(repo, run_id, goal, on_answer_delta=lambda delta: self._handle_answer_delta(repo, run_id, delta))
+            await self._complete_answer_stream(repo, run_id, loop_result["answer"].summary)
             final_answer = loop_result["answer"]
             result = loop_result["result"]
             status = loop_result["status"]
@@ -138,7 +198,6 @@ class RunEngine:
                 content_ref=final_answer.model_dump_json(),
                 metadata={"format": "json"},
             )
-            await self._emit_answer_stream(repo, run_id, final_answer.summary)
             if synth_step is not None:
                 await repo.update_step(
                     synth_step.id,
@@ -173,14 +232,15 @@ class RunEngine:
 
         await repo.update_run_status(run_id, "synthesizing")
         synth_step = await self._mark_named_step_running(repo, run_id, "综合")
-        final_answer = await self.model_client.synthesize(goal, tool_outputs)
+        await self._start_answer_stream(repo, run_id)
+        final_answer = await self.model_client.synthesize(goal, tool_outputs, on_delta=lambda delta: self._answer_delta(repo, run_id, delta))
+        await self._complete_answer_stream(repo, run_id, final_answer.summary)
         await repo.create_artifact(
             run_id,
             "final_answer",
             content_ref=final_answer.model_dump_json(),
             metadata={"format": "json"},
         )
-        await self._emit_answer_stream(repo, run_id, final_answer.summary)
         if synth_step is not None:
             await repo.update_step(
                 synth_step.id,
@@ -221,12 +281,27 @@ class RunEngine:
             )
 
     async def _emit_answer_stream(self, repo: RunRepository, run_id: str, content: str) -> None:
-        await repo.add_event(run_id, "answer.started", {"role": "assistant"})
+        await self._start_answer_stream(repo, run_id)
+        await self._answer_delta(repo, run_id, content)
+        await self._complete_answer_stream(repo, run_id, content)
+
+    async def _start_answer_stream(self, repo: RunRepository, run_id: str) -> None:
+        await repo.add_event(run_id, "answer.started", {"role": "assistant", "mode": "native"})
         await repo.session.commit()
-        for index in range(0, len(content), 12):
-            await repo.add_event(run_id, "answer.delta", {"delta": content[index:index + 12]})
-            await repo.session.commit()
-            await asyncio.sleep(0.01)
+
+    async def _answer_delta(self, repo: RunRepository, run_id: str, delta: str) -> None:
+        if not delta:
+            return
+        await repo.add_event(run_id, "answer.delta", {"delta": delta})
+        await repo.session.commit()
+
+    async def _handle_answer_delta(self, repo: RunRepository, run_id: str, delta: str) -> None:
+        if delta == "\0":
+            await self._start_answer_stream(repo, run_id)
+            return
+        await self._answer_delta(repo, run_id, delta)
+
+    async def _complete_answer_stream(self, repo: RunRepository, run_id: str, content: str) -> None:
         await repo.add_event(run_id, "answer.completed", {"content": content})
         await repo.session.commit()
 

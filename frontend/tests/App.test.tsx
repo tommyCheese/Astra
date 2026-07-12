@@ -127,7 +127,7 @@ vi.mock('../src/api', () => ({
         role: 'assistant',
         content: '已完成查询',
         status: 'completed',
-        metadata: { turn_index: 2 },
+        metadata: { turn_index: 2, decision_type: 'finalize' },
       },
     ],
     artifacts: [],
@@ -183,7 +183,9 @@ describe('App', () => {
     expect(screen.getAllByText(/web_search/).length).toBeGreaterThan(0);
     expect(screen.getByRole('navigation', { name: '问题导航' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '跳转到问题 1' })).toBeInTheDocument();
-    expect(screen.getByText('运行策略与验证')).toBeInTheDocument();
+    expect(screen.getByText('思考与验证')).toBeInTheDocument();
+    expect(screen.getAllByText('已完成查询')).toHaveLength(1);
+    expect(screen.getByText('web_search').closest('details')).not.toHaveAttribute('open');
   });
 
   it('sends selected reasoning policy with a run', async () => {

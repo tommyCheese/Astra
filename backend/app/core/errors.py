@@ -2,6 +2,7 @@ import logging
 import uuid
 from typing import Any, Dict, Optional
 
+import httpx
 from pydantic import BaseModel, Field
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -67,6 +68,14 @@ def run_error_from_exception(exc: Exception) -> Dict[str, Any]:
             message="大模型服务返回了无法处理的结果，请稍后重试。",
             retryable=True,
             details={"reason": str(exc)[:600]},
+        ).model_dump(mode="json")
+    if isinstance(exc, httpx.RequestError):
+        return ErrorPayload(
+            type="dependency.model_unavailable",
+            code="MODEL_ENDPOINT_UNAVAILABLE",
+            message="暂时无法连接大模型服务，请稍后重试。",
+            retryable=True,
+            details={"reason": type(exc).__name__},
         ).model_dump(mode="json")
     if name == "ToolExecutionError":
         category = getattr(exc, "category", "tool_failed")

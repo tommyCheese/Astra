@@ -3,7 +3,7 @@ import logging
 import re
 import time
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List
+from typing import Any, Awaitable, Callable, Dict, List, Optional
 
 import httpx
 
@@ -21,6 +21,7 @@ from app.schemas.agent import (
 )
 
 logger = logging.getLogger("astra.model")
+AnswerDeltaCallback = Callable[[str], Awaitable[None]]
 
 
 class ModelConfigurationError(RuntimeError):
@@ -41,19 +42,28 @@ class ModelClient(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    async def synthesize(self, goal: str, tool_outputs: List[Dict[str, Any]]) -> FinalAnswer:
+    async def synthesize(self, goal: str, tool_outputs: List[Dict[str, Any]], *, on_delta: Optional[AnswerDeltaCallback] = None) -> FinalAnswer:
         raise NotImplementedError
 
     @abstractmethod
     async def decide(self, goal: str, context: Dict[str, Any]) -> AgentDecision:
         raise NotImplementedError
 
+    async def decide_with_answer(
+        self,
+        goal: str,
+        context: Dict[str, Any],
+        *,
+        on_delta: Optional[AnswerDeltaCallback] = None,
+    ) -> tuple[AgentDecision, Optional[FinalAnswer]]:
+        return await self.decide(goal, context), None
+
     @abstractmethod
     async def reflect(self, goal: str, context: Dict[str, Any]) -> AgentReflection:
         raise NotImplementedError
 
     @abstractmethod
-    async def finalize(self, goal: str, context: Dict[str, Any]) -> FinalAnswer:
+    async def finalize(self, goal: str, context: Dict[str, Any], *, on_delta: Optional[AnswerDeltaCallback] = None) -> FinalAnswer:
         raise NotImplementedError
 
     @abstractmethod
@@ -115,7 +125,7 @@ class MockModelClient(ModelClient):
             risk_level="low",
         )
 
-    async def synthesize(self, goal: str, tool_outputs: List[Dict[str, Any]]) -> FinalAnswer:
+    async def synthesize(self, goal: str, tool_outputs: List[Dict[str, Any]], *, on_delta: Optional[AnswerDeltaCallback] = None) -> FinalAnswer:
         sources: List[SourceReference] = []
         findings: List[Finding] = []
         caveats: List[str] = []
@@ -179,7 +189,7 @@ class MockModelClient(ModelClient):
         if not findings:
             caveats.append("未能获取足够的来源内容，结果只能报告证据不足。")
 
-        return FinalAnswer(
+        answer = FinalAnswer(
             summary=f"已围绕目标完成 Web 数据查询：{goal}",
             findings=findings,
             sources=sources,
@@ -191,6 +201,9 @@ class MockModelClient(ModelClient):
                 "答案仅基于本次 run 中记录的 ToolCall、Artifact 和验证结果生成。"
             ],
         )
+        if on_delta:
+            await on_delta(answer.summary)
+        return answer
 
     async def decide(self, goal: str, context: Dict[str, Any]) -> AgentDecision:
         observations = context.get("observations", [])
@@ -250,8 +263,8 @@ class MockModelClient(ModelClient):
             retry=context.get("retry_count", 0) < 1,
         )
 
-    async def finalize(self, goal: str, context: Dict[str, Any]) -> FinalAnswer:
-        return await self.synthesize(goal, [{"evidence_pack": context.get("evidence_pack", {})}])
+    async def finalize(self, goal: str, context: Dict[str, Any], *, on_delta: Optional[AnswerDeltaCallback] = None) -> FinalAnswer:
+        return await self.synthesize(goal, [{"evidence_pack": context.get("evidence_pack", {})}], on_delta=on_delta)
 
     async def extract_memory_candidates(
         self,
@@ -322,7 +335,7 @@ class OpenAICompatibleModelClient(ModelClient):
         except Exception as exc:
             raise ModelOutputError(f"Invalid task contract output: {exc}") from exc
 
-    async def synthesize(self, goal: str, tool_outputs: List[Dict[str, Any]]) -> FinalAnswer:
+    async def synthesize(self, goal: str, tool_outputs: List[Dict[str, Any]], *, on_delta: Optional[AnswerDeltaCallback] = None) -> FinalAnswer:
         payload = await self._chat_json(
             [
                 {
@@ -344,10 +357,12 @@ class OpenAICompatibleModelClient(ModelClient):
                         ensure_ascii=False,
                     ),
                 },
-            ]
+            ],
+            stream_field="summary",
+            on_field_delta=on_delta,
         )
         try:
-            return FinalAnswer.model_validate(payload)
+            return FinalAnswer.model_validate(normalize_final_answer_payload(payload))
         except Exception as exc:
             raise ModelOutputError(f"Invalid final answer output: {exc}") from exc
 
@@ -378,6 +393,44 @@ class OpenAICompatibleModelClient(ModelClient):
         except Exception as exc:
             raise ModelOutputError(f"Invalid agent decision output: {exc}") from exc
 
+    async def decide_with_answer(
+        self,
+        goal: str,
+        context: Dict[str, Any],
+        *,
+        on_delta: Optional[AnswerDeltaCallback] = None,
+    ) -> tuple[AgentDecision, Optional[FinalAnswer]]:
+        payload = await self._chat_json(
+            [
+                {
+                    "role": "system",
+                    "content": (
+                        "You are Astra's general Agent controller and answer engine. Return one JSON object. "
+                        "Always include decision_type and reasoning_summary. Allowed decision_type values: "
+                        "call_tool, reflect, replan, finalize, ask_user, blocked. Use tools only for current, "
+                        "external, or otherwise unverifiable information. For stable knowledge, explanation, "
+                        "writing, and conversation, choose finalize and also include final_answer with keys: "
+                        "summary, findings, sources, failed_sources, source_quality, conflicts, caveats, "
+                        "verification_notes. Put final_answer immediately after reasoning_summary. "
+                        "The summary must contain the complete user-facing answer, not an introduction or preview; "
+                        "use findings only for optional supporting details. "
+                        "For call_tool include tool_name and tool_input and omit final_answer. "
+                        "Do not expose hidden chain-of-thought; reasoning_summary must be concise."
+                    ),
+                },
+                {"role": "user", "content": json.dumps({"goal": goal, "context": context}, ensure_ascii=False)},
+            ],
+            stream_field="summary",
+            on_field_delta=on_delta,
+        )
+        try:
+            decision = AgentDecision.model_validate(payload)
+            raw_answer = payload.get("final_answer")
+            answer = FinalAnswer.model_validate(normalize_final_answer_payload(raw_answer)) if decision.decision_type == "finalize" and isinstance(raw_answer, dict) else None
+            return decision, answer
+        except Exception as exc:
+            raise ModelOutputError(f"Invalid combined decision output: {exc}") from exc
+
     async def reflect(self, goal: str, context: Dict[str, Any]) -> AgentReflection:
         payload = await self._chat_json(
             [
@@ -400,8 +453,8 @@ class OpenAICompatibleModelClient(ModelClient):
         except Exception as exc:
             raise ModelOutputError(f"Invalid reflection output: {exc}") from exc
 
-    async def finalize(self, goal: str, context: Dict[str, Any]) -> FinalAnswer:
-        return await self.synthesize(goal, [{"evidence_pack": context.get("evidence_pack", {})}])
+    async def finalize(self, goal: str, context: Dict[str, Any], *, on_delta: Optional[AnswerDeltaCallback] = None) -> FinalAnswer:
+        return await self.synthesize(goal, [{"evidence_pack": context.get("evidence_pack", {})}], on_delta=on_delta)
 
     async def extract_memory_candidates(
         self,
@@ -429,7 +482,14 @@ class OpenAICompatibleModelClient(ModelClient):
         except Exception as exc:
             raise ModelOutputError(f"Invalid memory extraction output: {exc}") from exc
 
-    async def _chat_json(self, messages: List[Dict[str, str]]) -> Dict[str, Any]:
+    async def _chat_json(
+        self,
+        messages: List[Dict[str, str]],
+        *,
+        attempt: int = 0,
+        stream_field: Optional[str] = None,
+        on_field_delta: Optional[AnswerDeltaCallback] = None,
+    ) -> Dict[str, Any]:
         url = self.settings.model_base_url.rstrip("/") + "/chat/completions"
         system_prompt = messages[0].get("content", "") if messages else ""
         operation = "contract" if "task contract" in system_prompt else "plan" if "planner" in system_prompt else "decision" if "controller" in system_prompt else "reflection" if "reflector" in system_prompt else "memory" if "memory" in system_prompt else "synthesis"
@@ -461,6 +521,7 @@ class OpenAICompatibleModelClient(ModelClient):
                     raise ModelOutputError(f"Model endpoint returned HTTP {response.status_code}") from exc
                 if "text/event-stream" in response.headers.get("content-type", ""):
                     chunks: List[str] = []
+                    streamed_value = ""
                     async for line in response.aiter_lines():
                         if not line.startswith("data:"):
                             continue
@@ -473,6 +534,11 @@ class OpenAICompatibleModelClient(ModelClient):
                             continue
                         if delta:
                             chunks.append(delta)
+                            if stream_field and on_field_delta:
+                                current_value = extract_partial_json_string("".join(chunks), stream_field)
+                                if len(current_value) > len(streamed_value):
+                                    await on_field_delta(current_value[len(streamed_value):])
+                                    streamed_value = current_value
                     content = "".join(chunks)
                     chunk_count = len(chunks)
                 else:
@@ -497,6 +563,20 @@ class OpenAICompatibleModelClient(ModelClient):
         try:
             return parse_json_object(content)
         except (json.JSONDecodeError, ValueError) as exc:
+            if attempt == 0:
+                logger.warning("model.response.retry operation=%s reason=non_json", operation)
+                return await self._chat_json(
+                    [
+                        *messages,
+                        {
+                            "role": "user",
+                            "content": "Your previous response was not valid JSON. Return only one valid JSON object matching the requested schema, with no prose or markdown.",
+                        },
+                    ],
+                    attempt=1,
+                    stream_field=stream_field,
+                    on_field_delta=on_field_delta,
+                )
             raise ModelOutputError("Model returned non-JSON content") from exc
 
 
@@ -517,9 +597,68 @@ def parse_json_object(content: str) -> Dict[str, Any]:
     return payload
 
 
+def extract_partial_json_string(content: str, field: str) -> str:
+    """Return the safely decoded portion of a JSON string field before the object is complete."""
+    match = re.search(rf'"{re.escape(field)}"\s*:\s*"', content)
+    if not match:
+        return ""
+    index = match.end()
+    decoded: List[str] = []
+    escapes = {'"': '"', "\\": "\\", "/": "/", "b": "\b", "f": "\f", "n": "\n", "r": "\r", "t": "\t"}
+    while index < len(content):
+        char = content[index]
+        if char == '"':
+            break
+        if char != "\\":
+            decoded.append(char)
+            index += 1
+            continue
+        if index + 1 >= len(content):
+            break
+        escaped = content[index + 1]
+        if escaped == "u":
+            if index + 6 > len(content):
+                break
+            codepoint = content[index + 2:index + 6]
+            if not re.fullmatch(r"[0-9a-fA-F]{4}", codepoint):
+                break
+            decoded.append(chr(int(codepoint, 16)))
+            index += 6
+            continue
+        if escaped not in escapes:
+            break
+        decoded.append(escapes[escaped])
+        index += 2
+    return "".join(decoded)
+
+
 def normalize_contract_payload(payload: Dict[str, Any], goal: str) -> Dict[str, Any]:
+    reported_goal = str(payload.get("original_goal") or "").strip()
+    if reported_goal and normalize_goal_text(reported_goal) != normalize_goal_text(goal):
+        logger.warning(
+            "model.contract.goal_mismatch expected_chars=%s reported_chars=%s fallback=default",
+            len(goal),
+            len(reported_goal),
+        )
+        return {
+            "original_goal": goal.strip(),
+            "deliverables": [f"回复用户请求：{goal.strip()}"],
+            "constraints": [],
+            "prohibited_actions": ["执行未注册或未授权的工具"],
+            "assumptions": [],
+            "success_criteria": [{
+                "id": "criterion-result",
+                "description": f"正确回应用户请求：{goal.strip()}",
+                "mandatory": True,
+                "verification_method": "task_adapter",
+            }],
+            "verification_requirements": [{"id": "verify-result", "validator": "task_adapter"}],
+            "risk_level": "low",
+            "ambiguity_status": "clear",
+            "clarification_question": None,
+        }
     normalized = dict(payload)
-    normalized["original_goal"] = str(normalized.get("original_goal") or goal)
+    normalized["original_goal"] = goal.strip()
     for field in ("deliverables", "constraints", "prohibited_actions"):
         value = normalized.get(field, [])
         normalized[field] = value if isinstance(value, list) else [str(value)]
@@ -552,7 +691,15 @@ def normalize_contract_payload(payload: Dict[str, Any], goal: str) -> Dict[str, 
     for index, item in enumerate(normalized["verification_requirements"], start=1):
         item["id"] = str(item.get("id") or f"verify-{index}")
         item["validator"] = str(item.get("validator") or "task_adapter")
+    ambiguity = str(normalized.get("ambiguity_status") or "clear").lower()
+    normalized["ambiguity_status"] = ambiguity if ambiguity in {"clear", "ambiguous"} else "clear"
+    if normalized["ambiguity_status"] == "clear":
+        normalized["clarification_question"] = None
     return normalized
+
+
+def normalize_goal_text(value: str) -> str:
+    return "".join(value.lower().split()).strip("。！？!?.,，")
 
 
 def normalize_plan_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -571,4 +718,33 @@ def normalize_plan_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
         for field in ("required_tools", "success_criteria"):
             value = item.get(field) or []
             item[field] = value if isinstance(value, list) else [str(value)]
+    return normalized
+
+
+def normalize_final_answer_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
+    normalized = dict(payload)
+    normalized["summary"] = str(normalized.get("summary") or "已完成回复。")
+    findings = normalized.get("findings") or []
+    normalized["findings"] = [
+        item if isinstance(item, dict) else {"text": str(item), "source_urls": []}
+        for item in (findings if isinstance(findings, list) else [findings])
+    ]
+    for item in normalized["findings"]:
+        item["text"] = str(item.get("text") or item.get("finding") or "")
+        urls = item.get("source_urls") or []
+        item["source_urls"] = urls if isinstance(urls, list) else [str(urls)]
+    sources = normalized.get("sources") or []
+    normalized["sources"] = [
+        item if isinstance(item, dict) else {"url": str(item)}
+        for item in (sources if isinstance(sources, list) else [sources])
+    ]
+    for field in ("failed_sources", "source_quality", "conflicts", "caveats", "verification_notes", "memory_references"):
+        value = normalized.get(field) or []
+        normalized[field] = value if isinstance(value, list) else [value]
+    normalized["failed_sources"] = [item for item in normalized["failed_sources"] if isinstance(item, dict)]
+    normalized["source_quality"] = [item for item in normalized["source_quality"] if isinstance(item, dict)]
+    normalized["conflicts"] = [item for item in normalized["conflicts"] if isinstance(item, dict)]
+    normalized["memory_references"] = [item for item in normalized["memory_references"] if isinstance(item, dict)]
+    normalized["caveats"] = [str(item) for item in normalized["caveats"]]
+    normalized["verification_notes"] = [str(item) for item in normalized["verification_notes"]]
     return normalized
