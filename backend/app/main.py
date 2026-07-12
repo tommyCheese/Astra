@@ -10,6 +10,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from app.api.runs import router as runs_router
 from app.api.runtime import router as runtime_router
+from app.api.usage import router as usage_router
 from app.core.config import Settings, get_settings
 from app.core.errors import (
     AstraError,
@@ -18,6 +19,8 @@ from app.core.errors import (
     ValidationError,
     run_error_from_exception,
 )
+from app.db.session import SessionLocal
+from app.repositories.usage import UsageRepository
 from app.runtime_profiles import RuntimeProfileService
 
 logger = logging.getLogger("astra.http")
@@ -29,6 +32,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         try:
+            async with SessionLocal() as session:
+                interrupted = await UsageRepository(session).reconcile_interrupted()
+                if interrupted:
+                    logger.warning("usage.reconciled_interrupted count=%s", interrupted)
             yield
         finally:
             await app.state.runtime_profile_service.shutdown()
@@ -51,6 +58,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     app.include_router(runs_router)
     app.include_router(runtime_router)
+    app.include_router(usage_router)
 
     @app.middleware("http")
     async def request_log(request: Request, call_next):

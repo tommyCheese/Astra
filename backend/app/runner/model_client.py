@@ -313,6 +313,7 @@ class OpenAICompatibleModelClient(ModelClient):
         if not settings.model_api_key and settings.model_provider != "compatible":
             raise ModelConfigurationError("MODEL_API_KEY is required for real model providers")
         self.settings = settings
+        self.usage_recorder = None
 
     async def plan(self, goal: str) -> PlanOutput:
         payload = await self._chat_json(
@@ -544,6 +545,16 @@ class OpenAICompatibleModelClient(ModelClient):
             else "synthesis"
         )
         started = time.perf_counter()
+        invocation_id = None
+        if self.usage_recorder is not None:
+            invocation_id = await self.usage_recorder.start(
+                provider=self.settings.model_provider,
+                model=self.settings.model_name,
+                operation=operation,
+                attempt=attempt + 1,
+            )
+        usage: dict[str, Any] | None = None
+        request_id: str | None = None
         logger.info(
             "model.request.start operation=%s provider=%s model=%s endpoint=%s messages=%s",
             operation,
@@ -563,9 +574,11 @@ class OpenAICompatibleModelClient(ModelClient):
                     "messages": messages,
                     "response_format": {"type": "json_object"},
                     "stream": True,
+                    "stream_options": {"include_usage": True},
                 },
             ) as response,
         ):
+            request_id = response.headers.get("x-request-id") or response.headers.get("request-id")
             try:
                 response.raise_for_status()
             except httpx.HTTPStatusError as exc:
@@ -575,6 +588,14 @@ class OpenAICompatibleModelClient(ModelClient):
                     response.status_code,
                     (time.perf_counter() - started) * 1000,
                 )
+                if self.usage_recorder is not None:
+                    await self.usage_recorder.finish(
+                        invocation_id,
+                        status="failed",
+                        duration_ms=round((time.perf_counter() - started) * 1000),
+                        request_id=request_id,
+                        error=exc,
+                    )
                 raise ModelOutputError(
                     f"Model endpoint returned HTTP {response.status_code}"
                 ) from exc
@@ -588,7 +609,10 @@ class OpenAICompatibleModelClient(ModelClient):
                     if not data or data == "[DONE]":
                         continue
                     try:
-                        delta = json.loads(data)["choices"][0]["delta"].get("content")
+                        event = json.loads(data)
+                        if isinstance(event.get("usage"), dict):
+                            usage = event["usage"]
+                        delta = event["choices"][0]["delta"].get("content")
                     except (KeyError, IndexError, TypeError, ValueError):
                         continue
                     if delta:
@@ -605,8 +629,19 @@ class OpenAICompatibleModelClient(ModelClient):
             else:
                 try:
                     body = json.loads((await response.aread()).decode())
+                    if isinstance(body.get("usage"), dict):
+                        usage = body["usage"]
                     content = body["choices"][0]["message"]["content"]
                 except (KeyError, IndexError, TypeError, ValueError, UnicodeDecodeError) as exc:
+                    if self.usage_recorder is not None:
+                        await self.usage_recorder.finish(
+                            invocation_id,
+                            status="failed",
+                            duration_ms=round((time.perf_counter() - started) * 1000),
+                            request_id=request_id,
+                            usage=usage,
+                            error=exc,
+                        )
                     raise ModelOutputError(
                         "Model endpoint returned an unsupported response shape"
                     ) from exc
@@ -624,8 +659,26 @@ class OpenAICompatibleModelClient(ModelClient):
         if fenced:
             content = fenced.group(1)
         try:
-            return parse_json_object(content)
+            payload = parse_json_object(content)
+            if self.usage_recorder is not None:
+                await self.usage_recorder.finish(
+                    invocation_id,
+                    status="succeeded",
+                    duration_ms=round((time.perf_counter() - started) * 1000),
+                    request_id=request_id,
+                    usage=usage,
+                )
+            return payload
         except (json.JSONDecodeError, ValueError) as exc:
+            if self.usage_recorder is not None:
+                await self.usage_recorder.finish(
+                    invocation_id,
+                    status="failed",
+                    duration_ms=round((time.perf_counter() - started) * 1000),
+                    request_id=request_id,
+                    usage=usage,
+                    error=exc,
+                )
             if attempt == 0:
                 logger.warning("model.response.retry operation=%s reason=non_json", operation)
                 return await self._chat_json(

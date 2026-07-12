@@ -42,6 +42,33 @@ export type RuntimeProfile = {
   build: RuntimeBuild | null;
 };
 
+export type TokenTotals = { input: number; cached_input: number; output: number; reasoning: number; total: number };
+export type UsageSummary = {
+  scope: 'all' | 'task' | 'run';
+  from?: string | null;
+  to?: string | null;
+  overview: {
+    model_invocations: number; successful_invocations: number; failed_invocations: number; interrupted_invocations: number;
+    agent_turns: number; tool_calls: number; successful_tool_calls: number; failed_tool_calls: number;
+    tool_success_rate: number | null; memories: number; sandbox_jobs: number; artifacts: number; artifact_bytes: number;
+  };
+  tokens: TokenTotals;
+  coverage: { reported_invocations: number; total_invocations: number; ratio: number; complete: boolean };
+  trend: Array<{ date: string; invocations: number; tokens: number; tool_calls: number }>;
+  models: Array<{ provider: string; model: string; invocations: number; reported_invocations: number; tokens: TokenTotals }>;
+  tools: Array<{ tool_name: string; calls: number; succeeded: number; failed: number; success_rate: number | null }>;
+};
+
+export async function getUsageSummary(params: { scope: 'all' | 'task' | 'run'; taskId?: string; runId?: string; from?: string }, signal?: AbortSignal): Promise<UsageSummary> {
+  const query = new URLSearchParams({ scope: params.scope });
+  if (params.taskId) query.set('task_id', params.taskId);
+  if (params.runId) query.set('run_id', params.runId);
+  if (params.from) query.set('from', params.from);
+  const response = await fetch(`/api/usage/summary?${query}`, { signal });
+  if (!response.ok) throw await responseError(response);
+  return response.json();
+}
+
 export async function getRuntimeProfile(signal?: AbortSignal): Promise<RuntimeProfile> {
   const response = await fetch('/api/runtime', { signal });
   if (!response.ok) throw await responseError(response);

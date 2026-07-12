@@ -44,6 +44,24 @@ async def test_engine_completes_mock_web_query(session):
     assert len(evidence_pack["fetched_sources"]) == len(succeeded_fetch_calls)
 
 
+async def test_answer_delta_batching_flushes_first_and_final_content(session):
+    settings = Settings(model_provider="mock", web_search_provider="mock")
+    repo = RunRepository(session)
+    run = await repo.create_task_run("流式批处理", settings.model_policy)
+    engine = RunEngine(settings, model_client=MockModelClient(), tool_registry=fake_web_registry())
+
+    await engine._start_answer_stream(repo, run.id)
+    await engine._handle_answer_delta(repo, run.id, "首")
+    await engine._handle_answer_delta(repo, run.id, "尾")
+    await engine._complete_answer_stream(repo, run.id, "首尾")
+
+    events = await repo.list_events(run.id)
+    assert [event.type for event in events] == [
+        "run.created", "answer.started", "answer.delta", "answer.delta", "answer.completed"
+    ]
+    assert events[-1].payload == {"content": "首尾", "status": "answer_complete"}
+
+
 class PlanningSpyClient(MockModelClient):
     def __init__(self):
         self.contract_calls = 0

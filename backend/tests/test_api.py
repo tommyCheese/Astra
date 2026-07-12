@@ -130,6 +130,23 @@ async def test_create_and_get_run(app_client):
     assert "chat_messages" in body
 
 
+async def test_run_event_stream_starts_with_ready_signal(app_client, monkeypatch):
+    from app.repositories.runs import RunRepository
+
+    created = await app_client.post("/api/runs", json={"goal": "流连接测试"})
+    run_id = created.json()["run_id"]
+    monkeypatch.setattr(runs_api, "SessionLocal", app_client._astra_session)
+    async with app_client._astra_session() as session:
+        await RunRepository(session).update_run_status(run_id, "completed", summary="完成")
+        await session.commit()
+
+    response = await app_client.get(f"/api/runs/{run_id}/events")
+
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "no-cache, no-transform"
+    assert '"type": "stream.ready"' in response.text
+
+
 async def test_run_task_is_retained_until_background_execution_finishes(app_client, monkeypatch):
     started = asyncio.Event()
     release = asyncio.Event()

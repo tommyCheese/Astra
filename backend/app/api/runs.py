@@ -198,6 +198,7 @@ async def stream_run_events(
     async def event_stream() -> AsyncIterator[str]:
         logger.info("sse.open run_id=%s after_id=%s", run_id, after_id)
         last_id = after_id
+        yield f'data: {json.dumps({"type": "stream.ready", "payload": {"run_id": run_id}})}\n\n'
         async with SessionLocal() as stream_session:
             stream_repo = RunRepository(stream_session)
             while True:
@@ -211,8 +212,6 @@ async def stream_run_events(
                         "created_at": event.created_at.isoformat(),
                     }
                     yield f"id: {event.id}\ndata: {json.dumps(payload)}\n\n"
-                    if event.type == "answer.delta":
-                        await asyncio.sleep(0.008)
                 run = await stream_repo.get_run(run_id)
                 if run and run.status in {
                     "completed",
@@ -230,5 +229,9 @@ async def stream_run_events(
     return StreamingResponse(
         event_stream(),
         media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        headers={
+            "Cache-Control": "no-cache, no-transform",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
     )

@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import time
 from typing import Any
 
 import httpx
@@ -19,6 +20,7 @@ from app.runner.reasoning import (
 from app.schemas.agent import AgentState, PlanOutput, PlanStep, ReasoningPolicySnapshot
 from app.tools.base import ToolRegistry
 from app.tools.registry import build_tool_registry
+from app.usage_metering import DatabaseUsageRecorder
 
 logger = logging.getLogger("astra.engine")
 
@@ -34,8 +36,12 @@ class RunEngine:
         self.settings = settings
         self.model_client = model_client or build_model_client(settings)
         self.tool_registry = tool_registry or build_tool_registry(settings)
+        self._answer_buffers: dict[str, str] = {}
+        self._answer_flush_at: dict[str, float] = {}
 
     async def run(self, run_id: str) -> None:
+        if hasattr(self.model_client, "usage_recorder"):
+            self.model_client.usage_recorder = DatabaseUsageRecorder(run_id)
         logger.info(
             "run.engine.start run_id=%s provider=%s model=%s",
             run_id,
@@ -326,6 +332,8 @@ class RunEngine:
         await self._complete_answer_stream(repo, run_id, content)
 
     async def _start_answer_stream(self, repo: RunRepository, run_id: str) -> None:
+        self._answer_buffers[run_id] = ""
+        self._answer_flush_at[run_id] = 0.0
         await repo.add_event(run_id, "answer.started", {"role": "assistant", "mode": "native"})
         await repo.session.commit()
 
@@ -339,10 +347,30 @@ class RunEngine:
         if delta == "\0":
             await self._start_answer_stream(repo, run_id)
             return
-        await self._answer_delta(repo, run_id, delta)
+        if not delta:
+            return
+        buffered = self._answer_buffers.get(run_id, "") + delta
+        now = time.monotonic()
+        last_flush = self._answer_flush_at.get(run_id, 0.0)
+        first_delta = last_flush == 0.0
+        should_flush = first_delta or now - last_flush >= 0.02 or len(buffered) >= 96
+        if should_flush:
+            self._answer_buffers[run_id] = ""
+            self._answer_flush_at[run_id] = now
+            await self._answer_delta(repo, run_id, buffered)
+        else:
+            self._answer_buffers[run_id] = buffered
 
     async def _complete_answer_stream(self, repo: RunRepository, run_id: str, content: str) -> None:
-        await repo.add_event(run_id, "answer.completed", {"content": content})
+        buffered = self._answer_buffers.pop(run_id, "")
+        self._answer_flush_at.pop(run_id, None)
+        if buffered:
+            await repo.add_event(run_id, "answer.delta", {"delta": buffered})
+        await repo.add_event(
+            run_id,
+            "answer.completed",
+            {"content": content, "status": "answer_complete"},
+        )
         await repo.session.commit()
 
     async def _mark_named_step_running(self, repo: RunRepository, run_id: str, name_part: str):

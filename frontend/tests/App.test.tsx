@@ -8,9 +8,17 @@ vi.mock('../src/api', () => ({
   getRuntimeProfile: vi.fn(async () => ({ dependencies: [], core_dependencies: [{ name: 'numpy', version: '2.2.6' }, { name: 'matplotlib', version: '3.10.3' }], active_image: 'astra-data-viz:0.1.0', dependency_digest: 'base', build: null })),
   buildRuntime: vi.fn(async () => ({ dependencies: [{ name: 'polars', version: '' }], core_dependencies: [], active_image: 'astra-data-viz:0.1.0', dependency_digest: 'base', build: { id: 'build-1', status: 'queued', phase: '等待构建', progress: 0, log: '等待构建' } })),
   cancelRuntimeBuild: vi.fn(async () => ({ dependencies: [{ name: 'polars', version: '' }], core_dependencies: [], active_image: 'astra-data-viz:0.1.0', dependency_digest: 'base', build: { id: 'build-1', status: 'cancelled', phase: '已取消', progress: 12, log: '构建已由用户取消' } })),
+  streamRunEvents: vi.fn(() => () => undefined),
   createRun: vi.fn(async () => ({ run_id: 'run-1', task_id: 'task-1', status: 'created' })),
   listRuns: vi.fn(async () => []),
   resumeRun: vi.fn(async () => ({ run_id: 'run-1', task_id: 'task-1', status: 'executing' })),
+  getUsageSummary: vi.fn(async () => ({
+    scope: 'task', from: null, to: null,
+    overview: { model_invocations: 3, successful_invocations: 3, failed_invocations: 0, interrupted_invocations: 0, agent_turns: 2, tool_calls: 2, successful_tool_calls: 2, failed_tool_calls: 0, tool_success_rate: 1, memories: 1, sandbox_jobs: 0, artifacts: 0, artifact_bytes: 0 },
+    tokens: { input: 100, cached_input: 20, output: 50, reasoning: 10, total: 150 },
+    coverage: { reported_invocations: 3, total_invocations: 3, ratio: 1, complete: true },
+    trend: [], models: [{ provider: 'openai', model: 'gpt-5', invocations: 3, reported_invocations: 3, tokens: { input: 100, cached_input: 20, output: 50, reasoning: 10, total: 150 } }], tools: [],
+  })),
   getRun: vi.fn(async () => ({
     id: 'run-1',
     task_id: 'task-1',
@@ -188,6 +196,7 @@ describe('App', () => {
     expect(screen.getAllByText(/web_search/).length).toBeGreaterThan(0);
     expect(screen.getByRole('navigation', { name: '问题导航' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '跳转到问题 1' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '跳转到问题 1' })).toHaveAttribute('aria-current', 'true');
     expect(screen.getByText('思考过程')).toBeInTheDocument();
     expect(screen.getAllByText('已完成查询')).toHaveLength(1);
     expect(screen.getByText('web_search').closest('details')).not.toHaveAttribute('open');
@@ -270,6 +279,12 @@ describe('App', () => {
     }), expect.objectContaining({ provider: 'openai', name: 'gpt-5' }));
     expect(screen.getAllByRole('button', { name: /完成 completed/ })).toHaveLength(1);
     expect(screen.getAllByRole('button', { name: /跳转到问题/ })).toHaveLength(2);
+    const firstQuestion = screen.getByRole('button', { name: '跳转到问题 1' });
+    const secondQuestion = screen.getByRole('button', { name: '跳转到问题 2' });
+    expect(secondQuestion).toHaveAttribute('aria-current', 'true');
+    await userEvent.click(firstQuestion);
+    expect(firstQuestion).toHaveAttribute('aria-current', 'true');
+    expect(secondQuestion).not.toHaveAttribute('aria-current');
   });
 
   it('opens settings and moves capabilities into the settings view', async () => {
@@ -541,7 +556,7 @@ describe('App', () => {
 
     await userEvent.click(screen.getByRole('button', { name: /用量统计/ }));
     expect(screen.getByRole('dialog', { name: '用量统计' })).toBeInTheDocument();
-    expect(screen.getByText('Token 用量')).toBeInTheDocument();
+    expect(await screen.findByText('Token 总量')).toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: '关闭用量统计' }));
 
     await userEvent.click(screen.getByRole('button', { name: '当前模型：gpt-5' }));

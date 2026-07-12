@@ -4,8 +4,8 @@ import remarkGfm from 'remark-gfm';
 import { AstraApiError, ApiErrorPayload, buildRuntime, cancelRuntimeBuild, createRun, getRun, getRuntimeProfile, listRuns, resumeRun, streamRunEvents } from './api';
 import { I18nProvider, useI18n } from './i18n';
 import { ThemeProvider, useTheme } from './theme';
-import { FloatingAd } from './plugins/floating-ad';
 import type { ChatMessage, RunView } from './types';
+import { UsageDashboard } from './UsageDashboard';
 
 const terminalStatuses = new Set(['completed', 'completed_with_warnings', 'failed', 'blocked', 'waiting_user']);
 type ConversationEntry = { id: string; run: RunView; priorMessages: ChatMessage[] };
@@ -28,6 +28,7 @@ function AppContent() {
   const [priorMessages, setPriorMessages] = useState<ChatMessage[]>([]);
   const [loading, setLoading] = useState(false);
   const [streamingAnswer, setStreamingAnswer] = useState('');
+  const [answerComplete, setAnswerComplete] = useState(false);
   const [showJumpToLatest, setShowJumpToLatest] = useState(false);
   const [error, setError] = useState<ApiErrorPayload | null>(null);
   const [view, setView] = useState<'chat' | 'settings'>('chat');
@@ -51,6 +52,9 @@ function AppContent() {
   const followLatestRef = useRef(true);
   const jumpingToLatestRef = useRef(false);
   const jumpResetTimerRef = useRef<number>();
+  const deltaBufferRef = useRef('');
+  const deltaFrameRef = useRef<number>();
+  const refreshTimerRef = useRef<number>();
   const availableModels = useMemo(() => providerConfigs
     .filter((provider) => provider.enabled)
     .flatMap((provider) => parseModelIds(provider.models).map((model) => ({ key: `${provider.id}:${model}`, model, providerId: provider.id, providerName: provider.name }))), [providerConfigs]);
@@ -62,6 +66,8 @@ function AppContent() {
 
   useEffect(() => () => {
     if (jumpResetTimerRef.current !== undefined) window.clearTimeout(jumpResetTimerRef.current);
+    if (deltaFrameRef.current !== undefined) window.cancelAnimationFrame(deltaFrameRef.current);
+    if (refreshTimerRef.current !== undefined) window.clearTimeout(refreshTimerRef.current);
   }, []);
 
   useEffect(() => {
@@ -143,6 +149,8 @@ function AppContent() {
     followLatestRef.current = true;
     setShowJumpToLatest(false);
     setStreamingAnswer('');
+    setAnswerComplete(false);
+    deltaBufferRef.current = '';
     setLoading(true);
     try {
       const previousMessages = run ? messages : [];
@@ -163,11 +171,23 @@ function AppContent() {
           api_key: selectedProvider.apiKey,
           base_url: selectedProvider.endpoint,
         } : undefined);
-      const current = normalizeRunView(await getRun(created.run_id));
+      const current = normalizeRunView({
+        id: created.run_id,
+        task_id: created.task_id,
+        status: created.status,
+        mode: 'general-agent',
+        steps: [], tool_calls: [], artifacts: [], events: [], turns: [], memories: [],
+        chat_messages: [{ id: `optimistic-${created.run_id}`, role: 'user', content: trimmedGoal, status: 'completed', metadata: {} }],
+      } as RunView);
       setPriorMessages(previousMessages);
       setRun(current);
       rememberConversation(current, previousMessages);
       setGoal('');
+      void getRun(created.run_id).then((snapshot) => {
+        const next = normalizeRunView(snapshot);
+        setRun(next);
+        rememberConversation(next, previousMessages);
+      }).catch(() => { /* SSE and fallback polling will recover the snapshot. */ });
     } catch (err) {
       setError(err instanceof AstraApiError ? err.payload : { type: 'runtime.internal_error', code: 'REQUEST_FAILED', message: t('服务暂时出现异常，请稍后重试。'), retryable: true, trace_id: 'unavailable' });
     } finally {
@@ -184,6 +204,16 @@ function AppContent() {
     let refreshing = false;
     let closeStream: () => void = () => {};
     const controller = new AbortController();
+    const flushDeltas = () => {
+      deltaFrameRef.current = undefined;
+      const delta = deltaBufferRef.current;
+      deltaBufferRef.current = '';
+      if (delta) setStreamingAnswer((value) => value + delta);
+    };
+    const queueDelta = (delta: string) => {
+      deltaBufferRef.current += delta;
+      if (deltaFrameRef.current === undefined) deltaFrameRef.current = window.requestAnimationFrame(flushDeltas);
+    };
     const refreshRun = async () => {
       if (refreshing || !active) return;
       refreshing = true;
@@ -203,16 +233,39 @@ function AppContent() {
         refreshing = false;
       }
     };
+    const scheduleRefresh = (immediate = false) => {
+      if (refreshTimerRef.current !== undefined) window.clearTimeout(refreshTimerRef.current);
+      refreshTimerRef.current = window.setTimeout(() => { refreshTimerRef.current = undefined; void refreshRun(); }, immediate ? 0 : 100);
+    };
     closeStream = streamRunEvents(run.id, (event) => {
-      if (event.type === 'answer.started') setStreamingAnswer('');
-      if (event.type === 'answer.delta') setStreamingAnswer((value) => value + String(event.payload.delta ?? ''));
-      if (event.type !== 'answer.delta' && event.type !== 'heartbeat') void refreshRun();
+      if (event.type === 'answer.started') {
+        deltaBufferRef.current = '';
+        setStreamingAnswer('');
+        setAnswerComplete(false);
+        return;
+      }
+      if (event.type === 'answer.delta') {
+        queueDelta(String(event.payload.delta ?? ''));
+        return;
+      }
+      if (event.type === 'answer.completed') {
+        if (deltaFrameRef.current !== undefined) window.cancelAnimationFrame(deltaFrameRef.current);
+        deltaFrameRef.current = undefined;
+        deltaBufferRef.current = '';
+        setStreamingAnswer(String(event.payload.content ?? ''));
+        setAnswerComplete(true);
+        scheduleRefresh(true);
+        return;
+      }
+      if (event.type !== 'heartbeat' && event.type !== 'stream.ready') scheduleRefresh();
     }, () => { void refreshRun(); });
     fallback = window.setInterval(() => { void refreshRun(); }, 3000);
     return () => {
       active = false;
       controller.abort();
       closeStream();
+      if (deltaFrameRef.current !== undefined) window.cancelAnimationFrame(deltaFrameRef.current);
+      if (refreshTimerRef.current !== undefined) window.clearTimeout(refreshTimerRef.current);
       if (fallback !== undefined) window.clearInterval(fallback);
     };
   }, [run?.id]);
@@ -221,9 +274,9 @@ function AppContent() {
     const currentMessages = buildPresentation(run)
       .filter((message) => !streamingAnswer || message.metadata.presentation !== 'answer')
       .map((message) => ({ ...message, id: `${run?.id ?? 'idle'}:${priorMessages.length}:${message.id}` }));
-    const streamed = streamingAnswer ? [{ id: `${run?.id ?? 'idle'}-stream`, role: 'assistant', content: streamingAnswer, status: 'streaming', metadata: {} }] : [];
+    const streamed = streamingAnswer ? [{ id: `${run?.id ?? 'idle'}-stream`, role: 'assistant', content: streamingAnswer, status: answerComplete ? 'completed' : 'streaming', metadata: {} }] : [];
     return [...priorMessages, ...currentMessages, ...streamed];
-  }, [priorMessages, run, streamingAnswer]);
+  }, [priorMessages, run, streamingAnswer, answerComplete]);
 
   useEffect(() => {
     if (!followLatestRef.current) return;
@@ -266,6 +319,8 @@ function AppContent() {
     setPriorMessages([]);
     setError(null);
     setStreamingAnswer('');
+    setAnswerComplete(false);
+    deltaBufferRef.current = '';
     followLatestRef.current = true;
     setShowJumpToLatest(false);
     setGoal('');
@@ -325,9 +380,10 @@ function AppContent() {
               <MessageBubble key={message.id} message={message} run={run} />
             ))}
             {run && !terminalStatuses.has(run.status) && !streamingAnswer && (
-              <div className="bubble assistant">
+              <div className="bubble assistant waiting-message" role="status" aria-live="polite">
                 <span className="bubble-label">Astra</span>
-                <p>{t(activeState(run))}</p>
+                <span className="sr-only">{t(activeState(run))}</span>
+                <div className="waiting-line" aria-hidden="true"><span className="thinking-orb"><i /><i /><i /></span></div>
               </div>
             )}
           </div>
@@ -416,13 +472,12 @@ function AppContent() {
 
         </>}
       </section>
-      {usageOpen && <UsageModal run={run} onClose={() => setUsageOpen(false)} />}
+      {usageOpen && <UsageDashboard taskId={run?.task_id} runId={run?.id} onClose={() => setUsageOpen(false)} />}
       {bypassConfirmOpen && <BypassConfirmation onCancel={() => setBypassConfirmOpen(false)} onConfirm={() => {
         setExecutionMode('bypass');
         setExecutionMenuOpen(false);
         setBypassConfirmOpen(false);
       }} />}
-      <FloatingAd id="shaolin-womens-soccer-2026" imageSrc="/ads/astra-shaolin-womens-soccer.png" imageAlt="Astra 与少林女足联名海报" />
     </main>
   );
 }
@@ -480,8 +535,15 @@ function conversationTitle(run: RunView, fallback: string) {
 function QuestionRail({ messages }: { messages: ChatMessage[] }) {
   const { t } = useI18n();
   const questions = messages.filter((message) => message.role === 'user');
+  const latestQuestionId = questions.length ? questions[questions.length - 1].id : null;
+  const [activeQuestionId, setActiveQuestionId] = useState<string | null>(latestQuestionId);
+  useEffect(() => { setActiveQuestionId(latestQuestionId); }, [latestQuestionId]);
   if (!questions.length) return null;
-  return <nav className="question-rail" aria-label={t('问题导航')}>{questions.map((question, index) => <button className={index === questions.length - 1 ? 'active' : ''} type="button" key={question.id} aria-label={`${t('跳转到问题')} ${index + 1}`} onClick={() => document.getElementById(`message-${question.id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })}><span /><div className="question-preview"><strong>{t('问题')} {index + 1}</strong><p>{question.content}</p></div></button>)}</nav>;
+  return <nav className="question-rail" aria-label={t('问题导航')}>{questions.map((question, index) => <button className={question.id === activeQuestionId ? 'active' : ''} type="button" key={question.id} aria-current={question.id === activeQuestionId ? 'true' : undefined} aria-label={`${t('跳转到问题')} ${index + 1}`} onClick={() => {
+    setActiveQuestionId(question.id);
+    const target = document.getElementById(`message-${question.id}`);
+    if (typeof target?.scrollIntoView === 'function') target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }}><span /><div className="question-preview"><p>{question.content}</p></div></button>)}</nav>;
 }
 
 function CapabilityItem({ title, detail, state, enabled = true }: { title: string; detail: string; state: string; enabled?: boolean }) {
@@ -976,16 +1038,6 @@ function ErrorDialog({ error, onClose, onRetry }: { error: ApiErrorPayload; onCl
     : '内部运行时异常';
   const title = error.code === 'GOAL_REQUIRED' ? '请输入任务目标' : technical ? technicalTitle : '无法完成此操作';
   return <div className="modal-backdrop" role="presentation" onMouseDown={onClose}><section className="confirmation-modal error-dialog" role="alertdialog" aria-modal="true" aria-labelledby="error-title" onMouseDown={(event) => event.stopPropagation()}><div className="warning-mark">!</div><h2 id="error-title">{title}</h2><p>{error.message}</p>{technical && <div className="confirmation-note">错误类型：<code>{error.type}</code><br />诊断编号：<code>{error.trace_id}</code></div>}<div className="confirmation-actions">{onRetry && <button className="secondary-button" type="button" onClick={onRetry}>重试</button>}<button className="danger-confirm-button" type="button" onClick={onClose}>知道了</button></div></section></div>;
-}
-
-function UsageModal({ run, onClose }: { run: RunView | null; onClose: () => void }) {
-  const { language, t } = useI18n();
-  const calls = run?.tool_calls.length ?? 0;
-  const turns = run?.turns?.length ?? 0;
-  const estimatedTokens = run ? Math.max(640, turns * 760 + calls * 420 + (run.result?.findings.length ?? 0) * 180) : 0;
-  const succeeded = run?.tool_calls.filter((call) => call.status === 'succeeded').length ?? 0;
-  const successRate = calls ? Math.round((succeeded / calls) * 100) : 0;
-  return <div className="modal-backdrop" role="presentation" onMouseDown={onClose}><section className="usage-modal" role="dialog" aria-modal="true" aria-label={t('用量统计')} onMouseDown={(event) => event.stopPropagation()}><header><div><span>{t('当前对话')}</span><h2><Icon name="chart" />{t('用量统计')}</h2></div><button className="close-button" type="button" aria-label={t('关闭用量统计')} onClick={onClose}>×</button></header><div className="usage-primary"><div><Icon name="sparkle" /><span>{t('模型调用')}</span><strong>{turns}</strong><small>{t('次决策 / 生成')}</small></div><div><Icon name="token" /><span>{t('Token 用量')}</span><strong>{estimatedTokens.toLocaleString(language)}</strong><small>{t('前端估算')}</small></div></div><div className="usage-grid"><div><Icon name="tools" /><span>{t('工具调用')}</span><strong>{calls}</strong></div><div><Icon name="check" /><span>{t('成功率')}</span><strong>{successRate}%</strong></div><div><Icon name="route" /><span>{t('任务步骤')}</span><strong>{run?.steps.length ?? 0}</strong></div><div><Icon name="refresh" /><span>{t('Agent 轮次')}</span><strong>{turns}</strong></div><div><Icon name="message" /><span>{t('消息轮次')}</span><strong>{run?.chat_messages?.filter((message) => message.role === 'user').length ?? 0}</strong></div><div><Icon name="brain" /><span>{t('Memory 写入')}</span><strong>{run?.memories?.length ?? 0}</strong></div></div><p className="usage-note">{t('精确输入、输出和缓存 Token 将在模型网关接入后由后端返回。')}</p></section></div>;
 }
 
 type IconName = 'plus' | 'message' | 'chart' | 'settings' | 'sparkle' | 'tools' | 'terminal' | 'brain' | 'shield' | 'palette' | 'lock' | 'token' | 'check' | 'route' | 'refresh' | 'requestApprove' | 'autoApprove';
