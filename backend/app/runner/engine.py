@@ -76,9 +76,7 @@ class RunEngine:
         else:
             goal = current_goal
 
-        if run.state_version and run.agent_state and not run.steps:
-            await repo.update_run_status(run_id, "executing")
-        elif run.state_version and run.agent_state:
+        if run.state_version and run.agent_state:
             await repo.update_run_status(run_id, "executing")
             if self.settings.agent_use_loop and self.settings.agent_use_general_runtime:
                 agent_loop = AgentLoop(self.settings, model_client=self.model_client, tool_registry=self.tool_registry)

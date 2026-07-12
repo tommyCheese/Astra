@@ -438,7 +438,10 @@ class OpenAICompatibleModelClient(ModelClient):
                     "role": "system",
                     "content": (
                         "You are Astra's reflector. Return JSON only with keys: "
-                        "trigger, summary, next_action, retry, revised_tool_input. "
+                        "trigger, summary, next_action, retry, revised_tool_input, and optional patch. "
+                        "patch may contain level, invalidated_assumption_ids, fact_updates, "
+                        "criterion_updates, replacement_plan, added_verification_requirements, "
+                        "or terminal_intent. Only include changes justified by the supplied context. "
                         "Use concise audit-safe summaries."
                     ),
                 },

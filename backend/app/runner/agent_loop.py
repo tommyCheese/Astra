@@ -10,7 +10,13 @@ from app.schemas.agent import AgentObservation, FinalAnswer, VerificationReport
 from app.schemas.agent import AgentState, CriterionStatus, ReasoningPolicySnapshot, TerminalState
 from app.tools.base import ToolExecutionError, ToolRegistry
 from app.runner.adapters import WebTaskAdapter
-from app.runner.reasoning import CompletionGate, ObservationEvaluator, ReflectionGate, failure_fingerprint
+from app.runner.reasoning import (
+    CompletionGate,
+    ObservationEvaluator,
+    ReflectionGate,
+    apply_reflection_patch,
+    failure_fingerprint,
+)
 
 logger = logging.getLogger("astra.agent_loop")
 
@@ -49,6 +55,7 @@ class ContextAssembler:
         evidence_pack: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         memories = await self.repo.list_memories(run_id=run_id, min_confidence=0.0, limit=8)
+        run = await self.repo.require_run(run_id)
         return {
             "run_id": run_id,
             "goal": goal,
@@ -68,10 +75,10 @@ class ContextAssembler:
                 }
                 for memory in memories
             ],
-            "reasoning_policy": (await self.repo.require_run(run_id)).reasoning_policy or {},
-            "task_contract": (await self.repo.require_run(run_id)).task_contract or {},
-            "plan_graph": (await self.repo.require_run(run_id)).plan_graph or {},
-            "agent_state": (await self.repo.require_run(run_id)).agent_state or {},
+            "reasoning_policy": run.reasoning_policy or {},
+            "task_contract": run.task_contract or {},
+            "plan_graph": run.plan_graph or {},
+            "agent_state": run.agent_state or {},
         }
 
 
@@ -234,7 +241,59 @@ class AgentLoop:
                 return None
             reflection = await self.model_client.reflect(goal, reflection_context)
             reflection_count += 1
-            await repo.add_event(run_id, "reflection.created", reflection.model_dump())
+            reflection_observation = {
+                "kind": "reflection",
+                "status": "completed",
+                "summary": reflection.summary,
+                "data": {
+                    "signal": signal,
+                    "next_action": reflection.next_action,
+                    "retry": reflection.retry,
+                    "revised_tool_input": reflection.revised_tool_input,
+                },
+            }
+            observations.append(reflection_observation)
+            state_version = None
+            current = await repo.require_run(run_id)
+            if current.agent_state:
+                state = AgentState.model_validate(current.agent_state)
+                state.observations = list(observations)
+                state.budget_usage.update({
+                    "turns": len(current.turns),
+                    "tool_calls": tool_call_count,
+                    "reflections": reflection_count,
+                    "replans": replan_count,
+                })
+                patch = reflection.patch
+                if patch and patch.actionable():
+                    try:
+                        state = apply_reflection_patch(state, patch, expected_version=current.state_version)
+                    except (ValueError, TypeError) as exc:
+                        logger.warning(
+                            "reflection.patch_rejected run_id=%s signal=%s reason=%s",
+                            run_id,
+                            signal,
+                            str(exc),
+                        )
+                        await repo.add_event(run_id, "reflection.patch_rejected", {
+                            "signal": signal,
+                            "reason": str(exc),
+                        })
+                        state.version = current.state_version + 1
+                else:
+                    state.version = current.state_version + 1
+                updated = await repo.update_reasoning_state(
+                    run_id,
+                    expected_version=current.state_version,
+                    agent_state=state.model_dump(mode="json"),
+                    plan_graph=state.plan.model_dump(mode="json"),
+                    waiting_state=current.waiting_state,
+                )
+                state_version = updated.state_version
+            await repo.add_event(run_id, "reflection.created", {
+                **reflection.model_dump(mode="json"),
+                "state_version": state_version,
+            })
             await repo.session.commit()
             return reflection
 
@@ -558,10 +617,25 @@ class AgentLoop:
         run_record = await repo.require_run(run_id)
         if run_record.agent_state:
             state = AgentState.model_validate(run_record.agent_state)
+            state.observations = list(observations)
+            state.budget_usage.update({
+                "turns": len(run_record.turns),
+                "tool_calls": tool_call_count,
+                "reflections": reflection_count,
+                "replans": replan_count,
+            })
             if adapter_decision.state in {TerminalState.completed, TerminalState.completed_with_warnings}:
                 for criterion in state.task_contract.success_criteria:
                     if criterion.mandatory:
                         criterion.status = CriterionStatus.satisfied
+            state.version = run_record.state_version + 1
+            run_record = await repo.update_reasoning_state(
+                run_id,
+                expected_version=run_record.state_version,
+                agent_state=state.model_dump(mode="json"),
+                plan_graph=state.plan.model_dump(mode="json"),
+                waiting_state=run_record.waiting_state,
+            )
             gate_decision = self.completion_gate.evaluate(
                 state,
                 validator_passed=adapter_decision.state in {TerminalState.completed, TerminalState.completed_with_warnings},

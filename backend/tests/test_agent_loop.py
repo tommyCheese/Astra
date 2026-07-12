@@ -4,8 +4,17 @@ from app.core.config import Settings
 from app.repositories.runs import RunRepository
 from app.runner.agent_loop import AgentLoop, ToolRouter
 from app.runner.model_client import MockModelClient, ModelOutputError
-from app.runner.reasoning import PolicyCompiler
-from app.schemas.agent import AgentDecision, FinalAnswer, RequestedReasoningPolicy
+from app.runner.reasoning import PolicyCompiler, build_default_contract, build_plan_graph
+from app.schemas.agent import (
+    AcceptedFact,
+    AgentDecision,
+    AgentReflection,
+    AgentState,
+    FinalAnswer,
+    PlanningStrategy,
+    ReflectionPatch,
+    RequestedReasoningPolicy,
+)
 from app.tools.base import ToolExecutionError
 from app.tools.web import build_web_registry
 from fake_web_tools import fake_web_registry
@@ -80,6 +89,27 @@ class RecoveringDecisionClient(MockModelClient):
     async def reflect(self, goal, context):
         self.reflect_calls += 1
         return await super().reflect(goal, context)
+
+
+class PatchingReflectionClient(RecoveringDecisionClient):
+    async def reflect(self, goal, context):
+        self.reflect_calls += 1
+        return AgentReflection(
+            trigger="model_output_failed",
+            summary="记录修正后的事实并继续。",
+            next_action="retry",
+            retry=True,
+            patch=ReflectionPatch(
+                level="local",
+                fact_updates=[
+                    AcceptedFact(
+                        id="fact-reflection",
+                        statement="模型输出失败后需要重新决策。",
+                        provenance={"source": "reflection"},
+                    )
+                ],
+            ),
+        )
 
 
 class ToolThenFinalizeClient(MockModelClient):
@@ -185,6 +215,36 @@ async def test_model_failure_reflection_obeys_policy(session, enabled, trigger, 
     await AgentLoop(settings, model_client=client, tool_registry=fake_web_registry()).run(repo, run.id, run.task.description)
 
     assert client.reflect_calls == expected_reflections
+
+
+async def test_reflection_patch_updates_persisted_agent_state(session):
+    settings = Settings(model_provider="mock")
+    repo = RunRepository(session)
+    policy = compiled_policy(reflection_enabled=True, reflection_trigger="failure_only")
+    run = await repo.create_task_run("恢复错误", settings.model_policy, reasoning_policy=policy)
+    contract = build_default_contract(run.task.description)
+    graph = build_plan_graph(contract, PlanningStrategy.adaptive)
+    state = AgentState(task_contract=contract, plan=graph)
+    await repo.initialize_reasoning_state(
+        run.id,
+        task_contract=contract.model_dump(mode="json"),
+        plan_graph=graph.model_dump(mode="json"),
+        agent_state=state.model_dump(mode="json"),
+    )
+    client = PatchingReflectionClient()
+
+    await AgentLoop(settings, model_client=client, tool_registry=fake_web_registry()).run(
+        repo, run.id, run.task.description
+    )
+
+    loaded = await repo.require_run(run.id)
+    assert loaded.state_version == 3
+    assert loaded.agent_state["accepted_facts"][0]["id"] == "fact-reflection"
+    assert any(item["kind"] == "reflection" for item in loaded.agent_state["observations"])
+    assert loaded.agent_state["task_contract"]["success_criteria"][0]["status"] == "satisfied"
+    events = await repo.list_events(run.id)
+    created = next(event for event in events if event.type == "reflection.created")
+    assert created.payload["state_version"] == 2
 
 
 async def test_every_turn_reflection_runs_after_successful_non_terminal_turn(session):
