@@ -58,6 +58,16 @@ def test_chart_tool_is_registered_only_when_sandbox_enabled():
     )
 
 
+def test_chart_tool_switch_overrides_available_sandbox():
+    settings = Settings(
+        tool_chart_render_enabled=False,
+        sandbox_enabled=True,
+        sandbox_skip_availability_check=True,
+    )
+
+    assert "chart.render" not in build_tool_registry(settings).specs()
+
+
 class ChartClient(MockModelClient):
     def __init__(self):
         self.calls = 0

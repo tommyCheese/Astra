@@ -13,11 +13,14 @@ from app.tools.base import (
     ToolSpec,
 )
 from app.tools.web import (
+    DuckDuckGoHTMLParser,
     WebFetchTool,
     WebSearchTool,
     build_web_registry,
     extract_source,
+    normalize_bing_rss,
     normalize_google_items,
+    normalize_search_result_url,
 )
 
 
@@ -33,6 +36,105 @@ async def test_web_search_rejects_empty_query():
 
     with pytest.raises(ToolExecutionError):
         await tool.run({"query": ""})
+
+
+def test_duckduckgo_html_results_are_normalized():
+    parser = DuckDuckGoHTMLParser()
+    parser.feed(
+        """
+        <div class="result">
+          <a class="result__a" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fexample.com%2Farticle">
+            Example article
+          </a>
+          <a class="result__snippet">A useful result snippet.</a>
+        </div>
+        """
+    )
+
+    assert parser.results == [
+        {
+            "url": "https://example.com/article",
+            "title": "Example article",
+            "snippet": "A useful result snippet.",
+        }
+    ]
+    assert normalize_search_result_url("https://example.org/path") == "https://example.org/path"
+
+
+async def test_duckduckgo_web_search_uses_real_provider_response(monkeypatch):
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            return False
+
+        async def get(self, *args, **kwargs):
+            request = httpx.Request("GET", "https://html.duckduckgo.com/html/")
+            return httpx.Response(
+                200,
+                request=request,
+                text=(
+                    '<a class="result__a" href="https://example.com/a">Example</a>'
+                    '<a class="result__snippet">Snippet</a>'
+                ),
+            )
+
+    monkeypatch.setattr("app.tools.web.httpx.AsyncClient", FakeClient)
+    output = await WebSearchTool(Settings(web_search_provider="duckduckgo")).run(
+        {"query": "Astra", "num_results": 1}
+    )
+
+    assert output["provider"] == "duckduckgo"
+    assert output["candidate_count"] == 1
+    assert output["candidates"][0]["url"] == "https://example.com/a"
+
+
+def test_bing_rss_results_are_normalized():
+    candidates = normalize_bing_rss(
+        """<?xml version="1.0"?><rss><channel><item>
+        <title>Example</title><link>https://example.com/a</link>
+        <description>Snippet</description></item></channel></rss>"""
+    )
+
+    assert candidates[0]["provider"] == "bing"
+    assert candidates[0]["url"] == "https://example.com/a"
+    assert candidates[0]["snippet"] == "Snippet"
+
+
+async def test_bing_web_search_uses_rss_response(monkeypatch):
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            return False
+
+        async def get(self, *args, **kwargs):
+            request = httpx.Request("GET", "https://www.bing.com/search")
+            return httpx.Response(
+                200,
+                request=request,
+                text=(
+                    "<rss><channel><item><title>Example</title>"
+                    "<link>https://example.com/a</link>"
+                    "<description>Snippet</description></item></channel></rss>"
+                ),
+            )
+
+    monkeypatch.setattr("app.tools.web.httpx.AsyncClient", FakeClient)
+    output = await WebSearchTool(Settings(web_search_provider="bing")).run(
+        {"query": "Astra", "num_results": 1}
+    )
+
+    assert output["provider"] == "bing"
+    assert output["candidate_count"] == 1
 
 
 async def test_google_web_search_requires_credentials():
@@ -166,6 +268,18 @@ def test_web_tool_manifest_contains_operational_fields():
     assert specs["web_fetch"].description
     assert specs["web_search"].capabilities == ["network_read"]
     assert specs["web_search"].permissions == ["network_read"]
+
+
+def test_web_tool_switches_control_registration():
+    registry = build_web_registry(
+        Settings(tool_web_search_enabled=False, tool_web_fetch_enabled=True)
+    )
+
+    assert "web_search" not in registry.specs()
+    assert "web_fetch" in registry.specs()
+    with pytest.raises(ToolExecutionError) as exc_info:
+        registry.get("web_search")
+    assert exc_info.value.category == "tool_not_allowed"
 
 
 def test_tool_contract_serializes_artifact_envelope_and_legacy_permissions():

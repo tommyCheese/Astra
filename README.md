@@ -73,7 +73,21 @@ MODEL_BASE_URL=https://api.openai.com/v1
 
 ### Web 搜索/抓取配置
 
-`web_fetch` 支持直接抓取 URL；`web_search` 默认使用 mock provider。接入 Google Programmable Search JSON API 时配置：
+每个已支持工具都有独立开关；关闭后工具不会注册，也不会出现在模型可用工具清单中：
+
+```text
+TOOL_WEB_SEARCH_ENABLED=true
+TOOL_WEB_FETCH_ENABLED=true
+TOOL_CHART_RENDER_ENABLED=true
+```
+
+`web_fetch` 支持直接抓取公开 HTTP(S) URL；`web_search` 默认使用无需 API Key 的 Bing RSS 搜索：
+
+```text
+WEB_SEARCH_PROVIDER=bing
+```
+
+如需接入 Google Programmable Search JSON API，配置：
 
 ```text
 WEB_SEARCH_PROVIDER=google

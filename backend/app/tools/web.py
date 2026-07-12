@@ -1,9 +1,10 @@
 import ipaddress
 import re
+import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 from html.parser import HTMLParser
 from typing import Any
-from urllib.parse import urljoin, urlparse
+from urllib.parse import parse_qs, unquote, urljoin, urlparse
 
 import httpx
 
@@ -45,6 +46,83 @@ def normalize_google_items(payload: dict[str, Any]) -> list[dict[str, Any]]:
     return candidates
 
 
+def normalize_bing_rss(payload: str) -> list[dict[str, Any]]:
+    """Normalize Bing's public RSS search result format."""
+    try:
+        root = ET.fromstring(payload)
+    except ET.ParseError as exc:
+        raise ToolExecutionError("search_failed", "Bing returned invalid RSS") from exc
+    retrieved_at = iso_now()
+    candidates = []
+    for rank, item in enumerate(root.findall("./channel/item"), start=1):
+        url = normalize_space(item.findtext("link") or "")
+        if not url:
+            continue
+        candidates.append(
+            {
+                "url": url,
+                "title": normalize_space(item.findtext("title") or ""),
+                "snippet": normalize_space(item.findtext("description") or ""),
+                "rank": rank,
+                "display_link": display_link(url),
+                "provider": "bing",
+                "metadata": {},
+                "retrieved_at": retrieved_at,
+            }
+        )
+    return candidates
+
+
+def normalize_search_result_url(url: str) -> str:
+    """Resolve provider redirect links to the public result URL."""
+    absolute = urljoin("https://html.duckduckgo.com", url)
+    parsed = urlparse(absolute)
+    if parsed.netloc.endswith("duckduckgo.com") and parsed.path.startswith("/l/"):
+        target = parse_qs(parsed.query).get("uddg", [""])[0]
+        if target:
+            return unquote(target)
+    return absolute
+
+
+class DuckDuckGoHTMLParser(HTMLParser):
+    """Extract result links and snippets from DuckDuckGo's server-rendered HTML."""
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.results: list[dict[str, str]] = []
+        self._active: str | None = None
+        self._current: dict[str, str] | None = None
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        attributes = {key: value or "" for key, value in attrs}
+        classes = set(attributes.get("class", "").split())
+        if tag == "a" and "result__a" in classes:
+            self._current = {
+                "url": normalize_search_result_url(attributes.get("href", "")),
+                "title": "",
+                "snippet": "",
+            }
+            self.results.append(self._current)
+            self._active = "title"
+        elif self._current is not None and (
+            "result__snippet" in classes or "result-snippet" in classes
+        ):
+            self._active = "snippet"
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag in {"a", "div"}:
+            self._active = None
+
+    def handle_data(self, data: str) -> None:
+        if self._current is None or self._active is None:
+            return
+        text = normalize_space(data)
+        if text:
+            self._current[self._active] = normalize_space(
+                f"{self._current[self._active]} {text}"
+            )
+
+
 class WebSearchTool(Tool):
     spec = ToolSpec(
         name="web_search",
@@ -76,6 +154,10 @@ class WebSearchTool(Tool):
         if not query:
             raise ToolExecutionError("invalid_input", "web_search requires a non-empty query")
         provider = self.settings.web_search_provider
+        if provider == "bing":
+            return await self._bing_search(query, tool_input)
+        if provider == "duckduckgo":
+            return await self._duckduckgo_search(query, tool_input)
         if provider == "google":
             return await self._google_search(query, tool_input)
         if provider == "brave":
@@ -84,6 +166,117 @@ class WebSearchTool(Tool):
             "provider_not_configured",
             f"Unsupported web search provider: {self.settings.web_search_provider}",
         )
+
+    async def _bing_search(
+        self, query: str, tool_input: dict[str, Any]
+    ) -> dict[str, Any]:
+        try:
+            num_results = int(
+                tool_input.get("num_results") or self.settings.google_search_result_count
+            )
+        except (TypeError, ValueError) as exc:
+            raise ToolExecutionError("invalid_input", "num_results must be an integer") from exc
+        num_results = max(1, min(num_results, 10))
+        language = str(tool_input.get("language") or self.settings.google_search_language or "")
+        region = str(tool_input.get("region") or self.settings.google_search_region or "")
+        try:
+            async with httpx.AsyncClient(
+                timeout=self.spec.timeout_seconds,
+                headers={
+                    "User-Agent": "Astra/0.1",
+                    "Accept": "application/rss+xml,application/xml,text/xml",
+                    "Accept-Language": language or "zh-CN,zh;q=0.9,en;q=0.8",
+                },
+            ) as client:
+                response = await client.get(
+                    "https://www.bing.com/search",
+                    params={"q": query, "format": "rss", "count": num_results},
+                )
+                response.raise_for_status()
+        except httpx.HTTPError as exc:
+            raise ToolExecutionError("search_failed", str(exc)) from exc
+        candidates = normalize_bing_rss(response.text)[:num_results]
+        warnings = [] if candidates else ["Bing 搜索没有返回候选来源。"]
+        return {
+            "query": query,
+            "provider": "bing",
+            "parameters": {
+                "num_results": num_results,
+                "language": language,
+                "region": region,
+            },
+            "candidate_count": len(candidates),
+            "warnings": warnings,
+            "candidates": candidates,
+        }
+
+    async def _duckduckgo_search(
+        self, query: str, tool_input: dict[str, Any]
+    ) -> dict[str, Any]:
+        try:
+            num_results = int(
+                tool_input.get("num_results") or self.settings.google_search_result_count
+            )
+        except (TypeError, ValueError) as exc:
+            raise ToolExecutionError("invalid_input", "num_results must be an integer") from exc
+        num_results = max(1, min(num_results, 10))
+        language = str(tool_input.get("language") or self.settings.google_search_language or "")
+        region = str(tool_input.get("region") or self.settings.google_search_region or "")
+        params = {"q": query}
+        if region:
+            params["kl"] = region
+        try:
+            async with httpx.AsyncClient(
+                timeout=self.spec.timeout_seconds,
+                headers={
+                    "User-Agent": (
+                        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124 Safari/537.36"
+                    ),
+                    "Accept": "text/html,application/xhtml+xml",
+                    "Accept-Language": language or "zh-CN,zh;q=0.9,en;q=0.8",
+                },
+            ) as client:
+                response = await client.get("https://html.duckduckgo.com/html/", params=params)
+                response.raise_for_status()
+        except httpx.HTTPError as exc:
+            raise ToolExecutionError("search_failed", str(exc)) from exc
+
+        parser = DuckDuckGoHTMLParser()
+        parser.feed(response.text)
+        retrieved_at = iso_now()
+        candidates = []
+        for item in parser.results:
+            url = item.get("url", "")
+            if not url or urlparse(url).scheme not in {"http", "https"}:
+                continue
+            candidates.append(
+                {
+                    "url": url,
+                    "title": item.get("title", ""),
+                    "snippet": item.get("snippet", ""),
+                    "rank": len(candidates) + 1,
+                    "display_link": display_link(url),
+                    "provider": "duckduckgo",
+                    "metadata": {},
+                    "retrieved_at": retrieved_at,
+                }
+            )
+            if len(candidates) >= num_results:
+                break
+        warnings = [] if candidates else ["DuckDuckGo 搜索没有返回可解析的候选来源。"]
+        return {
+            "query": query,
+            "provider": "duckduckgo",
+            "parameters": {
+                "num_results": num_results,
+                "language": language,
+                "region": region,
+            },
+            "candidate_count": len(candidates),
+            "warnings": warnings,
+            "candidates": candidates,
+        }
 
     async def _google_search(self, query: str, tool_input: dict[str, Any]) -> dict[str, Any]:
         api_key = self.settings.google_search_api_key or self.settings.web_search_api_key
@@ -226,7 +419,14 @@ class WebFetchTool(Tool):
         try:
             async with httpx.AsyncClient(
                 timeout=self.spec.timeout_seconds,
-                headers={"User-Agent": "AstraBot/0.1 (+https://github.com/tommyCheese/Astra)"},
+                headers={
+                    "User-Agent": (
+                        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124 Safari/537.36"
+                    ),
+                    "Accept": "text/html,application/xhtml+xml,application/json,text/plain;q=0.9,*/*;q=0.8",
+                    "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+                },
             ) as client:
                 response = await self._get_with_safe_redirects(client, url)
                 response.raise_for_status()
@@ -603,6 +803,8 @@ def build_web_registry(settings: Settings):
     from app.tools.base import ToolRegistry
 
     registry = ToolRegistry()
-    registry.register(WebSearchTool(settings))
-    registry.register(WebFetchTool(settings))
+    if settings.tool_web_search_enabled:
+        registry.register(WebSearchTool(settings))
+    if settings.tool_web_fetch_enabled:
+        registry.register(WebFetchTool(settings))
     return registry
