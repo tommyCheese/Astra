@@ -28,6 +28,8 @@
 ### Requirement: Runtime settings interface
 设置页 SHALL 提供 Runtime tab，以列表查看当前 image 与依赖，支持单项或批量新增、编辑、删除依赖，触发构建并展示 queued/building/succeeded/failed 状态与可恢复错误。
 
+核心依赖 SHALL 默认展示实际锁定版本，并在界面中禁用修改、选择和删除操作。
+
 #### Scenario: User builds dependencies
 - **WHEN** 用户添加 `numpy==2.2.6` 并点击构建
 - **THEN** 界面禁用重复提交、持续更新状态并在成功后显示 active image

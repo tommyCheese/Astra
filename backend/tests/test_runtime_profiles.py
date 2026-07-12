@@ -1,10 +1,11 @@
 import asyncio
 import json
+from pathlib import Path
 
 import pytest
 
 from app.core.config import Settings
-from app.runtime_profiles import RuntimeProfileService, normalize_dependencies
+from app.runtime_profiles import CORE_DEPENDENCIES, RuntimeProfileService, normalize_dependencies
 
 
 def test_dependencies_are_normalized_sorted_and_pinned():
@@ -21,6 +22,18 @@ def test_dependency_version_is_optional_and_means_latest():
     assert normalize_dependencies([{"name": "openpyxl", "version": ""}]) == [
         {"name": "openpyxl", "version": ""},
     ]
+
+
+def test_runtime_profile_exposes_locked_core_dependency_versions(tmp_path):
+    service = RuntimeProfileService(Settings(runtime_profile_path=str(tmp_path / "profile.json")))
+
+    assert service.read()["core_dependencies"] == CORE_DEPENDENCIES
+    assert {item["name"] for item in CORE_DEPENDENCIES} == {
+        "matplotlib", "numpy", "pandas", "pillow", "pyarrow", "scipy", "seaborn",
+    }
+    runtime_project = (Path(__file__).parents[2] / "runtimes" / "data-viz" / "pyproject.toml").read_text()
+    for item in CORE_DEPENDENCIES:
+        assert f'{item["name"]}=={item["version"]}' in runtime_project
 
 
 @pytest.mark.parametrize("dependency", [

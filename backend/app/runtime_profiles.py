@@ -10,7 +10,16 @@ from app.sandbox.runtime import sanitize_log
 
 NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 VERSION = re.compile(r"^[0-9]+(?:\.[0-9A-Za-z]+)*(?:[-+][0-9A-Za-z.-]+)?$")
-PROTECTED = {"matplotlib", "numpy", "pandas", "pillow", "pyarrow", "scipy", "seaborn", "echarts", "playwright"}
+CORE_DEPENDENCIES = [
+    {"name": "matplotlib", "version": "3.10.3"},
+    {"name": "numpy", "version": "2.2.6"},
+    {"name": "pandas", "version": "2.2.3"},
+    {"name": "pillow", "version": "11.2.1"},
+    {"name": "pyarrow", "version": "20.0.0"},
+    {"name": "scipy", "version": "1.15.3"},
+    {"name": "seaborn", "version": "0.13.2"},
+]
+PROTECTED = {item["name"] for item in CORE_DEPENDENCIES} | {"echarts", "playwright"}
 
 
 def normalize_dependencies(values):
@@ -35,8 +44,11 @@ class RuntimeProfileService:
 
     def read(self):
         if self.path.exists():
-            return json.loads(self.path.read_text())
-        return {"dependencies": [], "active_image": self.settings.sandbox_runtime_image, "dependency_digest": self.settings.sandbox_runtime_lock_digest, "build": None}
+            state = json.loads(self.path.read_text())
+        else:
+            state = {"dependencies": [], "active_image": self.settings.sandbox_runtime_image, "dependency_digest": self.settings.sandbox_runtime_lock_digest, "build": None}
+        state["core_dependencies"] = CORE_DEPENDENCIES
+        return state
 
     def write(self, value):
         self.path.parent.mkdir(parents=True, exist_ok=True)

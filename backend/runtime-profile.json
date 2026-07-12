@@ -1,11 +1,46 @@
 {
-  "dependencies": [],
+  "dependencies": [
+    {
+      "name": "torch",
+      "version": ""
+    }
+  ],
   "active_image": "astra-data-viz:custom-4f53cda18c2baa0c",
   "dependency_digest": "4f53cda18c2baa0c",
   "build": {
-    "id": "8f092cb7-0b93-45d7-934c-f2f9ab1dcbab",
-    "status": "succeeded",
-    "log": "构建与导入验证成功",
-    "image": "astra-data-viz:custom-4f53cda18c2baa0c"
-  }
+    "id": "d638d3a0-8799-4fcd-b914-e74f9d77ec60",
+    "status": "building",
+    "log": "正在解析并安装依赖",
+    "image": null
+  },
+  "core_dependencies": [
+    {
+      "name": "matplotlib",
+      "version": "3.10.3"
+    },
+    {
+      "name": "numpy",
+      "version": "2.2.6"
+    },
+    {
+      "name": "pandas",
+      "version": "2.2.3"
+    },
+    {
+      "name": "pillow",
+      "version": "11.2.1"
+    },
+    {
+      "name": "pyarrow",
+      "version": "20.0.0"
+    },
+    {
+      "name": "scipy",
+      "version": "1.15.3"
+    },
+    {
+      "name": "seaborn",
+      "version": "0.13.2"
+    }
+  ]
 }

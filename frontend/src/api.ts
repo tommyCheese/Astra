@@ -25,7 +25,7 @@ export type ReasoningPolicyRequest = {
 
 export type RunModelConfig = { provider: string; name: string; api_key: string; base_url: string };
 export type RuntimeDependency = { name: string; version: string };
-export type RuntimeProfile = { dependencies: RuntimeDependency[]; active_image: string; dependency_digest: string; build: null | { id: string; status: string; log: string; image?: string | null } };
+export type RuntimeProfile = { dependencies: RuntimeDependency[]; core_dependencies: RuntimeDependency[]; active_image: string; dependency_digest: string; build: null | { id: string; status: string; log: string; image?: string | null } };
 
 export async function getRuntimeProfile(): Promise<RuntimeProfile> {
   const response = await fetch('/api/runtime');

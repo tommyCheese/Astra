@@ -5,7 +5,7 @@ import { App } from '../src/App';
 import { buildRuntime, createRun, listRuns } from '../src/api';
 
 vi.mock('../src/api', () => ({
-  getRuntimeProfile: vi.fn(async () => ({ dependencies: [], active_image: 'astra-data-viz:0.1.0', dependency_digest: 'base', build: null })),
+  getRuntimeProfile: vi.fn(async () => ({ dependencies: [], core_dependencies: [{ name: 'numpy', version: '2.2.6' }, { name: 'matplotlib', version: '3.10.3' }], active_image: 'astra-data-viz:0.1.0', dependency_digest: 'base', build: null })),
   buildRuntime: vi.fn(async () => ({ dependencies: [], active_image: 'astra-data-viz:0.1.0', dependency_digest: 'base', build: { id: 'build-1', status: 'queued', log: '等待构建' } })),
   createRun: vi.fn(async () => ({ run_id: 'run-1', task_id: 'task-1', status: 'created' })),
   listRuns: vi.fn(async () => []),
@@ -371,8 +371,11 @@ describe('App', () => {
     expect(screen.getByRole('heading', { name: 'Docker 运行时' })).toBeInTheDocument();
     expect(screen.getByText('Docker Ready')).toBeInTheDocument();
     expect(screen.getByText('尚未添加自定义依赖')).toBeInTheDocument();
+    expect(screen.getByText('numpy')).toBeInTheDocument();
+    expect(screen.getByLabelText('numpy 已锁定')).toBeInTheDocument();
+    expect(screen.getByText('2.2.6')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '配置已同步' })).toBeDisabled();
-    await userEvent.click(screen.getByRole('button', { name: '＋ 添加依赖' }));
+    await userEvent.click(screen.getByRole('button', { name: '添加依赖' }));
     await userEvent.type(screen.getByLabelText('依赖名称'), 'polars');
     expect(screen.getByLabelText('polars版本')).toHaveAttribute('placeholder', '最新版本');
     await userEvent.click(screen.getByRole('button', { name: '批量添加' }));
@@ -381,6 +384,7 @@ describe('App', () => {
     expect(screen.getAllByLabelText('依赖名称')).toHaveLength(2);
     await userEvent.click(screen.getByRole('button', { name: '删除 openpyxl' }));
     expect(screen.getAllByLabelText('依赖名称')).toHaveLength(1);
+    expect(screen.getByRole('button', { name: '删除 polars' })).toHaveTextContent('−');
     expect(screen.getByRole('button', { name: '构建并激活' })).toBeEnabled();
     await userEvent.click(screen.getByRole('button', { name: '构建并激活' }));
     expect(vi.mocked(buildRuntime)).toHaveBeenCalledWith([{ name: 'polars', version: '' }]);
