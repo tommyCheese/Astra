@@ -5,7 +5,6 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.api import runs as runs_api
-from app.api import runtime as runtime_api
 from app.core.config import Settings, get_settings
 from app.db.models import Base
 from app.db.session import get_session
@@ -27,14 +26,15 @@ async def app_client(monkeypatch, tmp_path):
         return None
 
     monkeypatch.setattr(runs_api, "start_run_in_process", noop_runner)
-    app = create_app()
-    app.dependency_overrides[get_session] = override_session
     settings = Settings(model_provider="mock", artifact_store_path=str(tmp_path / "artifacts"))
+    app = create_app(settings)
+    app.dependency_overrides[get_session] = override_session
     app.dependency_overrides[get_settings] = lambda: settings
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         client._astra_session = Session
         client._astra_settings = settings
+        client._astra_runtime_service = app.state.runtime_profile_service
         yield client
     await engine.dispose()
 
@@ -69,7 +69,7 @@ async def test_runtime_build_defaults_missing_version_to_latest(app_client, monk
         captured.extend(dependencies)
         return {"dependencies": dependencies, "build": {"status": "queued"}}
 
-    monkeypatch.setattr(runtime_api.service, "start", start)
+    monkeypatch.setattr(app_client._astra_runtime_service, "start", start)
     response = await app_client.post(
         "/api/runtime/build", json={"dependencies": [{"name": "polars"}]}
     )

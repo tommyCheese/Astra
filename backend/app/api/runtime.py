@@ -1,12 +1,14 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, Field
 
-from app.core.config import get_settings
 from app.core.errors import StateError, ValidationError
 from app.runtime_profiles import RuntimeProfileService
 
 router = APIRouter(prefix="/api/runtime", tags=["runtime"])
-service = RuntimeProfileService(get_settings(), recover_interrupted=True)
+
+
+def get_runtime_profile_service(request: Request) -> RuntimeProfileService:
+    return request.app.state.runtime_profile_service
 
 
 class Dependency(BaseModel):
@@ -23,12 +25,15 @@ class CancelBuildRequest(BaseModel):
 
 
 @router.get("")
-async def get_runtime():
+async def get_runtime(service: RuntimeProfileService = Depends(get_runtime_profile_service)):
     return service.read()
 
 
 @router.post("/build")
-async def build_runtime(request: BuildRequest):
+async def build_runtime(
+    request: BuildRequest,
+    service: RuntimeProfileService = Depends(get_runtime_profile_service),
+):
     try:
         return await service.start([item.model_dump() for item in request.dependencies])
     except ValueError as exc:
@@ -38,7 +43,10 @@ async def build_runtime(request: BuildRequest):
 
 
 @router.post("/build/cancel")
-async def cancel_runtime_build(request: CancelBuildRequest):
+async def cancel_runtime_build(
+    request: CancelBuildRequest,
+    service: RuntimeProfileService = Depends(get_runtime_profile_service),
+):
     try:
         return await service.cancel(request.build_id)
     except RuntimeError as exc:

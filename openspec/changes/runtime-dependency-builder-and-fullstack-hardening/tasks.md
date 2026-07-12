@@ -29,5 +29,5 @@
 
 ## 6. 收尾验证
 
-- [ ] 6.1 运行后端、前端、Docker integration、lint、build、OpenSpec 和安全验收
+- [x] 6.1 运行后端、前端、Docker integration、lint、build、OpenSpec 和安全验收
 - [ ] 6.2 更新中文 README 与运维文档，记录构建权限、离线 Job、回滚和清理流程

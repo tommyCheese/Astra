@@ -1,5 +1,6 @@
 import logging
 import time
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
@@ -9,7 +10,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from app.api.runs import router as runs_router
 from app.api.runtime import router as runtime_router
-from app.core.config import get_settings
+from app.core.config import Settings, get_settings
 from app.core.errors import (
     AstraError,
     ErrorEnvelope,
@@ -17,17 +18,30 @@ from app.core.errors import (
     ValidationError,
     run_error_from_exception,
 )
+from app.runtime_profiles import RuntimeProfileService
 
 logger = logging.getLogger("astra.http")
 
 
-def create_app() -> FastAPI:
-    settings = get_settings()
+def create_app(settings: Settings | None = None) -> FastAPI:
+    settings = settings or get_settings()
+
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        try:
+            yield
+        finally:
+            await app.state.runtime_profile_service.shutdown()
+
     logging.basicConfig(
         level=getattr(logging, settings.log_level.upper(), logging.INFO),
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
     )
-    app = FastAPI(title="Astra", version="0.1.0")
+    app = FastAPI(title="Astra", version="0.1.0", lifespan=lifespan)
+    app.state.runtime_profile_service = RuntimeProfileService(
+        settings,
+        recover_interrupted=True,
+    )
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origin_list,

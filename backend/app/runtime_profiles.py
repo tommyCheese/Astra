@@ -109,6 +109,13 @@ class RuntimeProfileService:
         task.add_done_callback(lambda _: self.tasks.pop(build_id, None))
         return self.read()
 
+    async def shutdown(self):
+        tasks = list(self.tasks.values())
+        for task in tasks:
+            task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+
     async def cancel(self, build_id):
         state = self.read()
         build = state.get("build") or {}

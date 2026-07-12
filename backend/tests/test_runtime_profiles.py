@@ -143,6 +143,28 @@ async def test_active_build_can_be_cancelled(tmp_path, monkeypatch):
     assert cancelled["active_image"] == "astra-data-viz:test"
 
 
+async def test_shutdown_cancels_owned_build_tasks(tmp_path, monkeypatch):
+    service = RuntimeProfileService(
+        Settings(
+            runtime_profile_path=str(tmp_path / "profile.json"),
+            sandbox_runtime_image="astra-data-viz:test",
+        )
+    )
+
+    async def wait_forever(*args, **kwargs):
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(service, "_run_with_progress", wait_forever)
+    await service.start([{"name": "openpyxl", "version": "3.1.5"}])
+    await asyncio.sleep(0)
+
+    await service.shutdown()
+    await asyncio.sleep(0)
+
+    assert service.tasks == {}
+    assert service.read()["build"]["status"] == "cancelled"
+
+
 def test_interrupted_build_is_recovered_as_cancelled(tmp_path):
     profile_path = tmp_path / "profile.json"
     profile_path.write_text(
