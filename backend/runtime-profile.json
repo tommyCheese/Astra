@@ -1,16 +1,13 @@
 {
-  "dependencies": [
-    {
-      "name": "torch",
-      "version": ""
-    }
-  ],
+  "dependencies": [],
   "active_image": "astra-data-viz:custom-4f53cda18c2baa0c",
   "dependency_digest": "4f53cda18c2baa0c",
   "build": {
-    "id": "d638d3a0-8799-4fcd-b914-e74f9d77ec60",
-    "status": "building",
-    "log": "正在解析并安装依赖",
+    "id": "b456b964-5708-4d91-bfa6-1f9ecdde7e4b",
+    "status": "failed",
+    "phase": "构建失败",
+    "progress": 16,
+    "log": "镜像构建失败",
     "image": null
   },
   "core_dependencies": [

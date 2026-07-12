@@ -1,4 +1,5 @@
 :root {
+  --workspace-content-width: 1120px;
   color: #1f2933;
   background: #f7f9fc;
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
@@ -496,7 +497,7 @@ p {
   display: flex;
   justify-content: space-between;
   margin: 0 auto;
-  max-width: 1120px;
+  max-width: var(--workspace-content-width);
   min-height: 48px;
   width: 100%;
 }
@@ -611,7 +612,7 @@ h1 {
   display: grid;
   grid-template-rows: minmax(0, 1fr) auto auto;
   margin: 0 auto;
-  max-width: 1120px;
+  max-width: var(--workspace-content-width);
   min-height: 0;
   position: relative;
   width: 100%;
@@ -1442,7 +1443,7 @@ textarea {
   grid-row: 1 / -1;
   height: 100%;
   margin: 0 auto;
-  max-width: 1040px;
+  max-width: var(--workspace-content-width);
   min-height: 0;
   overflow: hidden;
   width: 100%;
@@ -1532,7 +1533,7 @@ textarea {
   min-height: 0;
   overscroll-behavior: contain;
   overflow: auto;
-  padding: 32px 0 60px 38px;
+  padding: 32px 0 60px 32px;
 }
 
 .runtime-overview { background: linear-gradient(135deg, #eef7f7 0%, #f2f6fb 100%); border: 1px solid #d4e4e6; border-radius: 14px; box-shadow: 0 5px 18px rgba(42, 84, 91, 0.055); margin-top: 18px; overflow: hidden; }
@@ -1545,6 +1546,7 @@ textarea {
 .runtime-status-badge { background: color-mix(in srgb, #35a56f 10%, transparent); border: 1px solid color-mix(in srgb, #35a56f 25%, transparent); border-radius: 999px; color: #287d57 !important; font-size: 11px !important; padding: 5px 9px; }
 .runtime-status-failed { background: #fbeaec; border-color: #f1c5ca; color: #b43c49 !important; }
 .runtime-status-building, .runtime-status-queued { background: #fff6df; border-color: #ead7a1; color: #8a6819 !important; }
+.runtime-status-cancelled { background: #edf0f2; border-color: #d7dde1; color: #65717a !important; }
 .runtime-overview-details { background: rgba(255, 255, 255, 0.38); border-top: 1px solid #d8e5e7; display: grid; grid-template-columns: minmax(0, 1fr) 180px; }
 .runtime-overview-details > div { display: grid; gap: 4px; min-width: 0; padding: 11px 16px; }
 .runtime-overview-details > div + div { border-left: 1px solid #d8e5e7; }
@@ -1602,10 +1604,21 @@ textarea {
 .runtime-build-actions { align-items: center; background: #f3eee5; border: 1px solid #dfd4c3; border-radius: 10px; display: flex; justify-content: space-between; padding: 10px 12px; }
 .runtime-build-actions > div { display: grid; gap: 2px; }
 .runtime-build-actions span, .runtime-build-actions small { color: #756f65; font-size: 11px; }
+.runtime-build-progress { background: #f3eee5; border: 1px solid #dfd4c3; border-radius: 10px; display: grid; gap: 9px; grid-template-columns: minmax(0, 1fr) auto; padding: 12px; }
+.runtime-build-progress-heading { align-items: center; display: flex; grid-column: 1 / -1; justify-content: space-between; }
+.runtime-build-progress-heading > div { display: grid; gap: 2px; }
+.runtime-build-progress-heading strong { color: #343a3c; font-size: 12px; }
+.runtime-build-progress-heading span { font-size: 11px; }
+.runtime-build-progress-heading b { color: #176b55; font-size: 12px; }
+.runtime-progress-track { background: #ddd7cc; border-radius: 999px; grid-column: 1 / -1; height: 6px; overflow: hidden; }
+.runtime-progress-track > span { background: linear-gradient(90deg, #2a876d, #4aa78a); border-radius: inherit; display: block; height: 100%; min-width: 3px; transition: width 250ms ease; }
+.runtime-build-progress p { color: #756f65; font: 10px/1.45 ui-monospace, monospace; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.runtime-build-progress button { align-self: center; min-height: 30px; }
 
 .settings-group {
   animation: settings-enter 200ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
-  max-width: 720px;
+  max-width: none;
+  width: 100%;
 }
 
 .settings-group > header {
@@ -2631,7 +2644,8 @@ html[data-theme="dark"] .runtime-dependency-toolbar,
 html[data-theme="dark"] .runtime-core-heading,
 html[data-theme="dark"] .runtime-dependency-add-actions,
 html[data-theme="dark"] .runtime-batch-panel,
-html[data-theme="dark"] .runtime-build-actions {
+html[data-theme="dark"] .runtime-build-actions,
+html[data-theme="dark"] .runtime-build-progress {
   background: #36322c;
   border-color: #4b4439;
 }
@@ -2671,6 +2685,15 @@ html[data-theme="dark"] .runtime-locked-badge {
   background: #30353a;
   border-color: #485057;
   color: #bfc6cc !important;
+}
+
+html[data-theme="dark"] .runtime-build-progress-heading strong,
+html[data-theme="dark"] .runtime-build-progress p {
+  color: #dfe3e7;
+}
+
+html[data-theme="dark"] .runtime-progress-track {
+  background: #4a453d;
 }
 
 html[data-theme="dark"] .modal-backdrop {
@@ -2927,6 +2950,15 @@ html[data-theme="dark"] .question-preview p {
 
   .runtime-build-actions button {
     width: 100%;
+  }
+
+  .runtime-build-progress {
+    grid-template-columns: 1fr;
+  }
+
+  .runtime-build-progress button,
+  .runtime-build-progress p {
+    grid-column: 1;
   }
 
   .runtime-dependency-heading {

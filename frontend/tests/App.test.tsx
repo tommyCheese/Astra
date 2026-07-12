@@ -2,11 +2,12 @@ import { cleanup, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { App } from '../src/App';
-import { buildRuntime, createRun, listRuns } from '../src/api';
+import { buildRuntime, cancelRuntimeBuild, createRun, getRuntimeProfile, listRuns } from '../src/api';
 
 vi.mock('../src/api', () => ({
   getRuntimeProfile: vi.fn(async () => ({ dependencies: [], core_dependencies: [{ name: 'numpy', version: '2.2.6' }, { name: 'matplotlib', version: '3.10.3' }], active_image: 'astra-data-viz:0.1.0', dependency_digest: 'base', build: null })),
-  buildRuntime: vi.fn(async () => ({ dependencies: [], active_image: 'astra-data-viz:0.1.0', dependency_digest: 'base', build: { id: 'build-1', status: 'queued', log: '等待构建' } })),
+  buildRuntime: vi.fn(async () => ({ dependencies: [{ name: 'polars', version: '' }], core_dependencies: [], active_image: 'astra-data-viz:0.1.0', dependency_digest: 'base', build: { id: 'build-1', status: 'queued', phase: '等待构建', progress: 0, log: '等待构建' } })),
+  cancelRuntimeBuild: vi.fn(async () => ({ dependencies: [{ name: 'polars', version: '' }], core_dependencies: [], active_image: 'astra-data-viz:0.1.0', dependency_digest: 'base', build: { id: 'build-1', status: 'cancelled', phase: '已取消', progress: 12, log: '构建已由用户取消' } })),
   createRun: vi.fn(async () => ({ run_id: 'run-1', task_id: 'task-1', status: 'created' })),
   listRuns: vi.fn(async () => []),
   resumeRun: vi.fn(async () => ({ run_id: 'run-1', task_id: 'task-1', status: 'executing' })),
@@ -393,6 +394,33 @@ describe('App', () => {
     expect(screen.queryByText('工具失败重试')).not.toBeInTheDocument();
     expect(screen.queryByText('命令执行确认')).not.toBeInTheDocument();
     expect(screen.getByText('当前镜像')).toBeInTheDocument();
+  });
+
+  it('shows live runtime build progress and supports cancellation', async () => {
+    vi.mocked(getRuntimeProfile).mockResolvedValue({
+      dependencies: [{ name: 'polars', version: '' }],
+      core_dependencies: [],
+      active_image: 'astra-data-viz:0.1.0',
+      dependency_digest: 'base',
+      build: { id: 'build-1', status: 'building', phase: '构建镜像并安装依赖', progress: 42, log: 'installing polars' },
+    });
+    render(<App />);
+
+    await userEvent.click(screen.getByRole('button', { name: /设置/ }));
+    await userEvent.click(screen.getByRole('button', { name: '运行时' }));
+
+    expect(await screen.findByRole('progressbar', { name: '依赖构建进度' })).toHaveAttribute('aria-valuenow', '42');
+    expect(screen.getByText('构建镜像并安装依赖')).toBeInTheDocument();
+    expect(screen.getByText('installing polars')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: '取消构建' }));
+    expect(vi.mocked(cancelRuntimeBuild)).toHaveBeenCalledWith('build-1');
+    vi.mocked(getRuntimeProfile).mockResolvedValue({
+      dependencies: [],
+      core_dependencies: [],
+      active_image: 'astra-data-viz:0.1.0',
+      dependency_digest: 'base',
+      build: null,
+    });
   });
 
   it('keeps validation and data settings task agnostic', async () => {

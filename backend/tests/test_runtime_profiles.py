@@ -1,5 +1,6 @@
 import asyncio
 import json
+import sys
 from pathlib import Path
 
 import pytest
@@ -76,3 +77,61 @@ async def test_profile_write_is_atomic_and_finished_tasks_are_removed(tmp_path, 
     assert service.tasks == {}
     assert json.loads((tmp_path / "runtime" / "profile.json").read_text())["dependencies"] == []
     assert not (tmp_path / "runtime" / "profile.json.tmp").exists()
+
+
+async def test_build_progress_uses_live_subprocess_output(tmp_path):
+    service = RuntimeProfileService(Settings(runtime_profile_path=str(tmp_path / "profile.json")))
+    service.write({
+        "dependencies": [],
+        "active_image": "base",
+        "dependency_digest": "base",
+        "build": {"id": "build-1", "status": "building", "progress": 5, "log": "start"},
+    })
+
+    returncode = await service._run_with_progress(
+        "build-1",
+        [sys.executable, "-c", "print('installing dependency')"],
+        phase="构建镜像并安装依赖",
+        start=10,
+        end=82,
+    )
+
+    build = service.read()["build"]
+    assert returncode == 0
+    assert build["progress"] == 11
+    assert build["phase"] == "构建镜像并安装依赖"
+    assert build["log"] == "installing dependency"
+
+
+async def test_active_build_can_be_cancelled(tmp_path, monkeypatch):
+    service = RuntimeProfileService(Settings(
+        runtime_profile_path=str(tmp_path / "profile.json"),
+        sandbox_runtime_image="astra-data-viz:test",
+    ))
+
+    async def wait_forever(*args, **kwargs):
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(service, "_run_with_progress", wait_forever)
+    state = await service.start([{"name": "openpyxl", "version": "3.1.5"}])
+    await asyncio.sleep(0)
+    cancelled = await service.cancel(state["build"]["id"])
+
+    assert cancelled["build"]["status"] == "cancelled"
+    assert cancelled["build"]["phase"] == "已取消"
+    assert cancelled["active_image"] == "astra-data-viz:test"
+
+
+def test_interrupted_build_is_recovered_as_cancelled(tmp_path):
+    profile_path = tmp_path / "profile.json"
+    profile_path.write_text(json.dumps({
+        "dependencies": [{"name": "polars", "version": ""}],
+        "active_image": "base",
+        "dependency_digest": "base",
+        "build": {"id": "old-build", "status": "building", "log": "installing"},
+    }))
+
+    service = RuntimeProfileService(Settings(runtime_profile_path=str(profile_path)))
+
+    assert service.read()["build"]["status"] == "cancelled"
+    assert service.read()["build"]["phase"] == "构建已中断"

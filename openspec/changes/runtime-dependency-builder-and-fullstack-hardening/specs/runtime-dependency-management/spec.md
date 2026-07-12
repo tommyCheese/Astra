@@ -10,6 +10,8 @@
 ### Requirement: Auditable asynchronous runtime builds
 系统 SHALL 创建可查询的 RuntimeBuild，记录状态、依赖摘要、image digest、脱敏日志、时间和错误，并限制同一 profile 同时只有一个构建。
 
+构建期间系统 SHALL 持续更新阶段、进度和最新脱敏日志，并允许用户随时取消仍处于 queued 或 building 的构建。
+
 #### Scenario: Build succeeds
 - **WHEN** 合法依赖完成 Docker build 与 renderer smoke test
 - **THEN** Build 标记 succeeded 并原子激活内容寻址 image
@@ -17,6 +19,10 @@
 #### Scenario: Build fails
 - **WHEN** 依赖解析、下载、构建或 smoke test 失败
 - **THEN** Build 标记 failed，保留旧 active image 且不泄露宿主信息
+
+#### Scenario: User cancels build
+- **WHEN** 用户取消 queued 或 building 状态的构建
+- **THEN** 系统终止构建子进程、标记 cancelled，并保留旧 active image
 
 ### Requirement: Immutable job runtime activation
 普通 Tool Job MUST 使用 profile 当前 active image、默认断网且禁止运行期包安装；后续调用自动使用最新成功激活版本。

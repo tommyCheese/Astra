@@ -25,7 +25,7 @@ export type ReasoningPolicyRequest = {
 
 export type RunModelConfig = { provider: string; name: string; api_key: string; base_url: string };
 export type RuntimeDependency = { name: string; version: string };
-export type RuntimeProfile = { dependencies: RuntimeDependency[]; core_dependencies: RuntimeDependency[]; active_image: string; dependency_digest: string; build: null | { id: string; status: string; log: string; image?: string | null } };
+export type RuntimeProfile = { dependencies: RuntimeDependency[]; core_dependencies: RuntimeDependency[]; active_image: string; dependency_digest: string; build: null | { id: string; status: string; phase?: string; progress?: number; log: string; image?: string | null } };
 
 export async function getRuntimeProfile(): Promise<RuntimeProfile> {
   const response = await fetch('/api/runtime');
@@ -35,6 +35,12 @@ export async function getRuntimeProfile(): Promise<RuntimeProfile> {
 
 export async function buildRuntime(dependencies: RuntimeDependency[]): Promise<RuntimeProfile> {
   const response = await fetch('/api/runtime/build', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ dependencies }) });
+  if (!response.ok) throw await responseError(response);
+  return response.json();
+}
+
+export async function cancelRuntimeBuild(buildId: string): Promise<RuntimeProfile> {
+  const response = await fetch('/api/runtime/build/cancel', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ build_id: buildId }) });
   if (!response.ok) throw await responseError(response);
   return response.json();
 }

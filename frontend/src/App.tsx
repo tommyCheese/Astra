@@ -1,7 +1,7 @@
 import { FormEvent, ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { AstraApiError, ApiErrorPayload, buildRuntime, createRun, getRun, getRuntimeProfile, listRuns, resumeRun, streamRunEvents } from './api';
+import { AstraApiError, ApiErrorPayload, buildRuntime, cancelRuntimeBuild, createRun, getRun, getRuntimeProfile, listRuns, resumeRun, streamRunEvents } from './api';
 import { I18nProvider, useI18n } from './i18n';
 import { ThemeProvider, useTheme } from './theme';
 import { FloatingAd } from './plugins/floating-ad';
@@ -618,8 +618,16 @@ function RuntimeSettings() {
       setMessage(''); setDirty(false); setProfile(await buildRuntime(values));
     } catch (error) { setMessage(error instanceof Error ? error.message : '构建请求失败'); }
   }
+  async function cancelBuild() {
+    if (!profile?.build?.id) return;
+    try {
+      setMessage('');
+      setProfile(await cancelRuntimeBuild(profile.build.id));
+    } catch (error) { setMessage(error instanceof Error ? error.message : '取消构建失败'); }
+  }
   const buildStatus = profile?.build?.status ?? 'ready';
-  const buildStatusLabel: Record<string, string> = { ready: '已就绪', queued: '等待构建', building: '构建中', succeeded: '构建成功', failed: '构建失败' };
+  const buildStatusLabel: Record<string, string> = { ready: '已就绪', queued: '等待构建', building: '构建中', succeeded: '构建成功', failed: '构建失败', cancelled: '已取消' };
+  const buildProgress = profile?.build?.progress ?? (buildStatus === 'queued' ? 0 : 5);
   return <SettingsGroup title="Docker 运行时" description="管理绘图工具使用的隔离镜像与 Python 依赖。只有构建阶段联网，工具执行始终断网。">
     <section className="runtime-overview" aria-label="Docker 运行状态">
       <div className="runtime-engine"><div><span>运行引擎</span><strong><span className="runtime-health-dot" aria-hidden="true" />Docker Ready</strong><small>一次性强化容器</small></div><span className={`runtime-status-badge runtime-status-${buildStatus}`}>{buildStatusLabel[buildStatus] ?? buildStatus}</span></div>
@@ -642,7 +650,7 @@ function RuntimeSettings() {
         </div>
         {showBatch && <div className="runtime-batch-panel"><label htmlFor="runtime-batch-input">每行一个依赖，可填写 `package` 或 `package==version`</label><textarea id="runtime-batch-input" rows={4} value={batchInput} onChange={(event) => setBatchInput(event.target.value)} placeholder={'polars==1.31.0\nopenpyxl'} spellCheck={false} /><div><button type="button" onClick={() => setShowBatch(false)}>取消</button><button className="primary-button" type="button" onClick={addBatch}>添加到列表</button></div></div>}
       </div>
-      <div className="runtime-build-actions"><div><span>{dependencies.length} 个自定义依赖{dirty ? ' · 有未应用修改' : ''}</span>{profile?.build?.log && <small role="status">{profile.build.log}</small>}</div><button className="primary-button" type="button" onClick={() => void build()} disabled={building || !dirty}>{building ? '构建中…' : dirty ? '构建并激活' : '配置已同步'}</button></div>
+      {building ? <div className="runtime-build-progress" role="status" aria-live="polite"><div className="runtime-build-progress-heading"><div><strong>{profile?.build?.phase ?? '准备构建'}</strong><span>{dependencies.length} 个自定义依赖</span></div><b>{buildProgress}%</b></div><div className="runtime-progress-track" role="progressbar" aria-label="依赖构建进度" aria-valuemin={0} aria-valuemax={100} aria-valuenow={buildProgress}><span style={{ width: `${buildProgress}%` }} /></div><p>{profile?.build?.log ?? '正在等待构建输出'}</p><button className="secondary-button" type="button" onClick={() => void cancelBuild()}>取消构建</button></div> : <div className="runtime-build-actions"><div><span>{dependencies.length} 个自定义依赖{dirty ? ' · 有未应用修改' : ''}</span>{profile?.build?.log && <small role="status">{profile.build.log}</small>}</div><button className="primary-button" type="button" onClick={() => void build()} disabled={!dirty}>{dirty ? '构建并激活' : '配置已同步'}</button></div>}
       {message && <p className="runtime-build-error" role="alert">{message}</p>}
     </section>
   </SettingsGroup>;
