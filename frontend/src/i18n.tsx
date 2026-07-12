@@ -11,7 +11,7 @@ const english: Record<string, string> = {
   '输入任务 / 继续追问...': 'Enter a task or ask a follow-up...', '请输入任务目标': 'Enter a task goal', '创建 run 失败': 'Failed to create run',
   '新对话': 'New chat', '历史对话': 'Chat history', '当前 Web Agent 会话': 'Current Web Agent chat', '暂无会话': 'No chats yet', '暂无对话': 'No chats yet', 'Astra 图标': 'Astra icon',
   '切换对话': 'Switch chat', '最近对话': 'Recent chats', '未命名对话': 'Untitled chat', '还没有历史对话': 'No chat history yet',
-  '问题导航': 'Question navigation', '跳转到问题': 'Jump to question', '问题': 'Question',
+  '问题导航': 'Question navigation', '跳转到问题': 'Jump to question', '问题': 'Question', '回到最新': 'Jump to latest',
   '用量统计': 'Usage', '设置': 'Settings', '本地配置': 'Local preferences', '工作区': 'Workspace', '关闭设置': 'Close settings', '设置类别': 'Settings categories',
   '模型管理': 'Model providers', '工具': 'Tools', '运行时': 'Runtime', '记忆': 'Memory', '验证与安全': 'Verification & safety', '界面': 'Interface', '数据与隐私': 'Data & privacy',
   '配置模型供应商连接、凭据和 Agent 可选模型。': 'Configure model provider connections, credentials, and models available to the agent.',

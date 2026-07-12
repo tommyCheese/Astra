@@ -1,8 +1,10 @@
 import { FormEvent, ReactNode, useEffect, useMemo, useRef, useState } from 'react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { AstraApiError, ApiErrorPayload, createRun, getRun, listRuns, resumeRun, streamRunEvents } from './api';
 import { I18nProvider, useI18n } from './i18n';
 import { ThemeProvider, useTheme } from './theme';
-import type { AgentTurnView, ChatMessage, RunView, ToolCallView } from './types';
+import type { ChatMessage, RunView } from './types';
 
 const terminalStatuses = new Set(['completed', 'completed_with_warnings', 'failed', 'blocked', 'waiting_user']);
 type ConversationEntry = { id: string; run: RunView; priorMessages: ChatMessage[] };
@@ -25,6 +27,7 @@ function AppContent() {
   const [priorMessages, setPriorMessages] = useState<ChatMessage[]>([]);
   const [loading, setLoading] = useState(false);
   const [streamingAnswer, setStreamingAnswer] = useState('');
+  const [showJumpToLatest, setShowJumpToLatest] = useState(false);
   const [error, setError] = useState<ApiErrorPayload | null>(null);
   const [view, setView] = useState<'chat' | 'settings'>('chat');
   const [usageOpen, setUsageOpen] = useState(false);
@@ -43,6 +46,9 @@ function AppContent() {
   const attachMenuRef = useRef<HTMLDivElement>(null);
   const executionMenuRef = useRef<HTMLDivElement>(null);
   const modelMenuRef = useRef<HTMLDivElement>(null);
+  const conversationRef = useRef<HTMLDivElement>(null);
+  const followLatestRef = useRef(true);
+  const jumpingToLatestRef = useRef(false);
   const availableModels = useMemo(() => providerConfigs
     .filter((provider) => provider.enabled)
     .flatMap((provider) => parseModelIds(provider.models).map((model) => ({ key: `${provider.id}:${model}`, model, providerId: provider.id, providerName: provider.name }))), [providerConfigs]);
@@ -64,7 +70,7 @@ function AppContent() {
       const restored = [...grouped.entries()].map(([id, items]) => ({
         id,
         run: items[0],
-        priorMessages: [...items.slice(1)].reverse().flatMap(buildConversation),
+        priorMessages: [...items.slice(1)].reverse().flatMap(buildPresentation),
       }));
       setConversationHistory((local) => [...restored, ...local.filter((item) => !grouped.has(item.id))]);
     }).catch(() => { /* retain browser history while the backend is offline */ });
@@ -127,6 +133,8 @@ function AppContent() {
       return;
     }
     setError(null);
+    followLatestRef.current = true;
+    setShowJumpToLatest(false);
     setStreamingAnswer('');
     setLoading(true);
     try {
@@ -188,10 +196,42 @@ function AppContent() {
   }, [run?.id]);
 
   const messages = useMemo(() => {
-    const currentMessages = buildConversation(run).map((message) => ({ ...message, id: `${run?.id ?? 'idle'}:${priorMessages.length}:${message.id}` }));
+    const currentMessages = buildPresentation(run)
+      .filter((message) => !streamingAnswer || message.metadata.presentation !== 'answer')
+      .map((message) => ({ ...message, id: `${run?.id ?? 'idle'}:${priorMessages.length}:${message.id}` }));
     const streamed = streamingAnswer ? [{ id: `${run?.id ?? 'idle'}-stream`, role: 'assistant', content: streamingAnswer, status: 'streaming', metadata: {} }] : [];
     return [...priorMessages, ...currentMessages, ...streamed];
   }, [priorMessages, run, streamingAnswer]);
+
+  useEffect(() => {
+    if (!followLatestRef.current) return;
+    const frame = window.requestAnimationFrame(() => {
+      const element = conversationRef.current;
+      if (!element) return;
+      if (typeof element.scrollTo === 'function') element.scrollTo({ top: element.scrollHeight, behavior: 'auto' });
+      else element.scrollTop = element.scrollHeight;
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [messages.length, streamingAnswer, run?.status]);
+
+  function handleConversationScroll() {
+    const element = conversationRef.current;
+    if (!element || jumpingToLatestRef.current) return;
+    const nearLatest = element.scrollHeight - element.scrollTop - element.clientHeight < 96;
+    followLatestRef.current = nearLatest;
+    setShowJumpToLatest(!nearLatest);
+  }
+
+  function jumpToLatest() {
+    const element = conversationRef.current;
+    if (!element) return;
+    jumpingToLatestRef.current = true;
+    followLatestRef.current = true;
+    setShowJumpToLatest(false);
+    if (typeof element.scrollTo === 'function') element.scrollTo({ top: element.scrollHeight, behavior: 'smooth' });
+    else element.scrollTop = element.scrollHeight;
+    window.setTimeout(() => { jumpingToLatestRef.current = false; }, 450);
+  }
 
   function changeView(nextView: 'chat' | 'settings') {
     setView(nextView);
@@ -203,6 +243,8 @@ function AppContent() {
     setPriorMessages([]);
     setError(null);
     setStreamingAnswer('');
+    followLatestRef.current = true;
+    setShowJumpToLatest(false);
     setGoal('');
     changeView('chat');
   }
@@ -218,6 +260,8 @@ function AppContent() {
           setActiveConversationId(conversation.id);
           setPriorMessages(conversation.priorMessages);
           setRun(normalizeRunView(conversation.run));
+          followLatestRef.current = true;
+          setShowJumpToLatest(false);
           changeView('chat');
         }}
         onOpenSettings={() => {
@@ -247,7 +291,7 @@ function AppContent() {
 
         <section className="chat-surface">
           <QuestionRail messages={messages} />
-          <div className="conversation">
+          <div className="conversation" ref={conversationRef} onScroll={handleConversationScroll}>
             {!messages.length && (
               <div className="welcome">
                 <h2>{t('Navigate Ideas. Create Reality.')}</h2>
@@ -257,7 +301,7 @@ function AppContent() {
             {messages.map((message) => (
               <MessageBubble key={message.id} message={message} run={run} />
             ))}
-            {run && !terminalStatuses.has(run.status) && (
+            {run && !terminalStatuses.has(run.status) && !streamingAnswer && (
               <div className="bubble assistant">
                 <span className="bubble-label">Astra</span>
                 <p>{t(activeState(run))}</p>
@@ -265,6 +309,7 @@ function AppContent() {
             )}
           </div>
 
+          {showJumpToLatest && <button className="jump-latest-button" type="button" onClick={jumpToLatest}><span aria-hidden="true">↓</span>{t('回到最新')}</button>}
           <form className="chat-composer" onSubmit={submit}>
             <div className="composer-menu-wrap" ref={attachMenuRef}>
               <button
@@ -827,50 +872,45 @@ function Icon({ name }: { name: IconName }) {
 
 function MessageBubble({ message, run }: { message: ChatMessage; run: RunView | null }) {
   const { t } = useI18n();
-  const turnIndex = Number(message.metadata.turn_index ?? 0);
-  const turn = run?.turns?.find((item) => item.turn_index === turnIndex);
-  const isFinalAnswer = message.role === 'assistant' && Boolean(run?.result) && (message.metadata?.decision_type === 'finalize' || message.id.endsWith('-answer') || message.id.endsWith('-terminal'));
+  const snapshot = (message.metadata.run_snapshot as RunView | undefined) ?? run;
+  const presentation = String(message.metadata.presentation ?? '');
 
   if (message.role === 'user') {
     return <article className="bubble user" id={`message-${message.id}`}><span className="bubble-label">{t('你')}</span><p>{message.content}</p></article>;
   }
 
   if (message.role === 'assistant' && message.status === 'streaming') {
-    return <article className="bubble assistant answer-message streaming-message" id={`message-${message.id}`}><span className="bubble-label">Astra</span><div className="answer-content"><p>{message.content}<span className="stream-cursor" aria-hidden="true" /></p></div></article>;
+    return <article className="bubble assistant answer-message streaming-message" id={`message-${message.id}`}><span className="bubble-label">Astra</span><div className="answer-content"><MarkdownContent content={message.content} /></div></article>;
   }
 
-  if (isFinalAnswer && run) {
-    return <article className="bubble assistant answer-message" id={`message-${message.id}`}><span className="bubble-label">Astra</span><FinalAnswer run={run} fallback={message.content} /></article>;
+  if (presentation === 'process' && snapshot) {
+    return <ProcessPanel run={snapshot} messageId={message.id} />;
   }
 
-  return (
-    <article className="process-entry" id={`message-${message.id}`}>
-      {turn?.selected_tool && <ToolEvent turn={turn} toolCalls={run?.tool_calls ?? []} />}
-      {!turn?.selected_tool && <ThinkingEvent title={turn?.reflection ? t('反思') : t('思考')} content={String(turn?.reflection?.summary ?? turn?.reasoning_summary ?? message.content)} />}
-    </article>
-  );
+  if (presentation === 'answer' && snapshot?.result) {
+    return <article className="bubble assistant answer-message" id={`message-${message.id}`}><span className="bubble-label">Astra</span><FinalAnswer run={snapshot} fallback={message.content} /></article>;
+  }
+
+  if (!presentation) {
+    if (message.role === 'assistant') return <article className="bubble assistant answer-message" id={`message-${message.id}`}><span className="bubble-label">Astra</span><div className="answer-content"><MarkdownContent content={message.content} /></div></article>;
+    return null;
+  }
+
+  return null;
 }
 
-function ThinkingEvent({ title, content }: { title: string; content: string }) {
-  return <details className="process-details"><summary><Icon name="brain" /><span>{title}</span></summary><p>{content}</p></details>;
-}
-
-function ToolEvent({ turn, toolCalls }: { turn: AgentTurnView; toolCalls: ToolCallView[] }) {
-  const call = toolCalls.find((item) => item.id === turn.tool_call_id);
-  const output = call?.output ?? {};
-  const url = typeof output.url === 'string' ? output.url : undefined;
-  const warnings = Array.isArray(output.warnings) ? output.warnings : [];
-
-  return (
-    <details className="process-details tool-event">
-      <summary><Icon name="tools" /><span>{turn.selected_tool}</span><small>{call?.status ?? turn.status}{toolCallDetail(output)}</small></summary>
-      {turn.reasoning_summary && <p>{turn.reasoning_summary}</p>}
-      {url && <a href={url} target="_blank" rel="noreferrer">{url}</a>}
-      {warnings.map((warning, index) => (
-        <p key={index}>{String(warning)}</p>
-      ))}
-    </details>
-  );
+function ProcessPanel({ run, messageId }: { run: RunView; messageId: string }) {
+  const turns = [...(run.turns ?? [])].sort((a, b) => a.turn_index - b.turn_index);
+  const report = run.verification_report ?? run.result?.verification_report;
+  const notes = [...new Set([...(run.result?.verification_notes ?? []), ...(report?.notes ?? [])])];
+  return <article className="process-entry" id={`message-${messageId}`}><details className="process-panel"><summary><Icon name="brain" /><span>思考过程</span><small>{turns.length} 个步骤 · {run.tool_calls.length} 次工具调用</small></summary><div className="process-timeline">
+    {turns.map((turn) => {
+      const call = run.tool_calls.find((item) => item.id === turn.tool_call_id);
+      return <div className="process-step" key={turn.id}><span className={`process-dot ${turn.selected_tool ? 'tool' : ''}`}><Icon name={turn.selected_tool ? 'tools' : 'brain'} /></span><div><strong>{turn.selected_tool ? turn.selected_tool : turn.decision_type === 'reflect' ? '反思' : '思考'}</strong><p>{turn.reflection ? String(turn.reflection.summary ?? turn.reasoning_summary) : turn.reasoning_summary}</p>{call && <small>{call.status}{toolCallDetail(call.output)}</small>}</div></div>;
+    })}
+    {notes.map((note, index) => <div className="process-step verification" key={`verification-${index}`}><span className="process-dot"><Icon name="check" /></span><div><strong>验证</strong><p>{note}</p></div></div>)}
+    <ReasoningAuditSummary run={run} />
+  </div></details></article>;
 }
 
 function FinalAnswer({ run, fallback }: { run: RunView; fallback: string }) {
@@ -878,21 +918,20 @@ function FinalAnswer({ run, fallback }: { run: RunView; fallback: string }) {
   if (!result) {
     return null;
   }
-  const report = run.verification_report ?? result.verification_report;
   const findings = result.findings.filter((finding) => finding.text.trim() !== result.summary.trim());
-  const notes = [...new Set([...result.caveats, ...result.verification_notes, ...(report?.notes ?? [])])];
+  const notes = [...new Set(result.caveats)];
   return (
     <div className="answer-content">
-      <p>{result.summary || fallback}</p>
+      <MarkdownContent content={result.summary || fallback} />
       {findings.map((finding, index) => (
-        <p key={index}>{finding.text}</p>
+        <MarkdownContent content={finding.text} key={index} />
       ))}
       {result.sources.length ? (
         <details className="answer-support"><summary>{`来源 · ${result.sources.length}`}</summary><div className="source-grid">
           {result.sources.map((source) => {
             const quality = result.source_quality?.find((item) => item.url === source.url);
             return (
-              <a key={source.url} href={source.url} target="_blank" rel="noreferrer" className="source-card">
+              <a key={source.url} href={externalHref(source.url)} target="_blank" rel="noreferrer" className="source-card">
                 <strong>{source.title || source.url}</strong>
                 {quality && (
                   <span>{formatScore(quality.quality_score)} · {quality.extraction_strategy || 'unknown'}</span>
@@ -902,13 +941,25 @@ function FinalAnswer({ run, fallback }: { run: RunView; fallback: string }) {
           })}
         </div></details>
       ) : null}
-      {(notes.length > 0 || run.turns?.length || run.terminal_reason) && <details className="answer-support reasoning-audit"><summary>{'思考与验证'}</summary><div className="answer-support-content">
-        {run.turns?.map((turn) => <div key={turn.id}><strong>{turn.selected_tool ? `工具 · ${turn.selected_tool}` : turn.decision_type === 'reflect' ? '反思' : '思考'}</strong><span>{turn.reasoning_summary}</span></div>)}
-        {notes.map((item, index) => <div key={`note-${index}`}><strong>验证</strong><span>{item}</span></div>)}
-        <ReasoningAuditSummary run={run} />
-      </div></details>}
+      {notes.length > 0 && <div className="answer-notes">{notes.map((item, index) => <p key={`note-${index}`}>{item}</p>)}</div>}
     </div>
   );
+}
+
+function MarkdownContent({ content }: { content: string }) {
+  return <div className="markdown-content"><ReactMarkdown remarkPlugins={[remarkGfm]} components={{
+    a: ({ node: _node, href, ...props }) => <a {...props} href={externalHref(href ?? '')} target="_blank" rel="noreferrer" />,
+  }}>{content}</ReactMarkdown></div>;
+}
+
+function externalHref(value: string) {
+  const href = value.trim();
+  if (!href || href.startsWith('#') || /^(https?:|mailto:|tel:)/i.test(href)) return href;
+  const embeddedUrl = href.match(/https?:\/\/[^\s，。；、）)\]]+/i)?.[0];
+  if (embeddedUrl) return embeddedUrl;
+  if (href.startsWith('//')) return `https:${href}`;
+  const embeddedDomain = href.match(/(?:[a-z0-9-]+\.)+[a-z]{2,}(?:\/[^\s，。；、）)\]]*)?/i)?.[0];
+  return `https://${(embeddedDomain ?? href).replace(/^\/+/, '')}`;
 }
 
 function ReasoningAuditSummary({ run }: { run: RunView }) {
@@ -959,6 +1010,21 @@ function buildConversation(run: RunView | null): ChatMessage[] {
     });
   }
   return messages;
+}
+
+function buildPresentation(run: RunView | null): ChatMessage[] {
+  if (!run) return [];
+  const raw = buildConversation(run);
+  const userMessages = raw.filter((message) => message.role === 'user');
+  const snapshot = normalizeRunView(run);
+  const presented: ChatMessage[] = userMessages.map((message) => ({ ...message, metadata: { ...message.metadata, presentation: 'user' } }));
+  if ((snapshot.turns?.length ?? 0) > 0 || snapshot.tool_calls.length > 0) {
+    presented.push({ id: `${run.id}-process`, role: 'process', content: '', status: run.status, metadata: { presentation: 'process', run_snapshot: snapshot } });
+  }
+  if (snapshot.result) {
+    presented.push({ id: `${run.id}-answer`, role: 'assistant', content: snapshot.result.summary, status: run.status, metadata: { presentation: 'answer', run_snapshot: snapshot } });
+  }
+  return presented;
 }
 
 function activeState(run: RunView) {

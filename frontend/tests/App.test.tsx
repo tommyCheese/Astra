@@ -16,11 +16,11 @@ vi.mock('../src/api', () => ({
     summary: '完成',
     result: {
       summary: '已完成查询',
-      findings: [{ text: '发现一条证据', source_urls: ['https://example.com'] }],
-      sources: [{ url: 'https://example.com', title: 'Example' }],
+      findings: [{ text: '**发现一条证据**', source_urls: ['https://example.com'] }],
+      sources: [{ url: '示例网站：https://example.com/docs', title: 'Example' }],
       source_quality: [
         {
-          url: 'https://example.com',
+          url: '示例网站：https://example.com/docs',
           quality_score: 0.92,
           extraction_strategy: 'readability',
           warnings: ['正文与查询词重叠较少'],
@@ -178,14 +178,18 @@ describe('App', () => {
 
     expect(await screen.findByText('已完成查询')).toBeInTheDocument();
     expect(screen.getByText('发现一条证据')).toBeInTheDocument();
+    expect(screen.getByText('发现一条证据').tagName).toBe('STRONG');
     expect(screen.getByText(/92%/)).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /Example/ })).toHaveAttribute('href', 'https://example.com/docs');
     expect(screen.queryByText('审计详情')).not.toBeInTheDocument();
     expect(screen.getAllByText(/web_search/).length).toBeGreaterThan(0);
     expect(screen.getByRole('navigation', { name: '问题导航' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '跳转到问题 1' })).toBeInTheDocument();
-    expect(screen.getByText('思考与验证')).toBeInTheDocument();
+    expect(screen.getByText('思考过程')).toBeInTheDocument();
     expect(screen.getAllByText('已完成查询')).toHaveLength(1);
     expect(screen.getByText('web_search').closest('details')).not.toHaveAttribute('open');
+    expect(document.querySelectorAll('.answer-message')).toHaveLength(1);
+    expect(document.querySelectorAll('.process-panel')).toHaveLength(1);
   });
 
   it('sends selected reasoning policy with a run', async () => {
