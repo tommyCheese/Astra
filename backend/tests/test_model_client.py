@@ -1,7 +1,15 @@
 import pytest
 
 from app.core.config import Settings
-from app.runner.model_client import ModelConfigurationError, MockModelClient, build_model_client
+from app.runner.model_client import (
+    ModelConfigurationError,
+    MockModelClient,
+    build_model_client,
+    normalize_contract_payload,
+    normalize_plan_payload,
+    parse_json_object,
+)
+from app.schemas.agent import PlanOutput, TaskContract
 
 
 async def test_mock_model_client_returns_structured_outputs():
@@ -84,3 +92,27 @@ def test_real_model_requires_credentials():
 
     with pytest.raises(ModelConfigurationError):
         build_model_client(settings)
+
+
+def test_model_json_parser_accepts_fences_and_leading_text():
+    assert parse_json_object('```json\n{"answer": "ok"}\n```') == {"answer": "ok"}
+    assert parse_json_object('Here is the JSON: {"answer": "ok"}') == {"answer": "ok"}
+
+
+def test_model_payload_normalization_accepts_shorthand_contract_and_plan():
+    contract = TaskContract.model_validate(normalize_contract_payload({
+        "original_goal": "你好",
+        "assumptions": ["用户希望得到问候"],
+        "success_criteria": ["自然回应"],
+        "verification_requirements": ["task_adapter"],
+    }, "你好"))
+    plan = PlanOutput.model_validate(normalize_plan_payload({
+        "steps": [{"title": "生成回复", "intent": "问候", "success_criteria": "用户收到回复"}],
+        "success_criteria": "用户感到被回应",
+    }))
+
+    assert contract.assumptions[0].statement == "用户希望得到问候"
+    assert contract.success_criteria[0].verification_method == "task_adapter"
+    assert plan.steps[0].intent == "问候"
+    assert plan.steps[0].success_criteria == ["用户收到回复"]
+    assert plan.success_criteria == ["用户感到被回应"]

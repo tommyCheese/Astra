@@ -236,6 +236,7 @@ class CreateRunRequest(BaseModel):
     goal: str = Field(min_length=1, max_length=4000)
     task_id: Optional[str] = None
     reasoning_policy: RequestedReasoningPolicy = Field(default_factory=RequestedReasoningPolicy)
+    model: Optional[Dict[str, str]] = None
 
 
 class CreateRunResponse(BaseModel):

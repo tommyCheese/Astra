@@ -1,4 +1,6 @@
+import asyncio
 import json
+import logging
 from typing import Any, Dict, List, Optional
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
@@ -7,12 +9,14 @@ from app.db.session import SessionLocal
 from app.repositories.runs import RunRepository
 from app.runner.agent_loop import AgentLoop
 from app.runner.model_client import ModelConfigurationError, ModelOutputError, build_model_client
-from app.schemas.agent import FinalAnswer, PlanOutput
+from app.schemas.agent import FinalAnswer, PlanOutput, PlanStep
 from app.schemas.agent import AgentState, ReasoningPolicySnapshot
-from app.runner.reasoning import build_plan_graph, validate_contract
+from app.runner.reasoning import build_plan_graph, normalize_contract, validate_contract
 from app.tools.base import ToolExecutionError, ToolRegistry
 from app.tools.web import build_web_registry
 from app.core.errors import run_error_from_exception
+
+logger = logging.getLogger("astra.engine")
 
 
 class RunEngine:
@@ -28,15 +32,18 @@ class RunEngine:
         self.tool_registry = tool_registry or build_web_registry(settings)
 
     async def run(self, run_id: str) -> None:
+        logger.info("run.engine.start run_id=%s provider=%s model=%s", run_id, self.settings.model_provider, self.settings.model_name)
         async with SessionLocal() as session:
             repo = RunRepository(session)
             try:
                 await self._run_with_repo(repo, run_id)
             except (ModelConfigurationError, ModelOutputError) as exc:
+                logger.exception("run.engine.model_error run_id=%s cause=%s", run_id, str(exc))
                 error = run_error_from_exception(exc)
                 await repo.add_event(run_id, "run.error", error)
-                await repo.update_run_status(run_id, "blocked", summary=error["message"], result={"summary": error["message"], "error": error})
+                await repo.update_run_status(run_id, "blocked", summary=error["message"], result=error_result(error))
             except Exception as exc:
+                logger.exception("run.engine.failed run_id=%s cause=%s", run_id, type(exc).__name__)
                 error = run_error_from_exception(exc)
                 await repo.add_event(run_id, "run.error", error)
                 await repo.update_run_status(
@@ -77,11 +84,17 @@ class RunEngine:
                 await repo.update_run_status(run_id, loop_result["status"], summary=loop_result["answer"].summary, result=loop_result["result"])
                 return
 
+        logger.info("run.phase run_id=%s phase=planning", run_id)
         await repo.update_run_status(run_id, "planning")
         contract = await self.model_client.contract(goal) if self.settings.agent_use_general_runtime else None
         if contract:
-            validate_contract(contract)
+            contract = normalize_contract(contract, goal)
+            try:
+                validate_contract(contract)
+            except ValueError as exc:
+                raise ModelOutputError(f"Invalid task contract: {exc}") from exc
         plan = await self.model_client.plan(goal)
+        logger.info("run.plan.ready run_id=%s steps=%s tools=%s", run_id, len(plan.steps), len(plan.required_tools))
         await self._persist_plan(repo, run_id, plan)
         run = await repo.require_run(run_id)
         if contract:
@@ -104,6 +117,7 @@ class RunEngine:
             })
             return
 
+        logger.info("run.phase run_id=%s phase=executing", run_id)
         await repo.update_run_status(run_id, "executing")
         if self.settings.agent_use_loop and self.settings.agent_use_general_runtime:
             agent_loop = AgentLoop(
@@ -124,6 +138,7 @@ class RunEngine:
                 content_ref=final_answer.model_dump_json(),
                 metadata={"format": "json"},
             )
+            await self._emit_answer_stream(repo, run_id, final_answer.summary)
             if synth_step is not None:
                 await repo.update_step(
                     synth_step.id,
@@ -151,6 +166,7 @@ class RunEngine:
                 summary=final_answer.summary,
                 result=result,
             )
+            logger.info("run.complete run_id=%s status=%s findings=%s sources=%s", run_id, status, len(final_answer.findings), len(final_answer.sources))
             return
 
         tool_outputs = await self._execute_web_query(repo, run_id, goal)
@@ -164,6 +180,7 @@ class RunEngine:
             content_ref=final_answer.model_dump_json(),
             metadata={"format": "json"},
         )
+        await self._emit_answer_stream(repo, run_id, final_answer.summary)
         if synth_step is not None:
             await repo.update_step(
                 synth_step.id,
@@ -193,7 +210,7 @@ class RunEngine:
 
     async def _persist_plan(self, repo: RunRepository, run_id: str, plan: PlanOutput) -> None:
         if not plan.steps:
-            raise ModelOutputError("Plan contains no steps")
+            plan = plan.model_copy(update={"steps": [PlanStep(title="生成回复", intent="直接回应用户请求")]})
         for index, step in enumerate(plan.steps, start=1):
             await repo.create_step(
                 run_id,
@@ -202,6 +219,16 @@ class RunEngine:
                 step.intent,
                 depends_on=[],
             )
+
+    async def _emit_answer_stream(self, repo: RunRepository, run_id: str, content: str) -> None:
+        await repo.add_event(run_id, "answer.started", {"role": "assistant"})
+        await repo.session.commit()
+        for index in range(0, len(content), 12):
+            await repo.add_event(run_id, "answer.delta", {"delta": content[index:index + 12]})
+            await repo.session.commit()
+            await asyncio.sleep(0.01)
+        await repo.add_event(run_id, "answer.completed", {"content": content})
+        await repo.session.commit()
 
     async def _execute_web_query(
         self,
@@ -473,5 +500,28 @@ class RunEngine:
 
 
 async def start_run_in_process(run_id: str, settings: Settings) -> None:
-    engine = RunEngine(settings)
+    try:
+        engine = RunEngine(settings)
+    except ModelConfigurationError as exc:
+        logger.exception("run.engine.configuration_error run_id=%s", run_id)
+        async with SessionLocal() as session:
+            repo = RunRepository(session)
+            error = run_error_from_exception(exc)
+            await repo.add_event(run_id, "run.error", error)
+            await repo.update_run_status(run_id, "blocked", summary=error["message"], result=error_result(error))
+        return
     await engine.run(run_id)
+
+
+def error_result(error: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "summary": error["message"],
+        "findings": [],
+        "sources": [],
+        "failed_sources": [],
+        "source_quality": [],
+        "conflicts": [],
+        "caveats": [],
+        "verification_notes": ["运行未能完成。"],
+        "error": error,
+    }

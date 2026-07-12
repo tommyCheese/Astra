@@ -1,11 +1,16 @@
 import { FormEvent, ReactNode, useEffect, useMemo, useRef, useState } from 'react';
-import { AstraApiError, ApiErrorPayload, createRun, getRun, resumeRun } from './api';
+import { AstraApiError, ApiErrorPayload, createRun, getRun, listRuns, resumeRun, streamRunEvents } from './api';
 import { I18nProvider, useI18n } from './i18n';
 import { ThemeProvider, useTheme } from './theme';
 import type { AgentTurnView, ChatMessage, RunView, ToolCallView } from './types';
 
 const terminalStatuses = new Set(['completed', 'completed_with_warnings', 'failed', 'blocked', 'waiting_user']);
 type ConversationEntry = { id: string; run: RunView; priorMessages: ChatMessage[] };
+const STORAGE_KEYS = {
+  conversations: 'astra.conversations.v1',
+  modelProviders: 'astra.model-providers.v1',
+  selectedModel: 'astra.selected-model.v1',
+};
 
 export function App() {
   return <I18nProvider><ThemeProvider><AppContent /></ThemeProvider></I18nProvider>;
@@ -15,10 +20,11 @@ function AppContent() {
   const { language, t } = useI18n();
   const [goal, setGoal] = useState('');
   const [run, setRun] = useState<RunView | null>(null);
-  const [conversationHistory, setConversationHistory] = useState<ConversationEntry[]>([]);
+  const [conversationHistory, setConversationHistory] = useState<ConversationEntry[]>(loadConversationHistory);
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
   const [priorMessages, setPriorMessages] = useState<ChatMessage[]>([]);
   const [loading, setLoading] = useState(false);
+  const [streamingAnswer, setStreamingAnswer] = useState('');
   const [error, setError] = useState<ApiErrorPayload | null>(null);
   const [view, setView] = useState<'chat' | 'settings'>('chat');
   const [usageOpen, setUsageOpen] = useState(false);
@@ -27,13 +33,13 @@ function AppContent() {
   const [executionMenuOpen, setExecutionMenuOpen] = useState(false);
   const [executionMode, setExecutionMode] = useState<'plan' | 'default' | 'bypass'>('default');
   const [bypassConfirmOpen, setBypassConfirmOpen] = useState(false);
-  const [providerConfigs, setProviderConfigs] = useState<ModelProviderConfig[]>(() => initialProviderConfigs);
-  const [selectedModelKey, setSelectedModelKey] = useState('openai:gpt-5');
+  const [providerConfigs, setProviderConfigs] = useState<ModelProviderConfig[]>(loadProviderConfigs);
+  const [selectedModelKey, setSelectedModelKey] = useState(() => readLocalString(STORAGE_KEYS.selectedModel) || 'openai:gpt-5');
   const [reflectionEnabled, setReflectionEnabled] = useState(true);
   const [reasoningEffort, setReasoningEffort] = useState('均衡');
   const [planningStrategy, setPlanningStrategy] = useState('自适应');
   const [reflectionTrigger, setReflectionTrigger] = useState('按需');
-  const [settingsCategory, setSettingsCategory] = useState('工具');
+  const [settingsCategory, setSettingsCategory] = useState('模型管理');
   const attachMenuRef = useRef<HTMLDivElement>(null);
   const executionMenuRef = useRef<HTMLDivElement>(null);
   const modelMenuRef = useRef<HTMLDivElement>(null);
@@ -41,6 +47,29 @@ function AppContent() {
     .filter((provider) => provider.enabled)
     .flatMap((provider) => parseModelIds(provider.models).map((model) => ({ key: `${provider.id}:${model}`, model, providerId: provider.id, providerName: provider.name }))), [providerConfigs]);
   const selectedModel = availableModels.find((item) => item.key === selectedModelKey)?.model ?? '';
+
+  useEffect(() => writeLocalJson(STORAGE_KEYS.conversations, conversationHistory), [conversationHistory]);
+  useEffect(() => writeLocalJson(STORAGE_KEYS.modelProviders, providerConfigs), [providerConfigs]);
+  useEffect(() => writeLocalString(STORAGE_KEYS.selectedModel, selectedModelKey), [selectedModelKey]);
+
+  useEffect(() => {
+    let active = true;
+    void listRuns().then((runs) => {
+      if (!active) return;
+      const grouped = new Map<string, RunView[]>();
+      for (const item of runs) {
+        const normalized = normalizeRunView(item);
+        grouped.set(normalized.task_id, [...(grouped.get(normalized.task_id) ?? []), normalized]);
+      }
+      const restored = [...grouped.entries()].map(([id, items]) => ({
+        id,
+        run: items[0],
+        priorMessages: [...items.slice(1)].reverse().flatMap(buildConversation),
+      }));
+      setConversationHistory((local) => [...restored, ...local.filter((item) => !grouped.has(item.id))]);
+    }).catch(() => { /* retain browser history while the backend is offline */ });
+    return () => { active = false; };
+  }, []);
 
   useEffect(() => {
     if (availableModels.length && !availableModels.some((item) => item.key === selectedModelKey)) {
@@ -98,9 +127,12 @@ function AppContent() {
       return;
     }
     setError(null);
+    setStreamingAnswer('');
     setLoading(true);
     try {
       const previousMessages = run ? messages : [];
+      const selectedOption = availableModels.find((item) => item.key === selectedModelKey);
+      const selectedProvider = providerConfigs.find((item) => item.id === selectedOption?.providerId);
       const created = run?.status === 'waiting_user'
         ? await resumeRun(run.id, trimmedGoal, typeof run.waiting_state?.continuation_token === 'string' ? run.waiting_state.continuation_token : undefined)
         : await createRun(trimmedGoal, run?.task_id, {
@@ -110,8 +142,13 @@ function AppContent() {
         reflection_trigger: reflectionTrigger === '失败时' ? 'failure_only' : reflectionTrigger === '每轮' ? 'every_turn' : 'adaptive',
         execution_mode: executionMode === 'plan' ? 'plan_only' : executionMode === 'bypass' ? 'auto_approval' : 'request_approval',
         verification_level: 'standard',
-        });
-      const current = await getRun(created.run_id);
+        }, selectedOption && selectedProvider ? {
+          provider: selectedProvider.id,
+          name: selectedOption.model,
+          api_key: selectedProvider.apiKey,
+          base_url: selectedProvider.endpoint,
+        } : undefined);
+      const current = normalizeRunView(await getRun(created.run_id));
       setPriorMessages(previousMessages);
       setRun(current);
       rememberConversation(current, previousMessages);
@@ -127,23 +164,28 @@ function AppContent() {
     if (!run || terminalStatuses.has(run.status)) {
       return;
     }
-    const refresh = window.setInterval(async () => {
-      const next = await getRun(run.id);
+    let active = true;
+    const refreshRun = async () => {
+      const next = normalizeRunView(await getRun(run.id));
+      if (!active) return;
       setRun(next);
       rememberConversation(next);
-      if (terminalStatuses.has(next.status)) {
-        window.clearInterval(refresh);
-      }
-    }, 700);
-    return () => {
-      window.clearInterval(refresh);
+      if (terminalStatuses.has(next.status)) setStreamingAnswer('');
     };
+    const close = streamRunEvents(run.id, (event) => {
+      if (event.type === 'answer.started') setStreamingAnswer('');
+      if (event.type === 'answer.delta') setStreamingAnswer((value) => value + String(event.payload.delta ?? ''));
+      void refreshRun();
+    }, () => { void refreshRun(); });
+    const fallback = window.setInterval(() => { void refreshRun(); }, 3000);
+    return () => { active = false; close(); window.clearInterval(fallback); };
   }, [run?.id, run?.status]);
 
   const messages = useMemo(() => {
     const currentMessages = buildConversation(run).map((message) => ({ ...message, id: `${run?.id ?? 'idle'}:${priorMessages.length}:${message.id}` }));
-    return [...priorMessages, ...currentMessages];
-  }, [priorMessages, run]);
+    const streamed = streamingAnswer ? [{ id: `${run?.id ?? 'idle'}-stream`, role: 'assistant', content: streamingAnswer, status: 'streaming', metadata: {} }] : [];
+    return [...priorMessages, ...currentMessages, ...streamed];
+  }, [priorMessages, run, streamingAnswer]);
 
   function changeView(nextView: 'chat' | 'settings') {
     setView(nextView);
@@ -154,6 +196,7 @@ function AppContent() {
     setActiveConversationId(null);
     setPriorMessages([]);
     setError(null);
+    setStreamingAnswer('');
     setGoal('');
     changeView('chat');
   }
@@ -168,10 +211,13 @@ function AppContent() {
         onSelectConversation={(conversation) => {
           setActiveConversationId(conversation.id);
           setPriorMessages(conversation.priorMessages);
-          setRun(conversation.run);
+          setRun(normalizeRunView(conversation.run));
           changeView('chat');
         }}
-        onOpenSettings={() => changeView('settings')}
+        onOpenSettings={() => {
+          setSettingsCategory('模型管理');
+          changeView('settings');
+        }}
         onOpenUsage={() => setUsageOpen(true)}
       />
 
@@ -459,7 +505,7 @@ function SettingSection({ category, providerConfigs, onProviderConfigsChange }: 
   const { language, setLanguage, t } = useI18n();
   const { mode, setMode } = useTheme();
   if (category === '模型管理') return <ModelManagement providers={providerConfigs} onChange={onProviderConfigsChange} />;
-  if (category === '工具') return <SettingsGroup title="工具" description="管理 Agent 可用工具及其调用策略。"><div className="capability-settings"><CapabilityItem title="Web Search" detail="搜索公开网页并生成候选来源" state="已启用" /><CapabilityItem title="Web Fetch" detail="自适应提取页面主要内容" state="已启用" /><CapabilityItem title="文件分析" detail="解析上传的文档、代码与数据" state="即将支持" enabled={false} /><CapabilityItem title="图像理解" detail="识别并分析图片内容" state="即将支持" enabled={false} /></div><SettingRow title="工具调用确认" description="工具可能修改数据、产生费用或影响外部系统时请求确认"><TranslatedSelect defaultValue="risk" options={[['risk', '仅高风险工具'], ['always', '每次调用'], ['never', '从不确认']]} /></SettingRow><SettingRow title="工具调用上限" description="限制单次任务可执行的工具调用总数"><TranslatedSelect defaultValue="10" options={['5', '10', '20']} /></SettingRow><SettingRow title="并行工具调用" description="并发执行相互独立且无副作用冲突的工具"><Toggle checked /></SettingRow><SettingRow title="工具失败重试" description="仅重试临时网络错误和明确标记为可恢复的工具错误"><TranslatedSelect defaultValue="2" options={[['0', '不重试'], ['1', '1'], ['2', '2'], ['3', '3']]} /></SettingRow></SettingsGroup>;
+  if (category === '工具') return <SettingsGroup title="工具" description="管理 Agent 可用工具及其调用策略。"><div className="capability-settings"><CapabilityItem title="Web Search" detail="搜索公开网页并生成候选来源" state="已启用" /><CapabilityItem title="Web Fetch" detail="自适应提取页面主要内容" state="已启用" /><CapabilityItem title="文件分析" detail="解析上传的文档、代码与数据" state="即将支持" enabled={false} /><CapabilityItem title="图像理解" detail="识别并分析图片内容" state="即将支持" enabled={false} /></div><SettingRow title="工具调用上限" description="限制单次任务可执行的工具调用总数"><TranslatedSelect defaultValue="10" options={['5', '10', '20']} /></SettingRow><SettingRow title="并行工具调用" description="并发执行相互独立且无副作用冲突的工具"><Toggle checked /></SettingRow><SettingRow title="工具失败重试" description="仅重试临时网络错误和明确标记为可恢复的工具错误"><TranslatedSelect defaultValue="2" options={[['0', '不重试'], ['1', '1'], ['2', '2'], ['3', '3']]} /></SettingRow></SettingsGroup>;
   if (category === '运行时') return <SettingsGroup title="运行时" description="管理 Agent 的执行环境、生命周期和任务级资源边界。"><div className="runtime-summary"><div><span>{t('执行环境')}</span><strong>{t('本地沙盒')}</strong></div><div><span>{t('任务状态')}</span><strong>{t('可恢复')}</strong></div><div><span>{t('网络')}</span><strong>{t('按需授权')}</strong></div></div><SettingRow title="沙盒模式" description="限定 Agent 可读取和修改的文件系统范围"><TranslatedSelect defaultValue="workspace" options={[['readonly', '只读'], ['workspace', '工作区可写'], ['container', '隔离容器']]} /></SettingRow><SettingRow title="网络策略" description="限制运行环境可访问的外部网络范围"><TranslatedSelect defaultValue="approval" options={[['off', '禁用'], ['approval', '公开网络，按需授权'], ['allowlist', '仅允许列表']]} /></SettingRow><SettingRow title="命令执行确认" description="命令可能修改环境或影响外部系统时请求确认"><TranslatedSelect defaultValue="risk" options={[['risk', '仅高风险命令'], ['always', '每次执行'], ['never', '从不确认']]} /></SettingRow><SettingRow title="最大 Agent 轮次" description="达到上限后停止循环并输出当前结果"><TranslatedSelect defaultValue="12" options={['6', '12', '20']} /></SettingRow><SettingRow title="单次运行时限" description="超时后停止任务并保留可恢复的运行状态"><TranslatedSelect defaultValue="30" options={[['10', `10 ${t('分钟')}`], ['30', `30 ${t('分钟')}`], ['60', `60 ${t('分钟')}`]]} /></SettingRow><SettingRow title="后台继续运行" description="离开当前对话后继续执行，并保留状态通知"><Toggle checked /></SettingRow><SettingRow title="保留运行工件" description="保存运行状态、验证报告和失败现场用于审计"><Toggle checked /></SettingRow></SettingsGroup>;
   if (category === '记忆') return <SettingsGroup title="记忆" description="管理 Agent 在单次任务和不同对话之间保留的信息。"><SettingRow title="运行记忆" description="在当前任务中保留来源摘要和决策线索"><Toggle checked /></SettingRow><SettingRow title="跨对话记忆" description="在新对话中使用已确认的偏好与事实"><Toggle /></SettingRow><SettingRow title="写入阈值" description="仅保存高于该置信度的结构化记忆"><TranslatedSelect defaultValue="80" options={[['70', '70%'], ['80', '80%'], ['90', '90%']]} /></SettingRow><SettingRow title="记忆保留期" description="到期后自动清理非固定记忆"><TranslatedSelect defaultValue="30" options={[['7', `7 ${t('天')}`], ['30', `30 ${t('天')}`], ['forever', '永久']]} /></SettingRow></SettingsGroup>;
   if (category === '验证与安全') return <SettingsGroup title="验证与安全" description="定义 Agent 在报告完成前必须满足的通用验证要求。"><SettingRow title="完成前验证" description="提交结果前运行与任务类型匹配的验证器"><Toggle checked /></SettingRow><SettingRow title="验证强度" description="控制验证覆盖范围以及失败后的检查深度"><TranslatedSelect defaultValue="standard" options={[['basic', '基础'], ['standard', '标准'], ['strict', '严格']]} /></SettingRow><SettingRow title="验证失败处理" description="验证未通过时决定继续修复、带警告返回或停止任务"><TranslatedSelect defaultValue="repair" options={[['repair', '自动修复'], ['warn', '带警告返回'], ['block', '停止任务']]} /></SettingRow></SettingsGroup>;
@@ -508,6 +554,87 @@ const initialProviderConfigs: ModelProviderConfig[] = modelProviders.map((provid
   ...providerDefaults[provider.id],
   apiKey: '',
 }));
+
+function localStorageOrNull(): Storage | null {
+  try {
+    return typeof window !== 'undefined' ? window.localStorage : null;
+  } catch {
+    return null;
+  }
+}
+
+function readLocalJson<T>(key: string): T | null {
+  try {
+    const value = localStorageOrNull()?.getItem(key);
+    return value ? JSON.parse(value) as T : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeLocalJson(key: string, value: unknown) {
+  try {
+    localStorageOrNull()?.setItem(key, JSON.stringify(value));
+  } catch { /* storage may be disabled or full */ }
+}
+
+function readLocalString(key: string) {
+  try {
+    return localStorageOrNull()?.getItem(key) ?? '';
+  } catch {
+    return '';
+  }
+}
+
+function writeLocalString(key: string, value: string) {
+  try {
+    localStorageOrNull()?.setItem(key, value);
+  } catch { /* storage may be disabled or full */ }
+}
+
+function loadProviderConfigs(): ModelProviderConfig[] {
+  const saved = readLocalJson<ModelProviderConfig[]>(STORAGE_KEYS.modelProviders);
+  if (!Array.isArray(saved)) return initialProviderConfigs;
+  return initialProviderConfigs.map((defaults) => {
+    const configured = saved.find((item) => item?.id === defaults.id);
+    return configured ? { ...defaults, ...configured, id: defaults.id, name: defaults.name } : defaults;
+  });
+}
+
+function loadConversationHistory(): ConversationEntry[] {
+  const saved = readLocalJson<ConversationEntry[]>(STORAGE_KEYS.conversations);
+  if (!Array.isArray(saved)) return [];
+  return saved
+    .filter((item) => item && typeof item.id === 'string' && item.run && typeof item.run.id === 'string' && Array.isArray(item.priorMessages))
+    .map((item) => ({
+      ...item,
+      run: normalizeRunView(item.run),
+      priorMessages: item.priorMessages.map((message) => ({ ...message, metadata: message.metadata ?? {} })),
+    }));
+}
+
+function normalizeRunView(run: RunView): RunView {
+  const result = run.result ? {
+    ...run.result,
+    findings: run.result.findings ?? [],
+    sources: run.result.sources ?? [],
+    caveats: run.result.caveats ?? [],
+    verification_notes: run.result.verification_notes ?? [],
+  } : run.result;
+  return {
+    ...run,
+    result,
+    steps: Array.isArray(run.steps) ? run.steps : [],
+    tool_calls: Array.isArray(run.tool_calls) ? run.tool_calls : [],
+    artifacts: Array.isArray(run.artifacts) ? run.artifacts : [],
+    events: Array.isArray(run.events) ? run.events : [],
+    turns: Array.isArray(run.turns) ? run.turns : [],
+    memories: Array.isArray(run.memories) ? run.memories : [],
+    chat_messages: Array.isArray(run.chat_messages)
+      ? run.chat_messages.map((message) => ({ ...message, metadata: message.metadata ?? {} }))
+      : [],
+  };
+}
 
 function parseModelIds(models: string) {
   return [...new Set(models.split(',').map((model) => model.trim()).filter(Boolean))];

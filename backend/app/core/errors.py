@@ -61,7 +61,13 @@ def run_error_from_exception(exc: Exception) -> Dict[str, Any]:
     if name == "ModelConfigurationError":
         return ErrorPayload(type="configuration.model_not_configured", code="MODEL_NOT_CONFIGURED", message="大模型服务尚未完成配置，无法执行该任务。", retryable=False).model_dump(mode="json")
     if name == "ModelOutputError":
-        return ErrorPayload(type="dependency.model_response_invalid", code="MODEL_RESPONSE_INVALID", message="大模型服务返回了无法处理的结果，请稍后重试。", retryable=True).model_dump(mode="json")
+        return ErrorPayload(
+            type="dependency.model_response_invalid",
+            code="MODEL_RESPONSE_INVALID",
+            message="大模型服务返回了无法处理的结果，请稍后重试。",
+            retryable=True,
+            details={"reason": str(exc)[:600]},
+        ).model_dump(mode="json")
     if name == "ToolExecutionError":
         category = getattr(exc, "category", "tool_failed")
         if category in {"search_failed", "missing_credentials"}:

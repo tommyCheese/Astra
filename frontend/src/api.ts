@@ -23,11 +23,13 @@ export type ReasoningPolicyRequest = {
   verification_level: 'basic' | 'standard' | 'strict';
 };
 
-export async function createRun(goal: string, taskId?: string, reasoningPolicy?: ReasoningPolicyRequest): Promise<{ run_id: string; task_id: string; status: string }> {
+export type RunModelConfig = { provider: string; name: string; api_key: string; base_url: string };
+
+export async function createRun(goal: string, taskId?: string, reasoningPolicy?: ReasoningPolicyRequest, model?: RunModelConfig): Promise<{ run_id: string; task_id: string; status: string }> {
   const response = await fetch('/api/runs', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ goal, task_id: taskId, reasoning_policy: reasoningPolicy }),
+    body: JSON.stringify({ goal, task_id: taskId, reasoning_policy: reasoningPolicy, model }),
   });
   if (!response.ok) {
     throw await responseError(response);
@@ -41,6 +43,31 @@ export async function getRun(runId: string): Promise<RunView> {
     throw await responseError(response);
   }
   return response.json();
+}
+
+export async function listRuns(limit = 100): Promise<RunView[]> {
+  const response = await fetch(`/api/runs?limit=${limit}`);
+  if (!response.ok) throw await responseError(response);
+  return response.json();
+}
+
+export type RunStreamEvent = { id?: number; type: string; payload: Record<string, unknown>; created_at?: string };
+
+export function streamRunEvents(runId: string, onEvent: (event: RunStreamEvent) => void, onError?: () => void): () => void {
+  if (typeof EventSource === 'undefined') return () => undefined;
+  const source = new EventSource(`/api/runs/${runId}/events`);
+  source.onmessage = (message) => {
+    try {
+      onEvent(JSON.parse(message.data) as RunStreamEvent);
+    } catch {
+      onError?.();
+    }
+  };
+  source.onerror = () => {
+    source.close();
+    onError?.();
+  };
+  return () => source.close();
 }
 
 export async function resumeRun(runId: string, content: string, continuationToken?: string): Promise<{ run_id: string; task_id: string; status: string }> {

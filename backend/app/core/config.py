@@ -5,9 +5,10 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    database_url: str = "postgresql+asyncpg://astra:astra@localhost:5432/astra"
-    model_provider: str = "mock"
-    model_name: str = "mock-web-query"
+    log_level: str = "INFO"
+    database_url: str = "sqlite+aiosqlite:///./astra-dev.db"
+    model_provider: str = "openai"
+    model_name: str = "gpt-5"
     model_api_key: str = ""
     model_base_url: str = "https://api.openai.com/v1"
     web_search_provider: str = "google"

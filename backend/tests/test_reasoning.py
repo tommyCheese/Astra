@@ -10,6 +10,7 @@ from app.runner.reasoning import (
     build_default_contract,
     build_plan_graph,
     failure_fingerprint,
+    normalize_contract,
     validate_contract,
 )
 from app.runner.runtime import InvalidTransition, LoopOrchestrator, NoProgressDetector
@@ -27,6 +28,7 @@ from app.schemas.agent import (
     ReflectionTrigger,
     RequestedReasoningPolicy,
     TerminalState,
+    TaskContract,
 )
 
 
@@ -46,6 +48,13 @@ def test_contract_and_plan_are_verifiable():
     graph = build_plan_graph(contract, PlanningStrategy.adaptive, [{"title": "搜索", "intent": "查找", "required_tools": ["web_search"]}, {"title": "总结", "intent": "回答"}])
     assert graph.steps[1].depends_on == ["step-1"]
     assert graph.ready_steps()[0].id == "step-1"
+
+
+def test_contract_normalization_supports_simple_conversation():
+    contract = normalize_contract(TaskContract(original_goal="你好"), "你好")
+    validate_contract(contract)
+    assert contract.deliverables == ["回复用户请求：你好"]
+    assert contract.success_criteria[0].verification_method == "task_adapter"
 
 
 def test_evaluation_does_not_treat_failure_as_success():

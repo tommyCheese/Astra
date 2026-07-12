@@ -1,5 +1,6 @@
 import asyncio
 import json
+import logging
 from typing import AsyncIterator
 
 from fastapi import APIRouter, Depends, Query
@@ -7,7 +8,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings, get_settings
-from app.db.session import get_session
+from app.db.session import SessionLocal, get_session
 from app.repositories.runs import RunRepository, run_to_view
 from app.runner.engine import start_run_in_process
 from app.runner.reasoning import PolicyCompiler
@@ -15,6 +16,16 @@ from app.core.errors import ResourceError, StateError, ValidationError
 from app.schemas.agent import ContinueRunRequest, CreateRunRequest, CreateRunResponse, RunView
 
 router = APIRouter(prefix="/api", tags=["runs"])
+logger = logging.getLogger("astra.runs")
+
+
+@router.get("/runs", response_model=list[RunView])
+async def list_runs(
+    limit: int = Query(default=100, ge=1, le=200),
+    session: AsyncSession = Depends(get_session),
+) -> list[RunView]:
+    runs = await RunRepository(session).list_recent_runs(limit)
+    return [RunView.model_validate(run_to_view(run)) for run in runs]
 
 
 @router.post("/runs", response_model=CreateRunResponse)
@@ -27,9 +38,29 @@ async def create_run(
     if not goal:
         raise ValidationError("GOAL_REQUIRED", "请输入你想完成的目标。", {"field": "goal"})
     repo = RunRepository(session)
+    logger.info(
+        "run.create.start task_id=%s provider=%s model=%s goal_chars=%s",
+        payload.task_id,
+        (payload.model or {}).get("provider", settings.model_provider),
+        (payload.model or {}).get("name", settings.model_name),
+        len(goal),
+    )
     try:
+        run_settings = settings
+        if payload.model:
+            provider = payload.model.get("provider", "")
+            if provider not in {"openai", "deepseek", "qwen", "siliconflow", "compatible", "azure"}:
+                raise ValidationError("MODEL_PROVIDER_UNSUPPORTED", "当前模型供应商尚未接入通用运行时。")
+            run_settings = settings.model_copy(update={
+                "model_provider": provider,
+                "model_name": payload.model.get("name", ""),
+                "model_api_key": payload.model.get("api_key", ""),
+                "model_base_url": payload.model.get("base_url", ""),
+            })
+            if not run_settings.model_name or (provider != "compatible" and not run_settings.model_api_key):
+                raise ValidationError("MODEL_CONFIGURATION_REQUIRED", "请先配置模型名称和 API Key。")
         policy = PolicyCompiler().compile(payload.reasoning_policy)
-        run = await repo.create_task_run(goal, settings.model_policy, payload.task_id, reasoning_policy=policy.model_dump(mode="json"))
+        run = await repo.create_task_run(goal, run_settings.model_policy, payload.task_id, reasoning_policy=policy.model_dump(mode="json"))
         for adjustment in policy.adjustments:
             await repo.add_event(run.id, "reasoning.policy_adjusted", adjustment.model_dump(mode="json"))
         await session.commit()
@@ -38,7 +69,8 @@ async def create_run(
         if message.startswith("Task not found"):
             raise ResourceError("TASK_NOT_FOUND", "找不到指定任务。") from exc
         raise ValidationError("RUN_REQUEST_INVALID", "无法创建任务。") from exc
-    asyncio.create_task(start_run_in_process(run.id, settings))
+    asyncio.create_task(start_run_in_process(run.id, run_settings))
+    logger.info("run.create.accepted run_id=%s task_id=%s status=%s", run.id, run.task_id, run.status)
     return CreateRunResponse(task_id=run.task_id, run_id=run.id, status=run.status)
 
 
@@ -95,23 +127,27 @@ async def stream_run_events(
         raise ResourceError("RUN_NOT_FOUND", "找不到指定运行记录。")
 
     async def event_stream() -> AsyncIterator[str]:
+        logger.info("sse.open run_id=%s after_id=%s", run_id, after_id)
         last_id = after_id
-        while True:
-            events = await repo.list_events(run_id, last_id)
-            for event in events:
-                last_id = event.id
-                payload = {
-                    "id": event.id,
-                    "type": event.type,
-                    "payload": event.payload,
-                    "created_at": event.created_at.isoformat(),
-                }
-                yield f"id: {event.id}\nevent: {event.type}\ndata: {json.dumps(payload)}\n\n"
-            run = await repo.get_run(run_id)
-            if run and run.status in {"completed", "completed_with_warnings", "failed", "blocked", "waiting_user"}:
-                if not events:
-                    yield "event: heartbeat\ndata: {}\n\n"
-                break
-            await asyncio.sleep(0.5)
+        async with SessionLocal() as stream_session:
+            stream_repo = RunRepository(stream_session)
+            while True:
+                events = await stream_repo.list_events(run_id, last_id)
+                for event in events:
+                    last_id = event.id
+                    payload = {
+                        "id": event.id,
+                        "type": event.type,
+                        "payload": event.payload,
+                        "created_at": event.created_at.isoformat(),
+                    }
+                    yield f"id: {event.id}\ndata: {json.dumps(payload)}\n\n"
+                run = await stream_repo.get_run(run_id)
+                if run and run.status in {"completed", "completed_with_warnings", "failed", "blocked", "waiting_user"}:
+                    if not events:
+                        yield "data: {\"type\": \"heartbeat\", \"payload\": {}}\n\n"
+                    break
+                await asyncio.sleep(0.25)
+        logger.info("sse.close run_id=%s last_id=%s", run_id, last_id)
 
-    return StreamingResponse(event_stream(), media_type="text/event-stream")
+    return StreamingResponse(event_stream(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})

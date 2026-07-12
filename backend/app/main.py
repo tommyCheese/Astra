@@ -1,3 +1,6 @@
+import logging
+import time
+
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
@@ -8,9 +11,15 @@ from app.api.runs import router as runs_router
 from app.core.config import get_settings
 from app.core.errors import AstraError, ErrorEnvelope, InfrastructureError, ValidationError, run_error_from_exception
 
+logger = logging.getLogger("astra.http")
+
 
 def create_app() -> FastAPI:
     settings = get_settings()
+    logging.basicConfig(
+        level=getattr(logging, settings.log_level.upper(), logging.INFO),
+        format="%(asctime)s %(levelname)s %(name)s %(message)s",
+    )
     app = FastAPI(title="Astra", version="0.1.0")
     app.add_middleware(
         CORSMiddleware,
@@ -21,8 +30,27 @@ def create_app() -> FastAPI:
     )
     app.include_router(runs_router)
 
+    @app.middleware("http")
+    async def request_log(request: Request, call_next):
+        started = time.perf_counter()
+        logger.info("request.start method=%s path=%s", request.method, request.url.path)
+        try:
+            response = await call_next(request)
+        except Exception:
+            logger.exception("request.failed method=%s path=%s duration_ms=%.1f", request.method, request.url.path, (time.perf_counter() - started) * 1000)
+            raise
+        logger.info(
+            "request.complete method=%s path=%s status=%s duration_ms=%.1f",
+            request.method,
+            request.url.path,
+            response.status_code,
+            (time.perf_counter() - started) * 1000,
+        )
+        return response
+
     @app.exception_handler(AstraError)
     async def astra_error_handler(_: Request, exc: AstraError) -> JSONResponse:
+        logger.warning("request.astra_error type=%s code=%s trace_id=%s", exc.payload.type, exc.payload.code, exc.payload.trace_id)
         return JSONResponse(status_code=exc.status_code, content=ErrorEnvelope(error=exc.payload).model_dump(mode="json"))
 
     @app.exception_handler(RequestValidationError)
@@ -32,11 +60,13 @@ def create_app() -> FastAPI:
 
     @app.exception_handler(SQLAlchemyError)
     async def database_error_handler(_: Request, exc: SQLAlchemyError) -> JSONResponse:
+        logger.exception("request.database_error cause=%s", type(exc).__name__)
         error = InfrastructureError()
         return JSONResponse(status_code=error.status_code, content=ErrorEnvelope(error=error.payload).model_dump(mode="json"))
 
     @app.exception_handler(Exception)
     async def unknown_error_handler(_: Request, exc: Exception) -> JSONResponse:
+        logger.exception("request.unhandled cause=%s", type(exc).__name__)
         payload = run_error_from_exception(exc)
         status = 503 if payload["type"].startswith(("infrastructure.", "configuration.", "dependency.")) else 500
         return JSONResponse(status_code=status, content=ErrorEnvelope(error=payload).model_dump(mode="json"))

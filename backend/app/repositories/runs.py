@@ -140,6 +140,23 @@ class RunRepository:
         )
         return result.scalar_one_or_none()
 
+    async def list_recent_runs(self, limit: int = 100) -> List[RunRecord]:
+        result = await self.session.execute(
+            select(RunRecord)
+            .order_by(RunRecord.created_at.desc())
+            .limit(limit)
+            .options(
+                selectinload(RunRecord.steps),
+                selectinload(RunRecord.task),
+                selectinload(RunRecord.tool_calls),
+                selectinload(RunRecord.artifacts),
+                selectinload(RunRecord.events),
+                selectinload(RunRecord.turns),
+                selectinload(RunRecord.memories),
+            )
+        )
+        return list(result.scalars().all())
+
     async def require_run(self, run_id: str) -> RunRecord:
         run = await self.get_run(run_id)
         if run is None:
@@ -684,6 +701,16 @@ def build_chat_messages(run: RunRecord) -> List[Dict[str, Any]]:
                     "memory_reads": turn.memory_reads,
                     "memory_writes": turn.memory_writes,
                 },
+            }
+        )
+    if run.status in {"blocked", "failed"} and run.result and not any(message["role"] == "assistant" for message in messages[1:]):
+        messages.append(
+            {
+                "id": f"{run.id}-terminal",
+                "role": "assistant",
+                "content": run.result.get("summary") or run.summary or "任务未能完成。",
+                "status": run.status,
+                "metadata": {"error": run.result.get("error")},
             }
         )
     return messages

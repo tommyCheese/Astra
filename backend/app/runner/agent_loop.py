@@ -1,5 +1,6 @@
 import json
 import hashlib
+import logging
 from typing import Any, Dict, List, Optional
 
 from app.core.config import Settings
@@ -10,6 +11,8 @@ from app.schemas.agent import AgentState, CriterionStatus, TerminalState
 from app.tools.base import ToolExecutionError, ToolRegistry
 from app.runner.adapters import WebTaskAdapter
 from app.runner.reasoning import CompletionGate, ObservationEvaluator, ReflectionGate, failure_fingerprint
+
+logger = logging.getLogger("astra.agent_loop")
 
 
 class ToolRouter:
@@ -197,6 +200,7 @@ class AgentLoop:
             try:
                 decision = await self.model_client.decide(goal, context)
             except ModelOutputError as exc:
+                logger.exception("agent.decision.invalid run_id=%s turn=%s", run_id, turn_index)
                 decision = None
                 observation = AgentObservation(
                     kind="model_error",
@@ -226,6 +230,15 @@ class AgentLoop:
                 await repo.add_event(run_id, "reflection.created", reflection.model_dump())
                 await repo.session.commit()
                 continue
+
+            logger.info(
+                "agent.decision run_id=%s turn=%s type=%s tool=%s confidence=%.2f",
+                run_id,
+                turn_index,
+                decision.decision_type,
+                decision.tool_name,
+                decision.confidence,
+            )
 
             idempotency_key = None
             if decision.decision_type == "call_tool":
@@ -320,6 +333,7 @@ class AgentLoop:
                     await repo.finish_tool_call(call.id, error=exc.to_payload())
                     raise
                 await repo.finish_tool_call(call.id, output=output)
+                logger.info("tool.complete run_id=%s turn=%s tool=%s call_id=%s", run_id, turn_index, tool.spec.name, call.id)
                 tool_call_count += 1
                 output = self._normalize_tool_output(tool.spec.name, output)
                 tool_outputs.append(output)
@@ -367,6 +381,7 @@ class AgentLoop:
                     phase="committed",
                 )
             except ToolExecutionError as exc:
+                logger.warning("tool.failed run_id=%s turn=%s tool=%s category=%s", run_id, turn_index, decision.tool_name, exc.category)
                 action_signature = json.dumps({"tool": decision.tool_name, "input": decision.tool_input}, sort_keys=True, ensure_ascii=False)
                 failed_action_counts[action_signature] = failed_action_counts.get(action_signature, 0) + 1
                 fingerprint = failure_fingerprint(decision.tool_name, decision.tool_input, exc.category, decision.reasoning_summary)

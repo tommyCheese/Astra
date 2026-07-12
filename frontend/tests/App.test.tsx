@@ -1,11 +1,12 @@
 import { cleanup, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { App } from '../src/App';
-import { createRun } from '../src/api';
+import { createRun, listRuns } from '../src/api';
 
 vi.mock('../src/api', () => ({
   createRun: vi.fn(async () => ({ run_id: 'run-1', task_id: 'task-1', status: 'created' })),
+  listRuns: vi.fn(async () => []),
   resumeRun: vi.fn(async () => ({ run_id: 'run-1', task_id: 'task-1', status: 'executing' })),
   getRun: vi.fn(async () => ({
     id: 'run-1',
@@ -149,6 +150,21 @@ Object.defineProperty(window, 'EventSource', {
 });
 
 describe('App', () => {
+  beforeEach(() => {
+    const values = new Map<string, string>();
+    Object.defineProperty(window, 'localStorage', {
+      configurable: true,
+      value: {
+        getItem: (key: string) => values.get(key) ?? null,
+        setItem: (key: string, value: string) => values.set(key, value),
+        removeItem: (key: string) => values.delete(key),
+        clear: () => values.clear(),
+        key: (index: number) => [...values.keys()][index] ?? null,
+        get length() { return values.size; },
+      },
+    });
+  });
+
   afterEach(() => {
     cleanup();
     globalThis.localStorage?.clear();
@@ -177,7 +193,12 @@ describe('App', () => {
     await userEvent.click(screen.getByRole('button', { name: '深入' }));
     await userEvent.click(screen.getByRole('button', { name: '先规划' }));
     await userEvent.click(screen.getByRole('button', { name: '↑' }));
-    expect(vi.mocked(createRun)).toHaveBeenLastCalledWith(expect.any(String), undefined, expect.objectContaining({ reasoning_effort: 'deep', planning_strategy: 'plan_first' }));
+    expect(vi.mocked(createRun)).toHaveBeenLastCalledWith(
+      expect.any(String),
+      undefined,
+      expect.objectContaining({ reasoning_effort: 'deep', planning_strategy: 'plan_first' }),
+      expect.objectContaining({ provider: 'openai', name: 'gpt-5' }),
+    );
   });
 
   it('shows validation error for empty goal', async () => {
@@ -235,7 +256,7 @@ describe('App', () => {
       planning_strategy: 'adaptive',
       reflection_enabled: true,
       execution_mode: 'request_approval',
-    }));
+    }), expect.objectContaining({ provider: 'openai', name: 'gpt-5' }));
     expect(screen.getAllByRole('button', { name: /完成 completed/ })).toHaveLength(1);
     expect(screen.getAllByRole('button', { name: /跳转到问题/ })).toHaveLength(2);
   });
@@ -245,6 +266,8 @@ describe('App', () => {
 
     expect(screen.queryByText('Web Fetch')).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: /设置/ }));
+
+    expect(screen.getByRole('heading', { name: '模型管理' })).toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: '工具' }));
 
     expect(screen.getByRole('heading', { name: '工具' })).toBeInTheDocument();
@@ -252,6 +275,7 @@ describe('App', () => {
     expect(screen.getByText('工具调用上限')).toBeInTheDocument();
     expect(screen.getByText('并行工具调用')).toBeInTheDocument();
     expect(screen.getByText('工具失败重试')).toBeInTheDocument();
+    expect(screen.queryByText('工具调用确认')).not.toBeInTheDocument();
   });
 
   it('manages model providers and keeps API credentials masked by default', async () => {
@@ -272,6 +296,47 @@ describe('App', () => {
     expect(keyInput).toHaveAttribute('type', 'text');
     await userEvent.click(screen.getByRole('button', { name: '测试连接' }));
     expect(screen.getByText('连接正常')).toBeInTheDocument();
+  });
+
+  it('restores conversation history and model credentials after remount', async () => {
+    render(<App />);
+    await userEvent.type(screen.getByRole('textbox'), '持久化测试');
+    await userEvent.click(screen.getByRole('button', { name: '↑' }));
+    await screen.findByText('已完成查询');
+    await userEvent.click(screen.getByRole('button', { name: /设置/ }));
+    await userEvent.type(screen.getByPlaceholderText('sk-...'), 'persisted-secret');
+
+    cleanup();
+    render(<App />);
+
+    expect(screen.getByRole('button', { name: /完成 completed/ })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: /设置/ }));
+    expect(screen.getByPlaceholderText('sk-...')).toHaveValue('persisted-secret');
+  });
+
+  it('can repeatedly switch to incomplete failed history without crashing', async () => {
+    vi.mocked(listRuns).mockResolvedValueOnce([
+      {
+        id: 'failed-run', task_id: 'failed-task', status: 'blocked', mode: 'web_agent', summary: '失败记录',
+        result: { summary: '模型调用失败', error: { code: 'MODEL_FAILED' } },
+        chat_messages: [{ id: 'failed-message', role: 'assistant', content: '模型调用失败', status: 'blocked' }],
+      },
+      {
+        id: 'empty-run', task_id: 'empty-task', status: 'completed', mode: 'web_agent', summary: '空数组记录',
+        result: { summary: '已完成' }, chat_messages: [],
+      },
+    ] as never);
+    render(<App />);
+
+    const failed = await screen.findByRole('button', { name: '失败记录 blocked' });
+    const empty = screen.getByRole('button', { name: '空数组记录 completed' });
+    await userEvent.click(failed);
+    expect(screen.getByText('模型调用失败')).toBeInTheDocument();
+    await userEvent.click(empty);
+    await userEvent.click(failed);
+    await userEvent.click(empty);
+
+    expect(screen.getByRole('heading', { name: 'Astra' })).toBeInTheDocument();
   });
 
   it('syncs enabled provider models into the chat model selector', async () => {

@@ -1,4 +1,7 @@
 import json
+import logging
+import re
+import time
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List
 
@@ -16,6 +19,8 @@ from app.schemas.agent import (
     SourceReference,
     TaskContract,
 )
+
+logger = logging.getLogger("astra.model")
 
 
 class ModelConfigurationError(RuntimeError):
@@ -274,7 +279,7 @@ class MockModelClient(ModelClient):
 
 class OpenAICompatibleModelClient(ModelClient):
     def __init__(self, settings: Settings):
-        if not settings.model_api_key:
+        if not settings.model_api_key and settings.model_provider != "compatible":
             raise ModelConfigurationError("MODEL_API_KEY is required for real model providers")
         self.settings = settings
 
@@ -293,7 +298,7 @@ class OpenAICompatibleModelClient(ModelClient):
             ]
         )
         try:
-            return PlanOutput.model_validate(payload)
+            return PlanOutput.model_validate(normalize_plan_payload(payload))
         except Exception as exc:
             raise ModelOutputError(f"Invalid plan output: {exc}") from exc
 
@@ -313,7 +318,7 @@ class OpenAICompatibleModelClient(ModelClient):
             ]
         )
         try:
-            return TaskContract.model_validate(payload)
+            return TaskContract.model_validate(normalize_contract_payload(payload, goal))
         except Exception as exc:
             raise ModelOutputError(f"Invalid task contract output: {exc}") from exc
 
@@ -426,25 +431,144 @@ class OpenAICompatibleModelClient(ModelClient):
 
     async def _chat_json(self, messages: List[Dict[str, str]]) -> Dict[str, Any]:
         url = self.settings.model_base_url.rstrip("/") + "/chat/completions"
+        system_prompt = messages[0].get("content", "") if messages else ""
+        operation = "contract" if "task contract" in system_prompt else "plan" if "planner" in system_prompt else "decision" if "controller" in system_prompt else "reflection" if "reflector" in system_prompt else "memory" if "memory" in system_prompt else "synthesis"
+        started = time.perf_counter()
+        logger.info(
+            "model.request.start operation=%s provider=%s model=%s endpoint=%s messages=%s",
+            operation,
+            self.settings.model_provider,
+            self.settings.model_name,
+            url,
+            len(messages),
+        )
         async with httpx.AsyncClient(timeout=60) as client:
-            response = await client.post(
+            async with client.stream(
+                "POST",
                 url,
                 headers={"Authorization": f"Bearer {self.settings.model_api_key}"},
                 json={
                     "model": self.settings.model_name,
                     "messages": messages,
                     "response_format": {"type": "json_object"},
+                    "stream": True,
                 },
-            )
-            response.raise_for_status()
-            content = response.json()["choices"][0]["message"]["content"]
+            ) as response:
+                try:
+                    response.raise_for_status()
+                except httpx.HTTPStatusError as exc:
+                    logger.error("model.request.http_error operation=%s status=%s duration_ms=%.1f", operation, response.status_code, (time.perf_counter() - started) * 1000)
+                    raise ModelOutputError(f"Model endpoint returned HTTP {response.status_code}") from exc
+                if "text/event-stream" in response.headers.get("content-type", ""):
+                    chunks: List[str] = []
+                    async for line in response.aiter_lines():
+                        if not line.startswith("data:"):
+                            continue
+                        data = line[5:].strip()
+                        if not data or data == "[DONE]":
+                            continue
+                        try:
+                            delta = json.loads(data)["choices"][0]["delta"].get("content")
+                        except (KeyError, IndexError, TypeError, ValueError):
+                            continue
+                        if delta:
+                            chunks.append(delta)
+                    content = "".join(chunks)
+                    chunk_count = len(chunks)
+                else:
+                    try:
+                        body = json.loads((await response.aread()).decode())
+                        content = body["choices"][0]["message"]["content"]
+                    except (KeyError, IndexError, TypeError, ValueError, UnicodeDecodeError) as exc:
+                        raise ModelOutputError("Model endpoint returned an unsupported response shape") from exc
+                    chunk_count = 1
+        logger.info(
+            "model.request.complete operation=%s status=%s chunks=%s content_chars=%s duration_ms=%.1f",
+            operation,
+            response.status_code,
+            chunk_count,
+            len(content),
+            (time.perf_counter() - started) * 1000,
+        )
+        content = content.strip()
+        fenced = re.fullmatch(r"```(?:json)?\s*(.*?)\s*```", content, re.DOTALL | re.IGNORECASE)
+        if fenced:
+            content = fenced.group(1)
         try:
-            return json.loads(content)
-        except json.JSONDecodeError as exc:
+            return parse_json_object(content)
+        except (json.JSONDecodeError, ValueError) as exc:
             raise ModelOutputError("Model returned non-JSON content") from exc
 
 
 def build_model_client(settings: Settings) -> ModelClient:
-    if settings.model_provider == "mock":
-        return MockModelClient()
     return OpenAICompatibleModelClient(settings)
+
+
+def parse_json_object(content: str) -> Dict[str, Any]:
+    try:
+        payload = json.loads(content)
+    except json.JSONDecodeError:
+        start = content.find("{")
+        if start < 0:
+            raise
+        payload, _ = json.JSONDecoder().raw_decode(content[start:])
+    if not isinstance(payload, dict):
+        raise ValueError("Model JSON root must be an object")
+    return payload
+
+
+def normalize_contract_payload(payload: Dict[str, Any], goal: str) -> Dict[str, Any]:
+    normalized = dict(payload)
+    normalized["original_goal"] = str(normalized.get("original_goal") or goal)
+    for field in ("deliverables", "constraints", "prohibited_actions"):
+        value = normalized.get(field, [])
+        normalized[field] = value if isinstance(value, list) else [str(value)]
+    assumptions = normalized.get("assumptions") or []
+    normalized["assumptions"] = [
+        item if isinstance(item, dict) else {"id": f"assumption-{index}", "statement": str(item)}
+        for index, item in enumerate(assumptions if isinstance(assumptions, list) else [assumptions], start=1)
+    ]
+    for index, item in enumerate(normalized["assumptions"], start=1):
+        item["id"] = str(item.get("id") or f"assumption-{index}")
+        item["statement"] = str(item.get("statement") or item.get("description") or "未声明的假设")
+    criteria = normalized.get("success_criteria") or []
+    normalized["success_criteria"] = [
+        item if isinstance(item, dict) else {
+            "id": f"criterion-{index}",
+            "description": str(item),
+            "verification_method": "task_adapter",
+        }
+        for index, item in enumerate(criteria if isinstance(criteria, list) else [criteria], start=1)
+    ]
+    for index, item in enumerate(normalized["success_criteria"], start=1):
+        item["id"] = str(item.get("id") or f"criterion-{index}")
+        item["description"] = str(item.get("description") or item.get("criterion") or f"正确回应用户请求：{goal}")
+        item["verification_method"] = str(item.get("verification_method") or "task_adapter")
+    requirements = normalized.get("verification_requirements") or []
+    normalized["verification_requirements"] = [
+        item if isinstance(item, dict) else {"id": f"verify-{index}", "validator": str(item) or "task_adapter"}
+        for index, item in enumerate(requirements if isinstance(requirements, list) else [requirements], start=1)
+    ]
+    for index, item in enumerate(normalized["verification_requirements"], start=1):
+        item["id"] = str(item.get("id") or f"verify-{index}")
+        item["validator"] = str(item.get("validator") or "task_adapter")
+    return normalized
+
+
+def normalize_plan_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
+    normalized = dict(payload)
+    for field in ("required_tools", "success_criteria"):
+        value = normalized.get(field) or []
+        normalized[field] = value if isinstance(value, list) else [str(value)]
+    steps = normalized.get("steps") or []
+    normalized["steps"] = [
+        item if isinstance(item, dict) else {"title": str(item), "intent": str(item)}
+        for item in (steps if isinstance(steps, list) else [steps])
+    ]
+    for index, item in enumerate(normalized["steps"], start=1):
+        item.setdefault("title", f"步骤 {index}")
+        item.setdefault("intent", item["title"])
+        for field in ("required_tools", "success_criteria"):
+            value = item.get(field) or []
+            item[field] = value if isinstance(value, list) else [str(value)]
+    return normalized

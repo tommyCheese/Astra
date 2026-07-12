@@ -74,6 +74,33 @@ def build_default_contract(goal: str, *, risk_level: str = "low") -> TaskContrac
     )
 
 
+def normalize_contract(contract: TaskContract, goal: str) -> TaskContract:
+    """Fill optional model omissions without weakening the contract boundary."""
+    normalized_goal = contract.original_goal.strip() or goal.strip()
+    updates: Dict[str, Any] = {"original_goal": normalized_goal}
+    if not contract.deliverables:
+        updates["deliverables"] = [f"回复用户请求：{normalized_goal}"]
+    criteria = []
+    seen_ids: set[str] = set()
+    for index, criterion in enumerate(contract.success_criteria, start=1):
+        criterion_id = criterion.id.strip() or f"criterion-{index}"
+        if criterion_id in seen_ids:
+            criterion_id = f"criterion-{index}"
+        seen_ids.add(criterion_id)
+        criteria.append(criterion.model_copy(update={
+            "id": criterion_id,
+            "verification_method": criterion.verification_method or "task_adapter",
+        }))
+    if not criteria:
+        criteria = [SuccessCriterion(id="criterion-result", description=f"正确回应用户请求：{normalized_goal}", verification_method="task_adapter")]
+    updates["success_criteria"] = criteria
+    if not contract.verification_requirements:
+        updates["verification_requirements"] = [VerificationRequirement(id="verify-result", validator="task_adapter")]
+    if contract.ambiguity_status != "clear" and not contract.clarification_question:
+        updates["ambiguity_status"] = "clear"
+    return contract.model_copy(update=updates)
+
+
 def validate_contract(contract: TaskContract) -> None:
     if not contract.original_goal.strip():
         raise ValueError("TaskContract original goal is empty")
