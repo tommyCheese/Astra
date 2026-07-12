@@ -14,13 +14,11 @@ from app.tools.web import (
 )
 
 
-async def test_mock_web_search_returns_candidate():
-    tool = WebSearchTool(Settings(web_search_provider="mock"))
-    output = await tool.run({"query": "Astra"})
-
-    assert output["candidates"][0]["url"].startswith("https://example.com/")
-    assert output["provider"] == "mock"
-    assert "candidate_count" in output
+async def test_unconfigured_web_search_provider_is_rejected():
+    tool = WebSearchTool(Settings(web_search_provider="unsupported"))
+    with pytest.raises(ToolExecutionError) as exc_info:
+        await tool.run({"query": "Astra"})
+    assert exc_info.value.category == "provider_not_configured"
 
 
 async def test_web_search_rejects_empty_query():
@@ -121,14 +119,11 @@ def test_web_tool_manifest_contains_operational_fields():
     assert specs["web_fetch"].description
 
 
-async def test_mock_web_fetch_returns_content():
-    tool = WebFetchTool(Settings())
-    output = await tool.run({"url": "https://example.com/astra-data-query"})
-
-    assert output["status_code"] == 200
-    assert "mock source" in output["content"]
-    assert output["extraction_strategy"] == "readability"
-    assert output["quality_score"] > 0
+async def test_web_fetch_respects_network_permission():
+    tool = WebFetchTool(Settings(allow_network_read=False))
+    with pytest.raises(ToolExecutionError) as exc_info:
+        await tool.run({"url": "https://example.com/source"})
+    assert exc_info.value.category == "permission_denied"
 
 
 async def test_web_fetch_rejects_empty_url():

@@ -4,7 +4,7 @@ from app.core.config import Settings
 from app.repositories.runs import RunRepository
 from app.runner.engine import RunEngine
 from app.runner.model_client import MockModelClient
-from app.tools.web import build_web_registry
+from fake_web_tools import fake_web_registry
 
 
 async def test_engine_completes_mock_web_query(session):
@@ -15,7 +15,7 @@ async def test_engine_completes_mock_web_query(session):
     engine = RunEngine(
         settings,
         model_client=MockModelClient(),
-        tool_registry=build_web_registry(settings),
+        tool_registry=fake_web_registry(),
     )
     await engine._run_with_repo(repo, run.id)
 

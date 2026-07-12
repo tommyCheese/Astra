@@ -6,6 +6,7 @@ from app.runner.agent_loop import AgentLoop, ToolRouter
 from app.runner.model_client import MockModelClient
 from app.tools.base import ToolExecutionError
 from app.tools.web import build_web_registry
+from fake_web_tools import fake_web_registry
 
 
 async def test_agent_loop_completes_mock_web_run(session):
@@ -13,7 +14,7 @@ async def test_agent_loop_completes_mock_web_run(session):
     repo = RunRepository(session)
     run = await repo.create_task_run("查询 mock 数据", settings.model_policy)
     client = MockModelClient()
-    loop = AgentLoop(settings, model_client=client, tool_registry=build_web_registry(settings))
+    loop = AgentLoop(settings, model_client=client, tool_registry=fake_web_registry())
 
     output = await loop.run(repo, run.id, run.task.description)
     loaded = await repo.require_run(run.id)

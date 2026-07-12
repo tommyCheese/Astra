@@ -29,6 +29,8 @@ class WebTaskAdapter(TaskAdapter):
         fetched = evidence.get("fetched_sources", [])
         sources = result.get("sources", [])
         warnings = list(evidence.get("warnings", []))
+        if not evidence.get("candidates") and not evidence.get("failed_sources") and result.get("findings"):
+            return CompletionDecision(state=TerminalState.completed, reason="通用问答已直接完成，无需调用外部工具。")
         if not fetched or not sources:
             return CompletionDecision(state=TerminalState.blocked, reason="没有足够的已审计 Web 证据。", unmet_criteria=["criterion-result"], warnings=warnings)
         if evidence.get("failed_sources") or any(float(item.get("quality_score") or 0) < 0.5 for item in fetched):

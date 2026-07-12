@@ -75,8 +75,6 @@ class WebSearchTool(Tool):
         if not query:
             raise ToolExecutionError("invalid_input", "web_search requires a non-empty query")
         provider = self.settings.web_search_provider
-        if provider == "mock":
-            return self._mock_search(query)
         if provider == "google":
             return await self._google_search(query, tool_input)
         if provider == "brave":
@@ -85,38 +83,6 @@ class WebSearchTool(Tool):
             "provider_not_configured",
             f"Unsupported web search provider: {self.settings.web_search_provider}",
         )
-
-    def _mock_search(self, query: str) -> Dict[str, Any]:
-        now = iso_now()
-        return {
-            "query": query,
-            "provider": "mock",
-            "parameters": {"num_results": 2},
-            "warnings": [],
-            "candidate_count": 2,
-            "candidates": [
-                {
-                    "url": "https://example.com/astra-data-query",
-                    "title": "Astra mock source",
-                    "snippet": f"Mock search result for: {query}",
-                    "rank": 1,
-                    "display_link": "example.com",
-                    "provider": "mock",
-                    "metadata": {"kind": "article"},
-                    "retrieved_at": now,
-                },
-                {
-                    "url": "https://example.com/astra-evidence",
-                    "title": "Astra evidence mock source",
-                    "snippet": "A second deterministic result for summary evidence.",
-                    "rank": 2,
-                    "display_link": "example.com",
-                    "provider": "mock",
-                    "metadata": {"kind": "article"},
-                    "retrieved_at": now,
-                },
-            ],
-        }
 
     async def _google_search(self, query: str, tool_input: Dict[str, Any]) -> Dict[str, Any]:
         api_key = self.settings.google_search_api_key or self.settings.web_search_api_key
@@ -244,8 +210,6 @@ class WebFetchTool(Tool):
         query = str(tool_input.get("query", "") or "")
         snippet = str(tool_input.get("snippet", "") or "")
         crawler_plan = validate_crawler_plan(tool_input.get("crawler_plan"))
-        if url.startswith("https://example.com/"):
-            return self._mock_fetch(url, query, snippet, crawler_plan)
         if not self.settings.allow_network_read:
             raise ToolExecutionError("permission_denied", "Network read is disabled")
 
@@ -265,44 +229,6 @@ class WebFetchTool(Tool):
             status_code=response.status_code,
             body=response.text,
             content_type=response.headers.get("content-type", ""),
-            query=query,
-            snippet=snippet,
-            crawler_plan=crawler_plan,
-            max_chars=self.settings.crawler_max_content_chars,
-            min_quality_chars=self.settings.crawler_min_quality_chars,
-        )
-
-    def _mock_fetch(
-        self,
-        url: str,
-        query: str,
-        snippet: str,
-        crawler_plan: Dict[str, Any],
-    ) -> Dict[str, Any]:
-        html = """
-        <html>
-          <head>
-            <title>Astra mock source</title>
-            <meta name="description" content="A deterministic mock source for Astra summary runs." />
-            <meta property="og:site_name" content="Example" />
-          </head>
-          <body>
-            <main>
-              <article>
-                <h1>Astra mock source</h1>
-                <p>This deterministic mock source lets Astra verify a real summary workflow.</p>
-                <p>It includes enough main content to exercise evidence extraction, quality scoring,
-                source attribution, and summary generation without external network access.</p>
-              </article>
-            </main>
-          </body>
-        </html>
-        """
-        return extract_source(
-            url=url,
-            status_code=200,
-            body=html,
-            content_type="text/html",
             query=query,
             snippet=snippet,
             crawler_plan=crawler_plan,

@@ -323,13 +323,13 @@ class OpenAICompatibleModelClient(ModelClient):
                 {
                     "role": "system",
                     "content": (
-                        "You are Astra's synthesis engine. Return JSON only with keys: "
+                        "You are Astra's general answer engine. Return JSON only with keys: "
                         "summary, findings, sources, failed_sources, source_quality, "
                         "conflicts, caveats, verification_notes. "
                         "Each finding has text and source_urls. Each source has url, title, retrieved_at. "
-                        "Only use the audited evidence_pack from the provided tool_outputs. "
-                        "Do not use raw web content that is not in evidence_pack. "
-                        "Every important finding must cite source URLs."
+                        "When audited tool evidence exists, ground claims in it and cite source URLs. "
+                        "When no tool was needed, answer from general model knowledge, leave sources empty, "
+                        "and state limitations for time-sensitive or uncertain claims."
                     ),
                 },
                 {
@@ -352,10 +352,12 @@ class OpenAICompatibleModelClient(ModelClient):
                 {
                     "role": "system",
                     "content": (
-                        "You are Astra's Web Agent loop controller. Return JSON only. "
+                        "You are Astra's general Agent loop controller. Return JSON only. "
                         "Required keys: decision_type, reasoning_summary. "
                         "Allowed decision_type values: call_tool, reflect, replan, finalize, ask_user, blocked. "
-                        "Only request web_search or web_fetch tools. "
+                        "Choose among the tools in context.tool_manifests only when external or current evidence is needed. "
+                        "For stable general knowledge, explanation, writing, or conversation, finalize without tools. "
+                        "Use web_search for current or externally verifiable information and web_fetch only for a URL from context. "
                         "For call_tool include tool_name and tool_input. "
                         "Do not include hidden chain-of-thought; reasoning_summary must be concise and user-auditable."
                     ),
