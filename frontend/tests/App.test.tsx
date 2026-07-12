@@ -215,8 +215,9 @@ describe('App', () => {
       window.setTimeout(() => {
         onEvent({ type: 'answer.started', payload: {} });
         onEvent({ type: 'answer.delta', payload: { delta: '流式回答不会消失' } });
-        onEvent({ type: 'answer.completed', payload: { content: '流式回答不会消失' } });
+        onEvent({ type: 'answer.settling', payload: { phase: 'structuring_and_verifying' } });
       }, 0);
+      window.setTimeout(() => onEvent({ type: 'answer.completed', payload: { content: '流式回答不会消失' } }), 300);
       return () => undefined;
     });
     render(<App />);
@@ -225,6 +226,7 @@ describe('App', () => {
     await userEvent.click(screen.getByRole('button', { name: '↑' }));
 
     expect(await screen.findByText('流式回答不会消失')).toBeInTheDocument();
+    expect(screen.getByText('正在整理并验证结果…')).toBeInTheDocument();
     await new Promise((resolve) => window.setTimeout(resolve, 200));
     expect(screen.getByText('流式回答不会消失')).toBeInTheDocument();
     await waitFor(() => expect(screen.getByText('已完成查询')).toBeInTheDocument(), { timeout: 4000 });
@@ -365,6 +367,22 @@ describe('App', () => {
     expect(screen.getByRole('button', { name: /完成 completed/ })).toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: /设置/ }));
     expect(screen.getByPlaceholderText('sk-...')).toHaveValue('persisted-secret');
+  });
+
+  it('shows more than six persisted conversations and explains the retention limit', async () => {
+    vi.mocked(listRuns).mockResolvedValueOnce(Array.from({ length: 8 }, (_, index) => ({
+      id: `run-history-${index}`,
+      task_id: `task-history-${index}`,
+      status: 'completed',
+      mode: 'general-agent',
+      summary: `历史会话 ${index + 1}`,
+      result: { summary: `历史会话 ${index + 1}` },
+    })) as never);
+
+    render(<App />);
+
+    expect(await screen.findByRole('button', { name: '历史会话 8 completed' })).toBeInTheDocument();
+    expect(screen.getByText('最多保留最近 100 个会话')).toBeInTheDocument();
   });
 
   it('can repeatedly switch to incomplete failed history without crashing', async () => {

@@ -484,7 +484,7 @@ class OpenAICompatibleModelClient(ModelClient):
             ]
         )
         try:
-            return AgentReflection.model_validate(payload)
+            return AgentReflection.model_validate(normalize_reflection_payload(payload))
         except Exception as exc:
             raise ModelOutputError(f"Invalid reflection output: {exc}") from exc
 
@@ -517,7 +517,12 @@ class OpenAICompatibleModelClient(ModelClient):
             ]
         )
         try:
-            return [MemoryRecord.model_validate(item) for item in payload.get("memories", [])]
+            return [
+                MemoryRecord.model_validate(normalized)
+                for item in payload.get("memories", [])
+                if isinstance(item, dict)
+                and (normalized := normalize_memory_payload(item)) is not None
+            ]
         except Exception as exc:
             raise ModelOutputError(f"Invalid memory extraction output: {exc}") from exc
 
@@ -602,6 +607,7 @@ class OpenAICompatibleModelClient(ModelClient):
             if "text/event-stream" in response.headers.get("content-type", ""):
                 chunks: list[str] = []
                 streamed_value = ""
+                field_complete_notified = False
                 async for line in response.aiter_lines():
                     if not line.startswith("data:"):
                         continue
@@ -618,12 +624,16 @@ class OpenAICompatibleModelClient(ModelClient):
                     if delta:
                         chunks.append(delta)
                         if stream_field and on_field_delta:
-                            current_value = extract_partial_json_string(
-                                "".join(chunks), stream_field
-                            )
+                            streamed_content = "".join(chunks)
+                            current_value = extract_partial_json_string(streamed_content, stream_field)
                             if len(current_value) > len(streamed_value):
                                 await on_field_delta(current_value[len(streamed_value) :])
                                 streamed_value = current_value
+                            if not field_complete_notified and json_string_field_complete(
+                                streamed_content, stream_field
+                            ):
+                                await on_field_delta("\1")
+                                field_complete_notified = True
                 content = "".join(chunks)
                 chunk_count = len(chunks)
             else:
@@ -715,6 +725,81 @@ def parse_json_object(content: str) -> dict[str, Any]:
     return payload
 
 
+def normalize_reflection_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    normalized = dict(payload)
+    normalized["trigger"] = str(payload.get("trigger") or "adaptive")
+    normalized["summary"] = str(payload.get("summary") or "已检查当前结果。")
+    normalized["next_action"] = str(payload.get("next_action") or "continue")
+    patch = payload.get("patch")
+    if not isinstance(patch, dict):
+        normalized["patch"] = None
+        return normalized
+    clean_patch = dict(patch)
+    clean_patch["level"] = str(patch.get("level") or payload.get("level") or "local")
+    for field in ("invalidated_assumption_ids",):
+        if not isinstance(clean_patch.get(field), list):
+            clean_patch[field] = []
+    if not isinstance(clean_patch.get("criterion_updates"), dict):
+        clean_patch["criterion_updates"] = {}
+    terminal_intent = clean_patch.get("terminal_intent")
+    if terminal_intent is not None and not isinstance(terminal_intent, str):
+        clean_patch["terminal_intent"] = json.dumps(terminal_intent, ensure_ascii=False)
+    facts = []
+    for index, fact in enumerate(clean_patch.get("fact_updates") or []):
+        if not isinstance(fact, dict):
+            continue
+        statement = fact.get("statement") or fact.get("add")
+        if not statement:
+            continue
+        facts.append(
+            {
+                "id": str(fact.get("id") or f"reflection-fact-{index + 1}"),
+                "statement": str(statement),
+                "provenance": fact.get("provenance")
+                if isinstance(fact.get("provenance"), dict)
+                else {"source": "model_reflection"},
+                "confidence": fact.get("confidence", 0.5),
+                "conflicts_with": fact.get("conflicts_with")
+                if isinstance(fact.get("conflicts_with"), list)
+                else [],
+            }
+        )
+    clean_patch["fact_updates"] = facts
+    requirements = []
+    for index, requirement in enumerate(clean_patch.get("added_verification_requirements") or []):
+        if isinstance(requirement, str):
+            requirements.append(
+                {"id": f"reflection-validator-{index + 1}", "validator": requirement}
+            )
+        elif isinstance(requirement, dict) and requirement.get("validator"):
+            requirements.append(
+                {
+                    **requirement,
+                    "id": str(requirement.get("id") or f"reflection-validator-{index + 1}"),
+                }
+            )
+    clean_patch["added_verification_requirements"] = requirements
+    normalized["patch"] = clean_patch
+    return normalized
+
+
+def normalize_memory_payload(payload: dict[str, Any]) -> dict[str, Any] | None:
+    if not payload.get("content"):
+        return None
+    normalized = dict(payload)
+    normalized["scope"] = str(payload.get("scope") or "run")
+    normalized["kind"] = str(payload.get("kind") or "fact")
+    if not isinstance(payload.get("structured_data"), dict):
+        normalized["structured_data"] = {}
+    if not isinstance(payload.get("provenance"), dict):
+        normalized["provenance"] = {"source": str(payload.get("provenance") or "model")}
+    try:
+        normalized["confidence"] = min(1.0, max(0.0, float(payload.get("confidence", 0.5))))
+    except (TypeError, ValueError):
+        normalized["confidence"] = 0.5
+    return normalized
+
+
 def extract_partial_json_string(content: str, field: str) -> str:
     """Return the safely decoded portion of a JSON string field before the object is complete."""
     match = re.search(rf'"{re.escape(field)}"\s*:\s*"', content)
@@ -757,6 +842,22 @@ def extract_partial_json_string(content: str, field: str) -> str:
         decoded.append(escapes[escaped])
         index += 2
     return "".join(decoded)
+
+
+def json_string_field_complete(content: str, field: str) -> bool:
+    """Return whether a streamed JSON string field has received its closing quote."""
+    match = re.search(rf'"{re.escape(field)}"\s*:\s*"', content)
+    if not match:
+        return False
+    escaped = False
+    for char in content[match.end() :]:
+        if escaped:
+            escaped = False
+        elif char == "\\":
+            escaped = True
+        elif char == '"':
+            return True
+    return False
 
 
 def normalize_contract_payload(payload: dict[str, Any], goal: str) -> dict[str, Any]:

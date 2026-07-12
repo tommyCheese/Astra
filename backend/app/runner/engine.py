@@ -347,6 +347,18 @@ class RunEngine:
         if delta == "\0":
             await self._start_answer_stream(repo, run_id)
             return
+        if delta == "\1":
+            buffered = self._answer_buffers.get(run_id, "")
+            self._answer_buffers[run_id] = ""
+            if buffered:
+                await repo.add_event(run_id, "answer.delta", {"delta": buffered})
+            await repo.add_event(
+                run_id,
+                "answer.settling",
+                {"phase": "structuring_and_verifying"},
+            )
+            await repo.session.commit()
+            return
         if not delta:
             return
         buffered = self._answer_buffers.get(run_id, "") + delta

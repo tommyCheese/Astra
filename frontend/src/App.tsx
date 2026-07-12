@@ -8,6 +8,7 @@ import type { ChatMessage, RunView } from './types';
 import { UsageDashboard } from './UsageDashboard';
 
 const terminalStatuses = new Set(['completed', 'completed_with_warnings', 'failed', 'blocked', 'waiting_user']);
+const HISTORY_LIMIT = 100;
 type ConversationEntry = { id: string; run: RunView; priorMessages: ChatMessage[] };
 const STORAGE_KEYS = {
   conversations: 'astra.conversations.v1',
@@ -29,6 +30,7 @@ function AppContent() {
   const [loading, setLoading] = useState(false);
   const [streamingAnswer, setStreamingAnswer] = useState('');
   const [answerComplete, setAnswerComplete] = useState(false);
+  const [answerSettling, setAnswerSettling] = useState(false);
   const [showJumpToLatest, setShowJumpToLatest] = useState(false);
   const [error, setError] = useState<ApiErrorPayload | null>(null);
   const [view, setView] = useState<'chat' | 'settings'>('chat');
@@ -61,7 +63,7 @@ function AppContent() {
     .flatMap((provider) => parseModelIds(provider.models).map((model) => ({ key: `${provider.id}:${model}`, model, providerId: provider.id, providerName: provider.name }))), [providerConfigs]);
   const selectedModel = availableModels.find((item) => item.key === selectedModelKey)?.model ?? '';
 
-  useEffect(() => writeLocalJson(STORAGE_KEYS.conversations, conversationHistory), [conversationHistory]);
+  useEffect(() => writeLocalJson(STORAGE_KEYS.conversations, conversationHistory.slice(0, HISTORY_LIMIT)), [conversationHistory]);
   useEffect(() => writeLocalJson(STORAGE_KEYS.modelProviders, providerConfigs), [providerConfigs]);
   useEffect(() => writeLocalString(STORAGE_KEYS.selectedModel, selectedModelKey), [selectedModelKey]);
 
@@ -74,7 +76,7 @@ function AppContent() {
 
   useEffect(() => {
     let active = true;
-    void listRuns().then((runs) => {
+    void listRuns(200).then((runs) => {
       if (!active) return;
       const grouped = new Map<string, RunView[]>();
       for (const item of runs) {
@@ -86,7 +88,7 @@ function AppContent() {
         run: items[0],
         priorMessages: [...items.slice(1)].reverse().flatMap(buildPresentation),
       }));
-      setConversationHistory((local) => [...restored, ...local.filter((item) => !grouped.has(item.id))]);
+      setConversationHistory((local) => [...restored, ...local.filter((item) => !grouped.has(item.id))].slice(0, HISTORY_LIMIT));
     }).catch(() => { /* retain browser history while the backend is offline */ });
     return () => { active = false; };
   }, []);
@@ -136,7 +138,7 @@ function AppContent() {
   function rememberConversation(nextRun: RunView, previousMessages: ChatMessage[] = priorMessages) {
     const conversationId = activeConversationId ?? nextRun.task_id;
     setActiveConversationId(conversationId);
-    setConversationHistory((items) => [{ id: conversationId, run: nextRun, priorMessages: previousMessages }, ...items.filter((item) => item.id !== conversationId)]);
+    setConversationHistory((items) => [{ id: conversationId, run: nextRun, priorMessages: previousMessages }, ...items.filter((item) => item.id !== conversationId)].slice(0, HISTORY_LIMIT));
   }
 
   async function submit(event: FormEvent) {
@@ -152,6 +154,7 @@ function AppContent() {
     setShowJumpToLatest(false);
     setStreamingAnswer('');
     setAnswerComplete(false);
+    setAnswerSettling(false);
     deltaBufferRef.current = '';
     setLoading(true);
     try {
@@ -231,6 +234,7 @@ function AppContent() {
         rememberConversation(next);
         if (terminalStatuses.has(next.status) && next.result) {
           setStreamingAnswer('');
+          setAnswerSettling(false);
           closeStream();
           if (fallback !== undefined) window.clearInterval(fallback);
         }
@@ -251,10 +255,19 @@ function AppContent() {
         deltaBufferRef.current = '';
         setStreamingAnswer('');
         setAnswerComplete(false);
+        setAnswerSettling(false);
         return;
       }
       if (event.type === 'answer.delta') {
+        setAnswerSettling(false);
         queueDelta(String(event.payload.delta ?? ''));
+        return;
+      }
+      if (event.type === 'answer.settling') {
+        if (deltaFrameRef.current !== undefined) window.cancelAnimationFrame(deltaFrameRef.current);
+        flushDeltas();
+        setAnswerComplete(true);
+        setAnswerSettling(true);
         return;
       }
       if (event.type === 'answer.completed') {
@@ -263,6 +276,7 @@ function AppContent() {
         deltaBufferRef.current = '';
         setStreamingAnswer(String(event.payload.content ?? ''));
         setAnswerComplete(true);
+        setAnswerSettling(true);
         scheduleRefresh(true);
         return;
       }
@@ -331,6 +345,7 @@ function AppContent() {
     setError(null);
     setStreamingAnswer('');
     setAnswerComplete(false);
+    setAnswerSettling(false);
     deltaBufferRef.current = '';
     followLatestRef.current = true;
     setShowJumpToLatest(false);
@@ -390,6 +405,7 @@ function AppContent() {
             {messages.map((message) => (
               <MessageBubble key={message.id} message={message} run={run} />
             ))}
+            {answerSettling && streamingAnswer && <div className="answer-settling" role="status" aria-live="polite"><span className="settling-spinner" aria-hidden="true" />{t('正在整理并验证结果…')}</div>}
             {run && !terminalStatuses.has(run.status) && !streamingAnswer && (
               <div className="bubble assistant waiting-message" role="status" aria-live="polite">
                 <span className="bubble-label">Astra</span>
@@ -519,8 +535,11 @@ function Sidebar({ run, conversations, activeView, onNewChat, onSelectConversati
       </button>
 
       <nav className="side-section">
-        <span className="side-title">{t('历史对话')}</span>
-        {conversations.length ? conversations.slice(0, 6).map((conversation) => <button className={`history-item ${run?.task_id === conversation.id ? 'active' : ''}`} type="button" key={conversation.id} onClick={() => onSelectConversation(conversation)}><Icon name="message" /><span>{conversationTitle(conversation.run, t('当前 Web Agent 会话'))}</span><small>{statusLabel(conversation.run.status)}</small></button>) : <div className="history-empty">{t('暂无对话')}</div>}
+        <div className="history-heading"><span className="side-title">{t('历史对话')}</span><small>{t('最多保留最近 {count} 个会话').replace('{count}', String(HISTORY_LIMIT))}</small></div>
+        <div className="history-list">
+          {conversations.length ? conversations.slice(0, HISTORY_LIMIT).map((conversation) => <button className={`history-item ${run?.task_id === conversation.id ? 'active' : ''}`} type="button" key={conversation.id} onClick={() => onSelectConversation(conversation)}><Icon name="message" /><span>{conversationTitle(conversation.run, t('当前 Web Agent 会话'))}</span><small>{statusLabel(conversation.run.status)}</small></button>) : <div className="history-empty">{t('暂无对话')}</div>}
+        </div>
+        {conversations.length >= HISTORY_LIMIT && <p className="history-retention-note">{t('较早的会话会自动移出此列表')}</p>}
       </nav>
 
       <div className="sidebar-bottom">
@@ -880,7 +899,8 @@ function loadConversationHistory(): ConversationEntry[] {
       ...item,
       run: normalizeRunView(item.run),
       priorMessages: item.priorMessages.map((message) => ({ ...message, metadata: message.metadata ?? {} })),
-    }));
+    }))
+    .slice(0, HISTORY_LIMIT);
 }
 
 function normalizeRunView(run: RunView): RunView {

@@ -6,12 +6,15 @@ from app.runner.model_client import (
     ModelConfigurationError,
     build_model_client,
     extract_partial_json_string,
+    json_string_field_complete,
     normalize_contract_payload,
     normalize_final_answer_payload,
+    normalize_memory_payload,
     normalize_plan_payload,
+    normalize_reflection_payload,
     parse_json_object,
 )
-from app.schemas.agent import FinalAnswer, PlanOutput, TaskContract
+from app.schemas.agent import AgentReflection, FinalAnswer, MemoryRecord, PlanOutput, TaskContract
 
 
 async def test_mock_model_client_returns_structured_outputs():
@@ -112,6 +115,9 @@ def test_partial_json_string_streams_only_complete_characters():
     assert extract_partial_json_string('{"summary":"line\\nnext', "summary") == "line\nnext"
     assert extract_partial_json_string('{"summary":"A\\u4f6', "summary") == "A"
     assert extract_partial_json_string('{"summary":"A\\u4f60', "summary") == "A你"
+    assert not json_string_field_complete('{"summary":"still streaming', "summary")
+    assert not json_string_field_complete('{"summary":"escaped \\" quote', "summary")
+    assert json_string_field_complete('{"summary":"done","findings":[', "summary")
 
 
 def test_model_payload_normalization_accepts_shorthand_contract_and_plan():
@@ -199,3 +205,33 @@ def test_final_answer_normalization_drops_scalar_record_placeholders():
     assert answer.failed_sources == []
     assert answer.conflicts == []
     assert answer.memory_references == []
+
+
+def test_reflection_normalization_accepts_common_model_shorthand():
+    payload = normalize_reflection_payload(
+        {
+            "summary": "无需搜索即可回答。",
+            "next_action": "finalize",
+            "patch": {
+                "fact_updates": [{"add": "可使用稳定医学常识回答。"}],
+                "criterion_updates": [],
+                "added_verification_requirements": ["medical_safety"],
+                "terminal_intent": {"type": "inform"},
+            },
+        }
+    )
+    reflection = AgentReflection.model_validate(payload)
+    assert reflection.patch.level == "local"
+    assert reflection.patch.fact_updates[0].statement == "可使用稳定医学常识回答。"
+    assert reflection.patch.added_verification_requirements[0].validator == "medical_safety"
+    assert isinstance(reflection.patch.terminal_intent, str)
+
+
+def test_memory_normalization_converts_scalar_provenance_and_drops_empty_content():
+    normalized = normalize_memory_payload(
+        {"content": "用户询问口腔溃疡", "provenance": "conversation", "confidence": 2}
+    )
+    memory = MemoryRecord.model_validate(normalized)
+    assert memory.provenance == {"source": "conversation"}
+    assert memory.confidence == 1
+    assert normalize_memory_payload({"content": ""}) is None

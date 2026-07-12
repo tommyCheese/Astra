@@ -12,6 +12,7 @@ const english: Record<string, string> = {
   '请输入你想完成的目标。': 'Enter what you would like to accomplish.', '服务暂时出现异常，请稍后重试。': 'The service is temporarily unavailable. Please try again shortly.',
   '新对话': 'New chat', '历史对话': 'Chat history', '当前 Web Agent 会话': 'Current Web Agent chat', '暂无会话': 'No chats yet', '暂无对话': 'No chats yet', 'Astra 图标': 'Astra icon',
   '切换对话': 'Switch chat', '最近对话': 'Recent chats', '未命名对话': 'Untitled chat', '还没有历史对话': 'No chat history yet',
+  '最多保留最近 {count} 个会话': 'Keeps up to {count} recent chats', '较早的会话会自动移出此列表': 'Older chats are automatically removed from this list',
   '问题导航': 'Question navigation', '跳转到问题': 'Jump to question', '问题': 'Question', '回到最新': 'Jump to latest',
   '用量统计': 'Usage', '设置': 'Settings', '本地配置': 'Local preferences', '工作区': 'Workspace', '关闭设置': 'Close settings', '设置类别': 'Settings categories',
   '模型管理': 'Model providers', '工具': 'Tools', '运行时': 'Runtime', '记忆': 'Memory', '验证与安全': 'Verification & safety', '界面': 'Interface', '数据与隐私': 'Data & privacy',
@@ -88,6 +89,7 @@ const english: Record<string, string> = {
   '数据存储不可用': 'Data storage unavailable', '大模型尚未配置': 'Model is not configured', '大模型服务异常': 'Model service error', '搜索服务异常': 'Search service error', '网页访问服务异常': 'Web access service error', '后端错误未分类': 'Unclassified backend error', '内部运行时异常': 'Internal runtime error', '无法完成此操作': 'Unable to complete this action', '错误类型：': 'Error type: ', '诊断编号：': 'Diagnostic ID: ', '知道了': 'Dismiss',
   '你': 'You', '审计详情': 'Audit details', '暂无 Memory 写入。': 'No memory writes yet.', '提交了一个任务': 'Submitted a task',
   '正在搜索候选来源...': 'Searching for candidate sources...', '正在阅读和验证来源...': 'Reading and verifying sources...', '正在反思并调整策略...': 'Reflecting and adjusting strategy...', '正在验证证据...': 'Verifying evidence...', '正在处理...': 'Working...',
+  '正在整理并验证结果…': 'Structuring and verifying the result…',
 };
 
 type I18nValue = { language: Language; setLanguage: (language: Language) => void; t: (text: string) => string };

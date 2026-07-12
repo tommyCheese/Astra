@@ -334,11 +334,19 @@ p {
 }
 
 .side-section {
-  display: grid;
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
   gap: 5px;
+  min-height: 0;
   min-width: 0;
   overflow: hidden;
 }
+
+.history-heading { align-items: baseline; display: flex; justify-content: space-between; padding-right: 8px; }
+.history-heading small { color: #8a95a3; font-size: 9px; }
+.history-list { display: grid; gap: 3px; min-height: 0; overflow-x: hidden; overflow-y: auto; padding-right: 3px; scrollbar-gutter: stable; }
+.history-retention-note { color: #8a95a3; font-size: 10px; line-height: 1.35; margin: 3px 10px 0; }
 
 .side-title {
   color: #697586;
@@ -708,6 +716,10 @@ h1 {
 @keyframes stream-cursor-blink {
   50% { opacity: 0; }
 }
+
+.answer-settling { align-items: center; color: #7b8794; display: flex; font-size: 12px; gap: 7px; margin: -4px 0 10px 30px; }
+.settling-spinner { animation: settling-spin 800ms linear infinite; border: 1.5px solid currentColor; border-right-color: transparent; border-radius: 50%; height: 11px; width: 11px; }
+@keyframes settling-spin { to { transform: rotate(360deg); } }
 
 .process-entry {
   margin: 2px 0 8px;

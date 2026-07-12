@@ -53,11 +53,12 @@ async def test_answer_delta_batching_flushes_first_and_final_content(session):
     await engine._start_answer_stream(repo, run.id)
     await engine._handle_answer_delta(repo, run.id, "首")
     await engine._handle_answer_delta(repo, run.id, "尾")
+    await engine._handle_answer_delta(repo, run.id, "\1")
     await engine._complete_answer_stream(repo, run.id, "首尾")
 
     events = await repo.list_events(run.id)
     assert [event.type for event in events] == [
-        "run.created", "answer.started", "answer.delta", "answer.delta", "answer.completed"
+        "run.created", "answer.started", "answer.delta", "answer.delta", "answer.settling", "answer.completed"
     ]
     assert events[-1].payload == {"content": "首尾", "status": "answer_complete"}
 

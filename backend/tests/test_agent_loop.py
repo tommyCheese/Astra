@@ -147,6 +147,12 @@ class PatchingReflectionClient(RecoveringDecisionClient):
         )
 
 
+class InvalidReflectionClient(RecoveringDecisionClient):
+    async def reflect(self, goal, context):
+        self.reflect_calls += 1
+        raise ModelOutputError("invalid reflection")
+
+
 class ToolThenFinalizeClient(MockModelClient):
     def __init__(self):
         self.decide_calls = 0
@@ -302,6 +308,29 @@ async def test_model_failure_reflection_obeys_policy(
     )
 
     assert client.reflect_calls == expected_reflections
+
+
+async def test_invalid_reflection_is_skipped_without_blocking_answer(session):
+    settings = Settings(model_provider="mock")
+    repo = RunRepository(session)
+    run = await repo.create_task_run(
+        "你好，吃橘子可以治疗口腔溃疡吗？",
+        settings.model_policy,
+        reasoning_policy=compiled_policy(reflection_enabled=True, reflection_trigger="failure_only"),
+    )
+    client = InvalidReflectionClient()
+
+    result = await AgentLoop(
+        settings, model_client=client, tool_registry=fake_web_registry()
+    ).run(repo, run.id, run.task.description)
+
+    assert result["answer"].summary == "已完成"
+    events = await repo.list_events(run.id)
+    assert any(
+        event.type == "reflection.skipped"
+        and event.payload.get("reason") == "invalid_model_output"
+        for event in events
+    )
 
 
 async def test_reflection_patch_updates_persisted_agent_state(session):

@@ -337,7 +337,22 @@ class AgentLoop:
                 )
                 await repo.session.commit()
                 return None
-            reflection = await self.model_client.reflect(goal, reflection_context)
+            try:
+                reflection = await self.model_client.reflect(goal, reflection_context)
+            except ModelOutputError as exc:
+                logger.warning(
+                    "reflection.invalid_output_skipped run_id=%s signal=%s reason=%s",
+                    run_id,
+                    signal,
+                    str(exc),
+                )
+                await repo.add_event(
+                    run_id,
+                    "reflection.skipped",
+                    {"signal": signal, "reason": "invalid_model_output"},
+                )
+                await repo.session.commit()
+                return None
             reflection_count += 1
             reflection_observation = {
                 "kind": "reflection",
