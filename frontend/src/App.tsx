@@ -55,6 +55,7 @@ function AppContent() {
   const deltaBufferRef = useRef('');
   const deltaFrameRef = useRef<number>();
   const refreshTimerRef = useRef<number>();
+  const initialSnapshotControllerRef = useRef<AbortController>();
   const availableModels = useMemo(() => providerConfigs
     .filter((provider) => provider.enabled)
     .flatMap((provider) => parseModelIds(provider.models).map((model) => ({ key: `${provider.id}:${model}`, model, providerId: provider.id, providerName: provider.name }))), [providerConfigs]);
@@ -68,6 +69,7 @@ function AppContent() {
     if (jumpResetTimerRef.current !== undefined) window.clearTimeout(jumpResetTimerRef.current);
     if (deltaFrameRef.current !== undefined) window.cancelAnimationFrame(deltaFrameRef.current);
     if (refreshTimerRef.current !== undefined) window.clearTimeout(refreshTimerRef.current);
+    initialSnapshotControllerRef.current?.abort();
   }, []);
 
   useEffect(() => {
@@ -183,7 +185,12 @@ function AppContent() {
       setRun(current);
       rememberConversation(current, previousMessages);
       setGoal('');
-      void getRun(created.run_id).then((snapshot) => {
+      initialSnapshotControllerRef.current?.abort();
+      const initialSnapshotController = new AbortController();
+      initialSnapshotControllerRef.current = initialSnapshotController;
+      void getRun(created.run_id, initialSnapshotController.signal).then((snapshot) => {
+        if (initialSnapshotControllerRef.current !== initialSnapshotController) return;
+        initialSnapshotControllerRef.current = undefined;
         const next = normalizeRunView(snapshot);
         setRun(next);
         rememberConversation(next, previousMessages);
@@ -222,7 +229,7 @@ function AppContent() {
         if (!active) return;
         setRun(next);
         rememberConversation(next);
-        if (terminalStatuses.has(next.status)) {
+        if (terminalStatuses.has(next.status) && next.result) {
           setStreamingAnswer('');
           closeStream();
           if (fallback !== undefined) window.clearInterval(fallback);
@@ -238,6 +245,8 @@ function AppContent() {
       refreshTimerRef.current = window.setTimeout(() => { refreshTimerRef.current = undefined; void refreshRun(); }, immediate ? 0 : 100);
     };
     closeStream = streamRunEvents(run.id, (event) => {
+      initialSnapshotControllerRef.current?.abort();
+      initialSnapshotControllerRef.current = undefined;
       if (event.type === 'answer.started') {
         deltaBufferRef.current = '';
         setStreamingAnswer('');
@@ -314,6 +323,8 @@ function AppContent() {
   }
 
   function startNewChat() {
+    initialSnapshotControllerRef.current?.abort();
+    initialSnapshotControllerRef.current = undefined;
     setRun(null);
     setActiveConversationId(null);
     setPriorMessages([]);

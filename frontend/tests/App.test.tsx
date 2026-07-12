@@ -1,8 +1,8 @@
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { App } from '../src/App';
-import { buildRuntime, cancelRuntimeBuild, createRun, getRuntimeProfile, listRuns } from '../src/api';
+import { buildRuntime, cancelRuntimeBuild, createRun, getRun, getRuntimeProfile, listRuns, streamRunEvents } from '../src/api';
 
 vi.mock('../src/api', () => ({
   getRuntimeProfile: vi.fn(async () => ({ dependencies: [], core_dependencies: [{ name: 'numpy', version: '2.2.6' }, { name: 'matplotlib', version: '3.10.3' }], active_image: 'astra-data-viz:0.1.0', dependency_digest: 'base', build: null })),
@@ -204,6 +204,33 @@ describe('App', () => {
     expect(screen.getByRole('img', { name: 'chart.png' })).toHaveAttribute('src', '/api/artifacts/a-chart/content');
     expect(screen.getByTitle('chart.html')).toHaveAttribute('sandbox', 'allow-scripts');
     expect(document.querySelectorAll('.process-panel')).toHaveLength(1);
+  });
+
+  it('keeps the streamed answer until a terminal snapshot contains the persisted result', async () => {
+    const finalSnapshot = await vi.mocked(getRun)('fixture');
+    vi.mocked(getRun)
+      .mockResolvedValueOnce({ ...finalSnapshot, result: null, summary: null, status: 'completed' })
+      .mockImplementation(() => new Promise((resolve) => window.setTimeout(() => resolve(finalSnapshot), 500)));
+    vi.mocked(streamRunEvents).mockImplementationOnce((_runId, onEvent) => {
+      window.setTimeout(() => {
+        onEvent({ type: 'answer.started', payload: {} });
+        onEvent({ type: 'answer.delta', payload: { delta: '流式回答不会消失' } });
+        onEvent({ type: 'answer.completed', payload: { content: '流式回答不会消失' } });
+      }, 0);
+      return () => undefined;
+    });
+    render(<App />);
+
+    await userEvent.type(screen.getByRole('textbox'), '竞态测试');
+    await userEvent.click(screen.getByRole('button', { name: '↑' }));
+
+    expect(await screen.findByText('流式回答不会消失')).toBeInTheDocument();
+    await new Promise((resolve) => window.setTimeout(resolve, 200));
+    expect(screen.getByText('流式回答不会消失')).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByText('已完成查询')).toBeInTheDocument(), { timeout: 4000 });
+    expect(screen.queryByText('流式回答不会消失')).not.toBeInTheDocument();
+    vi.mocked(getRun).mockResolvedValue(finalSnapshot);
+    vi.mocked(streamRunEvents).mockImplementation(() => () => undefined);
   });
 
   it('sends selected reasoning policy with a run', async () => {
