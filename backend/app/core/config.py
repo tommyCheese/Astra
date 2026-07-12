@@ -21,8 +21,10 @@ class Settings(BaseSettings):
     google_search_safe: str = "active"
     crawler_max_content_chars: int = 12000
     crawler_min_quality_chars: int = 240
-    agent_max_turns: int = 12
-    agent_max_tool_calls: int = 8
+    agent_max_turns: int = 20
+    agent_max_tool_calls: int = 16
+    agent_max_reflections: int = 6
+    agent_max_replans: int = 4
     agent_per_tool_retry_limit: int = 2
     agent_memory_write_enabled: bool = True
     agent_use_loop: bool = True

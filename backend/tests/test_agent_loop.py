@@ -3,7 +3,9 @@ import pytest
 from app.core.config import Settings
 from app.repositories.runs import RunRepository
 from app.runner.agent_loop import AgentLoop, ToolRouter
-from app.runner.model_client import MockModelClient
+from app.runner.model_client import MockModelClient, ModelOutputError
+from app.runner.reasoning import PolicyCompiler
+from app.schemas.agent import AgentDecision, FinalAnswer, RequestedReasoningPolicy
 from app.tools.base import ToolExecutionError
 from app.tools.web import build_web_registry
 from fake_web_tools import fake_web_registry
@@ -53,3 +55,158 @@ def test_tool_router_rejects_disallowed_tool():
         router.resolve("shell.run", {"cmd": "date"})
 
     assert exc_info.value.category == "tool_not_allowed"
+
+
+class ContinueDecisionClient(MockModelClient):
+    def __init__(self):
+        self.decide_calls = 0
+
+    async def decide_with_answer(self, goal, context, *, on_delta=None):
+        self.decide_calls += 1
+        return AgentDecision(decision_type="continue", reasoning_summary="继续处理"), None
+
+
+class RecoveringDecisionClient(MockModelClient):
+    def __init__(self):
+        self.decide_calls = 0
+        self.reflect_calls = 0
+
+    async def decide_with_answer(self, goal, context, *, on_delta=None):
+        self.decide_calls += 1
+        if self.decide_calls == 1:
+            raise ModelOutputError("invalid decision")
+        return AgentDecision(decision_type="finalize", reasoning_summary="直接完成"), FinalAnswer(summary="已完成")
+
+    async def reflect(self, goal, context):
+        self.reflect_calls += 1
+        return await super().reflect(goal, context)
+
+
+class ToolThenFinalizeClient(MockModelClient):
+    def __init__(self):
+        self.decide_calls = 0
+        self.reflect_calls = 0
+
+    async def decide_with_answer(self, goal, context, *, on_delta=None):
+        self.decide_calls += 1
+        if self.decide_calls == 1:
+            return AgentDecision(decision_type="continue", reasoning_summary="完成一个非终态步骤"), None
+        return AgentDecision(decision_type="finalize", reasoning_summary="完成"), FinalAnswer(summary="已完成", findings=[{"text": "完成", "source_urls": []}])
+
+    async def reflect(self, goal, context):
+        self.reflect_calls += 1
+        return await super().reflect(goal, context)
+
+
+class RepeatedToolClient(MockModelClient):
+    def __init__(self):
+        self.decide_calls = 0
+
+    async def decide_with_answer(self, goal, context, *, on_delta=None):
+        self.decide_calls += 1
+        return AgentDecision(decision_type="call_tool", reasoning_summary="继续搜索", tool_name="web_search", tool_input={"query": f"{goal}-{self.decide_calls}"}), None
+
+
+class TwoToolsThenFinalizeClient(MockModelClient):
+    def __init__(self):
+        self.decide_calls = 0
+        self.reflect_calls = 0
+
+    async def decide_with_answer(self, goal, context, *, on_delta=None):
+        self.decide_calls += 1
+        if self.decide_calls == 1:
+            return AgentDecision(decision_type="call_tool", reasoning_summary="搜索", tool_name="web_search", tool_input={"query": goal}), None
+        if self.decide_calls == 2:
+            return AgentDecision(decision_type="call_tool", reasoning_summary="抓取", tool_name="web_fetch", tool_input={"url": "https://test.invalid/source"}), None
+        return AgentDecision(decision_type="finalize", reasoning_summary="完成"), FinalAnswer(summary="已完成", findings=[{"text": "完成", "source_urls": []}])
+
+    async def reflect(self, goal, context):
+        self.reflect_calls += 1
+        return await super().reflect(goal, context)
+
+
+def compiled_policy(**updates):
+    return PolicyCompiler().compile(RequestedReasoningPolicy(**updates)).model_dump(mode="json")
+
+
+@pytest.mark.parametrize(("effort", "expected_turns"), [("fast", 8), ("balanced", 12), ("deep", 20)])
+async def test_agent_loop_uses_reasoning_effort_turn_budget(session, effort, expected_turns):
+    settings = Settings(model_provider="mock", agent_max_turns=20, agent_max_tool_calls=16)
+    repo = RunRepository(session)
+    run = await repo.create_task_run("持续处理", settings.model_policy, reasoning_policy=compiled_policy(reasoning_effort=effort, reflection_enabled=False))
+    client = ContinueDecisionClient()
+
+    await AgentLoop(settings, model_client=client, tool_registry=fake_web_registry()).run(repo, run.id, run.task.description)
+
+    assert client.decide_calls == expected_turns
+    events = await repo.list_events(run.id)
+    limits = next(event.payload for event in events if event.type == "reasoning.runtime_limits")
+    assert limits["max_turns"] == expected_turns
+
+
+async def test_fast_policy_limits_tool_calls(session):
+    settings = Settings(model_provider="mock", web_search_provider="mock", agent_max_tool_calls=16)
+    repo = RunRepository(session)
+    run = await repo.create_task_run("重复搜索", settings.model_policy, reasoning_policy=compiled_policy(reasoning_effort="fast", reflection_enabled=False))
+    client = RepeatedToolClient()
+
+    await AgentLoop(settings, model_client=client, tool_registry=fake_web_registry()).run(repo, run.id, run.task.description)
+    loaded = await repo.require_run(run.id)
+
+    assert len(loaded.tool_calls) == 5
+    assert client.decide_calls == 6
+
+
+async def test_deployment_hard_cap_can_lower_deep_turn_budget(session):
+    settings = Settings(model_provider="mock", agent_max_turns=3)
+    repo = RunRepository(session)
+    run = await repo.create_task_run("受部署限制", settings.model_policy, reasoning_policy=compiled_policy(reasoning_effort="deep", reflection_enabled=False))
+    client = ContinueDecisionClient()
+
+    await AgentLoop(settings, model_client=client, tool_registry=fake_web_registry()).run(repo, run.id, run.task.description)
+
+    assert client.decide_calls == 3
+    events = await repo.list_events(run.id)
+    limits = next(event.payload for event in events if event.type == "reasoning.runtime_limits")
+    assert limits["max_turns"] == 3
+
+
+@pytest.mark.parametrize(("enabled", "trigger", "expected_reflections"), [
+    (False, "adaptive", 0),
+    (True, "failure_only", 1),
+    (True, "adaptive", 1),
+])
+async def test_model_failure_reflection_obeys_policy(session, enabled, trigger, expected_reflections):
+    settings = Settings(model_provider="mock")
+    repo = RunRepository(session)
+    run = await repo.create_task_run("恢复错误", settings.model_policy, reasoning_policy=compiled_policy(reflection_enabled=enabled, reflection_trigger=trigger))
+    client = RecoveringDecisionClient()
+
+    await AgentLoop(settings, model_client=client, tool_registry=fake_web_registry()).run(repo, run.id, run.task.description)
+
+    assert client.reflect_calls == expected_reflections
+
+
+async def test_every_turn_reflection_runs_after_successful_non_terminal_turn(session):
+    settings = Settings(model_provider="mock", web_search_provider="mock")
+    repo = RunRepository(session)
+    run = await repo.create_task_run("搜索后回答", settings.model_policy, reasoning_policy=compiled_policy(reflection_trigger="every_turn"))
+    client = ToolThenFinalizeClient()
+
+    await AgentLoop(settings, model_client=client, tool_registry=fake_web_registry()).run(repo, run.id, run.task.description)
+
+    assert client.reflect_calls == 1
+
+
+async def test_every_turn_reflection_stops_at_user_budget(session):
+    settings = Settings(model_provider="mock", web_search_provider="mock", agent_max_reflections=6)
+    repo = RunRepository(session)
+    run = await repo.create_task_run("搜索抓取后回答", settings.model_policy, reasoning_policy=compiled_policy(reasoning_effort="fast", reflection_trigger="every_turn"))
+    client = TwoToolsThenFinalizeClient()
+
+    await AgentLoop(settings, model_client=client, tool_registry=fake_web_registry()).run(repo, run.id, run.task.description)
+
+    assert client.reflect_calls == 1
+    events = await repo.list_events(run.id)
+    skipped = [event for event in events if event.type == "reflection.skipped" and event.payload["signal"] == "turn_completed"]
+    assert skipped

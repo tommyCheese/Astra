@@ -145,7 +145,7 @@ class ObservationEvaluator:
 
 
 class ReflectionGate:
-    ADAPTIVE_SIGNALS = {"tool_failed", "expectation_mismatch", "evidence_conflict", "low_confidence", "no_progress", "dependency_broken", "completion_gate_failed"}
+    ADAPTIVE_SIGNALS = {"tool_failed", "model_output_failed", "model_requested", "expectation_mismatch", "evidence_conflict", "low_confidence", "no_progress", "dependency_broken", "completion_gate_failed"}
 
     def should_reflect(self, policy: EffectiveReasoningPolicy, signal: str, used: int) -> bool:
         if not policy.reflection_enabled or used >= policy.budgets.max_reflections:
@@ -153,7 +153,7 @@ class ReflectionGate:
         if policy.reflection_trigger == ReflectionTrigger.every_turn:
             return True
         if policy.reflection_trigger == ReflectionTrigger.failure_only:
-            return signal in {"tool_failed", "completion_gate_failed"}
+            return signal in {"tool_failed", "model_output_failed", "completion_gate_failed"}
         return signal in self.ADAPTIVE_SIGNALS
 
 

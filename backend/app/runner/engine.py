@@ -91,18 +91,30 @@ class RunEngine:
         logger.info("run.phase run_id=%s phase=planning", run_id)
         await repo.update_run_status(run_id, "planning")
         initial_snapshot = ReasoningPolicySnapshot.model_validate(run.reasoning_policy or {})
-        fast_start = (
-            initial_snapshot.effective.execution_mode.value != "plan_only"
-            and initial_snapshot.effective.planning_strategy.value in {"direct", "adaptive"}
-        )
-        if fast_start:
+        planning_strategy = initial_snapshot.effective.planning_strategy.value
+        plan_only = initial_snapshot.effective.execution_mode.value == "plan_only"
+        if planning_strategy == "direct" and not plan_only:
             contract_result = build_default_contract(goal)
             plan_result = PlanOutput(
                 steps=[PlanStep(title="处理请求", intent="根据任务需要直接回答或选择工具")],
                 success_criteria=["正确回应用户当前请求"],
                 risk_level="low",
             )
-            logger.info("run.plan.fast_start run_id=%s strategy=%s", run_id, initial_snapshot.effective.planning_strategy.value)
+            logger.info("run.plan.direct_start run_id=%s", run_id)
+        elif planning_strategy == "adaptive" and not plan_only:
+            if self.settings.agent_use_general_runtime:
+                try:
+                    contract_result = await self.model_client.contract(goal)
+                except ModelOutputError as exc:
+                    contract_result = exc
+            else:
+                contract_result = build_default_contract(goal)
+            plan_result = PlanOutput(
+                steps=[PlanStep(title="自适应处理", intent="根据观察决定直接回答、调用工具、反思或重新规划")],
+                success_criteria=["正确回应用户当前请求"],
+                risk_level="low",
+            )
+            logger.info("run.plan.adaptive_start run_id=%s", run_id)
         elif self.settings.agent_use_general_runtime:
             contract_result, plan_result = await asyncio.gather(
                 self.model_client.contract(goal),

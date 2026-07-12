@@ -7,7 +7,7 @@ from app.core.config import Settings
 from app.repositories.runs import RunRepository
 from app.runner.model_client import ModelClient, ModelOutputError
 from app.schemas.agent import AgentObservation, FinalAnswer, VerificationReport
-from app.schemas.agent import AgentState, CriterionStatus, TerminalState
+from app.schemas.agent import AgentState, CriterionStatus, ReasoningPolicySnapshot, TerminalState
 from app.tools.base import ToolExecutionError, ToolRegistry
 from app.runner.adapters import WebTaskAdapter
 from app.runner.reasoning import CompletionGate, ObservationEvaluator, ReflectionGate, failure_fingerprint
@@ -197,6 +197,12 @@ class AgentLoop:
         memory_manager = MemoryManager(self.settings, repo, self.model_client)
         verifier = VerificationEngine()
         initial_run = await repo.require_run(run_id)
+        policy_snapshot = ReasoningPolicySnapshot.model_validate(initial_run.reasoning_policy or {})
+        policy = policy_snapshot.effective
+        max_turns = min(policy.budgets.max_turns, self.settings.agent_max_turns)
+        max_tool_calls = min(policy.budgets.max_tool_calls, self.settings.agent_max_tool_calls)
+        max_reflections = min(policy.budgets.max_reflections, self.settings.agent_max_reflections)
+        max_replans = min(policy.budgets.max_replans, self.settings.agent_max_replans)
         observations: List[Dict[str, Any]] = list((initial_run.agent_state or {}).get("observations", []))
         tool_outputs: List[Dict[str, Any]] = []
         filtered_candidates: List[Dict[str, Any]] = []
@@ -211,8 +217,50 @@ class AgentLoop:
         terminal_override: Optional[str] = None
         terminal_summary: Optional[str] = None
         streamed_final_answer: Optional[FinalAnswer] = None
+        reflection_count = 0
+        replan_count = 0
 
-        for turn_index in range(1, self.settings.agent_max_turns + 1):
+        async def maybe_reflect(signal: str, reflection_context: Dict[str, Any]):
+            nonlocal reflection_count
+            if reflection_count >= max_reflections or not self.reflection_gate.should_reflect(policy, signal, reflection_count):
+                await repo.add_event(run_id, "reflection.skipped", {
+                    "signal": signal,
+                    "enabled": policy.reflection_enabled,
+                    "trigger": policy.reflection_trigger.value,
+                    "used": reflection_count,
+                    "limit": max_reflections,
+                })
+                await repo.session.commit()
+                return None
+            reflection = await self.model_client.reflect(goal, reflection_context)
+            reflection_count += 1
+            await repo.add_event(run_id, "reflection.created", reflection.model_dump())
+            await repo.session.commit()
+            return reflection
+
+        logger.info(
+            "agent.policy run_id=%s effort=%s planning=%s reflection=%s/%s limits=turns:%s tools:%s reflections:%s replans:%s",
+            run_id,
+            policy.reasoning_effort.value,
+            policy.planning_strategy.value,
+            policy.reflection_enabled,
+            policy.reflection_trigger.value,
+            max_turns,
+            max_tool_calls,
+            max_reflections,
+            max_replans,
+        )
+        await repo.add_event(run_id, "reasoning.runtime_limits", {
+            "reasoning_effort": policy.reasoning_effort.value,
+            "planning_strategy": policy.planning_strategy.value,
+            "max_turns": max_turns,
+            "max_tool_calls": max_tool_calls,
+            "max_reflections": max_reflections,
+            "max_replans": max_replans,
+        })
+        await repo.session.commit()
+
+        for turn_index in range(1, max_turns + 1):
             context = await assembler.assemble(
                 run_id=run_id,
                 goal=goal,
@@ -237,25 +285,21 @@ class AgentLoop:
                     error={"category": "model_output_error", "message": str(exc)},
                 )
                 observations.append(observation.model_dump())
-                reflection = await self.model_client.reflect(
-                    goal,
-                    {"last_observation": observation.model_dump(), "retry_count": 0},
-                )
+                reflection = await maybe_reflect("model_output_failed", {"last_observation": observation.model_dump(), "retry_count": 0})
                 turn = await repo.create_agent_turn(
                     run_id,
                     turn_index,
-                    "reflect",
-                    reflection.summary,
-                    decision={"decision_type": "reflect"},
+                    "reflect" if reflection else "model_error",
+                    reflection.summary if reflection else observation.summary,
+                    decision={"decision_type": "reflect" if reflection else "model_error"},
                     memory_reads=context["memory_reads"],
                 )
                 await repo.update_agent_turn(
                     turn.id,
                     status="completed",
                     observation=observation.model_dump(),
-                    reflection=reflection.model_dump(),
+                    reflection=reflection.model_dump() if reflection else None,
                 )
-                await repo.add_event(run_id, "reflection.created", reflection.model_dump())
                 await repo.session.commit()
                 continue
 
@@ -318,6 +362,19 @@ class AgentLoop:
                     })
                 break
 
+            if decision.decision_type == "replan":
+                replan_count += 1
+                if replan_count > max_replans:
+                    terminal_override = "blocked"
+                    terminal_summary = "已达到用户策略允许的最大重新规划次数。"
+                    await repo.update_agent_turn(turn.id, status="blocked")
+                    break
+
+            if decision.decision_type == "reflect":
+                reflection = await maybe_reflect("model_requested", {"last_observation": observations[-1] if observations else {}, "retry_count": 0})
+                await repo.update_agent_turn(turn.id, status="completed", reflection=reflection.model_dump() if reflection else None)
+                continue
+
             if decision.decision_type != "call_tool":
                 observation = AgentObservation(
                     kind="agent_state",
@@ -325,15 +382,16 @@ class AgentLoop:
                     summary=decision.reasoning_summary,
                 )
                 observations.append(observation.model_dump())
-                await repo.update_agent_turn(turn.id, status="completed", observation=observation.model_dump())
+                turn_reflection = await maybe_reflect("turn_completed", {"last_observation": observation.model_dump(), "retry_count": 0})
+                await repo.update_agent_turn(turn.id, status="completed", observation=observation.model_dump(), reflection=turn_reflection.model_dump() if turn_reflection else None)
                 continue
 
-            if tool_call_count >= self.settings.agent_max_tool_calls:
+            if tool_call_count >= max_tool_calls:
                 observation = AgentObservation(
                     kind="limit",
                     status="blocked",
                     summary="已达到最大工具调用次数。",
-                    data={"max_tool_calls": self.settings.agent_max_tool_calls},
+                    data={"max_tool_calls": max_tool_calls},
                 )
                 observations.append(observation.model_dump())
                 await repo.update_agent_turn(turn.id, status="blocked", observation=observation.model_dump())
@@ -355,6 +413,7 @@ class AgentLoop:
                     tool.spec.permission,
                     tool.spec.side_effect_level,
                 )
+                tool_call_count += 1
                 await repo.update_agent_turn(turn.id, phase="executing", tool_call_id=call.id)
                 try:
                     output = await tool.run(decision.tool_input)
@@ -363,7 +422,6 @@ class AgentLoop:
                     raise
                 await repo.finish_tool_call(call.id, output=output)
                 logger.info("tool.complete run_id=%s turn=%s tool=%s call_id=%s", run_id, turn_index, tool.spec.name, call.id)
-                tool_call_count += 1
                 output = self._normalize_tool_output(tool.spec.name, output)
                 tool_outputs.append(output)
                 if tool.spec.name == "web_search":
@@ -409,6 +467,9 @@ class AgentLoop:
                     evaluation=evaluation.model_dump(mode="json"),
                     phase="committed",
                 )
+                turn_reflection = await maybe_reflect("turn_completed", {"last_observation": observation.model_dump(), "retry_count": 0})
+                if turn_reflection:
+                    await repo.update_agent_turn(turn.id, reflection=turn_reflection.model_dump())
             except ToolExecutionError as exc:
                 logger.warning("tool.failed run_id=%s turn=%s tool=%s category=%s", run_id, turn_index, decision.tool_name, exc.category)
                 action_signature = json.dumps({"tool": decision.tool_name, "input": decision.tool_input}, sort_keys=True, ensure_ascii=False)
@@ -432,22 +493,18 @@ class AgentLoop:
                             "message": exc.message,
                         }
                     )
-                reflection = await self.model_client.reflect(
-                    goal,
-                    {
-                        "last_observation": observation.model_dump(),
-                        "retry_count": retry_counts[decision.tool_name or "unknown"],
-                    },
-                )
+                reflection = await maybe_reflect("tool_failed", {
+                    "last_observation": observation.model_dump(),
+                    "retry_count": retry_counts[decision.tool_name or "unknown"],
+                })
                 await repo.update_agent_turn(
                     turn.id,
                     status="failed",
                     observation=observation.model_dump(),
-                    reflection=reflection.model_dump(),
-                    reflection_patch=reflection.patch.model_dump(mode="json") if reflection.patch else None,
+                    reflection=reflection.model_dump() if reflection else None,
+                    reflection_patch=reflection.patch.model_dump(mode="json") if reflection and reflection.patch else None,
                     phase="failed",
                 )
-                await repo.add_event(run_id, "reflection.created", reflection.model_dump())
                 await repo.add_event(run_id, "reasoning.failure_fingerprinted", {"fingerprint": fingerprint, "attempt_count": failed_action_counts[action_signature], "exhausted": failed_action_counts[action_signature] >= self.settings.agent_per_tool_retry_limit})
                 await repo.session.commit()
                 if retry_counts[decision.tool_name or "unknown"] >= self.settings.agent_per_tool_retry_limit:
@@ -515,6 +572,17 @@ class AgentLoop:
             gate_decision = adapter_decision
         if terminal_override == "blocked":
             gate_decision = gate_decision.model_copy(update={"state": TerminalState.blocked, "reason": terminal_summary or gate_decision.reason})
+        completion_reflection = None
+        if gate_decision.state == TerminalState.blocked and not terminal_override:
+            completion_reflection = await maybe_reflect("completion_gate_failed", {
+                "last_observation": {
+                    "kind": "completion_gate",
+                    "status": "failed",
+                    "summary": gate_decision.reason,
+                    "data": gate_decision.model_dump(mode="json"),
+                },
+                "retry_count": 0,
+            })
         final_status = gate_decision.state.value
         report.status = final_status
         result = final_answer.model_dump()
@@ -536,6 +604,7 @@ class AgentLoop:
                 },
                 artifact_id=artifact.id,
                 memory_writes=memory_writes,
+                reflection=completion_reflection.model_dump() if completion_reflection else None,
             )
         await repo.add_event(run_id, "verification.created", report.model_dump())
         await repo.session.commit()
