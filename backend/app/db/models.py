@@ -31,6 +31,18 @@ class ToolSettingRecord(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
 
+class ConversationStrategyPreferenceRecord(Base):
+    __tablename__ = "conversation_strategy_preferences"
+
+    id: Mapped[str] = mapped_column(String(40), primary_key=True, default="default")
+    reasoning_effort: Mapped[str] = mapped_column(String(40), nullable=False)
+    planning_strategy: Mapped[str] = mapped_column(String(40), nullable=False)
+    reflection_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    reflection_trigger: Mapped[str] = mapped_column(String(40), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
 class TaskRecord(Base):
     __tablename__ = "tasks"
 

@@ -85,6 +85,45 @@ async def test_tool_settings_can_be_read_and_updated(app_client):
     assert persisted == states
 
 
+async def test_conversation_strategy_can_be_restored_and_updated(app_client):
+    loaded = await app_client.get("/api/preferences/conversation-strategy")
+    assert loaded.status_code == 200
+    assert loaded.json() == {
+        "reasoning_effort": "balanced",
+        "planning_strategy": "adaptive",
+        "reflection_enabled": True,
+        "reflection_trigger": "adaptive",
+    }
+
+    updated = {
+        "reasoning_effort": "deep",
+        "planning_strategy": "plan_first",
+        "reflection_enabled": False,
+        "reflection_trigger": "failure_only",
+    }
+    saved = await app_client.put(
+        "/api/preferences/conversation-strategy", json=updated
+    )
+    assert saved.status_code == 200
+    assert saved.json() == updated
+
+    reloaded = await app_client.get("/api/preferences/conversation-strategy")
+    assert reloaded.json() == updated
+
+
+async def test_conversation_strategy_rejects_unknown_values(app_client):
+    response = await app_client.put(
+        "/api/preferences/conversation-strategy",
+        json={
+            "reasoning_effort": "unbounded",
+            "planning_strategy": "adaptive",
+            "reflection_enabled": True,
+            "reflection_trigger": "adaptive",
+        },
+    )
+    assert response.status_code == 422
+
+
 async def test_new_run_uses_persisted_tool_settings(app_client, monkeypatch):
     captured = []
 

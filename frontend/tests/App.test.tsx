@@ -2,9 +2,11 @@ import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { App } from '../src/App';
-import { buildRuntime, cancelRuntimeBuild, createRun, getRun, getRuntimeProfile, listRuns, streamRunEvents, updateToolSettings, type RunStreamEvent } from '../src/api';
+import { buildRuntime, cancelRuntimeBuild, createRun, getConversationStrategy, getRun, getRuntimeProfile, listRuns, streamRunEvents, updateConversationStrategy, updateToolSettings, type RunStreamEvent } from '../src/api';
 
 vi.mock('../src/api', () => ({
+  getConversationStrategy: vi.fn(async () => ({ reasoning_effort: 'balanced', planning_strategy: 'adaptive', reflection_enabled: true, reflection_trigger: 'adaptive' })),
+  updateConversationStrategy: vi.fn(async (strategy) => strategy),
   getToolSettings: vi.fn(async () => ({ tools: [
     { name: 'web_search', label: 'Web Search', description: '搜索公开网页并生成候选来源', enabled: true, available: true },
     { name: 'web_fetch', label: 'Web Fetch', description: '自适应提取页面主要内容', enabled: true, available: true },
@@ -471,6 +473,46 @@ describe('App', () => {
     );
   });
 
+  it('restores conversation strategy from the database and persists manual changes in order', async () => {
+    vi.mocked(getConversationStrategy).mockResolvedValueOnce({
+      reasoning_effort: 'deep',
+      planning_strategy: 'plan_first',
+      reflection_enabled: true,
+      reflection_trigger: 'every_turn',
+    });
+    vi.mocked(updateConversationStrategy).mockClear();
+    render(<App />);
+
+    await waitFor(() => expect(screen.getByRole('button', { name: '当前模型：gpt-5' })).toHaveTextContent('深入 · 每轮 反思'));
+    await userEvent.click(screen.getByRole('button', { name: '当前模型：gpt-5' }));
+    expect(screen.getByRole('button', { name: '深入' })).toHaveClass('active');
+    expect(screen.getByRole('button', { name: '先规划' })).toHaveClass('active');
+    expect(screen.getByRole('button', { name: '每轮' })).toHaveClass('active');
+
+    await userEvent.click(screen.getByRole('button', { name: '快速' }));
+    await userEvent.click(screen.getByRole('button', { name: '直接' }));
+    await waitFor(() => expect(updateConversationStrategy).toHaveBeenLastCalledWith({
+      reasoning_effort: 'fast',
+      planning_strategy: 'direct',
+      reflection_enabled: true,
+      reflection_trigger: 'every_turn',
+    }));
+
+    await userEvent.type(screen.getByRole('textbox'), '使用恢复后的策略');
+    await userEvent.click(screen.getByRole('button', { name: '↑' }));
+    expect(createRun).toHaveBeenLastCalledWith(
+      expect.any(String),
+      undefined,
+      expect.objectContaining({
+        reasoning_effort: 'fast',
+        planning_strategy: 'direct',
+        reflection_enabled: true,
+        reflection_trigger: 'every_turn',
+      }),
+      expect.any(Object),
+    );
+  });
+
   it('shows validation error for empty goal', async () => {
     render(<App />);
     const textbox = screen.getByRole('textbox');
@@ -829,18 +871,17 @@ describe('App', () => {
 
     await userEvent.click(screen.getByRole('button', { name: '当前模型：gpt-5' }));
     const helpButton = screen.getByRole('button', { name: '了解对话策略' });
-    expect(helpButton).toHaveAttribute('aria-expanded', 'false');
 
     await userEvent.click(helpButton);
-    expect(helpButton).toHaveAttribute('aria-expanded', 'true');
-    expect(screen.getByRole('region', { name: '对话策略说明' })).toBeInTheDocument();
+    expect(screen.getByRole('dialog', { name: '策略说明' })).toBeInTheDocument();
+    expect(screen.queryByText('触发方式')).not.toBeInTheDocument();
     expect(screen.getByText('减少思考轮次与工具预算，简单任务更快。')).toBeInTheDocument();
     expect(screen.getByText('轻量启动，按结果决定是否调整计划。')).toBeInTheDocument();
     expect(screen.getByText('失败、低置信度、冲突或无进展时反思。')).toBeInTheDocument();
     expect(screen.getByText('每轮结束都反思，更审慎但更慢、更耗用量。')).toBeInTheDocument();
 
-    await userEvent.click(helpButton);
-    expect(screen.queryByRole('region', { name: '对话策略说明' })).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: '关闭策略说明' }));
+    expect(screen.queryByRole('dialog', { name: '策略说明' })).not.toBeInTheDocument();
   });
 
   it('switches execution modes and confirms before enabling bypass', async () => {

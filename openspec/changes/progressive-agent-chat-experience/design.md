@@ -64,6 +64,12 @@ RunEngine 在规划开始时发出阶段事件；AgentLoop 每轮模型决策前
 
 思考面板外层在运行期仍使用静态中性背景和边框，不扫光、不用节奏条动画替换整个面板。展开后，已完成的内部步骤保持透明背景；只有当前 `running` 步骤使用中性色加载窗格和低对比度扫光表示仍在推进。动画不改变文本、事件或展开偏好；`prefers-reduced-motion` 下停止扫光，保留当前步骤的静态窗格。
 
+### 8. 对话策略偏好与 Run 策略快照分离持久化
+
+新增单例 `conversation_strategy_preferences` 数据库记录，保存 `reasoning_effort`、`planning_strategy`、`reflection_enabled` 与 `reflection_trigger`。`GET /api/preferences/conversation-strategy` 在首次读取时用产品默认值创建记录，`PUT` 使用受枚举约束的完整对象更新记录。该记录是下一次新 Run 的用户偏好来源，而每个 Run 已有的 `reasoning_policy` 仍是创建时不可变的执行快照；修改偏好不会回写历史 Run。
+
+前端启动后异步读取数据库偏好。若用户在读取完成前已经手动修改，则不允许迟到的 GET 覆盖用户动作。每次点击先乐观更新界面，再把完整策略加入顺序保存链，避免快速连续点击造成较早请求最后落库。普通渲染和 Run 状态变化不触发保存。
+
 ## Risks / Trade-offs
 
 - [模型把 `reasoning_summary` 放在 JSON 较后位置] → 提示固定字段顺序，并始终先发运行时阶段事件，避免空白等待。
@@ -72,6 +78,7 @@ RunEngine 在规划开始时发出阶段事件；AgentLoop 每轮模型决策前
 - [SSE 事件与 RunView 刷新竞争造成重复条目] → 使用稳定事件/turn/tool ID 归约，终态快照执行确定性校正。
 - [实时过程不易被发现] → 折叠标题保留实时活动指示；用户最后一次选择会影响下一条新面板，但不会批量展开历史过程。
 - [“思考过程”被误解为原始思维链] → UI 与规格统一使用“可审计过程/推理摘要”语义，禁止供应商隐藏推理字段进入协议。
+- [启动读取与用户快速点击竞态] → 用本地 touched 标志保护用户动作，并将 PUT 串行化，保证最后一次手动选择最终落库。
 
 ## Migration Plan
 

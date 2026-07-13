@@ -1,6 +1,7 @@
 import pytest
 
 from app.agent_profile import load_agent_profile
+from app.repositories.conversation_strategy import ConversationStrategyRepository
 from app.repositories.runs import RunRepository, run_to_view
 from app.repositories.tool_settings import ToolSettingsRepository
 from app.runner.reasoning import build_default_contract, build_plan_graph
@@ -18,6 +19,29 @@ async def test_tool_settings_are_created_and_persisted(session):
     await session.commit()
 
     assert await repo.get_or_create(defaults) == updated
+
+
+async def test_conversation_strategy_is_created_and_persisted(session):
+    repo = ConversationStrategyRepository(session)
+    assert await repo.get_or_create() == {
+        "reasoning_effort": "balanced",
+        "planning_strategy": "adaptive",
+        "reflection_enabled": True,
+        "reflection_trigger": "adaptive",
+    }
+    await session.commit()
+
+    updated = {
+        "reasoning_effort": "deep",
+        "planning_strategy": "plan_first",
+        "reflection_enabled": False,
+        "reflection_trigger": "failure_only",
+    }
+    assert await repo.set(updated) == updated
+    await session.commit()
+
+    reloaded = ConversationStrategyRepository(session)
+    assert await reloaded.get_or_create() == updated
 
 
 async def test_run_lifecycle_persistence(session):

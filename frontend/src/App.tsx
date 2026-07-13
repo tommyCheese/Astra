@@ -1,7 +1,7 @@
 import { FormEvent, MouseEvent, ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { AstraApiError, ApiErrorPayload, buildRuntime, cancelRuntimeBuild, createRun, getRun, getRuntimeProfile, getToolSettings, listRuns, resumeRun, streamRunEvents, updateToolSettings, type ToolSetting } from './api';
+import { AstraApiError, ApiErrorPayload, buildRuntime, cancelRuntimeBuild, createRun, getConversationStrategy, getRun, getRuntimeProfile, getToolSettings, listRuns, resumeRun, streamRunEvents, updateConversationStrategy, updateToolSettings, type ConversationStrategyPreferences, type ToolSetting } from './api';
 import { I18nProvider, useI18n } from './i18n';
 import { ThemeProvider, useTheme } from './theme';
 import type { ArtifactView, ChatMessage, RunView } from './types';
@@ -17,6 +17,24 @@ const STORAGE_KEYS = {
   modelProviders: 'astra.model-providers.v1',
   selectedModel: 'astra.selected-model.v1',
 };
+const DEFAULT_CONVERSATION_STRATEGY: ConversationStrategyPreferences = {
+  reasoning_effort: 'balanced',
+  planning_strategy: 'adaptive',
+  reflection_enabled: true,
+  reflection_trigger: 'adaptive',
+};
+
+function reasoningEffortLabel(value: ConversationStrategyPreferences['reasoning_effort']): string {
+  return value === 'fast' ? '快速' : value === 'deep' ? '深入' : '均衡';
+}
+
+function planningStrategyLabel(value: ConversationStrategyPreferences['planning_strategy']): string {
+  return value === 'direct' ? '直接' : value === 'plan_first' ? '先规划' : '自适应';
+}
+
+function reflectionTriggerLabel(value: ConversationStrategyPreferences['reflection_trigger']): string {
+  return value === 'failure_only' ? '失败时' : value === 'every_turn' ? '每轮' : '按需';
+}
 
 export function App() {
   return <I18nProvider><ThemeProvider><AppContent /></ThemeProvider></I18nProvider>;
@@ -40,6 +58,7 @@ function AppContent() {
   const [error, setError] = useState<ApiErrorPayload | null>(null);
   const [view, setView] = useState<'chat' | 'settings'>('chat');
   const [usageOpen, setUsageOpen] = useState(false);
+  const [strategyHelpOpen, setStrategyHelpOpen] = useState(false);
   const [modelOpen, setModelOpen] = useState(false);
   const [attachOpen, setAttachOpen] = useState(false);
   const [executionMenuOpen, setExecutionMenuOpen] = useState(false);
@@ -51,6 +70,7 @@ function AppContent() {
   const [reasoningEffort, setReasoningEffort] = useState('均衡');
   const [planningStrategy, setPlanningStrategy] = useState('自适应');
   const [reflectionTrigger, setReflectionTrigger] = useState('按需');
+  const [conversationStrategyReady, setConversationStrategyReady] = useState(false);
   const [settingsCategory, setSettingsCategory] = useState('模型管理');
   const attachMenuRef = useRef<HTMLDivElement>(null);
   const executionMenuRef = useRef<HTMLDivElement>(null);
@@ -64,6 +84,9 @@ function AppContent() {
   const processEventBufferRef = useRef<RunStreamEvent[]>([]);
   const processFrameRef = useRef<number>();
   const refreshTimerRef = useRef<number>();
+  const conversationStrategyRef = useRef<ConversationStrategyPreferences>(DEFAULT_CONVERSATION_STRATEGY);
+  const conversationStrategyTouchedRef = useRef(false);
+  const conversationStrategySaveRef = useRef<Promise<void>>(Promise.resolve());
   const initialSnapshotControllerRef = useRef<AbortController>();
   const availableModels = useMemo(() => providerConfigs
     .filter((provider) => provider.enabled)
@@ -74,6 +97,25 @@ function AppContent() {
   useEffect(() => writeLocalJson(STORAGE_KEYS.processPanelDefaultOpen, processPanelDefaultOpen), [processPanelDefaultOpen]);
   useEffect(() => writeLocalJson(STORAGE_KEYS.modelProviders, providerConfigs), [providerConfigs]);
   useEffect(() => writeLocalString(STORAGE_KEYS.selectedModel, selectedModelKey), [selectedModelKey]);
+
+  useEffect(() => {
+    let active = true;
+    const controller = new AbortController();
+    void getConversationStrategy(controller.signal).then((strategy) => {
+      if (!active || conversationStrategyTouchedRef.current) return;
+      conversationStrategyRef.current = strategy;
+      setReasoningEffort(reasoningEffortLabel(strategy.reasoning_effort));
+      setPlanningStrategy(planningStrategyLabel(strategy.planning_strategy));
+      setReflectionEnabled(strategy.reflection_enabled);
+      setReflectionTrigger(reflectionTriggerLabel(strategy.reflection_trigger));
+    }).catch(() => { /* Retain documented defaults while the backend is unavailable. */ }).finally(() => {
+      if (active) setConversationStrategyReady(true);
+    });
+    return () => {
+      active = false;
+      controller.abort();
+    };
+  }, []);
 
   useEffect(() => () => {
     if (jumpResetTimerRef.current !== undefined) window.clearTimeout(jumpResetTimerRef.current);
@@ -150,6 +192,22 @@ function AppContent() {
     setConversationHistory((items) => [{ id: conversationId, run: nextRun, priorMessages: previousMessages }, ...items.filter((item) => item.id !== conversationId)].slice(0, HISTORY_LIMIT));
   }
 
+  function persistConversationStrategy(patch: Partial<ConversationStrategyPreferences>) {
+    conversationStrategyTouchedRef.current = true;
+    const next = { ...conversationStrategyRef.current, ...patch };
+    conversationStrategyRef.current = next;
+    setReasoningEffort(reasoningEffortLabel(next.reasoning_effort));
+    setPlanningStrategy(planningStrategyLabel(next.planning_strategy));
+    setReflectionEnabled(next.reflection_enabled);
+    setReflectionTrigger(reflectionTriggerLabel(next.reflection_trigger));
+    conversationStrategySaveRef.current = conversationStrategySaveRef.current
+      .then(() => updateConversationStrategy(next))
+      .then(() => undefined)
+      .catch((err) => {
+        setError(err instanceof AstraApiError ? err.payload : { type: 'infrastructure.database', code: 'STRATEGY_PREFERENCE_SAVE_FAILED', message: t('保存对话策略失败，当前选择可能无法在重启后恢复。'), retryable: true, trace_id: 'unavailable' });
+      });
+  }
+
   async function submit(event: FormEvent) {
     event.preventDefault();
     if (loading) return;
@@ -173,10 +231,10 @@ function AppContent() {
       const created = run?.status === 'waiting_user'
         ? await resumeRun(run.id, trimmedGoal, typeof run.waiting_state?.continuation_token === 'string' ? run.waiting_state.continuation_token : undefined)
         : await createRun(trimmedGoal, run?.task_id, {
-        reasoning_effort: reasoningEffort === '快速' ? 'fast' : reasoningEffort === '深入' ? 'deep' : 'balanced',
-        planning_strategy: planningStrategy === '直接' ? 'direct' : planningStrategy === '先规划' ? 'plan_first' : 'adaptive',
-        reflection_enabled: reflectionEnabled,
-        reflection_trigger: reflectionTrigger === '失败时' ? 'failure_only' : reflectionTrigger === '每轮' ? 'every_turn' : 'adaptive',
+        reasoning_effort: conversationStrategyRef.current.reasoning_effort,
+        planning_strategy: conversationStrategyRef.current.planning_strategy,
+        reflection_enabled: conversationStrategyRef.current.reflection_enabled,
+        reflection_trigger: conversationStrategyRef.current.reflection_trigger,
         execution_mode: executionMode === 'plan' ? 'plan_only' : executionMode === 'bypass' ? 'auto_approval' : 'request_approval',
         verification_level: 'standard',
         }, selectedOption && selectedProvider ? {
@@ -529,17 +587,21 @@ function AppContent() {
                   onModelChange={setSelectedModelKey}
                   modelOptions={availableModels}
                   reasoningEffort={reasoningEffort}
-                  onReasoningEffortChange={setReasoningEffort}
+                  onReasoningEffortChange={(value) => persistConversationStrategy({ reasoning_effort: value === '快速' ? 'fast' : value === '深入' ? 'deep' : 'balanced' })}
                   planningStrategy={planningStrategy}
-                  onPlanningStrategyChange={setPlanningStrategy}
+                  onPlanningStrategyChange={(value) => persistConversationStrategy({ planning_strategy: value === '直接' ? 'direct' : value === '先规划' ? 'plan_first' : 'adaptive' })}
                   reflectionEnabled={reflectionEnabled}
-                  onReflectionChange={setReflectionEnabled}
+                  onReflectionChange={(enabled) => persistConversationStrategy({ reflection_enabled: enabled })}
                   reflectionTrigger={reflectionTrigger}
-                  onReflectionTriggerChange={setReflectionTrigger}
+                  onReflectionTriggerChange={(value) => persistConversationStrategy({ reflection_trigger: value === '失败时' ? 'failure_only' : value === '每轮' ? 'every_turn' : 'adaptive' })}
+                  onOpenStrategyHelp={() => {
+                    setModelOpen(false);
+                    setStrategyHelpOpen(true);
+                  }}
                 />
               )}
             </div>
-            <button className="send-button" type="submit" disabled={loading}>{loading ? '...' : '↑'}</button>
+            <button className="send-button" type="submit" disabled={loading || !conversationStrategyReady}>{loading ? '...' : '↑'}</button>
           </form>
           {error && <ErrorDialog error={error} onClose={() => setError(null)} onRetry={error.retryable ? () => document.querySelector<HTMLFormElement>('.chat-composer')?.requestSubmit() : undefined} />}
         </section>
@@ -547,6 +609,7 @@ function AppContent() {
         </>}
       </section>
       {usageOpen && <UsageDashboard taskId={run?.task_id} runId={run?.id} onClose={() => setUsageOpen(false)} />}
+      {strategyHelpOpen && <StrategyHelpDialog onClose={() => setStrategyHelpOpen(false)} />}
       {bypassConfirmOpen && <BypassConfirmation onCancel={() => setBypassConfirmOpen(false)} onConfirm={() => {
         setExecutionMode('bypass');
         setExecutionMenuOpen(false);
@@ -1107,7 +1170,7 @@ function BypassConfirmation({ onCancel, onConfirm }: { onCancel: () => void; onC
   return <div className="modal-backdrop" role="presentation" onMouseDown={onCancel}><section className="confirmation-modal" role="alertdialog" aria-modal="true" aria-labelledby="bypass-title" onMouseDown={(event) => event.stopPropagation()}><div className="warning-mark">!</div><h2 id="bypass-title">{t('启用自动批准模式？')}</h2><p>{t('自动批准模式将允许 Agent 自动执行所有命令和工具，包括可能修改文件、访问网络或影响外部系统的高风险操作。')}</p><div className="confirmation-note"><strong>{t('仅在你信任当前任务和运行环境时启用。')}</strong></div><div className="confirmation-actions"><button className="secondary-button" type="button" onClick={onCancel}>{t('取消')}</button><button className="danger-confirm-button" type="button" onClick={onConfirm}>{t('确认启用自动批准')}</button></div></section></div>;
 }
 
-function ModelMenu({ selectedModelKey, onModelChange, modelOptions, reasoningEffort, onReasoningEffortChange, planningStrategy, onPlanningStrategyChange, reflectionEnabled, onReflectionChange, reflectionTrigger, onReflectionTriggerChange }: {
+function ModelMenu({ selectedModelKey, onModelChange, modelOptions, reasoningEffort, onReasoningEffortChange, planningStrategy, onPlanningStrategyChange, reflectionEnabled, onReflectionChange, reflectionTrigger, onReflectionTriggerChange, onOpenStrategyHelp }: {
   selectedModelKey: string;
   onModelChange: (modelKey: string) => void;
   modelOptions: Array<{ key: string; model: string; providerId: ModelProviderId; providerName: string }>;
@@ -1119,20 +1182,25 @@ function ModelMenu({ selectedModelKey, onModelChange, modelOptions, reasoningEff
   onReflectionChange: (enabled: boolean) => void;
   reflectionTrigger: string;
   onReflectionTriggerChange: (trigger: string) => void;
+  onOpenStrategyHelp: () => void;
 }) {
   const { t } = useI18n();
-  const [strategyHelpOpen, setStrategyHelpOpen] = useState(false);
   const groups = modelOptions.reduce<Array<{ providerId: ModelProviderId; providerName: string; models: Array<{ key: string; model: string }> }>>((result, option) => {
     const group = result.find((item) => item.providerId === option.providerId);
     if (group) group.models.push({ key: option.key, model: option.model });
     else result.push({ providerId: option.providerId, providerName: option.providerName, models: [{ key: option.key, model: option.model }] });
     return result;
   }, []);
-  return <div className="floating-menu model-menu"><div className="menu-heading">{t('模型')}</div>{groups.length ? groups.map((group) => <div className="model-provider-group" key={group.providerId}><div className="model-provider-heading"><span className={`provider-mark provider-${group.providerId}`}>{modelProviders.find((provider) => provider.id === group.providerId)?.mark}</span><span>{group.providerName}</span></div>{group.models.map((item) => <button className={`model-option ${selectedModelKey === item.key ? 'selected' : ''}`} type="button" key={item.key} onClick={() => onModelChange(item.key)}><div><strong>{item.model}</strong><small>{group.providerName}</small></div><span>{selectedModelKey === item.key ? '✓' : ''}</span></button>)}</div>) : <div className="model-menu-empty">{t('请先在模型管理中启用供应商并配置模型')}</div>}<div className="menu-divider" /><div className="menu-heading menu-heading-with-help"><span>{t('对话策略')}</span><button className="strategy-help-button" type="button" aria-label={t('了解对话策略')} aria-expanded={strategyHelpOpen} aria-controls="strategy-help-panel" onClick={() => setStrategyHelpOpen((open) => !open)}>?</button></div>{strategyHelpOpen && <StrategyHelp /> }<MenuChoice label="推理强度" value={reasoningEffort} options={['快速', '均衡', '深入']} onChange={onReasoningEffortChange} /><MenuChoice label="规划策略" value={planningStrategy} options={['直接', '自适应', '先规划']} onChange={onPlanningStrategyChange} /><div className="menu-toggle"><div><strong>{t('反思循环')}</strong><small>{t('检查结果并修订下一步策略')}</small></div><Toggle checked={reflectionEnabled} onChange={onReflectionChange} label={t('反思循环')} /></div>{reflectionEnabled && <MenuChoice label="触发方式" value={reflectionTrigger} options={['失败时', '按需', '每轮']} onChange={onReflectionTriggerChange} />}</div>;
+  return <div className="floating-menu model-menu"><div className="menu-heading">{t('模型')}</div>{groups.length ? groups.map((group) => <div className="model-provider-group" key={group.providerId}><div className="model-provider-heading"><span className={`provider-mark provider-${group.providerId}`}>{modelProviders.find((provider) => provider.id === group.providerId)?.mark}</span><span>{group.providerName}</span></div>{group.models.map((item) => <button className={`model-option ${selectedModelKey === item.key ? 'selected' : ''}`} type="button" key={item.key} onClick={() => onModelChange(item.key)}><div><strong>{item.model}</strong><small>{group.providerName}</small></div><span>{selectedModelKey === item.key ? '✓' : ''}</span></button>)}</div>) : <div className="model-menu-empty">{t('请先在模型管理中启用供应商并配置模型')}</div>}<div className="menu-divider" /><div className="menu-heading menu-heading-with-help"><span>{t('对话策略')}</span><button className="strategy-help-button" type="button" aria-label={t('了解对话策略')} onClick={onOpenStrategyHelp}>?</button></div><MenuChoice label="推理强度" value={reasoningEffort} options={['快速', '均衡', '深入']} onChange={onReasoningEffortChange} /><MenuChoice label="规划策略" value={planningStrategy} options={['直接', '自适应', '先规划']} onChange={onPlanningStrategyChange} /><div className="menu-toggle"><div><strong>{t('反思循环')}</strong><small>{t('检查结果并修订下一步策略')}</small></div><Toggle checked={reflectionEnabled} onChange={onReflectionChange} label={t('反思循环')} /></div>{reflectionEnabled && <MenuChoice label="触发方式" value={reflectionTrigger} options={['失败时', '按需', '每轮']} onChange={onReflectionTriggerChange} />}</div>;
 }
 
-function StrategyHelp() {
+function StrategyHelpDialog({ onClose }: { onClose: () => void }) {
   const { t } = useI18n();
+  useEffect(() => {
+    const closeOnEscape = (event: KeyboardEvent) => { if (event.key === 'Escape') onClose(); };
+    document.addEventListener('keydown', closeOnEscape);
+    return () => document.removeEventListener('keydown', closeOnEscape);
+  }, [onClose]);
   const groups = [
     { title: '推理强度', items: [
       ['快速', '减少思考轮次与工具预算，简单任务更快。'],
@@ -1151,7 +1219,7 @@ function StrategyHelp() {
       ['每轮', '每轮结束都反思，更审慎但更慢、更耗用量。'],
     ] },
   ];
-  return <section className="strategy-help-panel" id="strategy-help-panel" role="region" aria-label={t('对话策略说明')}>{groups.map((group) => <div className="strategy-help-group" key={group.title}><strong>{t(group.title)}</strong>{group.items.map(([label, detail]) => <div className="strategy-help-item" key={label}><span>{t(label)}</span><p>{t(detail)}</p></div>)}</div>)}</section>;
+  return <div className="modal-backdrop" role="presentation" onMouseDown={onClose}><section className="usage-modal strategy-guide-modal" role="dialog" aria-modal="true" aria-labelledby="strategy-guide-title" onMouseDown={(event) => event.stopPropagation()}><header><div><span>{t('对话策略')}</span><h2 id="strategy-guide-title">{t('策略说明')}</h2></div><button className="close-button" type="button" aria-label={t('关闭策略说明')} onClick={onClose}>×</button></header><div className="strategy-guide-grid">{groups.map((group) => <section className="strategy-guide-group" key={group.title}><h3>{t(group.title)}</h3>{group.items.map(([label, detail]) => <div className="strategy-guide-item" key={label}><strong>{t(label)}</strong><p>{t(detail)}</p></div>)}</section>)}</div></section></div>;
 }
 
 function MenuChoice({ label, value, options, onChange }: { label: string; value: string; options: string[]; onChange: (value: string) => void }) {

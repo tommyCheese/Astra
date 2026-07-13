@@ -69,6 +69,29 @@ export type ToolSetting = {
 
 export type ToolSettings = { tools: ToolSetting[] };
 
+export type ConversationStrategyPreferences = {
+  reasoning_effort: 'fast' | 'balanced' | 'deep';
+  planning_strategy: 'direct' | 'adaptive' | 'plan_first';
+  reflection_enabled: boolean;
+  reflection_trigger: 'failure_only' | 'adaptive' | 'every_turn';
+};
+
+export async function getConversationStrategy(signal?: AbortSignal): Promise<ConversationStrategyPreferences> {
+  const response = await fetch('/api/preferences/conversation-strategy', { signal });
+  if (!response.ok) throw await responseError(response);
+  return response.json();
+}
+
+export async function updateConversationStrategy(strategy: ConversationStrategyPreferences): Promise<ConversationStrategyPreferences> {
+  const response = await fetch('/api/preferences/conversation-strategy', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(strategy),
+  });
+  if (!response.ok) throw await responseError(response);
+  return response.json();
+}
+
 export async function getToolSettings(signal?: AbortSignal): Promise<ToolSettings> {
   const response = await fetch('/api/tools', { signal });
   if (!response.ok) throw await responseError(response);

@@ -65,3 +65,21 @@ The system SHALL map run, phase, turn and tool statuses to a live user-readable 
 #### Scenario: Run is blocked
 - **WHEN** the run becomes blocked
 - **THEN** the UI shows a clear blocked message with reason and any required user action
+
+### Requirement: Conversation strategy persists across application starts
+The system SHALL persist reasoning effort, planning strategy, reflection enabled state, and reflection trigger in the database as the current conversation strategy preference.
+
+#### Scenario: Application starts with a saved strategy
+- **WHEN** the chat application starts and a saved conversation strategy exists
+- **THEN** the UI restores all four strategy options from the database
+- **THEN** newly created Runs use the restored strategy
+
+#### Scenario: User changes a strategy option
+- **WHEN** the user manually changes any conversation strategy option
+- **THEN** the UI applies the option immediately
+- **THEN** the complete current strategy is persisted to the database in change order
+- **THEN** ordinary renders, Run completion, and service restarts do not overwrite it with defaults
+
+#### Scenario: No saved strategy exists
+- **WHEN** the application reads conversation strategy preferences for the first time
+- **THEN** the backend creates and returns the documented default strategy
