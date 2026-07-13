@@ -2,6 +2,8 @@
 
 本文只沿一条真实执行时间线讲 Astra，不按“API、数据库、工具、模型”分别罗列。读者会跟随上下文，看它怎样从浏览器中的一句话开始，经过持久化、规划、Agent Loop Harness、工具与沙箱，再以流式答案和审计记录回到浏览器。
 
+本文不把 Harness、Context、Memory 或 Verification 当作没有代码归属的抽象名词。概念第一次进入执行顺序时，会同时给出 `文件::类/函数`。其中“Agent Loop Harness”是对在线执行组合的统称，核心实现是 `backend/app/runner/agent_loop.py::AgentLoop.run()`；仓库中不存在名为 `Harness` 的 Python 类，也不存在单独的 Harness 服务。
+
 为了让所有核心路径都在同一次交互中出现，假设用户提交：
 
 > 搜索 Astra 最近的发布变化，阅读可靠来源，总结要点，并把版本趋势生成一张图。
@@ -75,9 +77,13 @@ sequenceDiagram
 
 这张图是全文的地图。下面不再切换观察角度，而是从第一个前置动作开始顺序走完它。
 
+图中的参与者也都有确定代码入口：React App 是 `frontend/src/App.tsx::AppContent`，FastAPI 是 `backend/app/main.py::create_app()` 与 `backend/app/api/runs.py`，数据库访问统一经过 `backend/app/repositories/runs.py::RunRepository`，RunEngine 是 `backend/app/runner/engine.py::RunEngine`，AgentLoop Harness 是 `backend/app/runner/agent_loop.py::AgentLoop`，模型边界是 `backend/app/runner/model_client.py::ModelClient`，工具门控是 `backend/app/runner/agent_loop.py::ToolRouter` 与 `backend/app/tools/base.py::ToolRegistry`，Web/Chart 工具分别是 `backend/app/tools/web.py::WebSearchTool/WebFetchTool` 和 `backend/app/tools/chart.py::ChartRenderTool`，沙箱与工件分别由 `backend/app/sandbox/runtime.py` 和 `backend/app/artifacts.py` 实现。
+
 ---
 
 ## 第 0 步：请求到来前，系统先把“可执行世界”准备好
+
+本步从 `backend/alembic/versions/*.py`、`backend/alembic/env.py`、`backend/app/db/session.py`、`backend/app/core/config.py::Settings` 和 `backend/app/main.py::create_app()` 开始；Agent Profile 的加载与提示组合分别对应 `backend/app/agent_profile/profile.py::AgentProfileLoader/load_agent_profile()` 和 `backend/app/agent_profile/prompts.py::PromptComposer`。
 
 后端启动前，`alembic upgrade head` 先沿 `backend/alembic/versions/` 的版本链建立数据库。`0001` 创建 Task、Run、Step、ToolCall、Artifact 和 RunEvent；`0002` 加入 AgentTurn 与 Memory；`0003` 加入 TaskContract、PlanGraph、AgentState、版本与等待态；`0004` 加入 SandboxJob 和可验证工件字段；`0005` 加入模型调用与 Token 台账；`0006` 创建 `tool_settings`，把工具开关从进程内变量变成数据库事实。
 
@@ -85,7 +91,9 @@ sequenceDiagram
 
 模型调用由统一 Prompt Composer 按 operation 选择 Profile：contract/plan 使用 Identity，controller/answer 使用 Identity 与 Soul，reflection 使用 Identity 与 Memory 治理，memory extraction 只使用 Memory 治理。AutoDream 当前为禁用协议，不进入同步问答，也不会产生后台任务。对话历史、数据库 Memory、工具观察和外部页面均放入明确分隔的低信任上下文；它们不能覆盖 Profile、结构化角色协议或 ToolRouter 权限。
 
-Alembic 的 `env.py` 从 `Settings.database_url` 取得数据库地址，并使用 `app.db.models.Base.metadata` 作为模型真相。运行期由 `app.db.session` 创建异步 engine、`SessionLocal` 和请求级 `get_session()`。因此后面看到的每个 API 请求、后台 Run、SSE 读取和用量记录都能拥有独立的 `AsyncSession`，而不是共享一个易冲突的长事务。
+Alembic 的 `backend/alembic/env.py::get_url()` 从 `Settings.database_url` 取得数据库地址，并使用 `backend/app/db/base.py::Base.metadata` 作为迁移 metadata；`env.py` 导入 `app.db.models` 以注册模型。运行期由 `backend/app/db/session.py` 创建异步 engine、`SessionLocal` 和请求级 `get_session()`。因此后面看到的每个 API 请求、后台 Run、SSE 读取和用量记录都能拥有独立的 `AsyncSession`，而不是共享一个易冲突的长事务。
+
+本文后续反复出现的数据概念也在这里落到代码：Task、Run、Step、ToolCall、Artifact、RunEvent、AgentTurn、Memory 和 SandboxJob 分别对应 `backend/app/db/models.py` 中的 `TaskRecord`、`RunRecord`、`StepRecord`、`ToolCallRecord`、`ArtifactRecord`、`RunEventRecord`、`AgentTurnRecord`、`MemoryRecord` 和 `SandboxJobRecord`；API 侧的结构化对象集中定义在 `backend/app/schemas/agent.py`。
 
 Uvicorn 随后导入 `app.main`，文件底部的 `app = create_app()` 触发装配。`Settings` 先从 `.env` 读取模型、网络、Agent 预算、沙箱、工件和工具默认值；`get_settings()` 用缓存维持进程内基准配置。这里的工具布尔值不再是日常运行的最终真相，它们只在 `tool_settings` 缺行时提供初始值。
 
@@ -96,6 +104,8 @@ Uvicorn 随后导入 `app.main`，文件底部的 `app = create_app()` 触发装
 ---
 
 ## 第 1 步：用户先决定 Agent 在下一次运行中能看见哪些工具
+
+本步工具开关的前端入口是 `frontend/src/App.tsx::ToolSettings()` 与 `frontend/src/api.ts::getToolSettings()/updateToolSettings()`；后端入口是 `backend/app/api/tools.py::get_tool_settings()/update_tool_settings()`，持久化由 `backend/app/repositories/tool_settings.py::ToolSettingsRepository` 完成，可用性检查落在 `backend/app/tools/registry.py::sandbox_available()`。同一步中的运行时设置对应 `frontend/src/App.tsx::RuntimeSettings()`、`frontend/src/api.ts::getRuntimeProfile()/buildRuntime()/cancelRuntimeBuild()`、`backend/app/api/runtime.py` 和 `backend/app/runtime_profiles.py::RuntimeProfileService`。
 
 用户打开“设置 → 工具”时，`ToolSettings` React 组件调用 `frontend/src/api.ts` 的 `getToolSettings()`，请求 `GET /api/tools`。
 
@@ -112,6 +122,8 @@ Uvicorn 随后导入 `app.main`，文件底部的 `app = create_app()` 触发装
 ---
 
 ## 第 2 步：React 把当前对话、模型和推理策略组装成创建请求
+
+本步在线代码是 `frontend/src/App.tsx::AppContent.submit()`；HTTP 调用封装在 `frontend/src/api.ts::createRun()/getRun()/streamRunEvents()/resumeRun()`，Run 快照兼容处理在 `frontend/src/conversations.ts::normalizeRunView()`。
 
 用户点击发送后，`AppContent.submit()` 首先处理浏览器内上下文。它读取输入框目标、当前 `task_id`、模型供应商配置、推理强度、规划策略、反思开关、反思触发方式和执行模式，再调用 `createRun()`。
 
@@ -144,6 +156,8 @@ Uvicorn 随后导入 `app.main`，文件底部的 `app = create_app()` 触发装
 
 ## 第 3 步：创建 API 冻结本次 Run 的能力和策略
 
+本步从 `backend/app/api/runs.py::create_run()` 进入，依次调用 `backend/app/repositories/tool_settings.py::apply_tool_states()`、`backend/app/runner/reasoning.py::PolicyCompiler.compile()`、`backend/app/agent_profile/profile.py::load_agent_profile()` 和 `backend/app/repositories/runs.py::RunRepository.create_task_run()`；后台调度由同文件 `_schedule_run()` 完成。
+
 `app.api.runs.create_run()` 收到 `CreateRunRequest` 后先清理 goal。空目标在这里被拒绝，不会进入后台。
 
 随后它按严格顺序冻结本次执行上下文：
@@ -152,7 +166,7 @@ Uvicorn 随后导入 `app.main`，文件底部的 `app = create_app()` 触发装
 
 然后，如果请求携带模型覆盖，API 只在这个 `run_settings` 副本上更新 provider、name、key 和 base URL。`model_policy` 写入数据库时只保留 provider、model 和 base URL，不持久化 API Key。
 
-接着 `PolicyCompiler.compile()` 把用户请求的推理策略编译成 `ReasoningPolicySnapshot`。`fast`、`balanced`、`deep` 对应不同的 turn、tool call、reflection、replan 和模型调用预算；高风险或高复杂度场景还能提升规划、批准和验证强度，并把每次提升记为 `PolicyAdjustment`。
+接着 `PolicyCompiler.compile()` 把用户请求的推理策略编译成 `ReasoningPolicySnapshot`。`fast`、`balanced`、`deep` 对应不同的 turn、tool call、reflection、replan 和模型调用预算。`backend/app/runner/reasoning.py::PolicyCompiler.compile()` 本身也实现了 `risk_level` 和 `complexity` 参数，可提升规划、批准和验证强度并生成 `PolicyAdjustment`；但当前 `backend/app/api/runs.py::create_run()` 只调用 `compile(payload.reasoning_policy)`，没有把任务风险或复杂度传入，因此在线创建路径现在只应用用户策略与默认预算，不能把风险自动提升描述成已生效行为。
 
 最后 `RunRepository.create_task_run()` 创建或复用 `TaskRecord`，再创建新的 `RunRecord`。Task 代表连续对话，Run 代表这一次执行。goal 被写入 `model_policy.conversation_goal`，reasoning policy 被快照化，并追加第一条 `run.created` 事件。API 提交事务后，用 `_schedule_run()` 创建带强引用的后台 asyncio task，再立即返回 ID。
 
@@ -161,6 +175,8 @@ Uvicorn 随后导入 `app.main`，文件底部的 `app = create_app()` 触发装
 ---
 
 ## 第 4 步：RunEngine 把对话历史、契约和计划送到 Harness 门口
+
+本步实际调用链是 `backend/app/runner/engine.py::start_run_in_process()` → `RunEngine.run()` → `RunEngine._run_with_repo()`。模型和工具装配分别来自 `backend/app/runner/model_client.py::build_model_client()` 与 `backend/app/tools/registry.py::build_tool_registry()`；模型用量记录器是 `backend/app/usage_metering.py::DatabaseUsageRecorder`。对话压缩、规划和状态初始化分别对应 `RunEngine._conversation_goal()`、`RunEngine._prepare_plan()` 与 `RunRepository.initialize_reasoning_state()`；`TaskContract`、`PlanOutput`、`PlanGraph`、`PlanGraphStep`、`ExpectedObservation` 和 `AgentState` 的结构都定义在 `backend/app/schemas/agent.py`，构建逻辑位于 `backend/app/runner/reasoning.py::normalize_contract()/validate_contract()/build_plan_graph()`。
 
 `start_run_in_process()` 构造 `RunEngine`。构造时，`build_model_client()` 根据本次配置选择 `MockModelClient` 或 `OpenAICompatibleModelClient`；`build_tool_registry()` 根据刚才冻结的开关注册工具。
 
@@ -193,6 +209,8 @@ Current user request: ...
 
 ## 第 5 步：Harness 初始化本轮的控制面与数据面
 
+本步没有独立的 Harness 类：在线核心是 `backend/app/runner/agent_loop.py::AgentLoop.__init__()/run()`。它直接组合同文件的 `ToolRouter`、`ContextAssembler`、`MemoryManager`、`VerificationEngine`，以及 `backend/app/runner/adapters.py::ProcessorRegistry/WebTaskAdapter/ChartTaskAdapter`、`backend/app/runner/reasoning.py::ObservationEvaluator/ReflectionGate/CompletionGate`。
+
 当前代码中的 Harness 核心是 `app.runner.agent_loop.AgentLoop`，它由多个确定性组件围住模型，而不是让模型直接控制系统。
 
 构造 `AgentLoop` 时，`ToolRouter` 接收已经裁剪过的 ToolRegistry；`WebTaskAdapter` 与 `ChartTaskAdapter` 被放入 `ProcessorRegistry`；`ObservationEvaluator`、`ReflectionGate` 和 `CompletionGate` 分别负责观察判断、反思触发和完成判定。
@@ -209,9 +227,11 @@ Harness 从数据库中的 `ReasoningPolicySnapshot.effective` 读取预算，�
 
 ## 第 6 步：每一轮先重建 Context，而不是只把上一句话交给模型
 
+这里的 Context 不是全局对象，而是 `backend/app/runner/agent_loop.py::ContextAssembler.assemble()` 每轮返回的 `dict`。Run、Memory 和状态来自 `backend/app/repositories/runs.py::RunRepository`，可用工具描述来自 `ToolRouter.eligible_specs()` 和 `backend/app/tools/base.py::ToolSpec.model_dump()`。
+
 每个 turn 开始，`ContextAssembler.assemble()` 都重新从数据库和运行内存构建模型上下文。
 
-它读取当前 Run、最近八条 Memory、累积 observations 和 evidence pack；再让 `ToolRouter.eligible_specs()` 对 ToolRegistry 中每个 ToolSpec 做 availability 探测。只有同时满足能力、权限、风险和执行后端要求的 manifest 才进入 `tool_manifests`，不可用项进入 `unavailable_capabilities`。
+它读取当前 Run、最近八条 Memory 和本次 `AgentLoop.run()` 内累积的 observations；再让 `ToolRouter.eligible_specs()` 对 ToolRegistry 中每个 ToolSpec 做 availability 探测。`ContextAssembler.assemble()` 虽然接受可选 `evidence_pack` 参数，但当前 turn 循环的调用没有传入它，所以逐轮 Context 中该字段实际为 `{}`；完整 Evidence Pack 要到退出循环后才由 `WebTaskAdapter.build_evidence()` 生成。只有同时满足能力、权限、风险和执行后端要求的 manifest 才进入 `tool_manifests`，不可用项进入 `unavailable_capabilities`。
 
 最终上下文形状接近：
 
@@ -241,6 +261,8 @@ Harness 从数据库中的 `ReasoningPolicySnapshot.effective` 读取预算，�
 
 ## 第 7 步：模型只返回可审计决策，Harness 决定是否执行
 
+本步模型接口是 `backend/app/runner/model_client.py::ModelClient.decide_with_answer()`，生产实现是 `OpenAICompatibleModelClient.decide_with_answer()`，JSON 请求、重试和 summary 增量解析位于同类 `_chat_json()`；返回结构 `AgentDecision`、`FinalAnswer` 和 `AgentObservation` 定义在 `backend/app/schemas/agent.py`。
+
 Harness 调用 `ModelClient.decide_with_answer(goal, context)`。真实实现向 OpenAI-compatible `/chat/completions` 发送 JSON-only 提示，允许的 decision type 只有 `call_tool`、`reflect`、`replan`、`finalize`、`ask_user` 和 `blocked`。提示明确要求只从 `context.tool_manifests` 选择工具，并禁止输出隐藏思维链；`reasoning_summary` 只保留简短、可审计理由。
 
 当问题属于稳定知识、写作或普通对话时，模型可以在一次响应中返回 `finalize + final_answer`。`_chat_json()` 会从流式 JSON 中增量提取 `summary` 字段，经回调发送到 Engine。若需要外部事实，本例第一轮更可能返回：
@@ -268,6 +290,8 @@ Harness 调用 `ModelClient.decide_with_answer(goal, context)`。真实实现向
 
 ## 第 8 步：Harness 先写 Turn，再触碰任何外部工具
 
+本步顺序直接写在 `backend/app/runner/agent_loop.py::AgentLoop.run()` 中；持久化调用是 `backend/app/repositories/runs.py::RunRepository.create_agent_turn()/update_agent_turn()/add_event()`，记录模型是 `backend/app/db/models.py::AgentTurnRecord`。
+
 收到有效 `AgentDecision` 后，Harness 不立即执行。它先为 `call_tool` 计算 SHA-256 idempotency key，输入包含 run ID、turn index、工具名和规范化输入；然后创建 `AgentTurnRecord`，记录 decision、memory reads、state version before、plan version，并把 phase 标为 `prepared`。
 
 紧接着写入 `reasoning.decision_validated` 事件并提交。这个顺序意味着：即使进程在工具执行前崩溃，数据库仍知道当时准备做什么。`AgentTurnRecord.phase` 的 prepared、executing、committed、failed 与 idempotency key，为未来接入 `LoopOrchestrator.recovery_action()` 提供了恢复语义。
@@ -277,6 +301,8 @@ Harness 调用 `ModelClient.decide_with_answer(goal, context)`。真实实现向
 ---
 
 ## 第 9 步：ToolRouter 是模型与执行环境之间不可绕过的门
+
+本步门控实现是 `backend/app/runner/agent_loop.py::ToolRouter.resolve()`；工具契约与注册表分别是 `backend/app/tools/base.py::ToolSpec` 和 `ToolRegistry`，Step、ToolCall 的写入对应 `RunRepository.create_step()/update_step()/start_tool_call()`。
 
 行动开始前，Harness 先检查本次 Run 的工具总预算，再为“工具名 + 输入”计算 action signature。如果完全相同的失败策略已经达到 `agent_per_tool_retry_limit`，它会在执行前拒绝。
 
@@ -289,6 +315,8 @@ Harness 调用 `ModelClient.decide_with_answer(goal, context)`。真实实现向
 ---
 
 ## 第 10 步：Web Search 把“需要资料”变成候选来源 Observation
+
+本步从 `backend/app/tools/web.py::WebSearchTool.run()` 执行搜索，随后进入 `backend/app/runner/agent_loop.py::AgentLoop._normalize_tool_output()`、`backend/app/runner/adapters.py::ProcessorRegistry.for_tool()` 和 `WebTaskAdapter.process()`；URL 规范化由 `WebTaskAdapter.canonical_url()` 完成，观察评估由 `backend/app/runner/reasoning.py::ObservationEvaluator.evaluate()` 完成。
 
 第一轮工具通常是 `WebSearchTool.run()`。它先验证 query，再依据 `web_search_provider` 选择 provider。当前实现支持 Bing RSS、DuckDuckGo HTML、Google Programmable Search JSON API 和 Brave API；默认 Bing 不要求密钥，Google 与 Brave 会检查凭据。
 
@@ -309,7 +337,9 @@ Context₀ → AgentDecision(web_search) → ToolCall → candidates
 
 ## 第 11 步：Memory 在 Observation 之后产生，并在下一轮成为可引用上下文
 
-每次成功工具调用后，`MemoryManager.write_candidates()` 把 last observation 和当前 evidence context 交给 `ModelClient.extract_memory_candidates()`。只有开启 `agent_memory_write_enabled` 才会执行。
+这里的 Memory 写入是 `backend/app/runner/agent_loop.py::MemoryManager.write_candidates()`，候选生成是 `ModelClient.extract_memory_candidates()`，落库和读取分别是 `RunRepository.create_memory()` 与 `RunRepository.list_memories()`；数据结构 `MemoryRecord` 位于 `backend/app/schemas/agent.py`，数据库记录 `MemoryRecord` 位于 `backend/app/db/models.py`。
+
+每次成功工具调用后，`MemoryManager.write_candidates()` 把 last observation 交给 `ModelClient.extract_memory_candidates()`；当前这条逐工具调用路径显式传入的 `evidence_pack` 是空对象。退出循环后的第二次 `MemoryManager.write_candidates()` 才收到包含 observations、tool outputs 和完整 Evidence Pack 的 `final_context`。只有开启 `agent_memory_write_enabled` 才会执行。
 
 候选 Memory 必须带 scope、kind、content、structured data、provenance 和 confidence。`RunRepository.create_memory()` 负责持久化；写入结果被记录到当前 AgentTurn 的 `memory_writes`。模型输出不合法时，Harness 写 `memory.extraction_skipped` 事件，但不让记忆失败破坏主任务。
 
@@ -319,7 +349,9 @@ Context₀ → AgentDecision(web_search) → ToolCall → candidates
 
 ## 第 12 步：Reflection 检查结果是否值得改变下一步，而不是机械重试
 
-成功 turn 完成后，Harness 以 `turn_completed` 信号询问 `ReflectionGate`；工具失败、模型输出失败、证据冲突、低置信度、无进展或 Completion Gate 失败时则使用更强的信号。
+本步触发判断是 `backend/app/runner/reasoning.py::ReflectionGate.should_reflect()`，模型调用是 `ModelClient.reflect()`，结构是 `backend/app/schemas/agent.py::AgentReflection/ReflectionPatch`，确定性应用和乐观更新分别是 `backend/app/runner/reasoning.py::apply_reflection_patch()` 与 `RunRepository.update_reasoning_state()`。
+
+成功 turn 完成后，Harness 以 `turn_completed` 信号询问 `ReflectionGate`；工具失败、模型输出失败、模型主动要求反思或 Completion Gate 失败时，在线代码分别使用 `tool_failed`、`model_output_failed`、`model_requested` 和 `completion_gate_failed`。`ReflectionGate.ADAPTIVE_SIGNALS` 还声明了证据冲突、低置信度、无进展和依赖破坏等信号，但当前 `AgentLoop.run()` 没有发出这些信号，因此它们是已定义接口，不是当前执行分支。
 
 `ReflectionGate.should_reflect()` 同时检查策略开关、触发模式和预算。`failure_only` 只处理失败，`adaptive` 只处理预定义信号，`every_turn` 每轮都允许。若不触发，Harness 仍写 `reflection.skipped`，使“不反思”也可审计。
 
@@ -341,6 +373,8 @@ Observation₁ → ReflectionGate → AgentReflection₁
 
 ## 第 13 步：Web Fetch 把候选 URL 变成可审计正文证据
 
+本步入口是 `backend/app/tools/web.py::WebFetchTool.run()`；公网 URL 边界、抓取计划、策略选择和输出构造分别对应同文件 `validate_public_http_url()`、`validate_crawler_plan()`、`choose_strategy()` 和 `build_fetch_output()`，结果进入 `backend/app/runner/adapters.py::WebTaskAdapter.process()/record_failure()`。
+
 下一轮模型从 Context 中看到去重后的 candidates，选择一个 URL 调用 `web_fetch`。
 
 `WebFetchTool` 首先通过 `validate_public_http_url()` 拒绝非 HTTP(S)、带凭据 URL、localhost、`.local`、私网和保留地址；每次重定向后都会再次验证目标，最多五跳。这防止一个看似公网的 URL 把抓取器引向内部网络。
@@ -355,9 +389,11 @@ Observation₁ → ReflectionGate → AgentReflection₁
 
 ## 第 14 步：Chart Render 走相同 Harness 门，但在工具内部进入隔离沙箱
 
+本步入口是 `backend/app/tools/chart.py::ChartRenderTool.run()`，声明式输入结构的真实类名是同文件 `ChartRequest`，镜像读取是 `backend/app/runtime_profiles.py::RuntimeProfileService.read()`；执行链继续进入 `backend/app/sandbox/runtime.py::SandboxJobService.execute()`、`SandboxSupervisor.run()` 和 `backend/app/sandbox/docker_provider.py::DockerSandboxProvider`。文件检查、存储和持久化分别对应 `backend/app/artifacts.py::ArtifactCollector`、`LocalArtifactStore` 和 `ArtifactService.persist_output()`，对外引用结构是 `backend/app/tools/base.py::ArtifactRef`。
+
 当 Web Observation 已包含可绘制数据，模型可以选择 `chart.render`。它没有特殊绕过 Harness：仍然先有 AgentDecision、AgentTurn prepared、ToolRouter、Step running 和 ToolCall running。
 
-区别从 `ChartRenderTool.run()` 内部开始。工具使用 Pydantic 的 `ChartRenderRequest` 校验 chart 类型、数据、标题、输出格式和尺寸，再读取 `RuntimeProfileService` 当前 active image。它在临时 input/output 目录准备请求，通过 `ToolExecutionContext.sandbox_service` 进入 `SandboxJobService.execute()`。
+区别从 `ChartRenderTool.run()` 内部开始。工具使用 Pydantic 的 `ChartRequest` 校验 chart 类型、数据、标题、输出格式和尺寸，再读取 `RuntimeProfileService.read()` 返回的 current active image。它在临时 input/output 目录准备请求，通过 `backend/app/tools/base.py::ToolExecutionContext.sandbox_service` 进入 `SandboxJobService.execute()`。
 
 `SandboxJobService` 先创建 `SandboxJobRecord(queued)`，再按 preparing、running、collecting、succeeded 推进。`SandboxSupervisor` 调用 `DockerSandboxProvider`：容器使用 `--network none`、只读根目录、非 root 用户、drop all capabilities、no-new-privileges、PID/内存/CPU 限制和独立 tmpfs。输入被上传到 `/input`，结果只能从 `/output` 下载；无论成功失败，finally 都强制删除容器。
 
@@ -383,6 +419,8 @@ Decision(chart.render)
 
 ## 第 15 步：失败不会跳出 Harness，而会变成下一轮可理解的上下文
 
+工具错误结构是 `backend/app/tools/base.py::ToolExecutionError`，失败指纹来自 `backend/app/runner/reasoning.py::failure_fingerprint()`；失败分支位于 `AgentLoop.run()` 的 `except ToolExecutionError`，顶层异常则由 `backend/app/runner/engine.py::RunEngine.run()` 调用 `backend/app/core/errors.py::run_error_from_exception()` 收口。
+
 任何 ToolExecutionError 都有稳定 category，例如 invalid input、permission denied、search failed、fetch failed、sandbox unavailable、timeout、OOM、policy violation 或 invalid artifact。
 
 Harness 先结束已创建的 ToolCall，再为工具名、输入、错误类别和意图生成 `failure_fingerprint`。相同 action signature 的失败次数和每个工具的 retry count 分别更新，Observation 变成 `kind=tool_error`。对应 Processor 记录领域失败，ReflectionGate 收到 `tool_failed`，AgentTurn 进入 failed，并保存 observation、reflection、reflection patch 与 failure event。
@@ -395,6 +433,8 @@ Harness 先结束已创建的 ToolCall，再为工具名、输入、错误类别
 
 ## 第 16 步：退出 turn 循环后，Harness 才组装证据和判断“是否真的完成”
 
+本步仍在 `backend/app/runner/agent_loop.py::AgentLoop.run()` 尾部，依次调用 `WebTaskAdapter.build_evidence()`、`RunRepository.create_artifact()`、`ModelClient.finalize()`、`normalize_final_answer_artifact_references()`、`VerificationEngine.verify()` 和 `backend/app/runner/reasoning.py::CompletionGate.evaluate()`。Evidence Pack 在当前实现中不是 Pydantic 类，而是 `WebTaskAdapter.build_evidence()` 返回的 `dict`；`Finding`、`FinalAnswer`、`VerificationReport` 和 `CompletionDecision` 才是 `backend/app/schemas/agent.py` 中的结构化模型。
+
 模型返回 finalize、请求用户、明确 blocked、预算耗尽或 turn 用完后，Harness 离开循环。此时 `WebTaskAdapter.build_evidence()` 才把 query、候选、成功抓取、失败来源、dedupe、warnings 和 external evidence attempted 组装成 Evidence Pack。
 
 Harness 立即把它创建为 `evidence_pack` Artifact，并在 metadata 写入已审计来源数与失败数。随后构造 final context，其中只包含本次 observations、tool outputs 和刚持久化的 evidence pack。
@@ -403,7 +443,7 @@ Harness 立即把它创建为 `evidence_pack` Artifact，并在 metadata 写入�
 
 模型答案此时还不能直接持久化。Harness 紧接着重新查询当前 Run 的 Artifact，只把 `security_status=verified` 且具有 `storage_key` 的 ID 放入允许集合，然后按 finding 顺序执行引用规范化：同一 finding 内保留第一次引用，未知 ID、其他 Run 的 ID、pending/expired 输出和没有可访问内容的输出全部移除。拒绝项只累加数量并写入安全 warning，不回显 ID、storage key 或路径。规范化完成后，后续 Verification、result 和 Engine 创建的 `final_answer` Artifact 都使用同一个 `FinalAnswer` 对象。
 
-`VerificationEngine.verify()` 检查是否尝试外部证据、成功来源数、低质量来源、失败来源和最终引用，生成 `VerificationReport`。随后领域 Adapter 再做一次语义验证：普通稳定问答可以无外部证据完成；Web 任务若已尝试外部证据却没有已审计抓取与引用，会 blocked；纯图表任务没有有效 Artifact 也会 blocked。当前混合任务采用 `chart attempted and web not attempted` 才选择 ChartTaskAdapter，否则选择 WebTaskAdapter；所以本文这种 Web+Chart 请求的图表完整性在 `ChartTaskAdapter.process()` 阶段已经检查，最终 Completion Gate 的领域决定仍以 Web 证据验证为主。
+`VerificationEngine.verify()` 检查是否尝试外部 Web 证据、成功来源数、低质量来源、失败来源和 `FinalAnswer.sources`，生成 `VerificationReport`；Artifact ID 的完整性不是它检查，而是前一步 `normalize_final_answer_artifact_references()` 独立完成。随后领域 Adapter 再做一次语义验证：普通稳定问答可以无外部证据完成；Web 任务若已尝试外部证据却没有已审计抓取与来源引用，会 blocked；纯图表任务没有有效 Artifact 也会 blocked。当前混合任务采用 `chart attempted and web not attempted` 才选择 ChartTaskAdapter，否则选择 WebTaskAdapter；所以本文这种 Web+Chart 请求的图表完整性在 `ChartTaskAdapter.process()` 阶段已经检查，最终 Completion Gate 的领域决定仍以 Web 证据验证为主。
 
 若数据库中存在 AgentState，Harness 把 Observation 与最终预算写回新版本，并把通过的强制准则标为 satisfied。`CompletionGate.evaluate()` 才拥有最终决定权：
 
@@ -427,6 +467,8 @@ completed | completed_with_warnings | waiting_user | blocked | failed
 
 ## 第 17 步：RunEngine 把 Harness 结果变成用户可见的最终 Run
 
+本步实现已经从主循环拆到 `backend/app/runner/engine.py::RunEngine._finalize_agent_loop()`；它通过 `RunRepository.create_artifact()/update_step()/update_run_status()` 保存 final_answer、步骤证据、summary、完整 result 和终态。
+
 Harness 返回后，Engine 依次把 Run 更新为 synthesizing 和 verifying，在计划中寻找对应 Step 并补充 evidence。它创建 `final_answer` Artifact，完成尚未关闭的 Step，最后把 Run 更新为 Completion Gate 决定的状态，并保存 summary 与完整 result。
 
 这一层看似重复，实际承担“循环结果 → Run 生命周期”的适配：Harness 决定任务是否满足契约，Engine 负责把答案、计划步骤、工件和顶层 Run 状态整理成 API 可读取的一致快照。
@@ -435,23 +477,27 @@ Harness 返回后，Engine 依次把 Run 更新为 synthesizing 和 verifying，
 
 ## 第 18 步：答案不是一次性返回，而是沿 Event Log 流回前端
 
+后端流式链是 `RunEngine._start_answer_stream()` → `_handle_answer_delta()` → `_complete_answer_stream()` → `backend/app/api/runs.py::stream_run_events()`；前端接收位于 `frontend/src/App.tsx::AppContent` 内监听 Run 的 `useEffect`，消息构造位于 `frontend/src/conversations.ts::buildPresentation()`，展示组件是 `frontend/src/App.tsx::ProcessPanel/FinalAnswer/ArtifactGallery/ArtifactCard`。Artifact 的就近布局由同文件 `visibleArtifacts()/planArtifactPlacements()/OtherArtifacts()` 实现，稳定锚点由 `artifactDomId()` 生成，API 类型位于 `frontend/src/types.ts::RunView/FinalResult/ArtifactView`。
+
 进入 AgentLoop 前，Engine 写 `answer.started`。真实模型在流式 JSON 中生成 `summary` 时，`_chat_json()` 用增量 JSON 字符串提取器只取 summary 新增部分，回调给 Engine。
 
-Engine 用短缓冲降低数据库事件频率：首段、超过 20ms 或累计 96 字符时写 `answer.delta`。summary 字段闭合后，特殊控制信号触发 `answer.settling`，告诉前端“文本已出，正在结构化和验证”；全部完成后写 `answer.completed`。
+Engine 用短缓冲降低数据库事件频率：首段、超过 20ms 或累计 96 字符时写 `answer.delta`。summary 字段闭合后，`OpenAICompatibleModelClient._chat_json()` 通过控制值 `"\1"` 触发 `RunEngine._handle_answer_delta()` 写 `answer.settling`，告诉前端“文本已出，正在结构化和验证”。`AgentLoop.run()` 返回后，`RunEngine._complete_answer_stream()` 先写 `answer.completed`，随后 `_finalize_agent_loop()` 才持久化 final_answer Artifact 和终态 Run；所以 `answer.completed` 表示模型文本流结束，不等同于终态快照已经落库。
 
-`stream_run_events()` 以 RunEvent 的递增 ID 读取数据库并输出 SSE。前端收到 answer.started 时清空旧缓冲；answer.delta 通过 `requestAnimationFrame` 合并渲染；answer.settling 显示整理状态；answer.completed 后立即刷新完整 Run。其他步骤、工具、反思和验证事件也会触发快照刷新。SSE 中断时轮询继续兜底。
+`stream_run_events()` 以 RunEvent 的递增 ID 读取数据库并输出 SSE。前端收到 answer.started 时清空旧缓冲；answer.delta 通过 `requestAnimationFrame` 合并渲染；answer.settling 显示整理状态；answer.completed 后立即尝试刷新 Run。若此时 `_finalize_agent_loop()` 尚未提交 result，`frontend/src/App.tsx` 不会删除流式文字，而是继续靠后续事件刷新和轮询，直到取得“终态状态且 result 非空”的 RunView 才切换。其他步骤、工具、反思和验证事件也会触发快照刷新，SSE 中断时 3 秒轮询继续兜底。
 
-最终 `buildPresentation()` 把原始 Run 转成用户能理解的三类内容：用户消息、可折叠的 ProcessPanel 和最终答案。终态快照到达前，界面只保留流式 summary；快照到达后一次性移除临时气泡并进入结构化渲染。
+最终 `frontend/src/conversations.ts::buildPresentation()` 把原始 Run 转成用户能理解的三类内容：用户消息、可折叠的 ProcessPanel 和最终答案。终态快照到达前，`frontend/src/App.tsx::AppContent` 的 `streamingAnswer` 状态只保留流式 summary；快照到达后一次性移除临时气泡并进入结构化渲染。
 
 结构化渲染先建立“已验证且有 content URL”的 Artifact map，再从第一个 finding 开始依次消费 `artifact_ids`。某个输出第一次出现时，局部 ArtifactGallery 紧跟在该 finding 后；以后再次引用只显示定位链接，不重复图片或 iframe。所有 finding 处理完后，未被消费的旧数据或未关联输出按 `created_at`、`id` 排序进入“其他输出”：不超过两个直接展开，更多时折叠。图片保留 alt，HTML 继续使用 sandbox iframe，其他文件只通过受控内容 URL 打开。
 
 与此同时，ProcessPanel 按 `tool_call_id` 找到每次调用产生的可见 Artifact。只有实际存在输出的步骤才显示数量和“查看输出”，目标是基于 Artifact ID 的 DOM 锚点；无输出或失败调用没有空入口，也不会把 storage key、Sandbox 路径带到界面。
 
-浏览器的 localStorage 只保留界面层对话索引、模型供应商表和选中模型；真正的 Run、事件、工具调用、Memory、用量和工具开关都以后端数据库为准。
+浏览器持久化由 `frontend/src/App.tsx::writeLocalJson()/writeLocalString()` 完成。当前 localStorage 保存的是对话缓存 `ConversationEntry[]`（包含 Run 快照与 prior messages）、完整模型供应商配置和选中模型，不只是一个对话索引；`ModelProviderConfig` 当前也包含 API Key，所以它会随供应商配置写入浏览器 localStorage。后端 `RunRecord.model_policy` 不保存 API Key，但不能据此宣称浏览器没有持久化凭据。真正用于跨设备和服务端审计的 Run、事件、工具调用、Memory、用量和工具开关仍以后端数据库为准，前端启动时还会通过 `frontend/src/api.ts::listRuns()` 用服务端记录合并本地缓存。
 
 ---
 
 ## 第 19 步：用户查看用量或继续追问时，上一次运行成为下一次上下文
+
+用量链是 `frontend/src/UsageDashboard.tsx::UsageDashboard` → `frontend/src/api.ts::getUsageSummary()` → `backend/app/api/usage.py::get_usage_summary()` → `backend/app/repositories/usage.py::UsageRepository.summary()`；追问和恢复分别回到 `createRun(...taskId...)` 与 `resumeRun()`，后端由 `RunEngine._conversation_goal()` 和 `RunRepository.resume_waiting_run()` 接续上下文。
 
 用户打开用量面板时，`UsageDashboard` 请求 `/api/usage/summary`。`UsageRepository` 先确定 all、task 或 run 范围内的 Run IDs，再聚合 ModelInvocation、AgentTurn、ToolCall、Memory、SandboxJob 和 Artifact。Token 未由供应商报告时保持未知，不伪装成零；coverage 明确显示精确用量覆盖率。
 
@@ -463,6 +509,8 @@ Engine 用短缓冲降低数据库事件频率：首段、超过 20ms 或累计 
 
 ## 用一句话理解 Agent Loop Harness
 
+在代码层面，这句话里的 Harness 特指 `RunEngine._execute_agent_loop()` 创建并调用的 `AgentLoop` 组合；“持续重建 Context”对应 `ContextAssembler.assemble()`，“确定性 Router”对应 `ToolRouter.resolve()`，“Observation 与 Evaluation”对应 `AgentObservation` 和 `ObservationEvaluator.evaluate()`，“版本化 Patch”对应 `apply_reflection_patch()` 与 `RunRepository.update_reasoning_state()`，“最终门禁”对应 `CompletionGate.evaluate()`。
+
 Astra 的 Agent Loop Harness 不是“模型循环调用工具”，而是一个持续重建受控 Context 的执行系统：每轮把数据库状态、Memory、Observation 和可用 Tool manifest 投影给模型；把模型输出限制为结构化 Decision；在行动前写审计记录并通过确定性 Router；把工具或沙箱结果转换为 Observation 与 Evaluation；只允许 Reflection 通过版本化 Patch 修改状态；最后由领域验证与 Completion Gate，而不是模型自己的 `finalize` 字样，决定 Run 是否真正完成。
 
-如果按代码阅读，最顺畅的顺序就是本文的运行顺序：从 `frontend/src/App.tsx` 的 `submit()` 进入 `app/api/runs.py`，跟到 `RunEngine._run_with_repo()`，再把主要精力放在 `AgentLoop.run()` 的逐轮控制流；遇到 decision、observation、reflection 和 completion 时回看 `schemas/agent.py` 与 `runner/reasoning.py`；遇到行动时进入 `tools/base.py`、具体 Tool、Adapter，以及必要时的 Sandbox 与 Artifact；最后回到 Engine 的 answer event、runs SSE 和前端 presentation。这样读到的不是一堆模块，而是一条上下文如何被读取、改变、验证并交付的因果链。
+如果按代码阅读，最顺畅的顺序就是本文的运行顺序：从 `frontend/src/App.tsx::AppContent.submit()` 进入 `backend/app/api/runs.py::create_run()`，跟到 `backend/app/runner/engine.py::RunEngine._run_with_repo()`，再把主要精力放在 `backend/app/runner/agent_loop.py::AgentLoop.run()` 的逐轮控制流；遇到 decision、observation、reflection 和 completion 时回看 `backend/app/schemas/agent.py` 与 `backend/app/runner/reasoning.py`；遇到行动时进入 `backend/app/tools/base.py`、具体 Tool、`backend/app/runner/adapters.py`，以及必要时的 `backend/app/sandbox/` 与 `backend/app/artifacts.py`；最后回到 `RunEngine` 的 answer event、`backend/app/api/runs.py::stream_run_events()` 和 `frontend/src/conversations.ts::buildPresentation()`。这样读到的不是一堆模块，而是一条上下文如何被读取、改变、验证并交付的因果链。

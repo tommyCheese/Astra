@@ -1176,13 +1176,19 @@ function FinalAnswer({ run, fallback }: { run: RunView; fallback: string }) {
   return (
     <div className="answer-content">
       <MarkdownContent content={result.summary || fallback} />
-      {placements.findings.map(({ finding, artifacts, repeatedArtifactIds }, index) => (
-        <section className="finding-block" key={index}>
-          {finding.text.trim() !== result.summary.trim() && <MarkdownContent content={finding.text} />}
-          <ArtifactGallery artifacts={artifacts} label={t('关联输出')} />
-          {repeatedArtifactIds.length > 0 && <div className="artifact-repeat-links">{repeatedArtifactIds.map((artifactId) => <a href={`#${artifactDomId(artifactId)}`} key={artifactId}>{t('查看上方已展示的输出')}</a>)}</div>}
-        </section>
-      ))}
+      {placements.findings.length > 0 && <details className="answer-support evidence-support"><summary>{t('数据与证据 · {count}').replace('{count}', String(placements.findings.length))}</summary><div className="evidence-list">
+        {placements.findings.map(({ finding, artifacts, repeatedArtifactIds }, index) => (
+          <section className="finding-block" key={index}>
+            <span className="evidence-index" aria-hidden="true">{index + 1}</span>
+            <div className="evidence-content">
+              {finding.text.trim() !== result.summary.trim() && <MarkdownContent content={finding.text} />}
+              {finding.source_urls.length > 0 && <div className="finding-source-links">{finding.source_urls.map((url) => <a href={externalHref(url)} target="_blank" rel="noreferrer" key={url}>{t('关联来源')}</a>)}</div>}
+              <ArtifactGallery artifacts={artifacts} label={t('关联输出')} />
+              {repeatedArtifactIds.length > 0 && <div className="artifact-repeat-links">{repeatedArtifactIds.map((artifactId) => <a href={`#${artifactDomId(artifactId)}`} key={artifactId}>{t('查看上方已展示的输出')}</a>)}</div>}
+            </div>
+          </section>
+        ))}
+      </div></details>}
       <OtherArtifacts artifacts={placements.otherArtifacts} />
       {result.sources.length ? (
         <details className="answer-support"><summary>{t('来源 · {count}').replace('{count}', String(result.sources.length))}</summary><div className="source-grid">

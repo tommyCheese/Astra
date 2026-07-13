@@ -194,10 +194,13 @@ describe('App', () => {
     await userEvent.click(screen.getByRole('button', { name: '↑' }));
 
     expect(await screen.findByText('已完成查询')).toBeInTheDocument();
+    const evidence = screen.getByText('数据与证据 · 1').closest('details');
+    expect(evidence).not.toHaveAttribute('open');
     expect(screen.getByText('发现一条证据')).toBeInTheDocument();
     expect(screen.getByText('发现一条证据').tagName).toBe('STRONG');
     expect(screen.getByText(/92%/)).toBeInTheDocument();
     expect(screen.getByRole('link', { name: /Example/ })).toHaveAttribute('href', 'https://example.com/docs');
+    expect(screen.getByRole('link', { name: '关联来源' })).toHaveAttribute('href', 'https://example.com');
     expect(screen.queryByText('审计详情')).not.toBeInTheDocument();
     expect(screen.getAllByText(/web_search/).length).toBeGreaterThan(0);
     expect(screen.getByRole('navigation', { name: '问题导航' })).toBeInTheDocument();
