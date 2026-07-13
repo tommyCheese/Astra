@@ -582,5 +582,5 @@ class RunView(BaseModel):
     state_version: int = 0
     terminal_reason: dict[str, Any] | None = None
     waiting_state: dict[str, Any] | None = None
-    task_adapter: str = "legacy_web"
+    task_adapter: str = "web"
     agent_profile: dict[str, Any] = Field(default_factory=dict)

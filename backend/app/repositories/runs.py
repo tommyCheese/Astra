@@ -432,7 +432,9 @@ class RunRepository:
         query = select(ArtifactRecord)
         if run_id is not None:
             query = query.where(ArtifactRecord.run_id == run_id)
-        result = await self.session.execute(query.order_by(ArtifactRecord.created_at, ArtifactRecord.id))
+        result = await self.session.execute(
+            query.order_by(ArtifactRecord.created_at, ArtifactRecord.id)
+        )
         return list(result.scalars().all())
 
     async def create_sandbox_job(
@@ -852,7 +854,7 @@ def run_to_view(run: RunRecord) -> dict[str, Any]:
         "state_version": run.state_version or 0,
         "terminal_reason": run.terminal_reason,
         "waiting_state": run.waiting_state,
-        "task_adapter": run.task_adapter or "legacy_web",
+        "task_adapter": run.task_adapter or "web",
         "agent_profile": safe_agent_profile_manifest(run.agent_profile_snapshot or {}),
     }
 

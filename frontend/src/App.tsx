@@ -6,10 +6,9 @@ import { I18nProvider, useI18n } from './i18n';
 import { ThemeProvider, useTheme } from './theme';
 import type { ArtifactView, ChatMessage, RunView } from './types';
 import { UsageDashboard } from './UsageDashboard';
+import { buildPresentation, HISTORY_LIMIT, normalizeRunView, type ConversationEntry } from './conversations';
 
 const terminalStatuses = new Set(['completed', 'completed_with_warnings', 'failed', 'blocked', 'waiting_user']);
-const HISTORY_LIMIT = 100;
-type ConversationEntry = { id: string; run: RunView; priorMessages: ChatMessage[] };
 const STORAGE_KEYS = {
   conversations: 'astra.conversations.v1',
   modelProviders: 'astra.model-providers.v1',
@@ -948,35 +947,6 @@ function loadConversationHistory(): ConversationEntry[] {
     .slice(0, HISTORY_LIMIT);
 }
 
-function normalizeRunView(run: RunView): RunView {
-  const result = run.result ? {
-    ...run.result,
-    findings: (Array.isArray(run.result.findings) ? run.result.findings : []).map((finding) => ({
-      ...finding,
-      source_urls: Array.isArray(finding?.source_urls) ? finding.source_urls : [],
-      artifact_ids: Array.isArray(finding?.artifact_ids)
-        ? finding.artifact_ids.filter((artifactId): artifactId is string => typeof artifactId === 'string')
-        : [],
-    })),
-    sources: run.result.sources ?? [],
-    caveats: run.result.caveats ?? [],
-    verification_notes: run.result.verification_notes ?? [],
-  } : run.result;
-  return {
-    ...run,
-    result,
-    steps: Array.isArray(run.steps) ? run.steps : [],
-    tool_calls: Array.isArray(run.tool_calls) ? run.tool_calls : [],
-    artifacts: Array.isArray(run.artifacts) ? run.artifacts : [],
-    events: Array.isArray(run.events) ? run.events : [],
-    turns: Array.isArray(run.turns) ? run.turns : [],
-    memories: Array.isArray(run.memories) ? run.memories : [],
-    chat_messages: Array.isArray(run.chat_messages)
-      ? run.chat_messages.map((message) => ({ ...message, metadata: message.metadata ?? {} }))
-      : [],
-  };
-}
-
 function parseModelIds(models: string) {
   return [...new Set(models.split(',').map((model) => model.trim()).filter(Boolean))];
 }
@@ -1324,58 +1294,6 @@ function ReasoningAuditSummary({ run }: { run: RunView }) {
   </div>;
 }
 
-function buildConversation(run: RunView | null): ChatMessage[] {
-  if (!run) {
-    return [];
-  }
-  if (run.chat_messages?.length) {
-    return run.chat_messages;
-  }
-  const messages: ChatMessage[] = [
-    {
-      id: `${run.id}-user`,
-      role: 'user',
-      content: run.summary || '提交了一个任务',
-      status: 'completed',
-      metadata: {},
-    },
-  ];
-  for (const call of run.tool_calls) {
-    messages.push({
-      id: call.id,
-      role: 'tool',
-      content: call.tool_name,
-      status: call.status,
-      metadata: { selected_tool: call.tool_name, output: call.output },
-    });
-  }
-  if (run.result) {
-    messages.push({
-      id: `${run.id}-answer`,
-      role: 'assistant',
-      content: run.result.summary,
-      status: run.status,
-      metadata: {},
-    });
-  }
-  return messages;
-}
-
-function buildPresentation(run: RunView | null): ChatMessage[] {
-  if (!run) return [];
-  const raw = buildConversation(run);
-  const userMessages = raw.filter((message) => message.role === 'user');
-  const snapshot = normalizeRunView(run);
-  const presented: ChatMessage[] = userMessages.map((message) => ({ ...message, metadata: { ...message.metadata, presentation: 'user' } }));
-  if ((snapshot.turns?.length ?? 0) > 0 || snapshot.tool_calls.length > 0) {
-    presented.push({ id: `${run.id}-process`, role: 'process', content: '', status: run.status, metadata: { presentation: 'process', run_snapshot: snapshot } });
-  }
-  if (snapshot.result) {
-    presented.push({ id: `${run.id}-answer`, role: 'assistant', content: snapshot.result.summary, status: run.status, metadata: { presentation: 'answer', run_snapshot: snapshot } });
-  }
-  return presented;
-}
-
 function activeState(run: RunView) {
   const latest = [...(run.turns ?? [])].sort((a, b) => b.turn_index - a.turn_index)[0];
   if (latest?.selected_tool === 'web_search') return '正在搜索候选来源...';
@@ -1387,13 +1305,6 @@ function activeState(run: RunView) {
 
 function statusLabel(status?: string) {
   return status ?? 'idle';
-}
-
-function labelForRole(role: string) {
-  if (role === 'user') return '你';
-  if (role === 'tool') return '工具';
-  if (role === 'reflection') return '反思';
-  return 'Astra';
 }
 
 function formatScore(score?: number | null) {

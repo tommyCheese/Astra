@@ -12,6 +12,7 @@ from app.agent_profile import (
 )
 from app.core.config import Settings
 from app.core.errors import run_error_from_exception
+from app.db.models import RunRecord
 from app.db.session import SessionLocal
 from app.repositories.runs import RunRepository
 from app.runner.agent_loop import AgentLoop
@@ -22,7 +23,14 @@ from app.runner.reasoning import (
     normalize_contract,
     validate_contract,
 )
-from app.schemas.agent import AgentState, PlanOutput, PlanStep, ReasoningPolicySnapshot
+from app.schemas.agent import (
+    AgentState,
+    FinalAnswer,
+    PlanOutput,
+    PlanStep,
+    ReasoningPolicySnapshot,
+    TaskContract,
+)
 from app.tools.base import ToolRegistry
 from app.tools.registry import build_tool_registry
 from app.usage_metering import DatabaseUsageRecorder
@@ -91,109 +99,15 @@ class RunEngine:
         run = await repo.require_run(run_id)
         profile = await self._profile_for_run(repo, run_id, run.agent_profile_snapshot or {})
         self.model_client.bind_agent_profile(profile)
-        current_goal = run.model_policy.get("conversation_goal", run.task.description)
-        conversation_runs = await repo.list_task_runs(run.task_id)
-        previous_runs = [item for item in conversation_runs if item.id != run.id][-6:]
-        if previous_runs:
-            context_lines = []
-            for item in previous_runs:
-                previous_goal = item.model_policy.get("conversation_goal", "")
-                context_lines.extend([f"User: {previous_goal}", f"Assistant: {item.summary or ''}"])
-            goal = (
-                "Conversation context:\n"
-                + "\n".join(context_lines)
-                + f"\nCurrent user request: {current_goal}"
-            )
-        else:
-            goal = current_goal
+        goal = await self._conversation_goal(repo, run)
 
         if run.state_version and run.agent_state:
-            await repo.update_run_status(run_id, "executing")
-            if self.settings.agent_use_general_runtime:
-                agent_loop = AgentLoop(
-                    self.settings, model_client=self.model_client, tool_registry=self.tool_registry
-                )
-                await self._start_answer_stream(repo, run_id)
-                loop_result = await agent_loop.run(
-                    repo,
-                    run_id,
-                    goal,
-                    on_answer_delta=lambda delta: self._handle_answer_delta(repo, run_id, delta),
-                )
-                await self._complete_answer_stream(repo, run_id, loop_result["answer"].summary)
-                await repo.update_run_status(
-                    run_id,
-                    loop_result["status"],
-                    summary=loop_result["answer"].summary,
-                    result=loop_result["result"],
-                )
-                return
+            await self._execute_agent_loop(repo, run_id, goal)
+            return
 
         logger.info("run.phase run_id=%s phase=planning", run_id)
         await repo.update_run_status(run_id, "planning")
-        initial_snapshot = ReasoningPolicySnapshot.model_validate(run.reasoning_policy or {})
-        planning_strategy = initial_snapshot.effective.planning_strategy.value
-        plan_only = initial_snapshot.effective.execution_mode.value == "plan_only"
-        if planning_strategy == "direct" and not plan_only:
-            contract_result = build_default_contract(goal)
-            plan_result = PlanOutput(
-                steps=[PlanStep(title="处理请求", intent="根据任务需要直接回答或选择工具")],
-                success_criteria=["正确回应用户当前请求"],
-                risk_level="low",
-            )
-            logger.info("run.plan.direct_start run_id=%s", run_id)
-        elif planning_strategy == "adaptive" and not plan_only:
-            if self.settings.agent_use_general_runtime:
-                try:
-                    contract_result = await self.model_client.contract(goal)
-                except ModelOutputError as exc:
-                    contract_result = exc
-            else:
-                contract_result = build_default_contract(goal)
-            plan_result = PlanOutput(
-                steps=[
-                    PlanStep(
-                        title="自适应处理", intent="根据观察决定直接回答、调用工具、反思或重新规划"
-                    )
-                ],
-                success_criteria=["正确回应用户当前请求"],
-                risk_level="low",
-            )
-            logger.info("run.plan.adaptive_start run_id=%s", run_id)
-        elif self.settings.agent_use_general_runtime:
-            contract_result, plan_result = await asyncio.gather(
-                self.model_client.contract(goal),
-                self.model_client.plan(goal),
-                return_exceptions=True,
-            )
-        else:
-            contract_result, plan_result = None, await self.model_client.plan(goal)
-        if isinstance(contract_result, Exception):
-            if not isinstance(contract_result, ModelOutputError):
-                raise contract_result
-            logger.warning(
-                "run.contract.fallback run_id=%s reason=%s", run_id, str(contract_result)
-            )
-            contract = build_default_contract(goal)
-        else:
-            contract = contract_result
-        if contract:
-            contract = normalize_contract(contract, goal)
-            try:
-                validate_contract(contract)
-            except ValueError as exc:
-                raise ModelOutputError(f"Invalid task contract: {exc}") from exc
-        if isinstance(plan_result, Exception):
-            if not isinstance(plan_result, ModelOutputError):
-                raise plan_result
-            logger.warning("run.plan.fallback run_id=%s reason=%s", run_id, str(plan_result))
-            plan = PlanOutput(
-                steps=[PlanStep(title="生成回复", intent="直接回应用户当前请求")],
-                success_criteria=["正确回应用户当前请求"],
-                risk_level="low",
-            )
-        else:
-            plan = plan_result
+        contract, plan = await self._prepare_plan(run_id, goal, run.reasoning_policy or {})
         logger.info(
             "run.plan.ready run_id=%s steps=%s tools=%s",
             run_id,
@@ -204,29 +118,9 @@ class RunEngine:
         run = await repo.require_run(run_id)
         snapshot = ReasoningPolicySnapshot.model_validate(run.reasoning_policy or {})
         if snapshot.effective.execution_mode.value == "plan_only":
-            summary = "规划已生成，未执行工具或外部操作。"
-            result = {
-                "summary": summary,
-                "findings": [
-                    {"text": f"{step.title}：{step.intent}", "source_urls": []}
-                    for step in plan.steps
-                ],
-                "sources": [],
-                "failed_sources": [],
-                "source_quality": [],
-                "conflicts": [],
-                "caveats": ["当前运行使用仅规划模式。"],
-                "verification_notes": ["已在执行前停止。"],
-            }
-            await self._complete_pending_steps(repo, run_id)
-            await self._emit_answer_stream(repo, run_id, summary)
-            await repo.update_run_status(run_id, "completed", summary=summary, result=result)
-            logger.info(
-                "run.complete run_id=%s status=completed mode=plan_only steps=%s",
-                run_id,
-                len(plan.steps),
-            )
+            await self._complete_plan_only(repo, run_id, plan)
             return
+
         if contract:
             graph = build_plan_graph(
                 contract,
@@ -234,94 +128,232 @@ class RunEngine:
                 [step.model_dump() for step in plan.steps],
             )
             state = AgentState(task_contract=contract, policy_version=snapshot.version, plan=graph)
-        if contract and not run.state_version:
-            await repo.initialize_reasoning_state(
-                run_id,
-                task_contract=contract.model_dump(mode="json"),
-                plan_graph=graph.model_dump(mode="json"),
-                agent_state=state.model_dump(mode="json"),
+            if not run.state_version:
+                await repo.initialize_reasoning_state(
+                    run_id,
+                    task_contract=contract.model_dump(mode="json"),
+                    plan_graph=graph.model_dump(mode="json"),
+                    agent_state=state.model_dump(mode="json"),
+                )
+            if contract.ambiguity_status != "clear":
+                await repo.set_waiting_state(
+                    run_id,
+                    {
+                        "paused_node": "build_contract",
+                        "state_version": state.version,
+                        "plan_version": graph.version,
+                        "request": contract.clarification_question,
+                    },
+                )
+                return
+
+        await self._execute_agent_loop(repo, run_id, goal)
+
+    async def _prepare_plan(
+        self, run_id: str, goal: str, reasoning_policy: dict[str, Any]
+    ) -> tuple[TaskContract | None, PlanOutput]:
+        snapshot = ReasoningPolicySnapshot.model_validate(reasoning_policy)
+        planning_strategy = snapshot.effective.planning_strategy.value
+        plan_only = snapshot.effective.execution_mode.value == "plan_only"
+        if planning_strategy == "direct" and not plan_only:
+            contract_result = build_default_contract(goal)
+            plan_result = self._default_plan("处理请求", "根据任务需要直接回答或选择工具")
+            logger.info("run.plan.direct_start run_id=%s", run_id)
+        elif planning_strategy == "adaptive" and not plan_only:
+            if self.settings.agent_use_general_runtime:
+                try:
+                    contract_result = await self.model_client.contract(goal)
+                except ModelOutputError as exc:
+                    contract_result = exc
+            else:
+                contract_result = build_default_contract(goal)
+            plan_result = self._default_plan(
+                "自适应处理", "根据观察决定直接回答、调用工具、反思或重新规划"
             )
-        if contract and contract.ambiguity_status != "clear":
-            await repo.set_waiting_state(
-                run_id,
+            logger.info("run.plan.adaptive_start run_id=%s", run_id)
+        elif self.settings.agent_use_general_runtime:
+            contract_result, plan_result = await asyncio.gather(
+                self.model_client.contract(goal),
+                self.model_client.plan(goal),
+                return_exceptions=True,
+            )
+        else:
+            contract_result, plan_result = None, await self.model_client.plan(goal)
+        contract = self._resolve_contract(run_id, goal, contract_result)
+        plan = self._resolve_plan(run_id, plan_result)
+        return contract, plan
+
+    def _resolve_contract(
+        self, run_id: str, goal: str, result: TaskContract | Exception | None
+    ) -> TaskContract | None:
+        contract = result
+        if isinstance(result, Exception):
+            if not isinstance(result, ModelOutputError):
+                raise result
+            logger.warning("run.contract.fallback run_id=%s reason=%s", run_id, str(result))
+            contract = build_default_contract(goal)
+        if contract:
+            contract = normalize_contract(contract, goal)
+            try:
+                validate_contract(contract)
+            except ValueError as exc:
+                raise ModelOutputError(f"Invalid task contract: {exc}") from exc
+        return contract
+
+    def _resolve_plan(self, run_id: str, result: PlanOutput | Exception) -> PlanOutput:
+        if not isinstance(result, Exception):
+            return result
+        if not isinstance(result, ModelOutputError):
+            raise result
+        logger.warning("run.plan.fallback run_id=%s reason=%s", run_id, str(result))
+        return self._default_plan("生成回复", "直接回应用户当前请求")
+
+    @staticmethod
+    def _default_plan(title: str, intent: str) -> PlanOutput:
+        return PlanOutput(
+            steps=[PlanStep(title=title, intent=intent)],
+            success_criteria=["正确回应用户当前请求"],
+            risk_level="low",
+        )
+
+    async def _complete_plan_only(self, repo: RunRepository, run_id: str, plan: PlanOutput) -> None:
+        summary = "规划已生成，未执行工具或外部操作。"
+        result = {
+            "summary": summary,
+            "findings": [
                 {
-                    "paused_node": "build_contract",
-                    "state_version": state.version,
-                    "plan_version": graph.version,
-                    "request": contract.clarification_question,
-                },
+                    "text": self._public_plan_text(f"{step.title}：{step.intent}"),
+                    "source_urls": [],
+                }
+                for step in plan.steps
+            ],
+            "sources": [],
+            "failed_sources": [],
+            "source_quality": [],
+            "conflicts": [],
+            "caveats": ["当前运行使用仅规划模式。"],
+            "verification_notes": ["已在执行前停止。"],
+        }
+        await self._complete_pending_steps(repo, run_id)
+        await self._emit_answer_stream(repo, run_id, summary)
+        await repo.update_run_status(run_id, "completed", summary=summary, result=result)
+        logger.info(
+            "run.complete run_id=%s status=completed mode=plan_only steps=%s",
+            run_id,
+            len(plan.steps),
+        )
+
+    @staticmethod
+    def _public_plan_text(text: str) -> str:
+        context_marker = "Conversation context:\n"
+        request_marker = "\nCurrent user request: "
+        if context_marker not in text or request_marker not in text:
+            return text
+        prefix, contextual = text.split(context_marker, 1)
+        _, current_request = contextual.rsplit(request_marker, 1)
+        return prefix + current_request
+
+    async def _conversation_goal(self, repo: RunRepository, run: RunRecord) -> str:
+        current_goal = run.model_policy.get("conversation_goal", run.task.description)
+        conversation_runs = await repo.list_task_runs(run.task_id)
+        previous_runs = [item for item in conversation_runs if item.id != run.id][-6:]
+        if not previous_runs:
+            return current_goal
+
+        context_lines: list[str] = []
+        for item in previous_runs:
+            previous_goal = item.model_policy.get("conversation_goal", "")
+            context_lines.extend([f"User: {previous_goal}", f"Assistant: {item.summary or ''}"])
+        return (
+            "Conversation context:\n"
+            + "\n".join(context_lines)
+            + f"\nCurrent user request: {current_goal}"
+        )
+
+    async def _execute_agent_loop(self, repo: RunRepository, run_id: str, goal: str) -> None:
+        if not self.settings.agent_use_general_runtime:
+            raise RuntimeError(
+                "The general Agent runtime is required; the legacy Web workflow has been removed"
             )
-            return
 
         logger.info("run.phase run_id=%s phase=executing", run_id)
         await repo.update_run_status(run_id, "executing")
-        if self.settings.agent_use_general_runtime:
-            agent_loop = AgentLoop(
-                self.settings,
-                model_client=self.model_client,
-                tool_registry=self.tool_registry,
-            )
-            await self._start_answer_stream(repo, run_id)
+        agent_loop = AgentLoop(
+            self.settings,
+            model_client=self.model_client,
+            tool_registry=self.tool_registry,
+        )
+        await self._start_answer_stream(repo, run_id)
+        try:
             loop_result = await agent_loop.run(
                 repo,
                 run_id,
                 goal,
                 on_answer_delta=lambda delta: self._handle_answer_delta(repo, run_id, delta),
             )
-            await self._complete_answer_stream(repo, run_id, loop_result["answer"].summary)
-            final_answer = loop_result["answer"]
-            result = loop_result["result"]
-            status = loop_result["status"]
+        except Exception:
+            self._answer_buffers.pop(run_id, None)
+            self._answer_flush_at.pop(run_id, None)
+            raise
 
-            await repo.update_run_status(run_id, "synthesizing")
-            synth_step = await self._mark_named_step_running(repo, run_id, "综合")
-            await repo.create_artifact(
-                run_id,
-                "final_answer",
-                content_ref=final_answer.model_dump_json(),
-                metadata={"format": "json"},
-            )
-            if synth_step is not None:
-                await repo.update_step(
-                    synth_step.id,
-                    "completed",
-                    evidence={
-                        "finding_count": len(final_answer.findings),
-                        "handled_by": "agent_loop",
-                    },
-                )
+        final_answer = loop_result["answer"]
+        result = loop_result["result"]
+        status = loop_result["status"]
+        await self._complete_answer_stream(repo, run_id, final_answer.summary)
+        await self._finalize_agent_loop(repo, run_id, final_answer, result, status)
 
-            await repo.update_run_status(run_id, "verifying")
-            verify_step = await self._mark_named_step_running(repo, run_id, "验证")
-            if verify_step is not None:
-                report = result.get("verification_report", {})
-                await repo.update_step(
-                    verify_step.id,
-                    "completed",
-                    evidence={
-                        "status": report.get("status", status),
-                        "source_count": report.get("source_count", len(result.get("sources", []))),
-                        "caveat_count": report.get("caveat_count", len(result.get("caveats", []))),
-                    },
-                )
-            await self._complete_pending_steps(repo, run_id)
-            await repo.update_run_status(
-                run_id,
-                status,
-                summary=final_answer.summary,
-                result=result,
+    async def _finalize_agent_loop(
+        self,
+        repo: RunRepository,
+        run_id: str,
+        final_answer: FinalAnswer,
+        result: dict[str, Any],
+        status: str,
+    ) -> None:
+        await repo.update_run_status(run_id, "synthesizing")
+        synth_step = await self._mark_named_step_running(repo, run_id, "综合")
+        await repo.create_artifact(
+            run_id,
+            "final_answer",
+            content_ref=final_answer.model_dump_json(),
+            metadata={"format": "json"},
+        )
+        if synth_step is not None:
+            await repo.update_step(
+                synth_step.id,
+                "completed",
+                evidence={
+                    "finding_count": len(final_answer.findings),
+                    "handled_by": "agent_loop",
+                },
             )
-            logger.info(
-                "run.complete run_id=%s status=%s findings=%s sources=%s",
-                run_id,
-                status,
-                len(final_answer.findings),
-                len(final_answer.sources),
-            )
-            return
 
-        raise RuntimeError(
-            "The general Agent runtime is required; the legacy Web workflow has been removed"
+        await repo.update_run_status(run_id, "verifying")
+        verify_step = await self._mark_named_step_running(repo, run_id, "验证")
+        if verify_step is not None:
+            report = result.get("verification_report", {})
+            await repo.update_step(
+                verify_step.id,
+                "completed",
+                evidence={
+                    "status": report.get("status", status),
+                    "source_count": report.get("source_count", len(result.get("sources", []))),
+                    "caveat_count": report.get("caveat_count", len(result.get("caveats", []))),
+                },
+            )
+        await self._complete_pending_steps(repo, run_id)
+        await repo.update_run_status(
+            run_id,
+            status,
+            summary=final_answer.summary,
+            result=result,
+        )
+        logger.info(
+            "run.complete run_id=%s status=%s findings=%s sources=%s",
+            run_id,
+            status,
+            len(final_answer.findings),
+            len(final_answer.sources),
         )
 
     async def _profile_for_run(

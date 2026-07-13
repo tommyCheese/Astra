@@ -101,6 +101,23 @@ export type VerificationReport = {
   notes: string[];
 };
 
+export type SandboxJobView = {
+  id: string;
+  tool_call_id?: string | null;
+  status: string;
+  executor: string;
+  runtime_profile: Record<string, unknown>;
+  resource_limits: Record<string, unknown>;
+  runtime_name?: string | null;
+  image_digest?: string | null;
+  exit_reason?: string | null;
+  error?: Record<string, unknown> | null;
+  stdout_summary?: string | null;
+  stderr_summary?: string | null;
+  input_artifact_ids: string[];
+  output_artifact_ids: string[];
+};
+
 export type FinalResult = {
   summary: string;
   findings: Array<{ text: string; source_urls: string[]; artifact_ids: string[] }>;
@@ -131,7 +148,7 @@ export type RunView = {
   steps: StepView[];
   tool_calls: ToolCallView[];
   artifacts: ArtifactView[];
-  sandbox_jobs?: Array<{ id: string; tool_call_id?: string | null; status: string; executor: string; runtime_profile: Record<string, unknown>; resource_limits: Record<string, unknown>; runtime_name?: string | null; image_digest?: string | null; exit_reason?: string | null; error?: Record<string, unknown> | null; stdout_summary?: string | null; stderr_summary?: string | null; input_artifact_ids: string[]; output_artifact_ids: string[] }>;
+  sandbox_jobs?: SandboxJobView[];
   events: RunEvent[];
   turns?: AgentTurnView[];
   memories?: MemoryView[];

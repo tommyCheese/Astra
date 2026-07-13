@@ -112,76 +112,82 @@ def internal_error(exc: Exception) -> ErrorPayload:
     return payload
 
 
+def _payload(
+    error_type: str,
+    code: str,
+    message: str,
+    *,
+    retryable: bool = False,
+    details: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    return ErrorPayload(
+        type=error_type,
+        code=code,
+        message=message,
+        retryable=retryable,
+        details=details or {},
+    ).model_dump(mode="json")
+
+
+def _tool_error(exc: Exception) -> dict[str, Any]:
+    category = getattr(exc, "category", "tool_failed")
+    if category in {"search_failed", "missing_credentials", "provider_not_configured"}:
+        return _payload(
+            "dependency.search_unavailable",
+            "SEARCH_UNAVAILABLE",
+            "搜索服务暂时不可用或尚未配置。",
+            retryable=category == "search_failed",
+        )
+    if category in {"fetch_failed", "permission_denied", "extract_failed"}:
+        return _payload(
+            "dependency.fetch_unavailable",
+            "FETCH_UNAVAILABLE",
+            "网页访问服务暂时不可用或当前不被允许。",
+            retryable=category == "fetch_failed",
+        )
+    if category == "invalid_input":
+        return _payload(
+            "validation.tool_input_invalid", "TOOL_INPUT_INVALID", "工具输入参数不正确。"
+        )
+    if category == "tool_not_allowed":
+        return _payload("policy.tool_not_allowed", "TOOL_NOT_ALLOWED", "当前任务不允许使用该工具。")
+    return _payload("runtime.tool_failed", "TOOL_EXECUTION_FAILED", "工具执行失败，请稍后重试。")
+
+
 def run_error_from_exception(exc: Exception) -> dict[str, Any]:
     if isinstance(exc, AstraError):
         return exc.payload.model_dump(mode="json")
     name = type(exc).__name__
     if name == "ModelConfigurationError":
-        return ErrorPayload(
-            type="configuration.model_not_configured",
-            code="MODEL_NOT_CONFIGURED",
-            message="大模型服务尚未完成配置，无法执行该任务。",
-            retryable=False,
-        ).model_dump(mode="json")
+        return _payload(
+            "configuration.model_not_configured",
+            "MODEL_NOT_CONFIGURED",
+            "大模型服务尚未完成配置，无法执行该任务。",
+        )
     if name == "AgentProfileConfigurationError":
-        return ErrorPayload(
-            type="configuration.agent_profile_invalid",
-            code="AGENT_PROFILE_INVALID",
-            message="Astra 身份配置无效，暂时无法执行该任务。",
-            retryable=False,
-        ).model_dump(mode="json")
+        return _payload(
+            "configuration.agent_profile_invalid",
+            "AGENT_PROFILE_INVALID",
+            "Astra 身份配置无效，暂时无法执行该任务。",
+        )
     if name == "ModelOutputError":
-        return ErrorPayload(
-            type="dependency.model_response_invalid",
-            code="MODEL_RESPONSE_INVALID",
-            message="大模型服务返回了无法处理的结果，请稍后重试。",
+        return _payload(
+            "dependency.model_response_invalid",
+            "MODEL_RESPONSE_INVALID",
+            "大模型服务返回了无法处理的结果，请稍后重试。",
             retryable=True,
             details={"reason": str(exc)[:600]},
-        ).model_dump(mode="json")
+        )
     if isinstance(exc, httpx.RequestError):
-        return ErrorPayload(
-            type="dependency.model_unavailable",
-            code="MODEL_ENDPOINT_UNAVAILABLE",
-            message="暂时无法连接大模型服务，请稍后重试。",
+        return _payload(
+            "dependency.model_unavailable",
+            "MODEL_ENDPOINT_UNAVAILABLE",
+            "暂时无法连接大模型服务，请稍后重试。",
             retryable=True,
             details={"reason": type(exc).__name__},
-        ).model_dump(mode="json")
+        )
     if name == "ToolExecutionError":
-        category = getattr(exc, "category", "tool_failed")
-        if category in {"search_failed", "missing_credentials", "provider_not_configured"}:
-            return ErrorPayload(
-                type="dependency.search_unavailable",
-                code="SEARCH_UNAVAILABLE",
-                message="搜索服务暂时不可用或尚未配置。",
-                retryable=category == "search_failed",
-            ).model_dump(mode="json")
-        if category in {"fetch_failed", "permission_denied", "extract_failed"}:
-            return ErrorPayload(
-                type="dependency.fetch_unavailable",
-                code="FETCH_UNAVAILABLE",
-                message="网页访问服务暂时不可用或当前不被允许。",
-                retryable=category == "fetch_failed",
-            ).model_dump(mode="json")
-        if category == "invalid_input":
-            return ErrorPayload(
-                type="validation.tool_input_invalid",
-                code="TOOL_INPUT_INVALID",
-                message="工具输入参数不正确。",
-                retryable=False,
-            ).model_dump(mode="json")
-        if category == "tool_not_allowed":
-            return ErrorPayload(
-                type="policy.tool_not_allowed",
-                code="TOOL_NOT_ALLOWED",
-                message="当前任务不允许使用该工具。",
-                retryable=False,
-            ).model_dump(mode="json")
-        return ErrorPayload(
-            type="runtime.tool_failed",
-            code="TOOL_EXECUTION_FAILED",
-            message="工具执行失败，请稍后重试。",
-            retryable=False,
-        ).model_dump(mode="json")
+        return _tool_error(exc)
     if isinstance(exc, (SQLAlchemyError, OSError, ConnectionError)):
         return InfrastructureError().payload.model_dump(mode="json")
     return internal_error(exc).model_dump(mode="json")

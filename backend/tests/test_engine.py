@@ -59,7 +59,12 @@ async def test_answer_delta_batching_flushes_first_and_final_content(session):
 
     events = await repo.list_events(run.id)
     assert [event.type for event in events] == [
-        "run.created", "answer.started", "answer.delta", "answer.delta", "answer.settling", "answer.completed"
+        "run.created",
+        "answer.started",
+        "answer.delta",
+        "answer.delta",
+        "answer.settling",
+        "answer.completed",
     ]
     assert events[-1].payload == {"content": "首尾", "status": "answer_complete"}
 
@@ -72,12 +77,8 @@ async def test_engine_resumes_with_frozen_profile_when_packaged_default_changes(
     run = await repo.create_task_run(
         "恢复 Profile", {"provider": "mock"}, agent_profile_snapshot=frozen.snapshot()
     )
-    changed_contents = {
-        document.name: document.content for document in frozen.manifest.documents
-    }
-    changed_contents["soul"] = changed_contents["soul"].replace(
-        "Astra 真诚", "Astra 始终真诚", 1
-    )
+    changed_contents = {document.name: document.content for document in frozen.manifest.documents}
+    changed_contents["soul"] = changed_contents["soul"].replace("Astra 真诚", "Astra 始终真诚", 1)
     changed = AgentProfileLoader().load(changed_contents)
     monkeypatch.setattr("app.runner.engine.load_agent_profile", lambda: changed)
 
@@ -140,3 +141,26 @@ async def test_engine_planning_strategy_selects_distinct_path(
 
     assert client.contract_calls == contract_calls
     assert client.plan_calls == plan_calls
+
+
+async def test_plan_only_result_does_not_expose_internal_conversation_wrapper(session):
+    settings = Settings(model_provider="mock", web_search_provider="mock")
+    repo = RunRepository(session)
+    previous = await repo.create_task_run("第一轮问题", settings.model_policy)
+    await repo.update_run_status(previous.id, "completed", summary="第一轮回答")
+    current = await repo.create_task_run(
+        "第二轮规划",
+        settings.model_policy,
+        previous.task_id,
+        reasoning_policy=engine_policy("plan_first", "plan_only"),
+    )
+
+    await RunEngine(
+        settings, model_client=MockModelClient(), tool_registry=fake_web_registry()
+    )._run_with_repo(repo, current.id)
+
+    loaded = await repo.require_run(current.id)
+    result_text = "\n".join(item["text"] for item in loaded.result["findings"])
+    assert "Conversation context" not in result_text
+    assert "Current user request" not in result_text
+    assert "第二轮规划" in result_text
