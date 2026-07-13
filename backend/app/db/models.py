@@ -56,6 +56,7 @@ class RunRecord(Base):
     status: Mapped[str] = mapped_column(String(40), default="created")
     mode: Mapped[str] = mapped_column(String(80), default="web_data_query")
     model_policy: Mapped[dict] = mapped_column(JsonType, default=dict)
+    agent_profile_snapshot: Mapped[dict] = mapped_column(JsonType, default=dict)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     current_step_id: Mapped[str | None] = mapped_column(String(36), nullable=True)

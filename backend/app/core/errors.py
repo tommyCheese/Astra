@@ -112,6 +112,13 @@ def run_error_from_exception(exc: Exception) -> dict[str, Any]:
             message="大模型服务尚未完成配置，无法执行该任务。",
             retryable=False,
         ).model_dump(mode="json")
+    if name == "AgentProfileConfigurationError":
+        return ErrorPayload(
+            type="configuration.agent_profile_invalid",
+            code="AGENT_PROFILE_INVALID",
+            message="Astra 身份配置无效，暂时无法执行该任务。",
+            retryable=False,
+        ).model_dump(mode="json")
     if name == "ModelOutputError":
         return ErrorPayload(
             type="dependency.model_response_invalid",

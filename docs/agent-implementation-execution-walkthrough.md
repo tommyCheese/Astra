@@ -395,7 +395,9 @@ Harness 先结束已创建的 ToolCall，再为工具名、输入、错误类别
 
 Harness 立即把它创建为 `evidence_pack` Artifact，并在 metadata 写入已审计来源数与失败数。随后构造 final context，其中只包含本次 observations、tool outputs 和刚持久化的 evidence pack。
 
-若存在 terminal override，Harness 生成状态型答案，明确“停止不等于成功”。如果 `decide_with_answer()` 已经流式返回完整 `FinalAnswer`，直接使用；否则调用 `ModelClient.finalize()`。`FinalAnswer` 的结构包含 summary、findings、sources、failed sources、source quality、conflicts、caveats、verification notes、memory references 和 audit refs。
+若存在 terminal override，Harness 生成状态型答案，明确“停止不等于成功”。如果 `decide_with_answer()` 已经流式返回完整 `FinalAnswer`，直接使用；否则调用 `ModelClient.finalize()`。`FinalAnswer` 的结构包含 summary、findings、sources、failed sources、source quality、conflicts、caveats、verification notes、memory references 和 audit refs；每个 finding 还可以用 `artifact_ids` 按顺序引用支撑该结论的工具输出。
+
+模型答案此时还不能直接持久化。Harness 紧接着重新查询当前 Run 的 Artifact，只把 `security_status=verified` 且具有 `storage_key` 的 ID 放入允许集合，然后按 finding 顺序执行引用规范化：同一 finding 内保留第一次引用，未知 ID、其他 Run 的 ID、pending/expired 输出和没有可访问内容的输出全部移除。拒绝项只累加数量并写入安全 warning，不回显 ID、storage key 或路径。规范化完成后，后续 Verification、result 和 Engine 创建的 `final_answer` Artifact 都使用同一个 `FinalAnswer` 对象。
 
 `VerificationEngine.verify()` 检查是否尝试外部证据、成功来源数、低质量来源、失败来源和最终引用，生成 `VerificationReport`。随后领域 Adapter 再做一次语义验证：普通稳定问答可以无外部证据完成；Web 任务若已尝试外部证据却没有已审计抓取与引用，会 blocked；纯图表任务没有有效 Artifact 也会 blocked。当前混合任务采用 `chart attempted and web not attempted` 才选择 ChartTaskAdapter，否则选择 WebTaskAdapter；所以本文这种 Web+Chart 请求的图表完整性在 `ChartTaskAdapter.process()` 阶段已经检查，最终 Completion Gate 的领域决定仍以 Web 证据验证为主。
 
@@ -415,7 +417,7 @@ completed | completed_with_warnings | waiting_user | blocked | failed
 
 如果 Completion Gate 仍 blocked 且不是明确 terminal override，Harness 还允许一次 `completion_gate_failed` Reflection，但不会绕过 Gate 宣布成功。
 
-最后，Harness 把 VerificationReport、audit refs 和 CompletionDecision 合并进 result，写入 `reasoning.completion_decided` 与 `verification.created`。最终 turn 会关联 Evidence Pack Artifact 和最后的 Memory writes，然后返回给 RunEngine。
+最后，Harness 把 VerificationReport、audit refs 和 CompletionDecision 合并进 result；VerificationReport 包含无效 Artifact 引用计数，audit refs 记录实际保留的 Artifact IDs。随后它写入 `reasoning.completion_decided` 与 `verification.created`。最终 turn 会关联 Evidence Pack Artifact 和最后的 Memory writes，然后返回给 RunEngine。
 
 ---
 
@@ -435,7 +437,11 @@ Engine 用短缓冲降低数据库事件频率：首段、超过 20ms 或累计 
 
 `stream_run_events()` 以 RunEvent 的递增 ID 读取数据库并输出 SSE。前端收到 answer.started 时清空旧缓冲；answer.delta 通过 `requestAnimationFrame` 合并渲染；answer.settling 显示整理状态；answer.completed 后立即刷新完整 Run。其他步骤、工具、反思和验证事件也会触发快照刷新。SSE 中断时轮询继续兜底。
 
-最终 `buildPresentation()` 把原始 Run 转成用户能理解的三类内容：用户消息、可折叠的 ProcessPanel 和最终答案。ProcessPanel 按 turn index 展示决策摘要、工具调用、Observation 状态和验证备注；FinalAnswer 用 Markdown 渲染摘要与发现，展示来源卡、质量评分、抓取策略、警告和 ArtifactGallery。图片直接预览，HTML 在 sandbox iframe 中隔离，其他文件提供受控内容链接。
+最终 `buildPresentation()` 把原始 Run 转成用户能理解的三类内容：用户消息、可折叠的 ProcessPanel 和最终答案。终态快照到达前，界面只保留流式 summary；快照到达后一次性移除临时气泡并进入结构化渲染。
+
+结构化渲染先建立“已验证且有 content URL”的 Artifact map，再从第一个 finding 开始依次消费 `artifact_ids`。某个输出第一次出现时，局部 ArtifactGallery 紧跟在该 finding 后；以后再次引用只显示定位链接，不重复图片或 iframe。所有 finding 处理完后，未被消费的旧数据或未关联输出按 `created_at`、`id` 排序进入“其他输出”：不超过两个直接展开，更多时折叠。图片保留 alt，HTML 继续使用 sandbox iframe，其他文件只通过受控内容 URL 打开。
+
+与此同时，ProcessPanel 按 `tool_call_id` 找到每次调用产生的可见 Artifact。只有实际存在输出的步骤才显示数量和“查看输出”，目标是基于 Artifact ID 的 DOM 锚点；无输出或失败调用没有空入口，也不会把 storage key、Sandbox 路径带到界面。
 
 浏览器的 localStorage 只保留界面层对话索引、模型供应商表和选中模型；真正的 Run、事件、工具调用、Memory、用量和工具开关都以后端数据库为准。
 

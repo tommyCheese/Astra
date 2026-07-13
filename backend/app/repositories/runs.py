@@ -1,4 +1,5 @@
 import uuid
+from copy import deepcopy
 from typing import Any
 
 from sqlalchemy import select
@@ -30,6 +31,7 @@ class RunRepository:
         task_id: str | None = None,
         *,
         reasoning_policy: dict[str, Any] | None = None,
+        agent_profile_snapshot: dict[str, Any] | None = None,
     ) -> RunRecord:
         now = utc_now()
         task = await self.session.get(TaskRecord, task_id) if task_id else None
@@ -50,6 +52,7 @@ class RunRepository:
             status="created",
             mode="web_agent",
             model_policy=run_policy,
+            agent_profile_snapshot=deepcopy(agent_profile_snapshot or {}),
             reasoning_policy=reasoning_policy or {},
             task_adapter="web",
             created_at=now,
@@ -59,6 +62,27 @@ class RunRepository:
         self.session.add(run)
         await self.session.flush()
         await self.add_event(run.id, "run.created", {"goal": goal, "status": run.status})
+        await self.session.commit()
+        return run
+
+    async def freeze_agent_profile_snapshot(
+        self,
+        run_id: str,
+        snapshot: dict[str, Any],
+    ) -> RunRecord:
+        run = await self.require_run(run_id)
+        current = run.agent_profile_snapshot or {}
+        if current:
+            if current != snapshot:
+                raise ValueError("Agent Profile snapshot is immutable")
+            return run
+        run.agent_profile_snapshot = deepcopy(snapshot)
+        run.updated_at = utc_now()
+        await self.add_event(
+            run_id,
+            "agent_profile.frozen",
+            {"profile": safe_agent_profile_manifest(snapshot)},
+        )
         await self.session.commit()
         return run
 
@@ -823,6 +847,28 @@ def run_to_view(run: RunRecord) -> dict[str, Any]:
         "terminal_reason": run.terminal_reason,
         "waiting_state": run.waiting_state,
         "task_adapter": run.task_adapter or "legacy_web",
+        "agent_profile": safe_agent_profile_manifest(run.agent_profile_snapshot or {}),
+    }
+
+
+def safe_agent_profile_manifest(snapshot: dict[str, Any]) -> dict[str, Any]:
+    documents = snapshot.get("documents")
+    safe_documents: dict[str, dict[str, Any]] = {}
+    if isinstance(documents, dict):
+        for name, value in documents.items():
+            if not isinstance(value, dict):
+                continue
+            safe_documents[str(name)] = {
+                key: value[key]
+                for key in ("filename", "sha256", "size_bytes", "status")
+                if key in value
+            }
+    role_documents = snapshot.get("role_documents")
+    return {
+        "version": str(snapshot.get("version") or "unfrozen"),
+        "composition_schema_version": int(snapshot.get("composition_schema_version") or 0),
+        "documents": safe_documents,
+        "role_documents": role_documents if isinstance(role_documents, dict) else {},
     }
 
 

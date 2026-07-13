@@ -5,6 +5,11 @@ from typing import Any
 
 import httpx
 
+from app.agent_profile import (
+    AgentProfile,
+    AgentProfileConfigurationError,
+    load_agent_profile,
+)
 from app.core.config import Settings
 from app.core.errors import run_error_from_exception
 from app.db.session import SessionLocal
@@ -52,7 +57,12 @@ class RunEngine:
             repo = RunRepository(session)
             try:
                 await self._run_with_repo(repo, run_id)
-            except (ModelConfigurationError, ModelOutputError, httpx.RequestError) as exc:
+            except (
+                AgentProfileConfigurationError,
+                ModelConfigurationError,
+                ModelOutputError,
+                httpx.RequestError,
+            ) as exc:
                 logger.exception("run.engine.model_error run_id=%s cause=%s", run_id, str(exc))
                 error = run_error_from_exception(exc)
                 await repo.add_event(run_id, "run.error", error)
@@ -79,6 +89,8 @@ class RunEngine:
 
     async def _run_with_repo(self, repo: RunRepository, run_id: str) -> None:
         run = await repo.require_run(run_id)
+        profile = await self._profile_for_run(repo, run_id, run.agent_profile_snapshot or {})
+        self.model_client.bind_agent_profile(profile)
         current_goal = run.model_policy.get("conversation_goal", run.task.description)
         conversation_runs = await repo.list_task_runs(run.task_id)
         previous_runs = [item for item in conversation_runs if item.id != run.id][-6:]
@@ -311,6 +323,19 @@ class RunEngine:
         raise RuntimeError(
             "The general Agent runtime is required; the legacy Web workflow has been removed"
         )
+
+    async def _profile_for_run(
+        self,
+        repo: RunRepository,
+        run_id: str,
+        snapshot: dict[str, Any],
+    ) -> AgentProfile:
+        if snapshot and snapshot.get("version") != "legacy-unversioned":
+            return AgentProfile.from_snapshot(snapshot)
+        profile = load_agent_profile()
+        if not snapshot:
+            await repo.freeze_agent_profile_snapshot(run_id, profile.snapshot())
+        return profile
 
     async def _persist_plan(self, repo: RunRepository, run_id: str, plan: PlanOutput) -> None:
         if not plan.steps:

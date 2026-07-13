@@ -583,3 +583,4 @@ class RunView(BaseModel):
     terminal_reason: dict[str, Any] | None = None
     waiting_state: dict[str, Any] | None = None
     task_adapter: str = "legacy_web"
+    agent_profile: dict[str, Any] = Field(default_factory=dict)

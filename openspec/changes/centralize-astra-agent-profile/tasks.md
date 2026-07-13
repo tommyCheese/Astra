@@ -1,16 +1,16 @@
 ## 1. Canonical Profile Documents
 
-- [ ] 1.1 Create `backend/app/agent_profile/` with `README.md`, `IDENTITY.md`, `SOUL.md`, `MEMORY.md`, and `AUTODREAM.md` using the approved responsibility boundaries and concise runtime-ready content
-- [ ] 1.2 Add document schema metadata, required-section rules, size limits, and explicit statements that Profile text cannot grant runtime capabilities
-- [ ] 1.3 Configure Python package data so every required Markdown file is included in source distributions and wheels
-- [ ] 1.4 Add tests that load the packaged documents outside the repository and backend working directories
+- [x] 1.1 Create `backend/app/agent_profile/` with `README.md`, `IDENTITY.md`, `SOUL.md`, `MEMORY.md`, and `AUTODREAM.md` using the approved responsibility boundaries and concise runtime-ready content
+- [x] 1.2 Add document schema metadata, required-section rules, size limits, and explicit statements that Profile text cannot grant runtime capabilities
+- [x] 1.3 Configure Python package data so every required Markdown file is included in source distributions and wheels
+- [x] 1.4 Add tests that load the packaged documents outside the repository and backend working directories
 
 ## 2. Profile Domain and Loader
 
-- [ ] 2.1 Implement immutable Agent Profile document, manifest, snapshot, and model-operation value objects
-- [ ] 2.2 Implement package-resource loading, UTF-8 validation, normalization, required-section validation, and typed configuration failures
-- [ ] 2.3 Implement deterministic per-document SHA-256 hashes and an aggregate version including the composition schema version
-- [ ] 2.4 Add unit tests for stable normalization and hashes, changed-content versions, malformed documents, missing resources, and size limits
+- [x] 2.1 Implement immutable Agent Profile document, manifest, snapshot, and model-operation value objects
+- [x] 2.2 Implement package-resource loading, UTF-8 validation, normalization, required-section validation, and typed configuration failures
+- [x] 2.3 Implement deterministic per-document SHA-256 hashes and an aggregate version including the composition schema version
+- [x] 2.4 Add unit tests for stable normalization and hashes, changed-content versions, malformed documents, missing resources, and size limits
 
 ## 3. Run Snapshot Persistence
 

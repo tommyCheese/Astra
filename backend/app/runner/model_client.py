@@ -8,6 +8,8 @@ from typing import Any
 
 import httpx
 
+from app.agent_profile import AgentProfile, ModelOperation, load_agent_profile
+from app.agent_profile.prompts import PromptComposer
 from app.core.config import Settings
 from app.schemas.agent import (
     AgentDecision,
@@ -34,6 +36,9 @@ class ModelOutputError(RuntimeError):
 
 
 class ModelClient(ABC):
+    def bind_agent_profile(self, profile: AgentProfile) -> None:
+        """Bind the immutable Profile selected for the current Run."""
+
     @abstractmethod
     async def contract(self, goal: str) -> TaskContract:
         raise NotImplementedError
@@ -332,20 +337,29 @@ class OpenAICompatibleModelClient(ModelClient):
             raise ModelConfigurationError("MODEL_API_KEY is required for real model providers")
         self.settings = settings
         self.usage_recorder = None
+        self.agent_profile = load_agent_profile()
+        self.prompt_composer = PromptComposer(self.agent_profile)
+
+    def bind_agent_profile(self, profile: AgentProfile) -> None:
+        self.agent_profile = profile
+        self.prompt_composer = PromptComposer(profile)
 
     async def plan(self, goal: str) -> PlanOutput:
+        operation = ModelOperation.PLAN
         payload = await self._chat_json(
             [
                 {
                     "role": "system",
-                    "content": (
-                        "You are Astra's planner. Return JSON only with keys: "
+                    "content": self.prompt_composer.compose(
+                        operation,
+                        "You are the planner. Return JSON only with keys: "
                         "steps, required_tools, success_criteria, risk_level. "
-                        "Each step has title, intent, required_tools, success_criteria."
+                        "Each step has title, intent, required_tools, success_criteria.",
                     ),
                 },
-                {"role": "user", "content": goal},
-            ]
+                {"role": "user", "content": self.prompt_composer.user_request(goal)},
+            ],
+            operation=operation,
         )
         try:
             return PlanOutput.model_validate(normalize_plan_payload(payload))
@@ -353,19 +367,22 @@ class OpenAICompatibleModelClient(ModelClient):
             raise ModelOutputError(f"Invalid plan output: {exc}") from exc
 
     async def contract(self, goal: str) -> TaskContract:
+        operation = ModelOperation.CONTRACT
         payload = await self._chat_json(
             [
                 {
                     "role": "system",
-                    "content": (
+                    "content": self.prompt_composer.compose(
+                        operation,
                         "Create an audit-safe task contract. Return JSON only with keys: original_goal, "
                         "deliverables, constraints, prohibited_actions, assumptions, success_criteria, "
                         "verification_requirements, risk_level, ambiguity_status, clarification_question. "
-                        "Each success criterion needs a stable id, description, mandatory, and verification_method."
+                        "Each success criterion needs a stable id, description, mandatory, and verification_method.",
                     ),
                 },
-                {"role": "user", "content": goal},
-            ]
+                {"role": "user", "content": self.prompt_composer.user_request(goal)},
+            ],
+            operation=operation,
         )
         try:
             return TaskContract.model_validate(normalize_contract_payload(payload, goal))
@@ -379,12 +396,14 @@ class OpenAICompatibleModelClient(ModelClient):
         *,
         on_delta: AnswerDeltaCallback | None = None,
     ) -> FinalAnswer:
+        operation = ModelOperation.SYNTHESIS
         payload = await self._chat_json(
             [
                 {
                     "role": "system",
-                    "content": (
-                        "You are Astra's general answer engine. Return JSON only with keys: "
+                    "content": self.prompt_composer.compose(
+                        operation,
+                        "You are the general answer engine. Return JSON only with keys: "
                         "summary, findings, sources, failed_sources, source_quality, "
                         "conflicts, caveats, verification_notes. "
                         "Each finding has text, source_urls, and artifact_ids. Each source has url, title, retrieved_at. "
@@ -392,17 +411,17 @@ class OpenAICompatibleModelClient(ModelClient):
                         "never invent an ID, and use an empty list when no Artifact supports the finding. "
                         "When audited tool evidence exists, ground claims in it and cite source URLs. "
                         "When no tool was needed, answer from general model knowledge, leave sources empty, "
-                        "and state limitations for time-sensitive or uncertain claims."
+                        "and state limitations for time-sensitive or uncertain claims.",
                     ),
                 },
                 {
                     "role": "user",
-                    "content": json.dumps(
-                        {"goal": goal, "tool_outputs": tool_outputs},
-                        ensure_ascii=False,
+                    "content": self.prompt_composer.runtime_context(
+                        goal, tool_outputs=tool_outputs
                     ),
                 },
             ],
+            operation=operation,
             stream_field="summary",
             on_field_delta=on_delta,
         )
@@ -412,26 +431,29 @@ class OpenAICompatibleModelClient(ModelClient):
             raise ModelOutputError(f"Invalid final answer output: {exc}") from exc
 
     async def decide(self, goal: str, context: dict[str, Any]) -> AgentDecision:
+        operation = ModelOperation.DECISION
         payload = await self._chat_json(
             [
                 {
                     "role": "system",
-                    "content": (
-                        "You are Astra's general Agent loop controller. Return JSON only. "
+                    "content": self.prompt_composer.compose(
+                        operation,
+                        "You are the general Agent loop controller. Return JSON only. "
                         "Required keys: decision_type, reasoning_summary. "
                         "Allowed decision_type values: call_tool, reflect, replan, finalize, ask_user, blocked. "
                         "Choose among the tools in context.tool_manifests only when external or current evidence is needed. "
                         "For stable general knowledge, explanation, writing, or conversation, finalize without tools. "
                         "Select tools only from context.tool_manifests and follow each manifest's description, schema, capabilities, and permissions. "
                         "For call_tool include tool_name and tool_input. "
-                        "Do not include hidden chain-of-thought; reasoning_summary must be concise and user-auditable."
+                        "Do not include hidden chain-of-thought; reasoning_summary must be concise and user-auditable.",
                     ),
                 },
                 {
                     "role": "user",
-                    "content": json.dumps({"goal": goal, "context": context}, ensure_ascii=False),
+                    "content": self.prompt_composer.runtime_context(goal, context=context),
                 },
-            ]
+            ],
+            operation=operation,
         )
         try:
             return AgentDecision.model_validate(payload)
@@ -445,12 +467,14 @@ class OpenAICompatibleModelClient(ModelClient):
         *,
         on_delta: AnswerDeltaCallback | None = None,
     ) -> tuple[AgentDecision, FinalAnswer | None]:
+        operation = ModelOperation.DECISION_WITH_ANSWER
         payload = await self._chat_json(
             [
                 {
                     "role": "system",
-                    "content": (
-                        "You are Astra's general Agent controller and answer engine. Return one JSON object. "
+                    "content": self.prompt_composer.compose(
+                        operation,
+                        "You are the general Agent controller and answer engine. Return one JSON object. "
                         "Always include decision_type and reasoning_summary. Allowed decision_type values: "
                         "call_tool, reflect, replan, finalize, ask_user, blocked. Use tools only for current, "
                         "external, or otherwise unverifiable information. For stable knowledge, explanation, "
@@ -463,14 +487,15 @@ class OpenAICompatibleModelClient(ModelClient):
                         "The summary must contain the complete user-facing answer, not an introduction or preview; "
                         "use findings only for optional supporting details. "
                         "For call_tool include tool_name and tool_input and omit final_answer. "
-                        "Do not expose hidden chain-of-thought; reasoning_summary must be concise."
+                        "Do not expose hidden chain-of-thought; reasoning_summary must be concise.",
                     ),
                 },
                 {
                     "role": "user",
-                    "content": json.dumps({"goal": goal, "context": context}, ensure_ascii=False),
+                    "content": self.prompt_composer.runtime_context(goal, context=context),
                 },
             ],
+            operation=operation,
             stream_field="summary",
             on_field_delta=on_delta,
         )
@@ -487,24 +512,27 @@ class OpenAICompatibleModelClient(ModelClient):
             raise ModelOutputError(f"Invalid combined decision output: {exc}") from exc
 
     async def reflect(self, goal: str, context: dict[str, Any]) -> AgentReflection:
+        operation = ModelOperation.REFLECTION
         payload = await self._chat_json(
             [
                 {
                     "role": "system",
-                    "content": (
-                        "You are Astra's reflector. Return JSON only with keys: "
+                    "content": self.prompt_composer.compose(
+                        operation,
+                        "You are the reflector. Return JSON only with keys: "
                         "trigger, summary, next_action, retry, revised_tool_input, and optional patch. "
                         "patch may contain level, invalidated_assumption_ids, fact_updates, "
                         "criterion_updates, replacement_plan, added_verification_requirements, "
                         "or terminal_intent. Only include changes justified by the supplied context. "
-                        "Use concise audit-safe summaries."
+                        "Use concise audit-safe summaries.",
                     ),
                 },
                 {
                     "role": "user",
-                    "content": json.dumps({"goal": goal, "context": context}, ensure_ascii=False),
+                    "content": self.prompt_composer.runtime_context(goal, context=context),
                 },
-            ]
+            ],
+            operation=operation,
         )
         try:
             return AgentReflection.model_validate(normalize_reflection_payload(payload))
@@ -523,21 +551,24 @@ class OpenAICompatibleModelClient(ModelClient):
         goal: str,
         context: dict[str, Any],
     ) -> list[MemoryRecord]:
+        operation = ModelOperation.MEMORY
         payload = await self._chat_json(
             [
                 {
                     "role": "system",
-                    "content": (
+                    "content": self.prompt_composer.compose(
+                        operation,
                         "Extract durable memory candidates. Return JSON only with key memories. "
                         "Each memory has scope, kind, content, structured_data, provenance, confidence. "
-                        "Only include memories with provenance."
+                        "Only include memories with provenance.",
                     ),
                 },
                 {
                     "role": "user",
-                    "content": json.dumps({"goal": goal, "context": context}, ensure_ascii=False),
+                    "content": self.prompt_composer.runtime_context(goal, context=context),
                 },
-            ]
+            ],
+            operation=operation,
         )
         try:
             return [
@@ -553,32 +584,19 @@ class OpenAICompatibleModelClient(ModelClient):
         self,
         messages: list[dict[str, str]],
         *,
+        operation: ModelOperation,
         attempt: int = 0,
         stream_field: str | None = None,
         on_field_delta: AnswerDeltaCallback | None = None,
     ) -> dict[str, Any]:
         url = self.settings.model_base_url.rstrip("/") + "/chat/completions"
-        system_prompt = messages[0].get("content", "") if messages else ""
-        operation = (
-            "contract"
-            if "task contract" in system_prompt
-            else "plan"
-            if "planner" in system_prompt
-            else "decision"
-            if "controller" in system_prompt
-            else "reflection"
-            if "reflector" in system_prompt
-            else "memory"
-            if "memory" in system_prompt
-            else "synthesis"
-        )
         started = time.perf_counter()
         invocation_id = None
         if self.usage_recorder is not None:
             invocation_id = await self.usage_recorder.start(
                 provider=self.settings.model_provider,
                 model=self.settings.model_name,
-                operation=operation,
+                operation=operation.value,
                 attempt=attempt + 1,
             )
         usage: dict[str, Any] | None = None
@@ -587,7 +605,6 @@ class OpenAICompatibleModelClient(ModelClient):
             "model.request.start operation=%s provider=%s model=%s endpoint=%s messages=%s",
             operation,
             self.settings.model_provider,
-            self.settings.model_name,
             url,
             len(messages),
         )
@@ -723,6 +740,7 @@ class OpenAICompatibleModelClient(ModelClient):
                         },
                     ],
                     attempt=1,
+                    operation=operation,
                     stream_field=stream_field,
                     on_field_delta=on_field_delta,
                 )

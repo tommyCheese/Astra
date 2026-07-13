@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, Header, Query
 from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.agent_profile import AgentProfileConfigurationError, load_agent_profile
 from app.artifacts import LocalArtifactStore
 from app.core.config import Settings, get_settings
 from app.core.errors import ResourceError, StateError, ValidationError
@@ -130,12 +131,17 @@ async def create_run(
             run_settings.model_policy,
             payload.task_id,
             reasoning_policy=policy.model_dump(mode="json"),
+            agent_profile_snapshot=load_agent_profile().snapshot(),
         )
         for adjustment in policy.adjustments:
             await repo.add_event(
                 run.id, "reasoning.policy_adjusted", adjustment.model_dump(mode="json")
             )
         await session.commit()
+    except AgentProfileConfigurationError as exc:
+        raise ValidationError(
+            "AGENT_PROFILE_INVALID", "Astra 身份配置无效，暂时无法创建任务。"
+        ) from exc
     except ValueError as exc:
         message = str(exc)
         if message.startswith("Task not found"):
