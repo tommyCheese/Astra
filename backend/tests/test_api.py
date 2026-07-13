@@ -49,6 +49,22 @@ async def test_create_run_rejects_empty_goal(app_client):
     assert error["trace_id"].startswith("req_")
 
 
+async def test_create_run_rejects_invalid_agent_profile_as_configuration_error(
+    app_client, monkeypatch
+):
+    from app.agent_profile import AgentProfileConfigurationError
+
+    def invalid_profile():
+        raise AgentProfileConfigurationError("invalid test profile")
+
+    monkeypatch.setattr(runs_api, "load_agent_profile", invalid_profile)
+    response = await app_client.post("/api/runs", json={"goal": "Profile 配置测试"})
+
+    assert response.status_code == 503
+    assert response.json()["error"]["code"] == "AGENT_PROFILE_INVALID"
+    assert "invalid test profile" not in response.text
+
+
 async def test_tool_settings_can_be_read_and_updated(app_client):
     loaded = await app_client.get("/api/tools")
     assert loaded.status_code == 200
@@ -166,6 +182,9 @@ async def test_create_and_get_run(app_client):
     assert "turns" in body
     assert "memories" in body
     assert "chat_messages" in body
+    assert body["agent_profile"]["version"].startswith("profile-")
+    assert "content" not in body["agent_profile"]["documents"]["identity"]
+    assert "secret" not in str(body["agent_profile"]).lower()
 
 
 async def test_run_event_stream_starts_with_ready_signal(app_client, monkeypatch):

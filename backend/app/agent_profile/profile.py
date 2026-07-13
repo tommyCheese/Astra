@@ -87,15 +87,14 @@ class AgentProfileManifest:
     version: str
     composition_schema_version: int
     documents: tuple[AgentProfileDocument, ...]
+    role_documents: tuple[tuple[str, tuple[str, ...]], ...]
 
     def safe_dict(self) -> dict[str, object]:
         return {
             "version": self.version,
             "composition_schema_version": self.composition_schema_version,
             "documents": {item.name: item.safe_metadata() for item in self.documents},
-            "role_documents": {
-                operation.value: list(names) for operation, names in ROLE_DOCUMENTS.items()
-            },
+            "role_documents": {operation: list(names) for operation, names in self.role_documents},
         }
 
 
@@ -110,12 +109,14 @@ class AgentProfile:
         raise AgentProfileConfigurationError(f"Agent Profile document is unavailable: {name}")
 
     def documents_for(self, operation: ModelOperation) -> tuple[AgentProfileDocument, ...]:
-        try:
-            names = ROLE_DOCUMENTS[operation]
-        except KeyError as exc:
+        names = next(
+            (names for role, names in self.manifest.role_documents if role == operation.value),
+            None,
+        )
+        if names is None:
             raise AgentProfileConfigurationError(
                 f"Unsupported Agent Profile operation: {operation}"
-            ) from exc
+            )
         return tuple(self.document(name) for name in names)
 
     def snapshot(self) -> dict[str, object]:
@@ -142,7 +143,15 @@ class AgentProfile:
                     f"Agent Profile snapshot document is invalid: {name}"
                 )
             contents[name] = value["content"]
-        profile = AgentProfileLoader().load(contents)
+        composition_version = snapshot.get("composition_schema_version")
+        role_documents = snapshot.get("role_documents")
+        if not isinstance(composition_version, int) or not isinstance(role_documents, Mapping):
+            raise AgentProfileConfigurationError("Agent Profile snapshot composition is invalid")
+        profile = AgentProfileLoader().load(
+            contents,
+            composition_schema_version=composition_version,
+            role_documents=role_documents,
+        )
         if profile.manifest.version != snapshot.get("version"):
             raise AgentProfileConfigurationError("Agent Profile snapshot checksum mismatch")
         return profile
@@ -158,7 +167,13 @@ class AgentProfileLoader:
         self.package = package
         self.max_document_bytes = max_document_bytes
 
-    def load(self, contents: Mapping[str, str] | None = None) -> AgentProfile:
+    def load(
+        self,
+        contents: Mapping[str, str] | None = None,
+        *,
+        composition_schema_version: int = COMPOSITION_SCHEMA_VERSION,
+        role_documents: Mapping[object, object] | None = None,
+    ) -> AgentProfile:
         documents = []
         for name, filename in DOCUMENT_FILES.items():
             content = contents.get(name) if contents is not None else self._read(filename)
@@ -167,12 +182,16 @@ class AgentProfileLoader:
                     f"Agent Profile document is missing: {filename}"
                 )
             documents.append(self._document(name, filename, content))
-        version = _profile_version(tuple(documents))
+        normalized_roles = _normalize_role_documents(role_documents or ROLE_DOCUMENTS)
+        version = _profile_version(
+            tuple(documents), composition_schema_version, normalized_roles
+        )
         return AgentProfile(
             AgentProfileManifest(
                 version=version,
-                composition_schema_version=COMPOSITION_SCHEMA_VERSION,
+                composition_schema_version=composition_schema_version,
                 documents=tuple(documents),
+                role_documents=normalized_roles,
             )
         )
 
@@ -244,11 +263,43 @@ def parse_frontmatter(content: str, filename: str) -> dict[str, str]:
     return metadata
 
 
-def _profile_version(documents: tuple[AgentProfileDocument, ...]) -> str:
+def _normalize_role_documents(
+    role_documents: Mapping[object, object],
+) -> tuple[tuple[str, tuple[str, ...]], ...]:
+    normalized = []
+    for raw_operation, raw_names in role_documents.items():
+        operation = (
+            raw_operation.value if isinstance(raw_operation, ModelOperation) else str(raw_operation)
+        )
+        if operation not in {item.value for item in ModelOperation}:
+            raise AgentProfileConfigurationError(
+                f"Agent Profile role operation is invalid: {operation}"
+            )
+        if not isinstance(raw_names, (list, tuple)):
+            raise AgentProfileConfigurationError(
+                f"Agent Profile role document selection is invalid: {operation}"
+            )
+        names = tuple(str(name) for name in raw_names)
+        if not names or any(name not in DOCUMENT_FILES or name == "autodream" for name in names):
+            raise AgentProfileConfigurationError(
+                f"Agent Profile role document selection is unsafe: {operation}"
+            )
+        normalized.append((operation, names))
+    if {operation for operation, _ in normalized} != {item.value for item in ModelOperation}:
+        raise AgentProfileConfigurationError("Agent Profile role matrix is incomplete")
+    return tuple(sorted(normalized))
+
+
+def _profile_version(
+    documents: tuple[AgentProfileDocument, ...],
+    composition_schema_version: int,
+    role_documents: tuple[tuple[str, tuple[str, ...]], ...],
+) -> str:
     payload = json.dumps(
         {
-            "composition_schema_version": COMPOSITION_SCHEMA_VERSION,
+            "composition_schema_version": composition_schema_version,
             "documents": {item.name: item.sha256 for item in documents},
+            "role_documents": role_documents,
         },
         ensure_ascii=True,
         sort_keys=True,

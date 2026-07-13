@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.agent_profile import AgentProfileConfigurationError, load_agent_profile
 from app.artifacts import LocalArtifactStore
 from app.core.config import Settings, get_settings
-from app.core.errors import ResourceError, StateError, ValidationError
+from app.core.errors import ConfigurationError, ResourceError, StateError, ValidationError
 from app.db.session import SessionLocal, get_session
 from app.repositories.runs import RunRepository, run_to_view
 from app.repositories.tool_settings import (
@@ -139,7 +139,7 @@ async def create_run(
             )
         await session.commit()
     except AgentProfileConfigurationError as exc:
-        raise ValidationError(
+        raise ConfigurationError(
             "AGENT_PROFILE_INVALID", "Astra 身份配置无效，暂时无法创建任务。"
         ) from exc
     except ValueError as exc:

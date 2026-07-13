@@ -114,5 +114,16 @@ Rollback keeps the additive database snapshot column. The model client can tempo
 
 ## Open Questions
 
-- At what database-size threshold should per-Run snapshots be normalized into immutable `agent_profile_revisions` referenced by Runs?
 - Should a future administrator-facing Profile editor permit only deployment-level variants, or also restricted workspace-level `SOUL` overlays? That requires a separate authorization and activation proposal.
+
+Snapshot normalization has a defined follow-up trigger: introduce immutable shared `agent_profile_revisions` when Profile snapshots exceed 5% of database storage, exceed 1 GiB in aggregate, or online editing/multiple active Profiles are required. This change intentionally keeps per-Run snapshots below that threshold.
+
+## Verification Coverage
+
+- Packaged resource loading, schema validation, size limits, normalization, hashing, snapshot reconstruction and AutoDream exclusion are covered by `backend/tests/test_agent_profile.py`.
+- Role-specific composition and explicit model-operation routing are covered by `backend/tests/test_agent_profile.py` and `backend/tests/test_model_client.py`.
+- Snapshot persistence, immutability, redacted audit events and Memory separation are covered by `backend/tests/test_repository.py`.
+- New Run API metadata, configuration failures and raw-content non-disclosure are covered by `backend/tests/test_api.py`.
+- Restart behavior and frozen Profile reuse are covered by `backend/tests/test_engine.py`.
+- Instruction-like Memory and hard Tool Router enforcement are covered by `backend/tests/test_agent_loop.py`; the existing unavailable-backend, persisted-switch, risk and budget tests remain authoritative.
+- Migration `0007` is verified against a copy of the current SQLite database, including all pre-existing Runs, and wheel inspection verifies all five Markdown resources can load outside the source tree.

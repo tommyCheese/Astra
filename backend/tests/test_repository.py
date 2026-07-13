@@ -1,3 +1,6 @@
+import pytest
+
+from app.agent_profile import load_agent_profile
 from app.repositories.runs import RunRepository, run_to_view
 from app.repositories.tool_settings import ToolSettingsRepository
 from app.runner.reasoning import build_default_contract, build_plan_graph
@@ -59,6 +62,53 @@ async def test_follow_up_run_reuses_task(session):
     assert follow_up.task_id == first.task_id
     assert follow_up.id != first.id
     assert follow_up.model_policy["conversation_goal"] == "继续追问"
+
+
+async def test_agent_profile_snapshot_is_immutable_and_public_view_is_redacted(session):
+    repo = RunRepository(session)
+    snapshot = load_agent_profile().snapshot()
+    run = await repo.create_task_run(
+        "Profile 测试", {"provider": "mock"}, agent_profile_snapshot=snapshot
+    )
+
+    loaded = await repo.require_run(run.id)
+    view = run_to_view(loaded)
+
+    assert loaded.agent_profile_snapshot["documents"]["identity"]["content"]
+    assert view["agent_profile"]["version"] == snapshot["version"]
+    assert "content" not in view["agent_profile"]["documents"]["identity"]
+    frozen_event = next(event for event in loaded.events if event.type == "agent_profile.frozen")
+    assert "content" not in frozen_event.payload["profile"]["documents"]["identity"]
+    with pytest.raises(ValueError, match="immutable"):
+        await repo.freeze_agent_profile_snapshot(run.id, {"version": "different"})
+
+
+async def test_repository_freezes_profile_once_for_unversioned_new_run(session):
+    repo = RunRepository(session)
+    run = await repo.create_task_run("冻结测试", {"provider": "mock"})
+    snapshot = load_agent_profile().snapshot()
+
+    await repo.freeze_agent_profile_snapshot(run.id, snapshot)
+    await repo.freeze_agent_profile_snapshot(run.id, snapshot)
+
+    loaded = await repo.require_run(run.id)
+    events = await repo.list_events(run.id)
+    assert loaded.agent_profile_snapshot["version"] == snapshot["version"]
+    assert [event.type for event in events].count("agent_profile.frozen") == 1
+
+
+async def test_loading_autodream_protocol_has_no_database_side_effect(session):
+    repo = RunRepository(session)
+    run = await repo.create_task_run("AutoDream 占位测试", {"provider": "mock"})
+
+    profile = load_agent_profile()
+    before = await repo.list_memories(run_id=run.id)
+    autodream = profile.document("autodream")
+    after = await repo.list_memories(run_id=run.id)
+
+    assert autodream.status == "disabled"
+    assert before == after == []
+    assert not any(event.type.startswith("autodream") for event in await repo.list_events(run.id))
 
 
 async def test_agent_turn_and_memory_persistence(session):

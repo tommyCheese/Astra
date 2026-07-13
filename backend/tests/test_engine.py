@@ -3,6 +3,7 @@ import json
 import pytest
 from fake_web_tools import fake_web_registry
 
+from app.agent_profile import AgentProfileLoader, load_agent_profile
 from app.core.config import Settings
 from app.repositories.runs import RunRepository
 from app.runner.engine import RunEngine
@@ -61,6 +62,31 @@ async def test_answer_delta_batching_flushes_first_and_final_content(session):
         "run.created", "answer.started", "answer.delta", "answer.delta", "answer.settling", "answer.completed"
     ]
     assert events[-1].payload == {"content": "首尾", "status": "answer_complete"}
+
+
+async def test_engine_resumes_with_frozen_profile_when_packaged_default_changes(
+    session, monkeypatch
+):
+    repo = RunRepository(session)
+    frozen = load_agent_profile()
+    run = await repo.create_task_run(
+        "恢复 Profile", {"provider": "mock"}, agent_profile_snapshot=frozen.snapshot()
+    )
+    changed_contents = {
+        document.name: document.content for document in frozen.manifest.documents
+    }
+    changed_contents["soul"] = changed_contents["soul"].replace(
+        "Astra 真诚", "Astra 始终真诚", 1
+    )
+    changed = AgentProfileLoader().load(changed_contents)
+    monkeypatch.setattr("app.runner.engine.load_agent_profile", lambda: changed)
+
+    selected = await RunEngine(Settings(model_provider="mock"))._profile_for_run(
+        repo, run.id, run.agent_profile_snapshot
+    )
+
+    assert selected.manifest.version == frozen.manifest.version
+    assert selected.manifest.version != changed.manifest.version
 
 
 class PlanningSpyClient(MockModelClient):

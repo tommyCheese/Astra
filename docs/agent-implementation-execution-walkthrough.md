@@ -81,6 +81,10 @@ sequenceDiagram
 
 后端启动前，`alembic upgrade head` 先沿 `backend/alembic/versions/` 的版本链建立数据库。`0001` 创建 Task、Run、Step、ToolCall、Artifact 和 RunEvent；`0002` 加入 AgentTurn 与 Memory；`0003` 加入 TaskContract、PlanGraph、AgentState、版本与等待态；`0004` 加入 SandboxJob 和可验证工件字段；`0005` 加入模型调用与 Token 台账；`0006` 创建 `tool_settings`，把工具开关从进程内变量变成数据库事实。
 
+`0007` 为 Run 增加不可变 `agent_profile_snapshot`。新 Run 从 Python package resources 读取 Git 管理的 `IDENTITY.md`、`SOUL.md`、`MEMORY.md` 和 `AUTODREAM.md`，在第一次模型调用前冻结规范化内容、组合规则和 SHA-256 版本。旧记录明确标记为 `legacy-unversioned`，不会伪造当时并不存在的 Profile 版本。普通 Run API 只序列化文档名、状态、大小和哈希，不返回完整 system prompt。
+
+模型调用由统一 Prompt Composer 按 operation 选择 Profile：contract/plan 使用 Identity，controller/answer 使用 Identity 与 Soul，reflection 使用 Identity 与 Memory 治理，memory extraction 只使用 Memory 治理。AutoDream 当前为禁用协议，不进入同步问答，也不会产生后台任务。对话历史、数据库 Memory、工具观察和外部页面均放入明确分隔的低信任上下文；它们不能覆盖 Profile、结构化角色协议或 ToolRouter 权限。
+
 Alembic 的 `env.py` 从 `Settings.database_url` 取得数据库地址，并使用 `app.db.models.Base.metadata` 作为模型真相。运行期由 `app.db.session` 创建异步 engine、`SessionLocal` 和请求级 `get_session()`。因此后面看到的每个 API 请求、后台 Run、SSE 读取和用量记录都能拥有独立的 `AsyncSession`，而不是共享一个易冲突的长事务。
 
 Uvicorn 随后导入 `app.main`，文件底部的 `app = create_app()` 触发装配。`Settings` 先从 `.env` 读取模型、网络、Agent 预算、沙箱、工件和工具默认值；`get_settings()` 用缓存维持进程内基准配置。这里的工具布尔值不再是日常运行的最终真相，它们只在 `tool_settings` 缺行时提供初始值。

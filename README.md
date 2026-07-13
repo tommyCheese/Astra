@@ -22,6 +22,12 @@ Astra 是一个 AI 原生的通用 Agent 平台。
 用户目标 -> 创建 Task/Run -> 模型规划 -> 工具执行 -> 结果综合 -> 证据验证 -> 时间线报告
 ```
 
+### Agent Profile、Memory 与运行能力
+
+Astra 的稳定身份与治理原则由后端包中的 `IDENTITY.md`、`SOUL.md`、`MEMORY.md` 和禁用占位的 `AUTODREAM.md` 统一定义并随 Git 发布。每个新 Run 会冻结所用 Profile 的完整不可变快照，历史接口只暴露安全的版本与哈希元数据；服务重启或后续 Profile 升级不会让已有 Run 静默切换人格。
+
+Profile 文档不保存实际用户记忆，也不授予工具权限。真实 run/workspace/user Memory 继续存入数据库；本次实际可执行能力由 Tool Manifest、环境配置、持久化工具开关、基础设施状态、Run 权限、风险门控和剩余预算共同决定。
+
 当前默认执行路径已经演进为 Web-only Agent loop：
 
 ```text

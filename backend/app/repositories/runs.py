@@ -62,6 +62,12 @@ class RunRepository:
         self.session.add(run)
         await self.session.flush()
         await self.add_event(run.id, "run.created", {"goal": goal, "status": run.status})
+        if agent_profile_snapshot:
+            await self.add_event(
+                run.id,
+                "agent_profile.frozen",
+                {"profile": safe_agent_profile_manifest(agent_profile_snapshot)},
+            )
         await self.session.commit()
         return run
 

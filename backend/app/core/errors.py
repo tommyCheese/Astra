@@ -85,6 +85,17 @@ class InfrastructureError(AstraError):
         )
 
 
+class ConfigurationError(AstraError):
+    def __init__(self, code: str, message: str):
+        super().__init__(
+            error_type="configuration.invalid",
+            code=code,
+            message=message,
+            status_code=503,
+            retryable=False,
+        )
+
+
 def internal_error(exc: Exception) -> ErrorPayload:
     payload = ErrorPayload(
         type="runtime.internal_error",

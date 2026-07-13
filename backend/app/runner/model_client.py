@@ -38,6 +38,7 @@ class ModelOutputError(RuntimeError):
 class ModelClient(ABC):
     def bind_agent_profile(self, profile: AgentProfile) -> None:
         """Bind the immutable Profile selected for the current Run."""
+        return None
 
     @abstractmethod
     async def contract(self, goal: str) -> TaskContract:
@@ -605,6 +606,7 @@ class OpenAICompatibleModelClient(ModelClient):
             "model.request.start operation=%s provider=%s model=%s endpoint=%s messages=%s",
             operation,
             self.settings.model_provider,
+            self.settings.model_name,
             url,
             len(messages),
         )

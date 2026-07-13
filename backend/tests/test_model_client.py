@@ -1,5 +1,8 @@
+from unittest.mock import AsyncMock
+
 import pytest
 
+from app.agent_profile import ModelOperation
 from app.core.config import Settings
 from app.runner.model_client import (
     MockModelClient,
@@ -259,3 +262,46 @@ def test_memory_normalization_converts_scalar_provenance_and_drops_empty_content
     assert memory.provenance == {"source": "conversation"}
     assert memory.confidence == 1
     assert normalize_memory_payload({"content": ""}) is None
+
+
+async def test_real_model_operations_use_explicit_profile_composition():
+    from app.runner.model_client import OpenAICompatibleModelClient
+
+    client = OpenAICompatibleModelClient(
+        Settings(model_provider="openai", model_api_key="secret", model_name="test")
+    )
+    captured = []
+    payloads = {
+        ModelOperation.CONTRACT: {},
+        ModelOperation.PLAN: {"steps": []},
+        ModelOperation.SYNTHESIS: {"summary": "完成"},
+        ModelOperation.DECISION: {
+            "decision_type": "finalize",
+            "reasoning_summary": "可以回答",
+        },
+        ModelOperation.DECISION_WITH_ANSWER: {
+            "decision_type": "finalize",
+            "reasoning_summary": "可以回答",
+            "final_answer": {"summary": "完成"},
+        },
+        ModelOperation.REFLECTION: {"summary": "继续", "next_action": "continue"},
+        ModelOperation.MEMORY: {"memories": []},
+    }
+
+    async def fake_chat(messages, *, operation, **kwargs):
+        captured.append((operation, messages, kwargs))
+        return payloads[operation]
+
+    client._chat_json = AsyncMock(side_effect=fake_chat)
+    await client.contract("目标")
+    await client.plan("目标")
+    await client.synthesize("目标", [])
+    await client.decide("目标", {"memory_reads": []})
+    await client.decide_with_answer("目标", {"memory_reads": []})
+    await client.reflect("目标", {"memory_reads": []})
+    await client.extract_memory_candidates("目标", {"memory_reads": []})
+
+    assert [item[0] for item in captured] == list(payloads)
+    assert all("Trusted Agent Profile" in item[1][0]["content"] for item in captured)
+    assert all("AUTODREAM.md" not in item[1][0]["content"] for item in captured)
+    assert all("secret" not in item[1][0]["content"] for item in captured)
