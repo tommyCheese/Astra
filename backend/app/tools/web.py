@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import asyncio
 import ipaddress
 import re
@@ -6,7 +8,7 @@ import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from html.parser import HTMLParser
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from urllib.parse import parse_qs, unquote, urljoin, urlparse
 
 import httpx
@@ -14,8 +16,10 @@ from charset_normalizer import from_bytes
 from trafilatura import extract as extract_main_content
 from trafilatura import extract_metadata
 
-from app.core.config import Settings
 from app.tools.base import Tool, ToolExecutionError, ToolSpec
+
+if TYPE_CHECKING:
+    from app.core.config import Settings
 
 PROXY_FAKE_IP_NETWORK = ipaddress.ip_network("198.18.0.0/15")
 
@@ -126,9 +130,7 @@ class DuckDuckGoHTMLParser(HTMLParser):
             return
         text = normalize_space(data)
         if text:
-            self._current[self._active] = normalize_space(
-                f"{self._current[self._active]} {text}"
-            )
+            self._current[self._active] = normalize_space(f"{self._current[self._active]} {text}")
 
 
 class WebSearchTool(Tool):
@@ -175,9 +177,7 @@ class WebSearchTool(Tool):
             f"Unsupported web search provider: {self.settings.web_search_provider}",
         )
 
-    async def _bing_search(
-        self, query: str, tool_input: dict[str, Any]
-    ) -> dict[str, Any]:
+    async def _bing_search(self, query: str, tool_input: dict[str, Any]) -> dict[str, Any]:
         try:
             num_results = int(
                 tool_input.get("num_results") or self.settings.google_search_result_count
@@ -218,9 +218,7 @@ class WebSearchTool(Tool):
             "candidates": candidates,
         }
 
-    async def _duckduckgo_search(
-        self, query: str, tool_input: dict[str, Any]
-    ) -> dict[str, Any]:
+    async def _duckduckgo_search(self, query: str, tool_input: dict[str, Any]) -> dict[str, Any]:
         try:
             num_results = int(
                 tool_input.get("num_results") or self.settings.google_search_result_count
@@ -606,7 +604,9 @@ async def validate_public_http_target(
             proto=socket.IPPROTO_TCP,
         )
     except socket.gaierror as exc:
-        raise ToolExecutionError("fetch_failed", f"Unable to resolve URL hostname: {hostname}") from exc
+        raise ToolExecutionError(
+            "fetch_failed", f"Unable to resolve URL hostname: {hostname}"
+        ) from exc
     addresses = {record[4][0].split("%", 1)[0] for record in records}
     if not addresses:
         raise ToolExecutionError("fetch_failed", f"URL hostname has no address records: {hostname}")
@@ -627,7 +627,11 @@ def validate_fetch_content_type(content_type: str) -> None:
         "application/xhtml+xml",
         "application/xml",
     }
-    if media_type and not media_type.startswith("text/") and media_type not in allowed_application_types:
+    if (
+        media_type
+        and not media_type.startswith("text/")
+        and media_type not in allowed_application_types
+    ):
         raise ToolExecutionError(
             "unsupported_content_type", f"Unsupported response content type: {media_type}"
         )
@@ -865,19 +869,20 @@ def extract_source(
     extraction_warnings: list[str] = []
     if strategy == "trafilatura":
         try:
-            content = extract_main_content(
-                body,
-                url=url,
-                output_format="txt",
-                include_comments=False,
-                include_tables=True,
-                include_links=False,
-                deduplicate=True,
-                favor_precision=True,
-                prune_xpath=selectors_to_prune_xpath(
-                    crawler_plan.get("exclude_selectors", [])
-                ),
-            ) or ""
+            content = (
+                extract_main_content(
+                    body,
+                    url=url,
+                    output_format="txt",
+                    include_comments=False,
+                    include_tables=True,
+                    include_links=False,
+                    deduplicate=True,
+                    favor_precision=True,
+                    prune_xpath=selectors_to_prune_xpath(crawler_plan.get("exclude_selectors", [])),
+                )
+                or ""
+            )
         except Exception:
             content = ""
             extraction_warnings.append("主正文提取器失败，已使用安全的 HTML 文本回退。")
@@ -945,14 +950,12 @@ def selectors_to_prune_xpath(selectors: list[str]) -> list[str] | None:
         elif selector.startswith("."):
             class_name = selector[1:]
             xpath.append(
-                "//*[contains(concat(' ', normalize-space(@class), ' '), "
-                f"' {class_name} ')]"
+                f"//*[contains(concat(' ', normalize-space(@class), ' '), ' {class_name} ')]"
             )
         elif "." in selector:
             tag, class_name = selector.split(".", 1)
             xpath.append(
-                f"//{tag}[contains(concat(' ', normalize-space(@class), ' '), "
-                f"' {class_name} ')]"
+                f"//{tag}[contains(concat(' ', normalize-space(@class), ' '), ' {class_name} ')]"
             )
         else:
             xpath.append(f"//{selector}")

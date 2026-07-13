@@ -14,6 +14,7 @@
 - [x] 3.1 实现内容寻址 Docker build context、异步 worker、超时、并发锁和脱敏日志
 - [x] 3.2 实现派生 image import 与 Matplotlib/Seaborn/ECharts smoke test，成功后原子激活
 - [x] 3.3 将 chart.render 改为读取 active profile 并记录 image/dependency digest provenance
+- [x] 3.4 实现 staging/custom 镜像清单、数量与时间老化、终态清理、安全保护和回归测试
 
 ## 4. Runtime 设置界面
 

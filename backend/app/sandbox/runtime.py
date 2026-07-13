@@ -59,6 +59,7 @@ class SandboxRequest:
     wall_time_seconds: int = 30
     secure: bool = True
     allow_internet_access: bool = False
+    record_stdout: bool = True
     environment: dict[str, str] = field(default_factory=dict)
     metadata: dict[str, str] = field(default_factory=dict)
 
@@ -222,7 +223,7 @@ class SandboxJobService:
                 job.id,
                 "succeeded",
                 output_artifact_ids=[ref.id for ref in refs],
-                stdout_summary=sanitize_log(result.stdout),
+                stdout_summary=sanitize_log(result.stdout) if request.record_stdout else "",
                 stderr_summary=sanitize_log(result.stderr),
             )
             await self.repo.add_event(
@@ -239,7 +240,7 @@ class SandboxJobService:
                 },
             )
             await self.repo.session.commit()
-            return job, refs
+            return job, refs, result
         except SandboxError as exc:
             status = "timed_out" if exc.category == "sandbox_timeout" else "failed"
             await self._record_terminal_state(

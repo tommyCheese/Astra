@@ -636,6 +636,23 @@ describe('App', () => {
     expect(screen.getByRole('button', { name: '构建并激活' })).toBeEnabled();
   });
 
+  it('shows the resolved version after an unpinned dependency build succeeds', async () => {
+    vi.mocked(getRuntimeProfile).mockResolvedValue({
+      dependencies: [{ name: 'openpyxl', version: '3.1.5' }],
+      core_dependencies: [],
+      active_image: 'astra-data-viz:custom-resolved',
+      dependency_digest: 'resolved',
+      build: { id: 'build-1', status: 'succeeded', phase: '构建完成', progress: 100, log: '构建与导入验证成功' },
+    });
+    render(<App />);
+
+    await userEvent.click(screen.getByRole('button', { name: /设置/ }));
+    await userEvent.click(screen.getByRole('button', { name: '运行时' }));
+
+    expect(await screen.findByLabelText('openpyxl版本')).toHaveValue('3.1.5');
+    expect(screen.getByRole('button', { name: '配置已同步' })).toBeDisabled();
+  });
+
   it('keeps validation and data settings task agnostic', async () => {
     render(<App />);
 

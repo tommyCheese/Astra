@@ -16,11 +16,13 @@
 4. 采用内容寻址 tag `astra-data-viz:custom-<digest>`；构建成功并 smoke test 后事务性激活。失败或重启不改变 active image。
 5. 设置页轮询 build 状态，禁止并发提交；展示安全摘要，不回显宿主路径或完整构建环境。
 6. 增加 backend/frontend Dockerfile 与 Compose，浏览器通过同源 `/api` 联调。
+7. 所有构建先写入 `astra-data-viz:build-<build-id>` staging tag，验证成功后才 tag 为 `custom-<dependency-digest>`；profile 持久化成功激活记录，基础镜像、active 镜像、最近成功镜像受保护，其余记录按数量和时间策略定向执行 `docker image rm`。禁止使用全局 prune，清理失败只记录警告，不撤销已成功激活的镜像。
 
 ## Risks / Trade-offs
 
 - [Risk] 恶意 PyPI 包在 build 阶段执行代码。→ Builder 必须独立 worker、资源/时间限制、最小 build context；第一版明确为管理员级能力。
 - [Risk] 镜像膨胀。→ 依赖数量/构建大小限制、内容去重、保留 active 与最近成功版本。
+- [Risk] 清理误删非 Astra 镜像或正在使用的 active 镜像。→ 只允许删除严格匹配 Astra staging/custom 命名空间且不在保护集中的精确 tag；Docker 拒绝删除时保留清单记录供下次重试。
 - [Risk] Docker build 并发耗尽资源。→ 单飞锁、队列与超时。
 - [Risk] 新依赖破坏核心 renderer。→ 构建后运行 import 与三 backend smoke tests，失败不激活。
 

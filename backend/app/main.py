@@ -33,6 +33,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         try:
+            await app.state.runtime_profile_service.startup()
             async with SessionLocal() as session:
                 interrupted = await UsageRepository(session).reconcile_interrupted()
                 if interrupted:

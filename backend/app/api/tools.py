@@ -30,17 +30,38 @@ class ToolSettingsUpdate(BaseModel):
 
 
 def _tool_settings(settings: Settings, states: dict[str, bool]) -> ToolSettingsResponse:
-    chart_available = settings.sandbox_enabled and sandbox_available(settings)
-    chart_reason = None
+    sandbox_ready = settings.sandbox_enabled and sandbox_available(settings)
+    unavailable_reason = None
     if not settings.sandbox_enabled:
-        chart_reason = "需要先启用 Docker 沙箱。"
-    elif not chart_available:
-        chart_reason = "Docker 当前不可用。"
+        unavailable_reason = "需要先启用 Docker 沙箱。"
+    elif not sandbox_ready:
+        unavailable_reason = "Docker 当前不可用。"
     return ToolSettingsResponse(
         tools=[
-            ToolToggle(name="web_search", label="Web Search", description="搜索公开网页并生成候选来源", enabled=states["web_search"], available=True),
-            ToolToggle(name="web_fetch", label="Web Fetch", description="自适应提取页面主要内容", enabled=states["web_fetch"], available=True),
-            ToolToggle(name="chart_render", label="Chart Render", description="在隔离的 Docker 运行时中生成图表", enabled=states["chart_render"], available=chart_available, unavailable_reason=chart_reason),
+            ToolToggle(
+                name="web_search",
+                label="Web Search",
+                description="在隔离的 Docker 运行时中搜索公开网页",
+                enabled=states["web_search"],
+                available=sandbox_ready,
+                unavailable_reason=unavailable_reason,
+            ),
+            ToolToggle(
+                name="web_fetch",
+                label="Web Fetch",
+                description="在隔离的 Docker 运行时中提取页面主要内容",
+                enabled=states["web_fetch"],
+                available=sandbox_ready,
+                unavailable_reason=unavailable_reason,
+            ),
+            ToolToggle(
+                name="chart_render",
+                label="Chart Render",
+                description="在隔离的 Docker 运行时中生成图表",
+                enabled=states["chart_render"],
+                available=sandbox_ready,
+                unavailable_reason=unavailable_reason,
+            ),
         ]
     )
 

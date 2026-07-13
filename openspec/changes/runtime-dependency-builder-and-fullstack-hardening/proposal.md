@@ -8,6 +8,7 @@ Astra 的绘图 Runtime 依赖目前只能由开发者修改 lock 和 Dockerfile
 - 用户可用 `name==version` 声明 Python 依赖并触发异步构建；系统验证包名/版本、生成派生 lock/image，成功后原子激活，失败时保留上一版本。
 - 构建允许联网下载依赖，普通 Tool Job 仍默认断网且禁止运行时安装。
 - 新增 Runtime profile/build 数据模型、API、状态机、Docker builder、并发控制、审计与错误分类。
+- 管理 Runtime 镜像完整生命周期：唯一 staging、内容寻址激活、成功镜像清单、可配置保留数量与老化时间，以及安全的定向清理。
 - 清理 Docker Sandbox、模型 mock、本地配置与全栈容器启动路径，补齐前后端镜像和 Compose 联调。
 - 增加后端、前端、Docker integration 和真实浏览器行为测试。
 

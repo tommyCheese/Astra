@@ -38,6 +38,7 @@ export type ReasoningPolicyRequest = {
 
 export type RunModelConfig = { provider: string; name: string; api_key: string; base_url: string };
 export type RuntimeDependency = { name: string; version: string };
+export type RuntimeImage = { image: string; dependency_digest: string; dependencies: RuntimeDependency[]; activated_at: string | null };
 export type RuntimeBuildStatus = 'queued' | 'building' | 'succeeded' | 'failed' | 'cancelled';
 export type RuntimeBuild = {
   id: string;
@@ -53,6 +54,8 @@ export type RuntimeProfile = {
   active_image: string;
   dependency_digest: string;
   build: RuntimeBuild | null;
+  images?: RuntimeImage[];
+  image_policy?: { keep_recent: number; retention_days: number };
 };
 
 export type ToolSetting = {

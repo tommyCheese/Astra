@@ -1,0 +1,100 @@
+import json
+from types import SimpleNamespace
+
+import pytest
+
+from app.core.config import Settings
+from app.sandbox.runtime import SandboxResult
+from app.tools.base import ToolExecutionContext, ToolExecutionError
+from app.tools.registry import build_tool_registry
+from app.tools.sandboxed import SandboxedWebTool, _web_runtime_config
+from app.tools.web import WebFetchTool
+
+
+class RecordingSandboxService:
+    def __init__(self, envelope):
+        self.envelope = envelope
+        self.request = None
+        self.payload = None
+
+    async def execute(self, request, **kwargs):
+        self.request = request
+        self.payload = json.loads((request.input_dir / "request.json").read_text())
+        self.runtime_config = json.loads((request.input_dir / "runtime-config.json").read_text())
+        return (
+            SimpleNamespace(id="job-1"),
+            [],
+            SandboxResult(0, stdout=json.dumps(self.envelope)),
+        )
+
+
+def context(service):
+    return ToolExecutionContext(
+        run_id="run-1",
+        tool_call_id="call-1",
+        step_id="step-1",
+        trace_id="trace-1",
+        artifact_service=None,
+        sandbox_service=service,
+    )
+
+
+def test_application_registry_exposes_only_container_tools():
+    registry = build_tool_registry(
+        Settings(sandbox_enabled=True, sandbox_skip_availability_check=True)
+    )
+
+    assert {"web_search", "web_fetch", "chart.render"} == set(registry.specs())
+    assert all(spec.execution_backend == "sandbox.remote" for spec in registry.specs().values())
+
+
+def test_registry_exposes_no_tools_when_sandbox_is_disabled():
+    assert not build_tool_registry(Settings(sandbox_enabled=False)).specs()
+
+
+def test_web_runtime_config_is_an_explicit_host_secret_allowlist():
+    settings = Settings(
+        model_api_key="model-secret",
+        database_url="postgresql://private-host/astra",
+        artifact_store_path="/Users/private/artifacts",
+        web_search_api_key="search-secret",
+    )
+
+    runtime_config = _web_runtime_config(settings, "web_search")
+
+    assert runtime_config["WEB_SEARCH_API_KEY"] == "search-secret"
+    assert "MODEL_API_KEY" not in runtime_config
+    assert "DATABASE_URL" not in runtime_config
+    assert "ARTIFACT_STORE_PATH" not in runtime_config
+    assert "/Users/private" not in json.dumps(runtime_config)
+
+
+async def test_web_tool_executes_through_container_protocol_only():
+    service = RecordingSandboxService(
+        {"ok": True, "output": {"url": "https://example.com", "content": "example"}}
+    )
+    tool = SandboxedWebTool(WebFetchTool(Settings()), Settings())
+
+    output = await tool.run({"url": "https://example.com"}, context=context(service))
+
+    assert output["content"] == "example"
+    assert service.payload == {
+        "version": "1",
+        "tool": "web_fetch",
+        "input": {"url": "https://example.com"},
+    }
+    assert service.request.allow_internet_access is True
+    assert service.request.record_stdout is False
+    assert service.request.command == ["/opt/astra/bin/tool-runtime"]
+    assert service.request.template == "astra-web-tools:0.1.0"
+    assert service.request.environment == {"TZ": "UTC", "PYTHONHASHSEED": "0"}
+
+
+async def test_web_tool_rejects_invalid_container_response():
+    service = RecordingSandboxService({"ok": True, "output": "not-an-object"})
+    tool = SandboxedWebTool(WebFetchTool(Settings()), Settings())
+
+    with pytest.raises(ToolExecutionError) as exc_info:
+        await tool.run({"url": "https://example.com"}, context=context(service))
+
+    assert exc_info.value.category == "sandbox_policy_violation"

@@ -46,6 +46,27 @@ async def test_docker_provider_hardens_and_always_removes(tmp_path):
     assert any(call[:2] == ("rm", "--force") for call in provider.calls)
 
 
+async def test_docker_provider_uses_bridge_only_for_explicit_internet_access(tmp_path):
+    provider = RecordingDockerProvider()
+    await SandboxSupervisor(provider).run(
+        SandboxRequest(
+            "astra-web-tools:0.1.0",
+            ["/opt/astra/bin/tool-runtime"],
+            tmp_path,
+            tmp_path / "out",
+            allow_internet_access=True,
+        )
+    )
+
+    create = next(call for call in provider.calls if call[0] == "create")
+    assert create[create.index("--network") : create.index("--network") + 2] == (
+        "--network",
+        "bridge",
+    )
+    assert "--mount" not in create and "--volume" not in create and "-v" not in create
+    assert not any(part.startswith("/Users/") for part in create)
+
+
 class TimeoutDockerProvider(RecordingDockerProvider):
     async def execute(self, handle, command, timeout, environment):
         await asyncio.sleep(timeout + 1)

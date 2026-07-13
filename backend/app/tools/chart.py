@@ -113,7 +113,7 @@ class ChartRenderTool(Tool):
             metadata={"tool": "chart.render", "backend": backend},
         )
         try:
-            job, refs = await context.sandbox_service.execute(
+            job, refs, _result = await context.sandbox_service.execute(
                 sandbox_request,
                 run_id=context.run_id,
                 tool_call_id=context.tool_call_id,

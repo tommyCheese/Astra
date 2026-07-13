@@ -40,11 +40,12 @@ class Settings(BaseSettings):
     artifact_max_files: int = 16
     artifact_max_bytes: int = 20 * 1024 * 1024
     artifact_retention_days: int = 30
-    sandbox_enabled: bool = False
+    sandbox_enabled: bool = True
     sandbox_skip_availability_check: bool = False
     sandbox_provider: str = "docker"
     docker_binary: str = "docker"
     sandbox_runtime_image: str = "astra-data-viz:0.1.0"
+    sandbox_web_runtime_image: str = "astra-web-tools:0.1.0"
     sandbox_runtime_lock_digest: str = ""
     sandbox_wall_time_seconds: int = 30
     sandbox_memory_mb: int = 1024
@@ -52,6 +53,8 @@ class Settings(BaseSettings):
     sandbox_pids: int = 128
     runtime_profile_path: str = "./runtime-profile.json"
     runtime_build_timeout_seconds: int = 600
+    runtime_image_keep_recent: int = 3
+    runtime_image_retention_days: int = 30
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 
