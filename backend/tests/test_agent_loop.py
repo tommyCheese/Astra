@@ -232,7 +232,7 @@ class ContinueDecisionClient(MockModelClient):
     def __init__(self):
         self.decide_calls = 0
 
-    async def decide_with_answer(self, goal, context, *, on_delta=None):
+    async def decide_with_answer(self, goal, context, *, on_delta=None, on_reasoning_delta=None):
         self.decide_calls += 1
         return AgentDecision(decision_type="continue", reasoning_summary="继续处理"), None
 
@@ -242,7 +242,7 @@ class RecoveringDecisionClient(MockModelClient):
         self.decide_calls = 0
         self.reflect_calls = 0
 
-    async def decide_with_answer(self, goal, context, *, on_delta=None):
+    async def decide_with_answer(self, goal, context, *, on_delta=None, on_reasoning_delta=None):
         self.decide_calls += 1
         if self.decide_calls == 1:
             raise ModelOutputError("invalid decision")
@@ -287,7 +287,7 @@ class ToolThenFinalizeClient(MockModelClient):
         self.decide_calls = 0
         self.reflect_calls = 0
 
-    async def decide_with_answer(self, goal, context, *, on_delta=None):
+    async def decide_with_answer(self, goal, context, *, on_delta=None, on_reasoning_delta=None):
         self.decide_calls += 1
         if self.decide_calls == 1:
             return AgentDecision(
@@ -306,7 +306,7 @@ class ArtifactReferencingClient(MockModelClient):
     def __init__(self, artifact_ids: list[str]):
         self.artifact_ids = artifact_ids
 
-    async def decide_with_answer(self, goal, context, *, on_delta=None):
+    async def decide_with_answer(self, goal, context, *, on_delta=None, on_reasoning_delta=None):
         return AgentDecision(decision_type="finalize", reasoning_summary="完成"), FinalAnswer(
             summary="已完成",
             findings=[
@@ -323,7 +323,7 @@ class RepeatedToolClient(MockModelClient):
     def __init__(self):
         self.decide_calls = 0
 
-    async def decide_with_answer(self, goal, context, *, on_delta=None):
+    async def decide_with_answer(self, goal, context, *, on_delta=None, on_reasoning_delta=None):
         self.decide_calls += 1
         return AgentDecision(
             decision_type="call_tool",
@@ -338,7 +338,7 @@ class TwoToolsThenFinalizeClient(MockModelClient):
         self.decide_calls = 0
         self.reflect_calls = 0
 
-    async def decide_with_answer(self, goal, context, *, on_delta=None):
+    async def decide_with_answer(self, goal, context, *, on_delta=None, on_reasoning_delta=None):
         self.decide_calls += 1
         if self.decide_calls == 1:
             return AgentDecision(
@@ -462,19 +462,20 @@ async def test_invalid_reflection_is_skipped_without_blocking_answer(session):
     run = await repo.create_task_run(
         "你好，吃橘子可以治疗口腔溃疡吗？",
         settings.model_policy,
-        reasoning_policy=compiled_policy(reflection_enabled=True, reflection_trigger="failure_only"),
+        reasoning_policy=compiled_policy(
+            reflection_enabled=True, reflection_trigger="failure_only"
+        ),
     )
     client = InvalidReflectionClient()
 
-    result = await AgentLoop(
-        settings, model_client=client, tool_registry=fake_web_registry()
-    ).run(repo, run.id, run.task.description)
+    result = await AgentLoop(settings, model_client=client, tool_registry=fake_web_registry()).run(
+        repo, run.id, run.task.description
+    )
 
     assert result["answer"].summary == "已完成"
     events = await repo.list_events(run.id)
     assert any(
-        event.type == "reflection.skipped"
-        and event.payload.get("reason") == "invalid_model_output"
+        event.type == "reflection.skipped" and event.payload.get("reason") == "invalid_model_output"
         for event in events
     )
 

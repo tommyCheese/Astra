@@ -1,6 +1,7 @@
 import hashlib
 import json
 import logging
+import time
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -502,11 +503,72 @@ class AgentLoop:
                 tool_router=self.router,
                 observations=observations,
             )
+            await repo.add_event(
+                run_id,
+                "reasoning.phase.started",
+                {
+                    "phase": "selecting_action",
+                    "label": "正在分析下一步",
+                    "turn_index": turn_index,
+                },
+            )
+            await repo.session.commit()
+            reasoning_buffer = ""
+            reasoning_summary = ""
+            reasoning_last_flush = 0.0
+            reasoning_completed = False
+            current_turn_index = turn_index
+
+            async def on_reasoning_delta(
+                delta: str, *, event_turn_index: int = current_turn_index
+            ) -> None:
+                nonlocal reasoning_buffer, reasoning_summary
+                nonlocal reasoning_last_flush, reasoning_completed
+                if delta == "\1":
+                    if reasoning_buffer:
+                        await repo.add_event(
+                            run_id,
+                            "reasoning.summary.delta",
+                            {"turn_index": event_turn_index, "delta": reasoning_buffer},
+                        )
+                        reasoning_buffer = ""
+                    await repo.add_event(
+                        run_id,
+                        "reasoning.summary.completed",
+                        {
+                            "turn_index": event_turn_index,
+                            "summary": reasoning_summary[:4000],
+                        },
+                    )
+                    reasoning_completed = True
+                    await repo.session.commit()
+                    return
+                if not delta or len(reasoning_summary) >= 4000:
+                    return
+                safe_delta = delta[: 4000 - len(reasoning_summary)]
+                reasoning_summary += safe_delta
+                reasoning_buffer += safe_delta
+                now = time.monotonic()
+                if (
+                    reasoning_last_flush == 0.0
+                    or now - reasoning_last_flush >= 0.02
+                    or len(reasoning_buffer) >= 96
+                ):
+                    await repo.add_event(
+                        run_id,
+                        "reasoning.summary.delta",
+                        {"turn_index": event_turn_index, "delta": reasoning_buffer},
+                    )
+                    reasoning_buffer = ""
+                    reasoning_last_flush = now
+                    await repo.session.commit()
+
             try:
                 decision, candidate_answer = await self.model_client.decide_with_answer(
                     goal,
                     context,
                     on_delta=on_answer_delta,
+                    on_reasoning_delta=on_reasoning_delta,
                 )
             except ModelOutputError as exc:
                 logger.exception("agent.decision.invalid run_id=%s turn=%s", run_id, turn_index)
@@ -540,6 +602,20 @@ class AgentLoop:
                 )
                 await repo.session.commit()
                 continue
+
+            if not reasoning_completed:
+                if reasoning_buffer:
+                    await repo.add_event(
+                        run_id,
+                        "reasoning.summary.delta",
+                        {"turn_index": turn_index, "delta": reasoning_buffer},
+                    )
+                await repo.add_event(
+                    run_id,
+                    "reasoning.summary.completed",
+                    {"turn_index": turn_index, "summary": decision.reasoning_summary[:4000]},
+                )
+                await repo.session.commit()
 
             logger.info(
                 "agent.decision run_id=%s turn=%s type=%s tool=%s confidence=%.2f",

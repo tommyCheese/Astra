@@ -1,8 +1,8 @@
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { App } from '../src/App';
-import { buildRuntime, cancelRuntimeBuild, createRun, getRun, getRuntimeProfile, listRuns, streamRunEvents, updateToolSettings } from '../src/api';
+import { buildRuntime, cancelRuntimeBuild, createRun, getRun, getRuntimeProfile, listRuns, streamRunEvents, updateToolSettings, type RunStreamEvent } from '../src/api';
 
 vi.mock('../src/api', () => ({
   getToolSettings: vi.fn(async () => ({ tools: [
@@ -341,6 +341,59 @@ describe('App', () => {
     expect(screen.getByText('流式回答不会消失')).toBeInTheDocument();
     await waitFor(() => expect(screen.getByText('已完成查询')).toBeInTheDocument(), { timeout: 4000 });
     expect(screen.queryByText('流式回答不会消失')).not.toBeInTheDocument();
+    vi.mocked(getRun).mockResolvedValue(finalSnapshot);
+    vi.mocked(streamRunEvents).mockImplementation(() => () => undefined);
+  });
+
+  it('shows live reasoning immediately, batches deltas without snapshot refreshes, and respects expansion choices', async () => {
+    const finalSnapshot = await vi.mocked(getRun)('fixture');
+    const executingSnapshot = {
+      ...finalSnapshot,
+      status: 'executing',
+      result: null,
+      summary: null,
+      turns: [],
+      tool_calls: [],
+      events: [],
+      chat_messages: [{ id: 'u-live', role: 'user', content: '实时过程', status: 'completed', metadata: {} }],
+    };
+    vi.mocked(getRun).mockClear();
+    vi.mocked(getRun).mockResolvedValue(executingSnapshot as typeof finalSnapshot);
+    let emit: ((event: RunStreamEvent) => void) | undefined;
+    vi.mocked(streamRunEvents).mockImplementationOnce((_runId, onEvent) => {
+      emit = onEvent;
+      return () => undefined;
+    });
+
+    render(<App />);
+    await userEvent.type(screen.getByRole('textbox'), '实时过程');
+    await userEvent.click(screen.getByRole('button', { name: '↑' }));
+
+    const summary = await screen.findByText('思考过程');
+    const panel = summary.closest('details');
+    expect(panel).toHaveAttribute('open');
+    expect(screen.getByText('实时更新')).toBeInTheDocument();
+    await waitFor(() => expect(emit).toBeTypeOf('function'));
+    const snapshotCalls = vi.mocked(getRun).mock.calls.length;
+
+    act(() => {
+      emit?.({ id: 10, type: 'reasoning.phase.started', payload: { phase: 'selecting_action', turn_index: 1 } });
+      emit?.({ id: 11, type: 'reasoning.summary.delta', payload: { turn_index: 1, delta: '正在选择可靠来源' } });
+    });
+    expect(await screen.findByText('正在选择可靠来源')).toBeInTheDocument();
+    await new Promise((resolve) => window.setTimeout(resolve, 150));
+    expect(vi.mocked(getRun)).toHaveBeenCalledTimes(snapshotCalls);
+
+    act(() => emit?.({ id: 12, type: 'answer.delta', payload: { delta: '开始回答' } }));
+    expect(await screen.findByText('开始回答')).toBeInTheDocument();
+    await waitFor(() => expect(panel).not.toHaveAttribute('open'));
+
+    await userEvent.click(summary);
+    expect(panel).toHaveAttribute('open');
+    act(() => emit?.({ id: 13, type: 'reasoning.summary.delta', payload: { turn_index: 1, delta: '并继续验证' } }));
+    expect(await screen.findByText('正在选择可靠来源并继续验证')).toBeInTheDocument();
+    expect(panel).toHaveAttribute('open');
+
     vi.mocked(getRun).mockResolvedValue(finalSnapshot);
     vi.mocked(streamRunEvents).mockImplementation(() => () => undefined);
   });

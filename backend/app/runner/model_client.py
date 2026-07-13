@@ -25,6 +25,7 @@ from app.schemas.agent import (
 
 logger = logging.getLogger("astra.model")
 AnswerDeltaCallback = Callable[[str], Awaitable[None]]
+StreamFieldCallbacks = dict[str, AnswerDeltaCallback]
 
 
 class ModelConfigurationError(RuntimeError):
@@ -68,8 +69,13 @@ class ModelClient(ABC):
         context: dict[str, Any],
         *,
         on_delta: AnswerDeltaCallback | None = None,
+        on_reasoning_delta: AnswerDeltaCallback | None = None,
     ) -> tuple[AgentDecision, FinalAnswer | None]:
-        return await self.decide(goal, context), None
+        decision = await self.decide(goal, context)
+        if on_reasoning_delta:
+            await on_reasoning_delta(decision.reasoning_summary)
+            await on_reasoning_delta("\1")
+        return decision, None
 
     @abstractmethod
     async def reflect(self, goal: str, context: dict[str, Any]) -> AgentReflection:
@@ -467,6 +473,7 @@ class OpenAICompatibleModelClient(ModelClient):
         context: dict[str, Any],
         *,
         on_delta: AnswerDeltaCallback | None = None,
+        on_reasoning_delta: AnswerDeltaCallback | None = None,
     ) -> tuple[AgentDecision, FinalAnswer | None]:
         operation = ModelOperation.DECISION_WITH_ANSWER
         payload = await self._chat_json(
@@ -497,8 +504,14 @@ class OpenAICompatibleModelClient(ModelClient):
                 },
             ],
             operation=operation,
-            stream_field="summary",
-            on_field_delta=on_delta,
+            stream_callbacks={
+                field: callback
+                for field, callback in {
+                    "reasoning_summary": on_reasoning_delta,
+                    "summary": on_delta,
+                }.items()
+                if callback is not None
+            },
         )
         try:
             decision = AgentDecision.model_validate(payload)
@@ -589,6 +602,7 @@ class OpenAICompatibleModelClient(ModelClient):
         attempt: int = 0,
         stream_field: str | None = None,
         on_field_delta: AnswerDeltaCallback | None = None,
+        stream_callbacks: StreamFieldCallbacks | None = None,
     ) -> dict[str, Any]:
         url = self.settings.model_base_url.rstrip("/") + "/chat/completions"
         started = time.perf_counter()
@@ -648,8 +662,11 @@ class OpenAICompatibleModelClient(ModelClient):
                 ) from exc
             if "text/event-stream" in response.headers.get("content-type", ""):
                 chunks: list[str] = []
-                streamed_value = ""
-                field_complete_notified = False
+                callbacks = dict(stream_callbacks or {})
+                if stream_field and on_field_delta:
+                    callbacks[stream_field] = on_field_delta
+                streamed_values = dict.fromkeys(callbacks, "")
+                completed_fields: set[str] = set()
                 async for line in response.aiter_lines():
                     if not line.startswith("data:"):
                         continue
@@ -665,17 +682,19 @@ class OpenAICompatibleModelClient(ModelClient):
                         continue
                     if delta:
                         chunks.append(delta)
-                        if stream_field and on_field_delta:
+                        if callbacks:
                             streamed_content = "".join(chunks)
-                            current_value = extract_partial_json_string(streamed_content, stream_field)
-                            if len(current_value) > len(streamed_value):
-                                await on_field_delta(current_value[len(streamed_value) :])
-                                streamed_value = current_value
-                            if not field_complete_notified and json_string_field_complete(
-                                streamed_content, stream_field
-                            ):
-                                await on_field_delta("\1")
-                                field_complete_notified = True
+                            for field, callback in callbacks.items():
+                                current_value = extract_partial_json_string(streamed_content, field)
+                                previous_value = streamed_values[field]
+                                if len(current_value) > len(previous_value):
+                                    await callback(current_value[len(previous_value) :])
+                                    streamed_values[field] = current_value
+                                if field not in completed_fields and json_string_field_complete(
+                                    streamed_content, field
+                                ):
+                                    await callback("\1")
+                                    completed_fields.add(field)
                 content = "".join(chunks)
                 chunk_count = len(chunks)
             else:
@@ -745,6 +764,7 @@ class OpenAICompatibleModelClient(ModelClient):
                     operation=operation,
                     stream_field=stream_field,
                     on_field_delta=on_field_delta,
+                    stream_callbacks=stream_callbacks,
                 )
             raise ModelOutputError("Model returned non-JSON content") from exc
 

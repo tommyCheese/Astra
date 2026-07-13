@@ -1,4 +1,5 @@
 import asyncio
+import json
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -202,6 +203,28 @@ async def test_run_event_stream_starts_with_ready_signal(app_client, monkeypatch
     assert response.status_code == 200
     assert response.headers["cache-control"] == "no-cache, no-transform"
     assert '"type": "stream.ready"' in response.text
+
+
+async def test_run_event_stream_resumes_after_event_id(app_client, monkeypatch):
+    from app.repositories.runs import RunRepository
+
+    created = await app_client.post("/api/runs", json={"goal": "断流恢复测试"})
+    run_id = created.json()["run_id"]
+    monkeypatch.setattr(runs_api, "SessionLocal", app_client._astra_session)
+    async with app_client._astra_session() as session:
+        repo = RunRepository(session)
+        skipped = await repo.add_event(run_id, "reasoning.summary.delta", {"delta": "旧片段"})
+        included = await repo.add_event(run_id, "reasoning.summary.completed", {"summary": "恢复后的摘要"})
+        await repo.update_run_status(run_id, "completed", summary="完成")
+        await session.commit()
+
+    response = await app_client.get(f"/api/runs/{run_id}/events?after_id={skipped.id}")
+
+    assert response.status_code == 200
+    assert f"id: {skipped.id}\n" not in response.text
+    assert f"id: {included.id}\n" in response.text
+    streamed = [json.loads(line.removeprefix("data: ")) for line in response.text.splitlines() if line.startswith("data: ")]
+    assert any(item.get("payload", {}).get("summary") == "恢复后的摘要" for item in streamed)
 
 
 async def test_run_task_is_retained_until_background_execution_finishes(app_client, monkeypatch):

@@ -106,6 +106,11 @@ class RunEngine:
             return
 
         logger.info("run.phase run_id=%s phase=planning", run_id)
+        await repo.add_event(
+            run_id,
+            "reasoning.phase.started",
+            {"phase": "planning", "label": "正在理解任务并制定计划"},
+        )
         await repo.update_run_status(run_id, "planning")
         contract, plan = await self._prepare_plan(run_id, goal, run.reasoning_policy or {})
         logger.info(
@@ -277,6 +282,11 @@ class RunEngine:
             )
 
         logger.info("run.phase run_id=%s phase=executing", run_id)
+        await repo.add_event(
+            run_id,
+            "reasoning.phase.started",
+            {"phase": "executing", "label": "正在执行计划"},
+        )
         await repo.update_run_status(run_id, "executing")
         agent_loop = AgentLoop(
             self.settings,
@@ -310,6 +320,11 @@ class RunEngine:
         result: dict[str, Any],
         status: str,
     ) -> None:
+        await repo.add_event(
+            run_id,
+            "reasoning.phase.started",
+            {"phase": "synthesizing", "label": "正在组织回答"},
+        )
         await repo.update_run_status(run_id, "synthesizing")
         synth_step = await self._mark_named_step_running(repo, run_id, "综合")
         await repo.create_artifact(
@@ -328,6 +343,11 @@ class RunEngine:
                 },
             )
 
+        await repo.add_event(
+            run_id,
+            "reasoning.phase.started",
+            {"phase": "verifying", "label": "正在验证结果"},
+        )
         await repo.update_run_status(run_id, "verifying")
         verify_step = await self._mark_named_step_running(repo, run_id, "验证")
         if verify_step is not None:

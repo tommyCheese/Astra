@@ -72,7 +72,7 @@ class ChartClient(MockModelClient):
     def __init__(self):
         self.calls = 0
 
-    async def decide_with_answer(self, goal, context, *, on_delta=None):
+    async def decide_with_answer(self, goal, context, *, on_delta=None, on_reasoning_delta=None):
         self.calls += 1
         if self.calls == 1:
             return AgentDecision(

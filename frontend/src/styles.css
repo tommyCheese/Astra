@@ -736,6 +736,15 @@ h1 {
   margin: 2px 0 10px 2px;
 }
 
+.process-entry.live .process-panel {
+  background: linear-gradient(145deg, rgba(247, 250, 252, .82), rgba(242, 247, 250, .62));
+  border: 1px solid rgba(207, 216, 227, .68);
+  border-radius: 13px;
+  margin-left: 0;
+  max-width: 760px;
+  padding: 10px 12px;
+}
+
 .process-panel > summary {
   align-items: center;
   cursor: pointer;
@@ -749,6 +758,8 @@ h1 {
 .process-panel > summary .ui-icon { height: 15px; width: 15px; }
 .process-panel > summary span { color: #52606d; font-size: 13px; font-weight: 650; }
 .process-panel > summary small { color: #8a94a3; font-size: 12px; }
+.process-live-dot { animation: process-live-pulse 1.5s ease-in-out infinite; background: #42a884; border-radius: 50%; box-shadow: 0 0 0 3px rgba(66, 168, 132, .12); height: 6px; width: 6px; }
+@keyframes process-live-pulse { 50% { box-shadow: 0 0 0 6px rgba(66, 168, 132, 0); opacity: .72; } }
 .process-panel > summary::after { color: #98a2b3; content: '›'; font-size: 16px; transition: transform 160ms ease; }
 .process-panel[open] > summary::after { transform: rotate(90deg); }
 
@@ -783,6 +794,11 @@ h1 {
 .process-step strong { color: #364152; display: block; font-size: 12px; }
 .process-step p { color: #697586; font-size: 12px; line-height: 1.5; margin-top: 2px; }
 .process-step small { color: #8a94a3; display: block; font-size: 11px; margin-top: 4px; }
+.process-step.status-running .process-dot { border-color: rgba(66, 168, 132, .5); color: #278268; }
+.process-step.status-running strong::after { animation: stream-cursor-blink 900ms steps(1) infinite; color: #42a884; content: ' ·'; }
+.process-step.status-failed .process-dot { color: #b54747; }
+
+html[data-theme="dark"] .process-entry.live .process-panel { background: linear-gradient(145deg, rgba(43, 49, 57, .82), rgba(35, 41, 49, .72)); border-color: rgba(255, 255, 255, .08); }
 
 .answer-notes {
   border-top: 1px solid #e1e7ed;
@@ -3022,6 +3038,7 @@ html[data-theme="dark"] .bubble.user { background: linear-gradient(145deg, rgba(
   .bubble.user p { max-width: calc(100vw - 56px); }
   .conversation { padding-left: 14px; padding-right: 14px; }
   .conversation .bubble.user { max-width: 88%; }
+  .process-entry.live .process-panel { max-width: none; }
 }
 .artifact-gallery { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; margin: 18px 0; }
 .artifact-card { margin: 0; overflow: hidden; border: 1px solid var(--border-color, #d8dce5); border-radius: 14px; background: var(--surface, #fff); }

@@ -123,6 +123,18 @@ def test_partial_json_string_streams_only_complete_characters():
     assert json_string_field_complete('{"summary":"done","findings":[', "summary")
 
 
+def test_partial_json_stream_separates_reasoning_summary_from_final_answer():
+    content = (
+        '{"decision_type":"finalize","reasoning_summary":"先检查已有信息。",'
+        '"final_answer":{"summary":"这是最终回答。"}}'
+    )
+
+    assert extract_partial_json_string(content, "reasoning_summary") == "先检查已有信息。"
+    assert extract_partial_json_string(content, "summary") == "这是最终回答。"
+    assert json_string_field_complete(content, "reasoning_summary")
+    assert json_string_field_complete(content, "summary")
+
+
 def test_model_payload_normalization_accepts_shorthand_contract_and_plan():
     contract = TaskContract.model_validate(
         normalize_contract_payload(

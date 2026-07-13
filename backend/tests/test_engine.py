@@ -44,6 +44,23 @@ async def test_engine_completes_mock_web_query(session):
     ]
     assert len(evidence_pack["fetched_sources"]) == len(succeeded_fetch_calls)
 
+    events = await repo.list_events(run.id)
+    event_types = [event.type for event in events]
+    planning_index = event_types.index("reasoning.phase.started")
+    selecting_index = next(
+        index
+        for index, event in enumerate(events)
+        if event.type == "reasoning.phase.started"
+        and event.payload.get("phase") == "selecting_action"
+    )
+    summary_index = event_types.index("reasoning.summary.completed")
+    turn_index = event_types.index("agent_turn.created")
+    tool_index = event_types.index("tool_call.started")
+    assert planning_index < selecting_index < summary_index < turn_index < tool_index
+    process_events = [event for event in events if event.type.startswith("reasoning.")]
+    assert all("reasoning_content" not in event.payload for event in process_events)
+    assert all("tool_input" not in event.payload for event in process_events)
+
 
 async def test_answer_delta_batching_flushes_first_and_final_content(session):
     settings = Settings(model_provider="mock", web_search_provider="mock")

@@ -1,4 +1,4 @@
-import { FormEvent, ReactNode, useEffect, useMemo, useRef, useState } from 'react';
+import { FormEvent, MouseEvent, ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { AstraApiError, ApiErrorPayload, buildRuntime, cancelRuntimeBuild, createRun, getRun, getRuntimeProfile, getToolSettings, listRuns, resumeRun, streamRunEvents, updateToolSettings, type ToolSetting } from './api';
@@ -7,6 +7,8 @@ import { ThemeProvider, useTheme } from './theme';
 import type { ArtifactView, ChatMessage, RunView } from './types';
 import { UsageDashboard } from './UsageDashboard';
 import { buildPresentation, HISTORY_LIMIT, normalizeRunView, type ConversationEntry } from './conversations';
+import { createOptimisticProcessState, reconcileProcessSnapshot, reduceProcessEvent, type ProcessStreamState } from './processStream';
+import type { RunStreamEvent } from './api';
 
 const terminalStatuses = new Set(['completed', 'completed_with_warnings', 'failed', 'blocked', 'waiting_user']);
 const STORAGE_KEYS = {
@@ -30,6 +32,7 @@ function AppContent() {
   const [streamingAnswer, setStreamingAnswer] = useState('');
   const [answerComplete, setAnswerComplete] = useState(false);
   const [answerSettling, setAnswerSettling] = useState(false);
+  const [processState, setProcessState] = useState<ProcessStreamState | null>(null);
   const [showJumpToLatest, setShowJumpToLatest] = useState(false);
   const [error, setError] = useState<ApiErrorPayload | null>(null);
   const [view, setView] = useState<'chat' | 'settings'>('chat');
@@ -55,6 +58,8 @@ function AppContent() {
   const jumpResetTimerRef = useRef<number>();
   const deltaBufferRef = useRef('');
   const deltaFrameRef = useRef<number>();
+  const processEventBufferRef = useRef<RunStreamEvent[]>([]);
+  const processFrameRef = useRef<number>();
   const refreshTimerRef = useRef<number>();
   const initialSnapshotControllerRef = useRef<AbortController>();
   const availableModels = useMemo(() => providerConfigs
@@ -69,6 +74,7 @@ function AppContent() {
   useEffect(() => () => {
     if (jumpResetTimerRef.current !== undefined) window.clearTimeout(jumpResetTimerRef.current);
     if (deltaFrameRef.current !== undefined) window.cancelAnimationFrame(deltaFrameRef.current);
+    if (processFrameRef.current !== undefined) window.cancelAnimationFrame(processFrameRef.current);
     if (refreshTimerRef.current !== undefined) window.clearTimeout(refreshTimerRef.current);
     initialSnapshotControllerRef.current?.abort();
   }, []);
@@ -186,6 +192,7 @@ function AppContent() {
       } as RunView);
       setPriorMessages(previousMessages);
       setRun(current);
+      setProcessState(createOptimisticProcessState(created.run_id));
       rememberConversation(current, previousMessages);
       setGoal('');
       initialSnapshotControllerRef.current?.abort();
@@ -196,6 +203,7 @@ function AppContent() {
         initialSnapshotControllerRef.current = undefined;
         const next = normalizeRunView(snapshot);
         setRun(next);
+        setProcessState((state) => reconcileProcessSnapshot(state, next));
         rememberConversation(next, previousMessages);
       }).catch(() => { /* SSE and fallback polling will recover the snapshot. */ });
     } catch (err) {
@@ -224,6 +232,21 @@ function AppContent() {
       deltaBufferRef.current += delta;
       if (deltaFrameRef.current === undefined) deltaFrameRef.current = window.requestAnimationFrame(flushDeltas);
     };
+    const flushProcessEvents = () => {
+      processFrameRef.current = undefined;
+      const events = processEventBufferRef.current;
+      processEventBufferRef.current = [];
+      if (!events.length) return;
+      setProcessState((state) => {
+        let next = state?.runId === run.id ? state : createOptimisticProcessState(run.id);
+        for (const event of events) next = reduceProcessEvent(next, event);
+        return next;
+      });
+    };
+    const queueProcessEvent = (event: RunStreamEvent) => {
+      processEventBufferRef.current.push(event);
+      if (processFrameRef.current === undefined) processFrameRef.current = window.requestAnimationFrame(flushProcessEvents);
+    };
     const refreshRun = async () => {
       if (refreshing || !active) return;
       refreshing = true;
@@ -231,6 +254,7 @@ function AppContent() {
         const next = normalizeRunView(await getRun(run.id, controller.signal));
         if (!active) return;
         setRun(next);
+        setProcessState((state) => reconcileProcessSnapshot(state, next));
         rememberConversation(next);
         if (terminalStatuses.has(next.status) && next.result) {
           setStreamingAnswer('');
@@ -280,6 +304,12 @@ function AppContent() {
         scheduleRefresh(true);
         return;
       }
+      const isProcessEvent = event.type.startsWith('reasoning.') || ['agent_turn.created', 'tool_call.started', 'tool_call.completed', 'reflection.created', 'verification.created'].includes(event.type);
+      if (isProcessEvent) {
+        queueProcessEvent(event);
+        if (!['reasoning.phase.started', 'reasoning.summary.delta', 'reasoning.summary.completed'].includes(event.type)) scheduleRefresh();
+        return;
+      }
       if (event.type !== 'heartbeat' && event.type !== 'stream.ready') scheduleRefresh();
     }, () => { void refreshRun(); });
     fallback = window.setInterval(() => { void refreshRun(); }, 3000);
@@ -288,6 +318,8 @@ function AppContent() {
       controller.abort();
       closeStream();
       if (deltaFrameRef.current !== undefined) window.cancelAnimationFrame(deltaFrameRef.current);
+      if (processFrameRef.current !== undefined) window.cancelAnimationFrame(processFrameRef.current);
+      processEventBufferRef.current = [];
       if (refreshTimerRef.current !== undefined) window.clearTimeout(refreshTimerRef.current);
       if (fallback !== undefined) window.clearInterval(fallback);
     };
@@ -346,6 +378,7 @@ function AppContent() {
     setStreamingAnswer('');
     setAnswerComplete(false);
     setAnswerSettling(false);
+    setProcessState(null);
     deltaBufferRef.current = '';
     followLatestRef.current = true;
     setShowJumpToLatest(false);
@@ -364,6 +397,7 @@ function AppContent() {
           setActiveConversationId(conversation.id);
           setPriorMessages(conversation.priorMessages);
           setRun(normalizeRunView(conversation.run));
+          setProcessState(reconcileProcessSnapshot(null, normalizeRunView(conversation.run)));
           followLatestRef.current = true;
           setShowJumpToLatest(false);
           changeView('chat');
@@ -403,10 +437,10 @@ function AppContent() {
               </div>
             )}
             {messages.map((message) => (
-              <MessageBubble key={message.id} message={message} run={run} />
+              <MessageBubble key={message.id} message={message} run={run} processState={processState} isAnswerStreaming={Boolean(streamingAnswer)} />
             ))}
             {answerSettling && streamingAnswer && <div className="answer-settling" role="status" aria-live="polite"><span className="settling-spinner" aria-hidden="true" />{t('正在整理并验证结果…')}</div>}
-            {run && !terminalStatuses.has(run.status) && !streamingAnswer && (
+            {run && !terminalStatuses.has(run.status) && !streamingAnswer && !processState && (
               <div className="bubble assistant waiting-message" role="status" aria-live="polite">
                 <span className="bubble-label">Astra</span>
                 <span className="sr-only">{t(activeState(run))}</span>
@@ -1123,7 +1157,7 @@ function Icon({ name }: { name: IconName }) {
   return <svg className="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{paths[name]}</svg>;
 }
 
-function MessageBubble({ message, run }: { message: ChatMessage; run: RunView | null }) {
+function MessageBubble({ message, run, processState, isAnswerStreaming }: { message: ChatMessage; run: RunView | null; processState: ProcessStreamState | null; isAnswerStreaming: boolean }) {
   const { t } = useI18n();
   const snapshot = (message.metadata.run_snapshot as RunView | undefined) ?? run;
   const presentation = String(message.metadata.presentation ?? '');
@@ -1137,7 +1171,7 @@ function MessageBubble({ message, run }: { message: ChatMessage; run: RunView | 
   }
 
   if (presentation === 'process' && snapshot) {
-    return <ProcessPanel run={snapshot} messageId={message.id} />;
+    return <ProcessPanel run={snapshot} messageId={message.id} liveState={processState?.runId === snapshot.id ? processState : null} isAnswerStreaming={isAnswerStreaming && run?.id === snapshot.id} />;
   }
 
   if (presentation === 'answer' && snapshot?.result) {
@@ -1152,22 +1186,42 @@ function MessageBubble({ message, run }: { message: ChatMessage; run: RunView | 
   return null;
 }
 
-function ProcessPanel({ run, messageId }: { run: RunView; messageId: string }) {
+function ProcessPanel({ run, messageId, liveState, isAnswerStreaming }: { run: RunView; messageId: string; liveState: ProcessStreamState | null; isAnswerStreaming: boolean }) {
   const { t } = useI18n();
   const turns = [...(run.turns ?? [])].sort((a, b) => a.turn_index - b.turn_index);
-  const processSummary = run.tool_calls.length > 0
+  const live = Boolean(liveState?.active);
+  const processSummary = live
+    ? t('实时更新')
+    : run.tool_calls.length > 0
     ? t('{steps} 个步骤 · {tools} 次工具调用').replace('{steps}', String(turns.length)).replace('{tools}', String(run.tool_calls.length))
     : t('{steps} 个步骤').replace('{steps}', String(turns.length));
   const report = run.result?.verification_report;
   const notes = [...new Set([...(run.result?.verification_notes ?? []), ...(report?.notes ?? [])])];
-  return <article className="process-entry" id={`message-${messageId}`}><details className="process-panel"><summary><Icon name="brain" /><span>{t('思考过程')}</span><small>{processSummary}</small></summary><div className="process-timeline">
-    {turns.map((turn) => {
+  const [open, setOpen] = useState(live);
+  const userToggledRef = useRef(false);
+  useEffect(() => {
+    userToggledRef.current = false;
+    setOpen(live);
+  }, [run.id]);
+  useEffect(() => {
+    if (isAnswerStreaming && !userToggledRef.current) setOpen(false);
+  }, [isAnswerStreaming]);
+  useEffect(() => {
+    if (!live && !userToggledRef.current) setOpen(false);
+  }, [live]);
+  const toggle = (event: MouseEvent<HTMLElement>) => {
+    event.preventDefault();
+    userToggledRef.current = true;
+    setOpen((value) => !value);
+  };
+  return <article className={`process-entry ${live ? 'live' : ''}`} id={`message-${messageId}`}><details className="process-panel" open={open}><summary onClick={toggle} aria-expanded={open}><Icon name="brain" /><span>{t('思考过程')}</span>{live && <i className="process-live-dot" aria-hidden="true" />}<small>{processSummary}</small></summary><div className="process-timeline" aria-live={live ? 'polite' : undefined}>
+    {live ? liveState?.items.map((item) => <div className={`process-step process-${item.kind} status-${item.status}`} key={item.id}><span className={`process-dot ${item.kind === 'tool' ? 'tool' : ''}`}><Icon name={item.kind === 'tool' ? 'tools' : item.kind === 'verification' ? 'check' : 'brain'} /></span><div><strong>{t(item.title)}</strong>{item.detail && <p>{item.detail}</p>}<small>{item.status === 'running' ? t('进行中') : item.status === 'failed' ? t('失败') : t('已完成')}</small></div></div>) : turns.map((turn) => {
       const call = run.tool_calls.find((item) => item.id === turn.tool_call_id);
       const outputs = call ? visibleArtifacts(run.artifacts).filter((artifact) => artifact.tool_call_id === call.id) : [];
       return <div className="process-step" key={turn.id}><span className={`process-dot ${turn.selected_tool ? 'tool' : ''}`}><Icon name={turn.selected_tool ? 'tools' : 'brain'} /></span><div><strong>{turn.selected_tool ? turn.selected_tool : t(turn.decision_type === 'reflect' ? '反思' : '思考')}</strong><p>{turn.reflection ? String(turn.reflection.summary ?? turn.reasoning_summary) : turn.reasoning_summary}</p>{call && <small>{call.status}{toolCallDetail(call.output)}</small>}{outputs.length > 0 && <a className="process-output-link" href={`#${artifactDomId(outputs[0].id)}`}>{t('{count} 个输出 · 查看输出').replace('{count}', String(outputs.length))}</a>}</div></div>;
     })}
-    {notes.map((note, index) => <div className="process-step verification" key={`verification-${index}`}><span className="process-dot"><Icon name="check" /></span><div><strong>{t('验证')}</strong><p>{note}</p></div></div>)}
-    <ReasoningAuditSummary run={run} />
+    {!live && notes.map((note, index) => <div className="process-step verification" key={`verification-${index}`}><span className="process-dot"><Icon name="check" /></span><div><strong>{t('验证')}</strong><p>{note}</p></div></div>)}
+    {!live && <ReasoningAuditSummary run={run} />}
   </div></details></article>;
 }
 
