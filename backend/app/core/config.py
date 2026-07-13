@@ -24,6 +24,7 @@ class Settings(BaseSettings):
     crawler_max_content_chars: int = 12000
     crawler_max_response_bytes: int = 2 * 1024 * 1024
     crawler_min_quality_chars: int = 240
+    crawler_allow_proxy_fake_ip: bool = False
     agent_max_turns: int = 20
     agent_max_tool_calls: int = 16
     agent_max_reflections: int = 6

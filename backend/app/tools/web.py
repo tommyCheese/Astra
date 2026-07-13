@@ -17,6 +17,8 @@ from trafilatura import extract_metadata
 from app.core.config import Settings
 from app.tools.base import Tool, ToolExecutionError, ToolSpec
 
+PROXY_FAKE_IP_NETWORK = ipaddress.ip_network("198.18.0.0/15")
+
 
 def iso_now() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -504,7 +506,10 @@ class WebFetchTool(Tool):
         byte_limit = max_response_bytes or self.settings.crawler_max_response_bytes
         current_url = url
         for redirect_count in range(max_redirects + 1):
-            await validate_public_http_target(current_url)
+            await validate_public_http_target(
+                current_url,
+                allow_proxy_fake_ip=self.settings.crawler_allow_proxy_fake_ip,
+            )
             async with client.stream("GET", current_url, follow_redirects=False) as response:
                 if response.is_redirect:
                     location = response.headers.get("location")
@@ -561,14 +566,24 @@ def validate_public_http_url(url: str) -> None:
     validate_public_ip(address)
 
 
-def validate_public_ip(address: ipaddress.IPv4Address | ipaddress.IPv6Address) -> None:
+def validate_public_ip(
+    address: ipaddress.IPv4Address | ipaddress.IPv6Address,
+    *,
+    allow_proxy_fake_ip: bool = False,
+) -> None:
+    if allow_proxy_fake_ip and address in PROXY_FAKE_IP_NETWORK:
+        return
     if not address.is_global:
         raise ToolExecutionError(
             "permission_denied", "Private or reserved network targets are not allowed"
         )
 
 
-async def validate_public_http_target(url: str) -> set[str]:
+async def validate_public_http_target(
+    url: str,
+    *,
+    allow_proxy_fake_ip: bool = False,
+) -> set[str]:
     """Resolve every A/AAAA target and reject the hop if any address is non-public."""
     validate_public_http_url(url)
     parsed = urlparse(url)
@@ -596,7 +611,10 @@ async def validate_public_http_target(url: str) -> set[str]:
     if not addresses:
         raise ToolExecutionError("fetch_failed", f"URL hostname has no address records: {hostname}")
     for value in addresses:
-        validate_public_ip(ipaddress.ip_address(value))
+        validate_public_ip(
+            ipaddress.ip_address(value),
+            allow_proxy_fake_ip=allow_proxy_fake_ip,
+        )
     return addresses
 
 

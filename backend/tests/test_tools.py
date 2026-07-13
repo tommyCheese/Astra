@@ -384,8 +384,35 @@ async def test_web_fetch_rejects_hostnames_resolving_to_private_addresses(monkey
     assert exc_info.value.category == "permission_denied"
 
 
+async def test_web_fetch_proxy_fake_ip_compatibility_is_explicit(monkeypatch):
+    class Resolver:
+        async def getaddrinfo(self, _host, port, **_kwargs):
+            return [(2, 1, 6, "", ("198.18.0.42", port))]
+
+    monkeypatch.setattr("app.tools.web.asyncio.get_running_loop", lambda: Resolver())
+
+    async def respond(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/plain"},
+            content=b"public content",
+            request=request,
+        )
+
+    strict_tool = WebFetchTool(Settings(crawler_allow_proxy_fake_ip=False))
+    compatible_tool = WebFetchTool(Settings(crawler_allow_proxy_fake_ip=True))
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
+        with pytest.raises(ToolExecutionError):
+            await strict_tool._get_with_safe_redirects(client, "https://public.example/")
+        response = await compatible_tool._get_with_safe_redirects(
+            client, "https://public.example/"
+        )
+
+    assert response.body == b"public content"
+
+
 async def test_web_fetch_streams_with_a_hard_response_limit(monkeypatch):
-    async def allow_public_target(_url):
+    async def allow_public_target(_url, **_kwargs):
         return {"93.184.216.34"}
 
     monkeypatch.setattr("app.tools.web.validate_public_http_target", allow_public_target)
@@ -409,7 +436,7 @@ async def test_web_fetch_streams_with_a_hard_response_limit(monkeypatch):
 
 
 async def test_web_fetch_rejects_non_text_content(monkeypatch):
-    async def allow_public_target(_url):
+    async def allow_public_target(_url, **_kwargs):
         return {"93.184.216.34"}
 
     monkeypatch.setattr("app.tools.web.validate_public_http_target", allow_public_target)
@@ -431,7 +458,7 @@ async def test_web_fetch_rejects_non_text_content(monkeypatch):
 
 
 async def test_web_fetch_records_the_validated_final_url(monkeypatch):
-    async def allow_public_target(_url):
+    async def allow_public_target(_url, **_kwargs):
         return {"93.184.216.34"}
 
     monkeypatch.setattr("app.tools.web.validate_public_http_target", allow_public_target)
