@@ -147,6 +147,12 @@ class MockModelClient(ModelClient):
         caveats: list[str] = []
         failed_sources: list[dict[str, Any]] = []
         source_quality: list[dict[str, Any]] = []
+        artifact_ids = [
+            str(artifact["id"])
+            for output in tool_outputs
+            for artifact in output.get("artifacts", [])
+            if isinstance(artifact, dict) and isinstance(artifact.get("id"), str)
+        ]
 
         evidence_pack = next(
             (output.get("evidence_pack") for output in tool_outputs if output.get("evidence_pack")),
@@ -203,7 +209,19 @@ class MockModelClient(ModelClient):
                     )
 
         if not findings:
-            caveats.append("未能获取足够的来源内容，结果只能报告证据不足。")
+            if artifact_ids:
+                findings.append(
+                    Finding(
+                        text="工具已生成可用于查看结果的输出。",
+                        artifact_ids=list(dict.fromkeys(artifact_ids)),
+                    )
+                )
+            else:
+                caveats.append("未能获取足够的来源内容，结果只能报告证据不足。")
+        elif artifact_ids:
+            findings[0] = findings[0].model_copy(
+                update={"artifact_ids": list(dict.fromkeys(artifact_ids))}
+            )
 
         answer = FinalAnswer(
             summary=f"已围绕目标完成 Web 数据查询：{goal}",
@@ -369,7 +387,9 @@ class OpenAICompatibleModelClient(ModelClient):
                         "You are Astra's general answer engine. Return JSON only with keys: "
                         "summary, findings, sources, failed_sources, source_quality, "
                         "conflicts, caveats, verification_notes. "
-                        "Each finding has text and source_urls. Each source has url, title, retrieved_at. "
+                        "Each finding has text, source_urls, and artifact_ids. Each source has url, title, retrieved_at. "
+                        "artifact_ids may only contain Artifact IDs that appear in tool_outputs and directly support that finding; "
+                        "never invent an ID, and use an empty list when no Artifact supports the finding. "
                         "When audited tool evidence exists, ground claims in it and cite source URLs. "
                         "When no tool was needed, answer from general model knowledge, leave sources empty, "
                         "and state limitations for time-sensitive or uncertain claims."
@@ -437,6 +457,9 @@ class OpenAICompatibleModelClient(ModelClient):
                         "writing, and conversation, choose finalize and also include final_answer with keys: "
                         "summary, findings, sources, failed_sources, source_quality, conflicts, caveats, "
                         "verification_notes. Put final_answer immediately after reasoning_summary. "
+                        "Each finding must contain text, source_urls, and artifact_ids. artifact_ids may only "
+                        "reference Artifact IDs present in the supplied context that directly support the finding; "
+                        "never invent IDs, and use an empty list when there is no supporting Artifact. "
                         "The summary must contain the complete user-facing answer, not an introduction or preview; "
                         "use findings only for optional supporting details. "
                         "For call_tool include tool_name and tool_input and omit final_answer. "
@@ -975,6 +998,12 @@ def normalize_final_answer_payload(payload: dict[str, Any]) -> dict[str, Any]:
         item["text"] = str(item.get("text") or item.get("finding") or "")
         urls = item.get("source_urls") or []
         item["source_urls"] = urls if isinstance(urls, list) else [str(urls)]
+        artifact_ids = item.get("artifact_ids") or []
+        item["artifact_ids"] = (
+            [str(artifact_id) for artifact_id in artifact_ids if isinstance(artifact_id, str)]
+            if isinstance(artifact_ids, list)
+            else []
+        )
     sources = normalized.get("sources") or []
     normalized["sources"] = [
         item if isinstance(item, dict) else {"url": str(item)}

@@ -1,9 +1,16 @@
+from types import SimpleNamespace
+
 import pytest
 from fake_web_tools import fake_web_registry
 
 from app.core.config import Settings
 from app.repositories.runs import RunRepository
-from app.runner.agent_loop import AgentLoop, ToolRouter
+from app.runner.agent_loop import (
+    INVALID_ARTIFACT_REFERENCE_WARNING,
+    AgentLoop,
+    ToolRouter,
+    normalize_final_answer_artifact_references,
+)
 from app.runner.model_client import MockModelClient, ModelOutputError
 from app.runner.reasoning import PolicyCompiler, build_default_contract, build_plan_graph
 from app.schemas.agent import (
@@ -18,6 +25,75 @@ from app.schemas.agent import (
 )
 from app.tools.base import ToolExecutionError
 from app.tools.web import build_web_registry
+
+
+def artifact_stub(
+    artifact_id: str,
+    *,
+    security_status: str = "verified",
+    storage_key: str | None = "run/output.png",
+):
+    return SimpleNamespace(
+        id=artifact_id,
+        security_status=security_status,
+        storage_key=storage_key,
+    )
+
+
+def test_artifact_reference_normalization_keeps_valid_ids_and_deduplicates():
+    answer = FinalAnswer(
+        summary="完成",
+        findings=[
+            {
+                "text": "图表结论",
+                "source_urls": [],
+                "artifact_ids": ["valid-a", "valid-a", "valid-b"],
+            }
+        ],
+    )
+
+    normalized, invalid_count, referenced = normalize_final_answer_artifact_references(
+        answer,
+        [artifact_stub("valid-a"), artifact_stub("valid-b")],
+    )
+
+    assert normalized.findings[0].artifact_ids == ["valid-a", "valid-b"]
+    assert invalid_count == 0
+    assert referenced == ["valid-a", "valid-b"]
+
+
+def test_artifact_reference_normalization_removes_all_inaccessible_ids_safely():
+    answer = FinalAnswer(
+        summary="完成",
+        findings=[
+            {
+                "text": "图表结论",
+                "source_urls": [],
+                "artifact_ids": [
+                    "other-run-or-unknown",
+                    "pending",
+                    "expired",
+                    "missing-storage",
+                ],
+            }
+        ],
+    )
+
+    normalized, invalid_count, referenced = normalize_final_answer_artifact_references(
+        answer,
+        [
+            artifact_stub("pending", security_status="pending"),
+            artifact_stub("expired", security_status="expired"),
+            artifact_stub("missing-storage", storage_key=None),
+        ],
+    )
+
+    assert normalized.findings[0].artifact_ids == []
+    assert invalid_count == 4
+    assert referenced == []
+    assert normalized.verification_notes == [INVALID_ARTIFACT_REFERENCE_WARNING]
+    assert "other-run-or-unknown" not in " ".join(normalized.verification_notes)
+    assert "storage" not in " ".join(normalized.verification_notes).lower()
 
 
 async def test_agent_loop_completes_mock_web_run(session):
@@ -55,6 +131,40 @@ async def test_agent_loop_injects_auditable_tool_execution_context(session):
     assert search.last_context.tool_call_id
     assert search.last_context.artifact_service
     assert search.last_context.sandbox_service
+
+
+async def test_agent_loop_persists_only_current_run_accessible_artifact_references(session):
+    settings = Settings(model_provider="mock")
+    repo = RunRepository(session)
+    run = await repo.create_task_run("生成图表结论", settings.model_policy)
+    other_run = await repo.create_task_run("其他运行", settings.model_policy)
+    valid = await repo.create_artifact(
+        run.id,
+        "sandbox_output",
+        storage_key="run/chart.png",
+        security_status="verified",
+    )
+    cross_run = await repo.create_artifact(
+        other_run.id,
+        "sandbox_output",
+        storage_key="other/chart.png",
+        security_status="verified",
+    )
+    loop = AgentLoop(
+        settings,
+        model_client=ArtifactReferencingClient([valid.id, cross_run.id]),
+        tool_registry=fake_web_registry(),
+    )
+
+    output = await loop.run(repo, run.id, run.task.description)
+
+    assert output["answer"].findings[0].artifact_ids == [valid.id]
+    assert output["result"]["findings"][0]["artifact_ids"] == [valid.id]
+    assert output["result"]["verification_report"]["invalid_artifact_references"] == 1
+    assert output["result"]["audit_refs"]["referenced_artifact_ids"] == [valid.id]
+    serialized = str(output["result"])
+    assert cross_run.id not in serialized
+    assert "other/chart.png" not in serialized
 
 
 async def test_agent_loop_blocks_at_turn_limit(session):
@@ -171,6 +281,23 @@ class ToolThenFinalizeClient(MockModelClient):
     async def reflect(self, goal, context):
         self.reflect_calls += 1
         return await super().reflect(goal, context)
+
+
+class ArtifactReferencingClient(MockModelClient):
+    def __init__(self, artifact_ids: list[str]):
+        self.artifact_ids = artifact_ids
+
+    async def decide_with_answer(self, goal, context, *, on_delta=None):
+        return AgentDecision(decision_type="finalize", reasoning_summary="完成"), FinalAnswer(
+            summary="已完成",
+            findings=[
+                {
+                    "text": "工具输出支撑该结论",
+                    "source_urls": [],
+                    "artifact_ids": self.artifact_ids,
+                }
+            ],
+        )
 
 
 class RepeatedToolClient(MockModelClient):

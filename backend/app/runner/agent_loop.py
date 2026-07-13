@@ -37,6 +37,52 @@ from app.tools.base import (
 logger = logging.getLogger("astra.agent_loop")
 
 
+INVALID_ARTIFACT_REFERENCE_WARNING = "已移除无效或不可访问的工具输出引用。"
+
+
+def normalize_final_answer_artifact_references(
+    final_answer: FinalAnswer,
+    artifacts: list[Any],
+) -> tuple[FinalAnswer, int, list[str]]:
+    """Keep only accessible artifacts from the current run without leaking rejected IDs."""
+    allowed_ids = {
+        str(artifact.id)
+        for artifact in artifacts
+        if artifact.security_status == "verified" and artifact.storage_key
+    }
+    invalid_count = 0
+    referenced_ids: list[str] = []
+    normalized_findings = []
+    for finding in final_answer.findings:
+        seen: set[str] = set()
+        valid_ids: list[str] = []
+        for artifact_id in finding.artifact_ids:
+            if artifact_id in seen:
+                continue
+            seen.add(artifact_id)
+            if artifact_id not in allowed_ids:
+                invalid_count += 1
+                continue
+            valid_ids.append(artifact_id)
+            if artifact_id not in referenced_ids:
+                referenced_ids.append(artifact_id)
+        normalized_findings.append(finding.model_copy(update={"artifact_ids": valid_ids}))
+
+    verification_notes = list(final_answer.verification_notes)
+    if invalid_count and INVALID_ARTIFACT_REFERENCE_WARNING not in verification_notes:
+        verification_notes.append(INVALID_ARTIFACT_REFERENCE_WARNING)
+    return (
+        final_answer.model_copy(
+            update={
+                "findings": normalized_findings,
+                "verification_notes": verification_notes,
+            }
+        ),
+        invalid_count,
+        referenced_ids,
+    )
+
+
 class ToolRouter:
     def __init__(
         self,
@@ -836,12 +882,17 @@ class AgentLoop:
             final_answer = await self.model_client.finalize(
                 goal, final_context, on_delta=on_answer_delta
             )
+        current_artifacts = await repo.list_artifacts(run_id)
+        final_answer, invalid_artifact_references, referenced_artifact_ids = (
+            normalize_final_answer_artifact_references(final_answer, current_artifacts)
+        )
         memory_writes = await memory_manager.write_candidates(
             run_id=run_id,
             goal=goal,
             context=final_context,
         )
         report = verifier.verify(final_answer, evidence_pack)
+        report.invalid_artifact_references = invalid_artifact_references
         adapter_decision = (
             self.chart_adapter.validate(final_answer.model_dump(), {})
             if self.chart_adapter.attempted and not self.adapter.attempted
@@ -913,6 +964,7 @@ class AgentLoop:
         result["audit_refs"] = {
             "evidence_pack_artifact_id": artifact.id,
             "agent_turn_count": len(observations) + (1 if final_turn_id else 0),
+            "referenced_artifact_ids": referenced_artifact_ids,
         }
         result["completion_decision"] = gate_decision.model_dump(mode="json")
         await repo.add_event(

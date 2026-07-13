@@ -97,12 +97,13 @@ export type VerificationReport = {
   low_quality_sources: Array<Record<string, unknown>>;
   failed_sources: Array<Record<string, unknown>>;
   memory_references: Array<Record<string, unknown>>;
+  invalid_artifact_references?: number;
   notes: string[];
 };
 
 export type FinalResult = {
   summary: string;
-  findings: Array<{ text: string; source_urls: string[] }>;
+  findings: Array<{ text: string; source_urls: string[]; artifact_ids: string[] }>;
   sources: Array<{ url: string; title?: string | null; retrieved_at?: string | null }>;
   failed_sources?: Array<{ url?: string; title?: string | null; category?: string; message?: string }>;
   source_quality?: Array<{

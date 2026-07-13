@@ -212,6 +212,88 @@ describe('App', () => {
     expect(document.querySelectorAll('.process-panel')).toHaveLength(1);
   });
 
+  it('renders referenced artifacts beside findings and only links repeated references', async () => {
+    const snapshot = await vi.mocked(getRun)('fixture');
+    const contextual = {
+      ...snapshot,
+      result: {
+        ...snapshot.result!,
+        findings: [
+          { text: '第一个结论', source_urls: [], artifact_ids: ['a-chart'] },
+          { text: '第二个结论', source_urls: [], artifact_ids: ['a-chart', 'a-html'] },
+        ],
+      },
+      artifacts: snapshot.artifacts.map((artifact) => ({
+        ...artifact,
+        tool_call_id: artifact.id === 'a-chart' ? 't1' : 't2',
+      })),
+    };
+    vi.mocked(getRun).mockResolvedValueOnce(contextual);
+
+    render(<App />);
+    await userEvent.type(screen.getByRole('textbox'), '关联展示');
+    await userEvent.click(screen.getByRole('button', { name: '↑' }));
+
+    const firstFinding = await screen.findByText('第一个结论');
+    const secondFinding = screen.getByText('第二个结论');
+    const chart = screen.getByRole('img', { name: 'chart.png' });
+    const html = screen.getByTitle('chart.html');
+    expect(firstFinding.compareDocumentPosition(chart) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(chart.compareDocumentPosition(secondFinding) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(secondFinding.compareDocumentPosition(html) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(document.querySelectorAll('#artifact-output-a-chart')).toHaveLength(1);
+    expect(screen.getByRole('link', { name: '查看上方已展示的输出' })).toHaveAttribute('href', '#artifact-output-a-chart');
+    expect(screen.queryByText('其他输出')).not.toBeInTheDocument();
+    expect(screen.getByRole('link', { name: '1 个输出 · 查看输出' })).toHaveAttribute('href', '#artifact-output-a-chart');
+  });
+
+  it('sorts unreferenced outputs, collapses more than two, and keeps safe renderers', async () => {
+    const snapshot = await vi.mocked(getRun)('fixture');
+    const unreferenced = {
+      ...snapshot,
+      result: {
+        ...snapshot.result!,
+        findings: [{ text: '旧结果没有关联字段', source_urls: [] }],
+      },
+      artifacts: [
+        { id: 'file-c', type: 'sandbox_output', metadata: { filename: 'report.csv' }, created_at: '2026-01-03', mime_type: 'text/csv', security_status: 'verified', content_url: '/api/artifacts/file-c/content' },
+        { ...snapshot.artifacts[1], created_at: '2026-01-02' },
+        { ...snapshot.artifacts[0], created_at: '2026-01-01' },
+      ],
+    };
+    vi.mocked(getRun).mockResolvedValueOnce(unreferenced as unknown as typeof snapshot);
+
+    render(<App />);
+    await userEvent.type(screen.getByRole('textbox'), '旧数据降级');
+    await userEvent.click(screen.getByRole('button', { name: '↑' }));
+
+    expect(await screen.findByText('其他输出 · 3')).toBeInTheDocument();
+    const cards = [...document.querySelectorAll('.other-artifacts .artifact-card')];
+    expect(cards.map((card) => card.id)).toEqual([
+      'artifact-output-a-chart',
+      'artifact-output-a-html',
+      'artifact-output-file-c',
+    ]);
+    expect(screen.getByRole('img', { name: 'chart.png' })).toHaveAttribute('alt', 'chart.png');
+    expect(screen.getByTitle('chart.html')).toHaveAttribute('sandbox', 'allow-scripts');
+    expect(screen.getByRole('link', { name: /report.csv/ })).toHaveAttribute('href', '/api/artifacts/file-c/content');
+  });
+
+  it('does not show an output locator for tool calls without visible artifacts', async () => {
+    const snapshot = await vi.mocked(getRun)('fixture');
+    vi.mocked(getRun).mockResolvedValueOnce({
+      ...snapshot,
+      artifacts: snapshot.artifacts.map((artifact) => ({ ...artifact, tool_call_id: null })),
+    });
+
+    render(<App />);
+    await userEvent.type(screen.getByRole('textbox'), '无过程输出');
+    await userEvent.click(screen.getByRole('button', { name: '↑' }));
+
+    expect(await screen.findByText('已完成查询')).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: /查看输出/ })).not.toBeInTheDocument();
+  });
+
   it('keeps the streamed answer until a terminal snapshot contains the persisted result', async () => {
     const finalSnapshot = await vi.mocked(getRun)('fixture');
     vi.mocked(getRun)

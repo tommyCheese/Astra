@@ -3031,3 +3031,19 @@ html[data-theme="dark"] .bubble.user { background: linear-gradient(145deg, rgba(
 .artifact-error { display: none; padding: 24px; color: var(--muted, #6d7380); text-align: center; }
 .artifact-card.load-failed img { display: none; }
 .artifact-card.load-failed .artifact-error { display: block; }
+.finding-block { margin: 8px 0; }
+.artifact-card { scroll-margin-top: 24px; }
+.artifact-repeat-links { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0 16px; }
+.artifact-repeat-links a, .process-output-link { color: var(--accent, #257a64); font-size: 13px; text-decoration: none; }
+.artifact-repeat-links a:hover, .process-output-link:hover { text-decoration: underline; }
+.process-output-link { display: inline-block; margin-top: 6px; }
+.other-artifacts { margin: 20px 0; }
+.other-artifacts h3 { margin: 0 0 8px; font-size: 15px; }
+.other-artifacts.collapsible > summary { cursor: pointer; font-weight: 650; }
+
+@media (max-width: 620px) {
+  .artifact-gallery { grid-template-columns: minmax(0, 1fr); }
+  .artifact-card { min-width: 0; }
+  .artifact-card img, .artifact-card iframe { min-height: 180px; max-height: 420px; }
+  .artifact-card figcaption, .artifact-card.file { align-items: flex-start; flex-direction: column; }
+}

@@ -398,8 +398,11 @@ class RunRepository:
         )
         return result.one_or_none()
 
-    async def list_artifacts(self) -> list[ArtifactRecord]:
-        result = await self.session.execute(select(ArtifactRecord))
+    async def list_artifacts(self, run_id: str | None = None) -> list[ArtifactRecord]:
+        query = select(ArtifactRecord)
+        if run_id is not None:
+            query = query.where(ArtifactRecord.run_id == run_id)
+        result = await self.session.execute(query.order_by(ArtifactRecord.created_at, ArtifactRecord.id))
         return list(result.scalars().all())
 
     async def create_sandbox_job(

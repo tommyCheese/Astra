@@ -4,7 +4,7 @@ import remarkGfm from 'remark-gfm';
 import { AstraApiError, ApiErrorPayload, buildRuntime, cancelRuntimeBuild, createRun, getRun, getRuntimeProfile, getToolSettings, listRuns, resumeRun, streamRunEvents, updateToolSettings, type ToolSetting } from './api';
 import { I18nProvider, useI18n } from './i18n';
 import { ThemeProvider, useTheme } from './theme';
-import type { ChatMessage, RunView } from './types';
+import type { ArtifactView, ChatMessage, RunView } from './types';
 import { UsageDashboard } from './UsageDashboard';
 
 const terminalStatuses = new Set(['completed', 'completed_with_warnings', 'failed', 'blocked', 'waiting_user']);
@@ -951,7 +951,13 @@ function loadConversationHistory(): ConversationEntry[] {
 function normalizeRunView(run: RunView): RunView {
   const result = run.result ? {
     ...run.result,
-    findings: run.result.findings ?? [],
+    findings: (Array.isArray(run.result.findings) ? run.result.findings : []).map((finding) => ({
+      ...finding,
+      source_urls: Array.isArray(finding?.source_urls) ? finding.source_urls : [],
+      artifact_ids: Array.isArray(finding?.artifact_ids)
+        ? finding.artifact_ids.filter((artifactId): artifactId is string => typeof artifactId === 'string')
+        : [],
+    })),
     sources: run.result.sources ?? [],
     caveats: run.result.caveats ?? [],
     verification_notes: run.result.verification_notes ?? [],
@@ -1181,7 +1187,8 @@ function ProcessPanel({ run, messageId }: { run: RunView; messageId: string }) {
   return <article className="process-entry" id={`message-${messageId}`}><details className="process-panel"><summary><Icon name="brain" /><span>{t('思考过程')}</span><small>{t('{steps} 个步骤 · {tools} 次工具调用').replace('{steps}', String(turns.length)).replace('{tools}', String(run.tool_calls.length))}</small></summary><div className="process-timeline">
     {turns.map((turn) => {
       const call = run.tool_calls.find((item) => item.id === turn.tool_call_id);
-      return <div className="process-step" key={turn.id}><span className={`process-dot ${turn.selected_tool ? 'tool' : ''}`}><Icon name={turn.selected_tool ? 'tools' : 'brain'} /></span><div><strong>{turn.selected_tool ? turn.selected_tool : t(turn.decision_type === 'reflect' ? '反思' : '思考')}</strong><p>{turn.reflection ? String(turn.reflection.summary ?? turn.reasoning_summary) : turn.reasoning_summary}</p>{call && <small>{call.status}{toolCallDetail(call.output)}</small>}</div></div>;
+      const outputs = call ? visibleArtifacts(run.artifacts).filter((artifact) => artifact.tool_call_id === call.id) : [];
+      return <div className="process-step" key={turn.id}><span className={`process-dot ${turn.selected_tool ? 'tool' : ''}`}><Icon name={turn.selected_tool ? 'tools' : 'brain'} /></span><div><strong>{turn.selected_tool ? turn.selected_tool : t(turn.decision_type === 'reflect' ? '反思' : '思考')}</strong><p>{turn.reflection ? String(turn.reflection.summary ?? turn.reasoning_summary) : turn.reasoning_summary}</p>{call && <small>{call.status}{toolCallDetail(call.output)}</small>}{outputs.length > 0 && <a className="process-output-link" href={`#${artifactDomId(outputs[0].id)}`}>{t('{count} 个输出 · 查看输出').replace('{count}', String(outputs.length))}</a>}</div></div>;
     })}
     {notes.map((note, index) => <div className="process-step verification" key={`verification-${index}`}><span className="process-dot"><Icon name="check" /></span><div><strong>{t('验证')}</strong><p>{note}</p></div></div>)}
     <ReasoningAuditSummary run={run} />
@@ -1194,15 +1201,19 @@ function FinalAnswer({ run, fallback }: { run: RunView; fallback: string }) {
   if (!result) {
     return null;
   }
-  const findings = result.findings.filter((finding) => finding.text.trim() !== result.summary.trim());
+  const placements = planArtifactPlacements(result.findings, run.artifacts);
   const notes = [...new Set(result.caveats)];
   return (
     <div className="answer-content">
       <MarkdownContent content={result.summary || fallback} />
-      {findings.map((finding, index) => (
-        <MarkdownContent content={finding.text} key={index} />
+      {placements.findings.map(({ finding, artifacts, repeatedArtifactIds }, index) => (
+        <section className="finding-block" key={index}>
+          {finding.text.trim() !== result.summary.trim() && <MarkdownContent content={finding.text} />}
+          <ArtifactGallery artifacts={artifacts} label={t('关联输出')} />
+          {repeatedArtifactIds.length > 0 && <div className="artifact-repeat-links">{repeatedArtifactIds.map((artifactId) => <a href={`#${artifactDomId(artifactId)}`} key={artifactId}>{t('查看上方已展示的输出')}</a>)}</div>}
+        </section>
       ))}
-      <ArtifactGallery artifacts={run.artifacts} />
+      <OtherArtifacts artifacts={placements.otherArtifacts} />
       {result.sources.length ? (
         <details className="answer-support"><summary>{t('来源 · {count}').replace('{count}', String(result.sources.length))}</summary><div className="source-grid">
           {result.sources.map((source) => {
@@ -1223,20 +1234,63 @@ function FinalAnswer({ run, fallback }: { run: RunView; fallback: string }) {
   );
 }
 
-function ArtifactGallery({ artifacts }: { artifacts: RunView['artifacts'] }) {
+function visibleArtifacts(artifacts: RunView['artifacts']) {
+  return artifacts.filter((artifact) => artifact.security_status === 'verified' && artifact.content_url);
+}
+
+function artifactDomId(artifactId: string) {
+  return `artifact-output-${artifactId}`;
+}
+
+function planArtifactPlacements(findings: RunView['result'] extends infer _Result ? NonNullable<RunView['result']>['findings'] : never, artifacts: ArtifactView[]) {
+  const visible = visibleArtifacts(artifacts);
+  const byId = new Map(visible.map((artifact) => [artifact.id, artifact]));
+  const rendered = new Set<string>();
+  const plannedFindings = findings.map((finding) => {
+    const localArtifacts: ArtifactView[] = [];
+    const repeatedArtifactIds: string[] = [];
+    for (const artifactId of finding.artifact_ids) {
+      const artifact = byId.get(artifactId);
+      if (!artifact) continue;
+      if (rendered.has(artifactId)) {
+        if (!repeatedArtifactIds.includes(artifactId)) repeatedArtifactIds.push(artifactId);
+        continue;
+      }
+      rendered.add(artifactId);
+      localArtifacts.push(artifact);
+    }
+    return { finding, artifacts: localArtifacts, repeatedArtifactIds };
+  });
+  const otherArtifacts = visible
+    .filter((artifact) => !rendered.has(artifact.id))
+    .sort((a, b) => a.created_at.localeCompare(b.created_at) || a.id.localeCompare(b.id));
+  return { findings: plannedFindings, otherArtifacts };
+}
+
+function OtherArtifacts({ artifacts }: { artifacts: ArtifactView[] }) {
   const { t } = useI18n();
-  const visible = artifacts.filter((artifact) => artifact.security_status === 'verified' && artifact.content_url);
-  if (!visible.length) return null;
-  return <section className="artifact-gallery" aria-label={t('运行工件')}>{visible.map((artifact) => {
-    const label = String(artifact.metadata?.filename ?? artifact.type);
-    if (artifact.mime_type === 'image/png' || artifact.mime_type === 'image/svg+xml') {
-      return <figure className="artifact-card" key={artifact.id}><img src={artifact.content_url ?? ''} alt={label} onError={(event) => event.currentTarget.parentElement?.classList.add('load-failed')} /><span className="artifact-error" role="status">{t('预览加载失败')}</span><figcaption><strong>{label}</strong><span>{artifact.size_bytes?.toLocaleString() ?? 0} bytes</span></figcaption></figure>;
-    }
-    if (artifact.mime_type === 'text/html') {
-      return <figure className="artifact-card interactive" key={artifact.id}><iframe src={artifact.content_url ?? ''} title={label} sandbox="allow-scripts" referrerPolicy="no-referrer" /><figcaption><strong>{label}</strong><span>{t('隔离预览')}</span></figcaption></figure>;
-    }
-    return <a className="artifact-card file" href={artifact.content_url ?? ''} key={artifact.id} target="_blank" rel="noreferrer"><strong>{label}</strong><span>{artifact.mime_type ?? artifact.type}</span></a>;
-  })}</section>;
+  if (!artifacts.length) return null;
+  if (artifacts.length <= 2) {
+    return <section className="other-artifacts"><h3>{t('其他输出')}</h3><ArtifactGallery artifacts={artifacts} label={t('其他输出')} /></section>;
+  }
+  return <details className="other-artifacts collapsible"><summary>{t('其他输出 · {count}').replace('{count}', String(artifacts.length))}</summary><ArtifactGallery artifacts={artifacts} label={t('其他输出')} /></details>;
+}
+
+function ArtifactGallery({ artifacts, label }: { artifacts: ArtifactView[]; label: string }) {
+  if (!artifacts.length) return null;
+  return <section className="artifact-gallery" aria-label={label}>{artifacts.map((artifact) => <ArtifactCard artifact={artifact} key={artifact.id} />)}</section>;
+}
+
+function ArtifactCard({ artifact }: { artifact: ArtifactView }) {
+  const { t } = useI18n();
+  const artifactLabel = String(artifact.metadata?.filename ?? artifact.type);
+  if (artifact.mime_type === 'image/png' || artifact.mime_type === 'image/svg+xml') {
+    return <figure className="artifact-card" id={artifactDomId(artifact.id)}><img src={artifact.content_url ?? ''} alt={artifactLabel} onError={(event) => event.currentTarget.parentElement?.classList.add('load-failed')} /><span className="artifact-error" role="status">{t('预览加载失败')}</span><figcaption><strong>{artifactLabel}</strong><span>{artifact.size_bytes?.toLocaleString() ?? 0} bytes</span></figcaption></figure>;
+  }
+  if (artifact.mime_type === 'text/html') {
+    return <figure className="artifact-card interactive" id={artifactDomId(artifact.id)}><iframe src={artifact.content_url ?? ''} title={artifactLabel} sandbox="allow-scripts" referrerPolicy="no-referrer" /><figcaption><strong>{artifactLabel}</strong><span>{t('隔离预览')}</span></figcaption></figure>;
+  }
+  return <a className="artifact-card file" id={artifactDomId(artifact.id)} href={artifact.content_url ?? ''} target="_blank" rel="noreferrer"><strong>{artifactLabel}</strong><span>{artifact.mime_type ?? artifact.type}</span></a>;
 }
 
 function MarkdownContent({ content }: { content: string }) {

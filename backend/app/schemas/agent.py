@@ -294,6 +294,7 @@ class SourceReference(BaseModel):
 class Finding(BaseModel):
     text: str
     source_urls: list[str] = Field(default_factory=list)
+    artifact_ids: list[str] = Field(default_factory=list)
 
 
 class FinalAnswer(BaseModel):
@@ -384,6 +385,7 @@ class VerificationReport(BaseModel):
     low_quality_sources: list[dict[str, Any]] = Field(default_factory=list)
     failed_sources: list[dict[str, Any]] = Field(default_factory=list)
     memory_references: list[dict[str, Any]] = Field(default_factory=list)
+    invalid_artifact_references: int = 0
     notes: list[str] = Field(default_factory=list)
 
 

@@ -186,6 +186,30 @@ def test_final_answer_normalization_accepts_nullable_and_scalar_fields():
     assert answer.findings[0].text == "递归会调用自身"
     assert answer.caveats == ["这是简化解释"]
     assert answer.source_quality == []
+    assert answer.findings[0].artifact_ids == []
+
+
+@pytest.mark.parametrize(
+    ("artifact_ids", "expected"),
+    [
+        ([], []),
+        (["artifact-a"], ["artifact-a"]),
+        (["artifact-a", "artifact-b"], ["artifact-a", "artifact-b"]),
+        ("artifact-a", []),
+        (["artifact-a", 42, None], ["artifact-a"]),
+    ],
+)
+def test_final_answer_normalizes_artifact_ids(artifact_ids, expected):
+    answer = FinalAnswer.model_validate(
+        normalize_final_answer_payload(
+            {
+                "summary": "完成",
+                "findings": [{"text": "结论", "artifact_ids": artifact_ids}],
+            }
+        )
+    )
+
+    assert answer.findings[0].artifact_ids == expected
 
 
 def test_final_answer_normalization_drops_scalar_record_placeholders():
