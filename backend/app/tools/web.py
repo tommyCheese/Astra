@@ -1,12 +1,18 @@
+import asyncio
 import ipaddress
 import re
+import socket
 import xml.etree.ElementTree as ET
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from html.parser import HTMLParser
 from typing import Any
 from urllib.parse import parse_qs, unquote, urljoin, urlparse
 
 import httpx
+from charset_normalizer import from_bytes
+from trafilatura import extract as extract_main_content
+from trafilatura import extract_metadata
 
 from app.core.config import Settings
 from app.tools.base import Tool, ToolExecutionError, ToolSpec
@@ -376,11 +382,24 @@ class WebSearchTool(Tool):
         }
 
 
+@dataclass(frozen=True)
+class FetchedResponse:
+    requested_url: str
+    final_url: str
+    status_code: int
+    headers: dict[str, str]
+    body: bytes
+    redirect_count: int
+
+
 class WebFetchTool(Tool):
     spec = ToolSpec(
         name="web_fetch",
-        version="0.2.0",
-        description="Fetch a URL and adaptively extract its main readable content.",
+        version="0.3.0",
+        description=(
+            "Securely fetch a public HTTP(S) URL with bounded streaming and extract its "
+            "main readable content and metadata."
+        ),
         input_schema={
             "type": "object",
             "required": ["url"],
@@ -399,7 +418,14 @@ class WebFetchTool(Tool):
         side_effect_level="read_only",
         timeout_seconds=20,
         retry_policy={"max_attempts": 1},
-        error_categories=["invalid_input", "permission_denied", "fetch_failed", "extract_failed"],
+        error_categories=[
+            "invalid_input",
+            "permission_denied",
+            "fetch_failed",
+            "unsupported_content_type",
+            "response_too_large",
+            "extract_failed",
+        ],
     )
 
     def __init__(self, settings: Settings):
@@ -409,40 +435,62 @@ class WebFetchTool(Tool):
         url = str(tool_input.get("url", "")).strip()
         if not url:
             raise ToolExecutionError("invalid_input", "web_fetch requires a URL")
-        validate_public_http_url(url)
         query = str(tool_input.get("query", "") or "")
         snippet = str(tool_input.get("snippet", "") or "")
         crawler_plan = validate_crawler_plan(tool_input.get("crawler_plan"))
         if not self.settings.allow_network_read:
             raise ToolExecutionError("permission_denied", "Network read is disabled")
+        validate_public_http_url(url)
 
         try:
+            timeout = httpx.Timeout(
+                self.spec.timeout_seconds,
+                connect=min(10.0, self.spec.timeout_seconds),
+                read=self.spec.timeout_seconds,
+                write=5.0,
+                pool=5.0,
+            )
             async with httpx.AsyncClient(
-                timeout=self.spec.timeout_seconds,
+                timeout=timeout,
+                limits=httpx.Limits(
+                    max_connections=4,
+                    max_keepalive_connections=2,
+                    keepalive_expiry=5.0,
+                ),
+                trust_env=False,
                 headers={
-                    "User-Agent": (
-                        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-                        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124 Safari/537.36"
+                    "User-Agent": "AstraWebFetcher/0.3",
+                    "Accept": (
+                        "text/html,application/xhtml+xml,application/json,text/plain,"
+                        "application/xml;q=0.9,text/xml;q=0.9"
                     ),
-                    "Accept": "text/html,application/xhtml+xml,application/json,text/plain;q=0.9,*/*;q=0.8",
                     "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
                 },
             ) as client:
-                response = await self._get_with_safe_redirects(client, url)
-                response.raise_for_status()
+                response = await self._get_with_safe_redirects(
+                    client,
+                    url,
+                    max_response_bytes=self.settings.crawler_max_response_bytes,
+                )
+        except ToolExecutionError:
+            raise
         except httpx.HTTPError as exc:
             raise ToolExecutionError("fetch_failed", str(exc)) from exc
 
+        content_type = response.headers.get("content-type", "")
         return extract_source(
-            url=url,
+            url=response.final_url,
             status_code=response.status_code,
-            body=response.text,
-            content_type=response.headers.get("content-type", ""),
+            body=decode_response_body(response.body, content_type),
+            content_type=content_type,
             query=query,
             snippet=snippet,
             crawler_plan=crawler_plan,
             max_chars=self.settings.crawler_max_content_chars,
             min_quality_chars=self.settings.crawler_min_quality_chars,
+            requested_url=response.requested_url,
+            redirect_count=response.redirect_count,
+            response_bytes=len(response.body),
         )
 
     async def _get_with_safe_redirects(
@@ -451,38 +499,159 @@ class WebFetchTool(Tool):
         url: str,
         *,
         max_redirects: int = 5,
-    ) -> httpx.Response:
+        max_response_bytes: int | None = None,
+    ) -> FetchedResponse:
+        byte_limit = max_response_bytes or self.settings.crawler_max_response_bytes
         current_url = url
-        for _ in range(max_redirects + 1):
-            validate_public_http_url(current_url)
-            response = await client.get(current_url, follow_redirects=False)
-            if not response.is_redirect:
-                return response
-            location = response.headers.get("location")
-            if not location:
-                return response
-            current_url = urljoin(str(response.url), location)
+        for redirect_count in range(max_redirects + 1):
+            await validate_public_http_target(current_url)
+            async with client.stream("GET", current_url, follow_redirects=False) as response:
+                if response.is_redirect:
+                    location = response.headers.get("location")
+                    if not location:
+                        raise ToolExecutionError(
+                            "fetch_failed", "Redirect response did not include a Location header"
+                        )
+                    current_url = urljoin(str(response.url), location)
+                    continue
+
+                response.raise_for_status()
+                content_type = response.headers.get("content-type", "")
+                validate_fetch_content_type(content_type)
+                validate_content_length(response.headers.get("content-length"), byte_limit)
+                body = await read_limited_body(response, byte_limit)
+                return FetchedResponse(
+                    requested_url=url,
+                    final_url=str(response.url),
+                    status_code=response.status_code,
+                    headers=dict(response.headers),
+                    body=body,
+                    redirect_count=redirect_count,
+                )
         raise ToolExecutionError("fetch_failed", "Too many redirects")
 
 
 def validate_public_http_url(url: str) -> None:
-    """Reject obviously unsafe fetch targets before issuing a request."""
+    """Perform strict structural validation before resolving or requesting a URL."""
+    if any(ord(character) < 32 or character.isspace() for character in url):
+        raise ToolExecutionError("invalid_input", "URL contains whitespace or control characters")
     parsed = urlparse(url)
     if parsed.scheme not in {"http", "https"} or not parsed.hostname:
         raise ToolExecutionError("invalid_input", "web_fetch only supports HTTP(S) URLs")
     if parsed.username or parsed.password:
         raise ToolExecutionError("permission_denied", "URLs containing credentials are not allowed")
     hostname = parsed.hostname.rstrip(".").lower()
+    if len(hostname) > 253:
+        raise ToolExecutionError("invalid_input", "URL hostname is too long")
     if hostname == "localhost" or hostname.endswith((".localhost", ".local")):
         raise ToolExecutionError("permission_denied", "Local network targets are not allowed")
+    try:
+        port = parsed.port
+    except ValueError as exc:
+        raise ToolExecutionError("invalid_input", "URL contains an invalid port") from exc
+    expected_port = 80 if parsed.scheme == "http" else 443
+    if port is not None and port != expected_port:
+        raise ToolExecutionError(
+            "permission_denied", "Only standard HTTP and HTTPS ports are allowed"
+        )
     try:
         address = ipaddress.ip_address(hostname)
     except ValueError:
         return
+    validate_public_ip(address)
+
+
+def validate_public_ip(address: ipaddress.IPv4Address | ipaddress.IPv6Address) -> None:
     if not address.is_global:
         raise ToolExecutionError(
             "permission_denied", "Private or reserved network targets are not allowed"
         )
+
+
+async def validate_public_http_target(url: str) -> set[str]:
+    """Resolve every A/AAAA target and reject the hop if any address is non-public."""
+    validate_public_http_url(url)
+    parsed = urlparse(url)
+    hostname = parsed.hostname.rstrip(".").lower()  # type: ignore[union-attr]
+    try:
+        literal = ipaddress.ip_address(hostname)
+    except ValueError:
+        literal = None
+    if literal is not None:
+        validate_public_ip(literal)
+        return {str(literal)}
+
+    port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    try:
+        records = await asyncio.get_running_loop().getaddrinfo(
+            hostname,
+            port,
+            family=socket.AF_UNSPEC,
+            type=socket.SOCK_STREAM,
+            proto=socket.IPPROTO_TCP,
+        )
+    except socket.gaierror as exc:
+        raise ToolExecutionError("fetch_failed", f"Unable to resolve URL hostname: {hostname}") from exc
+    addresses = {record[4][0].split("%", 1)[0] for record in records}
+    if not addresses:
+        raise ToolExecutionError("fetch_failed", f"URL hostname has no address records: {hostname}")
+    for value in addresses:
+        validate_public_ip(ipaddress.ip_address(value))
+    return addresses
+
+
+def validate_fetch_content_type(content_type: str) -> None:
+    media_type = content_type.split(";", 1)[0].strip().lower()
+    allowed_application_types = {
+        "application/atom+xml",
+        "application/json",
+        "application/rss+xml",
+        "application/xhtml+xml",
+        "application/xml",
+    }
+    if media_type and not media_type.startswith("text/") and media_type not in allowed_application_types:
+        raise ToolExecutionError(
+            "unsupported_content_type", f"Unsupported response content type: {media_type}"
+        )
+
+
+def validate_content_length(content_length: str | None, byte_limit: int) -> None:
+    if not content_length:
+        return
+    try:
+        declared_size = int(content_length)
+    except ValueError:
+        return
+    if declared_size > byte_limit:
+        raise ToolExecutionError(
+            "response_too_large", f"Response exceeds the {byte_limit} byte limit"
+        )
+
+
+async def read_limited_body(response: httpx.Response, byte_limit: int) -> bytes:
+    chunks: list[bytes] = []
+    total = 0
+    async for chunk in response.aiter_bytes():
+        total += len(chunk)
+        if total > byte_limit:
+            raise ToolExecutionError(
+                "response_too_large", f"Response exceeds the {byte_limit} byte limit"
+            )
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
+def decode_response_body(body: bytes, content_type: str) -> str:
+    charset_match = re.search(r"charset\s*=\s*[\"']?([^;\"']+)", content_type, re.I)
+    if charset_match:
+        try:
+            return body.decode(charset_match.group(1).strip())
+        except (LookupError, UnicodeDecodeError):
+            pass
+    detected = from_bytes(body).best()
+    if detected is not None:
+        return str(detected)
+    return body.decode("utf-8", errors="replace")
 
 
 class ContentExtractor(HTMLParser):
@@ -567,6 +736,7 @@ class ContentExtractor(HTMLParser):
 
 def validate_crawler_plan(raw_plan: Any) -> dict[str, Any]:
     allowed = {
+        "trafilatura",
         "readability",
         "metadata_first",
         "selector_extract",
@@ -575,14 +745,14 @@ def validate_crawler_plan(raw_plan: Any) -> dict[str, Any]:
     }
     if not isinstance(raw_plan, dict):
         return {
-            "strategy": "readability",
+            "strategy": "trafilatura",
             "selectors": [],
             "exclude_selectors": [],
             "target": "main_content",
         }
-    strategy = raw_plan.get("strategy", "readability")
+    strategy = raw_plan.get("strategy", "trafilatura")
     if strategy not in allowed:
-        strategy = "readability"
+        strategy = "trafilatura"
     selectors = [item for item in raw_plan.get("selectors", []) if is_safe_selector(item)]
     exclude_selectors = [
         item for item in raw_plan.get("exclude_selectors", []) if is_safe_selector(item)
@@ -612,8 +782,12 @@ def extract_source(
     crawler_plan: dict[str, Any],
     max_chars: int,
     min_quality_chars: int,
+    requested_url: str | None = None,
+    redirect_count: int = 0,
+    response_bytes: int | None = None,
 ) -> dict[str, Any]:
     retrieved_at = iso_now()
+    requested_url = requested_url or url
     if "html" not in content_type and "<html" not in body[:500].lower():
         content = normalize_space(body)[:max_chars]
         warnings = [] if len(content) >= min_quality_chars else ["正文过短，可能不足以支撑总结。"]
@@ -623,40 +797,91 @@ def extract_source(
             None,
             None,
             content,
-            {"content_type": content_type},
+            {
+                "content_type": content_type,
+                "requested_url": requested_url,
+                "final_url": url,
+                "redirect_count": redirect_count,
+                "response_bytes": response_bytes,
+            },
             "plain_text",
             warnings,
             retrieved_at,
             min_quality_chars,
+            requested_url=requested_url,
         )
 
     parser = ContentExtractor()
     parser.feed(body)
-    title = normalize_space(" ".join(parser.title_parts)) or parser.metadata.get("og:title")
+    document_metadata = extract_metadata(body, default_url=url)
+    title = (
+        metadata_attribute(document_metadata, "title")
+        or normalize_space(" ".join(parser.title_parts))
+        or parser.metadata.get("og:title")
+    )
     description = (
-        parser.metadata.get("description")
+        metadata_attribute(document_metadata, "description")
+        or parser.metadata.get("description")
         or parser.metadata.get("og:description")
         or parser.metadata.get("twitter:description")
     )
     metadata = {
         "content_type": content_type,
         "description": description,
-        "site_name": parser.metadata.get("og:site_name"),
-        "published_at": first_present(
+        "site_name": metadata_attribute(document_metadata, "sitename")
+        or parser.metadata.get("og:site_name"),
+        "published_at": metadata_attribute(document_metadata, "date")
+        or first_present(
             parser.metadata,
             ["article:published_time", "datepublished", "publishdate", "date"],
         ),
-        "author": first_present(parser.metadata, ["author", "article:author"]),
+        "author": metadata_attribute(document_metadata, "author")
+        or first_present(parser.metadata, ["author", "article:author"]),
+        "requested_url": requested_url,
+        "final_url": url,
+        "canonical_url": metadata_attribute(document_metadata, "url"),
+        "redirect_count": redirect_count,
+        "response_bytes": response_bytes,
     }
     strategy = choose_strategy(crawler_plan, parser, description)
-    content = extract_content_by_strategy(
-        strategy,
-        parser,
-        description,
-        snippet,
-        crawler_plan.get("selectors", []),
-    )
+    extraction_warnings: list[str] = []
+    if strategy == "trafilatura":
+        try:
+            content = extract_main_content(
+                body,
+                url=url,
+                output_format="txt",
+                include_comments=False,
+                include_tables=True,
+                include_links=False,
+                deduplicate=True,
+                favor_precision=True,
+                prune_xpath=selectors_to_prune_xpath(
+                    crawler_plan.get("exclude_selectors", [])
+                ),
+            ) or ""
+        except Exception:
+            content = ""
+            extraction_warnings.append("主正文提取器失败，已使用安全的 HTML 文本回退。")
+        if not content:
+            strategy = "html_fallback"
+            content = extract_content_by_strategy(
+                strategy,
+                parser,
+                description,
+                snippet,
+                crawler_plan.get("selectors", []),
+            )
+    else:
+        content = extract_content_by_strategy(
+            strategy,
+            parser,
+            description,
+            snippet,
+            crawler_plan.get("selectors", []),
+        )
     warnings = quality_warnings(content, query, min_quality_chars)
+    warnings.extend(extraction_warnings)
     if not content and snippet:
         strategy = "fallback_snippet"
         content = snippet
@@ -672,18 +897,48 @@ def extract_source(
         warnings,
         retrieved_at,
         min_quality_chars,
+        requested_url=requested_url,
     )
 
 
 def choose_strategy(
     crawler_plan: dict[str, Any], parser: ContentExtractor, description: str | None
 ) -> str:
-    strategy = crawler_plan.get("strategy", "readability")
+    strategy = crawler_plan.get("strategy", "trafilatura")
+    if strategy == "readability":
+        strategy = "trafilatura"
     if strategy == "selector_extract" and crawler_plan.get("selectors"):
         return strategy
     if description and len(parser.elements) < 2:
         return "metadata_first"
     return strategy
+
+
+def metadata_attribute(document: Any, name: str) -> str | None:
+    value = getattr(document, name, None) if document is not None else None
+    return normalize_space(str(value)) if value else None
+
+
+def selectors_to_prune_xpath(selectors: list[str]) -> list[str] | None:
+    xpath: list[str] = []
+    for selector in selectors:
+        if selector.startswith("#"):
+            xpath.append(f"//*[@id='{selector[1:]}']")
+        elif selector.startswith("."):
+            class_name = selector[1:]
+            xpath.append(
+                "//*[contains(concat(' ', normalize-space(@class), ' '), "
+                f"' {class_name} ')]"
+            )
+        elif "." in selector:
+            tag, class_name = selector.split(".", 1)
+            xpath.append(
+                f"//{tag}[contains(concat(' ', normalize-space(@class), ' '), "
+                f"' {class_name} ')]"
+            )
+        else:
+            xpath.append(f"//{selector}")
+    return xpath or None
 
 
 def extract_content_by_strategy(
@@ -745,11 +1000,15 @@ def build_fetch_output(
     warnings: list[str],
     retrieved_at: str,
     min_quality_chars: int,
+    *,
+    requested_url: str | None = None,
 ) -> dict[str, Any]:
     content = normalize_space(content)
     quality_score = min(1.0, len(content) / max(float(min_quality_chars), 1.0))
     return {
         "url": url,
+        "requested_url": requested_url or url,
+        "final_url": url,
         "status_code": status_code,
         "title": title,
         "description": description,

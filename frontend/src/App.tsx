@@ -758,6 +758,7 @@ function RuntimeSettings() {
         if (!dirtyRef.current) {
           setDependencies(value.dependencies.map((item) => ({ id: `saved-${item.name}`, name: item.name, version: item.version ?? '' })));
         }
+        if (value.build?.status === 'failed') setDirty(true);
       } catch (error) {
         if (!active || (error instanceof DOMException && error.name === 'AbortError')) return;
         setMessage('无法读取 Runtime 配置');
@@ -842,7 +843,8 @@ function RuntimeSettings() {
         </div>
         {showBatch && <div className="runtime-batch-panel"><label htmlFor="runtime-batch-input">{t('每行一个依赖，可填写 `package` 或 `package==version`')}</label><textarea id="runtime-batch-input" rows={4} value={batchInput} onChange={(event) => setBatchInput(event.target.value)} placeholder={'polars==1.31.0\nopenpyxl'} spellCheck={false} disabled={controlsDisabled} /><div><button type="button" disabled={controlsDisabled} onClick={() => setShowBatch(false)}>{t('取消')}</button><button className="primary-button" type="button" disabled={controlsDisabled} onClick={addBatch}>{t('添加到列表')}</button></div></div>}
       </div>
-      {building ? <div className="runtime-build-progress" role="status" aria-live="polite"><div className="runtime-build-progress-heading"><div><strong>{t(profile?.build?.phase ?? '准备构建')}</strong><span>{tr('{count} 个自定义依赖', { count: dependencies.length })}</span></div><b>{buildProgress}%</b></div><div className="runtime-progress-track" role="progressbar" aria-label={t('依赖构建进度')} aria-valuemin={0} aria-valuemax={100} aria-valuenow={buildProgress}><span style={{ width: `${buildProgress}%` }} /></div><p>{t(profile?.build?.log ?? '正在等待构建输出')}</p><button className="secondary-button" type="button" onClick={() => void cancelBuild()}>{t('取消构建')}</button></div> : <div className="runtime-build-actions"><div><span>{tr('{count} 个自定义依赖', { count: dependencies.length })}{dirty ? ` · ${t('有未应用修改')}` : ''}</span>{profile?.build?.log && <small role="status">{t(profile.build.log)}</small>}</div><button className="primary-button" type="button" onClick={() => void build()} disabled={!dirty || submitting}>{t(submitting ? '正在提交…' : dirty ? '构建并激活' : '配置已同步')}</button></div>}
+      {building ? <div className="runtime-build-progress" role="status" aria-live="polite"><div className="runtime-build-progress-heading"><div><strong>{t(profile?.build?.phase ?? '准备构建')}</strong><span>{tr('{count} 个自定义依赖', { count: dependencies.length })}</span></div><b>{buildProgress}%</b></div><div className="runtime-progress-track" role="progressbar" aria-label={t('依赖构建进度')} aria-valuemin={0} aria-valuemax={100} aria-valuenow={buildProgress}><span style={{ width: `${buildProgress}%` }} /></div><p>{t(profile?.build?.log ?? '正在等待构建输出')}</p><button className="secondary-button" type="button" onClick={() => void cancelBuild()}>{t('取消构建')}</button></div> : <div className="runtime-build-actions"><div><span>{tr('{count} 个自定义依赖', { count: dependencies.length })}{dirty ? ` · ${t('有未应用修改')}` : ''}</span>{profile?.build?.log && profile.build.status !== 'failed' && <small role="status">{t(profile.build.log)}</small>}</div><button className="primary-button" type="button" onClick={() => void build()} disabled={!dirty || submitting}>{t(submitting ? '正在提交…' : dirty ? '构建并激活' : '配置已同步')}</button></div>}
+      {profile?.build?.status === 'failed' && profile.build.log && <p className="runtime-build-error" role="alert">{t(profile.build.log)}</p>}
       {message && <p className="runtime-build-error" role="alert">{message}</p>}
     </section>
   </SettingsGroup>;

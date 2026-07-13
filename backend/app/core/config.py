@@ -22,6 +22,7 @@ class Settings(BaseSettings):
     google_search_region: str = ""
     google_search_safe: str = "active"
     crawler_max_content_chars: int = 12000
+    crawler_max_response_bytes: int = 2 * 1024 * 1024
     crawler_min_quality_chars: int = 240
     agent_max_turns: int = 20
     agent_max_tool_calls: int = 16

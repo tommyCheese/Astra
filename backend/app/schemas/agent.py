@@ -556,7 +556,7 @@ class CandidateSource(BaseModel):
 
 
 class CrawlerPlan(BaseModel):
-    strategy: str = "readability"
+    strategy: str = "trafilatura"
     selectors: list[str] = Field(default_factory=list)
     exclude_selectors: list[str] = Field(default_factory=list)
     target: str = "main_content"

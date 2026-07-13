@@ -106,11 +106,13 @@ def test_sandbox_state_machine_rejects_illegal_transition():
 
 def test_sandbox_log_is_redacted_and_truncated():
     output = sanitize_log(
-        "api_key=secret Authorization: Bearer another-secret /Users/example/private/file",
+        "\x1b[91mapi_key=secret Authorization: Bearer another-secret "
+        "/Users/example/private/file\x1b[0m",
         limit=80,
     )
     assert "secret" not in output
     assert "/Users" not in output
+    assert "\x1b" not in output
 
 
 class TimeoutProvider(SandboxProvider):

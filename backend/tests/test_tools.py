@@ -350,7 +350,13 @@ async def test_web_fetch_rejects_unsafe_targets(url):
     assert exc_info.value.category in {"invalid_input", "permission_denied"}
 
 
-async def test_web_fetch_revalidates_redirect_targets():
+async def test_web_fetch_revalidates_redirect_targets(monkeypatch):
+    class Resolver:
+        async def getaddrinfo(self, _host, port, **_kwargs):
+            return [(2, 1, 6, "", ("93.184.216.34", port))]
+
+    monkeypatch.setattr("app.tools.web.asyncio.get_running_loop", lambda: Resolver())
+
     def respond(request: httpx.Request) -> httpx.Response:
         return httpx.Response(
             302, headers={"location": "http://127.0.0.1/private"}, request=request
@@ -362,6 +368,91 @@ async def test_web_fetch_revalidates_redirect_targets():
             await tool._get_with_safe_redirects(client, "https://example.com/source")
 
     assert exc_info.value.category == "permission_denied"
+
+
+async def test_web_fetch_rejects_hostnames_resolving_to_private_addresses(monkeypatch):
+    class Resolver:
+        async def getaddrinfo(self, _host, port, **_kwargs):
+            return [(2, 1, 6, "", ("127.0.0.1", port))]
+
+    monkeypatch.setattr("app.tools.web.asyncio.get_running_loop", lambda: Resolver())
+    tool = WebFetchTool(Settings())
+    async with httpx.AsyncClient(transport=httpx.MockTransport(lambda request: None)) as client:
+        with pytest.raises(ToolExecutionError) as exc_info:
+            await tool._get_with_safe_redirects(client, "https://public.example/source")
+
+    assert exc_info.value.category == "permission_denied"
+
+
+async def test_web_fetch_streams_with_a_hard_response_limit(monkeypatch):
+    async def allow_public_target(_url):
+        return {"93.184.216.34"}
+
+    monkeypatch.setattr("app.tools.web.validate_public_http_target", allow_public_target)
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/html"},
+            content=b"0123456789",
+            request=request,
+        )
+
+    tool = WebFetchTool(Settings(crawler_max_response_bytes=8))
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
+        with pytest.raises(ToolExecutionError) as exc_info:
+            await tool._get_with_safe_redirects(
+                client, "https://example.com/large", max_response_bytes=8
+            )
+
+    assert exc_info.value.category == "response_too_large"
+
+
+async def test_web_fetch_rejects_non_text_content(monkeypatch):
+    async def allow_public_target(_url):
+        return {"93.184.216.34"}
+
+    monkeypatch.setattr("app.tools.web.validate_public_http_target", allow_public_target)
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            headers={"content-type": "image/png"},
+            content=b"not-an-image",
+            request=request,
+        )
+
+    tool = WebFetchTool(Settings())
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
+        with pytest.raises(ToolExecutionError) as exc_info:
+            await tool._get_with_safe_redirects(client, "https://example.com/image")
+
+    assert exc_info.value.category == "unsupported_content_type"
+
+
+async def test_web_fetch_records_the_validated_final_url(monkeypatch):
+    async def allow_public_target(_url):
+        return {"93.184.216.34"}
+
+    monkeypatch.setattr("app.tools.web.validate_public_http_target", allow_public_target)
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/start":
+            return httpx.Response(302, headers={"location": "/final"}, request=request)
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/html; charset=utf-8"},
+            content=b"<html><body><main>done</main></body></html>",
+            request=request,
+        )
+
+    tool = WebFetchTool(Settings())
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
+        response = await tool._get_with_safe_redirects(client, "https://example.com/start")
+
+    assert response.requested_url == "https://example.com/start"
+    assert response.final_url == "https://example.com/final"
+    assert response.redirect_count == 1
 
 
 def test_selector_extraction_and_metadata_fixture():
@@ -416,3 +507,38 @@ def test_low_quality_page_reports_warning():
 
     assert output["quality_score"] < 0.5
     assert output["warnings"]
+
+
+def test_trafilatura_extracts_main_content_and_audits_fetch_metadata():
+    output = extract_source(
+        url="https://example.com/final",
+        requested_url="http://example.com/start",
+        redirect_count=1,
+        response_bytes=512,
+        status_code=200,
+        body="""
+        <html><head><title>Focused report</title></head><body>
+          <nav>Navigation boilerplate that should not become evidence.</nav>
+          <article>
+            <h1>Focused report</h1>
+            <p>This is the substantive Astra article content with enough detail to extract.</p>
+            <p>It contains a second paragraph so the main-content detector has context.</p>
+          </article>
+          <footer>Footer boilerplate that should not become evidence.</footer>
+        </body></html>
+        """,
+        content_type="text/html; charset=utf-8",
+        query="Astra article",
+        snippet="",
+        crawler_plan={"strategy": "trafilatura"},
+        max_chars=12000,
+        min_quality_chars=20,
+    )
+
+    assert output["extraction_strategy"] == "trafilatura"
+    assert "substantive Astra article" in output["content"]
+    assert "Navigation boilerplate" not in output["content"]
+    assert output["requested_url"] == "http://example.com/start"
+    assert output["final_url"] == "https://example.com/final"
+    assert output["metadata"]["redirect_count"] == 1
+    assert output["metadata"]["response_bytes"] == 512

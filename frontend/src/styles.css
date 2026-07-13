@@ -1500,7 +1500,7 @@ textarea {
 .runtime-batch-panel label { color: #756f65; font-size: 12px; }
 .runtime-batch-panel textarea { background: #fff; border: 1px solid #d9cfbf; border-radius: 8px; color: #293139; font: 13px/1.6 ui-monospace, monospace; padding: 10px; resize: vertical; }
 .runtime-batch-panel > div { display: flex; gap: 8px; justify-content: flex-end; }
-.runtime-build-error { background: #fff1f2; border: 1px solid #f2c9cd; border-radius: 8px; color: #b43c49; font-size: 12px; padding: 9px 11px; }
+.runtime-build-error { background: #fff1f2; border: 1px solid #f2c9cd; border-radius: 8px; color: #b43c49; font: 11px/1.5 ui-monospace, monospace; overflow-wrap: anywhere; padding: 9px 11px; white-space: pre-wrap; }
 .runtime-build-actions { align-items: center; background: #f3eee5; border: 1px solid #dfd4c3; border-radius: 10px; display: flex; justify-content: space-between; padding: 10px 12px; }
 .runtime-build-actions > div { display: grid; gap: 2px; }
 .runtime-build-actions span, .runtime-build-actions small { color: #756f65; font-size: 11px; }

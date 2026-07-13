@@ -122,6 +122,57 @@ async def test_build_progress_uses_live_subprocess_output(tmp_path):
     assert build["log"] == "installing dependency"
 
 
+async def test_failed_build_command_preserves_recent_error_output(tmp_path):
+    service = RuntimeProfileService(Settings(runtime_profile_path=str(tmp_path / "profile.json")))
+    service.write(
+        {
+            "dependencies": [],
+            "active_image": "base",
+            "dependency_digest": "base",
+            "build": {"id": "build-1", "status": "building", "progress": 5, "log": "start"},
+        }
+    )
+
+    with pytest.raises(RuntimeError, match="package not found") as exc_info:
+        await service._run_with_progress(
+            "build-1",
+            [
+                sys.executable,
+                "-c",
+                "import sys; print('package not found'); raise SystemExit(17)",
+            ],
+            phase="构建镜像并安装依赖",
+            start=10,
+            end=82,
+        )
+
+    assert "退出码 17" in str(exc_info.value)
+
+
+async def test_runtime_build_command_supports_docker_without_buildx(tmp_path, monkeypatch):
+    service = RuntimeProfileService(
+        Settings(
+            runtime_profile_path=str(tmp_path / "profile.json"),
+            sandbox_runtime_image="astra-data-viz:test",
+        )
+    )
+    commands = []
+
+    async def successful_command(build_id, command, **kwargs):
+        commands.append(command)
+        return 0
+
+    monkeypatch.setattr(service, "_run_with_progress", successful_command)
+    state = await service.start([{"name": "openpyxl", "version": "3.1.5"}])
+    await service.tasks[state["build"]["id"]]
+
+    build_command = commands[0]
+    assert build_command[1] == "build"
+    assert "--progress" not in build_command
+    assert service.read()["build"]["status"] == "succeeded"
+    assert service.read()["active_image"].startswith("astra-data-viz:custom-")
+
+
 async def test_active_build_can_be_cancelled(tmp_path, monkeypatch):
     service = RuntimeProfileService(
         Settings(

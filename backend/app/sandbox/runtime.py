@@ -39,6 +39,7 @@ def transition(current: str, target: str) -> str:
 
 
 def sanitize_log(value: str, limit: int = 4000) -> str:
+    value = re.sub(r"\x1b(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])", "", value)
     value = re.sub(
         r"(?i)(authorization)\s*[:=]\s*(?:bearer\s+)?\S+",
         r"\1=[REDACTED]",

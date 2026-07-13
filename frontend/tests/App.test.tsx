@@ -619,6 +619,23 @@ describe('App', () => {
     expect(screen.getByRole('button', { name: '构建并激活' })).toBeEnabled();
   });
 
+  it('shows asynchronous build failure details and allows retrying unchanged dependencies', async () => {
+    vi.mocked(getRuntimeProfile).mockResolvedValue({
+      dependencies: [{ name: 'cv2', version: '' }],
+      core_dependencies: [],
+      active_image: 'astra-data-viz:0.1.0',
+      dependency_digest: 'base',
+      build: { id: 'build-1', status: 'failed', phase: '构建失败', progress: 16, log: 'No matching distribution found for cv2' },
+    });
+    render(<App />);
+
+    await userEvent.click(screen.getByRole('button', { name: /设置/ }));
+    await userEvent.click(screen.getByRole('button', { name: '运行时' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('No matching distribution found for cv2');
+    expect(screen.getByRole('button', { name: '构建并激活' })).toBeEnabled();
+  });
+
   it('keeps validation and data settings task agnostic', async () => {
     render(<App />);
 

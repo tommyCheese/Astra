@@ -5,6 +5,7 @@ import json
 import re
 import tempfile
 import uuid
+from collections import deque
 from pathlib import Path
 
 from app.sandbox.runtime import sanitize_log
@@ -161,6 +162,7 @@ class RuntimeProfileService:
 
         async def consume_output():
             line_count = 0
+            recent_output = deque(maxlen=8)
             while True:
                 line = await process.stdout.readline()
                 if not line:
@@ -168,6 +170,7 @@ class RuntimeProfileService:
                 latest = sanitize_log(line.decode(errors="replace").strip(), limit=600)
                 if not latest:
                     continue
+                recent_output.append(latest)
                 line_count += 1
                 progress = min(end - 1, start + line_count)
                 self._update_build(
@@ -177,7 +180,11 @@ class RuntimeProfileService:
                     progress=progress,
                     log=latest,
                 )
-            return await process.wait()
+            returncode = await process.wait()
+            if returncode:
+                detail = "\n".join(recent_output) or "命令未返回错误详情"
+                raise RuntimeError(f"{phase}失败（退出码 {returncode}）：\n{detail}")
+            return returncode
 
         try:
             return await asyncio.wait_for(
@@ -216,13 +223,11 @@ class RuntimeProfileService:
                 Path(root, "Dockerfile").write_text(
                     f"FROM {self.settings.sandbox_runtime_image}\nUSER root\n{install}USER 65532:65532\n"
                 )
-                returncode = await self._run_with_progress(
+                await self._run_with_progress(
                     build_id,
                     [
                         self.settings.docker_binary,
                         "build",
-                        "--progress",
-                        "plain",
                         "--network",
                         "default",
                         "-t",
@@ -233,8 +238,6 @@ class RuntimeProfileService:
                     start=10,
                     end=82,
                 )
-                if returncode:
-                    raise RuntimeError("镜像构建失败")
                 package_names = json.dumps([item["name"] for item in deps])
                 smoke_code = (
                     f"import importlib.metadata as m; [m.version(name) for name in {package_names}]"
@@ -245,7 +248,7 @@ class RuntimeProfileService:
                     progress=85,
                     log="镜像构建完成，正在断网验证依赖",
                 )
-                returncode = await self._run_with_progress(
+                await self._run_with_progress(
                     build_id,
                     [
                         self.settings.docker_binary,
@@ -262,8 +265,6 @@ class RuntimeProfileService:
                     start=85,
                     end=98,
                 )
-                if returncode:
-                    raise RuntimeError("依赖导入验证失败")
                 state = self.read()
                 state.update(active_image=image, dependency_digest=digest)
                 state["build"].update(
