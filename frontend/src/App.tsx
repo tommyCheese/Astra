@@ -180,6 +180,7 @@ function AppContent() {
         task_id: created.task_id,
         status: created.status,
         mode: 'general-agent',
+        result: null,
         steps: [], tool_calls: [], artifacts: [], events: [], turns: [], memories: [],
         chat_messages: [{ id: `optimistic-${created.run_id}`, role: 'user', content: trimmedGoal, status: 'completed', metadata: {} }],
       } as RunView);
@@ -1152,9 +1153,12 @@ function MessageBubble({ message, run }: { message: ChatMessage; run: RunView | 
 function ProcessPanel({ run, messageId }: { run: RunView; messageId: string }) {
   const { t } = useI18n();
   const turns = [...(run.turns ?? [])].sort((a, b) => a.turn_index - b.turn_index);
+  const processSummary = run.tool_calls.length > 0
+    ? t('{steps} 个步骤 · {tools} 次工具调用').replace('{steps}', String(turns.length)).replace('{tools}', String(run.tool_calls.length))
+    : t('{steps} 个步骤').replace('{steps}', String(turns.length));
   const report = run.result?.verification_report;
   const notes = [...new Set([...(run.result?.verification_notes ?? []), ...(report?.notes ?? [])])];
-  return <article className="process-entry" id={`message-${messageId}`}><details className="process-panel"><summary><Icon name="brain" /><span>{t('思考过程')}</span><small>{t('{steps} 个步骤 · {tools} 次工具调用').replace('{steps}', String(turns.length)).replace('{tools}', String(run.tool_calls.length))}</small></summary><div className="process-timeline">
+  return <article className="process-entry" id={`message-${messageId}`}><details className="process-panel"><summary><Icon name="brain" /><span>{t('思考过程')}</span><small>{processSummary}</small></summary><div className="process-timeline">
     {turns.map((turn) => {
       const call = run.tool_calls.find((item) => item.id === turn.tool_call_id);
       const outputs = call ? visibleArtifacts(run.artifacts).filter((artifact) => artifact.tool_call_id === call.id) : [];

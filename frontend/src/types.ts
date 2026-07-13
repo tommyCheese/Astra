@@ -97,7 +97,7 @@ export type VerificationReport = {
   low_quality_sources: Array<Record<string, unknown>>;
   failed_sources: Array<Record<string, unknown>>;
   memory_references: Array<Record<string, unknown>>;
-  invalid_artifact_references?: number;
+  invalid_artifact_references: number;
   notes: string[];
 };
 
@@ -182,9 +182,9 @@ export type RunResult = {
     agent_turn_count: number;
     referenced_artifact_ids: string[];
   };
-  verification_report?: VerificationReport | null;
-  completion_decision?: CompletionDecision | null;
-  error?: RunError | null;
+  verification_report: VerificationReport | null;
+  completion_decision: CompletionDecision | null;
+  error: RunError | null;
 };
 
 export type RunView = {
@@ -193,7 +193,7 @@ export type RunView = {
   status: string;
   mode: string;
   summary?: string | null;
-  result?: RunResult | null;
+  result: RunResult | null;
   steps: StepView[];
   tool_calls: ToolCallView[];
   artifacts: ArtifactView[];

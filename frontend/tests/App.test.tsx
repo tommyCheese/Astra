@@ -33,7 +33,7 @@ vi.mock('../src/api', () => ({
     summary: '完成',
     result: {
       summary: '已完成查询',
-      findings: [{ text: '**发现一条证据**', source_urls: ['https://example.com'] }],
+      findings: [{ text: '**发现一条证据**', source_urls: ['https://example.com'], artifact_ids: [] }],
       sources: [{ url: '示例网站：https://example.com/docs', title: 'Example' }],
       source_quality: [
         {
@@ -43,10 +43,12 @@ vi.mock('../src/api', () => ({
           warnings: ['正文与查询词重叠较少'],
         },
       ],
-      failed_sources: [{ url: 'https://bad.example', category: 'fetch_failed' }],
+      failed_sources: [{ url: 'https://bad.example', category: 'fetch_failed', retryable: false, details: {} }],
       conflicts: [],
       caveats: ['部分来源抓取失败'],
       verification_notes: ['验证通过'],
+      memory_references: [],
+      audit_refs: { agent_turn_count: 2, referenced_artifact_ids: [] },
       verification_report: {
         status: 'completed',
         source_count: 1,
@@ -207,6 +209,7 @@ describe('App', () => {
     expect(screen.getByRole('button', { name: '跳转到问题 1' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '跳转到问题 1' })).toHaveAttribute('aria-current', 'true');
     expect(screen.getByText('思考过程')).toBeInTheDocument();
+    expect(screen.getByText('至少一个抓取来源支撑了最终答案。')).toBeInTheDocument();
     expect(screen.getAllByText('已完成查询')).toHaveLength(1);
     expect(screen.getByText('web_search').closest('details')).not.toHaveAttribute('open');
     expect(document.querySelectorAll('.answer-message')).toHaveLength(1);
@@ -295,6 +298,22 @@ describe('App', () => {
 
     expect(await screen.findByText('已完成查询')).toBeInTheDocument();
     expect(screen.queryByRole('link', { name: /查看输出/ })).not.toBeInTheDocument();
+  });
+
+  it('omits the tool call count from the reasoning summary when no tools were called', async () => {
+    const snapshot = await vi.mocked(getRun)('fixture');
+    vi.mocked(getRun).mockResolvedValueOnce({
+      ...snapshot,
+      tool_calls: [],
+      turns: (snapshot.turns ?? []).map((turn) => ({ ...turn, selected_tool: null, tool_call_id: null })),
+    });
+
+    render(<App />);
+    await userEvent.type(screen.getByRole('textbox'), '直接思考');
+    await userEvent.click(screen.getByRole('button', { name: '↑' }));
+
+    expect(await screen.findByText('2 个步骤')).toBeInTheDocument();
+    expect(screen.queryByText(/0 次工具调用/)).not.toBeInTheDocument();
   });
 
   it('keeps the streamed answer until a terminal snapshot contains the persisted result', async () => {
@@ -483,7 +502,15 @@ describe('App', () => {
     vi.mocked(listRuns).mockResolvedValueOnce([
       {
         id: 'failed-run', task_id: 'failed-task', status: 'blocked', mode: 'web_agent', summary: '失败记录',
-        result: { summary: '模型调用失败', error: { code: 'MODEL_FAILED' } },
+        result: {
+          summary: '模型调用失败', findings: [], sources: [], failed_sources: [], source_quality: [],
+          conflicts: [], caveats: [], verification_notes: ['运行未能完成。'], memory_references: [],
+          audit_refs: { agent_turn_count: 0, referenced_artifact_ids: [] },
+          error: {
+            type: 'dependency.model_response_invalid', code: 'MODEL_FAILED', message: '模型调用失败',
+            retryable: true, trace_id: 'req_failed', details: {},
+          },
+        },
         chat_messages: [{ id: 'failed-message', role: 'assistant', content: '模型调用失败', status: 'blocked' }],
       },
       {
