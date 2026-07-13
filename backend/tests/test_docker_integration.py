@@ -74,7 +74,7 @@ async def test_local_docker_web_runtime_returns_protocol_envelope(tmp_path, tool
         json.dumps(
             {
                 "ALLOW_NETWORK_READ": "true",
-                "WEB_SEARCH_PROVIDER": "bing",
+                "WEB_SEARCH_PROVIDER": "auto",
                 "CRAWLER_ALLOW_PROXY_FAKE_IP": "true",
             }
         )
@@ -96,3 +96,6 @@ async def test_local_docker_web_runtime_returns_protocol_envelope(tmp_path, tool
         assert envelope["output"]["status_code"] == 200
     else:
         assert envelope["output"]["candidate_count"] > 0
+        assert envelope["output"]["provider_mode"] == "auto"
+        assert envelope["output"]["degraded"] is True
+        assert envelope["output"]["provider_attempts"]

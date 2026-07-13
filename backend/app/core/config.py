@@ -13,7 +13,7 @@ class Settings(BaseSettings):
     tool_web_search_enabled: bool = True
     tool_web_fetch_enabled: bool = True
     tool_chart_render_enabled: bool = True
-    web_search_provider: str = "bing"
+    web_search_provider: str = "auto"
     web_search_api_key: str = ""
     google_search_api_key: str = ""
     google_search_engine_id: str = ""

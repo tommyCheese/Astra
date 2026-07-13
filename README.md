@@ -87,11 +87,21 @@ TOOL_WEB_FETCH_ENABLED=true
 TOOL_CHART_RENDER_ENABLED=true
 ```
 
-`web_fetch` 支持直接抓取公开 HTTP(S) URL；`web_search` 默认使用无需 API Key 的 Bing RSS 搜索：
+`web_fetch` 支持直接抓取公开 HTTP(S) URL；`web_search` 默认使用自动 provider 模式：
 
 ```text
-WEB_SEARCH_PROVIDER=bing
+WEB_SEARCH_PROVIDER=auto
 ```
+
+`auto` 按以下规则选择搜索路径：
+
+1. 同时存在专用 `GOOGLE_SEARCH_API_KEY` 和 `GOOGLE_SEARCH_ENGINE_ID` 时使用 Google；
+2. 否则存在 `WEB_SEARCH_API_KEY` 时使用 Brave；
+3. 否则进入无密钥链路，先请求 Bing RSS，失败或无结果时回退 DuckDuckGo HTML。
+
+自动搜索输出会记录实际 provider、每次 provider 尝试、回退原因和 `degraded` 状态。Bing RSS 与 DuckDuckGo HTML 属于公共搜索入口，可能受到结构变化、限流和使用条款约束；无密钥模式定位为本地开发和个人部署的降级能力，不承诺商业生产环境的可用性、许可或结果质量 SLA。
+
+显式配置 `google`、`brave`、`bing` 或 `duckduckgo` 时，系统只执行指定 provider，不会静默回退。这样可以保证部署配置与 ToolCall 审计结果一致。
 
 如需接入 Google Programmable Search JSON API，配置：
 
@@ -105,7 +115,7 @@ GOOGLE_SEARCH_REGION=
 GOOGLE_SEARCH_SAFE=active
 ```
 
-Google API Key 只用于后端工具调用，不会写入 ToolCall input/output。`web_fetch` 会按候选来源动态选择抓取策略，并将正文长度、质量评分、抓取 warning 和失败来源写入 Evidence Pack；最终总结只基于本次 run 中已审计的工具输出和 artifact。
+Google API Key 只用于后端工具调用，不会写入 ToolCall input/output。`auto` 只有在专用 Google Key 与 Search Engine ID 都存在时才自动选择 Google；显式 `WEB_SEARCH_PROVIDER=google` 继续兼容用 `WEB_SEARCH_API_KEY` 提供 Google Key 的旧配置。`web_fetch` 会按候选来源动态选择抓取策略，并将正文长度、质量评分、抓取 warning 和失败来源写入 Evidence Pack；最终总结只基于本次 run 中已审计的工具输出和 artifact。
 
 接入 Brave Search 时配置：
 

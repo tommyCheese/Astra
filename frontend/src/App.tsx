@@ -13,6 +13,7 @@ import type { RunStreamEvent } from './api';
 const terminalStatuses = new Set(['completed', 'completed_with_warnings', 'failed', 'blocked', 'waiting_user']);
 const STORAGE_KEYS = {
   conversations: 'astra.conversations.v1',
+  processPanelPreferences: 'astra.process-panel-preferences.v1',
   modelProviders: 'astra.model-providers.v1',
   selectedModel: 'astra.selected-model.v1',
 };
@@ -33,6 +34,7 @@ function AppContent() {
   const [answerComplete, setAnswerComplete] = useState(false);
   const [answerSettling, setAnswerSettling] = useState(false);
   const [processState, setProcessState] = useState<ProcessStreamState | null>(null);
+  const [processPanelPreferences, setProcessPanelPreferences] = useState<Record<string, boolean>>(loadProcessPanelPreferences);
   const [showJumpToLatest, setShowJumpToLatest] = useState(false);
   const [error, setError] = useState<ApiErrorPayload | null>(null);
   const [view, setView] = useState<'chat' | 'settings'>('chat');
@@ -68,6 +70,7 @@ function AppContent() {
   const selectedModel = availableModels.find((item) => item.key === selectedModelKey)?.model ?? '';
 
   useEffect(() => writeLocalJson(STORAGE_KEYS.conversations, conversationHistory.slice(0, HISTORY_LIMIT)), [conversationHistory]);
+  useEffect(() => writeLocalJson(STORAGE_KEYS.processPanelPreferences, processPanelPreferences), [processPanelPreferences]);
   useEffect(() => writeLocalJson(STORAGE_KEYS.modelProviders, providerConfigs), [providerConfigs]);
   useEffect(() => writeLocalString(STORAGE_KEYS.selectedModel, selectedModelKey), [selectedModelKey]);
 
@@ -332,6 +335,13 @@ function AppContent() {
     const streamed = streamingAnswer ? [{ id: `${run?.id ?? 'idle'}-stream`, role: 'assistant', content: streamingAnswer, status: answerComplete ? 'completed' : 'streaming', metadata: {} }] : [];
     return [...priorMessages, ...currentMessages, ...streamed];
   }, [priorMessages, run, streamingAnswer, answerComplete]);
+  const processPanelConversationId = activeConversationId ?? run?.task_id ?? null;
+  const processPanelOpen = processPanelConversationId ? processPanelPreferences[processPanelConversationId] === true : false;
+
+  function changeProcessPanelOpen(open: boolean) {
+    if (!processPanelConversationId) return;
+    setProcessPanelPreferences((preferences) => ({ ...preferences, [processPanelConversationId]: open }));
+  }
 
   useEffect(() => {
     if (!followLatestRef.current) return;
@@ -437,7 +447,7 @@ function AppContent() {
               </div>
             )}
             {messages.map((message) => (
-              <MessageBubble key={message.id} message={message} run={run} processState={processState} isAnswerStreaming={Boolean(streamingAnswer)} />
+              <MessageBubble key={message.id} message={message} run={run} processState={processState} processPanelOpen={processPanelOpen} onProcessPanelOpenChange={changeProcessPanelOpen} />
             ))}
             {answerSettling && streamingAnswer && <div className="answer-settling" role="status" aria-live="polite"><span className="settling-spinner" aria-hidden="true" />{t('正在整理并验证结果…')}</div>}
             {run && !terminalStatuses.has(run.status) && !streamingAnswer && !processState && (
@@ -984,6 +994,12 @@ function loadConversationHistory(): ConversationEntry[] {
     .slice(0, HISTORY_LIMIT);
 }
 
+function loadProcessPanelPreferences(): Record<string, boolean> {
+  const saved = readLocalJson<Record<string, unknown>>(STORAGE_KEYS.processPanelPreferences);
+  if (!saved || typeof saved !== 'object' || Array.isArray(saved)) return {};
+  return Object.fromEntries(Object.entries(saved).filter((entry): entry is [string, boolean] => typeof entry[1] === 'boolean'));
+}
+
 function parseModelIds(models: string) {
   return [...new Set(models.split(',').map((model) => model.trim()).filter(Boolean))];
 }
@@ -1157,7 +1173,7 @@ function Icon({ name }: { name: IconName }) {
   return <svg className="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{paths[name]}</svg>;
 }
 
-function MessageBubble({ message, run, processState, isAnswerStreaming }: { message: ChatMessage; run: RunView | null; processState: ProcessStreamState | null; isAnswerStreaming: boolean }) {
+function MessageBubble({ message, run, processState, processPanelOpen, onProcessPanelOpenChange }: { message: ChatMessage; run: RunView | null; processState: ProcessStreamState | null; processPanelOpen: boolean; onProcessPanelOpenChange: (open: boolean) => void }) {
   const { t } = useI18n();
   const snapshot = (message.metadata.run_snapshot as RunView | undefined) ?? run;
   const presentation = String(message.metadata.presentation ?? '');
@@ -1171,7 +1187,7 @@ function MessageBubble({ message, run, processState, isAnswerStreaming }: { mess
   }
 
   if (presentation === 'process' && snapshot) {
-    return <ProcessPanel run={snapshot} messageId={message.id} liveState={processState?.runId === snapshot.id ? processState : null} isAnswerStreaming={isAnswerStreaming && run?.id === snapshot.id} />;
+    return <ProcessPanel run={snapshot} messageId={message.id} liveState={processState?.runId === snapshot.id ? processState : null} open={processPanelOpen} onOpenChange={onProcessPanelOpenChange} />;
   }
 
   if (presentation === 'answer' && snapshot?.result) {
@@ -1186,7 +1202,7 @@ function MessageBubble({ message, run, processState, isAnswerStreaming }: { mess
   return null;
 }
 
-function ProcessPanel({ run, messageId, liveState, isAnswerStreaming }: { run: RunView; messageId: string; liveState: ProcessStreamState | null; isAnswerStreaming: boolean }) {
+function ProcessPanel({ run, messageId, liveState, open, onOpenChange }: { run: RunView; messageId: string; liveState: ProcessStreamState | null; open: boolean; onOpenChange: (open: boolean) => void }) {
   const { t } = useI18n();
   const turns = [...(run.turns ?? [])].sort((a, b) => a.turn_index - b.turn_index);
   const live = Boolean(liveState?.active);
@@ -1197,24 +1213,11 @@ function ProcessPanel({ run, messageId, liveState, isAnswerStreaming }: { run: R
     : t('{steps} 个步骤').replace('{steps}', String(turns.length));
   const report = run.result?.verification_report;
   const notes = [...new Set([...(run.result?.verification_notes ?? []), ...(report?.notes ?? [])])];
-  const [open, setOpen] = useState(live);
-  const userToggledRef = useRef(false);
-  useEffect(() => {
-    userToggledRef.current = false;
-    setOpen(live);
-  }, [run.id]);
-  useEffect(() => {
-    if (isAnswerStreaming && !userToggledRef.current) setOpen(false);
-  }, [isAnswerStreaming]);
-  useEffect(() => {
-    if (!live && !userToggledRef.current) setOpen(false);
-  }, [live]);
   const toggle = (event: MouseEvent<HTMLElement>) => {
     event.preventDefault();
-    userToggledRef.current = true;
-    setOpen((value) => !value);
+    onOpenChange(!open);
   };
-  return <article className={`process-entry ${live ? 'live' : ''}`} id={`message-${messageId}`}><details className="process-panel" open={open}><summary onClick={toggle} aria-expanded={open}><Icon name="brain" /><span>{t('思考过程')}</span>{live && <i className="process-live-dot" aria-hidden="true" />}<small>{processSummary}</small></summary><div className="process-timeline" aria-live={live ? 'polite' : undefined}>
+  return <article className={`process-entry ${live ? 'live' : ''}`} id={`message-${messageId}`}><details className="process-panel" open={open}><summary onClick={toggle} aria-expanded={open}><Icon name="brain" /><span>{t('思考过程')}</span>{live && <i className="process-loading-pane" aria-hidden="true"><b /><b /><b /></i>}<small>{processSummary}</small></summary><div className="process-timeline" aria-live={live ? 'polite' : undefined}>
     {live ? liveState?.items.map((item) => <div className={`process-step process-${item.kind} status-${item.status}`} key={item.id}><span className={`process-dot ${item.kind === 'tool' ? 'tool' : ''}`}><Icon name={item.kind === 'tool' ? 'tools' : item.kind === 'verification' ? 'check' : 'brain'} /></span><div><strong>{t(item.title)}</strong>{item.detail && <p>{item.detail}</p>}<small>{item.status === 'running' ? t('进行中') : item.status === 'failed' ? t('失败') : t('已完成')}</small></div></div>) : turns.map((turn) => {
       const call = run.tool_calls.find((item) => item.id === turn.tool_call_id);
       const outputs = call ? visibleArtifacts(run.artifacts).filter((artifact) => artifact.tool_call_id === call.id) : [];

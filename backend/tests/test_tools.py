@@ -1,4 +1,5 @@
 import os
+from unittest.mock import AsyncMock
 
 import httpx
 import pytest
@@ -135,6 +136,169 @@ async def test_bing_web_search_uses_rss_response(monkeypatch):
 
     assert output["provider"] == "bing"
     assert output["candidate_count"] == 1
+    assert output["provider_mode"] == "explicit"
+    assert output["provider_attempts"] == [
+        {"provider": "bing", "status": "succeeded", "candidate_count": 1}
+    ]
+    assert output["degraded"] is True
+
+
+def search_output(provider: str, candidate_count: int = 1) -> dict:
+    return {
+        "query": "Astra",
+        "provider": provider,
+        "parameters": {},
+        "candidate_count": candidate_count,
+        "warnings": [],
+        "candidates": [{}] * candidate_count,
+    }
+
+
+async def test_auto_web_search_selects_google_with_dedicated_credentials(monkeypatch):
+    tool = WebSearchTool(
+        Settings(
+            web_search_provider="auto",
+            google_search_api_key="google-secret",
+            google_search_engine_id="cx",
+            web_search_api_key="brave-secret",
+        )
+    )
+    google = AsyncMock(return_value=search_output("google"))
+    brave = AsyncMock(return_value=search_output("brave"))
+    monkeypatch.setattr(tool, "_google_search", google)
+    monkeypatch.setattr(tool, "_brave_search", brave)
+
+    output = await tool.run({"query": "Astra"})
+
+    assert output["provider"] == "google"
+    assert output["provider_mode"] == "auto"
+    assert output["degraded"] is False
+    assert "google-secret" not in str(output)
+    google.assert_awaited_once()
+    brave.assert_not_awaited()
+
+
+async def test_auto_web_search_selects_brave_from_generic_search_key(monkeypatch):
+    tool = WebSearchTool(
+        Settings(
+            web_search_provider="auto",
+            google_search_api_key="",
+            google_search_engine_id="",
+            web_search_api_key="brave-secret",
+        )
+    )
+    brave = AsyncMock(return_value=search_output("brave"))
+    bing = AsyncMock(return_value=search_output("bing"))
+    monkeypatch.setattr(tool, "_brave_search", brave)
+    monkeypatch.setattr(tool, "_bing_search", bing)
+
+    output = await tool.run({"query": "Astra"})
+
+    assert output["provider"] == "brave"
+    assert output["provider_attempts"][0]["provider"] == "brave"
+    assert output["degraded"] is False
+    brave.assert_awaited_once()
+    bing.assert_not_awaited()
+
+
+async def test_auto_keyless_search_stops_after_successful_bing(monkeypatch):
+    tool = WebSearchTool(
+        Settings(
+            web_search_provider="auto",
+            google_search_api_key="",
+            google_search_engine_id="",
+            web_search_api_key="",
+        )
+    )
+    bing = AsyncMock(return_value=search_output("bing"))
+    duckduckgo = AsyncMock(return_value=search_output("duckduckgo"))
+    monkeypatch.setattr(tool, "_bing_search", bing)
+    monkeypatch.setattr(tool, "_duckduckgo_search", duckduckgo)
+
+    output = await tool.run({"query": "Astra"})
+
+    assert output["provider"] == "bing"
+    assert output["provider_attempts"] == [
+        {"provider": "bing", "status": "succeeded", "candidate_count": 1}
+    ]
+    assert output["degraded"] is True
+    assert any("不保证商业生产环境" in warning for warning in output["warnings"])
+    duckduckgo.assert_not_awaited()
+
+
+@pytest.mark.parametrize("bing_failure", ["empty", "error"])
+async def test_auto_keyless_search_falls_back_to_duckduckgo(monkeypatch, bing_failure):
+    tool = WebSearchTool(
+        Settings(
+            web_search_provider="auto",
+            google_search_api_key="",
+            google_search_engine_id="",
+            web_search_api_key="",
+        )
+    )
+    if bing_failure == "empty":
+        bing = AsyncMock(return_value=search_output("bing", candidate_count=0))
+    else:
+        bing = AsyncMock(side_effect=ToolExecutionError("search_failed", "provider detail"))
+    duckduckgo = AsyncMock(return_value=search_output("duckduckgo"))
+    monkeypatch.setattr(tool, "_bing_search", bing)
+    monkeypatch.setattr(tool, "_duckduckgo_search", duckduckgo)
+
+    output = await tool.run({"query": "Astra"})
+
+    assert output["provider"] == "duckduckgo"
+    assert [attempt["provider"] for attempt in output["provider_attempts"]] == [
+        "bing",
+        "duckduckgo",
+    ]
+    assert output["provider_attempts"][0]["status"] == (
+        "empty" if bing_failure == "empty" else "failed"
+    )
+    assert any("回退到 DuckDuckGo" in warning for warning in output["warnings"])
+
+
+async def test_auto_keyless_search_aggregates_provider_failures_without_details(monkeypatch):
+    tool = WebSearchTool(
+        Settings(
+            web_search_provider="auto",
+            google_search_api_key="",
+            google_search_engine_id="",
+            web_search_api_key="",
+        )
+    )
+    monkeypatch.setattr(
+        tool,
+        "_bing_search",
+        AsyncMock(side_effect=ToolExecutionError("search_failed", "bing-secret-detail")),
+    )
+    monkeypatch.setattr(
+        tool,
+        "_duckduckgo_search",
+        AsyncMock(side_effect=ToolExecutionError("search_failed", "duck-secret-detail")),
+    )
+
+    with pytest.raises(ToolExecutionError) as exc_info:
+        await tool.run({"query": "Astra"})
+
+    assert exc_info.value.category == "search_failed"
+    assert "bing:search_failed" in exc_info.value.message
+    assert "duckduckgo:search_failed" in exc_info.value.message
+    assert "secret-detail" not in exc_info.value.message
+
+
+async def test_explicit_provider_failure_does_not_fall_back(monkeypatch):
+    tool = WebSearchTool(Settings(web_search_provider="google"))
+    bing = AsyncMock(return_value=search_output("bing"))
+    duckduckgo = AsyncMock(return_value=search_output("duckduckgo"))
+    monkeypatch.setattr(tool, "_bing_search", bing)
+    monkeypatch.setattr(tool, "_duckduckgo_search", duckduckgo)
+
+    with pytest.raises(ToolExecutionError) as exc_info:
+        await tool.run({"query": "Astra"})
+
+    assert exc_info.value.category == "missing_credentials"
+    bing.assert_not_awaited()
+    duckduckgo.assert_not_awaited()
 
 
 async def test_google_web_search_requires_credentials():
@@ -404,9 +568,7 @@ async def test_web_fetch_proxy_fake_ip_compatibility_is_explicit(monkeypatch):
     async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
         with pytest.raises(ToolExecutionError):
             await strict_tool._get_with_safe_redirects(client, "https://public.example/")
-        response = await compatible_tool._get_with_safe_redirects(
-            client, "https://public.example/"
-        )
+        response = await compatible_tool._get_with_safe_redirects(client, "https://public.example/")
 
     assert response.body == b"public content"
 

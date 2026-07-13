@@ -345,7 +345,7 @@ describe('App', () => {
     vi.mocked(streamRunEvents).mockImplementation(() => () => undefined);
   });
 
-  it('shows live reasoning immediately, batches deltas without snapshot refreshes, and respects expansion choices', async () => {
+  it('keeps live reasoning collapsed by default and persists the user choice within the conversation', async () => {
     const finalSnapshot = await vi.mocked(getRun)('fixture');
     const executingSnapshot = {
       ...finalSnapshot,
@@ -371,10 +371,16 @@ describe('App', () => {
 
     const summary = await screen.findByText('思考过程');
     const panel = summary.closest('details');
-    expect(panel).toHaveAttribute('open');
+    expect(panel).not.toHaveAttribute('open');
     expect(screen.getByText('实时更新')).toBeInTheDocument();
+    expect(panel?.querySelector('.process-loading-pane')).toBeInTheDocument();
+    expect(panel?.querySelector('.process-live-dot')).not.toBeInTheDocument();
     await waitFor(() => expect(emit).toBeTypeOf('function'));
     const snapshotCalls = vi.mocked(getRun).mock.calls.length;
+
+    await userEvent.click(summary);
+    expect(panel).toHaveAttribute('open');
+    await waitFor(() => expect(JSON.parse(window.localStorage.getItem('astra.process-panel-preferences.v1') ?? '{}')['task-1']).toBe(true));
 
     act(() => {
       emit?.({ id: 10, type: 'reasoning.phase.started', payload: { phase: 'selecting_action', turn_index: 1 } });
@@ -386,16 +392,50 @@ describe('App', () => {
 
     act(() => emit?.({ id: 12, type: 'answer.delta', payload: { delta: '开始回答' } }));
     expect(await screen.findByText('开始回答')).toBeInTheDocument();
-    await waitFor(() => expect(panel).not.toHaveAttribute('open'));
+    expect(panel).toHaveAttribute('open');
+
+    await userEvent.click(summary);
+    expect(panel).not.toHaveAttribute('open');
+    act(() => emit?.({ id: 13, type: 'reasoning.summary.delta', payload: { turn_index: 1, delta: '并继续验证' } }));
+    expect(await screen.findByText('正在选择可靠来源并继续验证')).toBeInTheDocument();
+    expect(panel).not.toHaveAttribute('open');
 
     await userEvent.click(summary);
     expect(panel).toHaveAttribute('open');
-    act(() => emit?.({ id: 13, type: 'reasoning.summary.delta', payload: { turn_index: 1, delta: '并继续验证' } }));
-    expect(await screen.findByText('正在选择可靠来源并继续验证')).toBeInTheDocument();
-    expect(panel).toHaveAttribute('open');
+    await userEvent.click(screen.getByRole('button', { name: '新对话' }));
+    expect(screen.queryByText('思考过程')).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: '实时过程 executing' }));
+    expect(await screen.findByText('思考过程')).toBeInTheDocument();
+    expect(screen.getByText('思考过程').closest('details')).toHaveAttribute('open');
+
+    await userEvent.click(screen.getByText('思考过程'));
+    await waitFor(() => expect(JSON.parse(window.localStorage.getItem('astra.process-panel-preferences.v1') ?? '{}')['task-1']).toBe(false));
+    await userEvent.click(screen.getByRole('button', { name: '新对话' }));
+    await userEvent.click(screen.getByRole('button', { name: '实时过程 executing' }));
+    expect(await screen.findByText('思考过程')).toBeInTheDocument();
+    expect(screen.getByText('思考过程').closest('details')).not.toHaveAttribute('open');
 
     vi.mocked(getRun).mockResolvedValue(finalSnapshot);
     vi.mocked(streamRunEvents).mockImplementation(() => () => undefined);
+  });
+
+  it('does not carry an expanded process preference into a different conversation', async () => {
+    const snapshot = await vi.mocked(getRun)('fixture');
+    window.localStorage.setItem('astra.process-panel-preferences.v1', JSON.stringify({ 'task-1': true }));
+    vi.mocked(createRun).mockResolvedValueOnce({ run_id: 'run-2', task_id: 'task-2', status: 'created' });
+    vi.mocked(getRun).mockResolvedValueOnce({
+      ...snapshot,
+      id: 'run-2',
+      task_id: 'task-2',
+      chat_messages: [{ id: 'u-2', role: 'user', content: '另一个会话', status: 'completed', metadata: {} }],
+    });
+
+    render(<App />);
+    await userEvent.type(screen.getByRole('textbox'), '另一个会话');
+    await userEvent.click(screen.getByRole('button', { name: '↑' }));
+
+    const summary = await screen.findByText('思考过程');
+    expect(summary.closest('details')).not.toHaveAttribute('open');
   });
 
   it('sends selected reasoning policy with a run', async () => {

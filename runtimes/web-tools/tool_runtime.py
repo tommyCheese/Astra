@@ -31,7 +31,7 @@ def config_int(config: dict[str, Any], name: str, default: int) -> int:
 @dataclass(frozen=True)
 class WebRuntimeSettings:
     allow_network_read: bool = True
-    web_search_provider: str = "bing"
+    web_search_provider: str = "auto"
     web_search_api_key: str = ""
     google_search_api_key: str = ""
     google_search_engine_id: str = ""
@@ -49,19 +49,27 @@ class WebRuntimeSettings:
         return cls(
             allow_network_read=str(config.get("ALLOW_NETWORK_READ", "true")).lower()
             in {"1", "true", "yes"},
-            web_search_provider=str(config.get("WEB_SEARCH_PROVIDER", "bing")),
+            web_search_provider=str(config.get("WEB_SEARCH_PROVIDER", "auto")),
             web_search_api_key=str(config.get("WEB_SEARCH_API_KEY", "")),
             google_search_api_key=str(config.get("GOOGLE_SEARCH_API_KEY", "")),
             google_search_engine_id=str(config.get("GOOGLE_SEARCH_ENGINE_ID", "")),
-            google_search_result_count=config_int(config, "GOOGLE_SEARCH_RESULT_COUNT", 5),
-            google_search_language=str(config.get("GOOGLE_SEARCH_LANGUAGE", "lang_zh-CN")),
+            google_search_result_count=config_int(
+                config, "GOOGLE_SEARCH_RESULT_COUNT", 5
+            ),
+            google_search_language=str(
+                config.get("GOOGLE_SEARCH_LANGUAGE", "lang_zh-CN")
+            ),
             google_search_region=str(config.get("GOOGLE_SEARCH_REGION", "")),
             google_search_safe=str(config.get("GOOGLE_SEARCH_SAFE", "active")),
-            crawler_max_content_chars=config_int(config, "CRAWLER_MAX_CONTENT_CHARS", 12000),
+            crawler_max_content_chars=config_int(
+                config, "CRAWLER_MAX_CONTENT_CHARS", 12000
+            ),
             crawler_max_response_bytes=config_int(
                 config, "CRAWLER_MAX_RESPONSE_BYTES", 2 * 1024 * 1024
             ),
-            crawler_min_quality_chars=config_int(config, "CRAWLER_MIN_QUALITY_CHARS", 240),
+            crawler_min_quality_chars=config_int(
+                config, "CRAWLER_MIN_QUALITY_CHARS", 240
+            ),
             crawler_allow_proxy_fake_ip=str(
                 config.get("CRAWLER_ALLOW_PROXY_FAKE_IP", "false")
             ).lower()
@@ -118,7 +126,10 @@ def main() -> None:
     except (json.JSONDecodeError, OSError, ValueError, TypeError):
         envelope = {
             "ok": False,
-            "error": {"category": "invalid_input", "message": "Invalid sandbox tool request"},
+            "error": {
+                "category": "invalid_input",
+                "message": "Invalid sandbox tool request",
+            },
         }
     except Exception:
         envelope = {

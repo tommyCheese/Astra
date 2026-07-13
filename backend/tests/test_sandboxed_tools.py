@@ -62,11 +62,35 @@ def test_web_runtime_config_is_an_explicit_host_secret_allowlist():
 
     runtime_config = _web_runtime_config(settings, "web_search")
 
+    assert runtime_config["WEB_SEARCH_PROVIDER"] == "auto"
     assert runtime_config["WEB_SEARCH_API_KEY"] == "search-secret"
     assert "MODEL_API_KEY" not in runtime_config
     assert "DATABASE_URL" not in runtime_config
     assert "ARTIFACT_STORE_PATH" not in runtime_config
     assert "/Users/private" not in json.dumps(runtime_config)
+
+
+def test_web_runtime_config_passes_only_explicit_search_credentials():
+    settings = Settings(
+        web_search_provider="auto",
+        web_search_api_key="brave-secret",
+        google_search_api_key="google-secret",
+        google_search_engine_id="cx-secret",
+    )
+
+    runtime_config = _web_runtime_config(settings, "web_search")
+
+    assert runtime_config == {
+        "ALLOW_NETWORK_READ": "true",
+        "WEB_SEARCH_PROVIDER": "auto",
+        "WEB_SEARCH_API_KEY": "brave-secret",
+        "GOOGLE_SEARCH_API_KEY": "google-secret",
+        "GOOGLE_SEARCH_ENGINE_ID": "cx-secret",
+        "GOOGLE_SEARCH_RESULT_COUNT": "5",
+        "GOOGLE_SEARCH_LANGUAGE": "lang_zh-CN",
+        "GOOGLE_SEARCH_REGION": "",
+        "GOOGLE_SEARCH_SAFE": "active",
+    }
 
 
 async def test_web_tool_executes_through_container_protocol_only():

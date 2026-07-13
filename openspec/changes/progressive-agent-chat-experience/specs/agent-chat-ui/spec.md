@@ -38,15 +38,24 @@ The system SHALL map run, phase, turn and tool statuses to a live user-readable 
 - **WHEN** the Agent loop is planning, selecting an action, searching, reading, reflecting, verifying, or composing
 - **THEN** the process panel displays the active state and completed prior entries in execution order
 
+#### Scenario: Active process panel is collapsed
+- **WHEN** a Run is active and its process panel is collapsed
+- **THEN** the process summary uses a neutral loading-pane animation rather than a solid green background to indicate ongoing work
+- **THEN** reduced-motion preferences receive an equivalent static loading pane
+
 #### Scenario: User controls the process panel
-- **WHEN** a process first starts and the user has not changed its expansion state
-- **THEN** the UI displays it expanded
+- **WHEN** a process first starts in a conversation without a saved expansion choice
+- **THEN** the UI displays it collapsed
 - **WHEN** the user manually collapses or expands it
-- **THEN** later ordinary deltas respect that choice
+- **THEN** later ordinary deltas, answers, Runs, history switches and page restores in the same conversation respect that choice until the user changes it again
 
 #### Scenario: Answer begins
-- **WHEN** answer streaming begins and the user has not manually overridden process expansion
-- **THEN** the process panel may collapse to prioritize answer reading while remaining accessible
+- **WHEN** answer streaming begins
+- **THEN** the process panel preserves the current conversation-level expansion choice
+
+#### Scenario: A new conversation begins
+- **WHEN** the user starts a conversation without a saved process-panel preference
+- **THEN** the process panel starts collapsed independently of other conversations
 
 #### Scenario: Run is blocked
 - **WHEN** the run becomes blocked

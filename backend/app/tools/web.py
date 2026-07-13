@@ -136,7 +136,7 @@ class DuckDuckGoHTMLParser(HTMLParser):
 class WebSearchTool(Tool):
     spec = ToolSpec(
         name="web_search",
-        version="0.2.0",
+        version="0.3.0",
         description="Search the web through a configured provider and return candidate sources.",
         input_schema={
             "type": "object",
@@ -164,6 +164,19 @@ class WebSearchTool(Tool):
         if not query:
             raise ToolExecutionError("invalid_input", "web_search requires a non-empty query")
         provider = self.settings.web_search_provider
+        if provider == "auto":
+            return await self._auto_search(query, tool_input)
+        output = await self._run_provider(provider, query, tool_input)
+        return self._with_audit(
+            output,
+            provider_mode="explicit",
+            provider_attempts=[self._successful_attempt(output)],
+            degraded=provider in {"bing", "duckduckgo"},
+        )
+
+    async def _run_provider(
+        self, provider: str, query: str, tool_input: dict[str, Any]
+    ) -> dict[str, Any]:
         if provider == "bing":
             return await self._bing_search(query, tool_input)
         if provider == "duckduckgo":
@@ -174,8 +187,110 @@ class WebSearchTool(Tool):
             return await self._brave_search(query)
         raise ToolExecutionError(
             "provider_not_configured",
-            f"Unsupported web search provider: {self.settings.web_search_provider}",
+            f"Unsupported web search provider: {provider}",
         )
+
+    async def _auto_search(self, query: str, tool_input: dict[str, Any]) -> dict[str, Any]:
+        if self.settings.google_search_api_key and self.settings.google_search_engine_id:
+            output = await self._google_search(query, tool_input)
+            return self._with_audit(
+                output,
+                provider_mode="auto",
+                provider_attempts=[self._successful_attempt(output)],
+                degraded=False,
+            )
+        if self.settings.web_search_api_key:
+            output = await self._brave_search(query)
+            return self._with_audit(
+                output,
+                provider_mode="auto",
+                provider_attempts=[self._successful_attempt(output)],
+                degraded=False,
+            )
+        return await self._keyless_search(query, tool_input)
+
+    async def _keyless_search(self, query: str, tool_input: dict[str, Any]) -> dict[str, Any]:
+        attempts: list[dict[str, Any]] = []
+        fallback_warnings: list[str] = []
+        try:
+            bing_output = await self._bing_search(query, tool_input)
+        except ToolExecutionError as exc:
+            if exc.category != "search_failed":
+                raise
+            attempts.append(
+                {"provider": "bing", "status": "failed", "error_category": exc.category}
+            )
+            fallback_warnings.append("Bing 搜索失败，已回退到 DuckDuckGo。")
+        else:
+            attempts.append(self._successful_attempt(bing_output))
+            if bing_output.get("candidate_count", 0) > 0:
+                return self._with_audit(
+                    bing_output,
+                    provider_mode="auto",
+                    provider_attempts=attempts,
+                    degraded=True,
+                    extra_warnings=self._keyless_warnings(),
+                )
+            fallback_warnings.append("Bing 搜索没有返回候选来源，已回退到 DuckDuckGo。")
+
+        try:
+            duckduckgo_output = await self._duckduckgo_search(query, tool_input)
+        except ToolExecutionError as exc:
+            if exc.category != "search_failed":
+                raise
+            attempts.append(
+                {"provider": "duckduckgo", "status": "failed", "error_category": exc.category}
+            )
+            summary = ", ".join(
+                f"{attempt['provider']}:{attempt['error_category']}"
+                for attempt in attempts
+                if attempt["status"] == "failed"
+            )
+            raise ToolExecutionError(
+                "search_failed", f"Keyless web search providers failed ({summary})"
+            ) from exc
+
+        attempts.append(self._successful_attempt(duckduckgo_output))
+        return self._with_audit(
+            duckduckgo_output,
+            provider_mode="auto",
+            provider_attempts=attempts,
+            degraded=True,
+            extra_warnings=[*self._keyless_warnings(), *fallback_warnings],
+        )
+
+    @staticmethod
+    def _successful_attempt(output: dict[str, Any]) -> dict[str, Any]:
+        candidate_count = int(output.get("candidate_count", 0))
+        return {
+            "provider": str(output.get("provider", "")),
+            "status": "succeeded" if candidate_count > 0 else "empty",
+            "candidate_count": candidate_count,
+        }
+
+    @staticmethod
+    def _keyless_warnings() -> list[str]:
+        return ["当前使用无密钥公共搜索入口，不保证商业生产环境的可用性或结果 SLA。"]
+
+    @staticmethod
+    def _with_audit(
+        output: dict[str, Any],
+        *,
+        provider_mode: str,
+        provider_attempts: list[dict[str, Any]],
+        degraded: bool,
+        extra_warnings: list[str] | None = None,
+    ) -> dict[str, Any]:
+        warnings = list(output.get("warnings", []))
+        for warning in extra_warnings or []:
+            if warning not in warnings:
+                warnings.append(warning)
+        return output | {
+            "provider_mode": provider_mode,
+            "provider_attempts": provider_attempts,
+            "degraded": degraded,
+            "warnings": warnings,
+        }
 
     async def _bing_search(self, query: str, tool_input: dict[str, Any]) -> dict[str, Any]:
         try:
