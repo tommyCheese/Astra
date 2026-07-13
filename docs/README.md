@@ -17,7 +17,7 @@
 
 ## 现有专题文档
 
-- [跟着一次请求读懂 Astra Agent](agent-implementation-execution-walkthrough.md)：按一次请求的真实执行顺序理解后台。
+- [跟着上下文流读懂 Astra Agent](agent-implementation-execution-walkthrough.md)：按真实交互顺序理解 Agent Loop Harness、工具、证据、反思、验证与前端交付。
 
 ## 文档状态约定
 
