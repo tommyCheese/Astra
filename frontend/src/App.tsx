@@ -1,4 +1,4 @@
-import { FormEvent, MouseEvent, ReactNode, useEffect, useMemo, useRef, useState } from 'react';
+import { FormEvent, MouseEvent, ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { AstraApiError, ApiErrorPayload, buildRuntime, cancelRuntimeBuild, createRun, getRun, getRuntimeProfile, getToolSettings, listRuns, resumeRun, streamRunEvents, updateToolSettings, type ToolSetting } from './api';
@@ -13,7 +13,7 @@ import type { RunStreamEvent } from './api';
 const terminalStatuses = new Set(['completed', 'completed_with_warnings', 'failed', 'blocked', 'waiting_user']);
 const STORAGE_KEYS = {
   conversations: 'astra.conversations.v1',
-  processPanelPreferences: 'astra.process-panel-preferences.v1',
+  processPanelDefaultOpen: 'astra.process-panel-default-open.v1',
   modelProviders: 'astra.model-providers.v1',
   selectedModel: 'astra.selected-model.v1',
 };
@@ -34,7 +34,8 @@ function AppContent() {
   const [answerComplete, setAnswerComplete] = useState(false);
   const [answerSettling, setAnswerSettling] = useState(false);
   const [processState, setProcessState] = useState<ProcessStreamState | null>(null);
-  const [processPanelPreferences, setProcessPanelPreferences] = useState<Record<string, boolean>>(loadProcessPanelPreferences);
+  const [processPanelDefaultOpen, setProcessPanelDefaultOpen] = useState(loadProcessPanelDefaultOpen);
+  const [processPanelOpenByRun, setProcessPanelOpenByRun] = useState<Record<string, boolean>>({});
   const [showJumpToLatest, setShowJumpToLatest] = useState(false);
   const [error, setError] = useState<ApiErrorPayload | null>(null);
   const [view, setView] = useState<'chat' | 'settings'>('chat');
@@ -70,7 +71,7 @@ function AppContent() {
   const selectedModel = availableModels.find((item) => item.key === selectedModelKey)?.model ?? '';
 
   useEffect(() => writeLocalJson(STORAGE_KEYS.conversations, conversationHistory.slice(0, HISTORY_LIMIT)), [conversationHistory]);
-  useEffect(() => writeLocalJson(STORAGE_KEYS.processPanelPreferences, processPanelPreferences), [processPanelPreferences]);
+  useEffect(() => writeLocalJson(STORAGE_KEYS.processPanelDefaultOpen, processPanelDefaultOpen), [processPanelDefaultOpen]);
   useEffect(() => writeLocalJson(STORAGE_KEYS.modelProviders, providerConfigs), [providerConfigs]);
   useEffect(() => writeLocalString(STORAGE_KEYS.selectedModel, selectedModelKey), [selectedModelKey]);
 
@@ -335,13 +336,15 @@ function AppContent() {
     const streamed = streamingAnswer ? [{ id: `${run?.id ?? 'idle'}-stream`, role: 'assistant', content: streamingAnswer, status: answerComplete ? 'completed' : 'streaming', metadata: {} }] : [];
     return [...priorMessages, ...currentMessages, ...streamed];
   }, [priorMessages, run, streamingAnswer, answerComplete]);
-  const processPanelConversationId = activeConversationId ?? run?.task_id ?? null;
-  const processPanelOpen = processPanelConversationId ? processPanelPreferences[processPanelConversationId] === true : false;
-
-  function changeProcessPanelOpen(open: boolean) {
-    if (!processPanelConversationId) return;
-    setProcessPanelPreferences((preferences) => ({ ...preferences, [processPanelConversationId]: open }));
-  }
+  const initializeProcessPanel = useCallback((runId: string) => {
+    setProcessPanelOpenByRun((states) => Object.prototype.hasOwnProperty.call(states, runId)
+      ? states
+      : { ...states, [runId]: processPanelDefaultOpen });
+  }, [processPanelDefaultOpen]);
+  const changeProcessPanelOpen = useCallback((runId: string, open: boolean) => {
+    setProcessPanelOpenByRun((states) => ({ ...states, [runId]: open }));
+    setProcessPanelDefaultOpen(open);
+  }, []);
 
   useEffect(() => {
     if (!followLatestRef.current) return;
@@ -447,7 +450,7 @@ function AppContent() {
               </div>
             )}
             {messages.map((message) => (
-              <MessageBubble key={message.id} message={message} run={run} processState={processState} processPanelOpen={processPanelOpen} onProcessPanelOpenChange={changeProcessPanelOpen} />
+              <MessageBubble key={message.id} message={message} run={run} processState={processState} processPanelDefaultOpen={processPanelDefaultOpen} processPanelOpenByRun={processPanelOpenByRun} onProcessPanelInitialize={initializeProcessPanel} onProcessPanelOpenChange={changeProcessPanelOpen} />
             ))}
             {answerSettling && streamingAnswer && <div className="answer-settling" role="status" aria-live="polite"><span className="settling-spinner" aria-hidden="true" />{t('正在整理并验证结果…')}</div>}
             {run && !terminalStatuses.has(run.status) && !streamingAnswer && !processState && (
@@ -994,10 +997,8 @@ function loadConversationHistory(): ConversationEntry[] {
     .slice(0, HISTORY_LIMIT);
 }
 
-function loadProcessPanelPreferences(): Record<string, boolean> {
-  const saved = readLocalJson<Record<string, unknown>>(STORAGE_KEYS.processPanelPreferences);
-  if (!saved || typeof saved !== 'object' || Array.isArray(saved)) return {};
-  return Object.fromEntries(Object.entries(saved).filter((entry): entry is [string, boolean] => typeof entry[1] === 'boolean'));
+function loadProcessPanelDefaultOpen(): boolean {
+  return readLocalJson<unknown>(STORAGE_KEYS.processPanelDefaultOpen) === true;
 }
 
 function parseModelIds(models: string) {
@@ -1120,13 +1121,37 @@ function ModelMenu({ selectedModelKey, onModelChange, modelOptions, reasoningEff
   onReflectionTriggerChange: (trigger: string) => void;
 }) {
   const { t } = useI18n();
+  const [strategyHelpOpen, setStrategyHelpOpen] = useState(false);
   const groups = modelOptions.reduce<Array<{ providerId: ModelProviderId; providerName: string; models: Array<{ key: string; model: string }> }>>((result, option) => {
     const group = result.find((item) => item.providerId === option.providerId);
     if (group) group.models.push({ key: option.key, model: option.model });
     else result.push({ providerId: option.providerId, providerName: option.providerName, models: [{ key: option.key, model: option.model }] });
     return result;
   }, []);
-  return <div className="floating-menu model-menu"><div className="menu-heading">{t('模型')}</div>{groups.length ? groups.map((group) => <div className="model-provider-group" key={group.providerId}><div className="model-provider-heading"><span className={`provider-mark provider-${group.providerId}`}>{modelProviders.find((provider) => provider.id === group.providerId)?.mark}</span><span>{group.providerName}</span></div>{group.models.map((item) => <button className={`model-option ${selectedModelKey === item.key ? 'selected' : ''}`} type="button" key={item.key} onClick={() => onModelChange(item.key)}><div><strong>{item.model}</strong><small>{group.providerName}</small></div><span>{selectedModelKey === item.key ? '✓' : ''}</span></button>)}</div>) : <div className="model-menu-empty">{t('请先在模型管理中启用供应商并配置模型')}</div>}<div className="menu-divider" /><div className="menu-heading">{t('对话策略')}</div><MenuChoice label="推理强度" value={reasoningEffort} options={['快速', '均衡', '深入']} onChange={onReasoningEffortChange} /><MenuChoice label="规划策略" value={planningStrategy} options={['直接', '自适应', '先规划']} onChange={onPlanningStrategyChange} /><div className="menu-toggle"><div><strong>{t('反思循环')}</strong><small>{t('检查结果并修订下一步策略')}</small></div><Toggle checked={reflectionEnabled} onChange={onReflectionChange} /></div>{reflectionEnabled && <MenuChoice label="触发方式" value={reflectionTrigger} options={['失败时', '按需', '每轮']} onChange={onReflectionTriggerChange} />}</div>;
+  return <div className="floating-menu model-menu"><div className="menu-heading">{t('模型')}</div>{groups.length ? groups.map((group) => <div className="model-provider-group" key={group.providerId}><div className="model-provider-heading"><span className={`provider-mark provider-${group.providerId}`}>{modelProviders.find((provider) => provider.id === group.providerId)?.mark}</span><span>{group.providerName}</span></div>{group.models.map((item) => <button className={`model-option ${selectedModelKey === item.key ? 'selected' : ''}`} type="button" key={item.key} onClick={() => onModelChange(item.key)}><div><strong>{item.model}</strong><small>{group.providerName}</small></div><span>{selectedModelKey === item.key ? '✓' : ''}</span></button>)}</div>) : <div className="model-menu-empty">{t('请先在模型管理中启用供应商并配置模型')}</div>}<div className="menu-divider" /><div className="menu-heading menu-heading-with-help"><span>{t('对话策略')}</span><button className="strategy-help-button" type="button" aria-label={t('了解对话策略')} aria-expanded={strategyHelpOpen} aria-controls="strategy-help-panel" onClick={() => setStrategyHelpOpen((open) => !open)}>?</button></div>{strategyHelpOpen && <StrategyHelp /> }<MenuChoice label="推理强度" value={reasoningEffort} options={['快速', '均衡', '深入']} onChange={onReasoningEffortChange} /><MenuChoice label="规划策略" value={planningStrategy} options={['直接', '自适应', '先规划']} onChange={onPlanningStrategyChange} /><div className="menu-toggle"><div><strong>{t('反思循环')}</strong><small>{t('检查结果并修订下一步策略')}</small></div><Toggle checked={reflectionEnabled} onChange={onReflectionChange} label={t('反思循环')} /></div>{reflectionEnabled && <MenuChoice label="触发方式" value={reflectionTrigger} options={['失败时', '按需', '每轮']} onChange={onReflectionTriggerChange} />}</div>;
+}
+
+function StrategyHelp() {
+  const { t } = useI18n();
+  const groups = [
+    { title: '推理强度', items: [
+      ['快速', '减少思考轮次与工具预算，简单任务更快。'],
+      ['均衡', '兼顾速度与检查深度，适合多数任务。'],
+      ['深入', '增加思考、工具与反思预算，复杂任务更稳。'],
+    ] },
+    { title: '规划策略', items: [
+      ['直接', '生成单步计划后立即处理，启动最快。'],
+      ['自适应', '轻量启动，按结果决定是否调整计划。'],
+      ['先规划', '执行前生成完整计划，适合多步骤任务。'],
+    ] },
+    { title: '反思循环', items: [
+      ['关闭', '不调用额外反思；安全与完成检查仍保留。'],
+      ['失败时', '只在工具、模型输出或完成检查失败时反思。'],
+      ['按需', '失败、低置信度、冲突或无进展时反思。'],
+      ['每轮', '每轮结束都反思，更审慎但更慢、更耗用量。'],
+    ] },
+  ];
+  return <section className="strategy-help-panel" id="strategy-help-panel" role="region" aria-label={t('对话策略说明')}>{groups.map((group) => <div className="strategy-help-group" key={group.title}><strong>{t(group.title)}</strong>{group.items.map(([label, detail]) => <div className="strategy-help-item" key={label}><span>{t(label)}</span><p>{t(detail)}</p></div>)}</div>)}</section>;
 }
 
 function MenuChoice({ label, value, options, onChange }: { label: string; value: string; options: string[]; onChange: (value: string) => void }) {
@@ -1173,7 +1198,7 @@ function Icon({ name }: { name: IconName }) {
   return <svg className="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{paths[name]}</svg>;
 }
 
-function MessageBubble({ message, run, processState, processPanelOpen, onProcessPanelOpenChange }: { message: ChatMessage; run: RunView | null; processState: ProcessStreamState | null; processPanelOpen: boolean; onProcessPanelOpenChange: (open: boolean) => void }) {
+function MessageBubble({ message, run, processState, processPanelDefaultOpen, processPanelOpenByRun, onProcessPanelInitialize, onProcessPanelOpenChange }: { message: ChatMessage; run: RunView | null; processState: ProcessStreamState | null; processPanelDefaultOpen: boolean; processPanelOpenByRun: Record<string, boolean>; onProcessPanelInitialize: (runId: string) => void; onProcessPanelOpenChange: (runId: string, open: boolean) => void }) {
   const { t } = useI18n();
   const snapshot = (message.metadata.run_snapshot as RunView | undefined) ?? run;
   const presentation = String(message.metadata.presentation ?? '');
@@ -1187,7 +1212,8 @@ function MessageBubble({ message, run, processState, processPanelOpen, onProcess
   }
 
   if (presentation === 'process' && snapshot) {
-    return <ProcessPanel run={snapshot} messageId={message.id} liveState={processState?.runId === snapshot.id ? processState : null} open={processPanelOpen} onOpenChange={onProcessPanelOpenChange} />;
+    const open = processPanelOpenByRun[snapshot.id] ?? processPanelDefaultOpen;
+    return <ProcessPanel run={snapshot} messageId={message.id} liveState={processState?.runId === snapshot.id ? processState : null} open={open} onInitialize={onProcessPanelInitialize} onOpenChange={onProcessPanelOpenChange} />;
   }
 
   if (presentation === 'answer' && snapshot?.result) {
@@ -1202,7 +1228,7 @@ function MessageBubble({ message, run, processState, processPanelOpen, onProcess
   return null;
 }
 
-function ProcessPanel({ run, messageId, liveState, open, onOpenChange }: { run: RunView; messageId: string; liveState: ProcessStreamState | null; open: boolean; onOpenChange: (open: boolean) => void }) {
+function ProcessPanel({ run, messageId, liveState, open, onInitialize, onOpenChange }: { run: RunView; messageId: string; liveState: ProcessStreamState | null; open: boolean; onInitialize: (runId: string) => void; onOpenChange: (runId: string, open: boolean) => void }) {
   const { t } = useI18n();
   const turns = [...(run.turns ?? [])].sort((a, b) => a.turn_index - b.turn_index);
   const live = Boolean(liveState?.active);
@@ -1213,11 +1239,12 @@ function ProcessPanel({ run, messageId, liveState, open, onOpenChange }: { run: 
     : t('{steps} 个步骤').replace('{steps}', String(turns.length));
   const report = run.result?.verification_report;
   const notes = [...new Set([...(run.result?.verification_notes ?? []), ...(report?.notes ?? [])])];
+  useEffect(() => onInitialize(run.id), [onInitialize, run.id]);
   const toggle = (event: MouseEvent<HTMLElement>) => {
     event.preventDefault();
-    onOpenChange(!open);
+    onOpenChange(run.id, !open);
   };
-  return <article className={`process-entry ${live ? 'live' : ''}`} id={`message-${messageId}`}><details className="process-panel" open={open}><summary onClick={toggle} aria-expanded={open}><Icon name="brain" /><span>{t('思考过程')}</span>{live && <i className="process-loading-pane" aria-hidden="true"><b /><b /><b /></i>}<small>{processSummary}</small></summary><div className="process-timeline" aria-live={live ? 'polite' : undefined}>
+  return <article className={`process-entry ${live ? 'live' : ''}`} id={`message-${messageId}`}><details className="process-panel" open={open}><summary onClick={toggle} aria-expanded={open}><Icon name="brain" /><span>{t('思考过程')}</span><small>{processSummary}</small></summary><div className="process-timeline" aria-live={live ? 'polite' : undefined}>
     {live ? liveState?.items.map((item) => <div className={`process-step process-${item.kind} status-${item.status}`} key={item.id}><span className={`process-dot ${item.kind === 'tool' ? 'tool' : ''}`}><Icon name={item.kind === 'tool' ? 'tools' : item.kind === 'verification' ? 'check' : 'brain'} /></span><div><strong>{t(item.title)}</strong>{item.detail && <p>{item.detail}</p>}<small>{item.status === 'running' ? t('进行中') : item.status === 'failed' ? t('失败') : t('已完成')}</small></div></div>) : turns.map((turn) => {
       const call = run.tool_calls.find((item) => item.id === turn.tool_call_id);
       const outputs = call ? visibleArtifacts(run.artifacts).filter((artifact) => artifact.tool_call_id === call.id) : [];

@@ -345,7 +345,7 @@ describe('App', () => {
     vi.mocked(streamRunEvents).mockImplementation(() => () => undefined);
   });
 
-  it('keeps live reasoning collapsed by default and persists the user choice within the conversation', async () => {
+  it('keeps live reasoning collapsed by default and preserves the current panel through answer updates', async () => {
     const finalSnapshot = await vi.mocked(getRun)('fixture');
     const executingSnapshot = {
       ...finalSnapshot,
@@ -373,20 +373,23 @@ describe('App', () => {
     const panel = summary.closest('details');
     expect(panel).not.toHaveAttribute('open');
     expect(screen.getByText('实时更新')).toBeInTheDocument();
-    expect(panel?.querySelector('.process-loading-pane')).toBeInTheDocument();
+    expect(panel?.querySelector('summary .process-loading-pane')).not.toBeInTheDocument();
+    expect(panel?.querySelector('.process-step.status-running')).toBeInTheDocument();
     expect(panel?.querySelector('.process-live-dot')).not.toBeInTheDocument();
     await waitFor(() => expect(emit).toBeTypeOf('function'));
     const snapshotCalls = vi.mocked(getRun).mock.calls.length;
 
     await userEvent.click(summary);
     expect(panel).toHaveAttribute('open');
-    await waitFor(() => expect(JSON.parse(window.localStorage.getItem('astra.process-panel-preferences.v1') ?? '{}')['task-1']).toBe(true));
+    await waitFor(() => expect(JSON.parse(window.localStorage.getItem('astra.process-panel-default-open.v1') ?? 'false')).toBe(true));
 
     act(() => {
       emit?.({ id: 10, type: 'reasoning.phase.started', payload: { phase: 'selecting_action', turn_index: 1 } });
       emit?.({ id: 11, type: 'reasoning.summary.delta', payload: { turn_index: 1, delta: '正在选择可靠来源' } });
     });
     expect(await screen.findByText('正在选择可靠来源')).toBeInTheDocument();
+    expect(panel?.querySelector('.process-step.status-completed')).toBeInTheDocument();
+    expect(panel?.querySelector('.process-step.status-running')).toBeInTheDocument();
     await new Promise((resolve) => window.setTimeout(resolve, 150));
     expect(vi.mocked(getRun)).toHaveBeenCalledTimes(snapshotCalls);
 
@@ -399,43 +402,58 @@ describe('App', () => {
     act(() => emit?.({ id: 13, type: 'reasoning.summary.delta', payload: { turn_index: 1, delta: '并继续验证' } }));
     expect(await screen.findByText('正在选择可靠来源并继续验证')).toBeInTheDocument();
     expect(panel).not.toHaveAttribute('open');
-
-    await userEvent.click(summary);
-    expect(panel).toHaveAttribute('open');
-    await userEvent.click(screen.getByRole('button', { name: '新对话' }));
-    expect(screen.queryByText('思考过程')).not.toBeInTheDocument();
-    await userEvent.click(screen.getByRole('button', { name: '实时过程 executing' }));
-    expect(await screen.findByText('思考过程')).toBeInTheDocument();
-    expect(screen.getByText('思考过程').closest('details')).toHaveAttribute('open');
-
-    await userEvent.click(screen.getByText('思考过程'));
-    await waitFor(() => expect(JSON.parse(window.localStorage.getItem('astra.process-panel-preferences.v1') ?? '{}')['task-1']).toBe(false));
-    await userEvent.click(screen.getByRole('button', { name: '新对话' }));
-    await userEvent.click(screen.getByRole('button', { name: '实时过程 executing' }));
-    expect(await screen.findByText('思考过程')).toBeInTheDocument();
-    expect(screen.getByText('思考过程').closest('details')).not.toHaveAttribute('open');
+    await waitFor(() => expect(JSON.parse(window.localStorage.getItem('astra.process-panel-default-open.v1') ?? 'true')).toBe(false));
 
     vi.mocked(getRun).mockResolvedValue(finalSnapshot);
     vi.mocked(streamRunEvents).mockImplementation(() => () => undefined);
   });
 
-  it('does not carry an expanded process preference into a different conversation', async () => {
+  it('changes only the clicked panel and uses that choice for the next new panel', async () => {
     const snapshot = await vi.mocked(getRun)('fixture');
-    window.localStorage.setItem('astra.process-panel-preferences.v1', JSON.stringify({ 'task-1': true }));
-    vi.mocked(createRun).mockResolvedValueOnce({ run_id: 'run-2', task_id: 'task-2', status: 'created' });
+    render(<App />);
+    await userEvent.type(screen.getByRole('textbox'), '第一条');
+    await userEvent.click(screen.getByRole('button', { name: '↑' }));
+
+    const firstSummary = await screen.findByText('思考过程');
+    const firstPanel = firstSummary.closest('details');
+    expect(firstPanel).not.toHaveAttribute('open');
+    await userEvent.click(firstSummary);
+    expect(firstPanel).toHaveAttribute('open');
+
+    vi.mocked(createRun).mockResolvedValueOnce({ run_id: 'run-2', task_id: 'task-1', status: 'created' });
     vi.mocked(getRun).mockResolvedValueOnce({
       ...snapshot,
       id: 'run-2',
-      task_id: 'task-2',
-      chat_messages: [{ id: 'u-2', role: 'user', content: '另一个会话', status: 'completed', metadata: {} }],
+      task_id: 'task-1',
+      chat_messages: [{ id: 'u-2', role: 'user', content: '第二条', status: 'completed', metadata: {} }],
     });
-
-    render(<App />);
-    await userEvent.type(screen.getByRole('textbox'), '另一个会话');
+    await userEvent.type(screen.getByRole('textbox'), '第二条');
     await userEvent.click(screen.getByRole('button', { name: '↑' }));
 
-    const summary = await screen.findByText('思考过程');
-    expect(summary.closest('details')).not.toHaveAttribute('open');
+    await waitFor(() => expect(screen.getAllByText('思考过程')).toHaveLength(2));
+    const summaries = screen.getAllByText('思考过程');
+    const firstExistingPanel = summaries[0].closest('details');
+    const secondPanel = summaries[1].closest('details');
+    expect(firstExistingPanel).toHaveAttribute('open');
+    expect(secondPanel).toHaveAttribute('open');
+
+    await userEvent.click(summaries[1]);
+    expect(firstExistingPanel).toHaveAttribute('open');
+    expect(secondPanel).not.toHaveAttribute('open');
+
+    await userEvent.click(screen.getByRole('button', { name: '新对话' }));
+    vi.mocked(createRun).mockResolvedValueOnce({ run_id: 'run-3', task_id: 'task-3', status: 'created' });
+    vi.mocked(getRun).mockResolvedValueOnce({
+      ...snapshot,
+      id: 'run-3',
+      task_id: 'task-3',
+      chat_messages: [{ id: 'u-3', role: 'user', content: '新对话', status: 'completed', metadata: {} }],
+    });
+    await userEvent.type(screen.getByRole('textbox'), '新对话');
+    await userEvent.click(screen.getByRole('button', { name: '↑' }));
+
+    const newConversationSummary = await screen.findByText('思考过程');
+    expect(newConversationSummary.closest('details')).not.toHaveAttribute('open');
   });
 
   it('sends selected reasoning policy with a run', async () => {
@@ -804,6 +822,25 @@ describe('App', () => {
     expect(screen.getByRole('button', { name: '深入' })).toBeInTheDocument();
     expect(screen.queryByText('最大 Agent 轮次')).not.toBeInTheDocument();
     expect(screen.queryByText('工具调用上限')).not.toBeInTheDocument();
+  });
+
+  it('explains each conversation strategy from the model menu', async () => {
+    render(<App />);
+
+    await userEvent.click(screen.getByRole('button', { name: '当前模型：gpt-5' }));
+    const helpButton = screen.getByRole('button', { name: '了解对话策略' });
+    expect(helpButton).toHaveAttribute('aria-expanded', 'false');
+
+    await userEvent.click(helpButton);
+    expect(helpButton).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByRole('region', { name: '对话策略说明' })).toBeInTheDocument();
+    expect(screen.getByText('减少思考轮次与工具预算，简单任务更快。')).toBeInTheDocument();
+    expect(screen.getByText('轻量启动，按结果决定是否调整计划。')).toBeInTheDocument();
+    expect(screen.getByText('失败、低置信度、冲突或无进展时反思。')).toBeInTheDocument();
+    expect(screen.getByText('每轮结束都反思，更审慎但更慢、更耗用量。')).toBeInTheDocument();
+
+    await userEvent.click(helpButton);
+    expect(screen.queryByRole('region', { name: '对话策略说明' })).not.toBeInTheDocument();
   });
 
   it('switches execution modes and confirms before enabling bypass', async () => {

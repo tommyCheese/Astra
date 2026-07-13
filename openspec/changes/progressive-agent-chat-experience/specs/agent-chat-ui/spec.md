@@ -38,24 +38,29 @@ The system SHALL map run, phase, turn and tool statuses to a live user-readable 
 - **WHEN** the Agent loop is planning, selecting an action, searching, reading, reflecting, verifying, or composing
 - **THEN** the process panel displays the active state and completed prior entries in execution order
 
-#### Scenario: Active process panel is collapsed
-- **WHEN** a Run is active and its process panel is collapsed
-- **THEN** the process summary uses a neutral loading-pane animation rather than a solid green background to indicate ongoing work
-- **THEN** reduced-motion preferences receive an equivalent static loading pane
+#### Scenario: Active process panel displays internal progress
+- **WHEN** a Run is active and its process panel is expanded
+- **THEN** the process panel outer container remains static without a loading animation
+- **THEN** completed internal steps use a transparent background rather than a solid green background
+- **THEN** only the current running step uses a neutral loading-pane animation
+- **THEN** reduced-motion preferences receive an equivalent static loading pane on the current step
 
 #### Scenario: User controls the process panel
-- **WHEN** a process first starts in a conversation without a saved expansion choice
+- **WHEN** the first process panel starts without a saved last-click preference
 - **THEN** the UI displays it collapsed
 - **WHEN** the user manually collapses or expands it
-- **THEN** later ordinary deltas, answers, Runs, history switches and page restores in the same conversation respect that choice until the user changes it again
+- **THEN** only that process panel changes state
+- **THEN** existing process panels keep their own state
+- **THEN** the chosen state becomes the initial state for the next newly created process panel
 
 #### Scenario: Answer begins
 - **WHEN** answer streaming begins
-- **THEN** the process panel preserves the current conversation-level expansion choice
+- **THEN** the current process panel preserves its own expansion state
 
 #### Scenario: A new conversation begins
-- **WHEN** the user starts a conversation without a saved process-panel preference
-- **THEN** the process panel starts collapsed independently of other conversations
+- **WHEN** the user starts a new conversation after manually expanding or collapsing another process panel
+- **THEN** its first process panel uses that last-click state as its initial state
+- **THEN** changing it does not retroactively change any existing process panel
 
 #### Scenario: Run is blocked
 - **WHEN** the run becomes blocked
