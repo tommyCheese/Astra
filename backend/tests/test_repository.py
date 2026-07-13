@@ -4,7 +4,7 @@ from app.agent_profile import load_agent_profile
 from app.repositories.runs import RunRepository, run_to_view
 from app.repositories.tool_settings import ToolSettingsRepository
 from app.runner.reasoning import build_default_contract, build_plan_graph
-from app.schemas.agent import AgentState, PlanningStrategy
+from app.schemas.agent import AgentState, PlanningStrategy, RunView
 
 
 async def test_tool_settings_are_created_and_persisted(session):
@@ -52,6 +52,35 @@ async def test_run_lifecycle_persistence(session):
         message["role"] == "assistant" and message["content"] == "done"
         for message in view["chat_messages"]
     )
+
+
+async def test_run_view_normalizes_persisted_result_contract(session):
+    repo = RunRepository(session)
+    run = await repo.create_task_run("兼容旧结果", {"provider": "mock"})
+    await repo.update_run_status(
+        run.id,
+        "completed_with_warnings",
+        summary="fallback summary",
+        result={
+            "findings": "legacy finding",
+            "caveats": None,
+            "verification_report": {
+                "status": "completed_with_warnings",
+                "notes": ["legacy"],
+            },
+            "private_runner_state": {"attempt": 4},
+        },
+    )
+
+    loaded = await repo.require_run(run.id)
+    payload = run_to_view(loaded)
+    view = RunView.model_validate(payload).model_dump(mode="json")
+
+    assert view["result"]["summary"] == "fallback summary"
+    assert view["result"]["findings"][0]["text"] == "legacy finding"
+    assert "private_runner_state" not in view["result"]
+    assert view["result"]["verification_report"]["status"] == "completed_with_warnings"
+    assert "verification_report" not in view
 
 
 async def test_follow_up_run_reuses_task(session):

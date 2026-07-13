@@ -118,24 +118,73 @@ export type SandboxJobView = {
   output_artifact_ids: string[];
 };
 
-export type FinalResult = {
+export type FailedSource = {
+  url?: string | null;
+  title?: string | null;
+  type?: string | null;
+  category?: string | null;
+  code?: string | null;
+  message?: string | null;
+  retryable: boolean;
+  trace_id?: string | null;
+  details: Record<string, unknown>;
+};
+
+export type SourceQuality = {
+  url: string;
+  title?: string | null;
+  quality_score?: number | null;
+  extraction_strategy?: string | null;
+  warnings: string[];
+};
+
+export type CompletionDecision = {
+  state: 'continue' | 'completed' | 'completed_with_warnings' | 'waiting_user' | 'blocked' | 'failed';
+  reason: string;
+  unmet_criteria: string[];
+  warnings: string[];
+  required_user_action?: string | null;
+};
+
+export type RunError = {
+  type: string;
+  code: string;
+  message: string;
+  retryable: boolean;
+  trace_id?: string | null;
+  details: Record<string, unknown>;
+};
+
+export type RunResult = {
   summary: string;
   findings: Array<{ text: string; source_urls: string[]; artifact_ids: string[] }>;
   sources: Array<{ url: string; title?: string | null; retrieved_at?: string | null }>;
-  failed_sources?: Array<{ url?: string; title?: string | null; category?: string; message?: string }>;
-  source_quality?: Array<{
-    url: string;
-    quality_score?: number | null;
-    extraction_strategy?: string | null;
-    warnings?: string[];
+  failed_sources: FailedSource[];
+  source_quality: SourceQuality[];
+  conflicts: Array<{
+    statement?: string | null;
+    conflicting_statement?: string | null;
+    source_urls: string[];
+    details: Record<string, unknown>;
   }>;
-  conflicts?: Array<Record<string, unknown>>;
   caveats: string[];
   verification_notes: string[];
-  memory_references?: Array<Record<string, unknown>>;
-  audit_refs?: Record<string, unknown>;
-  verification_report?: VerificationReport;
-  completion_decision?: Record<string, unknown>;
+  memory_references: Array<{
+    id?: string | null;
+    scope?: string | null;
+    kind?: string | null;
+    content?: string | null;
+    confidence?: number | null;
+    details: Record<string, unknown>;
+  }>;
+  audit_refs: {
+    evidence_pack_artifact_id?: string | null;
+    agent_turn_count: number;
+    referenced_artifact_ids: string[];
+  };
+  verification_report?: VerificationReport | null;
+  completion_decision?: CompletionDecision | null;
+  error?: RunError | null;
 };
 
 export type RunView = {
@@ -144,7 +193,7 @@ export type RunView = {
   status: string;
   mode: string;
   summary?: string | null;
-  result?: FinalResult | null;
+  result?: RunResult | null;
   steps: StepView[];
   tool_calls: ToolCallView[];
   artifacts: ArtifactView[];
@@ -153,7 +202,6 @@ export type RunView = {
   turns?: AgentTurnView[];
   memories?: MemoryView[];
   chat_messages?: ChatMessage[];
-  verification_report?: VerificationReport | null;
   reasoning_policy?: Record<string, unknown>;
   task_contract?: Record<string, unknown>;
   plan_graph?: Record<string, unknown>;

@@ -1,8 +1,10 @@
+from __future__ import annotations
+
 from datetime import datetime
 from enum import Enum
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class ReasoningEffort(str, Enum):
@@ -389,6 +391,159 @@ class VerificationReport(BaseModel):
     notes: list[str] = Field(default_factory=list)
 
 
+class FailedSource(BaseModel):
+    url: str | None = None
+    title: str | None = None
+    type: str | None = None
+    category: str | None = None
+    code: str | None = None
+    message: str | None = None
+    retryable: bool = False
+    trace_id: str | None = None
+    details: dict[str, Any] = Field(default_factory=dict)
+
+
+class SourceQuality(BaseModel):
+    url: str
+    title: str | None = None
+    quality_score: float | None = None
+    extraction_strategy: str | None = None
+    warnings: list[str] = Field(default_factory=list)
+
+
+class ConflictRecord(BaseModel):
+    statement: str | None = None
+    conflicting_statement: str | None = None
+    source_urls: list[str] = Field(default_factory=list)
+    details: dict[str, Any] = Field(default_factory=dict)
+
+
+class ResultMemoryReference(BaseModel):
+    id: str | None = None
+    scope: str | None = None
+    kind: str | None = None
+    content: str | None = None
+    confidence: float | None = None
+    details: dict[str, Any] = Field(default_factory=dict)
+
+
+class AuditReferences(BaseModel):
+    evidence_pack_artifact_id: str | None = None
+    agent_turn_count: int = 0
+    referenced_artifact_ids: list[str] = Field(default_factory=list)
+
+
+class RunError(BaseModel):
+    type: str
+    code: str
+    message: str
+    retryable: bool = False
+    trace_id: str | None = None
+    details: dict[str, Any] = Field(default_factory=dict)
+
+
+class RunResult(BaseModel):
+    """Stable API boundary for persisted runner result JSON."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    summary: str = ""
+    findings: list[Finding] = Field(default_factory=list)
+    sources: list[SourceReference] = Field(default_factory=list)
+    failed_sources: list[FailedSource] = Field(default_factory=list)
+    source_quality: list[SourceQuality] = Field(default_factory=list)
+    conflicts: list[ConflictRecord] = Field(default_factory=list)
+    caveats: list[str] = Field(default_factory=list)
+    verification_notes: list[str] = Field(default_factory=list)
+    memory_references: list[ResultMemoryReference] = Field(default_factory=list)
+    audit_refs: AuditReferences = Field(default_factory=AuditReferences)
+    verification_report: VerificationReport | None = None
+    completion_decision: CompletionDecision | None = None
+    error: RunError | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_legacy_result(cls, value: Any) -> dict[str, Any]:
+        if not isinstance(value, dict):
+            return {"summary": str(value) if value is not None else ""}
+
+        normalized = dict(value)
+        summary = normalized.get("summary")
+        normalized["summary"] = summary if isinstance(summary, str) else str(summary or "")
+        normalized["findings"] = _validated_records(
+            normalized.get("findings"), Finding, scalar_field="text"
+        )
+        normalized["sources"] = _validated_records(
+            normalized.get("sources"), SourceReference, scalar_field="url"
+        )
+        normalized["failed_sources"] = _validated_records(
+            normalized.get("failed_sources"), FailedSource
+        )
+        normalized["source_quality"] = _validated_records(
+            normalized.get("source_quality"), SourceQuality
+        )
+        normalized["conflicts"] = _validated_records(
+            normalized.get("conflicts"), ConflictRecord
+        )
+        normalized["memory_references"] = _validated_records(
+            normalized.get("memory_references"), ResultMemoryReference
+        )
+        for field_name in ("caveats", "verification_notes"):
+            items = _as_list(normalized.get(field_name))
+            normalized[field_name] = [str(item) for item in items if item is not None]
+        normalized["audit_refs"] = _validated_value(
+            normalized.get("audit_refs"), AuditReferences, default=AuditReferences()
+        )
+        normalized["verification_report"] = _validated_value(
+            normalized.get("verification_report"), VerificationReport
+        )
+        normalized["completion_decision"] = _validated_value(
+            normalized.get("completion_decision"), CompletionDecision
+        )
+        normalized["error"] = _validated_value(normalized.get("error"), RunError)
+        return normalized
+
+
+def _as_list(value: Any) -> list[Any]:
+    if value is None:
+        return []
+    return value if isinstance(value, list) else [value]
+
+
+def _validated_records(
+    value: Any,
+    model: type[BaseModel],
+    *,
+    scalar_field: str | None = None,
+) -> list[BaseModel]:
+    records: list[BaseModel] = []
+    for item in _as_list(value):
+        if item is None:
+            continue
+        candidate = {scalar_field: str(item)} if scalar_field and not isinstance(item, dict) else item
+        if not isinstance(candidate, dict):
+            continue
+        try:
+            records.append(model.model_validate(candidate))
+        except (TypeError, ValueError):
+            continue
+    return records
+
+
+def _validated_value(
+    value: Any,
+    model: type[BaseModel],
+    *,
+    default: BaseModel | None = None,
+) -> BaseModel | None:
+    if not isinstance(value, dict):
+        return default
+    try:
+        return model.model_validate(value)
+    except (TypeError, ValueError):
+        return default
+
+
 class CandidateSource(BaseModel):
     url: str
     title: str
@@ -565,7 +720,7 @@ class RunView(BaseModel):
     status: str
     mode: str
     summary: str | None
-    result: dict[str, Any] | None
+    result: RunResult | None
     steps: list[StepView]
     tool_calls: list[ToolCallView]
     artifacts: list[ArtifactView]
@@ -574,7 +729,6 @@ class RunView(BaseModel):
     turns: list[AgentTurnView] = Field(default_factory=list)
     memories: list[MemoryView] = Field(default_factory=list)
     chat_messages: list[ChatMessageView] = Field(default_factory=list)
-    verification_report: VerificationReport | None = None
     reasoning_policy: dict[str, Any] = Field(default_factory=dict)
     task_contract: dict[str, Any] = Field(default_factory=dict)
     plan_graph: dict[str, Any] = Field(default_factory=dict)

@@ -18,6 +18,7 @@ from app.db.models import (
     ToolCallRecord,
     utc_now,
 )
+from app.schemas.agent import RunResult
 
 
 class RunRepository:
@@ -709,15 +710,18 @@ class RunRepository:
 
 
 def run_to_view(run: RunRecord) -> dict[str, Any]:
-    result = run.result or {}
-    verification_report = result.get("verification_report")
+    result_payload = None
+    if run.result is not None:
+        raw_result = dict(run.result) if isinstance(run.result, dict) else {}
+        raw_result.setdefault("summary", run.summary or "")
+        result_payload = RunResult.model_validate(raw_result).model_dump(mode="json")
     return {
         "id": run.id,
         "task_id": run.task_id,
         "status": run.status,
         "mode": run.mode,
         "summary": run.summary,
-        "result": run.result,
+        "result": result_payload,
         "steps": [
             {
                 "id": step.id,
@@ -846,7 +850,6 @@ def run_to_view(run: RunRecord) -> dict[str, Any]:
             for memory in run.memories
         ],
         "chat_messages": build_chat_messages(run),
-        "verification_report": verification_report,
         "reasoning_policy": run.reasoning_policy or {},
         "task_contract": run.task_contract or {},
         "plan_graph": run.plan_graph or {},
