@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { createOptimisticProcessState, reduceProcessEvent } from '../src/processStream';
+import { createOptimisticProcessState, reconcileProcessSnapshot, reduceProcessEvent } from '../src/processStream';
+import type { RunView } from '../src/types';
 
 describe('process stream reducer', () => {
   it('merges reasoning deltas and ignores duplicate event ids', () => {
@@ -26,5 +27,48 @@ describe('process stream reducer', () => {
     expect(state.active).toBe(false);
     expect(state.items.find((item) => item.id === 'tool-call-1')).toEqual(expect.objectContaining({ title: 'web_search', status: 'completed' }));
     expect(JSON.stringify(state)).not.toContain('secret');
+  });
+
+  it('keeps each reasoning and tool row inside its nearest selecting-action group', () => {
+    let state = createOptimisticProcessState('run-1');
+    state = reduceProcessEvent(state, { id: 1, type: 'reasoning.phase.started', payload: { phase: 'selecting_action', turn_index: 1 } });
+    state = reduceProcessEvent(state, { id: 2, type: 'reasoning.summary.completed', payload: { turn_index: 1, summary: '先搜索' } });
+    state = reduceProcessEvent(state, { id: 3, type: 'tool_call.started', payload: { tool_call_id: 'call-1', tool_name: 'web_search' } });
+    state = reduceProcessEvent(state, { id: 4, type: 'reasoning.phase.started', payload: { phase: 'selecting_action', turn_index: 2 } });
+    state = reduceProcessEvent(state, { id: 5, type: 'reasoning.summary.completed', payload: { turn_index: 2, summary: '再抓取' } });
+    state = reduceProcessEvent(state, { id: 6, type: 'tool_call.started', payload: { tool_call_id: 'call-2', tool_name: 'web_fetch' } });
+
+    expect(state.items.find((item) => item.id === 'reasoning-1')?.groupId).toBe('phase-selecting_action-1');
+    expect(state.items.find((item) => item.id === 'tool-call-1')?.groupId).toBe('phase-selecting_action-1');
+    expect(state.items.find((item) => item.id === 'reasoning-2')?.groupId).toBe('phase-selecting_action-2');
+    expect(state.items.find((item) => item.id === 'tool-call-2')?.groupId).toBe('phase-selecting_action-2');
+  });
+
+  it('rebuilds decision groups from a terminal snapshot without live state', () => {
+    const state = reconcileProcessSnapshot(null, {
+      id: 'run-1', task_id: 'task-1', status: 'completed', mode: 'agent', summary: 'done', result: null,
+      steps: [], artifacts: [], sandbox_jobs: [], events: [], memories: [], chat_messages: [],
+      turns: [{
+        id: 'turn-1', run_id: 'run-1', turn_index: 1, decision_type: 'call_tool', reasoning_summary: '先搜索',
+        selected_tool: 'web_search', decision: {}, observation: null, reflection: null, tool_call_id: 'call-1',
+        artifact_id: null, memory_reads: [], memory_writes: [], status: 'completed', created_at: 'now', updated_at: 'now',
+      }],
+      tool_calls: [{ id: 'call-1', tool_name: 'web_search', status: 'succeeded', input: {}, output: {} }],
+    } as RunView);
+
+    expect(state.items.find((item) => item.id === 'phase-selecting_action-1')).toBeDefined();
+    expect(state.items.find((item) => item.id === 'reasoning-1')?.groupId).toBe('phase-selecting_action-1');
+    expect(state.items.find((item) => item.id === 'tool-call-1')?.groupId).toBe('phase-selecting_action-1');
+  });
+
+  it('restores a missing group anchor when replay starts from a child event', () => {
+    const state = reduceProcessEvent(createOptimisticProcessState('run-1'), {
+      id: 8,
+      type: 'reasoning.summary.completed',
+      payload: { turn_index: 3, summary: '从断点恢复' },
+    });
+
+    expect(state.items.find((item) => item.id === 'phase-selecting_action-3')).toBeDefined();
+    expect(state.items.find((item) => item.id === 'reasoning-3')?.groupId).toBe('phase-selecting_action-3');
   });
 });

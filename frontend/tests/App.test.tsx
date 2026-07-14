@@ -2,7 +2,7 @@ import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { App } from '../src/App';
-import { buildRuntime, cancelRuntimeBuild, createRun, getConversationStrategy, getRun, getRuntimeProfile, listRuns, streamRunEvents, updateConversationStrategy, updateToolSettings, type RunStreamEvent } from '../src/api';
+import { buildRuntime, cancelRun, cancelRuntimeBuild, createRun, getConversationStrategy, getRun, getRuntimeProfile, listRuns, streamRunEvents, updateConversationStrategy, updateToolSettings, type RunStreamEvent } from '../src/api';
 
 vi.mock('../src/api', () => ({
   getConversationStrategy: vi.fn(async () => ({ reasoning_effort: 'balanced', planning_strategy: 'adaptive', reflection_enabled: true, reflection_trigger: 'adaptive' })),
@@ -18,6 +18,16 @@ vi.mock('../src/api', () => ({
   cancelRuntimeBuild: vi.fn(async () => ({ dependencies: [{ name: 'polars', version: '' }], core_dependencies: [], active_image: 'astra-data-viz:0.1.0', dependency_digest: 'base', build: { id: 'build-1', status: 'cancelled', phase: '已取消', progress: 12, log: '构建已由用户取消' } })),
   streamRunEvents: vi.fn(() => () => undefined),
   createRun: vi.fn(async () => ({ run_id: 'run-1', task_id: 'task-1', status: 'created' })),
+  cancelRun: vi.fn(async () => ({
+    id: 'run-1', task_id: 'task-1', status: 'cancelled', mode: 'general-agent', summary: '已终止本次运行。', result: { summary: '已终止本次运行。', findings: [], sources: [], failed_sources: [], source_quality: [], conflicts: [], caveats: ['运行已由用户终止，未继续执行后续步骤。'], verification_notes: [] },
+    steps: [], tool_calls: [], artifacts: [], events: [{ id: 1, type: 'run.cancelled', payload: { category: 'user_cancelled' }, created_at: '2026-07-14T00:00:00Z' }], turns: [], memories: [], chat_messages: [{ id: 'run-1-terminal', role: 'assistant', content: '已终止本次运行。', status: 'completed', metadata: { terminal_status: 'cancelled' } }],
+  })),
+  listConversations: vi.fn(async () => []),
+  getConversation: vi.fn(async (id) => ({ id, title: '对话', title_source: 'auto', pinned_at: null, created_at: new Date().toISOString(), updated_at: new Date().toISOString(), last_run_status: null, last_message_preview: '', has_active_share: false, runs: [] })),
+  updateConversation: vi.fn(async (id, patch) => ({ id, title: patch.title ?? '对话', title_source: patch.title ? 'user' : 'auto', pinned_at: patch.pinned ? new Date().toISOString() : null, created_at: new Date().toISOString(), updated_at: new Date().toISOString(), last_run_status: 'completed', last_message_preview: '', has_active_share: false })),
+  deleteConversation: vi.fn(async () => undefined),
+  createConversationShare: vi.fn(async () => ({ url: '/share/token', created_at: new Date().toISOString(), updated_at: new Date().toISOString() })),
+  revokeConversationShare: vi.fn(async () => undefined),
   listRuns: vi.fn(async () => []),
   resumeRun: vi.fn(async () => ({ run_id: 'run-1', task_id: 'task-1', status: 'executing' })),
   getUsageSummary: vi.fn(async () => ({
@@ -172,6 +182,7 @@ Object.defineProperty(window, 'EventSource', {
 
 describe('App', () => {
   beforeEach(() => {
+    vi.clearAllMocks();
     const values = new Map<string, string>();
     Object.defineProperty(window, 'localStorage', {
       configurable: true,
@@ -195,7 +206,7 @@ describe('App', () => {
     render(<App />);
 
     await userEvent.type(screen.getByRole('textbox'), '查询 Astra');
-    await userEvent.click(screen.getByRole('button', { name: '↑' }));
+    await userEvent.click(screen.getByRole('button', { name: '发送' }));
 
     expect(await screen.findByText('已完成查询')).toBeInTheDocument();
     const evidence = screen.getByText('数据与证据 · 1').closest('details');
@@ -218,6 +229,38 @@ describe('App', () => {
     expect(screen.getByRole('img', { name: 'chart.png' })).toHaveAttribute('src', '/api/artifacts/a-chart/content');
     expect(screen.getByTitle('chart.html')).toHaveAttribute('sandbox', 'allow-scripts');
     expect(document.querySelectorAll('.process-panel')).toHaveLength(1);
+    expect(document.querySelectorAll('.process-decision-group')).toHaveLength(2);
+    expect(document.querySelector('[data-process-group="phase-selecting_action-1"] .process-decision-children')).toBeInTheDocument();
+  });
+
+  it('turns the send button into a stop button and restores it after cancellation', async () => {
+    vi.mocked(getRun).mockImplementationOnce(() => new Promise(() => undefined));
+    render(<App />);
+
+    await userEvent.type(screen.getByRole('textbox'), '生成较长回答');
+    await userEvent.click(screen.getByRole('button', { name: '发送' }));
+    const stopButton = await screen.findByRole('button', { name: '终止回答' });
+    await userEvent.click(stopButton);
+
+    await waitFor(() => expect(cancelRun).toHaveBeenCalledWith('run-1'));
+    expect(await screen.findByText('已终止本次运行。')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '发送' })).toBeInTheDocument();
+  });
+
+  it('remembers a stop request while run creation is pending and allows a follow-up', async () => {
+    let resolveCreate: ((value: { run_id: string; task_id: string; status: string }) => void) | undefined;
+    vi.mocked(createRun).mockImplementationOnce(() => new Promise((resolve) => { resolveCreate = resolve; }));
+    render(<App />);
+
+    await userEvent.type(screen.getByRole('textbox'), '创建期间终止');
+    await userEvent.click(screen.getByRole('button', { name: '发送' }));
+    await userEvent.click(await screen.findByRole('button', { name: '终止回答' }));
+    await act(async () => { resolveCreate?.({ run_id: 'run-pending', task_id: 'task-1', status: 'created' }); });
+
+    await waitFor(() => expect(cancelRun).toHaveBeenCalledWith('run-pending'));
+    await userEvent.type(screen.getByRole('textbox'), '继续追问');
+    await userEvent.click(screen.getByRole('button', { name: '发送' }));
+    await waitFor(() => expect(createRun).toHaveBeenLastCalledWith('继续追问', 'task-1', expect.anything(), expect.anything()));
   });
 
   it('renders referenced artifacts beside findings and only links repeated references', async () => {
@@ -240,7 +283,7 @@ describe('App', () => {
 
     render(<App />);
     await userEvent.type(screen.getByRole('textbox'), '关联展示');
-    await userEvent.click(screen.getByRole('button', { name: '↑' }));
+    await userEvent.click(screen.getByRole('button', { name: '发送' }));
 
     const firstFinding = await screen.findByText('第一个结论');
     const secondFinding = screen.getByText('第二个结论');
@@ -273,7 +316,7 @@ describe('App', () => {
 
     render(<App />);
     await userEvent.type(screen.getByRole('textbox'), '旧数据降级');
-    await userEvent.click(screen.getByRole('button', { name: '↑' }));
+    await userEvent.click(screen.getByRole('button', { name: '发送' }));
 
     expect(await screen.findByText('其他输出 · 3')).toBeInTheDocument();
     const cards = [...document.querySelectorAll('.other-artifacts .artifact-card')];
@@ -296,7 +339,7 @@ describe('App', () => {
 
     render(<App />);
     await userEvent.type(screen.getByRole('textbox'), '无过程输出');
-    await userEvent.click(screen.getByRole('button', { name: '↑' }));
+    await userEvent.click(screen.getByRole('button', { name: '发送' }));
 
     expect(await screen.findByText('已完成查询')).toBeInTheDocument();
     expect(screen.queryByRole('link', { name: /查看输出/ })).not.toBeInTheDocument();
@@ -312,7 +355,7 @@ describe('App', () => {
 
     render(<App />);
     await userEvent.type(screen.getByRole('textbox'), '直接思考');
-    await userEvent.click(screen.getByRole('button', { name: '↑' }));
+    await userEvent.click(screen.getByRole('button', { name: '发送' }));
 
     expect(await screen.findByText('2 个步骤')).toBeInTheDocument();
     expect(screen.queryByText(/0 次工具调用/)).not.toBeInTheDocument();
@@ -335,7 +378,7 @@ describe('App', () => {
     render(<App />);
 
     await userEvent.type(screen.getByRole('textbox'), '竞态测试');
-    await userEvent.click(screen.getByRole('button', { name: '↑' }));
+    await userEvent.click(screen.getByRole('button', { name: '发送' }));
 
     expect(await screen.findByText('流式回答不会消失')).toBeInTheDocument();
     expect(screen.getByText('正在整理并验证结果…')).toBeInTheDocument();
@@ -369,7 +412,7 @@ describe('App', () => {
 
     render(<App />);
     await userEvent.type(screen.getByRole('textbox'), '实时过程');
-    await userEvent.click(screen.getByRole('button', { name: '↑' }));
+    await userEvent.click(screen.getByRole('button', { name: '发送' }));
 
     const summary = await screen.findByText('思考过程');
     const panel = summary.closest('details');
@@ -390,6 +433,9 @@ describe('App', () => {
       emit?.({ id: 11, type: 'reasoning.summary.delta', payload: { turn_index: 1, delta: '正在选择可靠来源' } });
     });
     expect(await screen.findByText('正在选择可靠来源')).toBeInTheDocument();
+    const decisionGroup = panel?.querySelector('[data-process-group="phase-selecting_action-1"]');
+    expect(decisionGroup).toBeInTheDocument();
+    expect(decisionGroup?.querySelector('.process-decision-children')).toContainElement(screen.getByText('正在选择可靠来源').closest('.process-step'));
     expect(panel?.querySelector('.process-step.status-completed')).toBeInTheDocument();
     expect(panel?.querySelector('.process-step.status-running')).toBeInTheDocument();
     await new Promise((resolve) => window.setTimeout(resolve, 150));
@@ -414,7 +460,7 @@ describe('App', () => {
     const snapshot = await vi.mocked(getRun)('fixture');
     render(<App />);
     await userEvent.type(screen.getByRole('textbox'), '第一条');
-    await userEvent.click(screen.getByRole('button', { name: '↑' }));
+    await userEvent.click(screen.getByRole('button', { name: '发送' }));
 
     const firstSummary = await screen.findByText('思考过程');
     const firstPanel = firstSummary.closest('details');
@@ -430,7 +476,7 @@ describe('App', () => {
       chat_messages: [{ id: 'u-2', role: 'user', content: '第二条', status: 'completed', metadata: {} }],
     });
     await userEvent.type(screen.getByRole('textbox'), '第二条');
-    await userEvent.click(screen.getByRole('button', { name: '↑' }));
+    await userEvent.click(screen.getByRole('button', { name: '发送' }));
 
     await waitFor(() => expect(screen.getAllByText('思考过程')).toHaveLength(2));
     const summaries = screen.getAllByText('思考过程');
@@ -452,7 +498,7 @@ describe('App', () => {
       chat_messages: [{ id: 'u-3', role: 'user', content: '新对话', status: 'completed', metadata: {} }],
     });
     await userEvent.type(screen.getByRole('textbox'), '新对话');
-    await userEvent.click(screen.getByRole('button', { name: '↑' }));
+    await userEvent.click(screen.getByRole('button', { name: '发送' }));
 
     const newConversationSummary = await screen.findByText('思考过程');
     expect(newConversationSummary.closest('details')).not.toHaveAttribute('open');
@@ -464,7 +510,7 @@ describe('App', () => {
     await userEvent.click(screen.getByRole('button', { name: '当前模型：gpt-5' }));
     await userEvent.click(screen.getByRole('button', { name: '深入' }));
     await userEvent.click(screen.getByRole('button', { name: '先规划' }));
-    await userEvent.click(screen.getByRole('button', { name: '↑' }));
+    await userEvent.click(screen.getByRole('button', { name: '发送' }));
     expect(vi.mocked(createRun)).toHaveBeenLastCalledWith(
       expect.any(String),
       undefined,
@@ -499,7 +545,7 @@ describe('App', () => {
     }));
 
     await userEvent.type(screen.getByRole('textbox'), '使用恢复后的策略');
-    await userEvent.click(screen.getByRole('button', { name: '↑' }));
+    await userEvent.click(screen.getByRole('button', { name: '发送' }));
     expect(createRun).toHaveBeenLastCalledWith(
       expect.any(String),
       undefined,
@@ -518,7 +564,7 @@ describe('App', () => {
     const textbox = screen.getByRole('textbox');
 
     await userEvent.clear(textbox);
-    await userEvent.click(screen.getByRole('button', { name: '↑' }));
+    await userEvent.click(screen.getByRole('button', { name: '发送' }));
 
     expect(screen.getByText('请输入任务目标')).toBeInTheDocument();
   });
@@ -558,7 +604,7 @@ describe('App', () => {
     render(<App />);
 
     await userEvent.type(screen.getByRole('textbox'), '查询 Astra');
-    await userEvent.click(screen.getByRole('button', { name: '↑' }));
+    await userEvent.click(screen.getByRole('button', { name: '发送' }));
     await screen.findByText('已完成查询');
     await userEvent.type(screen.getByRole('textbox'), '继续追问{Enter}');
     await screen.findAllByText('已完成查询');
@@ -569,7 +615,7 @@ describe('App', () => {
       reflection_enabled: true,
       execution_mode: 'request_approval',
     }), expect.objectContaining({ provider: 'openai', name: 'gpt-5' }));
-    expect(screen.getAllByRole('button', { name: /完成 completed/ })).toHaveLength(1);
+    expect(screen.getAllByRole('button', { name: /查询 Astra completed/ })).toHaveLength(1);
     expect(screen.getAllByRole('button', { name: /跳转到问题/ })).toHaveLength(2);
     const firstQuestion = screen.getByRole('button', { name: '跳转到问题 1' });
     const secondQuestion = screen.getByRole('button', { name: '跳转到问题 2' });
@@ -622,7 +668,7 @@ describe('App', () => {
   it('restores conversation history and model credentials after remount', async () => {
     render(<App />);
     await userEvent.type(screen.getByRole('textbox'), '持久化测试');
-    await userEvent.click(screen.getByRole('button', { name: '↑' }));
+    await userEvent.click(screen.getByRole('button', { name: '发送' }));
     await screen.findByText('已完成查询');
     await userEvent.click(screen.getByRole('button', { name: /设置/ }));
     await userEvent.type(screen.getByPlaceholderText('sk-...'), 'persisted-secret');
@@ -630,7 +676,7 @@ describe('App', () => {
     cleanup();
     render(<App />);
 
-    expect(screen.getByRole('button', { name: /完成 completed/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /持久化测试 completed/ })).toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: /设置/ }));
     expect(screen.getByPlaceholderText('sk-...')).toHaveValue('persisted-secret');
   });

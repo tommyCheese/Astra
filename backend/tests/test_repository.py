@@ -1,9 +1,11 @@
 import pytest
 
 from app.agent_profile import load_agent_profile
+from app.db.models import ModelInvocationRecord
 from app.repositories.conversation_strategy import ConversationStrategyRepository
 from app.repositories.runs import RunRepository, run_to_view
 from app.repositories.tool_settings import ToolSettingsRepository
+from app.repositories.usage import UsageRepository
 from app.runner.reasoning import build_default_contract, build_plan_graph
 from app.schemas.agent import AgentState, PlanningStrategy, RunView
 
@@ -76,6 +78,54 @@ async def test_run_lifecycle_persistence(session):
         message["role"] == "assistant" and message["content"] == "done"
         for message in view["chat_messages"]
     )
+
+
+async def test_cancel_run_is_idempotent_and_preserves_partial_answer(session):
+    repo = RunRepository(session)
+    run = await repo.create_task_run("生成一份长回答", {"provider": "mock", "model": "mock"})
+    await repo.update_run_status(run.id, "executing")
+    step = await repo.create_step(run.id, 1, "检索", "收集证据")
+    await repo.update_step(step.id, "running")
+    call = await repo.start_tool_call(
+        run.id, step.id, "web_search", "0.1.0", {"query": "Astra"}, "network_read", "read_only"
+    )
+    turn = await repo.create_agent_turn(run.id, 1, "call_tool", "继续检索")
+    invocation_id = await UsageRepository(session).create_invocation(
+        run_id=run.id, provider="mock", model="mock", operation="answer", attempt=1
+    )
+    await repo.add_event(run.id, "answer.delta", {"delta": "已经生成"})
+    await repo.add_event(run.id, "answer.delta", {"delta": "一部分回答。"})
+    await session.commit()
+
+    cancelled = await repo.cancel_run(run.id)
+    cancelled_again = await repo.cancel_run(run.id)
+    view = run_to_view(cancelled_again)
+
+    assert cancelled.status == cancelled_again.status == "cancelled"
+    assert cancelled.summary == "已经生成一部分回答。"
+    assert cancelled.terminal_reason["category"] == "user_cancelled"
+    assert cancelled.terminal_reason["partial_answer"] is True
+    assert view["steps"][0]["status"] == "cancelled"
+    assert view["tool_calls"][0]["status"] == "cancelled"
+    assert view["turns"][0]["status"] == "cancelled"
+    invocation = await session.get(ModelInvocationRecord, invocation_id)
+    assert invocation.status == "interrupted"
+    assert invocation.error_type == "CancelledError"
+    assert [event.type for event in cancelled_again.events].count("run.cancelled") == 1
+    assert any(message["content"] == "已经生成一部分回答。" for message in view["chat_messages"])
+    assert call.id and turn.id
+
+
+async def test_cancel_run_does_not_overwrite_a_natural_completion(session):
+    repo = RunRepository(session)
+    run = await repo.create_task_run("快速完成", {"provider": "mock"})
+    await repo.update_run_status(run.id, "completed", summary="自然完成", result={"summary": "自然完成"})
+
+    unchanged = await repo.cancel_run(run.id)
+
+    assert unchanged.status == "completed"
+    assert unchanged.summary == "自然完成"
+    assert not any(event.type == "run.cancelled" for event in unchanged.events)
 
 
 async def test_run_view_normalizes_persisted_result_contract(session):

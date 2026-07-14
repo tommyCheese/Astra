@@ -4,8 +4,12 @@ export const HISTORY_LIMIT = 100;
 
 export type ConversationEntry = {
   id: string;
-  run: RunView;
+  run?: RunView;
   priorMessages: ChatMessage[];
+  title?: string;
+  pinned_at?: string | null;
+  updated_at?: string;
+  has_active_share?: boolean;
 };
 
 export function normalizeRunView(run: RunView): RunView {

@@ -1,4 +1,4 @@
-import type { RunView } from './types';
+import type { ConversationShare, ConversationSummary, ConversationView, RunView, SharedConversation } from './types';
 
 export type ApiErrorPayload = { type: string; code: string; message: string; retryable: boolean; trace_id: string; details?: Record<string, unknown> };
 
@@ -174,8 +174,54 @@ export async function getRun(runId: string, signal?: AbortSignal): Promise<RunVi
   return response.json();
 }
 
+export async function cancelRun(runId: string): Promise<RunView> {
+  const response = await fetch(`/api/runs/${runId}/cancel`, { method: 'POST' });
+  if (!response.ok) throw await responseError(response);
+  return response.json();
+}
+
 export async function listRuns(limit = 100): Promise<RunView[]> {
   const response = await fetch(`/api/runs?limit=${limit}`);
+  if (!response.ok) throw await responseError(response);
+  return response.json();
+}
+
+export async function listConversations(limit = 100): Promise<ConversationSummary[]> {
+  const response = await fetch(`/api/conversations?limit=${limit}`);
+  if (!response.ok) throw await responseError(response);
+  return response.json();
+}
+
+export async function getConversation(id: string): Promise<ConversationView> {
+  const response = await fetch(`/api/conversations/${id}`);
+  if (!response.ok) throw await responseError(response);
+  return response.json();
+}
+
+export async function updateConversation(id: string, patch: { title?: string; pinned?: boolean }): Promise<ConversationSummary> {
+  const response = await fetch(`/api/conversations/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch) });
+  if (!response.ok) throw await responseError(response);
+  return response.json();
+}
+
+export async function deleteConversation(id: string): Promise<void> {
+  const response = await fetch(`/api/conversations/${id}`, { method: 'DELETE' });
+  if (!response.ok) throw await responseError(response);
+}
+
+export async function createConversationShare(id: string, refresh = false): Promise<ConversationShare> {
+  const response = await fetch(`/api/conversations/${id}/share`, { method: refresh ? 'PUT' : 'POST' });
+  if (!response.ok) throw await responseError(response);
+  return response.json();
+}
+
+export async function revokeConversationShare(id: string): Promise<void> {
+  const response = await fetch(`/api/conversations/${id}/share`, { method: 'DELETE' });
+  if (!response.ok) throw await responseError(response);
+}
+
+export async function getSharedConversation(token: string): Promise<SharedConversation> {
+  const response = await fetch(`/api/shared-conversations/${encodeURIComponent(token)}`);
   if (!response.ok) throw await responseError(response);
   return response.json();
 }

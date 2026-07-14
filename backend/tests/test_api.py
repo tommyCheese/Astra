@@ -227,6 +227,43 @@ async def test_create_and_get_run(app_client):
     assert "secret" not in str(body["agent_profile"]).lower()
 
 
+async def test_conversation_management_and_share_lifecycle(app_client):
+    from app.repositories.runs import RunRepository
+
+    created = await app_client.post("/api/runs", json={"goal": "需要安全分享的对话"})
+    conversation_id = created.json()["task_id"]
+    run_id = created.json()["run_id"]
+    async with app_client._astra_session() as session:
+        await RunRepository(session).update_run_status(run_id, "completed", summary="公开回答")
+
+    renamed = await app_client.patch(
+        f"/api/conversations/{conversation_id}", json={"title": "用户标题", "pinned": True}
+    )
+    assert renamed.status_code == 200
+    assert renamed.json()["title"] == "用户标题"
+    assert renamed.json()["title_source"] == "user"
+    assert renamed.json()["pinned_at"] is not None
+
+    listed = await app_client.get("/api/conversations")
+    assert listed.json()[0]["id"] == conversation_id
+    assert listed.json()[0]["title"] == "用户标题"
+
+    shared = await app_client.post(f"/api/conversations/{conversation_id}/share")
+    assert shared.status_code == 200
+    token = shared.json()["url"].rsplit("/", 1)[-1]
+    public = await app_client.get(f"/api/shared-conversations/{token}")
+    assert public.status_code == 200
+    assert public.json()["title"] == "用户标题"
+    assert public.json()["messages"] == [{"role": "user", "content": "需要安全分享的对话"}]
+    assert "runs" not in public.json()
+    assert "agent_profile" not in public.json()
+
+    removed = await app_client.delete(f"/api/conversations/{conversation_id}")
+    assert removed.status_code == 204
+    assert (await app_client.get(f"/api/shared-conversations/{token}")).status_code == 404
+    assert (await app_client.get(f"/api/conversations/{conversation_id}")).status_code == 404
+
+
 async def test_run_event_stream_starts_with_ready_signal(app_client, monkeypatch):
     from app.repositories.runs import RunRepository
 
@@ -284,6 +321,47 @@ async def test_run_task_is_retained_until_background_execution_finishes(app_clie
     await asyncio.sleep(0)
     await asyncio.sleep(0)
     assert not any(task.get_name() == f"astra-run-{run_id}" for task in runs_api._background_tasks)
+
+
+async def test_active_run_can_be_cancelled_idempotently(app_client, monkeypatch):
+    started = asyncio.Event()
+
+    async def delayed_runner(run_id, settings):
+        started.set()
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(runs_api, "start_run_in_process", delayed_runner)
+    created = await app_client.post("/api/runs", json={"goal": "持续生成回答"})
+    run_id = created.json()["run_id"]
+    await started.wait()
+
+    cancelled = await app_client.post(f"/api/runs/{run_id}/cancel")
+    cancelled_again = await app_client.post(f"/api/runs/{run_id}/cancel")
+
+    assert cancelled.status_code == cancelled_again.status_code == 200
+    assert cancelled.json()["status"] == cancelled_again.json()["status"] == "cancelled"
+    assert cancelled.json()["terminal_reason"]["category"] == "user_cancelled"
+    assert [event["type"] for event in cancelled_again.json()["events"]].count("run.cancelled") == 1
+    assert run_id not in runs_api._background_tasks_by_run
+
+
+async def test_cancel_run_returns_completed_snapshot_and_missing_run_is_404(app_client):
+    created = await app_client.post("/api/runs", json={"goal": "已完成任务"})
+    run_id = created.json()["run_id"]
+    async with app_client._astra_session() as session:
+        from app.repositories.runs import RunRepository
+
+        await RunRepository(session).update_run_status(
+            run_id, "completed", summary="自然完成", result={"summary": "自然完成"}
+        )
+
+    completed = await app_client.post(f"/api/runs/{run_id}/cancel")
+    missing = await app_client.post("/api/runs/missing/cancel")
+
+    assert completed.status_code == 200
+    assert completed.json()["status"] == "completed"
+    assert completed.json()["summary"] == "自然完成"
+    assert missing.status_code == 404
 
 
 async def test_create_run_compiles_reasoning_policy(app_client):

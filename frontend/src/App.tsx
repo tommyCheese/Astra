@@ -1,16 +1,16 @@
 import { FormEvent, MouseEvent, ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { AstraApiError, ApiErrorPayload, buildRuntime, cancelRuntimeBuild, createRun, getConversationStrategy, getRun, getRuntimeProfile, getToolSettings, listRuns, resumeRun, streamRunEvents, updateConversationStrategy, updateToolSettings, type ConversationStrategyPreferences, type ToolSetting } from './api';
+import { AstraApiError, ApiErrorPayload, buildRuntime, cancelRun, cancelRuntimeBuild, createConversationShare, createRun, deleteConversation, getConversation, getConversationStrategy, getRun, getRuntimeProfile, getToolSettings, listConversations, listRuns, resumeRun, revokeConversationShare, streamRunEvents, updateConversation, updateConversationStrategy, updateToolSettings, type ConversationStrategyPreferences, type ToolSetting } from './api';
 import { I18nProvider, useI18n } from './i18n';
 import { ThemeProvider, useTheme } from './theme';
-import type { ArtifactView, ChatMessage, RunView } from './types';
+import type { ArtifactView, ChatMessage, ConversationShare, ConversationSummary, RunView } from './types';
 import { UsageDashboard } from './UsageDashboard';
 import { buildPresentation, HISTORY_LIMIT, normalizeRunView, type ConversationEntry } from './conversations';
 import { createOptimisticProcessState, isDecisionGroup, reconcileProcessSnapshot, reduceProcessEvent, type ProcessStreamItem, type ProcessStreamState } from './processStream';
 import type { RunStreamEvent } from './api';
 
-const terminalStatuses = new Set(['completed', 'completed_with_warnings', 'failed', 'blocked', 'waiting_user']);
+const terminalStatuses = new Set(['completed', 'completed_with_warnings', 'failed', 'blocked', 'waiting_user', 'cancelled']);
 const STORAGE_KEYS = {
   conversations: 'astra.conversations.v1',
   processPanelDefaultOpen: 'astra.process-panel-default-open.v1',
@@ -48,6 +48,7 @@ function AppContent() {
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
   const [priorMessages, setPriorMessages] = useState<ChatMessage[]>([]);
   const [loading, setLoading] = useState(false);
+  const [stopping, setStopping] = useState(false);
   const [streamingAnswer, setStreamingAnswer] = useState('');
   const [answerComplete, setAnswerComplete] = useState(false);
   const [answerSettling, setAnswerSettling] = useState(false);
@@ -59,6 +60,7 @@ function AppContent() {
   const [view, setView] = useState<'chat' | 'settings'>('chat');
   const [usageOpen, setUsageOpen] = useState(false);
   const [strategyHelpOpen, setStrategyHelpOpen] = useState(false);
+  const [conversationAction, setConversationAction] = useState<{ kind: 'rename' | 'share' | 'delete'; conversation: ConversationEntry } | null>(null);
   const [modelOpen, setModelOpen] = useState(false);
   const [attachOpen, setAttachOpen] = useState(false);
   const [executionMenuOpen, setExecutionMenuOpen] = useState(false);
@@ -88,6 +90,7 @@ function AppContent() {
   const conversationStrategyTouchedRef = useRef(false);
   const conversationStrategySaveRef = useRef<Promise<void>>(Promise.resolve());
   const initialSnapshotControllerRef = useRef<AbortController>();
+  const cancelRequestedRef = useRef(false);
   const availableModels = useMemo(() => providerConfigs
     .filter((provider) => provider.enabled)
     .flatMap((provider) => parseModelIds(provider.models).map((model) => ({ key: `${provider.id}:${model}`, model, providerId: provider.id, providerName: provider.name }))), [providerConfigs]);
@@ -127,20 +130,19 @@ function AppContent() {
 
   useEffect(() => {
     let active = true;
-    void listRuns(200).then((runs) => {
+    void listConversations(HISTORY_LIMIT).then((summaries) => {
+      if (!active) return;
+      if (!summaries.length) throw new Error('no persisted conversations');
+      setConversationHistory((local) => summaries.map((summary) => {
+        const cached = local.find((item) => item.id === summary.id);
+        return { ...cached, id: summary.id, priorMessages: cached?.priorMessages ?? [], title: summary.title, pinned_at: summary.pinned_at, updated_at: summary.updated_at, has_active_share: summary.has_active_share };
+      }));
+    }).catch(() => listRuns(200).then((runs) => {
       if (!active) return;
       const grouped = new Map<string, RunView[]>();
-      for (const item of runs) {
-        const normalized = normalizeRunView(item);
-        grouped.set(normalized.task_id, [...(grouped.get(normalized.task_id) ?? []), normalized]);
-      }
-      const restored = [...grouped.entries()].map(([id, items]) => ({
-        id,
-        run: items[0],
-        priorMessages: [...items.slice(1)].reverse().flatMap(buildPresentation),
-      }));
-      setConversationHistory((local) => [...restored, ...local.filter((item) => !grouped.has(item.id))].slice(0, HISTORY_LIMIT));
-    }).catch(() => { /* retain browser history while the backend is offline */ });
+      for (const item of runs) grouped.set(item.task_id, [...(grouped.get(item.task_id) ?? []), normalizeRunView(item)]);
+      setConversationHistory([...grouped.entries()].map(([id, items]) => ({ id, run: items[0], priorMessages: [...items.slice(1)].reverse().flatMap(buildPresentation) })));
+    }).catch(() => { /* retain browser history while the backend is offline */ }));
     return () => { active = false; };
   }, []);
 
@@ -189,7 +191,33 @@ function AppContent() {
   function rememberConversation(nextRun: RunView, previousMessages: ChatMessage[] = priorMessages) {
     const conversationId = activeConversationId ?? nextRun.task_id;
     setActiveConversationId(conversationId);
-    setConversationHistory((items) => [{ id: conversationId, run: nextRun, priorMessages: previousMessages }, ...items.filter((item) => item.id !== conversationId)].slice(0, HISTORY_LIMIT));
+    setConversationHistory((items) => {
+      const existing = items.find((item) => item.id === conversationId);
+      return [{ ...existing, id: conversationId, run: nextRun, priorMessages: previousMessages, title: existing?.title ?? conversationTitle(nextRun, t('当前 Web Agent 会话')), updated_at: new Date().toISOString() }, ...items.filter((item) => item.id !== conversationId)].slice(0, HISTORY_LIMIT);
+    });
+  }
+
+  async function openConversation(conversation: ConversationEntry) {
+    setActiveConversationId(conversation.id);
+    try {
+      const detail = await getConversation(conversation.id);
+      const runs = detail.runs.map(normalizeRunView);
+      const latest = runs[runs.length - 1];
+      if (!latest) throw new Error('conversation has no runs');
+      setPriorMessages(runs.slice(0, -1).flatMap(buildPresentation));
+      setRun(latest);
+      setProcessState(reconcileProcessSnapshot(null, latest));
+      setConversationHistory((items) => items.map((item) => item.id === conversation.id ? { ...item, run: latest, title: detail.title, pinned_at: detail.pinned_at, updated_at: detail.updated_at, has_active_share: detail.has_active_share } : item));
+    } catch {
+      if (conversation.run) {
+        setPriorMessages(conversation.priorMessages);
+        setRun(normalizeRunView(conversation.run));
+        setProcessState(reconcileProcessSnapshot(null, normalizeRunView(conversation.run)));
+      }
+    }
+    followLatestRef.current = true;
+    setShowJumpToLatest(false);
+    changeView('chat');
   }
 
   function persistConversationStrategy(patch: Partial<ConversationStrategyPreferences>) {
@@ -206,6 +234,36 @@ function AppContent() {
       .catch((err) => {
         setError(err instanceof AstraApiError ? err.payload : { type: 'infrastructure.database', code: 'STRATEGY_PREFERENCE_SAVE_FAILED', message: t('保存对话策略失败，当前选择可能无法在重启后恢复。'), retryable: true, trace_id: 'unavailable' });
       });
+  }
+
+  async function cancelRunById(runId: string, previousMessages: ChatMessage[] = priorMessages) {
+    initialSnapshotControllerRef.current?.abort();
+    initialSnapshotControllerRef.current = undefined;
+    setAnswerSettling(false);
+    try {
+      const next = normalizeRunView(await cancelRun(runId));
+      deltaBufferRef.current = '';
+      setStreamingAnswer('');
+      setAnswerComplete(false);
+      setRun(next);
+      setProcessState((state) => reconcileProcessSnapshot(state, next));
+      rememberConversation(next, previousMessages);
+    } catch (err) {
+      setError(err instanceof AstraApiError ? err.payload : { type: 'runtime.internal_error', code: 'CANCEL_RUN_FAILED', message: t('终止回答失败，当前回答可能仍在继续。'), retryable: true, trace_id: 'unavailable' });
+    } finally {
+      cancelRequestedRef.current = false;
+      setStopping(false);
+    }
+  }
+
+  async function stopActiveRun() {
+    if (stopping) return;
+    cancelRequestedRef.current = true;
+    setStopping(true);
+    setAnswerSettling(false);
+    if (run && !terminalStatuses.has(run.status)) {
+      await cancelRunById(run.id);
+    }
   }
 
   async function submit(event: FormEvent) {
@@ -257,6 +315,10 @@ function AppContent() {
       setProcessState(createOptimisticProcessState(created.run_id));
       rememberConversation(current, previousMessages);
       setGoal('');
+      if (cancelRequestedRef.current) {
+        await cancelRunById(created.run_id, previousMessages);
+        return;
+      }
       initialSnapshotControllerRef.current?.abort();
       const initialSnapshotController = new AbortController();
       initialSnapshotControllerRef.current = initialSnapshotController;
@@ -269,6 +331,8 @@ function AppContent() {
         rememberConversation(next, previousMessages);
       }).catch(() => { /* SSE and fallback polling will recover the snapshot. */ });
     } catch (err) {
+      cancelRequestedRef.current = false;
+      setStopping(false);
       setError(err instanceof AstraApiError ? err.payload : { type: 'runtime.internal_error', code: 'REQUEST_FAILED', message: t('服务暂时出现异常，请稍后重试。'), retryable: true, trace_id: 'unavailable' });
     } finally {
       setLoading(false);
@@ -450,6 +514,8 @@ function AppContent() {
     setAnswerComplete(false);
     setAnswerSettling(false);
     setProcessState(null);
+    cancelRequestedRef.current = false;
+    setStopping(false);
     deltaBufferRef.current = '';
     followLatestRef.current = true;
     setShowJumpToLatest(false);
@@ -461,18 +527,13 @@ function AppContent() {
     <main className="app-layout">
       <Sidebar
         run={run}
+        activeConversationId={activeConversationId}
         conversations={conversationHistory}
         activeView={view}
         onNewChat={startNewChat}
-        onSelectConversation={(conversation) => {
-          setActiveConversationId(conversation.id);
-          setPriorMessages(conversation.priorMessages);
-          setRun(normalizeRunView(conversation.run));
-          setProcessState(reconcileProcessSnapshot(null, normalizeRunView(conversation.run)));
-          followLatestRef.current = true;
-          setShowJumpToLatest(false);
-          changeView('chat');
-        }}
+        onSelectConversation={(conversation) => { void openConversation(conversation); }}
+        onConversationAction={(kind, conversation) => setConversationAction({ kind, conversation })}
+        onTogglePin={(conversation) => { void updateConversation(conversation.id, { pinned: !conversation.pinned_at }).then((updated) => setConversationHistory((items) => items.map((item) => item.id === updated.id ? { ...item, title: updated.title, pinned_at: updated.pinned_at, updated_at: updated.updated_at } : item))); }}
         onOpenSettings={() => {
           setSettingsCategory('模型管理');
           changeView('settings');
@@ -601,7 +662,13 @@ function AppContent() {
                 />
               )}
             </div>
-            <button className="send-button" type="submit" disabled={loading || !conversationStrategyReady}>{loading ? '...' : '↑'}</button>
+            {loading || stopping || (run && !terminalStatuses.has(run.status)) ? (
+              <button className="send-button stop-button" type="button" aria-label={t('终止回答')} title={t('终止回答')} disabled={stopping} onClick={() => { void stopActiveRun(); }}>
+                <span aria-hidden="true" />
+              </button>
+            ) : (
+              <button className="send-button" type="submit" aria-label={t('发送')} disabled={!conversationStrategyReady}>↑</button>
+            )}
           </form>
           {error && <ErrorDialog error={error} onClose={() => setError(null)} onRetry={error.retryable ? () => document.querySelector<HTMLFormElement>('.chat-composer')?.requestSubmit() : undefined} />}
         </section>
@@ -615,20 +682,40 @@ function AppContent() {
         setExecutionMenuOpen(false);
         setBypassConfirmOpen(false);
       }} />}
+      {conversationAction && <ConversationActionDialog action={conversationAction} onClose={() => setConversationAction(null)} onRenamed={(updated) => setConversationHistory((items) => items.map((item) => item.id === updated.id ? { ...item, title: updated.title, updated_at: updated.updated_at } : item))} onDeleted={(id) => {
+        setConversationHistory((items) => items.filter((item) => item.id !== id));
+        if (activeConversationId === id) startNewChat();
+      }} onShareChanged={(id, active) => setConversationHistory((items) => items.map((item) => item.id === id ? { ...item, has_active_share: active } : item))} />}
     </main>
   );
 }
 
-function Sidebar({ run, conversations, activeView, onNewChat, onSelectConversation, onOpenSettings, onOpenUsage }: {
+function Sidebar({ run, activeConversationId, conversations, activeView, onNewChat, onSelectConversation, onConversationAction, onTogglePin, onOpenSettings, onOpenUsage }: {
   run: RunView | null;
+  activeConversationId: string | null;
   conversations: ConversationEntry[];
   activeView: 'chat' | 'settings';
   onNewChat: () => void;
   onSelectConversation: (conversation: ConversationEntry) => void;
+  onConversationAction: (kind: 'rename' | 'share' | 'delete', conversation: ConversationEntry) => void;
+  onTogglePin: (conversation: ConversationEntry) => void;
   onOpenSettings: () => void;
   onOpenUsage: () => void;
 }) {
   const { t } = useI18n();
+  const [menuId, setMenuId] = useState<string | null>(null);
+  const pinned = conversations.filter((item) => item.pinned_at);
+  const recent = conversations.filter((item) => !item.pinned_at);
+  const renderConversation = (conversation: ConversationEntry) => <div className={`history-item ${activeConversationId === conversation.id ? 'active' : ''}`} key={conversation.id}>
+    <button className="history-select" type="button" onClick={() => onSelectConversation(conversation)}><Icon name="message" /><span>{conversation.title ?? (conversation.run ? conversationTitle(conversation.run, t('当前 Web Agent 会话')) : t('未命名对话'))}</span><small>{conversation.run ? statusLabel(conversation.run.status) : ''}</small></button>
+    <button className="history-more" type="button" aria-label={`${t('更多操作')} ${conversation.title ?? ''}`} aria-expanded={menuId === conversation.id} onClick={(event) => { event.stopPropagation(); setMenuId((current) => current === conversation.id ? null : conversation.id); }}>•••</button>
+    {menuId === conversation.id && <div className="history-menu" role="menu">
+      <button type="button" onClick={() => { setMenuId(null); onConversationAction('rename', conversation); }}>{t('重命名')}</button>
+      <button type="button" onClick={() => { setMenuId(null); onTogglePin(conversation); }}>{conversation.pinned_at ? t('取消置顶') : t('置顶')}</button>
+      <button type="button" onClick={() => { setMenuId(null); onConversationAction('share', conversation); }}>{t('分享')}</button>
+      <button className="danger" type="button" onClick={() => { setMenuId(null); onConversationAction('delete', conversation); }}>{t('删除')}</button>
+    </div>}
+  </div>;
   return (
     <aside className="sidebar">
       <div className="brand">
@@ -647,7 +734,10 @@ function Sidebar({ run, conversations, activeView, onNewChat, onSelectConversati
       <nav className="side-section">
         <div className="history-heading"><span className="side-title">{t('历史对话')}</span><small>{t('最多保留最近 {count} 个会话').replace('{count}', String(HISTORY_LIMIT))}</small></div>
         <div className="history-list">
-          {conversations.length ? conversations.slice(0, HISTORY_LIMIT).map((conversation) => <button className={`history-item ${run?.task_id === conversation.id ? 'active' : ''}`} type="button" key={conversation.id} onClick={() => onSelectConversation(conversation)}><Icon name="message" /><span>{conversationTitle(conversation.run, t('当前 Web Agent 会话'))}</span><small>{statusLabel(conversation.run.status)}</small></button>) : <div className="history-empty">{t('暂无对话')}</div>}
+          {pinned.length > 0 && <><span className="history-group-title">{t('置顶')}</span>{pinned.map(renderConversation)}</>}
+          {recent.length > 0 && pinned.length > 0 && <span className="history-group-title">{t('最近')}</span>}
+          {recent.map(renderConversation)}
+          {!conversations.length && <div className="history-empty">{t('暂无对话')}</div>}
         </div>
         {conversations.length >= HISTORY_LIMIT && <p className="history-retention-note">{t('较早的会话会自动移出此列表')}</p>}
       </nav>
@@ -670,6 +760,38 @@ function Sidebar({ run, conversations, activeView, onNewChat, onSelectConversati
 
 function conversationTitle(run: RunView, fallback: string) {
   return run.summary?.trim() || run.chat_messages?.find((message) => message.role === 'user')?.content || fallback;
+}
+
+function ConversationActionDialog({ action, onClose, onRenamed, onDeleted, onShareChanged }: {
+  action: { kind: 'rename' | 'share' | 'delete'; conversation: ConversationEntry };
+  onClose: () => void;
+  onRenamed: (conversation: ConversationSummary) => void;
+  onDeleted: (id: string) => void;
+  onShareChanged: (id: string, active: boolean) => void;
+}) {
+  const { t } = useI18n();
+  const [title, setTitle] = useState(action.conversation.title ?? '');
+  const [share, setShare] = useState<ConversationShare | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [failure, setFailure] = useState('');
+  useEffect(() => {
+    if (action.kind === 'share' && action.conversation.has_active_share) {
+      void createConversationShare(action.conversation.id).then(setShare).catch(() => setFailure(t('无法加载分享链接')));
+    }
+  }, [action, t]);
+  const execute = async (operation: () => Promise<void>) => {
+    setBusy(true); setFailure('');
+    try { await operation(); } catch (error) { setFailure(error instanceof Error ? error.message : t('操作失败')); }
+    finally { setBusy(false); }
+  };
+  return <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+    <div className="conversation-action-dialog" role="dialog" aria-modal="true" aria-label={action.kind === 'rename' ? t('重命名对话') : action.kind === 'share' ? t('分享对话') : t('删除对话')} onKeyDown={(event) => { if (event.key === 'Escape') onClose(); }}>
+      {action.kind === 'rename' && <form onSubmit={(event) => { event.preventDefault(); void execute(async () => { const updated = await updateConversation(action.conversation.id, { title }); onRenamed(updated); onClose(); }); }}><h2>{t('重命名对话')}</h2><input autoFocus value={title} maxLength={240} onChange={(event) => setTitle(event.target.value)} /><div className="dialog-actions"><button type="button" onClick={onClose}>{t('取消')}</button><button className="primary" disabled={busy || !title.trim()}>{t('保存')}</button></div></form>}
+      {action.kind === 'delete' && <><h2>{t('永久删除对话？')}</h2><p>{t('将删除“{title}”的所有消息、执行记录和分享链接，此操作无法撤销。').replace('{title}', action.conversation.title ?? t('未命名对话'))}</p><div className="dialog-actions"><button type="button" onClick={onClose}>{t('取消')}</button><button className="danger" disabled={busy} type="button" onClick={() => { void execute(async () => { await deleteConversation(action.conversation.id); onDeleted(action.conversation.id); onClose(); }); }}>{t('永久删除')}</button></div></>}
+      {action.kind === 'share' && <><h2>{t('分享对话')}</h2><p>{t('任何获得链接的人都可以查看创建时的只读快照。后续消息不会自动公开。')}</p>{share ? <><div className="share-link"><input readOnly value={`${window.location.origin}${share.url}`} /><button type="button" onClick={() => { void navigator.clipboard?.writeText(`${window.location.origin}${share.url}`); }}>{t('复制')}</button></div><small>{t('快照更新时间')} {new Date(share.updated_at).toLocaleString()}</small><div className="dialog-actions"><button type="button" onClick={() => { void execute(async () => { const updated = await createConversationShare(action.conversation.id, true); setShare(updated); }); }}>{t('更新快照')}</button><button className="danger" type="button" onClick={() => { void execute(async () => { await revokeConversationShare(action.conversation.id); setShare(null); onShareChanged(action.conversation.id, false); }); }}>{t('停止分享')}</button></div></> : <div className="dialog-actions"><button type="button" onClick={onClose}>{t('取消')}</button><button className="primary" type="button" onClick={() => { void execute(async () => { const created = await createConversationShare(action.conversation.id); setShare(created); onShareChanged(action.conversation.id, true); }); }}>{t('创建分享链接')}</button></div>}</>}
+      {failure && <p className="dialog-error">{failure}</p>}
+    </div>
+  </div>;
 }
 
 function QuestionRail({ messages }: { messages: ChatMessage[] }) {
@@ -1054,7 +1176,7 @@ function loadConversationHistory(): ConversationEntry[] {
     .filter((item) => item && typeof item.id === 'string' && item.run && typeof item.run.id === 'string' && Array.isArray(item.priorMessages))
     .map((item) => ({
       ...item,
-      run: normalizeRunView(item.run),
+      run: normalizeRunView(item.run!),
       priorMessages: item.priorMessages.map((message) => ({ ...message, metadata: message.metadata ?? {} })),
     }))
     .slice(0, HISTORY_LIMIT);
@@ -1308,6 +1430,8 @@ function ProcessPanel({ run, messageId, liveState, open, onInitialize, onOpenCha
   const report = run.result?.verification_report;
   const notes = [...new Set([...(run.result?.verification_notes ?? []), ...(report?.notes ?? [])])];
   const processItems = liveState?.items ?? reconcileProcessSnapshot(null, run).items;
+  const streamedVerificationText = processItems.filter((item) => item.kind === 'verification').map((item) => item.detail ?? '').join('；');
+  const remainingNotes = notes.filter((note) => !streamedVerificationText.includes(note));
   useEffect(() => onInitialize(run.id), [onInitialize, run.id]);
   const toggle = (event: MouseEvent<HTMLElement>) => {
     event.preventDefault();
@@ -1315,7 +1439,7 @@ function ProcessPanel({ run, messageId, liveState, open, onInitialize, onOpenCha
   };
   return <article className={`process-entry ${live ? 'live' : ''}`} id={`message-${messageId}`}><details className="process-panel" open={open}><summary onClick={toggle} aria-expanded={open}><Icon name="brain" /><span>{t('思考过程')}</span><small>{processSummary}</small></summary><div className="process-timeline" aria-live={live ? 'polite' : undefined}>
     <ProcessTimeline items={processItems} run={run} />
-    {!live && notes.map((note, index) => <div className="process-step verification" key={`verification-${index}`}><span className="process-dot"><Icon name="check" /></span><div><strong>{t('验证')}</strong><p>{note}</p></div></div>)}
+    {!live && remainingNotes.map((note, index) => <div className="process-step verification" key={`verification-${index}`}><span className="process-dot"><Icon name="check" /></span><div><strong>{t('验证')}</strong><p>{note}</p></div></div>)}
     {!live && <ReasoningAuditSummary run={run} />}
   </div></details></article>;
 }

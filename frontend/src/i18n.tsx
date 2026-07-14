@@ -9,7 +9,7 @@ const english: Record<string, string> = {
   '添加内容': 'Add content', '上传文件': 'Upload file', '文档、代码与数据': 'Documents, code, and data',
   '添加图片': 'Add image', '分析图像内容': 'Analyze image content', '连接来源': 'Connect source', '即将支持': 'Coming soon',
   '输入任务 / 继续追问...': 'Enter a task or ask a follow-up...', '请输入任务目标': 'Enter a task goal', '创建 run 失败': 'Failed to create run',
-  '请输入你想完成的目标。': 'Enter what you would like to accomplish.', '服务暂时出现异常，请稍后重试。': 'The service is temporarily unavailable. Please try again shortly.',
+  '请输入你想完成的目标。': 'Enter what you would like to accomplish.', '服务暂时出现异常，请稍后重试。': 'The service is temporarily unavailable. Please try again shortly.', '发送': 'Send', '终止回答': 'Stop response', '终止回答失败，当前回答可能仍在继续。': 'Unable to stop the response. It may still be running.',
   '新对话': 'New chat', '历史对话': 'Chat history', '当前 Web Agent 会话': 'Current Web Agent chat', '暂无会话': 'No chats yet', '暂无对话': 'No chats yet', 'Astra 图标': 'Astra icon',
   '切换对话': 'Switch chat', '最近对话': 'Recent chats', '未命名对话': 'Untitled chat', '还没有历史对话': 'No chat history yet',
   '最多保留最近 {count} 个会话': 'Keeps up to {count} recent chats', '较早的会话会自动移出此列表': 'Older chats are automatically removed from this list',

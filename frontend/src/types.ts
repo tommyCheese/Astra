@@ -211,3 +211,19 @@ export type RunView = {
   waiting_state?: Record<string, unknown> | null;
   task_adapter?: string;
 };
+
+export type ConversationSummary = {
+  id: string;
+  title: string;
+  title_source: string;
+  pinned_at: string | null;
+  created_at: string;
+  updated_at: string;
+  last_run_status: string | null;
+  last_message_preview: string;
+  has_active_share: boolean;
+};
+
+export type ConversationView = ConversationSummary & { runs: RunView[] };
+export type ConversationShare = { url: string; created_at: string; updated_at: string };
+export type SharedConversation = { title: string; messages: Array<{ role: 'user' | 'assistant'; content: string }>; shared_at: string; updated_at: string };
