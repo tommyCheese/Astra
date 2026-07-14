@@ -11,6 +11,7 @@ export type ProcessStreamItem = {
   status: ProcessItemStatus;
   turnIndex?: number;
   toolCallId?: string;
+  groupId?: string;
 };
 
 export type ProcessStreamState = {
@@ -40,9 +41,22 @@ export function createOptimisticProcessState(runId: string): ProcessStreamState 
 }
 
 export function reconcileProcessSnapshot(state: ProcessStreamState | null, run: RunView): ProcessStreamState {
-  const next = state?.runId === run.id ? state : createOptimisticProcessState(run.id);
+  let next = state?.runId === run.id ? state : createOptimisticProcessState(run.id);
+  for (const event of [...(run.events ?? [])].sort((a, b) => a.id - b.id)) {
+    next = reduceProcessEvent(next, event);
+  }
   const snapshotItems: ProcessStreamItem[] = [...next.items];
   for (const turn of [...(run.turns ?? [])].sort((a, b) => a.turn_index - b.turn_index)) {
+    const groupId = decisionGroupId(turn.turn_index);
+    if (!snapshotItems.some((item) => item.id === groupId)) {
+      snapshotItems.push({
+        id: groupId,
+        kind: 'phase',
+        title: phaseTitles.selecting_action,
+        status: 'completed',
+        turnIndex: turn.turn_index,
+      });
+    }
     const id = `reasoning-${turn.turn_index}`;
     const existing = snapshotItems.findIndex((item) => item.id === id);
     const item: ProcessStreamItem = {
@@ -53,6 +67,7 @@ export function reconcileProcessSnapshot(state: ProcessStreamState | null, run: 
       status: turn.status === 'failed' ? 'failed' : 'completed',
       turnIndex: turn.turn_index,
       toolCallId: turn.tool_call_id ?? undefined,
+      groupId,
     };
     if (existing >= 0) snapshotItems[existing] = item;
     else snapshotItems.push(item);
@@ -66,6 +81,7 @@ export function reconcileProcessSnapshot(state: ProcessStreamState | null, run: 
       title: call.tool_name,
       status: call.status === 'running' ? 'running' : call.status === 'failed' ? 'failed' : 'completed',
       toolCallId: call.id,
+      groupId: snapshotItems.find((item) => item.toolCallId === call.id && item.turnIndex !== undefined)?.groupId,
     };
     if (existing >= 0) snapshotItems[existing] = { ...snapshotItems[existing], ...item };
     else snapshotItems.push(item);
@@ -107,6 +123,7 @@ export function reduceProcessEvent(state: ProcessStreamState, event: RunStreamEv
       detail: `${existing?.detail ?? ''}${safeString(payload.delta)}`.slice(0, 4000),
       status: 'running',
       turnIndex,
+      groupId: turnIndex === undefined ? undefined : decisionGroupId(turnIndex),
     });
   } else if (event.type === 'reasoning.summary.completed' || event.type === 'agent_turn.created') {
     const id = `reasoning-${turnIndex ?? 0}`;
@@ -119,18 +136,22 @@ export function reduceProcessEvent(state: ProcessStreamState, event: RunStreamEv
       status: 'completed',
       turnIndex,
       toolCallId: safeString(payload.tool_call_id) || existing?.toolCallId,
+      groupId: turnIndex === undefined ? existing?.groupId : decisionGroupId(turnIndex),
     });
   } else if (event.type === 'tool_call.started') {
     const toolCallId = safeString(payload.tool_call_id);
+    const groupId = turnIndex === undefined ? activeDecisionGroupId(items) : decisionGroupId(turnIndex);
     if (toolCallId) items = upsert(items, {
       id: `tool-${toolCallId}`,
       kind: 'tool',
       title: safeString(payload.tool_name) || '工具调用',
       status: 'running',
       toolCallId,
+      groupId,
     });
   } else if (event.type === 'tool_call.completed') {
     const toolCallId = safeString(payload.tool_call_id);
+    const existing = items.find((item) => item.id === `tool-${toolCallId}`);
     if (toolCallId) items = upsert(items, {
       id: `tool-${toolCallId}`,
       kind: 'tool',
@@ -138,6 +159,7 @@ export function reduceProcessEvent(state: ProcessStreamState, event: RunStreamEv
       detail: safeString(payload.status),
       status: payload.status === 'failed' ? 'failed' : 'completed',
       toolCallId,
+      groupId: existing?.groupId ?? (turnIndex === undefined ? activeDecisionGroupId(items) : decisionGroupId(turnIndex)),
     });
   } else if (event.type === 'reflection.created') {
     const summary = safeString(payload.summary);
@@ -148,6 +170,7 @@ export function reduceProcessEvent(state: ProcessStreamState, event: RunStreamEv
       detail: summary,
       status: 'completed',
       turnIndex,
+      groupId: turnIndex === undefined ? activeDecisionGroupId(items) : decisionGroupId(turnIndex),
     });
   } else if (event.type === 'verification.created') {
     const notes = Array.isArray(payload.notes) ? payload.notes.filter((note): note is string => typeof note === 'string') : [];
@@ -166,6 +189,18 @@ export function reduceProcessEvent(state: ProcessStreamState, event: RunStreamEv
     items = items.map((item) => item.status === 'running' ? { ...item, status: 'completed' } : item);
   }
   return { ...state, items, active, seenEventIds };
+}
+
+export function isDecisionGroup(item: ProcessStreamItem) {
+  return item.kind === 'phase' && item.id.startsWith('phase-selecting_action-');
+}
+
+function decisionGroupId(turnIndex: number) {
+  return `phase-selecting_action-${turnIndex}`;
+}
+
+function activeDecisionGroupId(items: ProcessStreamItem[]) {
+  return [...items].reverse().find(isDecisionGroup)?.id;
 }
 
 function upsert(items: ProcessStreamItem[], item: ProcessStreamItem) {

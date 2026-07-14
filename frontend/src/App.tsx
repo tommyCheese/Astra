@@ -7,7 +7,7 @@ import { ThemeProvider, useTheme } from './theme';
 import type { ArtifactView, ChatMessage, RunView } from './types';
 import { UsageDashboard } from './UsageDashboard';
 import { buildPresentation, HISTORY_LIMIT, normalizeRunView, type ConversationEntry } from './conversations';
-import { createOptimisticProcessState, reconcileProcessSnapshot, reduceProcessEvent, type ProcessStreamState } from './processStream';
+import { createOptimisticProcessState, isDecisionGroup, reconcileProcessSnapshot, reduceProcessEvent, type ProcessStreamItem, type ProcessStreamState } from './processStream';
 import type { RunStreamEvent } from './api';
 
 const terminalStatuses = new Set(['completed', 'completed_with_warnings', 'failed', 'blocked', 'waiting_user']);
@@ -1191,7 +1191,7 @@ function ModelMenu({ selectedModelKey, onModelChange, modelOptions, reasoningEff
     else result.push({ providerId: option.providerId, providerName: option.providerName, models: [{ key: option.key, model: option.model }] });
     return result;
   }, []);
-  return <div className="floating-menu model-menu"><div className="menu-heading">{t('模型')}</div>{groups.length ? groups.map((group) => <div className="model-provider-group" key={group.providerId}><div className="model-provider-heading"><span className={`provider-mark provider-${group.providerId}`}>{modelProviders.find((provider) => provider.id === group.providerId)?.mark}</span><span>{group.providerName}</span></div>{group.models.map((item) => <button className={`model-option ${selectedModelKey === item.key ? 'selected' : ''}`} type="button" key={item.key} onClick={() => onModelChange(item.key)}><div><strong>{item.model}</strong><small>{group.providerName}</small></div><span>{selectedModelKey === item.key ? '✓' : ''}</span></button>)}</div>) : <div className="model-menu-empty">{t('请先在模型管理中启用供应商并配置模型')}</div>}<div className="menu-divider" /><div className="menu-heading menu-heading-with-help"><span>{t('对话策略')}</span><button className="strategy-help-button" type="button" aria-label={t('了解对话策略')} onClick={onOpenStrategyHelp}>?</button></div><MenuChoice label="推理强度" value={reasoningEffort} options={['快速', '均衡', '深入']} onChange={onReasoningEffortChange} /><MenuChoice label="规划策略" value={planningStrategy} options={['直接', '自适应', '先规划']} onChange={onPlanningStrategyChange} /><div className="menu-toggle"><div><strong>{t('反思循环')}</strong><small>{t('检查结果并修订下一步策略')}</small></div><Toggle checked={reflectionEnabled} onChange={onReflectionChange} label={t('反思循环')} /></div>{reflectionEnabled && <MenuChoice label="触发方式" value={reflectionTrigger} options={['失败时', '按需', '每轮']} onChange={onReflectionTriggerChange} />}</div>;
+  return <div className="floating-menu model-menu"><div className="menu-heading">{t('模型')}</div>{groups.length ? groups.map((group) => <div className="model-provider-group" key={group.providerId}><div className="model-provider-heading"><span className={`provider-mark provider-${group.providerId}`}>{modelProviders.find((provider) => provider.id === group.providerId)?.mark}</span><span>{group.providerName}</span></div>{group.models.map((item) => <button className={`model-option ${selectedModelKey === item.key ? 'selected' : ''}`} type="button" key={item.key} onClick={() => onModelChange(item.key)}><div><strong>{item.model}</strong><small>{group.providerName}</small></div><span>{selectedModelKey === item.key ? '✓' : ''}</span></button>)}</div>) : <div className="model-menu-empty">{t('请先在模型管理中启用供应商并配置模型')}</div>}<div className="menu-divider" /><div className="menu-heading menu-heading-with-help"><span>{t('对话策略')}</span><button className="strategy-help-button" type="button" aria-label={t('了解对话策略')} onClick={onOpenStrategyHelp}><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M7.6 7.3a2.6 2.6 0 1 1 3.15 2.54c-.75.23-1.25.72-1.25 1.46v.3" /><circle cx="9.5" cy="14.35" r=".72" fill="currentColor" stroke="none" /></svg></button></div><MenuChoice label="推理强度" value={reasoningEffort} options={['快速', '均衡', '深入']} onChange={onReasoningEffortChange} /><MenuChoice label="规划策略" value={planningStrategy} options={['直接', '自适应', '先规划']} onChange={onPlanningStrategyChange} /><div className="menu-toggle"><div><strong>{t('反思循环')}</strong><small>{t('检查结果并修订下一步策略')}</small></div><Toggle checked={reflectionEnabled} onChange={onReflectionChange} label={t('反思循环')} /></div>{reflectionEnabled && <MenuChoice label="触发方式" value={reflectionTrigger} options={['失败时', '按需', '每轮']} onChange={onReflectionTriggerChange} />}</div>;
 }
 
 function StrategyHelpDialog({ onClose }: { onClose: () => void }) {
@@ -1307,20 +1307,46 @@ function ProcessPanel({ run, messageId, liveState, open, onInitialize, onOpenCha
     : t('{steps} 个步骤').replace('{steps}', String(turns.length));
   const report = run.result?.verification_report;
   const notes = [...new Set([...(run.result?.verification_notes ?? []), ...(report?.notes ?? [])])];
+  const processItems = liveState?.items ?? reconcileProcessSnapshot(null, run).items;
   useEffect(() => onInitialize(run.id), [onInitialize, run.id]);
   const toggle = (event: MouseEvent<HTMLElement>) => {
     event.preventDefault();
     onOpenChange(run.id, !open);
   };
   return <article className={`process-entry ${live ? 'live' : ''}`} id={`message-${messageId}`}><details className="process-panel" open={open}><summary onClick={toggle} aria-expanded={open}><Icon name="brain" /><span>{t('思考过程')}</span><small>{processSummary}</small></summary><div className="process-timeline" aria-live={live ? 'polite' : undefined}>
-    {live ? liveState?.items.map((item) => <div className={`process-step process-${item.kind} status-${item.status}`} key={item.id}><span className={`process-dot ${item.kind === 'tool' ? 'tool' : ''}`}><Icon name={item.kind === 'tool' ? 'tools' : item.kind === 'verification' ? 'check' : 'brain'} /></span><div><strong>{t(item.title)}</strong>{item.detail && <p>{item.detail}</p>}<small>{item.status === 'running' ? t('进行中') : item.status === 'failed' ? t('失败') : t('已完成')}</small></div></div>) : turns.map((turn) => {
-      const call = run.tool_calls.find((item) => item.id === turn.tool_call_id);
-      const outputs = call ? visibleArtifacts(run.artifacts).filter((artifact) => artifact.tool_call_id === call.id) : [];
-      return <div className="process-step" key={turn.id}><span className={`process-dot ${turn.selected_tool ? 'tool' : ''}`}><Icon name={turn.selected_tool ? 'tools' : 'brain'} /></span><div><strong>{turn.selected_tool ? turn.selected_tool : t(turn.decision_type === 'reflect' ? '反思' : '思考')}</strong><p>{turn.reflection ? String(turn.reflection.summary ?? turn.reasoning_summary) : turn.reasoning_summary}</p>{call && <small>{call.status}{toolCallDetail(call.output)}</small>}{outputs.length > 0 && <a className="process-output-link" href={`#${artifactDomId(outputs[0].id)}`}>{t('{count} 个输出 · 查看输出').replace('{count}', String(outputs.length))}</a>}</div></div>;
-    })}
+    <ProcessTimeline items={processItems} run={run} />
     {!live && notes.map((note, index) => <div className="process-step verification" key={`verification-${index}`}><span className="process-dot"><Icon name="check" /></span><div><strong>{t('验证')}</strong><p>{note}</p></div></div>)}
     {!live && <ReasoningAuditSummary run={run} />}
   </div></details></article>;
+}
+
+function ProcessTimeline({ items, run }: { items: ProcessStreamItem[]; run: RunView }) {
+  const groupedItems = new Map<string, ProcessStreamItem[]>();
+  for (const item of items) {
+    if (!item.groupId) continue;
+    groupedItems.set(item.groupId, [...(groupedItems.get(item.groupId) ?? []), item]);
+  }
+  return <>{items.map((item) => {
+    if (item.groupId) return null;
+    if (!isDecisionGroup(item)) return <ProcessTimelineRow item={item} run={run} key={item.id} />;
+    const children = groupedItems.get(item.id) ?? [];
+    return <section className={`process-decision-group status-${item.status}`} aria-label={item.title} data-process-group={item.id} key={item.id}>
+      <ProcessTimelineRow item={item} run={run} anchor />
+      {children.length > 0 && <div className="process-decision-children">{children.map((child) => <ProcessTimelineRow item={child} run={run} key={child.id} />)}</div>}
+    </section>;
+  })}</>;
+}
+
+function ProcessTimelineRow({ item, run, anchor = false }: { item: ProcessStreamItem; run: RunView; anchor?: boolean }) {
+  const { t } = useI18n();
+  const call = item.kind === 'tool' && item.toolCallId ? run.tool_calls.find((candidate) => candidate.id === item.toolCallId) : undefined;
+  const outputs = call ? visibleArtifacts(run.artifacts).filter((artifact) => artifact.tool_call_id === call.id) : [];
+  const statusLabel = item.status === 'running' ? t('进行中') : item.status === 'failed' ? t('失败') : t('已完成');
+  const callDetail = call ? `${call.status}${toolCallDetail(call.output)}` : undefined;
+  return <div className={`process-step process-${item.kind} status-${item.status} ${anchor ? 'process-group-anchor' : ''}`}>
+    <span className={`process-dot ${item.kind === 'tool' ? 'tool' : ''}`}><Icon name={item.kind === 'tool' ? 'tools' : item.kind === 'verification' ? 'check' : 'brain'} /></span>
+    <div><strong>{t(item.title)}</strong>{item.detail && <p>{item.detail}</p>}<small>{callDetail ?? statusLabel}</small>{outputs.length > 0 && <a className="process-output-link" href={`#${artifactDomId(outputs[0].id)}`}>{t('{count} 个输出 · 查看输出').replace('{count}', String(outputs.length))}</a>}</div>
+  </div>;
 }
 
 function FinalAnswer({ run, fallback }: { run: RunView; fallback: string }) {

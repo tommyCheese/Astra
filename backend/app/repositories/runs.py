@@ -2,7 +2,7 @@ import uuid
 from copy import deepcopy
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -10,6 +10,7 @@ from app.db.models import (
     AgentTurnRecord,
     ArtifactRecord,
     MemoryRecord,
+    ModelInvocationRecord,
     RunEventRecord,
     RunRecord,
     SandboxJobRecord,
@@ -22,6 +23,15 @@ from app.schemas.agent import RunResult
 
 
 class RunRepository:
+    TERMINAL_STATUSES = {
+        "completed",
+        "completed_with_warnings",
+        "failed",
+        "blocked",
+        "waiting_user",
+        "cancelled",
+    }
+
     def __init__(self, session: AsyncSession):
         self.session = session
 
@@ -47,6 +57,8 @@ class RunRepository:
                 created_at=now,
                 updated_at=now,
             )
+        else:
+            task.updated_at = now
         run_policy = {**model_policy, "conversation_goal": goal}
         run = RunRecord(
             task=task,
@@ -252,11 +264,13 @@ class RunRepository:
         result: dict[str, Any] | None = None,
     ) -> None:
         run = await self.require_run(run_id)
+        if run.status == "cancelled" and status != "cancelled":
+            return
         run.status = status
         run.updated_at = utc_now()
         if status == "planning" and run.started_at is None:
             run.started_at = utc_now()
-        if status in {"completed", "completed_with_warnings", "failed", "blocked"}:
+        if status in {"completed", "completed_with_warnings", "failed", "blocked", "cancelled"}:
             run.completed_at = utc_now()
         if summary is not None:
             run.summary = summary
@@ -264,6 +278,88 @@ class RunRepository:
             run.result = result
         await self.add_event(run_id, "run.status_changed", {"status": status})
         await self.session.commit()
+
+    async def cancel_run(self, run_id: str) -> RunRecord:
+        run = await self.require_run(run_id)
+        if run.status in self.TERMINAL_STATUSES:
+            return run
+
+        now = utc_now()
+        partial_answer = "".join(
+            str(event.payload.get("delta", ""))
+            for event in sorted(run.events, key=lambda item: item.id)
+            if event.type == "answer.delta" and isinstance(event.payload, dict)
+        ).strip()
+        summary = partial_answer or "已终止本次运行。"
+        terminal_reason = {
+            "category": "user_cancelled",
+            "reason": "用户主动终止当前运行。",
+            "partial_answer": bool(partial_answer),
+        }
+
+        await self.session.execute(
+            update(StepRecord)
+            .where(StepRecord.run_id == run_id, StepRecord.status.in_(["pending", "running"]))
+            .values(status="cancelled", completed_at=now)
+        )
+        await self.session.execute(
+            update(ToolCallRecord)
+            .where(ToolCallRecord.run_id == run_id, ToolCallRecord.status == "running")
+            .values(
+                status="cancelled",
+                completed_at=now,
+                error={"category": "user_cancelled", "message": "工具调用已由用户终止。"},
+            )
+        )
+        await self.session.execute(
+            update(AgentTurnRecord)
+            .where(
+                AgentTurnRecord.run_id == run_id,
+                AgentTurnRecord.status.in_(["created", "running"]),
+            )
+            .values(status="cancelled", phase="cancelled", updated_at=now)
+        )
+        await self.session.execute(
+            update(SandboxJobRecord)
+            .where(
+                SandboxJobRecord.run_id == run_id,
+                SandboxJobRecord.status.in_(["queued", "preparing", "running", "collecting"]),
+            )
+            .values(
+                status="cancelled",
+                completed_at=now,
+                exit_reason="user_cancelled",
+                error={"category": "user_cancelled", "message": "沙箱任务已由用户终止。"},
+            )
+        )
+        await self.session.execute(
+            update(ModelInvocationRecord)
+            .where(
+                ModelInvocationRecord.run_id == run_id,
+                ModelInvocationRecord.status == "running",
+            )
+            .values(status="interrupted", completed_at=now, error_type="CancelledError")
+        )
+
+        run.status = "cancelled"
+        run.summary = summary
+        run.result = {
+            "summary": summary,
+            "findings": [],
+            "sources": [],
+            "failed_sources": [],
+            "source_quality": [],
+            "conflicts": [],
+            "caveats": ["运行已由用户终止，未继续执行后续步骤。"],
+            "verification_notes": ["取消的运行未执行完成验证。"],
+        }
+        run.terminal_reason = terminal_reason
+        run.waiting_state = None
+        run.completed_at = now
+        run.updated_at = now
+        await self.add_event(run_id, "run.cancelled", terminal_reason)
+        await self.session.commit()
+        return await self.require_run(run_id)
 
     async def create_step(
         self,
@@ -923,7 +1019,7 @@ def build_chat_messages(run: RunRecord) -> list[dict[str, Any]]:
                 },
             }
         )
-    terminal_statuses = {"completed", "completed_with_warnings", "blocked", "failed"}
+    terminal_statuses = {"completed", "completed_with_warnings", "blocked", "failed", "cancelled"}
     if (
         run.status in terminal_statuses
         and run.result
@@ -932,7 +1028,7 @@ def build_chat_messages(run: RunRecord) -> list[dict[str, Any]]:
         messages.append(
             {
                 "id": f"{run.id}-terminal"
-                if run.status in {"blocked", "failed"}
+                if run.status in {"blocked", "failed", "cancelled"}
                 else f"{run.id}-answer",
                 "role": "assistant",
                 "content": run.result.get("summary") or run.summary or "任务已完成。",

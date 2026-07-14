@@ -871,6 +871,7 @@ describe('App', () => {
 
     await userEvent.click(screen.getByRole('button', { name: '当前模型：gpt-5' }));
     const helpButton = screen.getByRole('button', { name: '了解对话策略' });
+    expect(helpButton.querySelector('svg')).toBeInTheDocument();
 
     await userEvent.click(helpButton);
     expect(screen.getByRole('dialog', { name: '策略说明' })).toBeInTheDocument();

@@ -65,6 +65,9 @@ class RunEngine:
             repo = RunRepository(session)
             try:
                 await self._run_with_repo(repo, run_id)
+            except asyncio.CancelledError:
+                await self._flush_cancelled_answer(run_id)
+                raise
             except (
                 AgentProfileConfigurationError,
                 ModelConfigurationError,
@@ -94,6 +97,16 @@ class RunEngine:
                         "error": error,
                     },
                 )
+
+    async def _flush_cancelled_answer(self, run_id: str) -> None:
+        buffered = self._answer_buffers.pop(run_id, "")
+        self._answer_flush_at.pop(run_id, None)
+        if not buffered:
+            return
+        async with SessionLocal() as session:
+            repo = RunRepository(session)
+            await repo.add_event(run_id, "answer.delta", {"delta": buffered})
+            await session.commit()
 
     async def _run_with_repo(self, repo: RunRepository, run_id: str) -> None:
         run = await repo.require_run(run_id)
@@ -494,7 +507,12 @@ async def start_run_in_process(run_id: str, settings: Settings) -> None:
                 run_id, "blocked", summary=error["message"], result=error_result(error)
             )
         return
-    await engine.run(run_id)
+    try:
+        await engine.run(run_id)
+    except asyncio.CancelledError:
+        async with SessionLocal() as session:
+            await RunRepository(session).cancel_run(run_id)
+        raise
 
 
 def error_result(error: dict[str, Any]) -> dict[str, Any]:

@@ -54,10 +54,28 @@ class TaskRecord(Base):
     status: Mapped[str] = mapped_column(String(40), default="created")
     priority: Mapped[str | None] = mapped_column(String(40), nullable=True)
     risk_level: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    title_source: Mapped[str] = mapped_column(String(20), default="auto")
+    pinned_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
     runs: Mapped[list["RunRecord"]] = relationship(back_populates="task")
+    share: Mapped["ConversationShareRecord | None"] = relationship(back_populates="conversation", uselist=False)
+
+
+class ConversationShareRecord(Base):
+    __tablename__ = "conversation_shares"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_str)
+    conversation_id: Mapped[str] = mapped_column(ForeignKey("tasks.id"), unique=True, index=True)
+    token: Mapped[str] = mapped_column(String(120), unique=True, index=True)
+    snapshot: Mapped[dict] = mapped_column(JsonType, default=dict)
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    conversation: Mapped[TaskRecord] = relationship(back_populates="share")
 
 
 class RunRecord(Base):

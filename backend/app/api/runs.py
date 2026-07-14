@@ -25,6 +25,7 @@ from app.schemas.agent import ContinueRunRequest, CreateRunRequest, CreateRunRes
 router = APIRouter(prefix="/api", tags=["runs"])
 logger = logging.getLogger("astra.runs")
 _background_tasks: set[asyncio.Task[None]] = set()
+_background_tasks_by_run: dict[str, asyncio.Task[None]] = {}
 
 
 def _schedule_run(run_id: str, settings: Settings) -> None:
@@ -34,8 +35,27 @@ def _schedule_run(run_id: str, settings: Settings) -> None:
         name=f"astra-run-{run_id}",
     )
     _background_tasks.add(task)
-    task.add_done_callback(_background_tasks.discard)
-    task.add_done_callback(_report_background_failure)
+    _background_tasks_by_run[run_id] = task
+    task.add_done_callback(lambda completed: _finish_background_task(run_id, completed))
+
+
+def _finish_background_task(run_id: str, task: asyncio.Task[None]) -> None:
+    _background_tasks.discard(task)
+    if _background_tasks_by_run.get(run_id) is task:
+        _background_tasks_by_run.pop(run_id, None)
+    _report_background_failure(task)
+
+
+async def _cancel_background_run(run_id: str) -> bool:
+    task = _background_tasks_by_run.get(run_id)
+    if task is None or task.done():
+        return False
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
+    return True
 
 
 def _report_background_failure(task: asyncio.Task[None]) -> None:
@@ -166,6 +186,28 @@ async def get_run(
     return RunView.model_validate(run_to_view(run))
 
 
+@router.post("/runs/{run_id}/cancel", response_model=RunView)
+async def cancel_run(
+    run_id: str,
+    session: AsyncSession = Depends(get_session),
+) -> RunView:
+    repo = RunRepository(session)
+    run = await repo.get_run(run_id)
+    if run is None:
+        raise ResourceError("RUN_NOT_FOUND", "找不到指定运行记录。")
+    if run.status in RunRepository.TERMINAL_STATUSES:
+        return RunView.model_validate(run_to_view(run))
+
+    await _cancel_background_run(run_id)
+    await session.rollback()
+    run = await repo.get_run(run_id)
+    if run is None:
+        raise ResourceError("RUN_NOT_FOUND", "找不到指定运行记录。")
+    if run.status not in RunRepository.TERMINAL_STATUSES:
+        run = await repo.cancel_run(run_id)
+    return RunView.model_validate(run_to_view(run))
+
+
 @router.post("/runs/{run_id}/resume", response_model=CreateRunResponse)
 async def resume_run(
     run_id: str,
@@ -234,6 +276,7 @@ async def stream_run_events(
                     "failed",
                     "blocked",
                     "waiting_user",
+                    "cancelled",
                 }:
                     if not events:
                         yield 'data: {"type": "heartbeat", "payload": {}}\n\n'

@@ -45,6 +45,17 @@ The system SHALL map run, phase, turn and tool statuses to a live user-readable 
 - **THEN** only the current running step uses a neutral loading-pane animation
 - **THEN** reduced-motion preferences receive an equivalent static loading pane on the current step
 
+#### Scenario: A decision produces reasoning and tool activity
+- **WHEN** `selecting_action` starts for an Agent turn
+- **THEN** the UI presents “正在分析下一步” as a distinct decision-group anchor rather than an ordinary flat row
+- **THEN** the same turn's reasoning summary, tool calls, and reflections are indented beneath that anchor
+- **THEN** a continuous alignment line and child connectors make the ownership visible at a glance
+
+#### Scenario: A completed process is reopened
+- **WHEN** the live process has reached a terminal RunView or the conversation is loaded from history
+- **THEN** the UI reconstructs the same decision groups from stable turn and tool-call identifiers
+- **THEN** process entries do not return to a flat timeline after completion or reload
+
 #### Scenario: User controls the process panel
 - **WHEN** the first process panel starts without a saved last-click preference
 - **THEN** the UI displays it collapsed
