@@ -15,6 +15,7 @@ from app.runner.reasoning import (
     ObservationEvaluator,
     ReflectionGate,
     apply_reflection_patch,
+    apply_validation_outcomes,
     failure_fingerprint,
 )
 from app.sandbox.docker_provider import build_sandbox_provider
@@ -22,10 +23,12 @@ from app.sandbox.runtime import SandboxJobService, SandboxSupervisor
 from app.schemas.agent import (
     AgentObservation,
     AgentState,
-    CriterionStatus,
+    CompletionDecision,
     FinalAnswer,
     ReasoningPolicySnapshot,
     TerminalState,
+    ValidationIssue,
+    ValidationOutcome,
     VerificationReport,
 )
 from app.tools.base import (
@@ -256,42 +259,61 @@ class MemoryManager:
 
 class VerificationEngine:
     def verify(
-        self, final_answer: FinalAnswer, evidence_pack: dict[str, Any]
+        self,
+        final_answer: FinalAnswer,
+        evidence_pack: dict[str, Any],
+        *,
+        validation_outcomes: list[ValidationOutcome] | None = None,
+        invalid_artifact_references: int = 0,
     ) -> VerificationReport:
         fetched_sources = evidence_pack.get("fetched_sources", [])
         low_quality = [
             source for source in fetched_sources if float(source.get("quality_score") or 0) < 0.5
         ]
         notes = list(final_answer.verification_notes)
-        status = "completed"
-        external_evidence_attempted = bool(
-            evidence_pack.get("external_evidence_attempted")
-            or evidence_pack.get("candidates")
-            or fetched_sources
-            or evidence_pack.get("failed_sources")
-        )
-        if not external_evidence_attempted:
-            return VerificationReport(
-                status=status,
-                source_count=0,
-                caveat_count=len(final_answer.caveats),
-                memory_references=final_answer.memory_references,
-                notes=list(dict.fromkeys(notes)),
+        outcomes = list(validation_outcomes or [])
+        artifact_warnings: list[str] = []
+        artifact_issues: list[ValidationIssue] = []
+        if invalid_artifact_references:
+            artifact_warnings.append(INVALID_ARTIFACT_REFERENCE_WARNING)
+            artifact_issues.append(
+                ValidationIssue(
+                    code="artifact_reference_invalid",
+                    message=INVALID_ARTIFACT_REFERENCE_WARNING,
+                    severity="warning",
+                    details={"invalid_count": invalid_artifact_references},
+                )
             )
-        if not fetched_sources:
-            status = "completed_with_warnings"
-            notes.append("没有成功抓取到可用来源。")
-        if low_quality:
-            status = "completed_with_warnings"
-            notes.append("部分来源质量较低，已在 source_quality 中标记。")
-        if evidence_pack.get("failed_sources"):
-            status = "completed_with_warnings"
-            notes.append("部分来源抓取失败，已在 failed_sources 中记录。")
-        if not final_answer.sources:
-            status = "completed_with_warnings"
-            notes.append("最终答案缺少来源引用。")
-        if fetched_sources and final_answer.sources:
+        outcomes.append(
+            ValidationOutcome(
+                validator="artifact_reference",
+                passed=True,
+                blocking=False,
+                issues=artifact_issues,
+                warnings=artifact_warnings,
+            )
+        )
+        for outcome in outcomes:
+            notes.extend(outcome.warnings)
+            notes.extend(issue.message for issue in outcome.issues)
+        if (
+            fetched_sources
+            and final_answer.sources
+            and not any(not outcome.passed and outcome.blocking for outcome in outcomes)
+        ):
             notes.append("至少一个抓取来源支撑了最终答案。")
+        has_blocking_failure = any(not outcome.passed and outcome.blocking for outcome in outcomes)
+        has_warnings = any(
+            outcome.warnings or any(issue.severity == "warning" for issue in outcome.issues)
+            for outcome in outcomes
+        )
+        status = (
+            "failed"
+            if has_blocking_failure
+            else "completed_with_warnings"
+            if has_warnings
+            else "completed"
+        )
         return VerificationReport(
             status=status,
             source_count=len(final_answer.sources),
@@ -299,7 +321,9 @@ class VerificationEngine:
             low_quality_sources=low_quality,
             failed_sources=evidence_pack.get("failed_sources", []),
             memory_references=final_answer.memory_references,
+            invalid_artifact_references=invalid_artifact_references,
             notes=list(dict.fromkeys(notes)),
+            validation_outcomes=outcomes,
         )
 
 
@@ -967,12 +991,16 @@ class AgentLoop:
             goal=goal,
             context=final_context,
         )
-        report = verifier.verify(final_answer, evidence_pack)
-        report.invalid_artifact_references = invalid_artifact_references
-        adapter_decision = (
+        adapter_outcome = (
             self.chart_adapter.validate(final_answer.model_dump(), {})
             if self.chart_adapter.attempted and not self.adapter.attempted
             else self.adapter.validate(final_answer.model_dump(), evidence_pack)
+        )
+        report = verifier.verify(
+            final_answer,
+            evidence_pack,
+            validation_outcomes=[adapter_outcome],
+            invalid_artifact_references=invalid_artifact_references,
         )
         run_record = await repo.require_run(run_id)
         if run_record.agent_state:
@@ -986,13 +1014,7 @@ class AgentLoop:
                     "replans": replan_count,
                 }
             )
-            if adapter_decision.state in {
-                TerminalState.completed,
-                TerminalState.completed_with_warnings,
-            }:
-                for criterion in state.task_contract.success_criteria:
-                    if criterion.mandatory:
-                        criterion.status = CriterionStatus.satisfied
+            state = apply_validation_outcomes(state, report.validation_outcomes)
             state.version = run_record.state_version + 1
             run_record = await repo.update_reasoning_state(
                 run_id,
@@ -1003,15 +1025,34 @@ class AgentLoop:
             )
             gate_decision = self.completion_gate.evaluate(
                 state,
-                validator_passed=adapter_decision.state
-                in {TerminalState.completed, TerminalState.completed_with_warnings},
-                warnings=adapter_decision.warnings,
+                validation_outcomes=report.validation_outcomes,
                 required_user_action=(run_record.waiting_state or {}).get("request")
                 if terminal_override == "waiting_user"
                 else None,
             )
         else:
-            gate_decision = adapter_decision
+            blocking = [
+                outcome
+                for outcome in report.validation_outcomes
+                if not outcome.passed and outcome.blocking
+            ]
+            outcome_warnings = list(
+                dict.fromkeys(
+                    warning
+                    for outcome in report.validation_outcomes
+                    for warning in outcome.warnings
+                )
+            )
+            gate_decision = CompletionDecision(
+                state=TerminalState.blocked
+                if blocking
+                else TerminalState.completed_with_warnings
+                if outcome_warnings
+                else TerminalState.completed,
+                reason="验证存在阻塞问题。" if blocking else "验证要求已满足。",
+                unmet_criteria=[f"validator:{item.validator}" for item in blocking],
+                warnings=outcome_warnings,
+            )
         if terminal_override == "blocked":
             gate_decision = gate_decision.model_copy(
                 update={
@@ -1034,7 +1075,6 @@ class AgentLoop:
                 },
             )
         final_status = gate_decision.state.value
-        report.status = final_status
         result = final_answer.model_dump()
         result["verification_report"] = report.model_dump()
         result["audit_refs"] = {
@@ -1052,7 +1092,7 @@ class AgentLoop:
                 status="completed",
                 observation={
                     "kind": "final_answer",
-                    "status": report.status,
+                    "status": final_status,
                     "summary": final_answer.summary,
                 },
                 artifact_id=artifact.id,

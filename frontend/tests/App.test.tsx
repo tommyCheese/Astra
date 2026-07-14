@@ -450,13 +450,18 @@ describe('App', () => {
     expect(decisionGroup?.querySelector('.process-decision-children')).toContainElement(handoff.closest('.process-step'));
     expect(panel?.querySelectorAll('.process-step.status-running')).toHaveLength(1);
 
-    act(() => emit?.({ id: 14, type: 'answer.delta', payload: { delta: '开始回答' } }));
+    act(() => emit?.({ id: 14, type: 'reasoning.phase.started', payload: { phase: 'selecting_action', turn_index: 2 } }));
+    await waitFor(() => expect(panel?.querySelector('[data-process-group="phase-selecting_action-2"]')).toHaveClass('status-running'));
+    expect(screen.queryByText('正在评估执行结果')).not.toBeInTheDocument();
+    expect(panel?.querySelectorAll('.process-step.status-running')).toHaveLength(1);
+
+    act(() => emit?.({ id: 15, type: 'answer.delta', payload: { delta: '开始回答' } }));
     expect(await screen.findByText('开始回答')).toBeInTheDocument();
     expect(panel).toHaveAttribute('open');
 
     await userEvent.click(summary);
     expect(panel).not.toHaveAttribute('open');
-    act(() => emit?.({ id: 15, type: 'reasoning.summary.delta', payload: { turn_index: 1, delta: '并继续验证' } }));
+    act(() => emit?.({ id: 16, type: 'reasoning.summary.delta', payload: { turn_index: 1, delta: '并继续验证' } }));
     expect(await screen.findByText('正在选择可靠来源并继续验证')).toBeInTheDocument();
     expect(panel).not.toHaveAttribute('open');
     await waitFor(() => expect(JSON.parse(window.localStorage.getItem('astra.process-panel-default-open.v1') ?? 'true')).toBe(false));
@@ -648,7 +653,7 @@ describe('App', () => {
       reflection_enabled: true,
       execution_mode: 'request_approval',
     }), expect.objectContaining({ provider: 'openai', name: 'gpt-5' }));
-    expect(screen.getAllByRole('button', { name: /查询 Astra completed/ })).toHaveLength(1);
+    expect(screen.getAllByRole('button', { name: /查询 Astra 已完成/ })).toHaveLength(1);
     expect(screen.getAllByRole('button', { name: /跳转到问题/ })).toHaveLength(2);
     const firstQuestion = screen.getByRole('button', { name: '跳转到问题 1' });
     const secondQuestion = screen.getByRole('button', { name: '跳转到问题 2' });
@@ -709,7 +714,7 @@ describe('App', () => {
     cleanup();
     render(<App />);
 
-    expect(screen.getByRole('button', { name: /持久化测试 completed/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /持久化测试 已完成/ })).toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: /设置/ }));
     expect(screen.getByPlaceholderText('sk-...')).toHaveValue('persisted-secret');
   });
@@ -726,7 +731,7 @@ describe('App', () => {
 
     render(<App />);
 
-    expect(await screen.findByRole('button', { name: '历史会话 8 completed' })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: '历史会话 8 已完成' })).toBeInTheDocument();
     expect(screen.getByText('最多保留最近 100 个会话')).toBeInTheDocument();
   });
 
@@ -752,8 +757,8 @@ describe('App', () => {
     ] as never);
     render(<App />);
 
-    const failed = await screen.findByRole('button', { name: '失败记录 blocked' });
-    const empty = screen.getByRole('button', { name: '空数组记录 completed' });
+    const failed = await screen.findByRole('button', { name: '失败记录 已阻塞' });
+    const empty = screen.getByRole('button', { name: '空数组记录 已完成' });
     await userEvent.click(failed);
     expect(screen.getByText('模型调用失败')).toBeInTheDocument();
     await userEvent.click(empty);

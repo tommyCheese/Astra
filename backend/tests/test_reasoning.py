@@ -8,6 +8,7 @@ from app.runner.reasoning import (
     ReflectionGate,
     StateVersionConflict,
     apply_reflection_patch,
+    apply_validation_outcomes,
     build_default_contract,
     build_plan_graph,
     failure_fingerprint,
@@ -29,6 +30,8 @@ from app.schemas.agent import (
     RequestedReasoningPolicy,
     TaskContract,
     TerminalState,
+    ValidationIssue,
+    ValidationOutcome,
 )
 
 
@@ -109,9 +112,23 @@ def test_completion_gate_requires_criteria():
     state = AgentState(
         task_contract=contract, plan=build_plan_graph(contract, PlanningStrategy.direct)
     )
-    assert CompletionGate().evaluate(state, validator_passed=False).state == TerminalState.blocked
-    state.task_contract.success_criteria[0].status = CriterionStatus.satisfied
-    assert CompletionGate().evaluate(state, validator_passed=True).state == TerminalState.completed
+    failed = ValidationOutcome(
+        validator="task_adapter",
+        passed=False,
+        blocking=True,
+        issues=[ValidationIssue(code="missing", message="missing evidence")],
+    )
+    state = apply_validation_outcomes(state, [failed])
+    assert (
+        CompletionGate().evaluate(state, validation_outcomes=[failed]).state
+        == TerminalState.blocked
+    )
+    passed = ValidationOutcome(validator="task_adapter", passed=True, blocking=True)
+    state = apply_validation_outcomes(state, [passed])
+    assert (
+        CompletionGate().evaluate(state, validation_outcomes=[passed]).state
+        == TerminalState.completed
+    )
 
 
 def test_completion_gate_distinguishes_waiting_failure_and_warning():
@@ -120,19 +137,60 @@ def test_completion_gate_distinguishes_waiting_failure_and_warning():
         task_contract=contract, plan=build_plan_graph(contract, PlanningStrategy.direct)
     )
     gate = CompletionGate()
+    failed = ValidationOutcome(validator="task_adapter", passed=False, blocking=True)
     assert (
-        gate.evaluate(state, validator_passed=False, required_user_action="请选择范围").state
+        gate.evaluate(state, validation_outcomes=[failed], required_user_action="请选择范围").state
         == TerminalState.waiting_user
     )
     assert (
-        gate.evaluate(state, validator_passed=False, runtime_error="database unavailable").state
+        gate.evaluate(
+            state, validation_outcomes=[failed], runtime_error="database unavailable"
+        ).state
         == TerminalState.failed
     )
-    state.task_contract.success_criteria[0].status = CriterionStatus.satisfied
+    warning = ValidationOutcome(
+        validator="task_adapter",
+        passed=True,
+        blocking=True,
+        warnings=["low quality"],
+    )
+    state = apply_validation_outcomes(state, [warning])
     assert (
-        gate.evaluate(state, validator_passed=True, warnings=["low quality"]).state
+        gate.evaluate(state, validation_outcomes=[warning]).state
         == TerminalState.completed_with_warnings
     )
+
+
+def test_completion_gate_blocks_when_mandatory_validator_is_missing():
+    contract = build_default_contract("goal")
+    state = AgentState(
+        task_contract=contract, plan=build_plan_graph(contract, PlanningStrategy.direct)
+    )
+    unrelated = ValidationOutcome(validator="artifact_reference", passed=True, blocking=False)
+
+    decision = CompletionGate().evaluate(state, validation_outcomes=[unrelated])
+
+    assert decision.state == TerminalState.blocked
+    assert "verification:verify-result" in decision.unmet_criteria
+
+
+def test_validation_outcomes_update_only_matching_success_criteria():
+    contract = build_default_contract("goal")
+    contract.success_criteria.append(
+        contract.success_criteria[0].model_copy(
+            update={"id": "criterion-security", "verification_method": "security_validator"}
+        )
+    )
+    state = AgentState(
+        task_contract=contract, plan=build_plan_graph(contract, PlanningStrategy.direct)
+    )
+
+    updated = apply_validation_outcomes(
+        state, [ValidationOutcome(validator="task_adapter", passed=True)]
+    )
+
+    assert updated.task_contract.success_criteria[0].status == CriterionStatus.satisfied
+    assert updated.task_contract.success_criteria[1].status == CriterionStatus.pending
 
 
 def test_orchestrator_rejects_shortcuts_and_unauthorized_patches():
@@ -200,28 +258,31 @@ def test_web_adapter_completion_variants():
                 "failed_sources": [],
                 "warnings": [],
             },
-        ).state
-        == TerminalState.completed
+        ).passed
+        is True
     )
-    assert (
-        adapter.validate(
-            result,
-            {
-                "fetched_sources": [{"url": "https://example.com", "quality_score": 0.2}],
-                "failed_sources": [],
-                "warnings": ["low quality"],
-            },
-        ).state
-        == TerminalState.completed_with_warnings
+    warning = adapter.validate(
+        result,
+        {
+            "fetched_sources": [{"url": "https://example.com", "quality_score": 0.2}],
+            "failed_sources": [],
+            "warnings": ["low quality"],
+        },
     )
-    assert (
-        adapter.validate(
-            {"sources": []},
-            {
-                "fetched_sources": [],
-                "failed_sources": [{"url": "https://bad.example"}],
-                "warnings": [],
-            },
-        ).state
-        == TerminalState.blocked
+    assert warning.passed is True
+    assert warning.warnings == ["low quality"]
+    assert any(issue.severity == "warning" for issue in warning.issues)
+    blocked = adapter.validate(
+        {"sources": []},
+        {
+            "fetched_sources": [],
+            "failed_sources": [{"url": "https://bad.example"}],
+            "warnings": [],
+        },
     )
+    assert blocked.passed is False
+    assert blocked.blocking is True
+    assert {issue.code for issue in blocked.issues} == {
+        "web_sources_not_fetched",
+        "web_source_citations_missing",
+    }

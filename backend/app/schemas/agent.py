@@ -380,6 +380,24 @@ class AgentTurn(BaseModel):
     updated_at: datetime | None = None
 
 
+class ValidationIssue(BaseModel):
+    code: str
+    message: str
+    severity: str = "error"
+    evidence_refs: list[str] = Field(default_factory=list)
+    details: dict[str, Any] = Field(default_factory=dict)
+
+
+class ValidationOutcome(BaseModel):
+    validator: str
+    passed: bool
+    blocking: bool = True
+    requirement_ids: list[str] = Field(default_factory=list)
+    issues: list[ValidationIssue] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    evidence_refs: list[str] = Field(default_factory=list)
+
+
 class VerificationReport(BaseModel):
     status: str
     source_count: int = 0
@@ -389,6 +407,7 @@ class VerificationReport(BaseModel):
     memory_references: list[dict[str, Any]] = Field(default_factory=list)
     invalid_artifact_references: int = 0
     notes: list[str] = Field(default_factory=list)
+    validation_outcomes: list[ValidationOutcome] = Field(default_factory=list)
 
 
 class FailedSource(BaseModel):
@@ -482,9 +501,7 @@ class RunResult(BaseModel):
         normalized["source_quality"] = _validated_records(
             normalized.get("source_quality"), SourceQuality
         )
-        normalized["conflicts"] = _validated_records(
-            normalized.get("conflicts"), ConflictRecord
-        )
+        normalized["conflicts"] = _validated_records(normalized.get("conflicts"), ConflictRecord)
         normalized["memory_references"] = _validated_records(
             normalized.get("memory_references"), ResultMemoryReference
         )
@@ -520,7 +537,9 @@ def _validated_records(
     for item in _as_list(value):
         if item is None:
             continue
-        candidate = {scalar_field: str(item)} if scalar_field and not isinstance(item, dict) else item
+        candidate = (
+            {scalar_field: str(item)} if scalar_field and not isinstance(item, dict) else item
+        )
         if not isinstance(candidate, dict):
             continue
         try:

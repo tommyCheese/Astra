@@ -26,6 +26,7 @@ from app.schemas.agent import (
     SuccessCriterion,
     TaskContract,
     TerminalState,
+    ValidationOutcome,
     VerificationLevel,
     VerificationRequirement,
 )
@@ -325,6 +326,20 @@ def apply_reflection_patch(
     return updated
 
 
+def apply_validation_outcomes(state: AgentState, outcomes: list[ValidationOutcome]) -> AgentState:
+    updated = state.model_copy(deep=True)
+    by_validator: dict[str, list[ValidationOutcome]] = {}
+    for outcome in outcomes:
+        by_validator.setdefault(outcome.validator, []).append(outcome)
+    for criterion in updated.task_contract.success_criteria:
+        matches = by_validator.get(criterion.verification_method, [])
+        if any(item.passed for item in matches):
+            criterion.status = CriterionStatus.satisfied
+        elif any(not item.passed and item.blocking for item in matches):
+            criterion.status = CriterionStatus.failed
+    return updated
+
+
 def failure_fingerprint(
     tool_name: str | None, tool_input: dict[str, Any], error_category: str, intent: str = ""
 ) -> str:
@@ -341,12 +356,18 @@ class CompletionGate:
         self,
         state: AgentState,
         *,
-        validator_passed: bool,
+        validation_outcomes: list[ValidationOutcome],
         warnings: list[str] | None = None,
         required_user_action: str | None = None,
         runtime_error: str | None = None,
     ) -> CompletionDecision:
-        warnings = warnings or []
+        combined_warnings = list(warnings or [])
+        for outcome in validation_outcomes:
+            combined_warnings.extend(outcome.warnings)
+            combined_warnings.extend(
+                issue.message for issue in outcome.issues if issue.severity == "warning"
+            )
+        combined_warnings = list(dict.fromkeys(combined_warnings))
         if runtime_error:
             return CompletionDecision(state=TerminalState.failed, reason=runtime_error)
         if required_user_action or state.task_contract.ambiguity_status != "clear":
@@ -358,32 +379,43 @@ class CompletionGate:
             )
         mandatory = [item for item in state.task_contract.success_criteria if item.mandatory]
         unmet = [item.id for item in mandatory if item.status != CriterionStatus.satisfied]
-        if not unmet and validator_passed:
+        missing_or_failed_requirements: list[str] = []
+        for requirement in state.task_contract.verification_requirements:
+            if not requirement.mandatory:
+                continue
+            matches = [
+                outcome
+                for outcome in validation_outcomes
+                if outcome.validator == requirement.validator
+                or requirement.id in outcome.requirement_ids
+            ]
+            if not matches or not any(outcome.passed for outcome in matches):
+                missing_or_failed_requirements.append(f"verification:{requirement.id}")
+        blocking_failures = [
+            outcome.validator
+            for outcome in validation_outcomes
+            if not outcome.passed and outcome.blocking
+        ]
+        unmet = list(
+            dict.fromkeys(
+                [
+                    *unmet,
+                    *missing_or_failed_requirements,
+                    *(f"validator:{validator}" for validator in blocking_failures),
+                ]
+            )
+        )
+        if not unmet:
             return CompletionDecision(
                 state=TerminalState.completed_with_warnings
-                if warnings
+                if combined_warnings
                 else TerminalState.completed,
                 reason="任务契约与验证要求已满足。",
-                warnings=warnings,
-            )
-        if (
-            warnings
-            and validator_passed
-            and all(
-                not item.mandatory
-                for item in state.task_contract.success_criteria
-                if item.id in unmet
-            )
-        ):
-            return CompletionDecision(
-                state=TerminalState.completed_with_warnings,
-                reason="已生成允许的部分结果。",
-                unmet_criteria=unmet,
-                warnings=warnings,
+                warnings=combined_warnings,
             )
         return CompletionDecision(
             state=TerminalState.blocked,
-            reason="仍有强制成功准则未满足。",
+            reason="仍有强制成功准则或验证要求未满足。",
             unmet_criteria=unmet,
-            warnings=warnings,
+            warnings=combined_warnings,
         )

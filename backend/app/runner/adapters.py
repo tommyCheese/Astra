@@ -3,7 +3,7 @@ from collections.abc import Iterable
 from typing import Any, ClassVar
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
-from app.schemas.agent import AgentObservation, CompletionDecision, TerminalState
+from app.schemas.agent import AgentObservation, ValidationIssue, ValidationOutcome
 
 
 class TaskAdapter(ABC):
@@ -15,7 +15,7 @@ class TaskAdapter(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def validate(self, result: dict[str, Any], evidence: dict[str, Any]) -> CompletionDecision:
+    def validate(self, result: dict[str, Any], evidence: dict[str, Any]) -> ValidationOutcome:
         raise NotImplementedError
 
 
@@ -96,7 +96,7 @@ class WebTaskAdapter(TaskAdapter, ToolResultProcessor):
         if tool_name == "web_fetch":
             self.failed_sources.append({"url": tool_input.get("url"), **error})
 
-    def validate(self, result: dict[str, Any], evidence: dict[str, Any]) -> CompletionDecision:
+    def validate(self, result: dict[str, Any], evidence: dict[str, Any]) -> ValidationOutcome:
         fetched = evidence.get("fetched_sources", [])
         sources = result.get("sources", [])
         warnings = list(evidence.get("warnings", []))
@@ -106,26 +106,59 @@ class WebTaskAdapter(TaskAdapter, ToolResultProcessor):
             and not evidence.get("failed_sources")
             and (result.get("summary") or result.get("findings"))
         ):
-            return CompletionDecision(
-                state=TerminalState.completed, reason="通用问答已直接完成，无需调用外部工具。"
+            return ValidationOutcome(
+                validator="task_adapter",
+                passed=True,
+                blocking=True,
+                evidence_refs=[],
             )
-        if not fetched or not sources:
-            return CompletionDecision(
-                state=TerminalState.blocked,
-                reason="没有足够的已审计 Web 证据。",
-                unmet_criteria=["criterion-result"],
+        issues: list[ValidationIssue] = []
+        if not fetched:
+            issues.append(
+                ValidationIssue(
+                    code="web_sources_not_fetched",
+                    message="没有成功抓取到可用来源。",
+                )
+            )
+        if not sources:
+            issues.append(
+                ValidationIssue(
+                    code="web_source_citations_missing",
+                    message="最终答案缺少来源引用。",
+                )
+            )
+        if issues:
+            return ValidationOutcome(
+                validator="task_adapter",
+                passed=False,
+                blocking=True,
+                issues=issues,
                 warnings=warnings,
             )
-        if evidence.get("failed_sources") or any(
-            float(item.get("quality_score") or 0) < 0.5 for item in fetched
-        ):
-            return CompletionDecision(
-                state=TerminalState.completed_with_warnings,
-                reason="Web 结果已验证，但存在来源质量或抓取警告。",
-                warnings=warnings,
+        warning_issues: list[ValidationIssue] = []
+        if evidence.get("failed_sources"):
+            warning_issues.append(
+                ValidationIssue(
+                    code="web_sources_partially_failed",
+                    message="部分来源抓取失败。",
+                    severity="warning",
+                )
             )
-        return CompletionDecision(
-            state=TerminalState.completed, reason="Web 结果具有已审计来源支持。"
+        if any(float(item.get("quality_score") or 0) < 0.5 for item in fetched):
+            warning_issues.append(
+                ValidationIssue(
+                    code="web_source_quality_low",
+                    message="部分来源质量较低。",
+                    severity="warning",
+                )
+            )
+        return ValidationOutcome(
+            validator="task_adapter",
+            passed=True,
+            blocking=True,
+            issues=warning_issues,
+            warnings=warnings,
+            evidence_refs=[str(item.get("url")) for item in fetched if item.get("url")],
         )
 
     def filter_candidates(self, candidates: list[dict[str, Any]]):
@@ -228,14 +261,25 @@ class ChartTaskAdapter(TaskAdapter, ToolResultProcessor):
             "warnings": self.warnings,
         }
 
-    def validate(self, result: dict[str, Any], evidence: dict[str, Any]) -> CompletionDecision:
+    def validate(self, result: dict[str, Any], evidence: dict[str, Any]) -> ValidationOutcome:
         if not self.attempted:
-            return CompletionDecision(state=TerminalState.completed, reason="未请求图表能力。")
+            return ValidationOutcome(validator="task_adapter", passed=True, blocking=True)
         if not self.artifacts:
-            return CompletionDecision(
-                state=TerminalState.blocked, reason="图表没有产生有效 Artifact。"
+            return ValidationOutcome(
+                validator="task_adapter",
+                passed=False,
+                blocking=True,
+                issues=[
+                    ValidationIssue(
+                        code="chart_artifact_missing",
+                        message="图表没有产生有效 Artifact。",
+                    )
+                ],
             )
-        state = TerminalState.completed_with_warnings if self.warnings else TerminalState.completed
-        return CompletionDecision(
-            state=state, reason="图表 Artifact 已通过完整性校验。", warnings=self.warnings
+        return ValidationOutcome(
+            validator="task_adapter",
+            passed=True,
+            blocking=True,
+            warnings=self.warnings,
+            evidence_refs=[str(item.get("id")) for item in self.artifacts if item.get("id")],
         )

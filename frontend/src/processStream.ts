@@ -93,10 +93,11 @@ export function reconcileProcessSnapshot(state: ProcessStreamState | null, run: 
     if (existing >= 0) snapshotItems[existing] = { ...snapshotItems[existing], ...item };
     else snapshotItems.push(item);
   }
+  const visibleSnapshotItems = active ? snapshotItems : snapshotItems.filter((item) => !isProcessingResultHandoff(item));
   return {
     ...next,
     active,
-    items: active ? snapshotItems : snapshotItems.map((item) => item.status === 'running' ? { ...item, status: run.status === 'cancelled' ? 'cancelled' : 'completed' } : item),
+    items: active ? visibleSnapshotItems : visibleSnapshotItems.map((item) => item.status === 'running' ? { ...item, status: run.status === 'cancelled' ? 'cancelled' : 'completed' } : item),
   };
 }
 
@@ -109,7 +110,9 @@ export function reduceProcessEvent(state: ProcessStreamState, event: RunStreamEv
   let active = state.active;
 
   if (event.type === 'reasoning.phase.started') {
-    items = items.map((item) => item.kind === 'phase' && item.status === 'running' ? { ...item, status: 'completed' } : item);
+    items = items
+      .filter((item) => !isProcessingResultHandoff(item))
+      .map((item) => item.kind === 'phase' && item.status === 'running' ? { ...item, status: 'completed' } : item);
     const phase = safeString(payload.phase) || 'working';
     const id = `phase-${phase}-${turnIndex ?? 0}`;
     items = upsert(items, {
@@ -209,13 +212,19 @@ export function reduceProcessEvent(state: ProcessStreamState, event: RunStreamEv
   const status = safeString(payload.status);
   if (terminalStatuses.has(status) || ['run.completed', 'run.failed', 'run.blocked', 'run.cancelled'].includes(event.type)) {
     active = false;
-    items = items.map((item) => item.status === 'running' ? { ...item, status: event.type === 'run.cancelled' || status === 'cancelled' ? 'cancelled' : 'completed' } : item);
+    items = items
+      .filter((item) => !isProcessingResultHandoff(item))
+      .map((item) => item.status === 'running' ? { ...item, status: event.type === 'run.cancelled' || status === 'cancelled' ? 'cancelled' : 'completed' } : item);
   }
   return { ...state, items, active, seenEventIds };
 }
 
 export function isDecisionGroup(item: ProcessStreamItem) {
   return item.kind === 'phase' && item.id.startsWith('phase-selecting_action-');
+}
+
+function isProcessingResultHandoff(item: ProcessStreamItem) {
+  return item.id.startsWith('phase-processing_result-');
 }
 
 function decisionGroupId(turnIndex: number) {

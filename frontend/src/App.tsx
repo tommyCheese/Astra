@@ -458,6 +458,7 @@ function AppContent() {
     const streamed = streamingAnswer ? [{ id: `${run?.id ?? 'idle'}-stream`, role: 'assistant', content: streamingAnswer, status: answerComplete ? 'completed' : 'streaming', metadata: {} }] : [];
     return [...priorMessages, ...currentMessages, ...streamed];
   }, [priorMessages, run, streamingAnswer, answerComplete]);
+  const activeProcessItemId = [...(processState?.items ?? [])].reverse().find((item) => item.status === 'running')?.id;
   const initializeProcessPanel = useCallback((runId: string) => {
     setProcessPanelOpenByRun((states) => Object.prototype.hasOwnProperty.call(states, runId)
       ? states
@@ -477,7 +478,7 @@ function AppContent() {
       else element.scrollTop = element.scrollHeight;
     });
     return () => window.cancelAnimationFrame(frame);
-  }, [messages.length, streamingAnswer, run?.status]);
+  }, [messages.length, streamingAnswer, run?.status, activeProcessItemId]);
 
   function handleConversationScroll() {
     const element = conversationRef.current;
@@ -1619,8 +1620,20 @@ function activeState(run: RunView) {
 }
 
 function statusLabel(status?: string) {
-  if (status === 'cancelled') return '已终止';
-  return status ?? 'idle';
+  const labels: Record<string, string> = {
+    idle: '空闲',
+    created: '等待开始',
+    planning: '正在规划',
+    executing: '正在执行',
+    verifying: '正在验证',
+    waiting_user: '等待回复',
+    completed: '已完成',
+    completed_with_warnings: '已完成 · 有提醒',
+    blocked: '已阻塞',
+    failed: '失败',
+    cancelled: '已终止',
+  };
+  return labels[status ?? 'idle'] ?? status ?? labels.idle;
 }
 
 function formatScore(score?: number | null) {

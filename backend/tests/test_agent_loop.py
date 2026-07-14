@@ -11,6 +11,7 @@ from app.runner.agent_loop import (
     INVALID_ARTIFACT_REFERENCE_WARNING,
     AgentLoop,
     ToolRouter,
+    VerificationEngine,
     normalize_final_answer_artifact_references,
 )
 from app.runner.model_client import MockModelClient, ModelOutputError
@@ -24,6 +25,7 @@ from app.schemas.agent import (
     PlanningStrategy,
     ReflectionPatch,
     RequestedReasoningPolicy,
+    ValidationOutcome,
 )
 from app.tools.base import ToolExecutionError
 from app.tools.web import build_web_registry
@@ -98,6 +100,23 @@ def test_artifact_reference_normalization_removes_all_inaccessible_ids_safely():
     assert "storage" not in " ".join(normalized.verification_notes).lower()
 
 
+def test_verification_engine_aggregates_artifact_warning_without_overwriting_outcomes():
+    report = VerificationEngine().verify(
+        FinalAnswer(summary="完成"),
+        {},
+        validation_outcomes=[ValidationOutcome(validator="task_adapter", passed=True)],
+        invalid_artifact_references=2,
+    )
+
+    assert report.status == "completed_with_warnings"
+    assert report.invalid_artifact_references == 2
+    assert [outcome.validator for outcome in report.validation_outcomes] == [
+        "task_adapter",
+        "artifact_reference",
+    ]
+    assert INVALID_ARTIFACT_REFERENCE_WARNING in report.notes
+
+
 async def test_agent_loop_completes_mock_web_run(session):
     settings = Settings(model_provider="mock", web_search_provider="mock", agent_max_turns=8)
     repo = RunRepository(session)
@@ -163,10 +182,37 @@ async def test_agent_loop_persists_only_current_run_accessible_artifact_referenc
     assert output["answer"].findings[0].artifact_ids == [valid.id]
     assert output["result"]["findings"][0]["artifact_ids"] == [valid.id]
     assert output["result"]["verification_report"]["invalid_artifact_references"] == 1
+    assert output["result"]["verification_report"]["status"] == "completed_with_warnings"
+    assert output["result"]["completion_decision"]["state"] == "completed_with_warnings"
     assert output["result"]["audit_refs"]["referenced_artifact_ids"] == [valid.id]
     serialized = str(output["result"])
     assert cross_run.id not in serialized
     assert "other/chart.png" not in serialized
+
+
+async def test_agent_loop_keeps_verification_status_separate_from_blocked_run(session):
+    settings = Settings(model_provider="mock", web_search_provider="mock", agent_max_turns=8)
+    repo = RunRepository(session)
+    run = await repo.create_task_run("查询 mock 数据", settings.model_policy)
+    contract = build_default_contract(run.task.description)
+    contract.verification_requirements[0].validator = "security_validator"
+    graph = build_plan_graph(contract, PlanningStrategy.direct)
+    state = AgentState(task_contract=contract, plan=graph)
+    await repo.initialize_reasoning_state(
+        run.id,
+        task_contract=contract.model_dump(mode="json"),
+        plan_graph=graph.model_dump(mode="json"),
+        agent_state=state.model_dump(mode="json"),
+    )
+
+    output = await AgentLoop(
+        settings, model_client=MockModelClient(), tool_registry=fake_web_registry()
+    ).run(repo, run.id, run.task.description)
+
+    assert output["result"]["verification_report"]["status"] == "completed"
+    assert output["status"] == "blocked"
+    assert output["result"]["completion_decision"]["state"] == "blocked"
+    assert "verification:verify-result" in output["result"]["completion_decision"]["unmet_criteria"]
 
 
 async def test_agent_loop_blocks_at_turn_limit(session):

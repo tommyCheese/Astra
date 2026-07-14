@@ -53,7 +53,7 @@ describe('process stream reducer', () => {
     expect(state.items.find((item) => item.id === 'tool-call-2')?.groupId).toBe('phase-selecting_action-2');
   });
 
-  it('shows a running evaluation handoff after a tool completes and closes it on the next phase', () => {
+  it('shows a running evaluation handoff after a tool completes and replaces it with the next phase', () => {
     let state = createOptimisticProcessState('run-1');
     state = reduceProcessEvent(state, { id: 1, type: 'reasoning.phase.started', payload: { phase: 'selecting_action', turn_index: 1 } });
     state = reduceProcessEvent(state, { id: 2, type: 'tool_call.started', payload: { tool_call_id: 'call-1', tool_name: 'web_search' } });
@@ -68,8 +68,20 @@ describe('process stream reducer', () => {
     expect(state.items.filter((item) => item.status === 'running')).toHaveLength(1);
 
     state = reduceProcessEvent(state, { id: 4, type: 'reasoning.phase.started', payload: { phase: 'selecting_action', turn_index: 2 } });
-    expect(state.items.find((item) => item.id === 'phase-processing_result-call-1')?.status).toBe('completed');
+    expect(state.items.find((item) => item.id === 'phase-processing_result-call-1')).toBeUndefined();
     expect(state.items.find((item) => item.id === 'phase-selecting_action-2')?.status).toBe('running');
+    expect(state.items.filter((item) => item.status === 'running')).toHaveLength(1);
+  });
+
+  it('does not retain the evaluation handoff after a terminal event', () => {
+    let state = createOptimisticProcessState('run-1');
+    state = reduceProcessEvent(state, { id: 1, type: 'reasoning.phase.started', payload: { phase: 'selecting_action', turn_index: 1 } });
+    state = reduceProcessEvent(state, { id: 2, type: 'tool_call.started', payload: { tool_call_id: 'call-1', tool_name: 'web_search' } });
+    state = reduceProcessEvent(state, { id: 3, type: 'tool_call.completed', payload: { tool_call_id: 'call-1', tool_name: 'web_search', status: 'succeeded' } });
+    state = reduceProcessEvent(state, { id: 4, type: 'run.completed', payload: { status: 'completed' } });
+
+    expect(state.items.find((item) => item.id === 'phase-processing_result-call-1')).toBeUndefined();
+    expect(state.active).toBe(false);
   });
 
   it('rebuilds decision groups from a terminal snapshot without live state', () => {

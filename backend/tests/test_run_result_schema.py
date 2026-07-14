@@ -1,6 +1,18 @@
 from app.schemas.agent import RunResult, RunView
 
 
+def test_verification_report_defaults_validation_outcomes_for_legacy_results():
+    result = RunResult.model_validate(
+        {
+            "summary": "legacy",
+            "verification_report": {"status": "completed", "notes": []},
+        }
+    )
+
+    assert result.verification_report is not None
+    assert result.verification_report.validation_outcomes == []
+
+
 def test_run_result_normalizes_legacy_payload_and_omits_unknown_fields():
     result = RunResult.model_validate(
         {
@@ -21,9 +33,7 @@ def test_run_result_normalizes_legacy_payload_and_omits_unknown_fields():
     )
 
     payload = result.model_dump(mode="json")
-    assert payload["findings"] == [
-        {"text": "one finding", "source_urls": [], "artifact_ids": []}
-    ]
+    assert payload["findings"] == [{"text": "one finding", "source_urls": [], "artifact_ids": []}]
     assert [source["url"] for source in payload["sources"]] == ["https://example.com"]
     assert payload["failed_sources"][0]["url"] == "https://bad.example"
     assert payload["source_quality"][0]["quality_score"] == 0.8

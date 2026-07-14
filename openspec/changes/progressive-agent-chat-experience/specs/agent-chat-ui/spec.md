@@ -60,7 +60,8 @@ The system SHALL map run, phase, turn and tool statuses to a live user-readable 
 - **WHEN** a ToolCall completes and the Run has not started its next phase or reached a terminal state
 - **THEN** the completed tool row remains visible under its decision group
 - **THEN** the same group immediately displays “正在评估执行结果” as the only running loading pane
-- **THEN** the transition completes when the next phase or terminal event arrives
+- **THEN** the transition is removed and replaced by the next active phase when that phase arrives
+- **THEN** the transition is removed rather than retained as a completed historical row when a terminal event arrives
 - **THEN** the process panel never presents an active Run with only completed rows during this interval
 
 #### Scenario: User controls the process panel
