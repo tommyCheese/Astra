@@ -458,8 +458,12 @@ p {
 .share-link input { flex: 1; }
 .dialog-error { color: #b64141 !important; font-size: 12px; }
 
-.shared-page { background: #f5f7f9; color: #27313d; min-height: 100vh; }
-.shared-page > header { align-items: center; background: rgba(255,255,255,.85); border-bottom: 1px solid #e1e6eb; display: flex; justify-content: space-between; padding: 16px max(22px, calc((100% - 820px)/2)); }
+.shared-page { background: radial-gradient(circle at 78% 6%, rgba(120,174,248,.08), transparent 31%), linear-gradient(180deg, #f8fafc, #f3f6f9); color: #27313d; min-height: 100vh; }
+.shared-page > header { align-items: center; backdrop-filter: blur(18px) saturate(150%); -webkit-backdrop-filter: blur(18px) saturate(150%); background: rgba(255,255,255,.7); border-bottom: 1px solid rgba(203,213,225,.58); display: flex; justify-content: space-between; padding: 13px max(22px, calc((100% - 820px)/2)); }
+.shared-brand { align-items: center; display: flex; gap: 9px; }
+.shared-brand img { border-radius: 9px; box-shadow: 0 4px 12px rgba(24,73,63,.14); height: 30px; width: 30px; }
+.shared-brand strong { font-size: 15px; }
+.shared-page > header > span { color: #788594; font-size: 12px; }
 .shared-conversation, .shared-empty { margin: 0 auto; max-width: 820px; padding: 54px 22px 90px; }
 .shared-conversation h1 { font-size: 30px; margin: 0; }
 .shared-meta { color: #84909d; font-size: 12px; margin-bottom: 40px; }
@@ -467,12 +471,12 @@ p {
 .shared-message > span { color: #788594; display: block; font-size: 11px; font-weight: 700; margin-bottom: 6px; text-transform: uppercase; }
 .shared-message.user { background: #e8edf1; border-radius: 16px; margin-left: auto; max-width: 72%; padding: 12px 16px; }
 
-.shares-page { background: #f7f9fb; box-sizing: border-box; height: 100%; overflow: auto; padding: 34px 42px 56px; }
+.shares-page { background: transparent; box-sizing: border-box; height: 100%; overflow: auto; padding: 34px 42px 56px; }
 .shares-header { align-items: flex-start; display: flex; justify-content: space-between; margin: 0 auto 26px; max-width: 980px; }
 .shares-header span { color: #718096; font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
 .shares-header h1 { color: #26313e; font-size: 28px; margin: 5px 0 7px; }
 .shares-header p { color: #748091; margin: 0; }
-.shares-toolbar { align-items: center; background: rgba(255,255,255,.88); border: 1px solid #e1e7ed; border-radius: 14px; display: flex; gap: 14px; margin: 0 auto 14px; max-width: 936px; padding: 11px 14px; }
+.shares-toolbar { align-items: center; backdrop-filter: blur(18px) saturate(135%); -webkit-backdrop-filter: blur(18px) saturate(135%); background: rgba(255,255,255,.6); border: 1px solid rgba(203,213,225,.58); border-radius: 14px; box-shadow: 0 8px 26px rgba(54,80,108,.05); display: flex; gap: 14px; margin: 0 auto 14px; max-width: 936px; padding: 11px 14px; }
 .shares-toolbar label { align-items: center; color: #485565; display: flex; font-size: 13px; gap: 7px; }
 .shares-toolbar > span { color: #84909e; font-size: 12px; }
 .shares-toolbar > div { display: flex; gap: 8px; margin-left: auto; }
@@ -483,7 +487,7 @@ p {
 .shares-toolbar .ui-icon { height: 14px; width: 14px; }
 .shares-message { color: #667483; font-size: 12px; margin: 0 auto 12px; max-width: 936px; }
 .shares-list { display: grid; gap: 10px; margin: 0 auto; max-width: 966px; }
-.share-management-item { align-items: center; background: rgba(255,255,255,.92); border: 1px solid #e1e7ed; border-radius: 14px; display: grid; gap: 14px; grid-template-columns: auto minmax(0,1fr) auto; padding: 15px 16px; }
+.share-management-item { align-items: center; backdrop-filter: blur(16px) saturate(130%); -webkit-backdrop-filter: blur(16px) saturate(130%); background: rgba(255,255,255,.58); border: 1px solid rgba(203,213,225,.54); border-radius: 14px; box-shadow: 0 7px 22px rgba(54,80,108,.045); display: grid; gap: 14px; grid-template-columns: auto minmax(0,1fr) auto; padding: 15px 16px; }
 .share-management-main { min-width: 0; }
 .share-management-main h2 { color: #344150; font-size: 14px; margin: 0 0 5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .share-management-main p { color: #84909e; font-size: 11px; margin: 0; }
@@ -2639,7 +2643,7 @@ html[data-theme="dark"] .floating-menu button {
   color: #d9dde3;
 }
 
-html[data-theme="dark"] .shares-page { background: #1b1e23; }
+html[data-theme="dark"] .shares-page { background: transparent; }
 html[data-theme="dark"] .shares-toolbar,
 html[data-theme="dark"] .share-management-item { background: rgba(39, 44, 51, .94); border-color: #393f48; }
 html[data-theme="dark"] .shares-toolbar button,

@@ -16,6 +16,7 @@ describe('SharedConversationPage', () => {
     render(<SharedConversationPage token="token" />);
 
     expect(await screen.findByRole('heading', { name: '公开标题' })).toBeInTheDocument();
+    expect(screen.getByRole('img', { name: 'Astra' })).toHaveAttribute('src', '/astra.svg');
     expect(screen.getByText('公开问题')).toBeInTheDocument();
     expect(screen.getByText('公开回答').tagName).toBe('STRONG');
     expect(screen.queryByRole('textbox')).not.toBeInTheDocument();
