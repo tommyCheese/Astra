@@ -1,19 +1,33 @@
 from fastapi import APIRouter, Depends
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_session
 from app.repositories.conversation_strategy import ConversationStrategyRepository
-from app.schemas.agent import PlanningStrategy, ReasoningEffort, ReflectionTrigger
+from app.schemas.agent import (
+    PlanningStrategy,
+    ReasoningEffort,
+    ReflectionTrigger,
+    TOOL_CALL_LIMIT_DEFAULTS,
+    validate_tool_call_limit,
+)
 
 router = APIRouter(prefix="/api/preferences", tags=["preferences"])
 
 
 class ConversationStrategyPreferences(BaseModel):
     reasoning_effort: ReasoningEffort = ReasoningEffort.balanced
+    max_tool_calls: int = 8
     planning_strategy: PlanningStrategy = PlanningStrategy.adaptive
     reflection_enabled: bool = True
     reflection_trigger: ReflectionTrigger = ReflectionTrigger.adaptive
+
+    @model_validator(mode="after")
+    def validate_tool_budget(self) -> "ConversationStrategyPreferences":
+        if "max_tool_calls" not in self.model_fields_set:
+            self.max_tool_calls = TOOL_CALL_LIMIT_DEFAULTS[self.reasoning_effort]
+        validate_tool_call_limit(self.reasoning_effort, self.max_tool_calls)
+        return self
 
 
 @router.get(

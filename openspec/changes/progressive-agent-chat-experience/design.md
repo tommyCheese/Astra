@@ -68,9 +68,9 @@ RunEngine 在规划开始时发出阶段事件；AgentLoop 每轮模型决策前
 
 ### 8. 对话策略偏好与 Run 策略快照分离持久化
 
-新增单例 `conversation_strategy_preferences` 数据库记录，保存 `reasoning_effort`、`planning_strategy`、`reflection_enabled` 与 `reflection_trigger`。`GET /api/preferences/conversation-strategy` 在首次读取时用产品默认值创建记录，`PUT` 使用受枚举约束的完整对象更新记录。该记录是下一次新 Run 的用户偏好来源，而每个 Run 已有的 `reasoning_policy` 仍是创建时不可变的执行快照；修改偏好不会回写历史 Run。
+新增单例 `conversation_strategy_preferences` 数据库记录，保存 `reasoning_effort`、`max_tool_calls`、`planning_strategy`、`reflection_enabled` 与 `reflection_trigger`。`max_tool_calls` 按推理强度执行交叉字段校验：快速 0–5、均衡 6–15、深入 16–50；默认值分别为 5、8、16。`GET /api/preferences/conversation-strategy` 在首次读取时用产品默认值创建记录，`PUT` 使用受约束的完整对象更新记录。该记录是下一次新 Run 的用户偏好来源，而每个 Run 已有的 `reasoning_policy` 仍是创建时不可变的执行快照；修改偏好不会回写历史 Run。部署级 `AGENT_MAX_TOOL_CALLS` 默认硬上限提升到 50，`AGENT_MAX_TURNS` 提升到 60；编译自定义工具预算时保证 `max_turns >= max_tool_calls + 1`，避免工具次数被较小的轮次预算提前截断。运行时继续取用户预算和部署硬上限的较小值。
 
-前端启动后异步读取数据库偏好。若用户在读取完成前已经手动修改，则不允许迟到的 GET 覆盖用户动作。每次点击先乐观更新界面，再把完整策略加入顺序保存链，避免快速连续点击造成较早请求最后落库。普通渲染和 Run 状态变化不触发保存。
+前端启动后异步读取数据库偏好。若用户在读取完成前已经手动修改，则不允许迟到的 GET 覆盖用户动作。每次点击或工具预算调节先乐观更新界面，再把完整策略加入顺序保存链，避免快速连续修改造成较早请求最后落库。切换推理强度时，若当前工具预算不属于新范围，则回到该档默认值。普通渲染和 Run 状态变化不触发保存。
 
 ### 9. “正在分析下一步”作为决策分组锚点
 

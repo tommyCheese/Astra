@@ -50,6 +50,28 @@ def test_policy_defaults_and_safety_floor():
     assert len(high.adjustments) == 3
 
 
+@pytest.mark.parametrize(
+    ("effort", "limit"),
+    [("fast", 0), ("fast", 5), ("balanced", 6), ("balanced", 15), ("deep", 16), ("deep", 50)],
+)
+def test_policy_compiler_uses_custom_tool_call_limit(effort, limit):
+    snapshot = PolicyCompiler().compile(
+        RequestedReasoningPolicy(reasoning_effort=effort, max_tool_calls=limit)
+    )
+    assert snapshot.requested.max_tool_calls == limit
+    assert snapshot.effective.budgets.max_tool_calls == limit
+    assert snapshot.effective.budgets.max_turns >= limit + 1
+
+
+@pytest.mark.parametrize(
+    ("effort", "limit"),
+    [("fast", 6), ("balanced", 5), ("balanced", 16), ("deep", 15), ("deep", 51)],
+)
+def test_policy_rejects_custom_tool_call_limit_outside_effort_range(effort, limit):
+    with pytest.raises(ValueError):
+        RequestedReasoningPolicy(reasoning_effort=effort, max_tool_calls=limit)
+
+
 def test_contract_and_plan_are_verifiable():
     contract = build_default_contract("总结证据")
     validate_contract(contract)

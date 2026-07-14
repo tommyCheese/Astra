@@ -36,6 +36,7 @@ class ConversationStrategyPreferenceRecord(Base):
 
     id: Mapped[str] = mapped_column(String(40), primary_key=True, default="default")
     reasoning_effort: Mapped[str] = mapped_column(String(40), nullable=False)
+    max_tool_calls: Mapped[int] = mapped_column(Integer, nullable=False, default=8)
     planning_strategy: Mapped[str] = mapped_column(String(40), nullable=False)
     reflection_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False)
     reflection_trigger: Mapped[str] = mapped_column(String(40), nullable=False)

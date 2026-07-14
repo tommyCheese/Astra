@@ -95,12 +95,19 @@ The system SHALL map run, phase, turn and tool statuses to a live user-readable 
 - **THEN** the UI shows a clear blocked message with reason and any required user action
 
 ### Requirement: Conversation strategy persists across application starts
-The system SHALL persist reasoning effort, planning strategy, reflection enabled state, and reflection trigger in the database as the current conversation strategy preference.
+The system SHALL persist reasoning effort, tool-call limit, planning strategy, reflection enabled state, and reflection trigger in the database as the current conversation strategy preference.
 
 #### Scenario: Application starts with a saved strategy
 - **WHEN** the chat application starts and a saved conversation strategy exists
-- **THEN** the UI restores all four strategy options from the database
+- **THEN** the UI restores all five strategy options from the database
 - **THEN** newly created Runs use the restored strategy
+
+#### Scenario: User reviews and adjusts the tool-call budget
+- **WHEN** the conversation strategy menu is open
+- **THEN** the UI explains that fast allows 0–5 tool calls, balanced allows 6–15, and deep allows 16–50
+- **THEN** the tool-call control is constrained to the selected effort's range
+- **THEN** changing reasoning effort replaces an out-of-range value with that effort's documented default
+- **THEN** a manually selected value is persisted and included in the next Run's reasoning policy
 
 #### Scenario: User changes a strategy option
 - **WHEN** the user manually changes any conversation strategy option

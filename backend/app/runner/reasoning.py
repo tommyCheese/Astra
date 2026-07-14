@@ -105,8 +105,12 @@ class PolicyCompiler:
                 "复杂任务至少使用自适应规划。",
             )
         effort = ReasoningEffort(data["reasoning_effort"])
+        budgets = self.BUDGETS[effort].model_copy(deep=True)
+        if requested.max_tool_calls is not None:
+            budgets.max_tool_calls = requested.max_tool_calls
+            budgets.max_turns = max(budgets.max_turns, requested.max_tool_calls + 1)
         effective = EffectiveReasoningPolicy(
-            **data, budgets=self.BUDGETS[effort].model_copy(deep=True)
+            **data, budgets=budgets
         )
         return ReasoningPolicySnapshot(
             requested=requested, effective=effective, adjustments=adjustments

@@ -1597,6 +1597,39 @@ html[data-theme="dark"] .process-decision-children .process-step.status-running 
   margin-bottom: 6px;
 }
 
+.tool-limit-control {
+  padding: 7px 10px 9px;
+}
+
+.tool-limit-control > div {
+  align-items: center;
+  color: #52606d;
+  display: flex;
+  font-size: 11px;
+  font-weight: 700;
+  justify-content: space-between;
+  margin-bottom: 5px;
+}
+
+.tool-limit-control output {
+  color: #176a52;
+  font-variant-numeric: tabular-nums;
+}
+
+.tool-limit-control input {
+  accent-color: #228267;
+  display: block;
+  margin: 0;
+  width: 100%;
+}
+
+.tool-limit-control small {
+  color: #8a94a3;
+  display: block;
+  font-size: 10px;
+  margin-top: 3px;
+}
+
 .segmented-control {
   background: #edf1f5;
   border-radius: 8px;

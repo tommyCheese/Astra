@@ -27,6 +27,7 @@ async def test_conversation_strategy_is_created_and_persisted(session):
     repo = ConversationStrategyRepository(session)
     assert await repo.get_or_create() == {
         "reasoning_effort": "balanced",
+        "max_tool_calls": 8,
         "planning_strategy": "adaptive",
         "reflection_enabled": True,
         "reflection_trigger": "adaptive",
@@ -35,6 +36,7 @@ async def test_conversation_strategy_is_created_and_persisted(session):
 
     updated = {
         "reasoning_effort": "deep",
+        "max_tool_calls": 32,
         "planning_strategy": "plan_first",
         "reflection_enabled": False,
         "reflection_trigger": "failure_only",

@@ -1,11 +1,11 @@
-import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { App } from '../src/App';
 import { buildRuntime, cancelRun, cancelRuntimeBuild, createConversationShare, createRun, deleteConversation, getConversation, getConversationStrategy, getRun, getRuntimeProfile, listConversationShares, listConversations, listRuns, revokeConversationShare, streamRunEvents, updateConversation, updateConversationStrategy, updateToolSettings, type RunStreamEvent } from '../src/api';
 
 vi.mock('../src/api', () => ({
-  getConversationStrategy: vi.fn(async () => ({ reasoning_effort: 'balanced', planning_strategy: 'adaptive', reflection_enabled: true, reflection_trigger: 'adaptive' })),
+  getConversationStrategy: vi.fn(async () => ({ reasoning_effort: 'balanced', max_tool_calls: 8, planning_strategy: 'adaptive', reflection_enabled: true, reflection_trigger: 'adaptive' })),
   updateConversationStrategy: vi.fn(async (strategy) => strategy),
   getToolSettings: vi.fn(async () => ({ tools: [
     { name: 'web_search', label: 'Web Search', description: '搜索公开网页并生成候选来源', enabled: true, available: true },
@@ -527,12 +527,16 @@ describe('App', () => {
     await userEvent.type(screen.getByRole('textbox'), '分析复杂问题');
     await userEvent.click(screen.getByRole('button', { name: '当前模型：gpt-5' }));
     await userEvent.click(screen.getByRole('button', { name: '深入' }));
+    const toolLimit = screen.getByRole('slider', { name: '工具调用上限' });
+    expect(toolLimit).toHaveAttribute('min', '16');
+    expect(toolLimit).toHaveAttribute('max', '50');
+    fireEvent.change(toolLimit, { target: { value: '42' } });
     await userEvent.click(screen.getByRole('button', { name: '先规划' }));
     await userEvent.click(screen.getByRole('button', { name: '发送' }));
     expect(vi.mocked(createRun)).toHaveBeenLastCalledWith(
       expect.any(String),
       undefined,
-      expect.objectContaining({ reasoning_effort: 'deep', planning_strategy: 'plan_first' }),
+      expect.objectContaining({ reasoning_effort: 'deep', max_tool_calls: 42, planning_strategy: 'plan_first' }),
       expect.objectContaining({ provider: 'openai', name: 'gpt-5' }),
     );
   });
@@ -540,6 +544,7 @@ describe('App', () => {
   it('restores conversation strategy from the database and persists manual changes in order', async () => {
     vi.mocked(getConversationStrategy).mockResolvedValueOnce({
       reasoning_effort: 'deep',
+      max_tool_calls: 32,
       planning_strategy: 'plan_first',
       reflection_enabled: true,
       reflection_trigger: 'every_turn',
@@ -547,7 +552,7 @@ describe('App', () => {
     vi.mocked(updateConversationStrategy).mockClear();
     render(<App />);
 
-    await waitFor(() => expect(screen.getByRole('button', { name: '当前模型：gpt-5' })).toHaveTextContent('深入 · 每轮 反思'));
+    await waitFor(() => expect(screen.getByRole('button', { name: '当前模型：gpt-5' })).toHaveTextContent('深入 · 32 次工具 · 每轮 反思'));
     await userEvent.click(screen.getByRole('button', { name: '当前模型：gpt-5' }));
     expect(screen.getByRole('button', { name: '深入' })).toHaveClass('active');
     expect(screen.getByRole('button', { name: '先规划' })).toHaveClass('active');
@@ -557,6 +562,7 @@ describe('App', () => {
     await userEvent.click(screen.getByRole('button', { name: '直接' }));
     await waitFor(() => expect(updateConversationStrategy).toHaveBeenLastCalledWith({
       reasoning_effort: 'fast',
+      max_tool_calls: 5,
       planning_strategy: 'direct',
       reflection_enabled: true,
       reflection_trigger: 'every_turn',
@@ -569,6 +575,7 @@ describe('App', () => {
       undefined,
       expect.objectContaining({
         reasoning_effort: 'fast',
+        max_tool_calls: 5,
         planning_strategy: 'direct',
         reflection_enabled: true,
         reflection_trigger: 'every_turn',
@@ -706,6 +713,7 @@ describe('App', () => {
 
     expect(vi.mocked(createRun)).toHaveBeenLastCalledWith('继续追问', 'task-1', expect.objectContaining({
       reasoning_effort: 'balanced',
+      max_tool_calls: 8,
       planning_strategy: 'adaptive',
       reflection_enabled: true,
       execution_mode: 'request_approval',
@@ -1000,7 +1008,8 @@ describe('App', () => {
     expect(screen.getByText('触发方式')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '深入' })).toBeInTheDocument();
     expect(screen.queryByText('最大 Agent 轮次')).not.toBeInTheDocument();
-    expect(screen.queryByText('工具调用上限')).not.toBeInTheDocument();
+    expect(screen.getByText('工具调用上限')).toBeInTheDocument();
+    expect(screen.getByText('当前强度可调整范围：6–15 次')).toBeInTheDocument();
   });
 
   it('explains each conversation strategy from the model menu', async () => {
@@ -1013,7 +1022,9 @@ describe('App', () => {
     await userEvent.click(helpButton);
     expect(screen.getByRole('dialog', { name: '策略说明' })).toBeInTheDocument();
     expect(screen.queryByText('触发方式')).not.toBeInTheDocument();
-    expect(screen.getByText('减少思考轮次与工具预算，简单任务更快。')).toBeInTheDocument();
+    expect(screen.getByText('允许 0–5 次工具调用，简单任务更快。')).toBeInTheDocument();
+    expect(screen.getByText('允许 6–15 次工具调用，兼顾速度与检查深度。')).toBeInTheDocument();
+    expect(screen.getByText('允许 16–50 次工具调用，为复杂任务提供更多执行预算。')).toBeInTheDocument();
     expect(screen.getByText('轻量启动，按结果决定是否调整计划。')).toBeInTheDocument();
     expect(screen.getByText('失败、低置信度、冲突或无进展时反思。')).toBeInTheDocument();
     expect(screen.getByText('每轮结束都反思，更审慎但更慢、更耗用量。')).toBeInTheDocument();

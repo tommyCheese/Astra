@@ -90,6 +90,7 @@ async def test_conversation_strategy_can_be_restored_and_updated(app_client):
     assert loaded.status_code == 200
     assert loaded.json() == {
         "reasoning_effort": "balanced",
+        "max_tool_calls": 8,
         "planning_strategy": "adaptive",
         "reflection_enabled": True,
         "reflection_trigger": "adaptive",
@@ -97,6 +98,7 @@ async def test_conversation_strategy_can_be_restored_and_updated(app_client):
 
     updated = {
         "reasoning_effort": "deep",
+        "max_tool_calls": 32,
         "planning_strategy": "plan_first",
         "reflection_enabled": False,
         "reflection_trigger": "failure_only",
@@ -116,6 +118,57 @@ async def test_conversation_strategy_rejects_unknown_values(app_client):
         "/api/preferences/conversation-strategy",
         json={
             "reasoning_effort": "unbounded",
+            "planning_strategy": "adaptive",
+            "reflection_enabled": True,
+            "reflection_trigger": "adaptive",
+        },
+    )
+    assert response.status_code == 422
+
+
+async def test_conversation_strategy_uses_effort_default_when_legacy_client_omits_limit(app_client):
+    response = await app_client.put(
+        "/api/preferences/conversation-strategy",
+        json={
+            "reasoning_effort": "deep",
+            "planning_strategy": "adaptive",
+            "reflection_enabled": True,
+            "reflection_trigger": "adaptive",
+        },
+    )
+    assert response.status_code == 200
+    assert response.json()["max_tool_calls"] == 16
+
+
+@pytest.mark.parametrize(
+    ("effort", "limit"),
+    [("fast", 0), ("fast", 5), ("balanced", 6), ("balanced", 15), ("deep", 16), ("deep", 50)],
+)
+async def test_conversation_strategy_accepts_tool_limits_for_each_effort(app_client, effort, limit):
+    response = await app_client.put(
+        "/api/preferences/conversation-strategy",
+        json={
+            "reasoning_effort": effort,
+            "max_tool_calls": limit,
+            "planning_strategy": "adaptive",
+            "reflection_enabled": True,
+            "reflection_trigger": "adaptive",
+        },
+    )
+    assert response.status_code == 200
+    assert response.json()["max_tool_calls"] == limit
+
+
+@pytest.mark.parametrize(
+    ("effort", "limit"),
+    [("fast", 6), ("balanced", 5), ("balanced", 16), ("deep", 15), ("deep", 51)],
+)
+async def test_conversation_strategy_rejects_tool_limits_outside_effort_range(app_client, effort, limit):
+    response = await app_client.put(
+        "/api/preferences/conversation-strategy",
+        json={
+            "reasoning_effort": effort,
+            "max_tool_calls": limit,
             "planning_strategy": "adaptive",
             "reflection_enabled": True,
             "reflection_trigger": "adaptive",
@@ -383,6 +436,7 @@ async def test_create_run_compiles_reasoning_policy(app_client):
             "goal": "分析复杂问题",
             "reasoning_policy": {
                 "reasoning_effort": "deep",
+                "max_tool_calls": 42,
                 "planning_strategy": "plan_first",
                 "reflection_enabled": False,
                 "reflection_trigger": "adaptive",
@@ -394,6 +448,7 @@ async def test_create_run_compiles_reasoning_policy(app_client):
     run_id = created.json()["run_id"]
     body = (await app_client.get(f"/api/runs/{run_id}")).json()
     assert body["reasoning_policy"]["requested"]["reasoning_effort"] == "deep"
+    assert body["reasoning_policy"]["effective"]["budgets"]["max_tool_calls"] == 42
     assert body["reasoning_policy"]["effective"]["budgets"]["max_reflections"] == 6
 
 
