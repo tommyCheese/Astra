@@ -1,10 +1,10 @@
 import { FormEvent, MouseEvent, ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { AstraApiError, ApiErrorPayload, buildRuntime, cancelRun, cancelRuntimeBuild, createConversationShare, createRun, deleteConversation, getConversation, getConversationStrategy, getRun, getRuntimeProfile, getToolSettings, listConversations, listRuns, resumeRun, revokeConversationShare, streamRunEvents, updateConversation, updateConversationStrategy, updateToolSettings, type ConversationStrategyPreferences, type ToolSetting } from './api';
+import { AstraApiError, ApiErrorPayload, buildRuntime, cancelRun, cancelRuntimeBuild, createConversationShare, createRun, deleteConversation, getConversation, getConversationStrategy, getRun, getRuntimeProfile, getToolSettings, listConversationShares, listConversations, listRuns, resumeRun, revokeConversationShare, streamRunEvents, updateConversation, updateConversationStrategy, updateToolSettings, type ConversationStrategyPreferences, type ToolSetting } from './api';
 import { I18nProvider, useI18n } from './i18n';
 import { ThemeProvider, useTheme } from './theme';
-import type { ArtifactView, ChatMessage, ConversationShare, ConversationSummary, RunView } from './types';
+import type { ArtifactView, ChatMessage, ConversationShare, ConversationShareSummary, ConversationSummary, RunView } from './types';
 import { UsageDashboard } from './UsageDashboard';
 import { buildPresentation, HISTORY_LIMIT, normalizeRunView, type ConversationEntry } from './conversations';
 import { createOptimisticProcessState, isDecisionGroup, reconcileProcessSnapshot, reduceProcessEvent, type ProcessStreamItem, type ProcessStreamState } from './processStream';
@@ -57,7 +57,7 @@ function AppContent() {
   const [processPanelOpenByRun, setProcessPanelOpenByRun] = useState<Record<string, boolean>>({});
   const [showJumpToLatest, setShowJumpToLatest] = useState(false);
   const [error, setError] = useState<ApiErrorPayload | null>(null);
-  const [view, setView] = useState<'chat' | 'settings'>('chat');
+  const [view, setView] = useState<'chat' | 'settings' | 'shares'>('chat');
   const [usageOpen, setUsageOpen] = useState(false);
   const [strategyHelpOpen, setStrategyHelpOpen] = useState(false);
   const [conversationAction, setConversationAction] = useState<{ kind: 'rename' | 'share' | 'delete'; conversation: ConversationEntry } | null>(null);
@@ -500,7 +500,7 @@ function AppContent() {
     jumpResetTimerRef.current = window.setTimeout(() => { jumpingToLatestRef.current = false; }, 450);
   }
 
-  function changeView(nextView: 'chat' | 'settings') {
+  function changeView(nextView: 'chat' | 'settings' | 'shares') {
     setView(nextView);
   }
 
@@ -539,11 +539,18 @@ function AppContent() {
           setSettingsCategory('模型管理');
           changeView('settings');
         }}
+        onOpenShares={() => changeView('shares')}
         onOpenUsage={() => setUsageOpen(true)}
       />
 
       <section className="workspace">
-        {view === 'settings' ? (
+        {view === 'shares' ? (
+          <SharedConversationsView
+            onClose={() => changeView('chat')}
+            onOpenConversation={(id, title) => { void openConversation({ id, title, priorMessages: [], has_active_share: true }); }}
+            onShareChanged={(ids, active) => setConversationHistory((items) => items.map((item) => ids.includes(item.id) ? { ...item, has_active_share: active } : item))}
+          />
+        ) : view === 'settings' ? (
           <SettingsView
             activeCategory={settingsCategory}
             onCategoryChange={setSettingsCategory}
@@ -691,16 +698,17 @@ function AppContent() {
   );
 }
 
-function Sidebar({ run, activeConversationId, conversations, activeView, onNewChat, onSelectConversation, onConversationAction, onTogglePin, onOpenSettings, onOpenUsage }: {
+function Sidebar({ run, activeConversationId, conversations, activeView, onNewChat, onSelectConversation, onConversationAction, onTogglePin, onOpenSettings, onOpenShares, onOpenUsage }: {
   run: RunView | null;
   activeConversationId: string | null;
   conversations: ConversationEntry[];
-  activeView: 'chat' | 'settings';
+  activeView: 'chat' | 'settings' | 'shares';
   onNewChat: () => void;
   onSelectConversation: (conversation: ConversationEntry) => void;
   onConversationAction: (kind: 'rename' | 'share' | 'delete', conversation: ConversationEntry) => void;
   onTogglePin: (conversation: ConversationEntry) => void;
   onOpenSettings: () => void;
+  onOpenShares: () => void;
   onOpenUsage: () => void;
 }) {
   const { t } = useI18n();
@@ -767,6 +775,11 @@ function Sidebar({ run, activeConversationId, conversations, activeView, onNewCh
       </nav>
 
       <div className="sidebar-bottom">
+        <button className={`side-action ${activeView === 'shares' ? 'active' : ''}`} type="button" onClick={onOpenShares}>
+          <Icon name="link" />
+          <span>{t('已分享对话')}</span>
+          <small>{conversations.filter((item) => item.has_active_share).length}</small>
+        </button>
         <button className="side-action" type="button" onClick={onOpenUsage}>
           <Icon name="chart" />
           <span>{t('用量统计')}</span>
@@ -784,6 +797,89 @@ function Sidebar({ run, activeConversationId, conversations, activeView, onNewCh
 
 function conversationTitle(run: RunView, fallback: string) {
   return run.summary?.trim() || run.chat_messages?.find((message) => message.role === 'user')?.content || fallback;
+}
+
+function SharedConversationsView({ onClose, onOpenConversation, onShareChanged }: {
+  onClose: () => void;
+  onOpenConversation: (id: string, title: string) => void;
+  onShareChanged: (ids: string[], active: boolean) => void;
+}) {
+  const { t } = useI18n();
+  const [shares, setShares] = useState<ConversationShareSummary[]>([]);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState<'refresh' | 'revoke' | null>(null);
+  const [message, setMessage] = useState('');
+
+  const loadShares = useCallback(async () => {
+    const items = await listConversationShares();
+    setShares(items);
+    setSelected((current) => new Set([...current].filter((id) => items.some((item) => item.conversation_id === id))));
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    void listConversationShares().then((items) => {
+      if (active) setShares(items);
+    }).catch(() => {
+      if (active) setMessage(t('无法读取已分享对话'));
+    }).finally(() => {
+      if (active) setLoading(false);
+    });
+    return () => { active = false; };
+  }, [t]);
+
+  const selectedIds = [...selected];
+  const allSelected = shares.length > 0 && selected.size === shares.length;
+  const toggleSelected = (id: string) => setSelected((current) => {
+    const next = new Set(current);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    return next;
+  });
+
+  async function runBatch(action: 'refresh' | 'revoke') {
+    if (!selectedIds.length || busy) return;
+    if (action === 'revoke' && !window.confirm(t(`确定取消选中的 ${selectedIds.length} 个分享链接吗？获得链接的人将无法继续访问。`))) return;
+    setBusy(action);
+    setMessage('');
+    const results = await Promise.allSettled(selectedIds.map((id) => action === 'refresh' ? createConversationShare(id, true) : revokeConversationShare(id)));
+    const succeeded = selectedIds.filter((_, index) => results[index].status === 'fulfilled');
+    const failed = selectedIds.length - succeeded.length;
+    if (action === 'revoke' && succeeded.length) onShareChanged(succeeded, false);
+    try {
+      await loadShares();
+    } catch {
+      setMessage(t('操作已完成，但刷新分享列表失败'));
+    }
+    if (failed) setMessage(t(`${succeeded.length} 项成功，${failed} 项失败，请重试。`));
+    else setMessage(action === 'refresh' ? t(`已更新 ${succeeded.length} 个分享快照。`) : t(`已取消 ${succeeded.length} 个分享链接。`));
+    setBusy(null);
+  }
+
+  return <section className="shares-page">
+    <header className="shares-header">
+      <div><span>{t('对话管理')}</span><h1>{t('已分享对话')}</h1><p>{t('管理当前仍可访问的只读对话快照。')}</p></div>
+      <button className="close-button" type="button" aria-label={t('关闭已分享对话')} onClick={onClose}>×</button>
+    </header>
+    <div className="shares-toolbar">
+      <label><input type="checkbox" aria-label={t('全选已分享对话')} checked={allSelected} onChange={() => setSelected(allSelected ? new Set() : new Set(shares.map((item) => item.conversation_id)))} />{t('全选')}</label>
+      <span>{t(`已选择 ${selected.size} 项`)}</span>
+      <div>
+        <button type="button" disabled={!selected.size || busy !== null} onClick={() => { void runBatch('refresh'); }}><Icon name="refresh" />{busy === 'refresh' ? t('更新中…') : t('更新快照')}</button>
+        <button className="danger" type="button" disabled={!selected.size || busy !== null} onClick={() => { void runBatch('revoke'); }}>{busy === 'revoke' ? t('取消中…') : t('取消分享')}</button>
+      </div>
+    </div>
+    {message && <p className="shares-message" role="status">{message}</p>}
+    <div className="shares-list">
+      {shares.map((share) => <article className="share-management-item" key={share.conversation_id}>
+        <input type="checkbox" aria-label={`${t('选择')} ${share.title}`} checked={selected.has(share.conversation_id)} onChange={() => toggleSelected(share.conversation_id)} />
+        <div className="share-management-main"><h2>{share.title}</h2><p>{t('快照更新时间')} {new Date(share.updated_at).toLocaleString()} · {share.message_count} {t('条消息')}</p></div>
+        <div className="share-management-actions"><button type="button" onClick={() => onOpenConversation(share.conversation_id, share.title)}>{t('查看原对话')}</button><a href={share.url} target="_blank" rel="noreferrer">{t('打开分享页')}</a></div>
+      </article>)}
+      {!loading && !shares.length && <div className="shares-empty"><Icon name="link" /><h2>{t('暂无已分享对话')}</h2><p>{t('从对话的更多操作中创建分享链接后，会显示在这里。')}</p></div>}
+      {loading && <div className="shares-empty"><p>{t('正在读取已分享对话…')}</p></div>}
+    </div>
+  </section>;
 }
 
 function ConversationActionDialog({ action, onClose, onRenamed, onDeleted, onShareChanged }: {
@@ -1385,12 +1481,13 @@ function ErrorDialog({ error, onClose, onRetry }: { error: ApiErrorPayload; onCl
   return <div className="modal-backdrop" role="presentation" onMouseDown={onClose}><section className="confirmation-modal error-dialog" role="alertdialog" aria-modal="true" aria-labelledby="error-title" onMouseDown={(event) => event.stopPropagation()}><div className="warning-mark">!</div><h2 id="error-title">{t(title)}</h2><p>{error.message}</p>{technical && <div className="confirmation-note">{t('错误类型：')}<code>{error.type}</code><br />{t('诊断编号：')}<code>{error.trace_id}</code></div>}<div className="confirmation-actions">{onRetry && <button className="secondary-button" type="button" onClick={onRetry}>{t('重试')}</button>}<button className="danger-confirm-button" type="button" onClick={onClose}>{t('知道了')}</button></div></section></div>;
 }
 
-type IconName = 'plus' | 'message' | 'chart' | 'settings' | 'sparkle' | 'tools' | 'terminal' | 'brain' | 'palette' | 'lock' | 'token' | 'check' | 'route' | 'refresh' | 'requestApprove' | 'autoApprove';
+type IconName = 'plus' | 'message' | 'link' | 'chart' | 'settings' | 'sparkle' | 'tools' | 'terminal' | 'brain' | 'palette' | 'lock' | 'token' | 'check' | 'route' | 'refresh' | 'requestApprove' | 'autoApprove';
 
 function Icon({ name }: { name: IconName }) {
   const paths: Record<IconName, ReactNode> = {
     plus: <path d="M12 5v14M5 12h14" />,
     message: <path d="M20 11.5a7.5 7.5 0 0 1-8 7.48 8.9 8.9 0 0 1-3.63-.78L4 20l1.34-3.58A7.34 7.34 0 0 1 4 12a7.5 7.5 0 0 1 8-7.48A7.5 7.5 0 0 1 20 11.5Z" />,
+    link: <><path d="M10 13a5 5 0 0 0 7.54.54l2-2a5 5 0 0 0-7.07-7.07l-1.15 1.15" /><path d="M14 11a5 5 0 0 0-7.54-.54l-2 2a5 5 0 0 0 7.07 7.07l1.15-1.15" /></>,
     chart: <><path d="M4 19V5M4 19h16" /><path d="m7 15 3-3 3 2 5-6" /></>,
     settings: <><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.06 2.06-.06-.06a1.7 1.7 0 0 0-1.88-.34 1.7 1.7 0 0 0-1 1.55V20h-2.9v-.09a1.7 1.7 0 0 0-1-1.55 1.7 1.7 0 0 0-1.88.34l-.06.06-2.06-2.06.06-.06A1.7 1.7 0 0 0 7.3 14.8a1.7 1.7 0 0 0-1.55-1H5.7v-2.9h.09a1.7 1.7 0 0 0 1.55-1 1.7 1.7 0 0 0-.34-1.88l-.06-.06L9 5.9l.06.06a1.7 1.7 0 0 0 1.88.34 1.7 1.7 0 0 0 1-1.55V4.7h2.9v.09a1.7 1.7 0 0 0 1 1.55 1.7 1.7 0 0 0 1.88-.34l.06-.06 2.06 2.06-.06.06a1.7 1.7 0 0 0-.34 1.88 1.7 1.7 0 0 0 1.55 1h.09v2.9h-.09a1.7 1.7 0 0 0-1.55 1Z" /></>,
     sparkle: <path d="m12 3 .9 5.1L18 9l-5.1.9L12 15l-.9-5.1L6 9l5.1-.9L12 3Zm6 12 .45 2.55L21 18l-2.55.45L18 21l-.45-2.55L15 18l2.55-.45L18 15Z" />,

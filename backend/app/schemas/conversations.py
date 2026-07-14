@@ -44,3 +44,8 @@ class ConversationShareView(BaseModel):
     created_at: datetime
     updated_at: datetime
 
+
+class ConversationShareSummary(ConversationShareView):
+    conversation_id: str
+    title: str
+    message_count: int = 0

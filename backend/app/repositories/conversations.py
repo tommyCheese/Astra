@@ -116,6 +116,15 @@ class ConversationRepository:
         )
         return result.scalar_one_or_none()
 
+    async def list_active_shares(self) -> list[ConversationShareRecord]:
+        result = await self.session.execute(
+            select(ConversationShareRecord)
+            .where(ConversationShareRecord.active.is_(True))
+            .order_by(ConversationShareRecord.updated_at.desc())
+            .options(selectinload(ConversationShareRecord.conversation))
+        )
+        return list(result.scalars().unique().all())
+
     def build_snapshot(self, task: TaskRecord) -> dict:
         messages = []
         for run in sorted(task.runs, key=lambda item: item.created_at):

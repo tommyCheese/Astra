@@ -14,6 +14,7 @@ from app.repositories.conversations import (
 )
 from app.schemas.conversations import (
     ConversationShareView,
+    ConversationShareSummary,
     ConversationSummary,
     ConversationUpdateRequest,
     ConversationView,
@@ -80,6 +81,20 @@ async def delete_conversation(
 
 def share_view(share) -> dict:
     return {"url": f"/share/{share.token}", "created_at": share.created_at, "updated_at": share.updated_at}
+
+
+@router.get("/conversation-shares", response_model=list[ConversationShareSummary])
+async def list_active_shares(session: AsyncSession = Depends(get_session)):
+    shares = await ConversationRepository(session).list_active_shares()
+    return [
+        {
+            **share_view(share),
+            "conversation_id": share.conversation_id,
+            "title": share.conversation.title,
+            "message_count": len(share.snapshot.get("messages", [])),
+        }
+        for share in shares
+    ]
 
 
 @router.post("/conversations/{conversation_id}/share", response_model=ConversationShareView)

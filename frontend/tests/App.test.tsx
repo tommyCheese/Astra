@@ -2,7 +2,7 @@ import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { App } from '../src/App';
-import { buildRuntime, cancelRun, cancelRuntimeBuild, createRun, deleteConversation, getConversationStrategy, getRun, getRuntimeProfile, listConversations, listRuns, streamRunEvents, updateConversation, updateConversationStrategy, updateToolSettings, type RunStreamEvent } from '../src/api';
+import { buildRuntime, cancelRun, cancelRuntimeBuild, createConversationShare, createRun, deleteConversation, getConversation, getConversationStrategy, getRun, getRuntimeProfile, listConversationShares, listConversations, listRuns, revokeConversationShare, streamRunEvents, updateConversation, updateConversationStrategy, updateToolSettings, type RunStreamEvent } from '../src/api';
 
 vi.mock('../src/api', () => ({
   getConversationStrategy: vi.fn(async () => ({ reasoning_effort: 'balanced', planning_strategy: 'adaptive', reflection_enabled: true, reflection_trigger: 'adaptive' })),
@@ -28,6 +28,7 @@ vi.mock('../src/api', () => ({
   deleteConversation: vi.fn(async () => undefined),
   createConversationShare: vi.fn(async () => ({ url: '/share/token', created_at: new Date().toISOString(), updated_at: new Date().toISOString() })),
   revokeConversationShare: vi.fn(async () => undefined),
+  listConversationShares: vi.fn(async () => []),
   listRuns: vi.fn(async () => []),
   resumeRun: vi.fn(async () => ({ run_id: 'run-1', task_id: 'task-1', status: 'executing' })),
   getUsageSummary: vi.fn(async () => ({
@@ -644,6 +645,42 @@ describe('App', () => {
     expect(screen.getByRole('dialog', { name: '删除对话' })).toHaveTextContent('无法撤销');
     await userEvent.click(screen.getByRole('button', { name: '永久删除' }));
     await waitFor(() => expect(deleteConversation).toHaveBeenCalledWith('recent'));
+  });
+
+  it('lists active shares and opens the original conversation', async () => {
+    const now = new Date().toISOString();
+    vi.mocked(listConversationShares).mockResolvedValueOnce([{ conversation_id: 'shared-1', title: '分享测试', url: '/share/token-1', created_at: now, updated_at: now, message_count: 4 }]);
+    render(<App />);
+
+    await userEvent.click(screen.getByRole('button', { name: /已分享对话/ }));
+    expect(await screen.findByRole('heading', { name: '已分享对话' })).toBeInTheDocument();
+    expect(screen.getByText(/4 条消息/)).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: '打开分享页' })).toHaveAttribute('href', '/share/token-1');
+
+    await userEvent.click(screen.getByRole('button', { name: '查看原对话' }));
+    await waitFor(() => expect(getConversation).toHaveBeenCalledWith('shared-1'));
+  });
+
+  it('updates and revokes selected shares in batches', async () => {
+    const now = new Date().toISOString();
+    const share = { conversation_id: 'shared-1', title: '分享测试', url: '/share/token-1', created_at: now, updated_at: now, message_count: 4 };
+    vi.mocked(listConversationShares)
+      .mockResolvedValueOnce([share])
+      .mockResolvedValueOnce([{ ...share, updated_at: new Date(Date.now() + 1000).toISOString() }])
+      .mockResolvedValueOnce([]);
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    render(<App />);
+
+    await userEvent.click(screen.getByRole('button', { name: /已分享对话/ }));
+    await userEvent.click(await screen.findByRole('checkbox', { name: '选择 分享测试' }));
+    await userEvent.click(screen.getByRole('button', { name: '更新快照' }));
+    await waitFor(() => expect(createConversationShare).toHaveBeenCalledWith('shared-1', true));
+    expect(await screen.findByText('已更新 1 个分享快照。')).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: '取消分享' }));
+    await waitFor(() => expect(revokeConversationShare).toHaveBeenCalledWith('shared-1'));
+    expect(await screen.findByText('暂无已分享对话')).toBeInTheDocument();
+    confirm.mockRestore();
   });
 
   it('reveals the local star burst after five quick logo clicks', async () => {

@@ -1,4 +1,4 @@
-import type { ConversationShare, ConversationSummary, ConversationView, RunView, SharedConversation } from './types';
+import type { ConversationShare, ConversationShareSummary, ConversationSummary, ConversationView, RunView, SharedConversation } from './types';
 
 export type ApiErrorPayload = { type: string; code: string; message: string; retryable: boolean; trace_id: string; details?: Record<string, unknown> };
 
@@ -211,6 +211,12 @@ export async function deleteConversation(id: string): Promise<void> {
 
 export async function createConversationShare(id: string, refresh = false): Promise<ConversationShare> {
   const response = await fetch(`/api/conversations/${id}/share`, { method: refresh ? 'PUT' : 'POST' });
+  if (!response.ok) throw await responseError(response);
+  return response.json();
+}
+
+export async function listConversationShares(): Promise<ConversationShareSummary[]> {
+  const response = await fetch('/api/conversation-shares');
   if (!response.ok) throw await responseError(response);
   return response.json();
 }

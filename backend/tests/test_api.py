@@ -251,6 +251,11 @@ async def test_conversation_management_and_share_lifecycle(app_client):
     shared = await app_client.post(f"/api/conversations/{conversation_id}/share")
     assert shared.status_code == 200
     token = shared.json()["url"].rsplit("/", 1)[-1]
+    active_shares = await app_client.get("/api/conversation-shares")
+    assert active_shares.status_code == 200
+    assert active_shares.json()[0]["conversation_id"] == conversation_id
+    assert active_shares.json()[0]["title"] == "用户标题"
+    assert active_shares.json()[0]["message_count"] == 1
     public = await app_client.get(f"/api/shared-conversations/{token}")
     assert public.status_code == 200
     assert public.json()["title"] == "用户标题"
