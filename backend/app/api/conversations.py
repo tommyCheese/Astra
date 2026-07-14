@@ -91,7 +91,7 @@ async def list_active_shares(session: AsyncSession = Depends(get_session)):
             **share_view(share),
             "conversation_id": share.conversation_id,
             "title": share.conversation.title,
-            "message_count": len(share.snapshot.get("messages", [])),
+            "message_count": sum(1 for message in share.snapshot.get("messages", []) if message.get("role") != "process"),
         }
         for share in shares
     ]

@@ -222,7 +222,9 @@ describe('App', () => {
     expect(screen.getByRole('navigation', { name: '问题导航' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '跳转到问题 1' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '跳转到问题 1' })).toHaveAttribute('aria-current', 'true');
-    expect(screen.getByText('思考完成')).toBeInTheDocument();
+    const completedProcessTitle = screen.getByText('思考完成');
+    expect(completedProcessTitle).toBeInTheDocument();
+    expect(completedProcessTitle.closest('summary')?.querySelector('.process-thinking-dots')).not.toBeInTheDocument();
     expect(screen.getByText('至少一个抓取来源支撑了最终答案。')).toBeInTheDocument();
     expect(screen.getAllByText('已完成查询')).toHaveLength(1);
     expect(screen.getByText('web_search').closest('details')).not.toHaveAttribute('open');
@@ -419,6 +421,7 @@ describe('App', () => {
     const panel = summary.closest('details');
     expect(panel).not.toHaveAttribute('open');
     expect(screen.queryByText('实时更新')).not.toBeInTheDocument();
+    expect(summary.querySelectorAll('.process-thinking-dots i')).toHaveLength(3);
     expect(panel?.querySelector('summary .process-loading-pane')).not.toBeInTheDocument();
     expect(panel?.querySelector('.process-step.status-running')).toBeInTheDocument();
     expect(panel?.querySelector('.process-live-dot')).not.toBeInTheDocument();

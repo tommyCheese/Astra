@@ -128,12 +128,52 @@ class ConversationRepository:
     def build_snapshot(self, task: TaskRecord) -> dict:
         messages = []
         for run in sorted(task.runs, key=lambda item: item.created_at):
-            for message in build_chat_messages(run):
-                if message["role"] == "user" or (
-                    message["role"] == "assistant" and message["status"] in TERMINAL_STATUSES
-                ):
-                    messages.append({"role": message["role"], "content": message["content"]})
+            chat_messages = build_chat_messages(run)
+            messages.extend(
+                {"role": message["role"], "content": message["content"]}
+                for message in chat_messages if message["role"] == "user"
+            )
+            process_items = self.build_public_process(run)
+            if process_items:
+                messages.append({"role": "process", "items": process_items})
+            messages.extend(
+                {"role": message["role"], "content": message["content"]}
+                for message in chat_messages
+                if message["role"] == "assistant" and message["status"] in TERMINAL_STATUSES
+            )
         return {"title": task.title, "messages": messages}
+
+    def build_public_process(self, run: RunRecord) -> list[dict]:
+        items: list[dict] = []
+        calls = {call.id: call for call in run.tool_calls}
+        included_calls: set[str] = set()
+
+        def public_status(status: str) -> str:
+            return status if status in {"failed", "cancelled"} else "completed"
+
+        for turn in sorted(run.turns, key=lambda item: item.turn_index):
+            detail = ((turn.reflection or {}).get("summary") if turn.decision_type == "reflect" else None) or turn.reasoning_summary
+            if detail:
+                items.append({
+                    "kind": "reflection" if turn.decision_type == "reflect" else "reasoning",
+                    "title": "反思" if turn.decision_type == "reflect" else "思考",
+                    "detail": str(detail)[:4000],
+                    "status": public_status(turn.status),
+                })
+            if turn.tool_call_id and turn.tool_call_id in calls:
+                call = calls[turn.tool_call_id]
+                included_calls.add(call.id)
+                items.append({"kind": "tool", "title": call.tool_name, "status": public_status(call.status)})
+
+        for call in run.tool_calls:
+            if call.id not in included_calls:
+                items.append({"kind": "tool", "title": call.tool_name, "status": public_status(call.status)})
+
+        result = run.result or {}
+        report = result.get("verification_report") or {}
+        notes = list(dict.fromkeys([*(result.get("verification_notes") or []), *(report.get("notes") or [])]))
+        items.extend({"kind": "verification", "title": "验证", "detail": str(note)[:4000]} for note in notes if note)
+        return items
 
     async def delete(self, task: TaskRecord) -> list[str]:
         run_ids = [run.id for run in task.runs]

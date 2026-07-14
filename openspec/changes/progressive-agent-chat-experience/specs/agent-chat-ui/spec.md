@@ -37,12 +37,15 @@ The system SHALL map run, phase, turn and tool statuses to a live user-readable 
 #### Scenario: Run is executing
 - **WHEN** the Agent loop is planning, selecting an action, searching, reading, reflecting, verifying, or composing
 - **THEN** the process panel summary displays “思考中” for the entire non-terminal Run, including gaps between internal process events
+- **THEN** a compact animated three-dot indicator beside “思考中” continuously communicates activity without animating the outer panel
+- **THEN** reduced-motion preferences receive the same indicator in a static form
 - **THEN** the process panel displays the active state and completed prior entries in execution order
 
 #### Scenario: Run reaches a terminal state
 - **WHEN** the Run completes, fails, becomes blocked, waits for the user, or is cancelled
 - **THEN** the process panel summary displays “思考完成”
 - **THEN** the summary no longer displays “思考中”
+- **THEN** the activity indicator is absent
 
 #### Scenario: Active process panel displays internal progress
 - **WHEN** a Run is active and its process panel is expanded

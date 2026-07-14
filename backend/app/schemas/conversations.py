@@ -27,9 +27,17 @@ class ConversationUpdateRequest(BaseModel):
     pinned: bool | None = None
 
 
+class PublicProcessItem(BaseModel):
+    kind: Literal["reasoning", "tool", "reflection", "verification"]
+    title: str
+    detail: str = ""
+    status: Literal["completed", "failed", "cancelled"] = "completed"
+
+
 class PublicMessage(BaseModel):
-    role: Literal["user", "assistant"]
-    content: str
+    role: Literal["user", "assistant", "process"]
+    content: str = ""
+    items: list[PublicProcessItem] = Field(default_factory=list)
 
 
 class SharedConversation(BaseModel):

@@ -1550,7 +1550,7 @@ function ProcessPanel({ run, messageId, liveState, open, onInitialize, onOpenCha
     event.preventDefault();
     onOpenChange(run.id, !open);
   };
-  return <article className={`process-entry ${live ? 'live' : ''}`} id={`message-${messageId}`}><details className="process-panel" open={open}><summary onClick={toggle} aria-expanded={open}><Icon name="brain" /><span>{processTitle}</span></summary><div className="process-timeline" aria-live={live ? 'polite' : undefined}>
+  return <article className={`process-entry ${live ? 'live' : ''}`} id={`message-${messageId}`}><details className="process-panel" open={open}><summary onClick={toggle} aria-expanded={open}><Icon name="brain" /><span className="process-title">{processTitle}{live && <span className="process-thinking-dots" aria-hidden="true"><i /><i /><i /></span>}</span></summary><div className="process-timeline" aria-live={live ? 'polite' : undefined}>
     <ProcessTimeline items={processItems} run={run} />
     {!live && remainingNotes.map((note, index) => <div className="process-step verification" key={`verification-${index}`}><span className="process-dot"><Icon name="check" /></span><div><strong>{t('验证')}</strong><p>{note}</p></div></div>)}
     {!live && <ReasoningAuditSummary run={run} />}

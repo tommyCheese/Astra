@@ -228,6 +228,7 @@ async def test_create_and_get_run(app_client):
 
 
 async def test_conversation_management_and_share_lifecycle(app_client):
+    from app.db.models import AgentTurnRecord
     from app.repositories.runs import RunRepository
 
     created = await app_client.post("/api/runs", json={"goal": "需要安全分享的对话"})
@@ -235,6 +236,8 @@ async def test_conversation_management_and_share_lifecycle(app_client):
     run_id = created.json()["run_id"]
     async with app_client._astra_session() as session:
         await RunRepository(session).update_run_status(run_id, "completed", summary="公开回答")
+        session.add(AgentTurnRecord(run_id=run_id, turn_index=1, decision_type="finalize", reasoning_summary="正在整理公开回答", status="completed"))
+        await session.commit()
 
     renamed = await app_client.patch(
         f"/api/conversations/{conversation_id}", json={"title": "用户标题", "pinned": True}
@@ -255,11 +258,15 @@ async def test_conversation_management_and_share_lifecycle(app_client):
     assert active_shares.status_code == 200
     assert active_shares.json()[0]["conversation_id"] == conversation_id
     assert active_shares.json()[0]["title"] == "用户标题"
-    assert active_shares.json()[0]["message_count"] == 1
+    assert active_shares.json()[0]["message_count"] == 2
     public = await app_client.get(f"/api/shared-conversations/{token}")
     assert public.status_code == 200
     assert public.json()["title"] == "用户标题"
-    assert public.json()["messages"] == [{"role": "user", "content": "需要安全分享的对话"}]
+    assert public.json()["messages"] == [
+        {"role": "user", "content": "需要安全分享的对话", "items": []},
+        {"role": "process", "content": "", "items": [{"kind": "reasoning", "title": "思考", "detail": "正在整理公开回答", "status": "completed"}]},
+        {"role": "assistant", "content": "正在整理公开回答", "items": []},
+    ]
     assert "runs" not in public.json()
     assert "agent_profile" not in public.json()
 

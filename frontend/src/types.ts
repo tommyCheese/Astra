@@ -227,4 +227,5 @@ export type ConversationSummary = {
 export type ConversationView = ConversationSummary & { runs: RunView[] };
 export type ConversationShare = { url: string; created_at: string; updated_at: string };
 export type ConversationShareSummary = ConversationShare & { conversation_id: string; title: string; message_count: number };
-export type SharedConversation = { title: string; messages: Array<{ role: 'user' | 'assistant'; content: string }>; shared_at: string; updated_at: string };
+export type SharedProcessItem = { kind: 'reasoning' | 'tool' | 'reflection' | 'verification'; title: string; detail: string; status: 'completed' | 'failed' | 'cancelled' };
+export type SharedConversation = { title: string; messages: Array<{ role: 'user' | 'assistant' | 'process'; content: string; items: SharedProcessItem[] }>; shared_at: string; updated_at: string };
