@@ -1022,9 +1022,9 @@ describe('App', () => {
     await userEvent.click(helpButton);
     expect(screen.getByRole('dialog', { name: '策略说明' })).toBeInTheDocument();
     expect(screen.queryByText('触发方式')).not.toBeInTheDocument();
-    expect(screen.getByText('允许 0–5 次工具调用，简单任务更快。')).toBeInTheDocument();
-    expect(screen.getByText('允许 6–15 次工具调用，兼顾速度与检查深度。')).toBeInTheDocument();
-    expect(screen.getByText('允许 16–50 次工具调用，为复杂任务提供更多执行预算。')).toBeInTheDocument();
+    expect(screen.getByText('允许 0–5 次工具调用，简单任务更快；启用反思时，提供轻量反思能力。')).toBeInTheDocument();
+    expect(screen.getByText('允许 6–15 次工具调用，兼顾速度与检查深度；启用反思时，提供基本的反思能力。')).toBeInTheDocument();
+    expect(screen.getByText('允许 16–50 次工具调用，为复杂任务提供更多执行预算；启用反思时，允许更深层的反思能力。')).toBeInTheDocument();
     expect(screen.getByText('轻量启动，按结果决定是否调整计划。')).toBeInTheDocument();
     expect(screen.getByText('失败、低置信度、冲突或无进展时反思。')).toBeInTheDocument();
     expect(screen.getByText('每轮结束都反思，更审慎但更慢、更耗用量。')).toBeInTheDocument();
