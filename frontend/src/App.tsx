@@ -94,6 +94,7 @@ function AppContent() {
   const attachMenuRef = useRef<HTMLDivElement>(null);
   const executionMenuRef = useRef<HTMLDivElement>(null);
   const modelMenuRef = useRef<HTMLDivElement>(null);
+  const goalInputRef = useRef<HTMLTextAreaElement>(null);
   const conversationRef = useRef<HTMLDivElement>(null);
   const followLatestRef = useRef(true);
   const jumpingToLatestRef = useRef(false);
@@ -610,7 +611,12 @@ function AppContent() {
           </div>
 
           {showJumpToLatest && <button className="jump-latest-button" type="button" onClick={jumpToLatest}><span aria-hidden="true">↓</span>{t('回到最新')}</button>}
-          <form className="chat-composer" onSubmit={submit}>
+          <form className="chat-composer" onSubmit={submit} onClick={(event) => {
+            const target = event.target as HTMLElement;
+            if (!target.closest('button, textarea, input, select, a, [role="button"]')) {
+              goalInputRef.current?.focus({ preventScroll: true });
+            }
+          }}>
             <div className="composer-menu-wrap" ref={attachMenuRef}>
               <button
                 className="composer-icon-button"
@@ -652,6 +658,7 @@ function AppContent() {
               }} />}
             </div>
             <textarea
+              ref={goalInputRef}
               value={goal}
               onChange={(event) => setGoal(event.target.value)}
               onKeyDown={(event) => {
@@ -668,7 +675,7 @@ function AppContent() {
                 setAttachOpen(false);
                 setExecutionMenuOpen(false);
               }}>
-                <span>{selectedModel || t('未配置模型')}</span><small>{t(reasoningEffort)} · {toolCallLimit} {t('次工具')} · {reflectionEnabled ? `${t(reflectionTrigger)} ${t('反思')}` : t('反思关闭')}</small><b>⌄</b>
+                <span>{selectedModel || t('未配置模型')}</span><small>{t(reasoningEffort)} · {t('{count} 次工具').replace('{count}', String(toolCallLimit))} · {reflectionEnabled ? `${t(reflectionTrigger)} ${t('反思')}` : t('反思关闭')}</small><b>⌄</b>
               </button>
               {modelOpen && (
                 <ModelMenu
@@ -1498,7 +1505,7 @@ function MenuChoice({ label, value, options, onChange }: { label: string; value:
 
 function ToolCallLimitControl({ value, min, max, onChange }: { value: number; min: number; max: number; onChange: (value: number) => void }) {
   const { t } = useI18n();
-  return <div className="tool-limit-control"><div><span>{t('工具调用上限')}</span><output>{value} {t('次')}</output></div><input type="range" aria-label={t('工具调用上限')} min={min} max={max} value={value} onChange={(event) => onChange(Number(event.currentTarget.value))} /><small>{t('当前强度可调整范围：{min}–{max} 次').replace('{min}', String(min)).replace('{max}', String(max))}</small></div>;
+  return <div className="tool-limit-control"><div><span>{t('工具调用上限')}</span><output>{t('{count} 次').replace('{count}', String(value))}</output></div><input type="range" aria-label={t('工具调用上限')} min={min} max={max} value={value} onChange={(event) => onChange(Number(event.currentTarget.value))} /><small>{t('当前强度可调整范围：{min}–{max} 次').replace('{min}', String(min)).replace('{max}', String(max))}</small></div>;
 }
 
 function ErrorDialog({ error, onClose, onRetry }: { error: ApiErrorPayload; onClose: () => void; onRetry?: () => void }) {

@@ -3454,7 +3454,7 @@ html[data-theme="dark"] .question-preview p {
 @keyframes thinking-wave { 0%, 70%, 100% { opacity: .34; transform: translateY(1px); } 35% { opacity: 1; transform: translateY(-2px); } }
 
 .chat-composer { box-shadow: 0 22px 54px rgba(37, 60, 83, .16), 0 4px 14px rgba(37, 60, 83, .08), inset 0 1px 0 rgba(255, 255, 255, .78), inset 0 -1px 0 rgba(148, 163, 184, .12); }
-.chat-composer:focus-within { border-color: rgba(83, 200, 162, .58); box-shadow: 0 24px 58px rgba(37, 60, 83, .17), 0 0 0 4px rgba(83, 200, 162, .09), inset 0 1px 0 rgba(255, 255, 255, .8); transform: translateY(-2px); }
+.chat-composer:focus-within { border-color: rgba(83, 200, 162, .58); box-shadow: 0 24px 58px rgba(37, 60, 83, .17), 0 0 0 4px rgba(83, 200, 162, .09), inset 0 1px 0 rgba(255, 255, 255, .8); }
 
 html[data-theme="dark"] #root { background: radial-gradient(circle at 14% 16%, rgba(44, 142, 115, .22), transparent 30%), radial-gradient(circle at 82% 12%, rgba(57, 103, 164, .22), transparent 34%), radial-gradient(circle at 72% 88%, rgba(149, 118, 45, .15), transparent 32%), #20242a; }
 html[data-theme="dark"] .sidebar { background: linear-gradient(155deg, rgba(42, 47, 54, .88), rgba(31, 36, 43, .82)); }

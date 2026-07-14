@@ -978,6 +978,13 @@ describe('App', () => {
     expect(screen.getByText('Choose the interface language')).toBeInTheDocument();
     expect(document.documentElement.lang).toBe('en');
     await userEvent.click(screen.getByRole('button', { name: 'Close settings' }));
+    const modelSelector = screen.getByRole('button', { name: 'Current model: gpt-5' });
+    expect(modelSelector).toHaveTextContent('Balanced · 8 tool calls · Adaptive reflection');
+    await userEvent.click(modelSelector);
+    expect(screen.getByText('8 calls')).toBeInTheDocument();
+    expect(screen.getByText('Adjustable range for this effort: 6–15')).toBeInTheDocument();
+    expect(screen.queryByText('8 次')).not.toBeInTheDocument();
+    await userEvent.click(modelSelector);
     await userEvent.click(screen.getByRole('button', { name: /^Usage/ }));
     expect(screen.getByRole('dialog', { name: 'Usage' })).toBeInTheDocument();
     expect(await screen.findByText('Total tokens')).toBeInTheDocument();
@@ -1010,6 +1017,21 @@ describe('App', () => {
     expect(screen.queryByText('最大 Agent 轮次')).not.toBeInTheDocument();
     expect(screen.getByText('工具调用上限')).toBeInTheDocument();
     expect(screen.getByText('当前强度可调整范围：6–15 次')).toBeInTheDocument();
+  });
+
+  it('keeps the task input focused when non-interactive composer content is clicked', async () => {
+    const { container } = render(<App />);
+    const composer = container.querySelector<HTMLElement>('.chat-composer');
+    const input = screen.getByRole('textbox');
+
+    expect(composer).not.toBeNull();
+    await userEvent.click(composer!);
+    expect(input).toHaveFocus();
+
+    await userEvent.click(screen.getByRole('button', { name: '当前模型：gpt-5' }));
+    await userEvent.click(screen.getByText('工具调用上限'));
+
+    expect(input).toHaveFocus();
   });
 
   it('explains each conversation strategy from the model menu', async () => {
