@@ -705,16 +705,39 @@ function Sidebar({ run, activeConversationId, conversations, activeView, onNewCh
 }) {
   const { t } = useI18n();
   const [menuId, setMenuId] = useState<string | null>(null);
+  const menuRootRef = useRef<HTMLDivElement>(null);
   const pinned = conversations.filter((item) => item.pinned_at);
   const recent = conversations.filter((item) => !item.pinned_at);
-  const renderConversation = (conversation: ConversationEntry) => <div className={`history-item ${activeConversationId === conversation.id ? 'active' : ''}`} key={conversation.id}>
-    <button className="history-select" type="button" onClick={() => onSelectConversation(conversation)}><Icon name="message" /><span>{conversation.title ?? (conversation.run ? conversationTitle(conversation.run, t('当前 Web Agent 会话')) : t('未命名对话'))}</span><small>{conversation.run ? statusLabel(conversation.run.status) : ''}</small></button>
-    <button className="history-more" type="button" aria-label={`${t('更多操作')} ${conversation.title ?? ''}`} aria-expanded={menuId === conversation.id} onClick={(event) => { event.stopPropagation(); setMenuId((current) => current === conversation.id ? null : conversation.id); }}>•••</button>
+
+  useEffect(() => {
+    if (!menuId) return;
+    const closeMenu = () => setMenuId(null);
+    const closeWhenFocusLeaves = (event: PointerEvent | FocusEvent) => {
+      if (event.target instanceof Node && !menuRootRef.current?.contains(event.target)) closeMenu();
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') closeMenu();
+    };
+    document.addEventListener('pointerdown', closeWhenFocusLeaves);
+    document.addEventListener('focusin', closeWhenFocusLeaves);
+    document.addEventListener('keydown', closeOnEscape);
+    window.addEventListener('blur', closeMenu);
+    return () => {
+      document.removeEventListener('pointerdown', closeWhenFocusLeaves);
+      document.removeEventListener('focusin', closeWhenFocusLeaves);
+      document.removeEventListener('keydown', closeOnEscape);
+      window.removeEventListener('blur', closeMenu);
+    };
+  }, [menuId]);
+
+  const renderConversation = (conversation: ConversationEntry) => <div className={`history-item ${activeConversationId === conversation.id ? 'active' : ''}`} key={conversation.id} ref={menuId === conversation.id ? menuRootRef : undefined}>
+    <button className="history-select" type="button" onClick={() => { setMenuId(null); onSelectConversation(conversation); }}><Icon name="message" /><span>{conversation.title ?? (conversation.run ? conversationTitle(conversation.run, t('当前 Web Agent 会话')) : t('未命名对话'))}</span><small>{conversation.run ? statusLabel(conversation.run.status) : ''}</small></button>
+    <button className="history-more" type="button" aria-label={`${t('更多操作')} ${conversation.title ?? ''}`} aria-expanded={menuId === conversation.id} aria-haspopup="menu" onClick={(event) => { event.stopPropagation(); setMenuId((current) => current === conversation.id ? null : conversation.id); }}>•••</button>
     {menuId === conversation.id && <div className="history-menu" role="menu">
-      <button type="button" onClick={() => { setMenuId(null); onConversationAction('rename', conversation); }}>{t('重命名')}</button>
-      <button type="button" onClick={() => { setMenuId(null); onTogglePin(conversation); }}>{conversation.pinned_at ? t('取消置顶') : t('置顶')}</button>
-      <button type="button" onClick={() => { setMenuId(null); onConversationAction('share', conversation); }}>{t('分享')}</button>
-      <button className="danger" type="button" onClick={() => { setMenuId(null); onConversationAction('delete', conversation); }}>{t('删除')}</button>
+      <button role="menuitem" type="button" onClick={() => { setMenuId(null); onConversationAction('rename', conversation); }}>{t('重命名')}</button>
+      <button role="menuitem" type="button" onClick={() => { setMenuId(null); onTogglePin(conversation); }}>{conversation.pinned_at ? t('取消置顶') : t('置顶')}</button>
+      <button role="menuitem" type="button" onClick={() => { setMenuId(null); onConversationAction('share', conversation); }}>{t('分享')}</button>
+      <button className="danger" role="menuitem" type="button" onClick={() => { setMenuId(null); onConversationAction('delete', conversation); }}>{t('删除')}</button>
     </div>}
   </div>;
   return (
@@ -866,13 +889,12 @@ function AstraBrandIcon() {
   );
 }
 
-const settingCategories = ['模型管理', '工具', '运行时', '记忆', '验证与安全', '界面', '数据与隐私'];
+const settingCategories = ['模型管理', '工具', '运行时', '记忆', '界面', '数据与隐私'];
 const settingCategoryIcons: Record<string, IconName> = {
   '模型管理': 'sparkle',
   '工具': 'tools',
   '运行时': 'terminal',
   '记忆': 'brain',
-  '验证与安全': 'shield',
   '界面': 'palette',
   '数据与隐私': 'lock',
 };
@@ -912,7 +934,6 @@ function SettingSection({ category, providerConfigs, onProviderConfigsChange }: 
   if (category === '运行时') return <RuntimeSettings />;
   if (category === '工具') return <ToolSettings />;
   if (category === '记忆') return <SettingsGroup title="记忆" description="管理 Agent 在单次任务和不同对话之间保留的信息。"><SettingRow title="运行记忆" description="在当前任务中保留来源摘要和决策线索"><Toggle checked /></SettingRow><SettingRow title="跨对话记忆" description="在新对话中使用已确认的偏好与事实"><Toggle /></SettingRow><SettingRow title="写入阈值" description="仅保存高于该置信度的结构化记忆"><TranslatedSelect defaultValue="80" options={[['70', '70%'], ['80', '80%'], ['90', '90%']]} /></SettingRow><SettingRow title="记忆保留期" description="到期后自动清理非固定记忆"><TranslatedSelect defaultValue="30" options={[['7', `7 ${t('天')}`], ['30', `30 ${t('天')}`], ['forever', '永久']]} /></SettingRow></SettingsGroup>;
-  if (category === '验证与安全') return <SettingsGroup title="验证与安全" description="定义 Agent 在报告完成前必须满足的通用验证要求。"><SettingRow title="完成前验证" description="提交结果前运行与任务类型匹配的验证器"><Toggle checked /></SettingRow><SettingRow title="验证强度" description="控制验证覆盖范围以及失败后的检查深度"><TranslatedSelect defaultValue="standard" options={[['basic', '基础'], ['standard', '标准'], ['strict', '严格']]} /></SettingRow><SettingRow title="验证失败处理" description="验证未通过时决定继续修复、带警告返回或停止任务"><TranslatedSelect defaultValue="repair" options={[['repair', '自动修复'], ['warn', '带警告返回'], ['block', '停止任务']]} /></SettingRow></SettingsGroup>;
   if (category === '界面') return <SettingsGroup title="界面" description="调整工作区的信息密度和运行过程展示。"><SettingRow title="语言" description="选择界面显示语言"><select value={language} onChange={(event) => setLanguage(event.target.value as 'zh-CN' | 'en')}><option value="zh-CN">中文</option><option value="en">English</option></select></SettingRow><SettingRow title="主题模式" description="选择界面外观，或随操作系统自动切换"><select value={mode} onChange={(event) => setMode(event.target.value as 'system' | 'light' | 'dark')}><option value="system">{t('跟随系统')}</option><option value="light">{t('浅色模式')}</option><option value="dark">{t('暗色模式')}</option></select></SettingRow><SettingRow title="过程展示" description="在对话中显示工具调用和反思摘要"><Toggle checked /></SettingRow><SettingRow title="审计面板" description="任务完成后显示证据、事件和记忆"><Toggle checked /></SettingRow><SettingRow title="信息密度" description="控制对话和面板的间距"><TranslatedSelect defaultValue="compact" options={[['compact', '紧凑'], ['comfortable', '舒适']]} /></SettingRow></SettingsGroup>;
   if (category === '数据与隐私') return <SettingsGroup title="数据与隐私" description="控制任务记录、工具内容和诊断信息的保存方式。"><SettingRow title="保存运行记录" description="保留对话、工具调用元数据和验证报告"><Toggle checked /></SettingRow><SettingRow title="工具内容保留" description="决定是否保存工具返回的正文、文件内容或结构化结果"><TranslatedSelect defaultValue="metadata" options={[['none', '不保留内容'], ['metadata', '仅保留元数据'], ['full', '保留完整输出']]} /></SettingRow><SettingRow title="诊断日志" description="记录不包含工具内容的性能与错误信息"><Toggle checked /></SettingRow><button className="danger-button" type="button">{t('清除本地运行数据')}</button></SettingsGroup>;
   return null;
@@ -1364,7 +1385,7 @@ function ErrorDialog({ error, onClose, onRetry }: { error: ApiErrorPayload; onCl
   return <div className="modal-backdrop" role="presentation" onMouseDown={onClose}><section className="confirmation-modal error-dialog" role="alertdialog" aria-modal="true" aria-labelledby="error-title" onMouseDown={(event) => event.stopPropagation()}><div className="warning-mark">!</div><h2 id="error-title">{t(title)}</h2><p>{error.message}</p>{technical && <div className="confirmation-note">{t('错误类型：')}<code>{error.type}</code><br />{t('诊断编号：')}<code>{error.trace_id}</code></div>}<div className="confirmation-actions">{onRetry && <button className="secondary-button" type="button" onClick={onRetry}>{t('重试')}</button>}<button className="danger-confirm-button" type="button" onClick={onClose}>{t('知道了')}</button></div></section></div>;
 }
 
-type IconName = 'plus' | 'message' | 'chart' | 'settings' | 'sparkle' | 'tools' | 'terminal' | 'brain' | 'shield' | 'palette' | 'lock' | 'token' | 'check' | 'route' | 'refresh' | 'requestApprove' | 'autoApprove';
+type IconName = 'plus' | 'message' | 'chart' | 'settings' | 'sparkle' | 'tools' | 'terminal' | 'brain' | 'palette' | 'lock' | 'token' | 'check' | 'route' | 'refresh' | 'requestApprove' | 'autoApprove';
 
 function Icon({ name }: { name: IconName }) {
   const paths: Record<IconName, ReactNode> = {
@@ -1376,7 +1397,6 @@ function Icon({ name }: { name: IconName }) {
     tools: <><path d="M14 6a4 4 0 0 0-5.48 5.48L3.5 16.5a2.12 2.12 0 0 0 3 3l5.02-5.02A4 4 0 0 0 17 9l-3 1-2-2 1-3Z" /><path d="m15 15 4 4" /></>,
     terminal: <><path d="m5 7 4 4-4 4M12 17h7" /><rect x="3" y="4" width="18" height="16" rx="2" /></>,
     brain: <path d="M9 5.2A3.4 3.4 0 0 0 4.7 8.5 3.2 3.2 0 0 0 5 14.7 3.1 3.1 0 0 0 8 19h1.2V5.2Zm6 0a3.4 3.4 0 0 1 4.3 3.3 3.2 3.2 0 0 1-.3 6.2 3.1 3.1 0 0 1-3 4.3h-1.2V5.2ZM9 9H7m2 4H6m9-4h2m-2 4h3" />,
-    shield: <path d="M12 3 19 6v5c0 4.6-3 7.7-7 10-4-2.3-7-5.4-7-10V6l7-3Zm-3 9 2 2 4-4" />,
     palette: <path d="M12 3a9 9 0 1 0 0 18h1.1a1.9 1.9 0 0 0 .5-3.73 1.5 1.5 0 0 1 .4-2.95H16A5 5 0 0 0 21 9c0-3.3-4-6-9-6ZM7.5 11.5h.01M9 7.5h.01m6 0h.01m1.5 4h.01" />,
     lock: <><rect x="5" y="10" width="14" height="10" rx="2" /><path d="M8 10V7a4 4 0 0 1 8 0v3m-4 4v2" /></>,
     token: <><circle cx="12" cy="12" r="8" /><path d="M9 9h6v6H9zM12 6v3m0 6v3m-6-6h3m6 0h3" /></>,
@@ -1421,13 +1441,8 @@ function MessageBubble({ message, run, processState, processPanelDefaultOpen, pr
 
 function ProcessPanel({ run, messageId, liveState, open, onInitialize, onOpenChange }: { run: RunView; messageId: string; liveState: ProcessStreamState | null; open: boolean; onInitialize: (runId: string) => void; onOpenChange: (runId: string, open: boolean) => void }) {
   const { t } = useI18n();
-  const turns = [...(run.turns ?? [])].sort((a, b) => a.turn_index - b.turn_index);
   const live = Boolean(liveState?.active);
-  const processSummary = live
-    ? t('实时更新')
-    : run.tool_calls.length > 0
-    ? t('{steps} 个步骤 · {tools} 次工具调用').replace('{steps}', String(turns.length)).replace('{tools}', String(run.tool_calls.length))
-    : t('{steps} 个步骤').replace('{steps}', String(turns.length));
+  const processTitle = live ? t('思考中') : t('思考完成');
   const report = run.result?.verification_report;
   const notes = [...new Set([...(run.result?.verification_notes ?? []), ...(report?.notes ?? [])])];
   const processItems = liveState?.items ?? reconcileProcessSnapshot(null, run).items;
@@ -1438,7 +1453,7 @@ function ProcessPanel({ run, messageId, liveState, open, onInitialize, onOpenCha
     event.preventDefault();
     onOpenChange(run.id, !open);
   };
-  return <article className={`process-entry ${live ? 'live' : ''}`} id={`message-${messageId}`}><details className="process-panel" open={open}><summary onClick={toggle} aria-expanded={open}><Icon name="brain" /><span>{t('思考过程')}</span><small>{processSummary}</small></summary><div className="process-timeline" aria-live={live ? 'polite' : undefined}>
+  return <article className={`process-entry ${live ? 'live' : ''}`} id={`message-${messageId}`}><details className="process-panel" open={open}><summary onClick={toggle} aria-expanded={open}><Icon name="brain" /><span>{processTitle}</span></summary><div className="process-timeline" aria-live={live ? 'polite' : undefined}>
     <ProcessTimeline items={processItems} run={run} />
     {!live && remainingNotes.map((note, index) => <div className="process-step verification" key={`verification-${index}`}><span className="process-dot"><Icon name="check" /></span><div><strong>{t('验证')}</strong><p>{note}</p></div></div>)}
     {!live && <ReasoningAuditSummary run={run} />}

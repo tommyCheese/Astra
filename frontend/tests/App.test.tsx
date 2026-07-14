@@ -221,7 +221,7 @@ describe('App', () => {
     expect(screen.getByRole('navigation', { name: '问题导航' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '跳转到问题 1' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '跳转到问题 1' })).toHaveAttribute('aria-current', 'true');
-    expect(screen.getByText('思考过程')).toBeInTheDocument();
+    expect(screen.getByText('思考完成')).toBeInTheDocument();
     expect(screen.getByText('至少一个抓取来源支撑了最终答案。')).toBeInTheDocument();
     expect(screen.getAllByText('已完成查询')).toHaveLength(1);
     expect(screen.getByText('web_search').closest('details')).not.toHaveAttribute('open');
@@ -357,7 +357,7 @@ describe('App', () => {
     await userEvent.type(screen.getByRole('textbox'), '直接思考');
     await userEvent.click(screen.getByRole('button', { name: '发送' }));
 
-    expect(await screen.findByText('2 个步骤')).toBeInTheDocument();
+    expect(await screen.findByText('思考完成')).toBeInTheDocument();
     expect(screen.queryByText(/0 次工具调用/)).not.toBeInTheDocument();
   });
 
@@ -414,10 +414,10 @@ describe('App', () => {
     await userEvent.type(screen.getByRole('textbox'), '实时过程');
     await userEvent.click(screen.getByRole('button', { name: '发送' }));
 
-    const summary = await screen.findByText('思考过程');
+    const summary = await screen.findByText('思考中');
     const panel = summary.closest('details');
     expect(panel).not.toHaveAttribute('open');
-    expect(screen.getByText('实时更新')).toBeInTheDocument();
+    expect(screen.queryByText('实时更新')).not.toBeInTheDocument();
     expect(panel?.querySelector('summary .process-loading-pane')).not.toBeInTheDocument();
     expect(panel?.querySelector('.process-step.status-running')).toBeInTheDocument();
     expect(panel?.querySelector('.process-live-dot')).not.toBeInTheDocument();
@@ -476,7 +476,7 @@ describe('App', () => {
     await userEvent.type(screen.getByRole('textbox'), '第一条');
     await userEvent.click(screen.getByRole('button', { name: '发送' }));
 
-    const firstSummary = await screen.findByText('思考过程');
+    const firstSummary = await screen.findByText('思考完成');
     const firstPanel = firstSummary.closest('details');
     expect(firstPanel).not.toHaveAttribute('open');
     await userEvent.click(firstSummary);
@@ -492,8 +492,8 @@ describe('App', () => {
     await userEvent.type(screen.getByRole('textbox'), '第二条');
     await userEvent.click(screen.getByRole('button', { name: '发送' }));
 
-    await waitFor(() => expect(screen.getAllByText('思考过程')).toHaveLength(2));
-    const summaries = screen.getAllByText('思考过程');
+    await waitFor(() => expect(screen.getAllByText('思考完成')).toHaveLength(2));
+    const summaries = screen.getAllByText('思考完成');
     const firstExistingPanel = summaries[0].closest('details');
     const secondPanel = summaries[1].closest('details');
     expect(firstExistingPanel).toHaveAttribute('open');
@@ -514,7 +514,7 @@ describe('App', () => {
     await userEvent.type(screen.getByRole('textbox'), '新对话');
     await userEvent.click(screen.getByRole('button', { name: '发送' }));
 
-    const newConversationSummary = await screen.findByText('思考过程');
+    const newConversationSummary = await screen.findByText('思考完成');
     expect(newConversationSummary.closest('details')).not.toHaveAttribute('open');
   });
 
@@ -615,15 +615,32 @@ describe('App', () => {
 
     expect(await screen.findByText('置顶')).toBeInTheDocument();
     expect(screen.getByText('最近')).toBeInTheDocument();
-    await userEvent.click(screen.getByRole('button', { name: '更多操作 重要对话' }));
-    await userEvent.click(screen.getByRole('button', { name: '重命名' }));
+    const moreButton = screen.getByRole('button', { name: '更多操作 重要对话' });
+    await userEvent.click(moreButton);
+    expect(moreButton).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByRole('menu')).toBeInTheDocument();
+    expect(screen.getAllByRole('menuitem')).toHaveLength(4);
+    await userEvent.click(screen.getByRole('heading', { name: 'Navigate Ideas. Create Reality.' }));
+    expect(moreButton).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+
+    await userEvent.click(moreButton);
+    await userEvent.keyboard('{Escape}');
+    expect(moreButton).toHaveAttribute('aria-expanded', 'false');
+
+    await userEvent.click(moreButton);
+    act(() => window.dispatchEvent(new Event('blur')));
+    expect(moreButton).toHaveAttribute('aria-expanded', 'false');
+
+    await userEvent.click(moreButton);
+    await userEvent.click(screen.getByRole('menuitem', { name: '重命名' }));
     const input = screen.getByRole('dialog', { name: '重命名对话' }).querySelector('input') as HTMLInputElement;
     await userEvent.clear(input);
     await userEvent.type(input, '新的标题{Enter}');
     await waitFor(() => expect(updateConversation).toHaveBeenCalledWith('pinned', { title: '新的标题' }));
 
     await userEvent.click(screen.getByRole('button', { name: '更多操作 普通对话' }));
-    await userEvent.click(screen.getByRole('button', { name: '删除' }));
+    await userEvent.click(screen.getByRole('menuitem', { name: '删除' }));
     expect(screen.getByRole('dialog', { name: '删除对话' })).toHaveTextContent('无法撤销');
     await userEvent.click(screen.getByRole('button', { name: '永久删除' }));
     await waitFor(() => expect(deleteConversation).toHaveBeenCalledWith('recent'));
@@ -890,15 +907,11 @@ describe('App', () => {
     expect(screen.getByRole('button', { name: '配置已同步' })).toBeDisabled();
   });
 
-  it('keeps validation and data settings task agnostic', async () => {
+  it('does not expose validation settings and keeps data settings task agnostic', async () => {
     render(<App />);
 
     await userEvent.click(screen.getByRole('button', { name: /设置/ }));
-    await userEvent.click(screen.getByRole('button', { name: '验证与安全' }));
-    expect(screen.getByText('验证强度')).toBeInTheDocument();
-    expect(screen.getByText('验证失败处理')).toBeInTheDocument();
-    expect(screen.queryByText('冲突处理')).not.toBeInTheDocument();
-    expect(screen.queryByText('最低独立来源数')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '验证与安全' })).not.toBeInTheDocument();
 
     await userEvent.click(screen.getByRole('button', { name: '数据与隐私' }));
     expect(screen.getByText('工具内容保留')).toBeInTheDocument();
