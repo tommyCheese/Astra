@@ -2,7 +2,7 @@ import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { App } from '../src/App';
-import { buildRuntime, cancelRun, cancelRuntimeBuild, createRun, getConversationStrategy, getRun, getRuntimeProfile, listRuns, streamRunEvents, updateConversationStrategy, updateToolSettings, type RunStreamEvent } from '../src/api';
+import { buildRuntime, cancelRun, cancelRuntimeBuild, createRun, deleteConversation, getConversationStrategy, getRun, getRuntimeProfile, listConversations, listRuns, streamRunEvents, updateConversation, updateConversationStrategy, updateToolSettings, type RunStreamEvent } from '../src/api';
 
 vi.mock('../src/api', () => ({
   getConversationStrategy: vi.fn(async () => ({ reasoning_effort: 'balanced', planning_strategy: 'adaptive', reflection_enabled: true, reflection_trigger: 'adaptive' })),
@@ -441,13 +441,22 @@ describe('App', () => {
     await new Promise((resolve) => window.setTimeout(resolve, 150));
     expect(vi.mocked(getRun)).toHaveBeenCalledTimes(snapshotCalls);
 
-    act(() => emit?.({ id: 12, type: 'answer.delta', payload: { delta: '开始回答' } }));
+    act(() => {
+      emit?.({ id: 12, type: 'tool_call.started', payload: { tool_call_id: 'call-live', tool_name: 'web_search' } });
+      emit?.({ id: 13, type: 'tool_call.completed', payload: { tool_call_id: 'call-live', tool_name: 'web_search', status: 'succeeded' } });
+    });
+    const handoff = await screen.findByText('正在评估执行结果');
+    expect(handoff.closest('.process-handoff')).toHaveClass('status-running');
+    expect(decisionGroup?.querySelector('.process-decision-children')).toContainElement(handoff.closest('.process-step'));
+    expect(panel?.querySelectorAll('.process-step.status-running')).toHaveLength(1);
+
+    act(() => emit?.({ id: 14, type: 'answer.delta', payload: { delta: '开始回答' } }));
     expect(await screen.findByText('开始回答')).toBeInTheDocument();
     expect(panel).toHaveAttribute('open');
 
     await userEvent.click(summary);
     expect(panel).not.toHaveAttribute('open');
-    act(() => emit?.({ id: 13, type: 'reasoning.summary.delta', payload: { turn_index: 1, delta: '并继续验证' } }));
+    act(() => emit?.({ id: 15, type: 'reasoning.summary.delta', payload: { turn_index: 1, delta: '并继续验证' } }));
     expect(await screen.findByText('正在选择可靠来源并继续验证')).toBeInTheDocument();
     expect(panel).not.toHaveAttribute('open');
     await waitFor(() => expect(JSON.parse(window.localStorage.getItem('astra.process-panel-default-open.v1') ?? 'true')).toBe(false));
@@ -589,6 +598,30 @@ describe('App', () => {
     expect(screen.getByRole('textbox')).toHaveValue('');
     expect(screen.getByText('Navigate Ideas. Create Reality.')).toBeInTheDocument();
     expect(screen.getByText('今天想完成点什么？')).toBeInTheDocument();
+  });
+
+  it('separates pinned conversations and manages rename and delete with dialogs', async () => {
+    const now = new Date().toISOString();
+    vi.mocked(listConversations).mockResolvedValueOnce([
+      { id: 'pinned', title: '重要对话', title_source: 'user', pinned_at: now, created_at: now, updated_at: now, last_run_status: 'completed', last_message_preview: '', has_active_share: false },
+      { id: 'recent', title: '普通对话', title_source: 'auto', pinned_at: null, created_at: now, updated_at: now, last_run_status: 'completed', last_message_preview: '', has_active_share: false },
+    ]);
+    render(<App />);
+
+    expect(await screen.findByText('置顶')).toBeInTheDocument();
+    expect(screen.getByText('最近')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: '更多操作 重要对话' }));
+    await userEvent.click(screen.getByRole('button', { name: '重命名' }));
+    const input = screen.getByRole('dialog', { name: '重命名对话' }).querySelector('input') as HTMLInputElement;
+    await userEvent.clear(input);
+    await userEvent.type(input, '新的标题{Enter}');
+    await waitFor(() => expect(updateConversation).toHaveBeenCalledWith('pinned', { title: '新的标题' }));
+
+    await userEvent.click(screen.getByRole('button', { name: '更多操作 普通对话' }));
+    await userEvent.click(screen.getByRole('button', { name: '删除' }));
+    expect(screen.getByRole('dialog', { name: '删除对话' })).toHaveTextContent('无法撤销');
+    await userEvent.click(screen.getByRole('button', { name: '永久删除' }));
+    await waitFor(() => expect(deleteConversation).toHaveBeenCalledWith('recent'));
   });
 
   it('reveals the local star burst after five quick logo clicks', async () => {

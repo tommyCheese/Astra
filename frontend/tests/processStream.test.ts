@@ -29,6 +29,15 @@ describe('process stream reducer', () => {
     expect(JSON.stringify(state)).not.toContain('secret');
   });
 
+  it('marks active process rows as cancelled when the run is stopped', () => {
+    let state = createOptimisticProcessState('run-1');
+    state = reduceProcessEvent(state, { id: 1, type: 'tool_call.started', payload: { tool_call_id: 'call-1', tool_name: 'web_search' } });
+    state = reduceProcessEvent(state, { id: 2, type: 'run.cancelled', payload: { status: 'cancelled' } });
+
+    expect(state.active).toBe(false);
+    expect(state.items.filter((item) => item.status === 'cancelled')).toHaveLength(2);
+  });
+
   it('keeps each reasoning and tool row inside its nearest selecting-action group', () => {
     let state = createOptimisticProcessState('run-1');
     state = reduceProcessEvent(state, { id: 1, type: 'reasoning.phase.started', payload: { phase: 'selecting_action', turn_index: 1 } });
@@ -42,6 +51,25 @@ describe('process stream reducer', () => {
     expect(state.items.find((item) => item.id === 'tool-call-1')?.groupId).toBe('phase-selecting_action-1');
     expect(state.items.find((item) => item.id === 'reasoning-2')?.groupId).toBe('phase-selecting_action-2');
     expect(state.items.find((item) => item.id === 'tool-call-2')?.groupId).toBe('phase-selecting_action-2');
+  });
+
+  it('shows a running evaluation handoff after a tool completes and closes it on the next phase', () => {
+    let state = createOptimisticProcessState('run-1');
+    state = reduceProcessEvent(state, { id: 1, type: 'reasoning.phase.started', payload: { phase: 'selecting_action', turn_index: 1 } });
+    state = reduceProcessEvent(state, { id: 2, type: 'tool_call.started', payload: { tool_call_id: 'call-1', tool_name: 'web_search' } });
+    state = reduceProcessEvent(state, { id: 3, type: 'tool_call.completed', payload: { tool_call_id: 'call-1', tool_name: 'web_search', status: 'succeeded' } });
+
+    expect(state.items.find((item) => item.id === 'phase-selecting_action-1')?.status).toBe('completed');
+    expect(state.items.find((item) => item.id === 'phase-processing_result-call-1')).toMatchObject({
+      title: '正在评估执行结果',
+      status: 'running',
+      groupId: 'phase-selecting_action-1',
+    });
+    expect(state.items.filter((item) => item.status === 'running')).toHaveLength(1);
+
+    state = reduceProcessEvent(state, { id: 4, type: 'reasoning.phase.started', payload: { phase: 'selecting_action', turn_index: 2 } });
+    expect(state.items.find((item) => item.id === 'phase-processing_result-call-1')?.status).toBe('completed');
+    expect(state.items.find((item) => item.id === 'phase-selecting_action-2')?.status).toBe('running');
   });
 
   it('rebuilds decision groups from a terminal snapshot without live state', () => {

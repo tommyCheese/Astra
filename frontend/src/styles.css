@@ -583,6 +583,12 @@ h1 {
   color: #9f2727;
 }
 
+.status.status-cancelled {
+  background: #edf1f4;
+  border-color: #cbd5df;
+  color: #526273;
+}
+
 .chat-surface {
   display: grid;
   grid-template-rows: minmax(0, 1fr) auto auto;
@@ -845,7 +851,7 @@ h1 {
   width: 18px;
 }
 
-.process-decision-children .process-step.status-running {
+.process-decision-children .process-step.status-running:not(.process-handoff) {
   background: transparent;
   border-radius: 0;
   margin: 0;
@@ -853,8 +859,13 @@ h1 {
   padding: 0;
 }
 
-.process-decision-children .process-step.status-running::before {
+.process-decision-children .process-step.status-running:not(.process-handoff)::before {
   display: none;
+}
+
+.process-decision-children .process-handoff.status-running {
+  margin: -5px -6px;
+  padding: 5px 6px;
 }
 
 .process-step.status-completed {
@@ -908,6 +919,8 @@ h1 {
 .process-step small { color: #8a94a3; display: block; font-size: 11px; margin-top: 4px; }
 .process-step.status-running .process-dot { border-color: rgba(125, 143, 162, .48); color: #65788c; }
 .process-step.status-failed .process-dot { color: #b54747; }
+.process-step.status-cancelled { color: #718096; }
+.process-step.status-cancelled .process-dot { border-color: #aeb9c5; color: #718096; }
 
 html[data-theme="dark"] .process-entry.live .process-panel { background: rgba(39, 44, 51, .78); border-color: rgba(255, 255, 255, .08); }
 html[data-theme="dark"] .process-step.status-running { background: rgba(54, 61, 70, .7); }

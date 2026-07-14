@@ -23,14 +23,14 @@ from app.schemas.agent import RunResult
 
 
 class RunRepository:
-    TERMINAL_STATUSES = {
+    TERMINAL_STATUSES = frozenset({
         "completed",
         "completed_with_warnings",
         "failed",
         "blocked",
         "waiting_user",
         "cancelled",
-    }
+    })
 
     def __init__(self, session: AsyncSession):
         self.session = session

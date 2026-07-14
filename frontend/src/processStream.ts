@@ -1,7 +1,7 @@
 import type { RunStreamEvent } from './api';
 import type { RunView } from './types';
 
-export type ProcessItemStatus = 'running' | 'completed' | 'failed';
+export type ProcessItemStatus = 'running' | 'completed' | 'failed' | 'cancelled';
 
 export type ProcessStreamItem = {
   id: string;
@@ -27,6 +27,7 @@ const phaseTitles: Record<string, string> = {
   planning: '正在理解任务并制定计划',
   executing: '正在执行计划',
   selecting_action: '正在分析下一步',
+  processing_result: '正在评估执行结果',
   synthesizing: '正在组织回答',
   verifying: '正在验证结果',
 };
@@ -67,7 +68,7 @@ export function reconcileProcessSnapshot(state: ProcessStreamState | null, run: 
       kind: turn.decision_type === 'reflect' ? 'reflection' : 'reasoning',
       title: turn.decision_type === 'reflect' ? '反思' : '思考',
       detail: turn.reflection ? String(turn.reflection.summary ?? turn.reasoning_summary) : turn.reasoning_summary,
-      status: turn.status === 'failed' ? 'failed' : 'completed',
+      status: turn.status === 'failed' ? 'failed' : turn.status === 'cancelled' ? 'cancelled' : 'completed',
       turnIndex: turn.turn_index,
       toolCallId: turn.tool_call_id ?? undefined,
       groupId,
@@ -85,7 +86,7 @@ export function reconcileProcessSnapshot(state: ProcessStreamState | null, run: 
       id,
       kind: 'tool',
       title: call.tool_name,
-      status: call.status === 'running' ? 'running' : call.status === 'failed' ? 'failed' : 'completed',
+      status: call.status === 'running' ? 'running' : call.status === 'failed' ? 'failed' : call.status === 'cancelled' ? 'cancelled' : 'completed',
       toolCallId: call.id,
       groupId,
     };
@@ -95,7 +96,7 @@ export function reconcileProcessSnapshot(state: ProcessStreamState | null, run: 
   return {
     ...next,
     active,
-    items: active ? snapshotItems : snapshotItems.map((item) => item.status === 'running' ? { ...item, status: 'completed' } : item),
+    items: active ? snapshotItems : snapshotItems.map((item) => item.status === 'running' ? { ...item, status: run.status === 'cancelled' ? 'cancelled' : 'completed' } : item),
   };
 }
 
@@ -161,6 +162,7 @@ export function reduceProcessEvent(state: ProcessStreamState, event: RunStreamEv
     const toolCallId = safeString(payload.tool_call_id);
     const existing = items.find((item) => item.id === `tool-${toolCallId}`);
     if (turnIndex !== undefined) items = ensureDecisionGroup(items, turnIndex);
+    const groupId = existing?.groupId ?? (turnIndex === undefined ? activeDecisionGroupId(items) : decisionGroupId(turnIndex));
     if (toolCallId) items = upsert(items, {
       id: `tool-${toolCallId}`,
       kind: 'tool',
@@ -168,8 +170,19 @@ export function reduceProcessEvent(state: ProcessStreamState, event: RunStreamEv
       detail: safeString(payload.status),
       status: payload.status === 'failed' ? 'failed' : 'completed',
       toolCallId,
-      groupId: existing?.groupId ?? (turnIndex === undefined ? activeDecisionGroupId(items) : decisionGroupId(turnIndex)),
+      groupId,
     });
+    if (toolCallId && groupId) {
+      items = items.map((item) => (item.id === groupId || item.groupId === groupId) && item.status === 'running' ? { ...item, status: 'completed' } : item);
+      items = upsert(items, {
+        id: `phase-processing_result-${toolCallId}`,
+        kind: 'phase',
+        title: phaseTitles.processing_result,
+        status: 'running',
+        turnIndex: turnIndex ?? items.find((item) => item.id === groupId)?.turnIndex,
+        groupId,
+      });
+    }
   } else if (event.type === 'reflection.created') {
     const summary = safeString(payload.summary);
     if (turnIndex !== undefined) items = ensureDecisionGroup(items, turnIndex);
@@ -196,7 +209,7 @@ export function reduceProcessEvent(state: ProcessStreamState, event: RunStreamEv
   const status = safeString(payload.status);
   if (terminalStatuses.has(status) || ['run.completed', 'run.failed', 'run.blocked', 'run.cancelled'].includes(event.type)) {
     active = false;
-    items = items.map((item) => item.status === 'running' ? { ...item, status: 'completed' } : item);
+    items = items.map((item) => item.status === 'running' ? { ...item, status: event.type === 'run.cancelled' || status === 'cancelled' ? 'cancelled' : 'completed' } : item);
   }
   return { ...state, items, active, seenEventIds };
 }

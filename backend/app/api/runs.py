@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 from collections.abc import AsyncIterator
+from contextlib import suppress
 
 from fastapi import APIRouter, Depends, Header, Query
 from fastapi.responses import FileResponse, StreamingResponse
@@ -51,10 +52,8 @@ async def _cancel_background_run(run_id: str) -> bool:
     if task is None or task.done():
         return False
     task.cancel()
-    try:
+    with suppress(asyncio.CancelledError):
         await task
-    except asyncio.CancelledError:
-        pass
     return True
 
 

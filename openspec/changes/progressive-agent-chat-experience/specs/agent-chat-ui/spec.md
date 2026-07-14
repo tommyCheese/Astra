@@ -56,6 +56,13 @@ The system SHALL map run, phase, turn and tool statuses to a live user-readable 
 - **THEN** the UI reconstructs the same decision groups from stable turn and tool-call identifiers
 - **THEN** process entries do not return to a flat timeline after completion or reload
 
+#### Scenario: Tool completes before the next decision starts
+- **WHEN** a ToolCall completes and the Run has not started its next phase or reached a terminal state
+- **THEN** the completed tool row remains visible under its decision group
+- **THEN** the same group immediately displays “正在评估执行结果” as the only running loading pane
+- **THEN** the transition completes when the next phase or terminal event arrives
+- **THEN** the process panel never presents an active Run with only completed rows during this interval
+
 #### Scenario: User controls the process panel
 - **WHEN** the first process panel starts without a saved last-click preference
 - **THEN** the UI displays it collapsed
