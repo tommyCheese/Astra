@@ -8,7 +8,15 @@ export function SharedConversationPage({ token }: { token: string }) {
   const [conversation, setConversation] = useState<SharedConversation | null>(null);
   const [missing, setMissing] = useState(false);
   useEffect(() => {
-    void getSharedConversation(token).then(setConversation).catch(() => setMissing(true));
+    const controller = new AbortController();
+    setConversation(null);
+    setMissing(false);
+    void getSharedConversation(token, controller.signal)
+      .then(setConversation)
+      .catch((error) => {
+        if (error?.name !== 'AbortError') setMissing(true);
+      });
+    return () => controller.abort();
   }, [token]);
   return <main className="shared-page">
     <header><div className="shared-brand"><img src="/astra.svg" alt="Astra" /><strong>Astra</strong></div><span>共享的对话</span></header>

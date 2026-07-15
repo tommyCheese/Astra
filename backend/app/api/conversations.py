@@ -13,8 +13,8 @@ from app.repositories.conversations import (
     conversation_view,
 )
 from app.schemas.conversations import (
-    ConversationShareView,
     ConversationShareSummary,
+    ConversationShareView,
     ConversationSummary,
     ConversationUpdateRequest,
     ConversationView,

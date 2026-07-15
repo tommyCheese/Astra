@@ -108,6 +108,7 @@ function AppContent() {
   const conversationStrategyTouchedRef = useRef(false);
   const conversationStrategySaveRef = useRef<Promise<void>>(Promise.resolve());
   const initialSnapshotControllerRef = useRef<AbortController>();
+  const conversationControllerRef = useRef<AbortController>();
   const cancelRequestedRef = useRef(false);
   const availableModels = useMemo(() => providerConfigs
     .filter((provider) => provider.enabled)
@@ -145,6 +146,7 @@ function AppContent() {
     if (processFrameRef.current !== undefined) window.cancelAnimationFrame(processFrameRef.current);
     if (refreshTimerRef.current !== undefined) window.clearTimeout(refreshTimerRef.current);
     initialSnapshotControllerRef.current?.abort();
+    conversationControllerRef.current?.abort();
   }, []);
 
   useEffect(() => {
@@ -217,9 +219,13 @@ function AppContent() {
   }
 
   async function openConversation(conversation: ConversationEntry) {
+    conversationControllerRef.current?.abort();
+    const controller = new AbortController();
+    conversationControllerRef.current = controller;
     setActiveConversationId(conversation.id);
     try {
-      const detail = await getConversation(conversation.id);
+      const detail = await getConversation(conversation.id, controller.signal);
+      if (conversationControllerRef.current !== controller) return;
       const runs = detail.runs.map(normalizeRunView);
       const latest = runs[runs.length - 1];
       if (!latest) throw new Error('conversation has no runs');
@@ -227,11 +233,16 @@ function AppContent() {
       setRun(latest);
       setProcessState(reconcileProcessSnapshot(null, latest));
       setConversationHistory((items) => items.map((item) => item.id === conversation.id ? { ...item, run: latest, title: detail.title, pinned_at: detail.pinned_at, updated_at: detail.updated_at, has_active_share: detail.has_active_share } : item));
-    } catch {
+    } catch (error) {
+      if (controller.signal.aborted) return;
       if (conversation.run) {
         setPriorMessages(conversation.priorMessages);
         setRun(normalizeRunView(conversation.run));
         setProcessState(reconcileProcessSnapshot(null, normalizeRunView(conversation.run)));
+      }
+    } finally {
+      if (conversationControllerRef.current === controller) {
+        conversationControllerRef.current = undefined;
       }
     }
     followLatestRef.current = true;
@@ -306,8 +317,14 @@ function AppContent() {
       const previousMessages = run ? messages : [];
       const selectedOption = availableModels.find((item) => item.key === selectedModelKey);
       const selectedProvider = providerConfigs.find((item) => item.id === selectedOption?.providerId);
+      const modelConfig = selectedOption && selectedProvider ? {
+        provider: selectedProvider.id,
+        name: selectedOption.model,
+        api_key: selectedProvider.apiKey,
+        base_url: selectedProvider.endpoint,
+      } : undefined;
       const created = run?.status === 'waiting_user'
-        ? await resumeRun(run.id, trimmedGoal, typeof run.waiting_state?.continuation_token === 'string' ? run.waiting_state.continuation_token : undefined)
+        ? await resumeRun(run.id, trimmedGoal, typeof run.waiting_state?.continuation_token === 'string' ? run.waiting_state.continuation_token : undefined, modelConfig)
         : await createRun(trimmedGoal, run?.task_id, {
         reasoning_effort: conversationStrategyRef.current.reasoning_effort,
         max_tool_calls: conversationStrategyRef.current.max_tool_calls,
@@ -316,12 +333,7 @@ function AppContent() {
         reflection_trigger: conversationStrategyRef.current.reflection_trigger,
         execution_mode: executionMode === 'plan' ? 'plan_only' : executionMode === 'bypass' ? 'auto_approval' : 'request_approval',
         verification_level: 'standard',
-        }, selectedOption && selectedProvider ? {
-          provider: selectedProvider.id,
-          name: selectedOption.model,
-          api_key: selectedProvider.apiKey,
-          base_url: selectedProvider.endpoint,
-        } : undefined);
+        }, modelConfig);
       const current = normalizeRunView({
         id: created.run_id,
         task_id: created.task_id,
@@ -526,6 +538,8 @@ function AppContent() {
   }
 
   function startNewChat() {
+    conversationControllerRef.current?.abort();
+    conversationControllerRef.current = undefined;
     initialSnapshotControllerRef.current?.abort();
     initialSnapshotControllerRef.current = undefined;
     setRun(null);
@@ -1232,37 +1246,30 @@ function RuntimeSettings() {
   </SettingsGroup>;
 }
 
-type ModelProviderId = 'openai' | 'anthropic' | 'google' | 'deepseek' | 'qwen' | 'siliconflow' | 'azure' | 'compatible';
+type ModelProviderId = 'openai' | 'deepseek' | 'qwen' | 'siliconflow' | 'compatible';
 type ModelProviderConfig = {
   id: ModelProviderId;
   name: string;
   enabled: boolean;
   endpoint: string;
   models: string;
-  organization: string;
   apiKey: string;
 };
 
 const modelProviders: Array<{ id: ModelProviderId; name: string; detail: string; mark: string }> = [
-  { id: 'openai', name: 'OpenAI', detail: 'Responses API', mark: 'O' },
-  { id: 'anthropic', name: 'Anthropic', detail: 'Claude API', mark: 'A' },
-  { id: 'google', name: 'Google Gemini', detail: 'Generative Language API', mark: 'G' },
+  { id: 'openai', name: 'OpenAI', detail: 'Chat Completions API', mark: 'O' },
   { id: 'deepseek', name: 'DeepSeek', detail: 'DeepSeek 开放平台', mark: 'D' },
   { id: 'qwen', name: '通义千问', detail: '阿里云百炼', mark: 'Q' },
   { id: 'siliconflow', name: 'SiliconFlow', detail: '硅基流动模型广场', mark: 'S' },
-  { id: 'azure', name: 'Azure OpenAI', detail: 'Azure AI Foundry', mark: 'Az' },
   { id: 'compatible', name: 'OpenAI 兼容', detail: 'Ollama、vLLM、OpenRouter', mark: '↗' },
 ];
 
-const providerDefaults: Record<ModelProviderId, { endpoint: string; models: string; organization: string }> = {
-  openai: { endpoint: 'https://api.openai.com/v1', models: 'gpt-5, gpt-5-mini', organization: '' },
-  anthropic: { endpoint: 'https://api.anthropic.com', models: 'claude-sonnet-4, claude-opus-4', organization: '' },
-  google: { endpoint: 'https://generativelanguage.googleapis.com', models: 'gemini-2.5-pro, gemini-2.5-flash', organization: '' },
-  deepseek: { endpoint: 'https://api.deepseek.com', models: 'deepseek-v4-pro, deepseek-v4-flash', organization: '' },
-  qwen: { endpoint: 'https://dashscope.aliyuncs.com/compatible-mode/v1', models: 'qwen3.7-plus, qwen-plus', organization: '' },
-  siliconflow: { endpoint: 'https://api.siliconflow.cn/v1', models: 'deepseek-ai/DeepSeek-V3, Qwen/Qwen2.5-72B-Instruct', organization: '' },
-  azure: { endpoint: '', models: '', organization: '2025-04-01-preview' },
-  compatible: { endpoint: 'http://127.0.0.1:11434/v1', models: '', organization: '' },
+const providerDefaults: Record<ModelProviderId, { endpoint: string; models: string }> = {
+  openai: { endpoint: 'https://api.openai.com/v1', models: 'gpt-5, gpt-5-mini' },
+  deepseek: { endpoint: 'https://api.deepseek.com', models: 'deepseek-v4-pro, deepseek-v4-flash' },
+  qwen: { endpoint: 'https://dashscope.aliyuncs.com/compatible-mode/v1', models: 'qwen3.7-plus, qwen-plus' },
+  siliconflow: { endpoint: 'https://api.siliconflow.cn/v1', models: 'deepseek-ai/DeepSeek-V3, Qwen/Qwen2.5-72B-Instruct' },
+  compatible: { endpoint: 'http://127.0.0.1:11434/v1', models: '' },
 };
 
 const initialProviderConfigs: ModelProviderConfig[] = modelProviders.map((provider) => ({
@@ -1344,19 +1351,16 @@ function ModelManagement({ providers, onChange }: { providers: ModelProviderConf
   const { t } = useI18n();
   const [selectedProvider, setSelectedProvider] = useState<ModelProviderId>('openai');
   const [showKey, setShowKey] = useState(false);
-  const [connectionState, setConnectionState] = useState('未验证');
   const provider = providers.find((item) => item.id === selectedProvider)!;
   const providerMeta = modelProviders.find((item) => item.id === selectedProvider)!;
 
   function selectProvider(id: ModelProviderId) {
     setSelectedProvider(id);
     setShowKey(false);
-    setConnectionState('未验证');
   }
 
   function updateProvider(patch: Partial<ModelProviderConfig>) {
     onChange(providers.map((item) => item.id === selectedProvider ? { ...item, ...patch } : item));
-    setConnectionState('未验证');
   }
 
   function toggleProvider() {
@@ -1385,20 +1389,16 @@ function ModelManagement({ providers, onChange }: { providers: ModelProviderConf
 
           <div className="provider-form">
             <label><span>{t('API 地址')}</span><small>{t('供应商 API 的基础地址')}</small><input value={provider.endpoint} onChange={(event) => updateProvider({ endpoint: event.target.value })} spellCheck={false} /></label>
-            <label><span>{t('API Key')}</span><small>{t('凭据保存在当前浏览器本地，不会写入运行记录')}</small><div className="secret-input"><input type={showKey ? 'text' : 'password'} value={provider.apiKey} onChange={(event) => updateProvider({ apiKey: event.target.value })} placeholder={selectedProvider === 'google' ? 'AIza...' : 'sk-...'} autoComplete="off" /><button type="button" onClick={() => setShowKey((visible) => !visible)}>{t(showKey ? '隐藏' : '显示')}</button></div></label>
-            <label><span>{t(selectedProvider === 'azure' ? 'API 版本' : '组织或项目 ID')}</span><small>{t(selectedProvider === 'azure' ? 'Azure OpenAI 请求使用的 API 版本' : '可选，用于供应商侧的项目隔离与计费')}</small><input value={provider.organization} onChange={(event) => updateProvider({ organization: event.target.value })} placeholder={selectedProvider === 'azure' ? '2025-04-01-preview' : t('可选')} /></label>
+            <label><span>{t('API Key')}</span><small>{t('凭据保存在当前浏览器本地，不会写入运行记录')}</small><div className="secret-input"><input type={showKey ? 'text' : 'password'} value={provider.apiKey} onChange={(event) => updateProvider({ apiKey: event.target.value })} placeholder="sk-..." autoComplete="off" /><button type="button" onClick={() => setShowKey((visible) => !visible)}>{t(showKey ? '隐藏' : '显示')}</button></div></label>
             <label><span>{t('可用模型 ID')}</span><small>{t('使用逗号分隔，模型选择器将使用这些标识')}</small><textarea value={provider.models} onChange={(event) => updateProvider({ models: event.target.value })} placeholder="model-id-1, model-id-2" /></label>
           </div>
 
           <div className="provider-advanced">
-            <div><strong>{t('请求兼容性')}</strong><small>{t(selectedProvider === 'anthropic' ? 'Anthropic Messages API' : selectedProvider === 'google' ? 'Google generateContent API' : 'OpenAI Responses / Chat Completions')}</small></div>
-            <TranslatedSelect defaultValue="auto" options={[['auto', '自动检测'], ['responses', 'Responses API'], ['chat', 'Chat Completions']]} />
+            <div><strong>{t('请求兼容性')}</strong><small>OpenAI Chat Completions</small></div>
           </div>
 
           <footer className="provider-actions">
-            <span className={`connection-state ${connectionState === '连接正常' ? 'success' : ''}`}><i />{t(connectionState)}</span>
-            <button className="secondary-button" type="button" onClick={() => setConnectionState(provider.endpoint && (provider.apiKey || selectedProvider === 'compatible') ? '连接正常' : '缺少连接信息')}>{t('测试连接')}</button>
-            <button className="primary-button" type="button" onClick={() => setConnectionState('配置已更新')}>{t('保存配置')}</button>
+            <span>{t('更改会自动保存到当前浏览器。')}</span>
           </footer>
         </section>
       </div>

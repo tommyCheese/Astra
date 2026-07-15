@@ -452,6 +452,45 @@ async def test_create_run_compiles_reasoning_policy(app_client):
     assert body["reasoning_policy"]["effective"]["budgets"]["max_reflections"] == 6
 
 
+@pytest.mark.parametrize("provider", ["anthropic", "google", "azure"])
+async def test_create_run_rejects_model_protocols_not_implemented_by_runtime(
+    app_client, provider
+):
+    response = await app_client.post(
+        "/api/runs",
+        json={
+            "goal": "测试模型配置",
+            "model": {
+                "provider": provider,
+                "name": "test-model",
+                "api_key": "secret",
+                "base_url": "https://example.test/v1",
+            },
+        },
+    )
+
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "MODEL_PROVIDER_UNSUPPORTED"
+
+
+async def test_create_run_rejects_missing_model_base_url(app_client):
+    response = await app_client.post(
+        "/api/runs",
+        json={
+            "goal": "测试模型配置",
+            "model": {
+                "provider": "openai",
+                "name": "test-model",
+                "api_key": "secret",
+                "base_url": "",
+            },
+        },
+    )
+
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "MODEL_CONFIGURATION_REQUIRED"
+
+
 async def test_resume_requires_waiting_run(app_client):
     created = await app_client.post("/api/runs", json={"goal": "普通任务"})
     response = await app_client.post(
@@ -459,6 +498,46 @@ async def test_resume_requires_waiting_run(app_client):
     )
     assert response.status_code == 409
     assert response.json()["error"]["code"] == "RUN_NOT_WAITING"
+
+
+async def test_resume_reuses_selected_model_configuration(app_client, monkeypatch):
+    created = await app_client.post("/api/runs", json={"goal": "需要补充信息"})
+    run_id = created.json()["run_id"]
+    async with app_client._astra_session() as session:
+        from app.repositories.runs import RunRepository
+
+        await RunRepository(session).set_waiting_state(
+            run_id,
+            {"request": "请补充", "continuation_token": "resume-token"},
+        )
+
+    scheduled = {}
+    monkeypatch.setattr(
+        runs_api,
+        "_schedule_run",
+        lambda scheduled_run_id, settings: scheduled.update(
+            run_id=scheduled_run_id, settings=settings
+        ),
+    )
+    response = await app_client.post(
+        f"/api/runs/{run_id}/resume",
+        json={
+            "content": "补充内容",
+            "continuation_token": "resume-token",
+            "model": {
+                "provider": "compatible",
+                "name": "local-model",
+                "api_key": "",
+                "base_url": "http://127.0.0.1:11434/v1",
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    assert scheduled["run_id"] == run_id
+    assert scheduled["settings"].model_provider == "compatible"
+    assert scheduled["settings"].model_name == "local-model"
+    assert scheduled["settings"].model_base_url == "http://127.0.0.1:11434/v1"
 
 
 async def test_missing_run_uses_safe_error_envelope(app_client):

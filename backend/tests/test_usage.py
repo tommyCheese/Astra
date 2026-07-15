@@ -1,5 +1,6 @@
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 
+from app.api.usage import _as_utc
 from app.db.models import AgentTurnRecord, ToolCallRecord, utc_now
 from app.repositories.runs import RunRepository
 from app.repositories.usage import UsageRepository, normalize_usage
@@ -49,6 +50,14 @@ def test_missing_usage_fields_remain_unknown():
     assert normalized["input_tokens"] == 12
     assert normalized["output_tokens"] is None
     assert normalized["total_tokens"] is None
+
+
+def test_usage_range_boundaries_are_normalized_to_utc():
+    naive = datetime(2026, 7, 15, 8, 30)
+    offset = datetime(2026, 7, 15, 16, 30, tzinfo=timezone(timedelta(hours=8)))
+
+    assert _as_utc(naive) == datetime(2026, 7, 15, 8, 30, tzinfo=timezone.utc)
+    assert _as_utc(offset) == datetime(2026, 7, 15, 8, 30, tzinfo=timezone.utc)
 
 
 async def test_reconcile_interrupted_invocations(session):

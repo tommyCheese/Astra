@@ -6,8 +6,12 @@ type ThemeValue = { mode: ThemeMode; resolvedTheme: 'light' | 'dark'; setMode: (
 const ThemeContext = createContext<ThemeValue | null>(null);
 
 function initialMode(): ThemeMode {
-  const saved = globalThis.localStorage?.getItem('astra.theme');
-  return saved === 'light' || saved === 'dark' || saved === 'system' ? saved : 'system';
+  try {
+    const saved = globalThis.localStorage?.getItem('astra.theme');
+    return saved === 'light' || saved === 'dark' || saved === 'system' ? saved : 'system';
+  } catch {
+    return 'system';
+  }
 }
 
 function systemTheme() {
@@ -28,7 +32,11 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
 
   const resolvedTheme = mode === 'system' ? system : mode;
   useEffect(() => {
-    globalThis.localStorage?.setItem('astra.theme', mode);
+    try {
+      globalThis.localStorage?.setItem('astra.theme', mode);
+    } catch {
+      // Storage can be unavailable in private or locked-down browser contexts.
+    }
     document.documentElement.dataset.theme = resolvedTheme;
     document.documentElement.style.colorScheme = resolvedTheme;
   }, [mode, resolvedTheme]);

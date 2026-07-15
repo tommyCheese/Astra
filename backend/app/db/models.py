@@ -1,7 +1,17 @@
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Index, Integer, String, Text
+from sqlalchemy import (
+    Boolean,
+    DateTime,
+    Float,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 from sqlalchemy.types import JSON
@@ -66,10 +76,18 @@ class TaskRecord(Base):
 
 class ConversationShareRecord(Base):
     __tablename__ = "conversation_shares"
+    __table_args__ = (
+        UniqueConstraint(
+            "conversation_id", name="uq_conversation_shares_conversation_id"
+        ),
+        UniqueConstraint("token", name="uq_conversation_shares_token"),
+        Index("ix_conversation_shares_conversation_id", "conversation_id"),
+        Index("ix_conversation_shares_token", "token"),
+    )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_str)
-    conversation_id: Mapped[str] = mapped_column(ForeignKey("tasks.id"), unique=True, index=True)
-    token: Mapped[str] = mapped_column(String(120), unique=True, index=True)
+    conversation_id: Mapped[str] = mapped_column(ForeignKey("tasks.id"))
+    token: Mapped[str] = mapped_column(String(120))
     snapshot: Mapped[dict] = mapped_column(JsonType, default=dict)
     active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
@@ -156,6 +174,7 @@ class ModelInvocationRecord(Base):
 
 class StepRecord(Base):
     __tablename__ = "steps"
+    __table_args__ = (Index("ix_steps_run_id_index", "run_id", "index"),)
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_str)
     run_id: Mapped[str] = mapped_column(ForeignKey("runs.id"))
@@ -174,6 +193,7 @@ class StepRecord(Base):
 
 class ToolCallRecord(Base):
     __tablename__ = "tool_calls"
+    __table_args__ = (Index("ix_tool_calls_run_id", "run_id"),)
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_str)
     run_id: Mapped[str] = mapped_column(ForeignKey("runs.id"))
@@ -243,6 +263,7 @@ class SandboxJobRecord(Base):
 
 class RunEventRecord(Base):
     __tablename__ = "run_events"
+    __table_args__ = (Index("ix_run_events_run_id_id", "run_id", "id"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     run_id: Mapped[str] = mapped_column(ForeignKey("runs.id"))
@@ -255,6 +276,7 @@ class RunEventRecord(Base):
 
 class AgentTurnRecord(Base):
     __tablename__ = "agent_turns"
+    __table_args__ = (Index("ix_agent_turns_run_id_index", "run_id", "turn_index"),)
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_str)
     run_id: Mapped[str] = mapped_column(ForeignKey("runs.id"))
@@ -286,6 +308,7 @@ class AgentTurnRecord(Base):
 
 class MemoryRecord(Base):
     __tablename__ = "memories"
+    __table_args__ = (Index("ix_memories_scope_kind", "scope", "kind"),)
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_str)
     run_id: Mapped[str | None] = mapped_column(ForeignKey("runs.id"), nullable=True)

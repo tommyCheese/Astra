@@ -10,7 +10,8 @@ async function fetchWithTimeout(input: RequestInfo | URL, init: RequestInit = {}
   const controller = new AbortController();
   const timer = window.setTimeout(() => controller.abort(), timeoutMs);
   const abort = () => controller.abort();
-  init.signal?.addEventListener('abort', abort, { once: true });
+  if (init.signal?.aborted) controller.abort(init.signal.reason);
+  else init.signal?.addEventListener('abort', abort, { once: true });
   try {
     return await fetch(input, { ...init, signal: controller.signal });
   } finally {
@@ -194,8 +195,8 @@ export async function listConversations(limit = 100): Promise<ConversationSummar
   return response.json();
 }
 
-export async function getConversation(id: string): Promise<ConversationView> {
-  const response = await fetch(`/api/conversations/${id}`);
+export async function getConversation(id: string, signal?: AbortSignal): Promise<ConversationView> {
+  const response = await fetch(`/api/conversations/${id}`, { signal });
   if (!response.ok) throw await responseError(response);
   return response.json();
 }
@@ -228,8 +229,8 @@ export async function revokeConversationShare(id: string): Promise<void> {
   if (!response.ok) throw await responseError(response);
 }
 
-export async function getSharedConversation(token: string): Promise<SharedConversation> {
-  const response = await fetch(`/api/shared-conversations/${encodeURIComponent(token)}`);
+export async function getSharedConversation(token: string, signal?: AbortSignal): Promise<SharedConversation> {
+  const response = await fetch(`/api/shared-conversations/${encodeURIComponent(token)}`, { signal });
   if (!response.ok) throw await responseError(response);
   return response.json();
 }
@@ -253,11 +254,11 @@ export function streamRunEvents(runId: string, onEvent: (event: RunStreamEvent) 
   return () => source.close();
 }
 
-export async function resumeRun(runId: string, content: string, continuationToken?: string): Promise<{ run_id: string; task_id: string; status: string }> {
+export async function resumeRun(runId: string, content: string, continuationToken?: string, model?: RunModelConfig): Promise<{ run_id: string; task_id: string; status: string }> {
   const response = await fetchWithTimeout(`/api/runs/${runId}/resume`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ content, continuation_token: continuationToken }),
+    body: JSON.stringify({ content, continuation_token: continuationToken, model }),
   });
   if (!response.ok) throw await responseError(response);
   return response.json();

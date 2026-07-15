@@ -668,7 +668,7 @@ describe('App', () => {
     expect(screen.getByRole('link', { name: '打开分享页' })).toHaveAttribute('href', '/share/token-1');
 
     await userEvent.click(screen.getByRole('button', { name: '查看原对话' }));
-    await waitFor(() => expect(getConversation).toHaveBeenCalledWith('shared-1'));
+    await waitFor(() => expect(getConversation).toHaveBeenCalledWith('shared-1', expect.any(AbortSignal)));
   });
 
   it('updates and revokes selected shares in batches', async () => {
@@ -754,7 +754,7 @@ describe('App', () => {
     await userEvent.click(screen.getByRole('button', { name: '模型管理' }));
 
     expect(screen.getByRole('heading', { name: '模型管理' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /Anthropic/ })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Anthropic/ })).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: /DeepSeek/ })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /通义千问/ })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /SiliconFlow/ })).toBeInTheDocument();
@@ -764,8 +764,7 @@ describe('App', () => {
     await userEvent.type(keyInput, 'secret-key');
     await userEvent.click(screen.getByRole('button', { name: '显示' }));
     expect(keyInput).toHaveAttribute('type', 'text');
-    await userEvent.click(screen.getByRole('button', { name: '测试连接' }));
-    expect(screen.getByText('连接正常')).toBeInTheDocument();
+    expect(screen.getByText('更改会自动保存到当前浏览器。')).toBeInTheDocument();
   });
 
   it('restores conversation history and model credentials after remount', async () => {

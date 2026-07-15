@@ -29,6 +29,33 @@ _background_tasks: set[asyncio.Task[None]] = set()
 _background_tasks_by_run: dict[str, asyncio.Task[None]] = {}
 
 
+def _apply_model_config(settings: Settings, model: dict[str, str] | None) -> Settings:
+    if not model:
+        return settings
+    provider = model.get("provider", "")
+    if provider not in {"openai", "deepseek", "qwen", "siliconflow", "compatible"}:
+        raise ValidationError(
+            "MODEL_PROVIDER_UNSUPPORTED", "当前模型供应商尚未接入通用运行时。"
+        )
+    configured = settings.model_copy(
+        update={
+            "model_provider": provider,
+            "model_name": model.get("name", ""),
+            "model_api_key": model.get("api_key", ""),
+            "model_base_url": model.get("base_url", ""),
+        }
+    )
+    if (
+        not configured.model_name
+        or not configured.model_base_url
+        or (provider != "compatible" and not configured.model_api_key)
+    ):
+        raise ValidationError(
+            "MODEL_CONFIGURATION_REQUIRED", "请先配置模型名称、API 地址和 API Key。"
+        )
+    return configured
+
+
 def _schedule_run(run_id: str, settings: Settings) -> None:
     """Keep a strong reference to in-process runs until they finish."""
     task = asyncio.create_task(
@@ -124,26 +151,7 @@ async def create_run(
         )
         # Keep the database-backed tool configuration active at creation time.
         run_settings = apply_tool_states(settings, tool_states)
-        if payload.model:
-            provider = payload.model.get("provider", "")
-            if provider not in {"openai", "deepseek", "qwen", "siliconflow", "compatible", "azure"}:
-                raise ValidationError(
-                    "MODEL_PROVIDER_UNSUPPORTED", "当前模型供应商尚未接入通用运行时。"
-                )
-            run_settings = run_settings.model_copy(
-                update={
-                    "model_provider": provider,
-                    "model_name": payload.model.get("name", ""),
-                    "model_api_key": payload.model.get("api_key", ""),
-                    "model_base_url": payload.model.get("base_url", ""),
-                }
-            )
-            if not run_settings.model_name or (
-                provider != "compatible" and not run_settings.model_api_key
-            ):
-                raise ValidationError(
-                    "MODEL_CONFIGURATION_REQUIRED", "请先配置模型名称和 API Key。"
-                )
+        run_settings = _apply_model_config(run_settings, payload.model)
         policy = PolicyCompiler().compile(payload.reasoning_policy)
         run = await repo.create_task_run(
             goal,
@@ -215,6 +223,12 @@ async def resume_run(
     settings: Settings = Depends(get_settings),
 ) -> CreateRunResponse:
     repo = RunRepository(session)
+    tool_states = await ToolSettingsRepository(session).get_or_create(
+        default_tool_states(settings)
+    )
+    run_settings = _apply_model_config(
+        apply_tool_states(settings, tool_states), payload.model
+    )
     try:
         run = await repo.resume_waiting_run(
             run_id,
@@ -237,7 +251,7 @@ async def resume_run(
         if "continuation token" in message:
             raise StateError("CONTINUATION_INVALID", "任务恢复凭据已失效，请刷新后重试。") from exc
         raise StateError("RUN_RESUME_CONFLICT", "当前任务无法恢复。") from exc
-    _schedule_run(run.id, settings)
+    _schedule_run(run.id, run_settings)
     return CreateRunResponse(task_id=run.task_id, run_id=run.id, status=run.status)
 
 

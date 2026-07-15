@@ -27,9 +27,11 @@ from app.schemas.usage import (
 
 
 def _utc(value: datetime | None) -> datetime | None:
-    if value is None or value.tzinfo is not None:
+    if value is None:
         return value
-    return value.replace(tzinfo=timezone.utc)
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
 
 
 class UsageRepository:

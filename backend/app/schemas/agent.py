@@ -294,6 +294,7 @@ class ContinueRunRequest(BaseModel):
     content: str = Field(min_length=1, max_length=4000)
     approved: bool | None = None
     continuation_token: str | None = None
+    model: dict[str, str] | None = None
 
 
 class PlanStep(BaseModel):
