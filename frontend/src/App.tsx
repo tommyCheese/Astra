@@ -93,6 +93,7 @@ function AppContent() {
   const [planningStrategy, setPlanningStrategy] = useState('自适应');
   const [reflectionTrigger, setReflectionTrigger] = useState('按需');
   const [conversationStrategyReady, setConversationStrategyReady] = useState(false);
+  const [trustedTransitionActive, setTrustedTransitionActive] = useState(false);
   const [settingsCategory, setSettingsCategory] = useState('模型管理');
   const attachMenuRef = useRef<HTMLDivElement>(null);
   const executionMenuRef = useRef<HTMLDivElement>(null);
@@ -113,6 +114,7 @@ function AppContent() {
   const initialSnapshotControllerRef = useRef<AbortController>();
   const conversationControllerRef = useRef<AbortController>();
   const cancelRequestedRef = useRef(false);
+  const trustedTransitionTimerRef = useRef<number>();
   const availableModels = useMemo(() => providerConfigs
     .filter((provider) => provider.enabled)
     .flatMap((provider) => parseModelIds(provider.models).map((model) => ({ key: `${provider.id}:${model}`, model, providerId: provider.id, providerName: provider.name }))), [providerConfigs]);
@@ -122,6 +124,11 @@ function AppContent() {
   useEffect(() => writeLocalJson(STORAGE_KEYS.processPanelDefaultOpen, processPanelDefaultOpen), [processPanelDefaultOpen]);
   useEffect(() => writeLocalJson(STORAGE_KEYS.modelProviders, providerConfigs), [providerConfigs]);
   useEffect(() => writeLocalString(STORAGE_KEYS.selectedModel, selectedModelKey), [selectedModelKey]);
+  useEffect(() => () => {
+    if (trustedTransitionTimerRef.current !== undefined) {
+      window.clearTimeout(trustedTransitionTimerRef.current);
+    }
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -290,6 +297,24 @@ function AppContent() {
       .catch((err) => {
         setError(err instanceof AstraApiError ? err.payload : { type: 'infrastructure.database', code: 'STRATEGY_PREFERENCE_SAVE_FAILED', message: t('保存对话策略失败，当前选择可能无法在重启后恢复。'), retryable: true, trace_id: 'unavailable' });
       });
+  }
+
+  function toggleTrustedMode() {
+    const nextMode = answerMode === 'trusted' ? 'standard' : 'trusted';
+    if (trustedTransitionTimerRef.current !== undefined) {
+      window.clearTimeout(trustedTransitionTimerRef.current);
+    }
+    if (nextMode === 'trusted') {
+      setTrustedTransitionActive(true);
+      trustedTransitionTimerRef.current = window.setTimeout(() => {
+        setTrustedTransitionActive(false);
+        trustedTransitionTimerRef.current = undefined;
+      }, 1800);
+    } else {
+      setTrustedTransitionActive(false);
+      trustedTransitionTimerRef.current = undefined;
+    }
+    persistConversationStrategy({ preferred_answer_mode: nextMode });
   }
 
   async function cancelRunById(runId: string, previousMessages: ChatMessage[] = priorMessages) {
@@ -601,6 +626,12 @@ function AppContent() {
 
   return (
     <main className="app-layout">
+      {trustedTransitionActive && (
+        <div className="trusted-mode-transition" aria-hidden="true" data-testid="trusted-mode-transition">
+          <i className="trusted-mode-transition-wave wave-one" />
+          <i className="trusted-mode-transition-wave wave-two" />
+        </div>
+      )}
       <Sidebar
         open={sidebarOpen}
         run={run}
@@ -679,7 +710,7 @@ function AppContent() {
               role="switch"
               aria-checked={answerMode === 'trusted'}
               aria-label={t('可信模式')}
-              onClick={() => persistConversationStrategy({ preferred_answer_mode: answerMode === 'trusted' ? 'standard' : 'trusted' })}
+              onClick={toggleTrustedMode}
             >
               <Icon name="requestApprove" />
               <span>{answerMode === 'trusted' ? t('可信模式') : t('快速回答')}</span>

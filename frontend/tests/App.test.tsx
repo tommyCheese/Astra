@@ -1071,6 +1071,18 @@ describe('App', () => {
     })));
   });
 
+  it('shows a non-blocking full-screen transition when trusted mode is enabled', async () => {
+    render(<App />);
+
+    const trustedSwitch = screen.getByRole('switch', { name: '可信模式' });
+    await userEvent.click(trustedSwitch);
+
+    expect(screen.getByTestId('trusted-mode-transition')).toHaveAttribute('aria-hidden', 'true');
+
+    await userEvent.click(trustedSwitch);
+    expect(screen.queryByTestId('trusted-mode-transition')).not.toBeInTheDocument();
+  });
+
   it('shows the full verification outcome on trusted answers', async () => {
     const snapshot = await vi.mocked(getRun)('fixture');
     vi.mocked(createRun).mockResolvedValueOnce({ run_id: 'run-trusted', task_id: 'task-trusted', status: 'created', answer_mode: 'trusted' });
