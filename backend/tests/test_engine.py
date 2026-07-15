@@ -246,16 +246,45 @@ class PlanningSpyClient(MockModelClient):
         return await super().plan(goal)
 
 
-def engine_policy(planning_strategy, execution_mode="request_approval"):
+class EffortSpyClient(MockModelClient):
+    def __init__(self):
+        self.bound_efforts = []
+
+    def bind_reasoning_effort(self, effort):
+        self.bound_efforts.append(str(effort))
+
+
+def engine_policy(
+    planning_strategy, execution_mode="request_approval", reasoning_effort="balanced"
+):
     return (
         PolicyCompiler()
         .compile(
             RequestedReasoningPolicy(
-                planning_strategy=planning_strategy, execution_mode=execution_mode
+                planning_strategy=planning_strategy,
+                execution_mode=execution_mode,
+                reasoning_effort=reasoning_effort,
             )
         )
         .model_dump(mode="json")
     )
+
+
+async def test_engine_binds_effective_reasoning_effort_before_model_operations(session):
+    settings = Settings(model_provider="mock", web_search_provider="mock")
+    repo = RunRepository(session)
+    run = await repo.create_task_run(
+        "查询 mock 数据",
+        settings.model_policy,
+        reasoning_policy=engine_policy("direct", reasoning_effort="deep"),
+    )
+    client = EffortSpyClient()
+
+    await RunEngine(
+        settings, model_client=client, tool_registry=fake_web_registry()
+    )._run_with_repo(repo, run.id)
+
+    assert client.bound_efforts == ["deep"]
 
 
 @pytest.mark.parametrize(

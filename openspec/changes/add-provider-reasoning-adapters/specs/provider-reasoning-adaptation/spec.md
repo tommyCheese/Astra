@@ -11,6 +11,10 @@
 - **WHEN** Run 通过已识别的 DashScope/Qwen 兼容端点调用混合思考模型
 - **THEN** 系统使用 `enable_thinking` 控制思考模式，并在启用时提供与推理强度对应的有界 `thinking_budget`
 
+#### Scenario: Claude 使用 effort
+- **WHEN** Run 通过 Anthropic Messages API 调用已知支持 effort 的 Claude 模型
+- **THEN** 系统将 fast、balanced、deep 转换为 `output_config.effort` 的 low、medium、high
+
 #### Scenario: 未知模型安全降级
 - **WHEN** Provider 或模型没有声明支持推理控制
 - **THEN** 系统省略额外推理参数并继续使用基础模型请求

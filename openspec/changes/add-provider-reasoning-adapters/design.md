@@ -1,20 +1,20 @@
 ## Context
 
-`PolicyCompiler` 已将用户选择编译为不可变的 `ReasoningPolicySnapshot`，但 `OpenAICompatibleModelClient._chat_json()` 只发送 model、messages、JSON mode 和 stream，未将生效的 `reasoning_effort` 传入模型。与此同时，Astra 当前只有 OpenAI-compatible Chat Completions 传输层；OpenAI、DashScope/Qwen 以及其他兼容网关虽共享基本协议，推理参数仍不同，而 Anthropic、Gemini 的原生协议还具有不同 endpoint、消息和流事件结构。
+`PolicyCompiler` 已将用户选择编译为不可变的 `ReasoningPolicySnapshot`，但模型请求未将生效的 `reasoning_effort` 传入模型。与此同时，Astra 已有 OpenAI-compatible Chat Completions 与 Anthropic Messages 两种传输层；OpenAI、Anthropic、DashScope/Qwen 的推理参数不同，而 Gemini 原生协议还具有不同 endpoint、消息和流事件结构。
 
 ## Goals / Non-Goals
 
 **Goals:**
 
 - 在模型调用前用纯函数解析 Provider、模型、操作类型和 Astra 推理强度，生成可测试的请求参数。
-- 首先支持当前传输层能够安全表达的 OpenAI GPT 与 DashScope/Qwen 推理控制。
-- 明确识别 DeepSeek、Anthropic、Gemini 等模型的能力边界；当前传输无法可靠表达时省略参数并记录原因。
+- 首先支持当前传输层能够安全表达的 OpenAI GPT、Anthropic Claude 与 DashScope/Qwen 推理控制。
+- 明确识别 DeepSeek、Gemini 等模型的能力边界；当前传输无法可靠表达时省略参数并记录原因。
 - 让同一 Run 的不可变生效策略贯穿 plan、contract、decision、reflection、finalize 和 memory 调用。
 - 记录每次调用实际应用的推理配置，但不持久化隐藏思考内容。
 
 **Non-Goals:**
 
-- 本次不新增 Anthropic Messages API 或 Gemini GenerateContent 原生传输实现。
+- 本次不新增 Gemini GenerateContent 原生传输实现。
 - 不自动迁移默认模型，也不改变用户保存的策略结构。
 - 不暴露或保存模型的原始 chain-of-thought。
 
@@ -29,8 +29,9 @@
 ### 2. 只发送已知兼容参数
 
 - OpenAI GPT-5 系列映射为 `reasoning_effort`：fast=`minimal`、balanced=`low`、deep=`high`。
+- 已知支持 effort 的 Claude 型号通过 Messages API 的 `output_config.effort` 映射为 low、medium、high。
 - DashScope/Qwen 混合思考模型使用 `enable_thinking`；balanced/deep 额外使用有界 `thinking_budget`。fast 关闭思考。
-- 对 DeepSeek 原生 `deepseek-reasoner`、Anthropic 和 Gemini，在当前 OpenAI-compatible 传输无法确认等价强度参数时不发送推理参数，并返回可观测的降级原因。
+- 对 DeepSeek 原生 `deepseek-reasoner` 和 Gemini，在当前传输无法确认等价强度参数时不发送推理参数，并返回可观测的降级原因。
 - 未知 Provider/模型默认不发送额外字段。
 
 这比将 `reasoning_effort` 盲目透传到所有兼容 endpoint 更安全，避免不支持字段导致请求失败。
@@ -53,7 +54,7 @@ Agent 控制器依赖 JSON 对象解析。若已知 Qwen endpoint 在 thinking �
 - [Qwen 深度模式关闭 JSON mode 后更易产生非法 JSON] → 保留严格提示、解析器和一次格式修复重试，并覆盖测试。
 - [同名模型可能由不同网关提供] → Provider 优先于模型名判断；只有明确 Provider/模型组合才应用参数。
 - [推理强度降低可能影响控制器质量] → balanced 使用低推理而非完全关闭；deep 保留高强度，运行时安全和验证规则不变。
-- [原生 Anthropic/Gemini 暂未获得参数控制] → 明确记录 unsupported transport，未来新增原生 Transport 时复用规范化策略。
+- [Gemini 暂未获得参数控制] → 明确记录 unsupported transport，未来新增原生 Transport 时复用规范化策略。
 
 ## Migration Plan
 

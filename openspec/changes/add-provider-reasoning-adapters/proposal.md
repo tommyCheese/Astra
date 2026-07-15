@@ -5,7 +5,7 @@ Astra 当前的 `fast / balanced / deep` 只控制 Agent 循环预算，没有�
 ## What Changes
 
 - 为模型 Provider 和具体模型声明推理相关能力，包括强度等级、思考开关、思考预算以及 JSON/流式兼容性。
-- 将 Astra 的统一推理强度按 Provider/模型转换为 OpenAI、Anthropic、Gemini、Qwen 和 DeepSeek 兼容请求参数。
+- 将 Astra 的统一推理强度按 Provider/模型转换为 OpenAI、Anthropic 和 Qwen 的已知兼容请求参数，并为 Gemini、DeepSeek 等当前无法安全控制的组合给出显式降级。
 - 对不支持或无法确认的参数采用安全省略策略，避免因盲目透传产生 HTTP 400。
 - 让模型调用记录保存实际应用的推理配置，便于诊断延迟和验证策略是否真实生效。
 - 补充请求构建、能力识别、降级和运行时接入测试。

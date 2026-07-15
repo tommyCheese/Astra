@@ -12,6 +12,7 @@ from app.agent_profile import AgentProfile, ModelOperation, load_agent_profile
 from app.agent_profile.prompts import PromptComposer
 from app.core.config import Settings
 from app.model_providers import API_KEY_OPTIONAL_MODEL_PROVIDERS
+from app.runner.model_reasoning import attach_reasoning_usage, resolve_model_reasoning
 from app.schemas.agent import (
     AgentDecision,
     AgentReflection,
@@ -20,6 +21,7 @@ from app.schemas.agent import (
     MemoryRecord,
     PlanOutput,
     PlanStep,
+    ReasoningEffort,
     SourceReference,
     TaskContract,
 )
@@ -40,6 +42,10 @@ class ModelOutputError(RuntimeError):
 class ModelClient(ABC):
     def bind_agent_profile(self, profile: AgentProfile) -> None:
         """Bind the immutable Profile selected for the current Run."""
+        return None
+
+    def bind_reasoning_effort(self, effort: ReasoningEffort | str) -> None:
+        """Bind the immutable effective reasoning effort selected for the current Run."""
         return None
 
     @abstractmethod
@@ -350,10 +356,14 @@ class OpenAICompatibleModelClient(ModelClient):
         self.usage_recorder = None
         self.agent_profile = load_agent_profile()
         self.prompt_composer = PromptComposer(self.agent_profile)
+        self.reasoning_effort = ReasoningEffort.balanced
 
     def bind_agent_profile(self, profile: AgentProfile) -> None:
         self.agent_profile = profile
         self.prompt_composer = PromptComposer(profile)
+
+    def bind_reasoning_effort(self, effort: ReasoningEffort | str) -> None:
+        self.reasoning_effort = ReasoningEffort(effort)
 
     async def plan(self, goal: str) -> PlanOutput:
         operation = ModelOperation.PLAN
@@ -615,6 +625,12 @@ class OpenAICompatibleModelClient(ModelClient):
     ) -> dict[str, Any]:
         url = self.settings.model_base_url.rstrip("/") + "/chat/completions"
         started = time.perf_counter()
+        reasoning_config = resolve_model_reasoning(
+            provider=self.settings.model_provider,
+            model=self.settings.model_name,
+            effort=self.reasoning_effort,
+            operation=operation,
+        )
         invocation_id = None
         if self.usage_recorder is not None:
             invocation_id = await self.usage_recorder.start(
@@ -633,19 +649,22 @@ class OpenAICompatibleModelClient(ModelClient):
             url,
             len(messages),
         )
+        request_payload = {
+            "model": self.settings.model_name,
+            "messages": messages,
+            "stream": True,
+            "stream_options": {"include_usage": True},
+            **reasoning_config.request_params,
+        }
+        if reasoning_config.include_json_mode:
+            request_payload["response_format"] = {"type": "json_object"}
         async with (
             httpx.AsyncClient(timeout=60) as client,
             client.stream(
                 "POST",
                 url,
                 headers={"Authorization": f"Bearer {self.settings.model_api_key}"},
-                json={
-                    "model": self.settings.model_name,
-                    "messages": messages,
-                    "response_format": {"type": "json_object"},
-                    "stream": True,
-                    "stream_options": {"include_usage": True},
-                },
+                json=request_payload,
             ) as response,
         ):
             request_id = response.headers.get("x-request-id") or response.headers.get("request-id")
@@ -664,6 +683,7 @@ class OpenAICompatibleModelClient(ModelClient):
                         status="failed",
                         duration_ms=round((time.perf_counter() - started) * 1000),
                         request_id=request_id,
+                        usage=attach_reasoning_usage(None, reasoning_config),
                         error=exc,
                     )
                 raise ModelOutputError(
@@ -719,7 +739,7 @@ class OpenAICompatibleModelClient(ModelClient):
                             status="failed",
                             duration_ms=round((time.perf_counter() - started) * 1000),
                             request_id=request_id,
-                            usage=usage,
+                            usage=attach_reasoning_usage(usage, reasoning_config),
                             error=exc,
                         )
                     raise ModelOutputError(
@@ -746,7 +766,7 @@ class OpenAICompatibleModelClient(ModelClient):
                     status="succeeded",
                     duration_ms=round((time.perf_counter() - started) * 1000),
                     request_id=request_id,
-                    usage=usage,
+                    usage=attach_reasoning_usage(usage, reasoning_config),
                 )
             return payload
         except (json.JSONDecodeError, ValueError) as exc:
@@ -756,7 +776,7 @@ class OpenAICompatibleModelClient(ModelClient):
                     status="failed",
                     duration_ms=round((time.perf_counter() - started) * 1000),
                     request_id=request_id,
-                    usage=usage,
+                    usage=attach_reasoning_usage(usage, reasoning_config),
                     error=exc,
                 )
             if attempt == 0:
@@ -792,6 +812,12 @@ class AnthropicModelClient(OpenAICompatibleModelClient):
         stream_callbacks: StreamFieldCallbacks | None = None,
     ) -> dict[str, Any]:
         url = self.settings.model_base_url.rstrip("/") + "/messages"
+        reasoning_config = resolve_model_reasoning(
+            provider=self.settings.model_provider,
+            model=self.settings.model_name,
+            effort=self.reasoning_effort,
+            operation=operation,
+        )
         system = "\n\n".join(
             message["content"] for message in messages if message["role"] == "system"
         )
@@ -821,6 +847,7 @@ class AnthropicModelClient(OpenAICompatibleModelClient):
                         "max_tokens": 8192,
                         "system": system,
                         "messages": anthropic_messages,
+                        **reasoning_config.request_params,
                     },
                 )
                 response.raise_for_status()
@@ -847,7 +874,7 @@ class AnthropicModelClient(OpenAICompatibleModelClient):
                         status="succeeded",
                         duration_ms=round((time.perf_counter() - started) * 1000),
                         request_id=response.headers.get("request-id"),
-                        usage=body.get("usage"),
+                        usage=attach_reasoning_usage(body.get("usage"), reasoning_config),
                     )
                 return payload
         except (httpx.HTTPError, json.JSONDecodeError, ValueError, ModelOutputError) as exc:
@@ -856,6 +883,7 @@ class AnthropicModelClient(OpenAICompatibleModelClient):
                     invocation_id,
                     status="failed",
                     duration_ms=round((time.perf_counter() - started) * 1000),
+                    usage=attach_reasoning_usage(None, reasoning_config),
                     error=exc,
                 )
             if attempt == 0 and not isinstance(exc, httpx.HTTPError):

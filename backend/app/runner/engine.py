@@ -112,6 +112,7 @@ class RunEngine:
         run = await repo.require_run(run_id)
         profile = await self._profile_for_run(repo, run_id, run.agent_profile_snapshot or {})
         self.model_client.bind_agent_profile(profile)
+        self._bind_reasoning_effort(run)
         goal = await self._conversation_goal(repo, run)
 
         if run.state_version and run.agent_state:
@@ -187,6 +188,21 @@ class RunEngine:
             return
 
         await self._execute_agent_loop(repo, run_id, goal)
+
+    def _bind_reasoning_effort(self, run: RunRecord) -> None:
+        policy = run.reasoning_policy or {}
+        effective = policy.get("effective") if isinstance(policy.get("effective"), dict) else {}
+        requested = policy.get("requested") if isinstance(policy.get("requested"), dict) else {}
+        effort = effective.get("reasoning_effort") or requested.get("reasoning_effort") or "balanced"
+        try:
+            self.model_client.bind_reasoning_effort(effort)
+        except ValueError:
+            logger.warning(
+                "run.reasoning_effort.invalid run_id=%s effort=%s fallback=balanced",
+                run.id,
+                effort,
+            )
+            self.model_client.bind_reasoning_effort("balanced")
 
     async def _prepare_plan(
         self, run_id: str, goal: str, reasoning_policy: dict[str, Any]
