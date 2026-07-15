@@ -585,12 +585,12 @@ describe('App', () => {
     expect(screen.getByRole('button', { name: '每轮' })).toHaveClass('active');
 
     await userEvent.click(screen.getByRole('button', { name: '快速' }));
-    await userEvent.click(screen.getByRole('button', { name: '直接' }));
+    await userEvent.click(screen.getByRole('button', { name: '自适应' }));
     await waitFor(() => expect(updateConversationStrategy).toHaveBeenLastCalledWith({
       preferred_answer_mode: 'trusted',
       reasoning_effort: 'fast',
       max_tool_calls: 5,
-      planning_strategy: 'direct',
+      planning_strategy: 'adaptive',
       reflection_enabled: true,
       reflection_trigger: 'every_turn',
     }));
@@ -604,7 +604,7 @@ describe('App', () => {
       expect.objectContaining({
         reasoning_effort: 'fast',
         max_tool_calls: 5,
-        planning_strategy: 'direct',
+        planning_strategy: 'adaptive',
         reflection_enabled: true,
         reflection_trigger: 'every_turn',
       }),
@@ -1134,6 +1134,7 @@ describe('App', () => {
     expect(screen.getByText('允许 6–15 次工具调用，兼顾速度与检查深度；启用反思时，提供基本的反思能力。')).toBeInTheDocument();
     expect(screen.getByText('允许 16–50 次工具调用，为复杂任务提供更多执行预算；启用反思时，允许更深层的反思能力。')).toBeInTheDocument();
     expect(screen.getByText('轻量启动，按结果决定是否调整计划。')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '直接' })).not.toBeInTheDocument();
     expect(screen.getByText('失败、低置信度、冲突或无进展时反思。')).toBeInTheDocument();
     expect(screen.getByText('每轮结束都反思，更审慎但更慢、更耗用量。')).toBeInTheDocument();
 

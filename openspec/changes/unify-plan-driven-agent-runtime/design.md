@@ -15,7 +15,7 @@ Astra 当前在 `RunEngine` 中生成 `PlanOutput`，再分别投影为数据库
 - 使节点完成由预期结果和证据评估驱动，而不是由工具进程是否成功驱动。
 - 使 replan 产生经过版本、权限、预算和 DAG 校验的持久化新计划版本。
 - 使恢复、完成判定和审计能够重建真实执行顺序。
-- 保持 direct、adaptive、plan-first 和 plan-only 的用户语义。
+- 保持 adaptive、plan-first 和 plan-only 的用户语义，并兼容读取历史 direct Run。
 
 **Non-Goals:**
 
@@ -86,12 +86,13 @@ PlanService 在内存副本上应用 Patch，禁止删除或改写已完成节�
 
 ### 10. 所有规划策略共享同一生命周期
 
-- `direct`：本地创建一个满足统一 Schema 的可执行节点，不调用 planner。
-- `adaptive`：创建少量粗粒度节点，允许在观察后通过 PlanPatch 扩展或修改未完成部分。
+- `adaptive`：创建少量粗粒度节点，允许在观察后通过 PlanPatch 扩展或修改未完成部分，并使用推理强度提供的有界重规划预算。
 - `plan-first`：首次外部行动前由模型生成并持久化完整 DAG。
 - `plan-only`：生成并持久化状态为 `planned` 的正式 Plan，但不激活节点执行；后续批准可以激活同一版本。
 
 策略只改变规划时机、粒度和可用预算，不改变 DAG 校验、节点状态、策略门和 CompletionGate 的强制边界。
+
+`direct` 不再是新请求可选策略。Schema 和执行器保留 legacy 枚举值，仅用于解析历史 Run 的不可变策略快照；偏好存储中的旧值迁移为 `adaptive`，前端、偏好 API 和新建 Run API 均不再接受或产生 `direct`。
 
 ### 11. 兼容视图和事件由规范节点投影
 
@@ -124,4 +125,3 @@ Run API 暂时继续返回 `steps`，但数据由 PlanNode 投影并包含 `plan
 
 - 是否在本变更中把 API 字段 `step_id` 同步重命名为 `plan_node_id`，还是先保留兼容别名并在后续版本删除；设计默认采用兼容别名。
 - `skipped` 是否可以满足 hard dependency；设计默认只有显式标记为可跳过的节点才能在 CompletionGate 中视为满足，普通 hard dependency 仍要求 `completed`。
-

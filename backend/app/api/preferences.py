@@ -7,9 +7,9 @@ from app.repositories.conversation_strategy import ConversationStrategyRepositor
 from app.schemas.agent import (
     TOOL_CALL_LIMIT_DEFAULTS,
     AnswerMode,
-    PlanningStrategy,
     ReasoningEffort,
     ReflectionTrigger,
+    RequestedPlanningStrategy,
     validate_tool_call_limit,
 )
 
@@ -20,7 +20,7 @@ class ConversationStrategyPreferences(BaseModel):
     preferred_answer_mode: AnswerMode = AnswerMode.standard
     reasoning_effort: ReasoningEffort = ReasoningEffort.balanced
     max_tool_calls: int = 8
-    planning_strategy: PlanningStrategy = PlanningStrategy.adaptive
+    planning_strategy: RequestedPlanningStrategy = RequestedPlanningStrategy.adaptive
     reflection_enabled: bool = True
     reflection_trigger: ReflectionTrigger = ReflectionTrigger.adaptive
 

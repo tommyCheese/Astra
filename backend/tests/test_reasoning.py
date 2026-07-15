@@ -27,6 +27,7 @@ from app.schemas.agent import (
     NodeResult,
     PlanningStrategy,
     ReasoningEffort,
+    ReasoningPolicySnapshot,
     ReflectionPatch,
     ReflectionTrigger,
     RequestedReasoningPolicy,
@@ -43,7 +44,7 @@ def test_policy_defaults_and_safety_floor():
     assert snapshot.effective.planning_strategy == PlanningStrategy.adaptive
     high = PolicyCompiler().compile(
         RequestedReasoningPolicy(
-            reasoning_effort="fast", planning_strategy="direct", execution_mode="auto_approval"
+            reasoning_effort="fast", planning_strategy="adaptive", execution_mode="auto_approval"
         ),
         risk_level="high",
     )
@@ -68,7 +69,7 @@ def test_standard_profile_is_fixed_and_preserves_execution_approval():
     assert profile.assurance_level.value == "basic"
     assert profile.contract_mode.value == "system_minimal"
     assert policy.reasoning_effort == ReasoningEffort.fast
-    assert policy.planning_strategy == PlanningStrategy.direct
+    assert policy.planning_strategy == PlanningStrategy.adaptive
     assert policy.reflection_enabled is False
     assert policy.budgets.max_tool_calls == 5
     assert policy.execution_mode == ExecutionMode.auto_approval
@@ -93,6 +94,20 @@ def test_trusted_profile_uses_requested_strategy_and_full_assurance():
     assert policy.planning_strategy == PlanningStrategy.plan_first
     assert policy.budgets.max_tool_calls == 42
     assert policy.verification_level.value == "strict"
+
+
+def test_new_requested_policy_rejects_direct_but_legacy_snapshot_remains_readable():
+    with pytest.raises(ValueError):
+        RequestedReasoningPolicy(planning_strategy="direct")
+
+    snapshot = PolicyCompiler().compile(RequestedReasoningPolicy()).model_dump(mode="json")
+    snapshot["requested"]["planning_strategy"] = "direct"
+    snapshot["effective"]["planning_strategy"] = "direct"
+
+    loaded = ReasoningPolicySnapshot.model_validate(snapshot)
+
+    assert loaded.requested.planning_strategy.value == "adaptive"
+    assert loaded.effective.planning_strategy == PlanningStrategy.direct
 
 
 @pytest.mark.parametrize(

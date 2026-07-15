@@ -9,7 +9,7 @@ Astra 当前由大模型自由选择下一动作，`PlanGraph` 主要作为模�
 - 增加 DAG 校验与 PlanScheduler，只允许执行依赖已满足的 ready node；第一阶段保持单 Agent 串行调度，为后续并行执行保留边界。
 - 将 Agent Loop 改为“Plan 选择节点，大模型决定节点内部动作”，并禁止模型通过任意 `target_step_id` 跳过计划依赖。
 - 将工具结果、Observation、Evaluation、Evidence 和 ToolCall 关联到规范 PlanNode；工具调用成功不再自动代表节点完成。
-- 将 `direct`、`adaptive`、`plan-first` 和 `plan-only` 统一到同一套 Plan 生命周期，同时保留各自的计划粒度和规划时机语义。
+- 将面向用户的 `adaptive`、`plan-first` 和 `plan-only` 统一到同一套 Plan 生命周期；移除新 Run 对 `direct` 的选择，仅为历史 Run 保留只读兼容。
 - 将 `replan` 接入版本化 PlanPatch：保留已完成节点和证据，校验版本、引用、预算与无环性，并记录新旧计划关系。
 - 扩展 CompletionGate，使成功状态同时要求活动计划完成、TaskContract 强制准则满足且必需验证通过。
 - 将现有运行时转换校验、补丁权限和无进展检测接入生产 Agent Loop，建立可恢复的节点级 checkpoint。
@@ -28,7 +28,7 @@ Astra 当前由大模型自由选择下一动作，`PlanGraph` 主要作为模�
 - `task-runner`: 将可审计 Step 统一为规范 PlanNode，并让 ToolCall、证据和 timeline 关联同一节点标识。
 - `completion-gate`: 将活动计划的必需节点完成状态加入成功判定。
 - `structured-reflection`: 将计划级反思改为有版本前置条件、受限操作和完整 DAG 校验的 PlanPatch。
-- `reasoning-policy`: 明确 direct、adaptive、plan-first 和 plan-only 均使用统一计划生命周期，仅在计划生成时机和粒度上不同。
+- `reasoning-policy`: 明确新 Run 仅支持 adaptive、plan-first 和 plan-only；历史 direct 快照继续可读但不会成为新的请求策略。
 - `runtime-reasoning-policy-enforcement`: 使规划策略不仅选择初始化路径，还真实约束节点调度、重规划预算和运行时行为。
 
 ## Impact

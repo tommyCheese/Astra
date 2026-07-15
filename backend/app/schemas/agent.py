@@ -36,7 +36,16 @@ def validate_tool_call_limit(effort: ReasoningEffort, value: int) -> int:
 
 
 class PlanningStrategy(str, Enum):
+    """Runtime strategy values, including legacy persisted Run snapshots."""
+
     direct = "direct"
+    adaptive = "adaptive"
+    plan_first = "plan_first"
+
+
+class RequestedPlanningStrategy(str, Enum):
+    """Planning strategies accepted for preferences and newly created Runs."""
+
     adaptive = "adaptive"
     plan_first = "plan_first"
 
@@ -128,7 +137,7 @@ class RunBudgets(BaseModel):
 class RequestedReasoningPolicy(BaseModel):
     reasoning_effort: ReasoningEffort = ReasoningEffort.balanced
     max_tool_calls: int | None = Field(default=None, ge=0, le=50)
-    planning_strategy: PlanningStrategy = PlanningStrategy.adaptive
+    planning_strategy: RequestedPlanningStrategy = RequestedPlanningStrategy.adaptive
     reflection_enabled: bool = True
     reflection_trigger: ReflectionTrigger = ReflectionTrigger.adaptive
     execution_mode: ExecutionMode = ExecutionMode.request_approval
@@ -142,6 +151,7 @@ class RequestedReasoningPolicy(BaseModel):
 
 
 class EffectiveReasoningPolicy(RequestedReasoningPolicy):
+    planning_strategy: PlanningStrategy = PlanningStrategy.adaptive
     budgets: RunBudgets = Field(default_factory=RunBudgets)
 
 
@@ -158,6 +168,19 @@ class ReasoningPolicySnapshot(BaseModel):
     effective: EffectiveReasoningPolicy = Field(default_factory=EffectiveReasoningPolicy)
     adjustments: list[PolicyAdjustment] = Field(default_factory=list)
     version: int = 1
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_legacy_requested_strategy(cls, value: Any) -> Any:
+        """Keep historical direct snapshots readable without accepting new direct requests."""
+        if not isinstance(value, dict):
+            return value
+        requested = value.get("requested")
+        if not isinstance(requested, dict) or requested.get("planning_strategy") != "direct":
+            return value
+        normalized = dict(value)
+        normalized["requested"] = {**requested, "planning_strategy": "adaptive"}
+        return normalized
 
 
 class RunExecutionProfile(BaseModel):

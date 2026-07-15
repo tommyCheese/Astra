@@ -55,6 +55,15 @@ async def test_create_run_rejects_empty_goal(app_client):
     assert error["trace_id"].startswith("req_")
 
 
+async def test_create_run_rejects_removed_direct_planning_strategy(app_client):
+    response = await app_client.post(
+        "/api/runs",
+        json={"goal": "测试旧策略", "reasoning_policy": {"planning_strategy": "direct"}},
+    )
+
+    assert response.status_code == 422
+
+
 async def test_activate_plan_starts_a_planned_run(app_client):
     async with app_client._astra_session() as session:
         repo = RunRepository(session)
@@ -594,7 +603,7 @@ async def test_create_run_defaults_to_standard_profile(app_client):
     assert body["answer_mode"] == "standard"
     assert body["execution_profile"]["assurance_level"] == "basic"
     assert body["reasoning_policy"]["effective"]["reasoning_effort"] == "fast"
-    assert body["reasoning_policy"]["effective"]["planning_strategy"] == "direct"
+    assert body["reasoning_policy"]["effective"]["planning_strategy"] == "adaptive"
     assert body["reasoning_policy"]["effective"]["reflection_enabled"] is False
     assert body["reasoning_policy"]["effective"]["budgets"]["max_tool_calls"] == 5
 

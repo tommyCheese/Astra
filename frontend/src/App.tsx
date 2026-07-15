@@ -46,7 +46,7 @@ function reasoningEffortLabel(value: ConversationStrategyPreferences['reasoning_
 }
 
 function planningStrategyLabel(value: ConversationStrategyPreferences['planning_strategy']): string {
-  return value === 'direct' ? '直接' : value === 'plan_first' ? '先规划' : '自适应';
+  return value === 'plan_first' ? '先规划' : '自适应';
 }
 
 function reflectionTriggerLabel(value: ConversationStrategyPreferences['reflection_trigger']): string {
@@ -790,7 +790,7 @@ function AppContent() {
                   toolCallLimit={toolCallLimit}
                   onToolCallLimitChange={(value) => persistConversationStrategy({ max_tool_calls: value })}
                   planningStrategy={planningStrategy}
-                  onPlanningStrategyChange={(value) => persistConversationStrategy({ planning_strategy: value === '直接' ? 'direct' : value === '先规划' ? 'plan_first' : 'adaptive' })}
+                  onPlanningStrategyChange={(value) => persistConversationStrategy({ planning_strategy: value === '先规划' ? 'plan_first' : 'adaptive' })}
                   reflectionEnabled={reflectionEnabled}
                   onReflectionChange={(enabled) => persistConversationStrategy({ reflection_enabled: enabled })}
                   reflectionTrigger={reflectionTrigger}
@@ -1629,7 +1629,7 @@ function ModelMenu({ selectedModelKey, onModelChange, modelOptions, trusted, rea
   }, []);
   const effort = reasoningEffortValue(reasoningEffort);
   const limitRange = TOOL_CALL_LIMITS[effort];
-  return <div className="floating-menu model-menu"><div className="menu-heading">{t('模型')}</div>{groups.length ? groups.map((group) => <div className="model-provider-group" key={group.providerId}><div className="model-provider-heading"><span className={`provider-mark provider-${group.providerId}`}>{modelProviders.find((provider) => provider.id === group.providerId)?.mark}</span><span>{group.providerName}</span></div>{group.models.map((item) => <button className={`model-option ${selectedModelKey === item.key ? 'selected' : ''}`} type="button" key={item.key} onClick={() => onModelChange(item.key)}><div><strong>{item.model}</strong><small>{group.providerName}</small></div><span>{selectedModelKey === item.key ? '✓' : ''}</span></button>)}</div>) : <div className="model-menu-empty">{t('请先在模型管理中启用供应商并配置模型')}</div>}<div className="menu-divider" />{trusted ? <><div className="menu-heading menu-heading-with-help"><span>{t('可信对话策略')}</span><button className="strategy-help-button" type="button" aria-label={t('了解对话策略')} onClick={onOpenStrategyHelp}><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M7.6 7.3a2.6 2.6 0 1 1 3.15 2.54c-.75.23-1.25.72-1.25 1.46v.3" /><circle cx="9.5" cy="14.35" r=".72" fill="currentColor" stroke="none" /></svg></button></div><MenuChoice label="推理强度" value={reasoningEffort} options={['快速', '均衡', '深入']} onChange={onReasoningEffortChange} /><ToolCallLimitControl value={toolCallLimit} min={limitRange.min} max={limitRange.max} onChange={onToolCallLimitChange} /><MenuChoice label="规划策略" value={planningStrategy} options={['直接', '自适应', '先规划']} onChange={onPlanningStrategyChange} /><div className="menu-toggle"><div><strong>{t('反思循环')}</strong><small>{t('检查结果并修订下一步策略')}</small></div><Toggle checked={reflectionEnabled} onChange={onReflectionChange} label={t('反思循环')} /></div>{reflectionEnabled && <MenuChoice label="触发方式" value={reflectionTrigger} options={['失败时', '按需', '每轮']} onChange={onReflectionTriggerChange} />}</> : <div className="standard-mode-note"><Icon name="requestApprove" /><div><strong>{t('快速回答')}</strong><small>{t('开启可信模式后可配置完整对话策略与结果校验。')}</small></div></div>}</div>;
+  return <div className="floating-menu model-menu"><div className="menu-heading">{t('模型')}</div>{groups.length ? groups.map((group) => <div className="model-provider-group" key={group.providerId}><div className="model-provider-heading"><span className={`provider-mark provider-${group.providerId}`}>{modelProviders.find((provider) => provider.id === group.providerId)?.mark}</span><span>{group.providerName}</span></div>{group.models.map((item) => <button className={`model-option ${selectedModelKey === item.key ? 'selected' : ''}`} type="button" key={item.key} onClick={() => onModelChange(item.key)}><div><strong>{item.model}</strong><small>{group.providerName}</small></div><span>{selectedModelKey === item.key ? '✓' : ''}</span></button>)}</div>) : <div className="model-menu-empty">{t('请先在模型管理中启用供应商并配置模型')}</div>}<div className="menu-divider" />{trusted ? <><div className="menu-heading menu-heading-with-help"><span>{t('可信对话策略')}</span><button className="strategy-help-button" type="button" aria-label={t('了解对话策略')} onClick={onOpenStrategyHelp}><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M7.6 7.3a2.6 2.6 0 1 1 3.15 2.54c-.75.23-1.25.72-1.25 1.46v.3" /><circle cx="9.5" cy="14.35" r=".72" fill="currentColor" stroke="none" /></svg></button></div><MenuChoice label="推理强度" value={reasoningEffort} options={['快速', '均衡', '深入']} onChange={onReasoningEffortChange} /><ToolCallLimitControl value={toolCallLimit} min={limitRange.min} max={limitRange.max} onChange={onToolCallLimitChange} /><MenuChoice label="规划策略" value={planningStrategy} options={['自适应', '先规划']} onChange={onPlanningStrategyChange} /><div className="menu-toggle"><div><strong>{t('反思循环')}</strong><small>{t('检查结果并修订下一步策略')}</small></div><Toggle checked={reflectionEnabled} onChange={onReflectionChange} label={t('反思循环')} /></div>{reflectionEnabled && <MenuChoice label="触发方式" value={reflectionTrigger} options={['失败时', '按需', '每轮']} onChange={onReflectionTriggerChange} />}</> : <div className="standard-mode-note"><Icon name="requestApprove" /><div><strong>{t('快速回答')}</strong><small>{t('开启可信模式后可配置完整对话策略与结果校验。')}</small></div></div>}</div>;
 }
 
 function StrategyHelpDialog({ onClose }: { onClose: () => void }) {
@@ -1646,7 +1646,6 @@ function StrategyHelpDialog({ onClose }: { onClose: () => void }) {
       ['深入', '允许 16–50 次工具调用，为复杂任务提供更多执行预算；启用反思时，允许更深层的反思能力。'],
     ] },
     { title: '规划策略', items: [
-      ['直接', '生成单步计划后立即处理，启动最快。'],
       ['自适应', '轻量启动，按结果决定是否调整计划。'],
       ['先规划', '执行前生成完整计划，适合多步骤任务。'],
     ] },

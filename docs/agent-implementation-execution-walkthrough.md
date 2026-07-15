@@ -75,7 +75,7 @@ SSE 端点由 [`backend/app/api/runs.py`](../backend/app/api/runs.py) 的 `strea
 
 若 Run 已有 `state_version` 和 `agent_state`，Engine 认为它是被恢复的执行，直接重新进入 Agent Loop。否则状态从 `planning` 开始，`_prepare_plan()` 根据有效规划策略准备 **TaskContract** 和 **Plan**。
 
-**TaskContract** 是用户目标的可验证边界，对应 [`backend/app/schemas/agent.py`](../backend/app/schemas/agent.py) 的 `TaskContract`，其中包含 deliverables、constraints、prohibited actions、assumptions、success criteria 和 verification requirements。`direct` 策略直接使用 `build_default_contract()` 和单步默认计划；`adaptive` 在通用 runtime 开启时让模型生成 Contract，但使用一个“自适应处理”的默认计划；`plan_first` 则并发调用模型的 `contract()` 与 `plan()`。模型输出无效时，Contract 或 Plan 会分别回退到安全默认值。
+**TaskContract** 是用户目标的可验证边界，对应 [`backend/app/schemas/agent.py`](../backend/app/schemas/agent.py) 的 `TaskContract`，其中包含 deliverables、constraints、prohibited actions、assumptions、success criteria 和 verification requirements。新 Run 只提供 `adaptive` 与 `plan_first`：`adaptive` 在通用 runtime 开启时让模型生成 Contract，但使用一个“自适应处理”的轻量默认计划；`plan_first` 则并发调用模型的 `contract()` 与 `plan()`。模型输出无效时，Contract 或 Plan 会分别回退到安全默认值。历史 Run 中持久化的 `direct` 只通过兼容执行路径读取，不再作为新请求选项。
 
 模型计划首先由 [`backend/app/runner/planning.py`](../backend/app/runner/planning.py) 的 `plan_output_to_draft()` 归一为 **PlanDraft**，然后经过 `PlanValidator` 检查节点引用、环、根节点、成功准则、能力和预算。`PlanService.create()` 将其落为 `PlanRecord`、`PlanNodeRecord` 与 `PlanEdgeRecord`。这组记录是新 Run 唯一可写的执行事实源；`Run.plan_graph`、API `steps` 和模型 Context 都由它单向投影，不能反向覆盖节点状态。旧 Run 若没有 `PlanRecord`，仍可只读显示原有 `StepRecord`，但不会被新调度器恢复执行。
 

@@ -24,6 +24,7 @@ from app.schemas.agent import (
     ReasoningPolicySnapshot,
     ReflectionPatch,
     ReflectionTrigger,
+    RequestedPlanningStrategy,
     RequestedReasoningPolicy,
     RunBudgets,
     RunExecutionProfile,
@@ -99,15 +100,6 @@ class PolicyCompiler:
                 "high_risk_strict_verification",
                 "高风险任务需要严格验证。",
             )
-        elif complexity == "high" and data["planning_strategy"] == PlanningStrategy.direct:
-            self._raise(
-                data,
-                adjustments,
-                "planning_strategy",
-                PlanningStrategy.adaptive,
-                "complexity_minimum_planning",
-                "复杂任务至少使用自适应规划。",
-            )
         effort = ReasoningEffort(data["reasoning_effort"])
         budgets = self.BUDGETS[effort].model_copy(deep=True)
         if requested.max_tool_calls is not None:
@@ -157,7 +149,7 @@ class RunProfileResolver:
                 update={
                     "reasoning_effort": ReasoningEffort.fast,
                     "max_tool_calls": 5,
-                    "planning_strategy": PlanningStrategy.direct,
+                    "planning_strategy": RequestedPlanningStrategy.adaptive,
                     "reflection_enabled": False,
                     "reflection_trigger": ReflectionTrigger.failure_only,
                     "verification_level": VerificationLevel.basic,

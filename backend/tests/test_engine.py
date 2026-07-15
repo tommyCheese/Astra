@@ -295,7 +295,7 @@ async def test_final_plan_node_answer_is_regenerated_as_canonical_stream(session
     settings = Settings(model_provider="mock")
     profile = RunProfileResolver().resolve(
         AnswerMode.trusted,
-        RequestedReasoningPolicy(planning_strategy=PlanningStrategy.direct),
+        RequestedReasoningPolicy(planning_strategy=PlanningStrategy.adaptive),
     )
     repo = RunRepository(session)
     run = await repo.create_task_run(
@@ -463,17 +463,17 @@ class EffortSpyClient(MockModelClient):
 def engine_policy(
     planning_strategy, execution_mode="request_approval", reasoning_effort="balanced"
 ):
-    return (
-        PolicyCompiler()
-        .compile(
-            RequestedReasoningPolicy(
-                planning_strategy=planning_strategy,
-                execution_mode=execution_mode,
-                reasoning_effort=reasoning_effort,
-            )
+    requested_strategy = "adaptive" if planning_strategy == "direct" else planning_strategy
+    snapshot = PolicyCompiler().compile(
+        RequestedReasoningPolicy(
+            planning_strategy=requested_strategy,
+            execution_mode=execution_mode,
+            reasoning_effort=reasoning_effort,
         )
-        .model_dump(mode="json")
-    )
+    ).model_dump(mode="json")
+    if planning_strategy == "direct":
+        snapshot["effective"]["planning_strategy"] = "direct"
+    return snapshot
 
 
 async def test_engine_binds_effective_reasoning_effort_before_model_operations(session):

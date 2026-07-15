@@ -24,6 +24,10 @@ class ConversationStrategyRepository:
             )
             self.session.add(record)
             await self.session.flush()
+        elif record.planning_strategy == "direct":
+            record.planning_strategy = "adaptive"
+            record.updated_at = utc_now()
+            await self.session.flush()
         return self._serialize(record)
 
     async def set(self, strategy: dict[str, str | bool | int]) -> dict[str, str | bool | int]:
