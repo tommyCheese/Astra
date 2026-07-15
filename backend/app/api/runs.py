@@ -262,7 +262,7 @@ async def stream_run_events(
     session: AsyncSession = Depends(get_session),
 ) -> StreamingResponse:
     repo = RunRepository(session)
-    if await repo.get_run(run_id) is None:
+    if await repo.get_run_status(run_id) is None:
         raise ResourceError("RUN_NOT_FOUND", "找不到指定运行记录。")
 
     async def event_stream() -> AsyncIterator[str]:
@@ -282,15 +282,8 @@ async def stream_run_events(
                         "created_at": event.created_at.isoformat(),
                     }
                     yield f"id: {event.id}\ndata: {json.dumps(payload)}\n\n"
-                run = await stream_repo.get_run(run_id)
-                if run and run.status in {
-                    "completed",
-                    "completed_with_warnings",
-                    "failed",
-                    "blocked",
-                    "waiting_user",
-                    "cancelled",
-                }:
+                status = await stream_repo.get_run_status(run_id)
+                if status in RunRepository.TERMINAL_STATUSES:
                     if not events:
                         yield 'data: {"type": "heartbeat", "payload": {}}\n\n'
                     break

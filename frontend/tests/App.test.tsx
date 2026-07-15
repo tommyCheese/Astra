@@ -250,6 +250,28 @@ describe('App', () => {
     expect(screen.getByRole('button', { name: '发送' })).toBeInTheDocument();
   });
 
+  it('does not submit another message while the current run is active', async () => {
+    vi.mocked(getRun).mockImplementationOnce(() => new Promise(() => undefined));
+    render(<App />);
+
+    await userEvent.type(screen.getByRole('textbox'), '正在执行的任务');
+    await userEvent.keyboard('{Enter}');
+    await screen.findByRole('button', { name: '终止回答' });
+    await userEvent.type(screen.getByRole('textbox'), '不应重复提交');
+    await userEvent.keyboard('{Enter}');
+
+    expect(createRun).toHaveBeenCalledTimes(1);
+  });
+
+  it('opens and closes the mobile navigation drawer through accessible controls', async () => {
+    render(<App />);
+
+    await userEvent.click(screen.getByRole('button', { name: '打开导航' }));
+    expect(document.querySelector('.sidebar')).toHaveClass('mobile-open');
+    await userEvent.click(screen.getByRole('button', { name: '关闭导航' }));
+    expect(document.querySelector('.sidebar')).not.toHaveClass('mobile-open');
+  });
+
   it('remembers a stop request while run creation is pending and allows a follow-up', async () => {
     let resolveCreate: ((value: { run_id: string; task_id: string; status: string }) => void) | undefined;
     vi.mocked(createRun).mockImplementationOnce(() => new Promise((resolve) => { resolveCreate = resolve; }));

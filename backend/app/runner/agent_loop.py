@@ -777,6 +777,8 @@ class AgentLoop:
                 await repo.update_agent_turn(
                     turn.id, status="blocked", observation=observation.model_dump()
                 )
+                terminal_override = "blocked"
+                terminal_summary = "已达到用户策略允许的最大工具调用次数。"
                 break
 
             try:

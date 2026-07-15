@@ -446,13 +446,14 @@ async def test_fast_policy_limits_tool_calls(session):
     )
     client = RepeatedToolClient()
 
-    await AgentLoop(settings, model_client=client, tool_registry=fake_web_registry()).run(
+    result = await AgentLoop(settings, model_client=client, tool_registry=fake_web_registry()).run(
         repo, run.id, run.task.description
     )
     loaded = await repo.require_run(run.id)
 
     assert len(loaded.tool_calls) == 5
     assert client.decide_calls == 6
+    assert result["status"] == "blocked"
 
 
 async def test_custom_balanced_policy_can_reach_fifteen_tool_calls(session):
@@ -472,13 +473,14 @@ async def test_custom_balanced_policy_can_reach_fifteen_tool_calls(session):
     )
     client = RepeatedToolClient()
 
-    await AgentLoop(settings, model_client=client, tool_registry=fake_web_registry()).run(
+    result = await AgentLoop(settings, model_client=client, tool_registry=fake_web_registry()).run(
         repo, run.id, run.task.description
     )
     loaded = await repo.require_run(run.id)
 
     assert len(loaded.tool_calls) == 15
     assert client.decide_calls == 16
+    assert result["status"] == "blocked"
 
 
 async def test_deployment_hard_cap_can_lower_deep_turn_budget(session):

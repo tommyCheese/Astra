@@ -225,6 +225,10 @@ class RunRepository:
         )
         return result.scalar_one_or_none()
 
+    async def get_run_status(self, run_id: str) -> str | None:
+        result = await self.session.execute(select(RunRecord.status).where(RunRecord.id == run_id))
+        return result.scalar_one_or_none()
+
     async def list_recent_runs(self, limit: int = 100) -> list[RunRecord]:
         result = await self.session.execute(
             select(RunRecord)

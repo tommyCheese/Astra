@@ -74,6 +74,7 @@ function AppContent() {
   const [showJumpToLatest, setShowJumpToLatest] = useState(false);
   const [error, setError] = useState<ApiErrorPayload | null>(null);
   const [view, setView] = useState<'chat' | 'settings' | 'shares'>('chat');
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   const [usageOpen, setUsageOpen] = useState(false);
   const [strategyHelpOpen, setStrategyHelpOpen] = useState(false);
   const [conversationAction, setConversationAction] = useState<{ kind: 'rename' | 'share' | 'delete'; conversation: ConversationEntry } | null>(null);
@@ -209,6 +210,15 @@ function AppContent() {
     };
   }, [attachOpen, modelOpen, executionMenuOpen]);
 
+  useEffect(() => {
+    if (!sidebarOpen) return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setSidebarOpen(false);
+    };
+    document.addEventListener('keydown', closeOnEscape);
+    return () => document.removeEventListener('keydown', closeOnEscape);
+  }, [sidebarOpen]);
+
   function rememberConversation(nextRun: RunView, previousMessages: ChatMessage[] = priorMessages) {
     const conversationId = activeConversationId ?? nextRun.task_id;
     setActiveConversationId(conversationId);
@@ -219,10 +229,18 @@ function AppContent() {
   }
 
   async function openConversation(conversation: ConversationEntry) {
+    const previousConversationId = activeConversationId;
+    initialSnapshotControllerRef.current?.abort();
+    initialSnapshotControllerRef.current = undefined;
     conversationControllerRef.current?.abort();
     const controller = new AbortController();
     conversationControllerRef.current = controller;
     setActiveConversationId(conversation.id);
+    setStreamingAnswer('');
+    setAnswerComplete(false);
+    setAnswerSettling(false);
+    deltaBufferRef.current = '';
+    processEventBufferRef.current = [];
     try {
       const detail = await getConversation(conversation.id, controller.signal);
       if (conversationControllerRef.current !== controller) return;
@@ -239,6 +257,9 @@ function AppContent() {
         setPriorMessages(conversation.priorMessages);
         setRun(normalizeRunView(conversation.run));
         setProcessState(reconcileProcessSnapshot(null, normalizeRunView(conversation.run)));
+      } else {
+        setActiveConversationId(previousConversationId);
+        setError({ type: 'infrastructure.database', code: 'CONVERSATION_LOAD_FAILED', message: t('无法加载该对话，请稍后重试。'), retryable: true, trace_id: 'unavailable' });
       }
     } finally {
       if (conversationControllerRef.current === controller) {
@@ -299,7 +320,7 @@ function AppContent() {
 
   async function submit(event: FormEvent) {
     event.preventDefault();
-    if (loading) return;
+    if (loading || (run && !terminalStatuses.has(run.status))) return;
     const trimmedGoal = goal.trim();
     if (!trimmedGoal) {
       setError({ type: 'validation.input_invalid', code: 'GOAL_REQUIRED', message: t('请输入你想完成的目标。'), retryable: false, trace_id: 'local' });
@@ -557,26 +578,42 @@ function AppContent() {
     setShowJumpToLatest(false);
     setGoal('');
     changeView('chat');
+    setSidebarOpen(false);
   }
+
+  async function toggleConversationPin(conversation: ConversationEntry) {
+    try {
+      const updated = await updateConversation(conversation.id, { pinned: !conversation.pinned_at });
+      setConversationHistory((items) => items.map((item) => item.id === updated.id ? { ...item, title: updated.title, pinned_at: updated.pinned_at, updated_at: updated.updated_at } : item));
+    } catch (err) {
+      setError(err instanceof AstraApiError ? err.payload : { type: 'infrastructure.database', code: 'CONVERSATION_PIN_FAILED', message: t('更新置顶状态失败，请稍后重试。'), retryable: true, trace_id: 'unavailable' });
+    }
+  }
+
+  const activeConversationTitle = conversationHistory.find((item) => item.id === activeConversationId)?.title;
 
   return (
     <main className="app-layout">
       <Sidebar
+        open={sidebarOpen}
         run={run}
         activeConversationId={activeConversationId}
         conversations={conversationHistory}
         activeView={view}
         onNewChat={startNewChat}
-        onSelectConversation={(conversation) => { void openConversation(conversation); }}
+        onSelectConversation={(conversation) => { setSidebarOpen(false); void openConversation(conversation); }}
         onConversationAction={(kind, conversation) => setConversationAction({ kind, conversation })}
-        onTogglePin={(conversation) => { void updateConversation(conversation.id, { pinned: !conversation.pinned_at }).then((updated) => setConversationHistory((items) => items.map((item) => item.id === updated.id ? { ...item, title: updated.title, pinned_at: updated.pinned_at, updated_at: updated.updated_at } : item))); }}
+        onTogglePin={(conversation) => { void toggleConversationPin(conversation); }}
         onOpenSettings={() => {
+          setSidebarOpen(false);
           setSettingsCategory('模型管理');
           changeView('settings');
         }}
-        onOpenShares={() => changeView('shares')}
-        onOpenUsage={() => setUsageOpen(true)}
+        onOpenShares={() => { setSidebarOpen(false); changeView('shares'); }}
+        onOpenUsage={() => { setSidebarOpen(false); setUsageOpen(true); }}
+        onClose={() => setSidebarOpen(false)}
       />
+      {sidebarOpen && <button className="sidebar-backdrop" type="button" aria-label={t('关闭导航遮罩')} onClick={() => setSidebarOpen(false)} />}
 
       <section className="workspace">
         {view === 'shares' ? (
@@ -595,11 +632,9 @@ function AppContent() {
           />
         ) : <>
         <section className="chat-topbar">
-          <div>
-            <h1>Astra</h1>
-            <p>{t('Web Agent · 可审计搜索与抓取')}</p>
-          </div>
-          <span className={`status status-${run?.status ?? 'idle'}`}>{statusLabel(run?.status)}</span>
+          <button className="mobile-sidebar-trigger" type="button" aria-label={t('打开导航')} onClick={() => setSidebarOpen(true)}><span /><span /><span /></button>
+          <h1>{activeConversationTitle || 'Astra'}</h1>
+          {run && <span className={`status status-${run.status}`}>{statusLabel(run.status)}</span>}
         </section>
 
         <section className="chat-surface">
@@ -647,9 +682,9 @@ function AppContent() {
               >+</button>
               {attachOpen && (
                 <div className="floating-menu attachment-menu">
-                  <button type="button"><span>↥</span><div><strong>{t('上传文件')}</strong><small>{t('文档、代码与数据')}</small></div></button>
-                  <button type="button"><span>▧</span><div><strong>{t('添加图片')}</strong><small>{t('分析图像内容')}</small></div></button>
-                  <button type="button"><span>⌁</span><div><strong>{t('连接来源')}</strong><small>{t('即将支持')}</small></div></button>
+                  <button type="button" disabled><span>↥</span><div><strong>{t('上传文件')}</strong><small>{t('即将支持')}</small></div></button>
+                  <button type="button" disabled><span>▧</span><div><strong>{t('添加图片')}</strong><small>{t('即将支持')}</small></div></button>
+                  <button type="button" disabled><span>⌁</span><div><strong>{t('连接来源')}</strong><small>{t('即将支持')}</small></div></button>
                 </div>
               )}
             </div>
@@ -744,7 +779,8 @@ function AppContent() {
   );
 }
 
-function Sidebar({ run, activeConversationId, conversations, activeView, onNewChat, onSelectConversation, onConversationAction, onTogglePin, onOpenSettings, onOpenShares, onOpenUsage }: {
+function Sidebar({ open, run, activeConversationId, conversations, activeView, onNewChat, onSelectConversation, onConversationAction, onTogglePin, onOpenSettings, onOpenShares, onOpenUsage, onClose }: {
+  open: boolean;
   run: RunView | null;
   activeConversationId: string | null;
   conversations: ConversationEntry[];
@@ -756,6 +792,7 @@ function Sidebar({ run, activeConversationId, conversations, activeView, onNewCh
   onOpenSettings: () => void;
   onOpenShares: () => void;
   onOpenUsage: () => void;
+  onClose: () => void;
 }) {
   const { t } = useI18n();
   const [menuId, setMenuId] = useState<string | null>(null);
@@ -795,13 +832,14 @@ function Sidebar({ run, activeConversationId, conversations, activeView, onNewCh
     </div>}
   </div>;
   return (
-    <aside className="sidebar">
+    <aside className={`sidebar ${open ? 'mobile-open' : ''}`}>
       <div className="brand">
         <AstraBrandIcon />
         <div>
           <strong>Astra</strong>
           <span>Agent Console</span>
         </div>
+        <button className="mobile-sidebar-close" type="button" aria-label={t('关闭导航')} onClick={onClose}>×</button>
       </div>
 
       <button className="new-chat-button" type="button" onClick={onNewChat}>
