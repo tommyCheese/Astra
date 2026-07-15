@@ -7,16 +7,28 @@ export type RunEvent = {
 
 export type StepView = {
   id: string;
+  plan_id?: string | null;
+  plan_version?: number | null;
+  node_key?: string | null;
   index: number;
   title: string;
   intent: string;
   status: string;
+  depends_on?: string[];
+  required_capabilities?: string[];
+  success_criteria_refs?: string[];
+  expected_outcome?: Record<string, unknown> | null;
+  risk_level?: string;
+  optional?: boolean;
+  evidence_refs?: string[];
+  failure?: Record<string, unknown> | null;
   evidence?: Record<string, unknown> | null;
 };
 
 export type ToolCallView = {
   id: string;
   step_id?: string | null;
+  plan_node_id?: string | null;
   tool_name: string;
   status: string;
   input: Record<string, unknown>;
@@ -36,6 +48,7 @@ export type ArtifactView = {
   checksum?: string | null;
   security_status?: string;
   tool_call_id?: string | null;
+  plan_node_id?: string | null;
   sandbox_job_id?: string | null;
   provenance?: Record<string, unknown>;
   content_url?: string | null;
@@ -44,6 +57,7 @@ export type ArtifactView = {
 export type AgentTurnView = {
   id: string;
   run_id: string;
+  plan_node_id?: string | null;
   turn_index: number;
   decision_type: string;
   reasoning_summary: string;

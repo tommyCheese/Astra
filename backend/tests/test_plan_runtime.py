@@ -15,11 +15,11 @@ from app.runner.reasoning import build_default_contract
 from app.schemas.agent import (
     ExpectedObservation,
     PlanDraft,
+    PlanningStrategy,
     PlanNodeDraft,
     PlanNodeStatus,
     PlanPatch,
     PlanPatchOperation,
-    PlanningStrategy,
 )
 
 
@@ -266,6 +266,99 @@ async def test_stale_plan_patch_is_rejected(session):
                         operation="update_node",
                         node_key="answer",
                         updates={"title": "changed"},
+                    )
+                ],
+            ),
+            contract=contract,
+            capabilities={"weather.lookup"},
+        )
+
+
+async def test_plan_patch_preserves_completed_nodes_and_evidence(session):
+    run = await RunRepository(session).create_task_run("保留成果", {"provider": "mock"})
+    contract = build_default_contract("保留成果")
+    repository = PlanRepository(session)
+    service = PlanService(repository)
+    plan = await service.create(
+        run.id,
+        weather_plan(),
+        contract=contract,
+        capabilities={"weather.lookup"},
+    )
+    first = plan.nodes[0]
+    await repository.transition_node(first.id, PlanNodeStatus.running)
+    await repository.transition_node(
+        first.id, PlanNodeStatus.completed, evidence_refs=["evidence-1"]
+    )
+    revised = await service.apply_patch(
+        run.id,
+        PlanPatch(
+            expected_plan_version=plan.version,
+            reason="只修改未开始节点",
+            operations=[
+                PlanPatchOperation(
+                    operation="update_node",
+                    node_key="answer",
+                    updates={"title": "生成最终建议"},
+                )
+            ],
+        ),
+        contract=contract,
+        capabilities={"weather.lookup"},
+    )
+    preserved = next(node for node in revised.nodes if node.node_key == "resolve-location")
+    assert preserved.status == "completed"
+    assert preserved.evidence_refs == ["evidence-1"]
+    assert preserved.lineage_node_id == first.id
+
+
+async def test_plan_patch_rejects_running_node_and_cyclic_update(session):
+    run = await RunRepository(session).create_task_run("补丁保护", {"provider": "mock"})
+    contract = build_default_contract("补丁保护")
+    repository = PlanRepository(session)
+    service = PlanService(repository)
+    plan = await service.create(
+        run.id,
+        weather_plan(),
+        contract=contract,
+        capabilities={"weather.lookup"},
+    )
+    await repository.transition_node(plan.nodes[0].id, PlanNodeStatus.running)
+    with pytest.raises(PlanStateError, match="running"):
+        await service.apply_patch(
+            run.id,
+            PlanPatch(
+                expected_plan_version=plan.version,
+                reason="unsafe",
+                operations=[
+                    PlanPatchOperation(
+                        operation="update_node",
+                        node_key="answer",
+                        updates={"title": "unsafe"},
+                    )
+                ],
+            ),
+            contract=contract,
+            capabilities={"weather.lookup"},
+        )
+    cycle_run = await RunRepository(session).create_task_run("循环补丁", {"provider": "mock"})
+    cycle_plan = await service.create(
+        cycle_run.id,
+        weather_plan(),
+        contract=contract,
+        capabilities={"weather.lookup"},
+    )
+    with pytest.raises(PlanValidationError, match="cycle"):
+        await service.apply_patch(
+            cycle_run.id,
+            PlanPatch(
+                expected_plan_version=cycle_plan.version,
+                reason="cycle",
+                operations=[
+                    PlanPatchOperation(
+                        operation="add_dependency",
+                        node_key="resolve-location",
+                        predecessor_key="answer",
                     )
                 ],
             ),

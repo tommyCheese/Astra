@@ -1,20 +1,21 @@
 from __future__ import annotations
 
-from copy import deepcopy
 from typing import Any
 
 from app.db.models import PlanNodeRecord, PlanRecord
 from app.repositories.plans import PlanRepository, PlanStateError, plan_to_view
 from app.schemas.agent import (
     AgentState,
+    Evaluation,
+    EvaluationOutcome,
     ExpectedObservation,
     PlanDraft,
+    PlanningStrategy,
     PlanNodeDraft,
     PlanNodeStatus,
     PlanOutput,
     PlanPatch,
     PlanStatus,
-    PlanningStrategy,
     RunBudgets,
     TaskContract,
 )
@@ -76,7 +77,9 @@ class PlanValidator:
         depth: dict[str, int] = {}
         while len(resolved) < len(dependencies):
             ready = sorted(
-                key for key, values in dependencies.items() if key not in resolved and values <= resolved
+                key
+                for key, values in dependencies.items()
+                if key not in resolved and values <= resolved
             )
             if not ready:
                 raise PlanValidationError("Plan contains a dependency cycle")
@@ -156,11 +159,17 @@ class PlanService:
         if current is None:
             raise PlanStateError("Run has no active plan")
         if current.version != patch.expected_plan_version:
-            raise PlanStateError(
+            error = PlanStateError(
                 f"Plan version conflict: expected {patch.expected_plan_version}, "
                 f"got {current.version}"
             )
+            await self._record_patch_rejection(run_id, patch, error)
+            raise error
         view = plan_to_view(current)
+        if any(node.status.value == PlanNodeStatus.running.value for node in view.nodes):
+            error = PlanStateError("Cannot replan while a plan node is running")
+            await self._record_patch_rejection(run_id, patch, error)
+            raise error
         nodes: dict[str, dict[str, Any]] = {
             node.node_key: {
                 "node_key": node.node_key,
@@ -182,31 +191,54 @@ class PlanService:
             }
             for node in view.nodes
         }
-        for operation in patch.operations:
-            self._apply_operation(nodes, operation.model_dump(exclude_none=True))
-        draft = PlanDraft(
-            strategy=view.strategy,
-            nodes=[
-                PlanNodeDraft.model_validate(
-                    {key: value for key, value in node.items() if key not in {"status", "id"}}
-                )
-                for node in sorted(nodes.values(), key=lambda item: item["node_key"])
-                if node.get("status") != PlanNodeStatus.blocked.value
-            ],
-        )
-        self.validator.validate(
-            draft,
-            task_contract=contract,
-            available_capabilities=capabilities,
-            budgets=budgets,
-        )
+        try:
+            for operation in patch.operations:
+                self._apply_operation(nodes, operation.model_dump(exclude_none=True))
+            draft = PlanDraft(
+                strategy=view.strategy,
+                nodes=[
+                    PlanNodeDraft.model_validate(
+                        {key: value for key, value in node.items() if key not in {"status", "id"}}
+                    )
+                    for node in sorted(nodes.values(), key=lambda item: item["node_key"])
+                ],
+            )
+            self.validator.validate(
+                draft,
+                task_contract=contract,
+                available_capabilities=capabilities,
+                budgets=budgets,
+            )
+        except (TypeError, ValueError) as exc:
+            await self._record_patch_rejection(run_id, patch, exc)
+            raise
         lineage = {key: value["id"] for key, value in nodes.items() if value.get("id")}
+        original_nodes = {node.id: node for node in current.nodes}
+        node_state = {
+            key: {
+                "status": value.get("status", PlanNodeStatus.pending.value),
+                "evidence_refs": list(original_nodes[value["id"]].evidence_refs or [])
+                if value.get("id") in original_nodes
+                else [],
+                "failure": original_nodes[value["id"]].failure
+                if value.get("id") in original_nodes
+                else None,
+                "started_at": original_nodes[value["id"]].started_at
+                if value.get("id") in original_nodes
+                else None,
+                "completed_at": original_nodes[value["id"]].completed_at
+                if value.get("id") in original_nodes
+                else None,
+            }
+            for key, value in nodes.items()
+        }
         next_plan = await self.repository.create(
             run_id,
             draft,
             status=PlanStatus.active,
             supersedes_plan_id=current.id,
             lineage=lineage,
+            node_state=node_state,
         )
         await self.repository._event(
             run_id,
@@ -220,6 +252,60 @@ class PlanService:
             },
         )
         return next_plan
+
+    async def _record_patch_rejection(
+        self, run_id: str, patch: PlanPatch, error: Exception
+    ) -> None:
+        await self.repository._event(
+            run_id,
+            "plan.patch_rejected",
+            {
+                "expected_plan_version": patch.expected_plan_version,
+                "reason": patch.reason,
+                "error": str(error),
+            },
+        )
+        await self.repository.session.flush()
+
+    async def complete_node(
+        self,
+        run_id: str,
+        node_id: str,
+        *,
+        evaluation: Evaluation | None,
+        evidence_refs: list[str],
+    ) -> PlanNodeRecord:
+        if evaluation is not None and evaluation.outcome != EvaluationOutcome.matched:
+            raise PlanStateError("Plan node completion requires a matched evaluation")
+        node = await self.repository.require_node(node_id)
+        plan = await self.repository.require(node.plan_id)
+        if plan.run_id != run_id:
+            raise PlanStateError("Plan node does not belong to the Run")
+        completed = await self.repository.transition_node(
+            node_id,
+            PlanNodeStatus.completed,
+            evidence_refs=evidence_refs,
+        )
+        from app.db.models import RunRecord
+
+        run = await self.repository.session.get(RunRecord, run_id)
+        if run is None:
+            raise ValueError(f"Run not found: {run_id}")
+        state = AgentState.model_validate(run.agent_state or {})
+        if evaluation is not None:
+            state.evaluations.append(evaluation.model_dump(mode="json"))
+            for criterion in state.task_contract.success_criteria:
+                if criterion.id in evaluation.criterion_updates:
+                    criterion.status = evaluation.criterion_updates[criterion.id]
+        state.active_node_id = None
+        state.active_plan_id = plan.id
+        state.active_plan_version = plan.version
+        state.version = run.state_version + 1
+        run.agent_state = state.model_dump(mode="json")
+        run.state_version = state.version
+        run.current_step_id = None
+        await self.repository.session.flush()
+        return completed
 
     @staticmethod
     def _apply_operation(nodes: dict[str, dict[str, Any]], operation: dict[str, Any]) -> None:
@@ -249,7 +335,13 @@ class PlanService:
                 "risk_level",
                 "optional",
             }
-            node.update({key: value for key, value in operation.get("updates", {}).items() if key in allowed})
+            node.update(
+                {
+                    key: value
+                    for key, value in operation.get("updates", {}).items()
+                    if key in allowed
+                }
+            )
         elif kind == "add_dependency":
             predecessor = operation.get("predecessor_key")
             if predecessor not in nodes:

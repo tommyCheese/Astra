@@ -109,9 +109,7 @@ class PolicyCompiler:
         if requested.max_tool_calls is not None:
             budgets.max_tool_calls = requested.max_tool_calls
             budgets.max_turns = max(budgets.max_turns, requested.max_tool_calls + 1)
-        effective = EffectiveReasoningPolicy(
-            **data, budgets=budgets
-        )
+        effective = EffectiveReasoningPolicy(**data, budgets=budgets)
         return ReasoningPolicySnapshot(
             requested=requested, effective=effective, adjustments=adjustments
         )
@@ -270,6 +268,7 @@ class ObservationEvaluator:
             else {}
         )
         return Evaluation(
+            plan_node_id=observation.plan_node_id,
             outcome=outcome,
             summary=f"Observation evaluated as {outcome.value}",
             expected=expected,
@@ -320,6 +319,8 @@ def apply_reflection_patch(
         if criterion.id in patch.criterion_updates:
             criterion.status = patch.criterion_updates[criterion.id]
     if patch.replacement_plan:
+        if updated.plan is None:
+            raise ValueError("Legacy replacement_plan cannot modify a canonical Plan")
         if patch.replacement_plan.version <= updated.plan.version:
             raise ValueError("Replacement plan version must increase")
         updated.plan = patch.replacement_plan
@@ -361,6 +362,7 @@ class CompletionGate:
         state: AgentState,
         *,
         validation_outcomes: list[ValidationOutcome],
+        plan: Any | None = None,
         warnings: list[str] | None = None,
         required_user_action: str | None = None,
         runtime_error: str | None = None,
@@ -381,6 +383,30 @@ class CompletionGate:
                 required_user_action=required_user_action
                 or state.task_contract.clarification_question,
             )
+        if plan is not None:
+            nodes = list(getattr(plan, "nodes", []) or [])
+            failed_nodes = [
+                node.node_key
+                for node in nodes
+                if not node.optional and node.status.value in {"failed", "blocked"}
+            ]
+            if failed_nodes:
+                return CompletionDecision(
+                    state=TerminalState.blocked,
+                    reason="活动计划存在失败或阻塞的必需节点。",
+                    unmet_criteria=[f"plan-node:{key}" for key in failed_nodes],
+                )
+            unfinished_nodes = [
+                node.node_key
+                for node in nodes
+                if not node.optional and node.status.value in {"pending", "running"}
+            ]
+            if unfinished_nodes:
+                return CompletionDecision(
+                    state=TerminalState.continue_run,
+                    reason="活动计划仍有未完成的必需节点。",
+                    unmet_criteria=[f"plan-node:{key}" for key in unfinished_nodes],
+                )
         mandatory = [item for item in state.task_contract.success_criteria if item.mandatory]
         unmet = [item.id for item in mandatory if item.status != CriterionStatus.satisfied]
         missing_or_failed_requirements: list[str] = []

@@ -312,6 +312,7 @@ class AgentState(BaseModel):
 
 
 class Evaluation(BaseModel):
+    plan_node_id: str | None = None
     outcome: EvaluationOutcome
     summary: str
     expected: ExpectedObservation | None = None
@@ -327,6 +328,7 @@ class ReflectionPatch(BaseModel):
     fact_updates: list[AcceptedFact] = Field(default_factory=list)
     criterion_updates: dict[str, CriterionStatus] = Field(default_factory=dict)
     replacement_plan: PlanGraph | None = None
+    plan_patch: PlanPatch | None = None
     added_verification_requirements: list[VerificationRequirement] = Field(default_factory=list)
     terminal_intent: str | None = None
 
@@ -338,6 +340,7 @@ class ReflectionPatch(BaseModel):
                 self.fact_updates,
                 self.criterion_updates,
                 self.replacement_plan,
+                self.plan_patch,
                 self.added_verification_requirements,
                 self.terminal_intent,
             )
@@ -437,9 +440,11 @@ class AgentDecision(BaseModel):
     risk_level: str = "low"
     confidence: float = Field(default=0.5, ge=0, le=1)
     fallback: str | None = None
+    node_result: dict[str, Any] = Field(default_factory=dict)
 
 
 class AgentObservation(BaseModel):
+    plan_node_id: str | None = None
     kind: str
     status: str
     summary: str

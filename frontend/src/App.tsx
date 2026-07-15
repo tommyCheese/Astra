@@ -1794,11 +1794,24 @@ function ReasoningAuditSummary({ run }: { run: RunView }) {
   return <div className="reasoning-audit-grid">
     {policy?.effective && <div><strong>{t('生效策略')}</strong><span>{String(policy.effective.reasoning_effort ?? 'balanced')} · {String(policy.effective.planning_strategy ?? 'adaptive')} · {String(policy.effective.execution_mode ?? 'request_approval')}</span></div>}
     <div><strong>{t('状态版本')}</strong><span>State {run.state_version ?? 0} · Plan {String(run.plan_graph?.version ?? 1)}</span></div>
+    {(run.steps ?? []).map((step) => <div className="plan-node-audit" key={step.id}><strong>{step.index}. {step.title}</strong><span>{planNodeStatusLabel(step.status)}{step.depends_on?.length ? ` · 依赖 ${step.depends_on.join(', ')}` : ''}{step.plan_version ? ` · v${step.plan_version}` : ''}</span>{step.failure && <small>{String(step.failure.category ?? '节点执行失败')}</small>}</div>)}
     {criteria.map((criterion) => <div key={String(criterion.id)}><strong>{String(criterion.description)}</strong><span>{String(criterion.status ?? 'pending')}</span></div>)}
     {policy?.adjustments?.map((adjustment, index) => <div key={`adjust-${index}`}><strong>{t('策略调整')}</strong><span>{String(adjustment.reason ?? adjustment.rule)}</span></div>)}
     {run.terminal_reason && <div><strong>{t('终态原因')}</strong><span>{String(run.terminal_reason.reason ?? run.status)}</span></div>}
     {(run.sandbox_jobs ?? []).map((job) => <div key={job.id}><strong>Sandbox · {job.status}</strong><span>{job.runtime_name ?? job.executor} · {job.image_digest ?? String(job.runtime_profile.image ?? t('未记录镜像'))} · {job.output_artifact_ids.length} artifacts{job.exit_reason ? ` · ${job.exit_reason}` : ''}</span>{(job.stdout_summary || job.stderr_summary) && <details><summary>{t('截断日志')}</summary><pre>{job.stderr_summary || job.stdout_summary}</pre></details>}</div>)}
   </div>;
+}
+
+function planNodeStatusLabel(status: string) {
+  const labels: Record<string, string> = {
+    pending: '等待执行',
+    running: '正在执行',
+    completed: '已完成',
+    failed: '失败',
+    blocked: '已阻塞',
+    skipped: '已跳过',
+  };
+  return labels[status] ?? status;
 }
 
 function activeState(run: RunView) {

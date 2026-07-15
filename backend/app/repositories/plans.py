@@ -23,7 +23,6 @@ from app.schemas.agent import (
     PlanView,
 )
 
-
 NODE_TRANSITIONS: dict[str, set[str]] = {
     PlanNodeStatus.pending.value: {
         PlanNodeStatus.running.value,
@@ -58,18 +57,22 @@ class PlanRepository:
         status: PlanStatus = PlanStatus.active,
         supersedes_plan_id: str | None = None,
         lineage: dict[str, str] | None = None,
+        node_state: dict[str, dict[str, Any]] | None = None,
     ) -> PlanRecord:
         run = await self.session.get(RunRecord, run_id)
         if run is None:
             raise ValueError(f"Run not found: {run_id}")
-        next_version = int(
-            (
-                await self.session.scalar(
-                    select(func.max(PlanRecord.version)).where(PlanRecord.run_id == run_id)
+        next_version = (
+            int(
+                (
+                    await self.session.scalar(
+                        select(func.max(PlanRecord.version)).where(PlanRecord.run_id == run_id)
+                    )
                 )
+                or 0
             )
-            or 0
-        ) + 1
+            + 1
+        )
         plan = PlanRecord(
             run_id=run_id,
             version=next_version,
@@ -82,20 +85,26 @@ class PlanRepository:
         await self.session.flush()
         nodes_by_key: dict[str, PlanNodeRecord] = {}
         lineage = lineage or {}
+        node_state = node_state or {}
         for index, item in enumerate(draft.nodes, start=1):
+            preserved = node_state.get(item.node_key, {})
             node = PlanNodeRecord(
                 plan_id=plan.id,
                 node_key=item.node_key,
                 index=index,
                 title=item.title,
                 intent=item.intent,
-                status=PlanNodeStatus.pending.value,
+                status=preserved.get("status", PlanNodeStatus.pending.value),
                 required_capabilities=list(item.required_capabilities),
                 success_criteria_refs=list(item.success_criteria_refs),
                 expected_outcome=item.expected_outcome.model_dump(mode="json"),
                 risk_level=item.risk_level,
                 optional=item.optional,
                 lineage_node_id=lineage.get(item.node_key),
+                evidence_refs=list(preserved.get("evidence_refs", [])),
+                failure=preserved.get("failure"),
+                started_at=preserved.get("started_at"),
+                completed_at=preserved.get("completed_at"),
             )
             self.session.add(node)
             nodes_by_key[item.node_key] = node
@@ -151,6 +160,19 @@ class PlanRepository:
             return None
         return await self.require(run.active_plan_id)
 
+    async def latest_planned_for_run(self, run_id: str) -> PlanRecord | None:
+        result = await self.session.execute(
+            select(PlanRecord.id)
+            .where(
+                PlanRecord.run_id == run_id,
+                PlanRecord.status == PlanStatus.planned.value,
+            )
+            .order_by(PlanRecord.version.desc())
+            .limit(1)
+        )
+        plan_id = result.scalar_one_or_none()
+        return await self.require(plan_id) if plan_id else None
+
     async def require_node(self, node_id: str) -> PlanNodeRecord:
         node = await self.session.get(PlanNodeRecord, node_id)
         if node is None:
@@ -183,6 +205,16 @@ class PlanRepository:
         if failure is not None:
             node.failure = failure
         plan = await self.require(node.plan_id)
+        if all(
+            item.status
+            in {
+                PlanNodeStatus.completed.value,
+                PlanNodeStatus.skipped.value,
+            }
+            for item in plan.nodes
+        ):
+            plan.status = PlanStatus.completed.value
+            plan.completed_at = utc_now()
         await self._event(
             plan.run_id,
             "plan.node.updated",
@@ -262,4 +294,3 @@ def plan_to_view(plan: PlanRecord) -> PlanView:
             for node in nodes
         ],
     )
-

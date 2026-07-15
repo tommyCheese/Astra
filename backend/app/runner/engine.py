@@ -14,16 +14,16 @@ from app.core.config import Settings
 from app.core.errors import run_error_from_exception
 from app.db.models import RunRecord
 from app.db.session import SessionLocal
-from app.repositories.runs import RunRepository
 from app.repositories.plans import PlanRepository, plan_to_view
+from app.repositories.runs import RunRepository
 from app.runner.agent_loop import AgentLoop
 from app.runner.model_client import ModelConfigurationError, ModelOutputError, build_model_client
+from app.runner.planning import PlanService, canonical_agent_state, plan_output_to_draft
 from app.runner.reasoning import (
     build_default_contract,
     normalize_contract,
     validate_contract,
 )
-from app.runner.planning import PlanService, canonical_agent_state, plan_output_to_draft
 from app.schemas.agent import (
     FinalAnswer,
     PlanOutput,
@@ -153,6 +153,16 @@ class RunEngine:
         )
         await repo.session.commit()
         if snapshot.effective.execution_mode.value == "plan_only":
+            planned_state = canonical_agent_state(
+                contract, canonical_plan, policy_version=snapshot.version
+            ).model_copy(update={"active_plan_id": None, "active_node_id": None})
+            if not run.state_version:
+                await repo.initialize_reasoning_state(
+                    run_id,
+                    task_contract=contract.model_dump(mode="json"),
+                    plan_graph=plan_to_view(canonical_plan).model_dump(mode="json"),
+                    agent_state=planned_state.model_dump(mode="json"),
+                )
             await self._complete_plan_only(repo, run_id, plan)
             return
 
@@ -384,7 +394,9 @@ class RunEngine:
                     "caveat_count": report.get("caveat_count", len(result.get("caveats", []))),
                 },
             )
-        await self._complete_pending_steps(repo, run_id)
+        current = await repo.require_run(run_id)
+        if not current.active_plan_id:
+            await self._complete_pending_steps(repo, run_id)
         await repo.update_run_status(
             run_id,
             status,

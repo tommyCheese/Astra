@@ -112,6 +112,12 @@ export async function updateToolSettings(tools: ToolSetting[]): Promise<ToolSett
   return response.json();
 }
 
+export async function activatePlan(runId: string): Promise<{ task_id: string; run_id: string; status: string }> {
+  const response = await fetch(`/api/runs/${runId}/activate-plan`, { method: 'POST' });
+  if (!response.ok) throw await responseError(response);
+  return response.json();
+}
+
 export type TokenTotals = { input: number; cached_input: number; output: number; reasoning: number; total: number };
 export type UsageSummary = {
   scope: 'all' | 'task' | 'run';

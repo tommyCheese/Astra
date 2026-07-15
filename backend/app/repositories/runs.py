@@ -11,6 +11,7 @@ from app.db.models import (
     ArtifactRecord,
     MemoryRecord,
     ModelInvocationRecord,
+    PlanNodeRecord,
     PlanRecord,
     RunEventRecord,
     RunRecord,
@@ -24,14 +25,16 @@ from app.schemas.agent import RunResult
 
 
 class RunRepository:
-    TERMINAL_STATUSES = frozenset({
-        "completed",
-        "completed_with_warnings",
-        "failed",
-        "blocked",
-        "waiting_user",
-        "cancelled",
-    })
+    TERMINAL_STATUSES = frozenset(
+        {
+            "completed",
+            "completed_with_warnings",
+            "failed",
+            "blocked",
+            "waiting_user",
+            "cancelled",
+        }
+    )
 
     def __init__(self, session: AsyncSession):
         self.session = session
@@ -310,6 +313,19 @@ class RunRepository:
             update(StepRecord)
             .where(StepRecord.run_id == run_id, StepRecord.status.in_(["pending", "running"]))
             .values(status="cancelled", completed_at=now)
+        )
+        plan_ids = select(PlanRecord.id).where(PlanRecord.run_id == run_id)
+        await self.session.execute(
+            update(PlanNodeRecord)
+            .where(
+                PlanNodeRecord.plan_id.in_(plan_ids),
+                PlanNodeRecord.status.in_(["pending", "running"]),
+            )
+            .values(
+                status="blocked",
+                completed_at=now,
+                failure={"category": "user_cancelled"},
+            )
         )
         await self.session.execute(
             update(ToolCallRecord)
@@ -879,7 +895,8 @@ def run_to_view(run: RunRecord) -> dict[str, Any]:
         "mode": run.mode,
         "summary": run.summary,
         "result": result_payload,
-        "steps": canonical_steps or [
+        "steps": canonical_steps
+        or [
             {
                 "id": step.id,
                 "index": step.index,

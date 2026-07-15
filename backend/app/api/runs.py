@@ -13,6 +13,7 @@ from app.artifacts import LocalArtifactStore
 from app.core.config import Settings, get_settings
 from app.core.errors import ConfigurationError, ResourceError, StateError, ValidationError
 from app.db.session import SessionLocal, get_session
+from app.repositories.plans import PlanRepository, plan_to_view
 from app.repositories.runs import RunRepository, run_to_view
 from app.repositories.tool_settings import (
     ToolSettingsRepository,
@@ -21,7 +22,13 @@ from app.repositories.tool_settings import (
 )
 from app.runner.engine import start_run_in_process
 from app.runner.reasoning import PolicyCompiler
-from app.schemas.agent import ContinueRunRequest, CreateRunRequest, CreateRunResponse, RunView
+from app.schemas.agent import (
+    AgentState,
+    ContinueRunRequest,
+    CreateRunRequest,
+    CreateRunResponse,
+    RunView,
+)
 
 router = APIRouter(prefix="/api", tags=["runs"])
 logger = logging.getLogger("astra.runs")
@@ -34,9 +41,7 @@ def _apply_model_config(settings: Settings, model: dict[str, str] | None) -> Set
         return settings
     provider = model.get("provider", "")
     if provider not in {"openai", "deepseek", "qwen", "siliconflow", "compatible"}:
-        raise ValidationError(
-            "MODEL_PROVIDER_UNSUPPORTED", "当前模型供应商尚未接入通用运行时。"
-        )
+        raise ValidationError("MODEL_PROVIDER_UNSUPPORTED", "当前模型供应商尚未接入通用运行时。")
     configured = settings.model_copy(
         update={
             "model_provider": provider,
@@ -215,6 +220,49 @@ async def cancel_run(
     return RunView.model_validate(run_to_view(run))
 
 
+@router.post("/runs/{run_id}/activate-plan", response_model=CreateRunResponse)
+async def activate_planned_run(
+    run_id: str,
+    session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+) -> CreateRunResponse:
+    repo = RunRepository(session)
+    run = await repo.get_run(run_id)
+    if run is None:
+        raise ResourceError("RUN_NOT_FOUND", "找不到指定运行记录。")
+    plan_repository = PlanRepository(session)
+    plan = await plan_repository.latest_planned_for_run(run_id)
+    if plan is None:
+        raise StateError("PLAN_NOT_ACTIVATABLE", "该任务没有可激活的仅规划结果。")
+    plan = await plan_repository.activate(plan.id, expected_version=plan.version)
+    state = AgentState.model_validate(run.agent_state or {})
+    state.active_plan_id = plan.id
+    state.active_plan_version = plan.version
+    state.active_node_id = None
+    state.version = run.state_version + 1
+    await repo.update_reasoning_state(
+        run_id,
+        expected_version=run.state_version,
+        agent_state=state.model_dump(mode="json"),
+        plan_graph=plan_to_view(plan).model_dump(mode="json"),
+        waiting_state=None,
+    )
+    run = await repo.require_run(run_id)
+    run.status = "executing"
+    run.completed_at = None
+    run.summary = None
+    run.result = None
+    await repo.add_event(
+        run_id,
+        "plan.activated",
+        {"plan_id": plan.id, "plan_version": plan.version},
+    )
+    await session.commit()
+    tool_states = await ToolSettingsRepository(session).get_or_create(default_tool_states(settings))
+    _schedule_run(run_id, apply_tool_states(settings, tool_states))
+    return CreateRunResponse(task_id=run.task_id, run_id=run.id, status=run.status)
+
+
 @router.post("/runs/{run_id}/resume", response_model=CreateRunResponse)
 async def resume_run(
     run_id: str,
@@ -223,12 +271,8 @@ async def resume_run(
     settings: Settings = Depends(get_settings),
 ) -> CreateRunResponse:
     repo = RunRepository(session)
-    tool_states = await ToolSettingsRepository(session).get_or_create(
-        default_tool_states(settings)
-    )
-    run_settings = _apply_model_config(
-        apply_tool_states(settings, tool_states), payload.model
-    )
+    tool_states = await ToolSettingsRepository(session).get_or_create(default_tool_states(settings))
+    run_settings = _apply_model_config(apply_tool_states(settings, tool_states), payload.model)
     try:
         run = await repo.resume_waiting_run(
             run_id,
@@ -268,7 +312,7 @@ async def stream_run_events(
     async def event_stream() -> AsyncIterator[str]:
         logger.info("sse.open run_id=%s after_id=%s", run_id, after_id)
         last_id = after_id
-        yield f'data: {json.dumps({"type": "stream.ready", "payload": {"run_id": run_id}})}\n\n'
+        yield f"data: {json.dumps({'type': 'stream.ready', 'payload': {'run_id': run_id}})}\n\n"
         async with SessionLocal() as stream_session:
             stream_repo = RunRepository(stream_session)
             while True:

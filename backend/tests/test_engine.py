@@ -5,11 +5,105 @@ from fake_web_tools import fake_web_registry
 
 from app.agent_profile import AgentProfileLoader, load_agent_profile
 from app.core.config import Settings
+from app.repositories.plans import PlanRepository, plan_to_view
 from app.repositories.runs import RunRepository
 from app.runner.engine import RunEngine
 from app.runner.model_client import MockModelClient
-from app.runner.reasoning import PolicyCompiler
-from app.schemas.agent import RequestedReasoningPolicy
+from app.runner.planning import PlanScheduler, PlanService, canonical_agent_state
+from app.runner.reasoning import PolicyCompiler, build_default_contract
+from app.schemas.agent import (
+    AgentDecision,
+    ExpectedObservation,
+    FinalAnswer,
+    PlanDraft,
+    PlanningStrategy,
+    PlanNodeDraft,
+    PlanOutput,
+    PlanStep,
+    RequestedReasoningPolicy,
+)
+from app.tools.base import Tool, ToolRegistry, ToolSpec
+
+
+class FakeWeather(Tool):
+    spec = ToolSpec(
+        name="weather_lookup",
+        version="test",
+        input_schema={"required": ["location", "date"]},
+        output_schema={},
+        permission="network_read",
+        side_effect_level="read_only",
+    )
+
+    async def run(self, tool_input, *, context=None):
+        return {
+            "location": tool_input["location"],
+            "date": tool_input["date"],
+            "temperature": {"min": 27, "max": 34},
+            "condition": "阵雨",
+            "precipitation_probability": 70,
+        }
+
+
+class WeatherPlanClient(MockModelClient):
+    async def plan(self, goal):
+        return PlanOutput(
+            steps=[
+                PlanStep(title="解析查询条件", intent="确定上海和明天"),
+                PlanStep(
+                    title="查询天气",
+                    intent="调用 weather_lookup",
+                    required_tools=["weather_lookup"],
+                ),
+                PlanStep(title="评估跑步条件", intent="分析温度和降雨"),
+                PlanStep(title="生成回答", intent="给出天气与跑步建议"),
+            ],
+            required_tools=["weather_lookup"],
+            success_criteria=["天气与建议完整"],
+        )
+
+    async def decide_with_answer(self, goal, context, *, on_delta=None, on_reasoning_delta=None):
+        active = context.get("active_node")
+        if active is None:
+            return AgentDecision(
+                decision_type="finalize", reasoning_summary="计划已完成"
+            ), FinalAnswer(
+                summary="明天上海有阵雨且最高约 34°C，不建议长距离户外跑步。",
+                findings=[{"text": "降雨概率较高，建议改为室内训练。"}],
+            )
+        if active["node_key"] == "step-2" and not any(
+            item.get("data", {}).get("tool_name") == "weather_lookup"
+            for item in context.get("observations", [])
+        ):
+            return AgentDecision(
+                decision_type="call_tool",
+                reasoning_summary="查询明天上海天气",
+                tool_name="weather_lookup",
+                tool_input={"location": "上海", "date": "tomorrow"},
+                target_step_id=active["id"],
+            ), None
+        return AgentDecision(
+            decision_type="complete_node",
+            reasoning_summary=f"完成 {active['title']}",
+            target_step_id=active["id"],
+        ), None
+
+
+class RecoveryClient(MockModelClient):
+    async def decide_with_answer(self, goal, context, *, on_delta=None, on_reasoning_delta=None):
+        active = context.get("active_node")
+        if active is not None:
+            return AgentDecision(
+                decision_type="complete_node",
+                reasoning_summary="确认恢复结果并完成节点",
+                target_step_id=active["id"],
+            ), None
+        return await super().decide_with_answer(
+            goal,
+            context,
+            on_delta=on_delta,
+            on_reasoning_delta=on_reasoning_delta,
+        )
 
 
 async def test_engine_completes_mock_web_query(session):
@@ -29,7 +123,12 @@ async def test_engine_completes_mock_web_query(session):
     assert loaded.result["sources"]
     assert loaded.result["source_quality"]
     assert loaded.result["verification_notes"]
-    assert all(step.status == "completed" for step in loaded.steps)
+    assert loaded.steps == []
+    canonical_plan = await PlanRepository(session).active_for_run(run.id)
+    assert canonical_plan is not None
+    assert canonical_plan.status == "completed"
+    assert all(node.status == "completed" for node in canonical_plan.nodes)
+    assert all(call.plan_node_id == canonical_plan.nodes[0].id for call in loaded.tool_calls)
 
     evidence_artifacts = [
         artifact for artifact in loaded.artifacts if artifact.type == "evidence_pack"
@@ -60,6 +159,32 @@ async def test_engine_completes_mock_web_query(session):
     process_events = [event for event in events if event.type.startswith("reasoning.")]
     assert all("reasoning_content" not in event.payload for event in process_events)
     assert all("tool_input" not in event.payload for event in process_events)
+
+
+async def test_weather_plan_executes_nodes_in_dependency_order(session):
+    settings = Settings(model_provider="mock")
+    repo = RunRepository(session)
+    run = await repo.create_task_run(
+        "查询明天上海天气并判断是否适合跑步",
+        settings.model_policy,
+        reasoning_policy=engine_policy("plan_first", "request_approval"),
+    )
+    registry = ToolRegistry()
+    registry.register(FakeWeather())
+    await RunEngine(
+        settings, model_client=WeatherPlanClient(), tool_registry=registry
+    )._run_with_repo(repo, run.id)
+
+    loaded = await repo.require_run(run.id)
+    plan = await PlanRepository(session).active_for_run(run.id)
+    assert loaded.status == "completed"
+    assert plan is not None
+    assert [node.status for node in plan.nodes] == ["completed"] * 4
+    call = next(item for item in loaded.tool_calls if item.tool_name == "weather_lookup")
+    assert call.plan_node_id == plan.nodes[1].id
+    events = await repo.list_events(run.id)
+    selected = [event.payload["node_key"] for event in events if event.type == "plan.node.selected"]
+    assert selected == ["step-1", "step-2", "step-3", "step-4"]
 
 
 async def test_answer_delta_batching_flushes_first_and_final_content(session):
@@ -181,3 +306,135 @@ async def test_plan_only_result_does_not_expose_internal_conversation_wrapper(se
     assert "Conversation context" not in result_text
     assert "Current user request" not in result_text
     assert "第二轮规划" in result_text
+    planned = await PlanRepository(session).latest_planned_for_run(current.id)
+    assert planned is not None
+    assert planned.status == "planned"
+    assert all(node.status == "pending" for node in planned.nodes)
+    assert loaded.agent_state["active_plan_id"] is None
+
+
+async def test_plan_only_plan_can_be_activated_and_executed(session):
+    settings = Settings(model_provider="mock", web_search_provider="mock")
+    repo = RunRepository(session)
+    run = await repo.create_task_run(
+        "先规划再执行",
+        settings.model_policy,
+        reasoning_policy=engine_policy("plan_first", "plan_only"),
+    )
+    registry = ToolRegistry()
+    registry.register(FakeWeather())
+    engine = RunEngine(settings, model_client=WeatherPlanClient(), tool_registry=registry)
+    await engine._run_with_repo(repo, run.id)
+    planned = await PlanRepository(session).latest_planned_for_run(run.id)
+    assert planned is not None
+    await PlanRepository(session).activate(planned.id, expected_version=planned.version)
+    loaded = await repo.require_run(run.id)
+    state = dict(loaded.agent_state)
+    state.update(
+        {
+            "active_plan_id": planned.id,
+            "active_plan_version": planned.version,
+            "active_node_id": None,
+            "version": loaded.state_version + 1,
+        }
+    )
+    await repo.update_reasoning_state(
+        run.id,
+        expected_version=loaded.state_version,
+        agent_state=state,
+        plan_graph=plan_to_view(planned).model_dump(mode="json"),
+    )
+    await engine._run_with_repo(repo, run.id)
+    executed = await PlanRepository(session).active_for_run(run.id)
+    assert executed is not None
+    assert all(node.status == "completed" for node in executed.nodes)
+
+
+async def test_engine_replays_recorded_checkpoint_without_duplicate_tool_call(session):
+    settings = Settings(model_provider="mock", web_search_provider="mock")
+    repo = RunRepository(session)
+    run = await repo.create_task_run("恢复已经记录的搜索结果", settings.model_policy)
+    contract = build_default_contract(run.task.description)
+    plan = await PlanService(PlanRepository(session)).create(
+        run.id,
+        PlanDraft(
+            strategy=PlanningStrategy.direct,
+            nodes=[
+                PlanNodeDraft(
+                    node_key="step-1",
+                    title="查询资料",
+                    intent="查询并恢复结果",
+                    required_capabilities=["web_search"],
+                    success_criteria_refs=[criterion.id for criterion in contract.success_criteria],
+                    expected_outcome=ExpectedObservation(
+                        kind="tool_result",
+                        success_condition="搜索结果已记录",
+                    ),
+                )
+            ],
+        ),
+        contract=contract,
+        capabilities={"web_search", "network_read"},
+    )
+    state = canonical_agent_state(contract, plan, policy_version=1)
+    await repo.initialize_reasoning_state(
+        run.id,
+        task_contract=contract.model_dump(mode="json"),
+        plan_graph=plan_to_view(plan).model_dump(mode="json"),
+        agent_state=state.model_dump(mode="json"),
+    )
+    node = await PlanScheduler(PlanRepository(session)).select_next(run.id)
+    assert node is not None
+    turn = await repo.create_agent_turn(
+        run.id,
+        1,
+        "call_tool",
+        "执行搜索",
+        selected_tool="web_search",
+        plan_node_id=node.id,
+        state_version_before=run.state_version,
+        phase="executing",
+        idempotency_key="stable-search-key",
+    )
+    call = await repo.start_tool_call(
+        run.id,
+        None,
+        "web_search",
+        "test",
+        {"query": "checkpoint"},
+        "network_read",
+        "read_only",
+        plan_node_id=node.id,
+    )
+    await repo.finish_tool_call(
+        call.id,
+        output={
+            "query": "checkpoint",
+            "candidates": [
+                {
+                    "title": "Recovered source",
+                    "url": "https://example.test/recovered",
+                    "snippet": "recorded result",
+                }
+            ],
+        },
+    )
+    await repo.update_agent_turn(
+        turn.id,
+        tool_call_id=call.id,
+        phase="result_recorded",
+    )
+
+    await RunEngine(
+        settings,
+        model_client=RecoveryClient(),
+        tool_registry=fake_web_registry(),
+    )._run_with_repo(repo, run.id)
+
+    loaded = await repo.require_run(run.id)
+    assert len(loaded.tool_calls) == 1
+    assert any(
+        event.type == "reasoning.checkpoint_recovered"
+        and event.payload.get("action") == "replay_result"
+        for event in loaded.events
+    )

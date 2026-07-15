@@ -1098,6 +1098,15 @@ html[data-theme="dark"] .process-decision-children .process-step.status-running 
   color: #697586;
 }
 
+.reasoning-audit-grid .plan-node-audit {
+  border-left: 3px solid rgba(43, 115, 91, 0.32);
+}
+
+.reasoning-audit-grid .plan-node-audit small {
+  color: #a3434d;
+  font-size: 10px;
+}
+
 .source-card {
   color: #176a52;
   display: block;

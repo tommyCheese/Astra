@@ -7,10 +7,11 @@ from typing import Any
 
 from app.artifacts import ArtifactService, LocalArtifactStore
 from app.core.config import Settings
-from app.repositories.runs import RunRepository
 from app.repositories.plans import PlanRepository, plan_to_view
+from app.repositories.runs import RunRepository
 from app.runner.adapters import ChartTaskAdapter, ProcessorRegistry, WebTaskAdapter
 from app.runner.model_client import ModelClient, ModelOutputError
+from app.runner.planning import PlanScheduler, PlanService
 from app.runner.reasoning import (
     CompletionGate,
     ObservationEvaluator,
@@ -19,23 +20,24 @@ from app.runner.reasoning import (
     apply_validation_outcomes,
     failure_fingerprint,
 )
-from app.runner.planning import PlanScheduler, PlanService, PlanStateError
+from app.runner.runtime import LoopOrchestrator, NoProgressDetector
 from app.sandbox.docker_provider import build_sandbox_provider
 from app.sandbox.runtime import SandboxJobService, SandboxSupervisor
 from app.schemas.agent import (
     AgentObservation,
     AgentState,
     CompletionDecision,
+    EvaluationOutcome,
+    ExpectedObservation,
+    FailureFingerprint,
     FinalAnswer,
+    NodeResult,
+    PlanNodeStatus,
     ReasoningPolicySnapshot,
     TerminalState,
     ValidationIssue,
     ValidationOutcome,
     VerificationReport,
-    ExpectedObservation,
-    EvaluationOutcome,
-    PlanNodeStatus,
-    PlanPatch,
 )
 from app.tools.base import (
     CapabilityAvailability,
@@ -196,6 +198,21 @@ class ContextAssembler:
         specs, unavailable = tool_registry.specs(), {}
         if tool_router is not None:
             specs, unavailable = tool_router.eligible_specs()
+        if active_node and active_node.get("required_capabilities"):
+            required = set(active_node["required_capabilities"])
+            specs = {
+                name: spec
+                for name, spec in specs.items()
+                if name in required
+                or bool(
+                    required
+                    & {
+                        *spec.capabilities,
+                        *spec.permissions,
+                        spec.permission,
+                    }
+                )
+            }
         return {
             "run_id": run_id,
             "goal": goal,
@@ -384,6 +401,11 @@ class AgentLoop:
         provider = self.sandbox_provider or build_sandbox_provider(self.settings)
         sandbox_service = SandboxJobService(repo, SandboxSupervisor(provider), artifact_service)
         initial_run = await repo.require_run(run_id)
+        plan_repository = PlanRepository(repo.session)
+        scheduler = PlanScheduler(plan_repository)
+        canonical_plan = await plan_repository.active_for_run(run_id)
+        orchestrator = LoopOrchestrator()
+        no_progress = NoProgressDetector()
         policy_snapshot = ReasoningPolicySnapshot.model_validate(initial_run.reasoning_policy or {})
         policy = policy_snapshot.effective
         max_turns = min(policy.budgets.max_turns, self.settings.agent_max_turns)
@@ -403,9 +425,74 @@ class AgentLoop:
         streamed_final_answer: FinalAnswer | None = None
         reflection_count = 0
         replan_count = 0
+        active_node = None
+        if initial_run.turns:
+            checkpoint = sorted(initial_run.turns, key=lambda item: item.turn_index)[-1]
+            call = next(
+                (item for item in initial_run.tool_calls if item.id == checkpoint.tool_call_id),
+                None,
+            )
+            if checkpoint.phase == "result_recorded" and call and call.output is not None:
+                recovered_output = self._normalize_tool_output(call.tool_name, call.output)
+                recovered_output["tool_call_id"] = call.id
+                processor = self.processors.for_tool(call.tool_name)
+                if processor:
+                    recovered_observation, _ = processor.process(call.tool_name, recovered_output)
+                else:
+                    recovered_observation = AgentObservation(
+                        kind="tool_result",
+                        status="succeeded",
+                        summary=f"{call.tool_name} recovered from checkpoint",
+                        data=recovered_output,
+                    )
+                observations.append(recovered_observation.model_dump(mode="json"))
+                await repo.update_agent_turn(
+                    checkpoint.id,
+                    status="completed",
+                    observation=recovered_observation.model_dump(mode="json"),
+                    phase="committed",
+                )
+                await repo.add_event(
+                    run_id,
+                    "reasoning.checkpoint_recovered",
+                    {"turn_id": checkpoint.id, "action": "replay_result"},
+                )
+            elif checkpoint.phase == "executing" and call and call.status == "running":
+                if call.side_effect_level != "read_only":
+                    terminal_override = "waiting_user"
+                    terminal_summary = "上一次非幂等行动的执行结果未知，需要用户确认后继续。"
+                    await repo.set_waiting_state(
+                        run_id,
+                        {
+                            "paused_node": "execute",
+                            "state_version": initial_run.state_version,
+                            "plan_version": (initial_run.agent_state or {}).get(
+                                "active_plan_version", 1
+                            ),
+                            "request": terminal_summary,
+                        },
+                    )
+                else:
+                    await repo.finish_tool_call(
+                        call.id,
+                        error={
+                            "category": "interrupted",
+                            "message": "Recovered after interruption",
+                        },
+                    )
+                    await repo.update_agent_turn(checkpoint.id, status="failed", phase="failed")
+                    await repo.add_event(
+                        run_id,
+                        "reasoning.checkpoint_recovered",
+                        {
+                            "turn_id": checkpoint.id,
+                            "action": "retry_same_idempotency_key",
+                            "idempotency_key": checkpoint.idempotency_key,
+                        },
+                    )
 
         async def maybe_reflect(signal: str, reflection_context: dict[str, Any]):
-            nonlocal reflection_count
+            nonlocal reflection_count, canonical_plan
             if reflection_count >= max_reflections or not self.reflection_gate.should_reflect(
                 policy, signal, reflection_count
             ):
@@ -467,6 +554,20 @@ class AgentLoop:
                 patch = reflection.patch
                 if patch and patch.actionable():
                     try:
+                        if patch.plan_patch and canonical_plan is not None:
+                            capabilities = set(self.tool_registry.specs())
+                            for spec in self.tool_registry.specs().values():
+                                capabilities.update(spec.capabilities)
+                            canonical_plan = await PlanService(plan_repository).apply_patch(
+                                run_id,
+                                patch.plan_patch,
+                                contract=state.task_contract,
+                                capabilities=capabilities,
+                                budgets=policy.budgets,
+                            )
+                            state.active_plan_id = canonical_plan.id
+                            state.active_plan_version = canonical_plan.version
+                            state.active_node_id = None
                         state = apply_reflection_patch(
                             state, patch, expected_version=current.state_version
                         )
@@ -492,7 +593,11 @@ class AgentLoop:
                     run_id,
                     expected_version=current.state_version,
                     agent_state=state.model_dump(mode="json"),
-                    plan_graph=state.plan.model_dump(mode="json"),
+                    plan_graph=plan_to_view(canonical_plan).model_dump(mode="json")
+                    if canonical_plan is not None
+                    else state.plan.model_dump(mode="json")
+                    if state.plan
+                    else {},
                     waiting_state=current.waiting_state,
                 )
                 state_version = updated.state_version
@@ -506,6 +611,93 @@ class AgentLoop:
             )
             await repo.session.commit()
             return reflection
+
+        async def persist_progress(evaluation=None) -> None:
+            current = await repo.require_run(run_id)
+            if not current.agent_state:
+                return
+            state = AgentState.model_validate(current.agent_state)
+            state.observations = list(observations)
+            known_fingerprints = {item.fingerprint for item in state.failures}
+            for item in observations:
+                fingerprint = item.get("data", {}).get("failure_fingerprint")
+                if fingerprint and fingerprint not in known_fingerprints:
+                    state.failures.append(
+                        FailureFingerprint(
+                            fingerprint=fingerprint,
+                            tool_name=item.get("data", {}).get("tool_name"),
+                            error_category=(item.get("error") or {}).get("category", "unknown"),
+                            attempt_count=int(item.get("data", {}).get("retry_count", 1)),
+                        )
+                    )
+                    known_fingerprints.add(fingerprint)
+            if evaluation is not None:
+                state.evaluations.append(evaluation.model_dump(mode="json"))
+                for criterion in state.task_contract.success_criteria:
+                    if criterion.id in evaluation.criterion_updates:
+                        criterion.status = evaluation.criterion_updates[criterion.id]
+            state.budget_usage.update(
+                {
+                    "turns": len(current.turns),
+                    "tool_calls": tool_call_count,
+                    "reflections": reflection_count,
+                    "replans": replan_count,
+                }
+            )
+            if canonical_plan is not None:
+                active = await plan_repository.active_for_run(run_id)
+                if active:
+                    state.active_plan_id = active.id
+                    state.active_plan_version = active.version
+                    state.active_node_id = (current.agent_state or {}).get("active_node_id")
+            state.version = current.state_version + 1
+            await repo.update_reasoning_state(
+                run_id,
+                expected_version=current.state_version,
+                agent_state=state.model_dump(mode="json"),
+                plan_graph=plan_to_view(active).model_dump(mode="json")
+                if canonical_plan is not None and active
+                else current.plan_graph,
+                waiting_state=current.waiting_state,
+            )
+
+        async def evaluate_node_completion(node, decision, candidate_answer=None):
+            current = await repo.require_run(run_id)
+            prior_match = next(
+                (
+                    turn.evaluation
+                    for turn in sorted(
+                        current.turns, key=lambda item: item.turn_index, reverse=True
+                    )
+                    if turn.plan_node_id == node.id
+                    and isinstance(turn.evaluation, dict)
+                    and turn.evaluation.get("outcome") == EvaluationOutcome.matched.value
+                ),
+                None,
+            )
+            if prior_match:
+                return None, None, True
+            expected = (
+                ExpectedObservation.model_validate(node.expected_outcome)
+                if node.expected_outcome
+                else ExpectedObservation(
+                    kind="step_result",
+                    success_condition="node result is available",
+                )
+            )
+            data = dict(decision.node_result or {})
+            if candidate_answer is not None:
+                data = {**candidate_answer.model_dump(mode="json"), **data}
+            observation = AgentObservation(
+                kind=expected.kind,
+                status="succeeded",
+                summary=f"Plan node {node.node_key} proposed completion",
+                data=data,
+            )
+            evaluation = self.evaluator.evaluate(
+                observation, expected, node.success_criteria_refs or []
+            )
+            return observation, evaluation, evaluation.outcome == EvaluationOutcome.matched
 
         logger.info(
             "agent.policy run_id=%s effort=%s planning=%s reflection=%s/%s limits=turns:%s tools:%s reflections:%s replans:%s",
@@ -533,7 +725,40 @@ class AgentLoop:
         )
         await repo.session.commit()
 
-        for turn_index in range(1, max_turns + 1):
+        start_turn_index = len(initial_run.turns) + 1
+        for turn_index in range(start_turn_index, max_turns + 1):
+            if terminal_override == "waiting_user":
+                break
+            if canonical_plan is not None:
+                canonical_plan = await plan_repository.active_for_run(run_id)
+                current = await repo.require_run(run_id)
+                active_node_id = (current.agent_state or {}).get("active_node_id")
+                active_node = next(
+                    (
+                        node
+                        for node in canonical_plan.nodes
+                        if node.id == active_node_id and node.status == PlanNodeStatus.running.value
+                    ),
+                    None,
+                )
+                if active_node is None and any(
+                    node.status == PlanNodeStatus.pending.value for node in canonical_plan.nodes
+                ):
+                    active_node = await scheduler.select_next(run_id)
+                    await repo.session.commit()
+                    canonical_plan = await plan_repository.active_for_run(run_id)
+                if active_node is None and any(
+                    node.status
+                    in {
+                        PlanNodeStatus.failed.value,
+                        PlanNodeStatus.blocked.value,
+                    }
+                    and not node.optional
+                    for node in canonical_plan.nodes
+                ):
+                    terminal_override = "blocked"
+                    terminal_summary = "活动计划存在失败或阻塞的必需节点。"
+                    break
             context = await assembler.assemble(
                 run_id=run_id,
                 goal=goal,
@@ -605,7 +830,12 @@ class AgentLoop:
                 decision, candidate_answer = await self.model_client.decide_with_answer(
                     goal,
                     context,
-                    on_delta=on_answer_delta,
+                    # A node-level answer is provisional. Only stream after the
+                    # canonical plan has no active node left, otherwise a model
+                    # could expose an intermediate node result as the task answer.
+                    on_delta=on_answer_delta
+                    if canonical_plan is None or active_node is None
+                    else None,
                     on_reasoning_delta=on_reasoning_delta,
                 )
             except ModelOutputError as exc:
@@ -664,8 +894,61 @@ class AgentLoop:
                 decision.confidence,
             )
 
+            if canonical_plan is not None:
+                if active_node is not None and decision.target_step_id not in {
+                    None,
+                    active_node.id,
+                    active_node.node_key,
+                }:
+                    observation = AgentObservation(
+                        kind="decision_error",
+                        status="failed",
+                        summary="模型选择了非活动计划节点。",
+                        data={
+                            "active_node_id": active_node.id,
+                            "proposed_node_id": decision.target_step_id,
+                        },
+                    )
+                    observations.append(observation.model_dump(mode="json"))
+                    await repo.add_event(
+                        run_id,
+                        "reasoning.decision_rejected",
+                        observation.model_dump(mode="json"),
+                    )
+                    await repo.session.commit()
+                    continue
+                if decision.decision_type == "call_tool" and active_node is None:
+                    terminal_override = "blocked"
+                    terminal_summary = "计划没有可执行节点，工具决策已被拒绝。"
+                    break
+
             idempotency_key = None
+            disallowed_tool_observation = None
             if decision.decision_type == "call_tool":
+                if active_node is not None and active_node.required_capabilities:
+                    proposed_spec = self.tool_registry.specs().get(decision.tool_name or "")
+                    required = set(active_node.required_capabilities)
+                    provided = (
+                        {
+                            decision.tool_name,
+                            *proposed_spec.capabilities,
+                            *proposed_spec.permissions,
+                            proposed_spec.permission,
+                        }
+                        if proposed_spec is not None
+                        else {decision.tool_name}
+                    )
+                    if not required & provided:
+                        disallowed_tool_observation = AgentObservation(
+                            kind="decision_error",
+                            status="failed",
+                            summary="模型选择了活动节点未声明的工具。",
+                            data={
+                                "plan_node_id": active_node.id,
+                                "tool_name": decision.tool_name,
+                                "required_capabilities": sorted(required),
+                            },
+                        )
                 encoded = json.dumps(
                     {
                         "run_id": run_id,
@@ -689,7 +972,22 @@ class AgentLoop:
                 plan_version=((await repo.require_run(run_id)).plan_graph or {}).get("version", 1),
                 phase="prepared" if decision.decision_type == "call_tool" else "created",
                 idempotency_key=idempotency_key,
+                plan_node_id=active_node.id if active_node is not None else None,
             )
+            if disallowed_tool_observation is not None:
+                observations.append(disallowed_tool_observation.model_dump(mode="json"))
+                await repo.update_agent_turn(
+                    turn.id,
+                    status="failed",
+                    observation=disallowed_tool_observation.model_dump(mode="json"),
+                )
+                await repo.add_event(
+                    run_id,
+                    "reasoning.decision_rejected",
+                    disallowed_tool_observation.model_dump(mode="json"),
+                )
+                await repo.session.commit()
+                continue
             await repo.add_event(
                 run_id,
                 "reasoning.decision_validated",
@@ -702,10 +1000,123 @@ class AgentLoop:
             await repo.session.commit()
 
             if decision.decision_type == "finalize":
+                orchestrator.validate_result(
+                    "select_action", NodeResult(next_node="completion_gate")
+                )
                 final_turn_id = turn.id
+                if canonical_plan is not None and active_node is not None:
+                    (
+                        completion_observation,
+                        completion_evaluation,
+                        matched,
+                    ) = await evaluate_node_completion(active_node, decision, candidate_answer)
+                    if not matched:
+                        if completion_observation is not None:
+                            observations.append(completion_observation.model_dump(mode="json"))
+                        if completion_evaluation is not None:
+                            await persist_progress(completion_evaluation)
+                        await repo.update_agent_turn(
+                            turn.id,
+                            status="failed",
+                            observation=completion_observation.model_dump(mode="json")
+                            if completion_observation
+                            else None,
+                            evaluation=completion_evaluation.model_dump(mode="json")
+                            if completion_evaluation
+                            else None,
+                            phase="failed",
+                        )
+                        await maybe_reflect(
+                            "expectation_mismatch",
+                            {
+                                "last_observation": completion_observation.model_dump(mode="json")
+                                if completion_observation
+                                else {},
+                                "runtime_context": context,
+                                "retry_count": 0,
+                            },
+                        )
+                        continue
+                    if completion_observation is not None:
+                        observations.append(completion_observation.model_dump(mode="json"))
+                    await PlanService(plan_repository).complete_node(
+                        run_id,
+                        active_node.id,
+                        evaluation=completion_evaluation,
+                        evidence_refs=[
+                            str(item.get("data", {}).get("tool_call_id"))
+                            for item in observations
+                            if item.get("data", {}).get("tool_call_id")
+                        ],
+                    )
+                    await repo.update_agent_turn(turn.id, status="completed", phase="committed")
+                    await repo.session.commit()
+                    canonical_plan = await plan_repository.active_for_run(run_id)
+                    active_node = None
+                    if canonical_plan and any(
+                        node.status == PlanNodeStatus.pending.value for node in canonical_plan.nodes
+                    ):
+                        final_turn_id = None
+                        streamed_final_answer = None
+                        continue
                 streamed_final_answer = candidate_answer
                 await repo.update_agent_turn(turn.id, status="completed")
                 break
+
+            if decision.decision_type == "complete_node":
+                if canonical_plan is None or active_node is None:
+                    await repo.update_agent_turn(turn.id, status="failed", phase="failed")
+                    await repo.add_event(
+                        run_id,
+                        "reasoning.decision_rejected",
+                        {"reason": "complete_node requires an active canonical plan node"},
+                    )
+                    await repo.session.commit()
+                    continue
+                (
+                    completion_observation,
+                    completion_evaluation,
+                    matched,
+                ) = await evaluate_node_completion(active_node, decision)
+                if not matched:
+                    if completion_observation is not None:
+                        observations.append(completion_observation.model_dump(mode="json"))
+                    if completion_evaluation is not None:
+                        await persist_progress(completion_evaluation)
+                    await repo.update_agent_turn(
+                        turn.id,
+                        status="failed",
+                        observation=completion_observation.model_dump(mode="json")
+                        if completion_observation
+                        else None,
+                        evaluation=completion_evaluation.model_dump(mode="json")
+                        if completion_evaluation
+                        else None,
+                        phase="failed",
+                    )
+                    await maybe_reflect(
+                        "expectation_mismatch",
+                        {
+                            "last_observation": completion_observation.model_dump(mode="json")
+                            if completion_observation
+                            else {},
+                            "runtime_context": context,
+                            "retry_count": 0,
+                        },
+                    )
+                    continue
+                if completion_observation is not None:
+                    observations.append(completion_observation.model_dump(mode="json"))
+                await PlanService(plan_repository).complete_node(
+                    run_id,
+                    active_node.id,
+                    evaluation=completion_evaluation,
+                    evidence_refs=active_node.evidence_refs or [],
+                )
+                await repo.update_agent_turn(turn.id, status="completed", phase="committed")
+                await repo.session.commit()
+                active_node = None
+                continue
 
             if decision.decision_type in {"blocked", "ask_user"}:
                 observation = AgentObservation(
@@ -745,6 +1156,25 @@ class AgentLoop:
                     terminal_summary = "已达到用户策略允许的最大重新规划次数。"
                     await repo.update_agent_turn(turn.id, status="blocked")
                     break
+                reflection = await maybe_reflect(
+                    "dependency_broken",
+                    {
+                        "reason": decision.reasoning_summary,
+                        "last_observation": observations[-1] if observations else {},
+                        "runtime_context": context,
+                        "retry_count": 0,
+                    },
+                )
+                await repo.update_agent_turn(
+                    turn.id,
+                    status="completed" if reflection else "failed",
+                    reflection=reflection.model_dump(mode="json") if reflection else None,
+                    reflection_patch=reflection.patch.model_dump(mode="json")
+                    if reflection and reflection.patch
+                    else None,
+                )
+                await repo.session.commit()
+                continue
 
             if decision.decision_type == "reflect":
                 reflection = await maybe_reflect(
@@ -768,6 +1198,20 @@ class AgentLoop:
                     summary=decision.reasoning_summary,
                 )
                 observations.append(observation.model_dump())
+                if no_progress.record(
+                    evidence_refs=[],
+                    criterion_changes={},
+                    completed_steps=[],
+                    plan_version=canonical_plan.version if canonical_plan is not None else 1,
+                ):
+                    await maybe_reflect(
+                        "no_progress",
+                        {
+                            "last_observation": observation.model_dump(),
+                            "runtime_context": context,
+                            "retry_count": 0,
+                        },
+                    )
                 turn_reflection = await maybe_reflect(
                     "turn_completed",
                     {"last_observation": observation.model_dump(), "retry_count": 0},
@@ -793,9 +1237,18 @@ class AgentLoop:
                 )
                 terminal_override = "blocked"
                 terminal_summary = "已达到用户策略允许的最大工具调用次数。"
+                if canonical_plan is not None and active_node is not None:
+                    await plan_repository.transition_node(
+                        active_node.id,
+                        PlanNodeStatus.blocked,
+                        failure={"category": "budget_exhausted"},
+                    )
+                    await scheduler.clear_active_node(run_id, active_node.id)
                 break
 
             try:
+                orchestrator.validate_result("select_action", NodeResult(next_node="policy_gate"))
+                orchestrator.validate_result("policy_gate", NodeResult(next_node="execute"))
                 action_signature = json.dumps(
                     {"tool": decision.tool_name, "input": decision.tool_input},
                     sort_keys=True,
@@ -809,16 +1262,22 @@ class AgentLoop:
                         "retry_exhausted", "Equivalent failed strategy exhausted its retry budget"
                     )
                 tool = self.router.resolve(decision.tool_name, decision.tool_input)
-                step = await self._step_for_tool(repo, run_id, tool.spec.name)
-                await repo.update_step(step.id, "running")
+                step = (
+                    active_node
+                    if canonical_plan is not None
+                    else await self._step_for_tool(repo, run_id, tool.spec.name)
+                )
+                if canonical_plan is None:
+                    await repo.update_step(step.id, "running")
                 call = await repo.start_tool_call(
                     run_id,
-                    step.id,
+                    step.id if canonical_plan is None else None,
                     tool.spec.name,
                     tool.spec.version,
                     decision.tool_input,
                     tool.spec.permission,
                     tool.spec.side_effect_level,
+                    plan_node_id=step.id if canonical_plan is not None else None,
                 )
                 tool_call_count += 1
                 await repo.update_agent_turn(turn.id, phase="executing", tool_call_id=call.id)
@@ -836,6 +1295,7 @@ class AgentLoop:
                     await repo.finish_tool_call(call.id, error=exc.to_payload())
                     raise
                 await repo.finish_tool_call(call.id, output=output)
+                await repo.update_agent_turn(turn.id, phase="result_recorded", tool_call_id=call.id)
                 logger.info(
                     "tool.complete run_id=%s turn=%s tool=%s call_id=%s",
                     run_id,
@@ -844,6 +1304,7 @@ class AgentLoop:
                     call.id,
                 )
                 output = self._normalize_tool_output(tool.spec.name, output)
+                output["tool_call_id"] = call.id
                 tool_outputs.append(output)
                 processor = self.processors.for_tool(tool.spec.name)
                 if processor:
@@ -856,16 +1317,56 @@ class AgentLoop:
                         data={"tool_name": tool.spec.name, **output},
                     )
                     step_evidence = {}
-                await repo.update_step(step.id, "completed", evidence=step_evidence)
+                if canonical_plan is not None and active_node is not None:
+                    observation.plan_node_id = active_node.id
+                if canonical_plan is None:
+                    await repo.update_step(step.id, "completed", evidence=step_evidence)
                 observations.append(observation.model_dump())
-                evaluation = self.evaluator.evaluate(
-                    observation, decision.expected, decision.success_criteria_refs
+                orchestrator.validate_result(
+                    "execute", NodeResult(next_node="normalize_observation")
                 )
+                orchestrator.validate_result(
+                    "normalize_observation", NodeResult(next_node="evaluate")
+                )
+                expected = decision.expected
+                criterion_refs = decision.success_criteria_refs
+                if canonical_plan is not None and active_node is not None:
+                    expected = (
+                        ExpectedObservation.model_validate(active_node.expected_outcome)
+                        if active_node.expected_outcome
+                        else expected
+                    )
+                    criterion_refs = active_node.success_criteria_refs or criterion_refs
+                    active_node.evidence_refs = list(
+                        dict.fromkeys([*(active_node.evidence_refs or []), call.id])
+                    )
+                evaluation = self.evaluator.evaluate(observation, expected, criterion_refs)
+                orchestrator.validate_result("evaluate", NodeResult(next_node="update_state"))
                 await repo.add_event(
                     run_id,
                     "reasoning.evaluation_created",
                     {"turn_index": turn_index, **evaluation.model_dump(mode="json")},
                 )
+                await persist_progress(evaluation)
+                orchestrator.validate_result(
+                    "update_state", NodeResult(next_node="reflection_gate")
+                )
+                if no_progress.record(
+                    evidence_refs=active_node.evidence_refs
+                    if canonical_plan is not None and active_node is not None
+                    else [call.id],
+                    criterion_changes=evaluation.criterion_updates,
+                    completed_steps=[],
+                    plan_version=canonical_plan.version if canonical_plan is not None else 1,
+                ):
+                    await maybe_reflect(
+                        "no_progress",
+                        {
+                            "last_observation": observation.model_dump(),
+                            "runtime_context": context,
+                            "retry_count": 0,
+                        },
+                    )
                 writes = await memory_manager.write_candidates(
                     run_id=run_id,
                     goal=goal,
@@ -927,6 +1428,7 @@ class AgentLoop:
                 )
                 observation.data["failure_fingerprint"] = fingerprint
                 observations.append(observation.model_dump())
+                await persist_progress()
                 processor = self.processors.for_tool(decision.tool_name or "")
                 if processor:
                     processor.record_failure(
@@ -966,6 +1468,17 @@ class AgentLoop:
                 ):
                     terminal_override = "blocked"
                     terminal_summary = f"{decision.tool_name} 已达到重试上限。"
+                    if canonical_plan is not None and active_node is not None:
+                        await plan_repository.transition_node(
+                            active_node.id,
+                            PlanNodeStatus.failed,
+                            failure={
+                                "category": exc.category,
+                                "fingerprint": fingerprint,
+                                "attempt_count": retry_counts[decision.tool_name or "unknown"],
+                            },
+                        )
+                        await scheduler.clear_active_node(run_id, active_node.id)
                     break
 
         evidence_pack = self.adapter.build_evidence(goal, self.adapter.attempted)
@@ -1036,12 +1549,21 @@ class AgentLoop:
                 run_id,
                 expected_version=run_record.state_version,
                 agent_state=state.model_dump(mode="json"),
-                plan_graph=state.plan.model_dump(mode="json"),
+                plan_graph=plan_to_view(await plan_repository.active_for_run(run_id)).model_dump(
+                    mode="json"
+                )
+                if canonical_plan is not None
+                else state.plan.model_dump(mode="json")
+                if state.plan
+                else {},
                 waiting_state=run_record.waiting_state,
             )
             gate_decision = self.completion_gate.evaluate(
                 state,
                 validation_outcomes=report.validation_outcomes,
+                plan=plan_to_view(await plan_repository.active_for_run(run_id))
+                if canonical_plan is not None
+                else None,
                 required_user_action=(run_record.waiting_state or {}).get("request")
                 if terminal_override == "waiting_user"
                 else None,
@@ -1074,6 +1596,13 @@ class AgentLoop:
                 update={
                     "state": TerminalState.blocked,
                     "reason": terminal_summary or gate_decision.reason,
+                }
+            )
+        if gate_decision.state == TerminalState.continue_run:
+            gate_decision = gate_decision.model_copy(
+                update={
+                    "state": TerminalState.blocked,
+                    "reason": "执行循环结束时活动计划仍有未完成节点。",
                 }
             )
         completion_reflection = None

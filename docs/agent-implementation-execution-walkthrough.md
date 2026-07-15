@@ -21,17 +21,21 @@ sequenceDiagram
     API-->>UI: run_id、task_id、created
     API-)E: asyncio 后台任务
     UI->>API: GET /api/runs/{id}/events
-    E->>DB: planning，写入 Contract、Plan、AgentState
+    E->>DB: planning，创建规范 Plan / PlanNode / PlanEdge
     E->>L: run(goal, on_answer_delta)
-    loop 每个 AgentTurn
-        L->>DB: 组装当前持久化上下文
+    loop 每个可执行 PlanNode
+        L->>DB: Scheduler 选择唯一 active_node
+        L->>DB: 组装 Plan + active_node 上下文
         L->>M: decide_with_answer(goal, context)
         alt 需要工具
             M-->>L: call_tool
             L->>T: 校验权限并执行
             T-->>L: Tool output / Artifact
-            L->>DB: Observation、Evaluation、Memory、事件
-        else 可以回答
+            L->>DB: Observation、Evaluation、checkpoint、事件
+        else 节点结果满足预期
+            M-->>L: complete_node
+            L->>DB: PlanNode completed，释放后继节点
+        else 计划全部完成
             M-->>L: finalize + FinalAnswer
             M-->>E: summary 增量回调
             E->>DB: 持久化 answer.delta
@@ -73,11 +77,13 @@ SSE 端点由 [`backend/app/api/runs.py`](../backend/app/api/runs.py) 的 `strea
 
 **TaskContract** 是用户目标的可验证边界，对应 [`backend/app/schemas/agent.py`](../backend/app/schemas/agent.py) 的 `TaskContract`，其中包含 deliverables、constraints、prohibited actions、assumptions、success criteria 和 verification requirements。`direct` 策略直接使用 `build_default_contract()` 和单步默认计划；`adaptive` 在通用 runtime 开启时让模型生成 Contract，但使用一个“自适应处理”的默认计划；`plan_first` 则并发调用模型的 `contract()` 与 `plan()`。模型输出无效时，Contract 或 Plan 会分别回退到安全默认值。
 
-展示用 Step 通过 `_persist_plan()` 写成 `StepRecord`。与此同时，`build_plan_graph()` 把 Contract 和 Plan 转成可版本化的 **PlanGraph**，再与 Contract 一起装入 **AgentState**。三者由 `RunRepository.initialize_reasoning_state()` 原子地写入 Run，并产生 `reasoning.state_initialized`。这里的 `StepRecord` 面向执行进度和前端展示，`PlanGraph` 位于推理状态内部，二者相关但不是同一个对象。
+模型计划首先由 [`backend/app/runner/planning.py`](../backend/app/runner/planning.py) 的 `plan_output_to_draft()` 归一为 **PlanDraft**，然后经过 `PlanValidator` 检查节点引用、环、根节点、成功准则、能力和预算。`PlanService.create()` 将其落为 `PlanRecord`、`PlanNodeRecord` 与 `PlanEdgeRecord`。这组记录是新 Run 唯一可写的执行事实源；`Run.plan_graph`、API `steps` 和模型 Context 都由它单向投影，不能反向覆盖节点状态。旧 Run 若没有 `PlanRecord`，仍可只读显示原有 `StepRecord`，但不会被新调度器恢复执行。
+
+**AgentState** 不再复制一份可变计划，只保存 `active_plan_id`、`active_plan_version` 和 `active_node_id` 等运行状态。`RunRepository.initialize_reasoning_state()` 初始化 Contract、计划投影和 AgentState；之后节点状态由 `PlanRepository` 转换，AgentState 通过乐观版本号同步活动节点。
 
 如果 Contract 判断问题仍有歧义，Engine 不进入循环，而由 `set_waiting_state()` 保存暂停节点、状态版本、计划版本、澄清问题和 `continuation_token`，把 Run 置为 `waiting_user`。前台下一次提交会改走 `POST /api/runs/{id}/resume`；`resume_waiting_run()` 校验 token，把用户补充内容追加为 AgentState 的 Observation，清除 Contract 歧义并从同一个 Run 继续执行。
 
-执行模式在当前代码里只有 `plan_only` 在 Engine 层形成完整分支：它保存计划、输出“规划已生成”并直接结束，不执行 Agent Loop。`request_approval` 与 `auto_approval` 会被保存在策略快照中，但当前 Agent Loop 的 ToolRouter 尚未根据这两个值暂停审批；不能把 `request_approval` 理解为当前所有工具调用前都会出现审批 UI。
+`plan_only` 也创建正式的规范 Plan，但状态保持 `planned`，AgentState 不设置 active plan。调用 `POST /api/runs/{id}/activate-plan` 后，同一版本切换为 `active` 并从首个 ready node 开始执行，不需要重新规划。`request_approval` 与 `auto_approval` 会被保存在策略快照中，但当前 Agent Loop 的 ToolRouter 尚未根据这两个值暂停审批；不能把 `request_approval` 理解为当前所有工具调用前都会出现审批 UI。
 
 ## Agent Loop 开始：每一轮都从已提交状态重新组装上下文
 
@@ -85,11 +91,13 @@ Engine 把 Run 改为 `executing`，构造 [`backend/app/runner/agent_loop.py`](
 
 `AgentLoop.run()` 会同时准备 `ContextAssembler`、`MemoryManager`、`VerificationEngine`、`ArtifactService`、Sandbox 服务和 `ToolRouter`。有效预算取策略预算与服务端 Settings 上限中的较小值，因此用户选择“深入”也不能越过部署级硬上限。
 
-循环的每个 `turn_index` 都调用 `ContextAssembler.assemble()` 重新读取当前 Run。生成的 **Context** 包含 goal、当前允许使用的 tool manifests、不可用能力及原因、此前 observations、当前 Run 的 memory reads、reasoning policy、TaskContract、PlanGraph 和 AgentState。工具不是把任意 Python 函数暴露给模型：`ToolRouter.eligible_specs()` 只公布通过能力、权限、风险级别和执行后端检查的 manifest；真正执行前，`resolve()` 还会再次校验工具名和必填输入。
+每轮开始先由 `PlanScheduler.ready_nodes()` 计算依赖全部 `completed` 的 pending 节点，再按稳定 index 选择一个节点并执行 `pending → running`，同时写入 `AgentState.active_node_id`。失败或阻塞的硬依赖会让后继节点进入结构化 `dependency_broken` 状态。节点转换和 loop phase 转换都经过 [`backend/app/runner/runtime.py`](../backend/app/runner/runtime.py) 的生产校验边界。
+
+随后 `ContextAssembler.assemble()` 重新读取当前 Run。生成的 **Context** 包含 goal、规范 Plan 投影、唯一 `active_node`、该节点的成功条件、此前 observations、当前 Run 的 memory reads、reasoning policy、TaskContract 和 AgentState。`ToolRouter.eligible_specs()` 先按能力、权限、风险级别和执行后端检查，再按活动节点声明的 required capabilities 收窄 manifest；真正执行前，loop 还会验证所选工具属于活动节点，`resolve()` 再校验工具名和必填输入。
 
 当前 Memory 读取也有明确范围：`ContextAssembler` 调用 `list_memories(run_id=run_id)`，所以实际注入的是当前 Run 最多八条 Memory。虽然数据模型允许 workspace 或 user scope，当前 loop 上下文并没有自动检索跨 Run Memory。
 
-组装完成后，loop 调用 [`backend/app/runner/model_client.py`](../backend/app/runner/model_client.py) 的 `decide_with_answer()`。OpenAI-compatible 实现要求模型返回一个 JSON 对象，核心字段是 `decision_type` 与可审计的 `reasoning_summary`。可选动作是 `call_tool`、`reflect`、`replan`、`finalize`、`ask_user` 或 `blocked`。稳定知识、解释、写作与一般对话应选择 `finalize`；只有需要当前、外部或无法验证的信息时才选择 manifest 中的工具。
+组装完成后，loop 调用 [`backend/app/runner/model_client.py`](../backend/app/runner/model_client.py) 的 `decide_with_answer()`。OpenAI-compatible 实现要求模型返回一个 JSON 对象，核心字段是 `decision_type` 与可审计的 `reasoning_summary`。可选动作是 `call_tool`、`complete_node`、`reflect`、`replan`、`finalize`、`ask_user` 或 `blocked`。模型只负责活动节点内部的动作选择；`target_step_id` 一旦提供，必须严格等于活动节点 ID 或 node key。`complete_node` 提交节点结果供 Evaluation 验证，只有所有必需节点完成后，`finalize` 才能成为任务级动作。
 
 模型网关本身使用 `/chat/completions` 的流式响应和 `response_format: json_object`。[`backend/app/runner/model_client.py`](../backend/app/runner/model_client.py) 的 `_chat_json()` 一边累积完整 JSON，一边从尚未结束的 JSON 字符串中提取 `summary` 字段增量。模型不是直接发送自由文本给前台；只有结构化对象里的用户答案字段被解码后，才经回调进入回答流。完整响应结束后仍要解析和 Pydantic 校验；非 JSON 输出会自动追加纠正提示重试一次。
 
@@ -97,7 +105,7 @@ Engine 把 Run 改为 `executing`，构造 [`backend/app/runner/agent_loop.py`](
 
 ## 如果模型可以直接回答，第一轮就在生成 FinalAnswer
 
-当 `decision_type` 为 `finalize` 时，同一个 `decide_with_answer()` 响应还必须包含 **FinalAnswer**。其 `summary` 是前台可独立阅读的完整答案，findings、sources、caveats 和 verification notes 是随后结构化展示与验证使用的字段。loop 记住这个 FinalAnswer，完成当前 AgentTurn 后退出逐轮循环。
+当规范计划仍有活动节点时，模型返回的旧式 `finalize` 只作为兼容性的节点完成提议处理，不能提前结束任务；节点级临时 summary 也不会进入前台答案流。只有计划没有未完成必需节点时，任务级 `finalize` 才必须携带 **FinalAnswer**。其 `summary` 是前台可独立阅读的完整答案，findings、sources、caveats 和 verification notes 用于随后结构化展示与验证。
 
 在模型生成 JSON 的过程中，`summary` 增量已经通过 `on_answer_delta` 回到 `RunEngine._handle_answer_delta()`。Engine 首段立即提交，之后按约 20 毫秒或 96 字符批量写入 `answer.delta`，降低数据库事件写入频率。模型关闭 `summary` 字符串时，特殊内部信号触发 `answer.settling`：前台此时保留已经显示的文字，同时提示“正在整理并验证结果”。这些 `\0`、`\1` 只是 ModelClient 与 Engine 之间的内部控制信号，不会作为答案正文保存。
 
@@ -105,25 +113,27 @@ Engine 把 Run 改为 `executing`，构造 [`backend/app/runner/agent_loop.py`](
 
 ## 如果模型选择工具，本轮先形成 Observation，再回到下一轮决策
 
-`call_tool` 决策先根据 Run、turn、tool name 和输入生成幂等键，再经过 `ToolRouter.resolve()`。通过后，loop 找到与能力匹配的 Step；若计划里没有对应 Step，`_step_for_tool()` 动态创建一个。随后 `RunRepository.start_tool_call()` 写入 **ToolCall**，状态为 `running`，并产生 `tool_call.started`。
+`call_tool` 决策先验证目标就是活动节点，并根据 Run、turn、tool name 和输入生成稳定幂等键，再经过 `ToolRouter.resolve()`。随后 `RunRepository.start_tool_call()` 写入显式关联 `plan_node_id` 的 **ToolCall**，状态为 `running`，并产生 `tool_call.started`。新路径不再通过标题、意图或 capability 字符串猜测 Step，也不会动态创建展示 Step。
 
-工具接收的 `ToolExecutionContext` 包含 run ID、tool call ID、step ID、trace ID、ArtifactService 和 SandboxJobService。注册表来自 [`backend/app/tools/registry.py`](../backend/app/tools/registry.py) 的 `build_tool_registry()`；网络搜索、网页抓取等工具可在进程内执行，图表等需要隔离计算的能力则通过 [`backend/app/sandbox/runtime.py`](../backend/app/sandbox/runtime.py) 管理 SandboxJob，并由 ArtifactService 接收输出。
+工具接收的 `ToolExecutionContext` 包含 run ID、tool call ID、规范 plan node ID、trace ID、ArtifactService 和 SandboxJobService。注册表来自 [`backend/app/tools/registry.py`](../backend/app/tools/registry.py) 的 `build_tool_registry()`；网络搜索、网页抓取等工具可在进程内执行，图表等需要隔离计算的能力则通过 [`backend/app/sandbox/runtime.py`](../backend/app/sandbox/runtime.py) 管理 SandboxJob，并由 ArtifactService 接收输出。
 
 工具返回的原始字典先保存到 ToolCall。成功时 `finish_tool_call()` 把状态改为 `succeeded` 并发出 `tool_call.completed`；失败时保存结构化错误并标记 `failed`。随后 ProcessorRegistry 按工具类型把 output 转成统一的 **AgentObservation** 和 Step evidence：WebTaskAdapter 负责搜索/抓取证据语义，ChartTaskAdapter 负责图表结果，其他工具使用通用 `tool_result` Observation。
 
-Observation 不是工具输出的别名。ToolCall.output 保留调用结果，Observation 则是 Agent 下一轮能够消费的归一化事实。`ObservationEvaluator.evaluate()` 将它与决策声明的 expected observation 对比，生成 **Evaluation**，并发出 `reasoning.evaluation_created`。成功工具轮次还会调用 `MemoryManager.write_candidates()`，让模型提取带 provenance 和 confidence 的候选 Memory；写入记录最终挂到本 AgentTurn 上。
+Observation 不是工具输出的别名。ToolCall.output 保留调用结果，Observation 则是 Agent 下一轮能够消费的归一化事实。`ObservationEvaluator.evaluate()` 将它与 PlanNode 的 `expected_outcome`、required fields 和 success criteria 对比，生成带 `plan_node_id` 的 **Evaluation**，结果可能是 matched、partial、mismatch、conflict 或 inconclusive。工具调用成功只产生 Observation，绝不会直接完成节点；只有 `PlanService.complete_node()` 收到 matched 结果且没有阻塞验证时，才写入 `completed`、证据引用并释放后继节点。
 
 本轮以 AgentTurn 的 `phase=committed` 结束。下一轮重新执行 ContextAssembler，因此刚才的 Observation、Memory 和持久化状态会进入下一次 `decide_with_answer()`，模型据此继续调用工具或选择 `finalize`。这就是当前 loop 的主闭环：**Context → Decision → Action → Observation → Evaluation → 新 Context**，而不是预先生成一条固定工具链后顺序跑完。
 
+外部行动在 AgentTurn 上依次留下 `prepared → executing → result_recorded → committed` checkpoint，并保存活动节点和幂等键。进程中断后，已有 `result_recorded` 的调用会直接重放结果而不重复执行；处于 `executing` 的只读行动可按同一幂等键安全重试，结果未知的非幂等行动则进入 `waiting_user`，等待用户确认。
+
 ToolExecutionError 会走另一条闭环。loop 将相同工具与输入序列化成 action signature，同时根据工具、输入、错误类别和意图生成 failure fingerprint，写入失败 Observation，并按策略触发 Reflection。相同失败策略或同一工具达到 `agent_per_tool_retry_limit` 后，Run 以 blocked 意图退出，避免模型无限重复同一动作。
 
-## Reflection 可以修改版本化状态，但 replan 动作本身不会重建计划
+## Reflection 通过 PlanPatch 产生不可变的新计划版本
 
 Reflection 是否发生由 [`backend/app/runner/reasoning.py`](../backend/app/runner/reasoning.py) 的 `ReflectionGate` 决定。`failure_only` 只响应工具失败、模型输出失败和完成门失败；`adaptive` 响应预定义的异常信号与模型主动请求；`every_turn` 则在预算内允许每轮触发。
 
-真正执行反思的是 `ModelClient.reflect()`。模型返回 `AgentReflection`，其中可包含 **ReflectionPatch**。`apply_reflection_patch()` 能使假设失效、加入 accepted facts、更新成功准则、替换为更高版本 PlanGraph、增加验证要求或设置 terminal intent。更新通过 `RunRepository.update_reasoning_state(expected_version=...)` 乐观锁提交；状态版本不匹配或 patch 不合法时会拒绝并记录事件，而不是静默覆盖并发状态。
+真正执行反思的是 `ModelClient.reflect()`。模型返回 `AgentReflection`，其中可包含带 **PlanPatch** 的 `ReflectionPatch`。PlanPatch 支持增加节点、更新 pending 节点、增删依赖、跳过可选节点和阻塞节点。应用时必须携带 `expected_plan_version`，并保护 completed 节点、已有证据和 running 节点；完整 DAG 复验通过后，系统创建带 lineage 与 `supersedes_plan_id` 的新 Plan 版本，原版本进入 `superseded`。过期、成环或越权补丁产生 `plan.patch_rejected`，不会部分覆盖现有计划。
 
-当前 `decision_type=replan` 的直接实现只增加 replan 计数，超过预算时 blocked；未超过预算时它被记录为普通 agent state Observation 后进入下一轮。它不会自行再次调用 planner 或生成替代 PlanGraph。当前真正改变计划结构的入口是 ReflectionPatch.replacement_plan，因此文档或界面不能把一次 `replan` 决策等同于“计划已经重建”。
+`decision_type=replan` 会进入计划级反思；若反思返回有效 PlanPatch，活动版本原子切换并由 Scheduler 重新选择 ready node。无有效补丁、补丁被拒或超过 replan/reflection 预算时，Run 会澄清或阻塞，而不是只增加一个计数后假装已经重新规划。`NoProgressDetector` 同时观察证据增益、准则变化、完成节点和计划版本，避免在没有进展时无限循环。
 
 同样，模型主动返回 `ask_user` 时，loop 会保存 waiting state 并进入 `waiting_user`；返回 `blocked` 时记录终止摘要。二者都停止当前循环。用户补充信息后，恢复路径仍是前面描述的同 Run resume，而不是创建新的 AgentTurn 对话历史副本。
 
@@ -135,13 +145,13 @@ Reflection 是否发生由 [`backend/app/runner/reasoning.py`](../backend/app/ru
 
 `VerificationEngine.verify()` 根据 Evidence Pack 检查是否尝试了外部证据、是否成功抓取来源、来源质量、失败来源以及答案是否有引用，生成 **VerificationReport**。若任务没有尝试外部证据，它不会强迫普通知识回答伪造来源；若尝试过但没有可用来源、存在低质量或失败来源，状态会变为 `completed_with_warnings`。
 
-WebTaskAdapter 或 ChartTaskAdapter 还会给出任务类型验证结果。若 Run 有 AgentState，`CompletionGate.evaluate()` 再把验证器结果与 TaskContract 的强制成功准则合并成 **CompletionDecision**。只有强制准则满足且验证通过才能得到 `completed` 或 `completed_with_warnings`；需要用户输入时得到 `waiting_user`，仍有强制条件未满足时得到 `blocked`。完成门 blocked 且此前没有明确 terminal override 时，还可以触发最后一次 completion reflection，但当前实现不会在这次反思后重新进入执行循环。
+WebTaskAdapter 或 ChartTaskAdapter 还会给出任务类型验证结果。若 Run 有 AgentState，`CompletionGate.evaluate()` 会同时检查活动 Plan 的必需节点、依赖失败、TaskContract 强制成功准则、验证、审批和等待状态。任何必需节点仍为 pending/running 都只能 `continue`，failed/blocked 则得到 `blocked`；只有计划与强制准则都满足且验证通过，才能得到 `completed` 或 `completed_with_warnings`。
 
 最终 `result` 由清洗后的 FinalAnswer 扩展而来，加入 `verification_report`、`completion_decision` 和 `audit_refs`。`audit_refs` 连接 Evidence Pack Artifact、AgentTurn 数量和被答案真正引用的 Artifact ID。loop 发出 `reasoning.completion_decided` 与 `verification.created` 后，把结果返回 Engine。
 
 ## Engine 提交终态，前台用完整快照替换临时答案
 
-Engine 收到 loop 结果后，先由 `_complete_answer_stream()` 冲刷剩余文字并写入 `answer.completed`。该事件携带的是经过 loop 清洗后的完整 `summary`，所以前台会用它覆盖可能不完整的增量缓冲。随后 `_finalize_agent_loop()` 依次把 Run 标记为 `synthesizing` 和 `verifying`，保存 `final_answer` Artifact，补齐相关 Step，最后通过 `RunRepository.update_run_status()` 写入终态 status、summary 和完整 result。
+Engine 收到 loop 结果后，先由 `_complete_answer_stream()` 冲刷剩余文字并写入 `answer.completed`。该事件携带的是经过 loop 清洗后的完整 `summary`，所以前台会用它覆盖可能不完整的增量缓冲。随后 `_finalize_agent_loop()` 依次把 Run 标记为 `synthesizing` 和 `verifying`，保存 `final_answer` Artifact，最后通过 `RunRepository.update_run_status()` 写入终态 status、summary 和完整 result。新路径不会在 Run 结束时批量把未执行节点标为完成；规范 PlanNode 保留真实终态，API `steps` 只是它的投影。
 
 这里存在一个有意的展示窗口：`answer.completed` 可能早于 Run 终态提交。[`frontend/src/App.tsx`](../frontend/src/App.tsx) 收到它后把答案标为完整但仍显示“正在整理并验证结果”，并立刻刷新 Run。只有快照已经包含终态 `result` 时，前端才清空 `streamingAnswer`、关闭 SSE 和轮询。
 

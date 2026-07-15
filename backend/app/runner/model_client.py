@@ -447,7 +447,7 @@ class OpenAICompatibleModelClient(ModelClient):
                         operation,
                         "You are the general Agent loop controller. Return JSON only. "
                         "Required keys: decision_type, reasoning_summary. "
-                        "Allowed decision_type values: call_tool, reflect, replan, finalize, ask_user, blocked. "
+                        "Allowed decision_type values: call_tool, complete_node, reflect, replan, finalize, ask_user, blocked. "
                         "Choose among the tools in context.tool_manifests only when external or current evidence is needed. "
                         "For stable general knowledge, explanation, writing, or conversation, finalize without tools. "
                         "Select tools only from context.tool_manifests and follow each manifest's description, schema, capabilities, and permissions. "
@@ -484,7 +484,11 @@ class OpenAICompatibleModelClient(ModelClient):
                         operation,
                         "You are the general Agent controller and answer engine. Return one JSON object. "
                         "Always include decision_type and reasoning_summary. Allowed decision_type values: "
-                        "call_tool, reflect, replan, finalize, ask_user, blocked. Use tools only for current, "
+                        "call_tool, complete_node, reflect, replan, finalize, ask_user, blocked. Work only on "
+                        "context.active_node when it is present. Use complete_node after its expected outcome is "
+                        "satisfied and include node_result fields required by its expected_outcome; use finalize "
+                        "only when context.active_node is null and the plan has no "
+                        "unfinished required node. Use tools only for current, "
                         "external, or otherwise unverifiable information. For stable knowledge, explanation, "
                         "writing, and conversation, choose finalize and also include final_answer with keys: "
                         "summary, findings, sources, failed_sources, source_quality, conflicts, caveats, "
@@ -494,7 +498,8 @@ class OpenAICompatibleModelClient(ModelClient):
                         "never invent IDs, and use an empty list when there is no supporting Artifact. "
                         "The summary must contain the complete user-facing answer, not an introduction or preview; "
                         "use findings only for optional supporting details. "
-                        "For call_tool include tool_name and tool_input and omit final_answer. "
+                        "For call_tool include tool_name and tool_input and omit final_answer. For complete_node "
+                        "omit final_answer. "
                         "Do not expose hidden chain-of-thought; reasoning_summary must be concise.",
                     ),
                 },
@@ -536,7 +541,7 @@ class OpenAICompatibleModelClient(ModelClient):
                         "You are the reflector. Return JSON only with keys: "
                         "trigger, summary, next_action, retry, revised_tool_input, and optional patch. "
                         "patch may contain level, invalidated_assumption_ids, fact_updates, "
-                        "criterion_updates, replacement_plan, added_verification_requirements, "
+                        "criterion_updates, plan_patch, added_verification_requirements, "
                         "or terminal_intent. Only include changes justified by the supplied context. "
                         "Use concise audit-safe summaries.",
                     ),

@@ -10,6 +10,11 @@ from app.core.config import Settings, get_settings
 from app.db.models import Base
 from app.db.session import get_session
 from app.main import create_app
+from app.repositories.plans import PlanRepository, plan_to_view
+from app.repositories.runs import RunRepository
+from app.runner.planning import PlanService, canonical_agent_state
+from app.runner.reasoning import build_default_contract
+from app.schemas.agent import ExpectedObservation, PlanDraft, PlanningStrategy, PlanNodeDraft
 
 
 @pytest.fixture
@@ -50,6 +55,52 @@ async def test_create_run_rejects_empty_goal(app_client):
     assert error["trace_id"].startswith("req_")
 
 
+async def test_activate_plan_starts_a_planned_run(app_client):
+    async with app_client._astra_session() as session:
+        repo = RunRepository(session)
+        run = await repo.create_task_run("批准后执行", {"provider": "mock"})
+        contract = build_default_contract("批准后执行")
+        plan = await PlanService(PlanRepository(session)).create(
+            run.id,
+            PlanDraft(
+                strategy=PlanningStrategy.direct,
+                nodes=[
+                    PlanNodeDraft(
+                        node_key="respond",
+                        title="生成回复",
+                        intent="回应用户",
+                        success_criteria_refs=["criterion-result"],
+                        expected_outcome=ExpectedObservation(
+                            kind="final_answer", success_condition="answer exists"
+                        ),
+                    )
+                ],
+            ),
+            contract=contract,
+            activate=False,
+        )
+        state = canonical_agent_state(contract, plan, policy_version=1).model_copy(
+            update={"active_plan_id": None}
+        )
+        await repo.initialize_reasoning_state(
+            run.id,
+            task_contract=contract.model_dump(mode="json"),
+            plan_graph=plan_to_view(plan).model_dump(mode="json"),
+            agent_state=state.model_dump(mode="json"),
+        )
+        await repo.update_run_status(run.id, "completed")
+        run_id = run.id
+
+    response = await app_client.post(f"/api/runs/{run_id}/activate-plan")
+    assert response.status_code == 200
+    assert response.json()["status"] == "executing"
+    async with app_client._astra_session() as session:
+        loaded = await RunRepository(session).require_run(run_id)
+        assert loaded.active_plan_id
+        assert loaded.agent_state["active_plan_id"] == loaded.active_plan_id
+        assert loaded.completed_at is None
+
+
 async def test_create_run_rejects_invalid_agent_profile_as_configuration_error(
     app_client, monkeypatch
 ):
@@ -70,7 +121,9 @@ async def test_tool_settings_can_be_read_and_updated(app_client):
     loaded = await app_client.get("/api/tools")
     assert loaded.status_code == 200
     assert {tool["name"] for tool in loaded.json()["tools"]} == {
-        "web_search", "web_fetch", "chart_render"
+        "web_search",
+        "web_fetch",
+        "chart_render",
     }
 
     updated = await app_client.put(
@@ -103,9 +156,7 @@ async def test_conversation_strategy_can_be_restored_and_updated(app_client):
         "reflection_enabled": False,
         "reflection_trigger": "failure_only",
     }
-    saved = await app_client.put(
-        "/api/preferences/conversation-strategy", json=updated
-    )
+    saved = await app_client.put("/api/preferences/conversation-strategy", json=updated)
     assert saved.status_code == 200
     assert saved.json() == updated
 
@@ -163,7 +214,9 @@ async def test_conversation_strategy_accepts_tool_limits_for_each_effort(app_cli
     ("effort", "limit"),
     [("fast", 6), ("balanced", 5), ("balanced", 16), ("deep", 15), ("deep", 51)],
 )
-async def test_conversation_strategy_rejects_tool_limits_outside_effort_range(app_client, effort, limit):
+async def test_conversation_strategy_rejects_tool_limits_outside_effort_range(
+    app_client, effort, limit
+):
     response = await app_client.put(
         "/api/preferences/conversation-strategy",
         json={
@@ -289,7 +342,15 @@ async def test_conversation_management_and_share_lifecycle(app_client):
     run_id = created.json()["run_id"]
     async with app_client._astra_session() as session:
         await RunRepository(session).update_run_status(run_id, "completed", summary="公开回答")
-        session.add(AgentTurnRecord(run_id=run_id, turn_index=1, decision_type="finalize", reasoning_summary="正在整理公开回答", status="completed"))
+        session.add(
+            AgentTurnRecord(
+                run_id=run_id,
+                turn_index=1,
+                decision_type="finalize",
+                reasoning_summary="正在整理公开回答",
+                status="completed",
+            )
+        )
         await session.commit()
 
     renamed = await app_client.patch(
@@ -317,7 +378,18 @@ async def test_conversation_management_and_share_lifecycle(app_client):
     assert public.json()["title"] == "用户标题"
     assert public.json()["messages"] == [
         {"role": "user", "content": "需要安全分享的对话", "items": []},
-        {"role": "process", "content": "", "items": [{"kind": "reasoning", "title": "思考", "detail": "正在整理公开回答", "status": "completed"}]},
+        {
+            "role": "process",
+            "content": "",
+            "items": [
+                {
+                    "kind": "reasoning",
+                    "title": "思考",
+                    "detail": "正在整理公开回答",
+                    "status": "completed",
+                }
+            ],
+        },
         {"role": "assistant", "content": "正在整理公开回答", "items": []},
     ]
     assert "runs" not in public.json()
@@ -355,7 +427,9 @@ async def test_run_event_stream_resumes_after_event_id(app_client, monkeypatch):
     async with app_client._astra_session() as session:
         repo = RunRepository(session)
         skipped = await repo.add_event(run_id, "reasoning.summary.delta", {"delta": "旧片段"})
-        included = await repo.add_event(run_id, "reasoning.summary.completed", {"summary": "恢复后的摘要"})
+        included = await repo.add_event(
+            run_id, "reasoning.summary.completed", {"summary": "恢复后的摘要"}
+        )
         await repo.update_run_status(run_id, "completed", summary="完成")
         await session.commit()
 
@@ -364,7 +438,11 @@ async def test_run_event_stream_resumes_after_event_id(app_client, monkeypatch):
     assert response.status_code == 200
     assert f"id: {skipped.id}\n" not in response.text
     assert f"id: {included.id}\n" in response.text
-    streamed = [json.loads(line.removeprefix("data: ")) for line in response.text.splitlines() if line.startswith("data: ")]
+    streamed = [
+        json.loads(line.removeprefix("data: "))
+        for line in response.text.splitlines()
+        if line.startswith("data: ")
+    ]
     assert any(item.get("payload", {}).get("summary") == "恢复后的摘要" for item in streamed)
 
 
@@ -453,9 +531,7 @@ async def test_create_run_compiles_reasoning_policy(app_client):
 
 
 @pytest.mark.parametrize("provider", ["anthropic", "google", "azure"])
-async def test_create_run_rejects_model_protocols_not_implemented_by_runtime(
-    app_client, provider
-):
+async def test_create_run_rejects_model_protocols_not_implemented_by_runtime(app_client, provider):
     response = await app_client.post(
         "/api/runs",
         json={

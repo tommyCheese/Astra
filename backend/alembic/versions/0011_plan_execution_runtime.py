@@ -76,27 +76,33 @@ def upgrade() -> None:
         ),
     )
     op.create_index("ix_plan_edges_successor", "plan_edges", ["successor_id"])
-    op.add_column("tool_calls", sa.Column("plan_node_id", sa.String(length=36), nullable=True))
-    op.create_foreign_key(
-        "fk_tool_calls_plan_node", "tool_calls", "plan_nodes", ["plan_node_id"], ["id"]
-    )
-    op.add_column("agent_turns", sa.Column("plan_node_id", sa.String(length=36), nullable=True))
-    op.create_foreign_key(
-        "fk_agent_turns_plan_node", "agent_turns", "plan_nodes", ["plan_node_id"], ["id"]
-    )
-    op.add_column("artifacts", sa.Column("plan_node_id", sa.String(length=36), nullable=True))
-    op.create_foreign_key(
-        "fk_artifacts_plan_node", "artifacts", "plan_nodes", ["plan_node_id"], ["id"]
-    )
+    with op.batch_alter_table("tool_calls") as batch:
+        batch.add_column(sa.Column("plan_node_id", sa.String(length=36), nullable=True))
+        batch.create_foreign_key(
+            "fk_tool_calls_plan_node", "plan_nodes", ["plan_node_id"], ["id"]
+        )
+    with op.batch_alter_table("agent_turns") as batch:
+        batch.add_column(sa.Column("plan_node_id", sa.String(length=36), nullable=True))
+        batch.create_foreign_key(
+            "fk_agent_turns_plan_node", "plan_nodes", ["plan_node_id"], ["id"]
+        )
+    with op.batch_alter_table("artifacts") as batch:
+        batch.add_column(sa.Column("plan_node_id", sa.String(length=36), nullable=True))
+        batch.create_foreign_key(
+            "fk_artifacts_plan_node", "plan_nodes", ["plan_node_id"], ["id"]
+        )
 
 
 def downgrade() -> None:
-    op.drop_constraint("fk_artifacts_plan_node", "artifacts", type_="foreignkey")
-    op.drop_column("artifacts", "plan_node_id")
-    op.drop_constraint("fk_agent_turns_plan_node", "agent_turns", type_="foreignkey")
-    op.drop_column("agent_turns", "plan_node_id")
-    op.drop_constraint("fk_tool_calls_plan_node", "tool_calls", type_="foreignkey")
-    op.drop_column("tool_calls", "plan_node_id")
+    with op.batch_alter_table("artifacts") as batch:
+        batch.drop_constraint("fk_artifacts_plan_node", type_="foreignkey")
+        batch.drop_column("plan_node_id")
+    with op.batch_alter_table("agent_turns") as batch:
+        batch.drop_constraint("fk_agent_turns_plan_node", type_="foreignkey")
+        batch.drop_column("plan_node_id")
+    with op.batch_alter_table("tool_calls") as batch:
+        batch.drop_constraint("fk_tool_calls_plan_node", type_="foreignkey")
+        batch.drop_column("plan_node_id")
     op.drop_index("ix_plan_edges_successor", table_name="plan_edges")
     op.drop_table("plan_edges")
     op.drop_index("ix_plan_nodes_plan_status", table_name="plan_nodes")
