@@ -11,6 +11,7 @@ import httpx
 from app.agent_profile import AgentProfile, ModelOperation, load_agent_profile
 from app.agent_profile.prompts import PromptComposer
 from app.core.config import Settings
+from app.model_providers import API_KEY_OPTIONAL_MODEL_PROVIDERS
 from app.schemas.agent import (
     AgentDecision,
     AgentReflection,
@@ -340,7 +341,10 @@ class MockModelClient(ModelClient):
 
 class OpenAICompatibleModelClient(ModelClient):
     def __init__(self, settings: Settings):
-        if not settings.model_api_key and settings.model_provider != "compatible":
+        if (
+            not settings.model_api_key
+            and settings.model_provider not in API_KEY_OPTIONAL_MODEL_PROVIDERS
+        ):
             raise ModelConfigurationError("MODEL_API_KEY is required for real model providers")
         self.settings = settings
         self.usage_recorder = None
@@ -774,9 +778,115 @@ class OpenAICompatibleModelClient(ModelClient):
             raise ModelOutputError("Model returned non-JSON content") from exc
 
 
+class AnthropicModelClient(OpenAICompatibleModelClient):
+    """Anthropic Messages API adapter preserving Astra's structured model contract."""
+
+    async def _chat_json(
+        self,
+        messages: list[dict[str, str]],
+        *,
+        operation: ModelOperation,
+        attempt: int = 0,
+        stream_field: str | None = None,
+        on_field_delta: AnswerDeltaCallback | None = None,
+        stream_callbacks: StreamFieldCallbacks | None = None,
+    ) -> dict[str, Any]:
+        url = self.settings.model_base_url.rstrip("/") + "/messages"
+        system = "\n\n".join(
+            message["content"] for message in messages if message["role"] == "system"
+        )
+        anthropic_messages = [
+            message for message in messages if message["role"] in {"user", "assistant"}
+        ]
+        started = time.perf_counter()
+        invocation_id = None
+        if self.usage_recorder is not None:
+            invocation_id = await self.usage_recorder.start(
+                provider=self.settings.model_provider,
+                model=self.settings.model_name,
+                operation=operation.value,
+                attempt=attempt + 1,
+            )
+        try:
+            async with httpx.AsyncClient(timeout=60) as client:
+                response = await client.post(
+                    url,
+                    headers={
+                        "x-api-key": self.settings.model_api_key,
+                        "anthropic-version": "2023-06-01",
+                        "content-type": "application/json",
+                    },
+                    json={
+                        "model": self.settings.model_name,
+                        "max_tokens": 8192,
+                        "system": system,
+                        "messages": anthropic_messages,
+                    },
+                )
+                response.raise_for_status()
+                body = response.json()
+                content = "".join(
+                    block.get("text", "")
+                    for block in body.get("content", [])
+                    if isinstance(block, dict) and block.get("type") == "text"
+                ).strip()
+                if not content:
+                    raise ModelOutputError("Anthropic endpoint returned no text content")
+                payload = parse_json_object(content)
+                callbacks = dict(stream_callbacks or {})
+                if stream_field and on_field_delta:
+                    callbacks[stream_field] = on_field_delta
+                for field, callback in callbacks.items():
+                    value = find_json_string_field(payload, field)
+                    if value:
+                        await callback(value)
+                    await callback("\1")
+                if self.usage_recorder is not None:
+                    await self.usage_recorder.finish(
+                        invocation_id,
+                        status="succeeded",
+                        duration_ms=round((time.perf_counter() - started) * 1000),
+                        request_id=response.headers.get("request-id"),
+                        usage=body.get("usage"),
+                    )
+                return payload
+        except (httpx.HTTPError, json.JSONDecodeError, ValueError, ModelOutputError) as exc:
+            if self.usage_recorder is not None:
+                await self.usage_recorder.finish(
+                    invocation_id,
+                    status="failed",
+                    duration_ms=round((time.perf_counter() - started) * 1000),
+                    error=exc,
+                )
+            if attempt == 0 and not isinstance(exc, httpx.HTTPError):
+                return await self._chat_json(
+                    [
+                        *messages,
+                        {
+                            "role": "user",
+                            "content": "Return only one valid JSON object matching the requested schema.",
+                        },
+                    ],
+                    operation=operation,
+                    attempt=1,
+                    stream_field=stream_field,
+                    on_field_delta=on_field_delta,
+                    stream_callbacks=stream_callbacks,
+                )
+            if isinstance(exc, httpx.HTTPStatusError):
+                raise ModelOutputError(
+                    f"Model endpoint returned HTTP {exc.response.status_code}"
+                ) from exc
+            if isinstance(exc, ModelOutputError):
+                raise
+            raise ModelOutputError("Anthropic returned non-JSON content") from exc
+
+
 def build_model_client(settings: Settings) -> ModelClient:
     if settings.model_provider == "mock":
         return MockModelClient()
+    if settings.model_provider == "anthropic":
+        return AnthropicModelClient(settings)
     return OpenAICompatibleModelClient(settings)
 
 
@@ -791,6 +901,18 @@ def parse_json_object(content: str) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise ValueError("Model JSON root must be an object")
     return payload
+
+
+def find_json_string_field(payload: dict[str, Any], field: str) -> str:
+    value = payload.get(field)
+    if isinstance(value, str):
+        return value
+    for nested in payload.values():
+        if isinstance(nested, dict):
+            found = find_json_string_field(nested, field)
+            if found:
+                return found
+    return ""
 
 
 def normalize_reflection_payload(payload: dict[str, Any]) -> dict[str, Any]:

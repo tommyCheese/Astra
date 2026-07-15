@@ -1,0 +1,37 @@
+SUPPORTED_MODEL_PROVIDERS = frozenset(
+    {
+        "openai",
+        "anthropic",
+        "google",
+        "xai",
+        "mistral",
+        "groq",
+        "openrouter",
+        "together",
+        "fireworks",
+        "perplexity",
+        "cohere",
+        "cerebras",
+        "nvidia",
+        "huggingface",
+        "azure",
+        "deepseek",
+        "qwen",
+        "siliconflow",
+        "moonshot",
+        "zhipu",
+        "minimax",
+        "baidu",
+        "tencent",
+        "volcengine",
+        "ollama",
+        "lmstudio",
+        "vllm",
+        "localai",
+        "compatible",
+    }
+)
+
+API_KEY_OPTIONAL_MODEL_PROVIDERS = frozenset(
+    {"ollama", "lmstudio", "vllm", "localai", "compatible"}
+)

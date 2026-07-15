@@ -569,14 +569,13 @@ async def test_create_run_compiles_reasoning_policy(app_client):
     assert body["reasoning_policy"]["effective"]["budgets"]["max_reflections"] == 6
 
 
-@pytest.mark.parametrize("provider", ["anthropic", "google", "azure"])
-async def test_create_run_rejects_model_protocols_not_implemented_by_runtime(app_client, provider):
+async def test_create_run_rejects_unknown_model_provider(app_client):
     response = await app_client.post(
         "/api/runs",
         json={
             "goal": "测试模型配置",
             "model": {
-                "provider": provider,
+                "provider": "unknown-provider",
                 "name": "test-model",
                 "api_key": "secret",
                 "base_url": "https://example.test/v1",
@@ -586,6 +585,36 @@ async def test_create_run_rejects_model_protocols_not_implemented_by_runtime(app
 
     assert response.status_code == 422
     assert response.json()["error"]["code"] == "MODEL_PROVIDER_UNSUPPORTED"
+
+
+@pytest.mark.parametrize("provider", ["anthropic", "google", "azure", "groq", "qwen"])
+def test_model_config_accepts_supported_cloud_providers(provider):
+    configured = runs_api._apply_model_config(
+        Settings(model_provider="mock"),
+        {
+            "provider": provider,
+            "name": "test-model",
+            "api_key": "secret",
+            "base_url": "https://example.test/v1",
+        },
+    )
+
+    assert configured.model_provider == provider
+
+
+@pytest.mark.parametrize("provider", ["ollama", "lmstudio", "vllm", "localai", "compatible"])
+def test_model_config_allows_keyless_local_providers(provider):
+    configured = runs_api._apply_model_config(
+        Settings(model_provider="mock"),
+        {
+            "provider": provider,
+            "name": "local-model",
+            "api_key": "",
+            "base_url": "http://127.0.0.1:1234/v1",
+        },
+    )
+
+    assert configured.model_provider == provider
 
 
 async def test_create_run_rejects_missing_model_base_url(app_client):

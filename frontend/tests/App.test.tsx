@@ -776,10 +776,16 @@ describe('App', () => {
     await userEvent.click(screen.getByRole('button', { name: '模型管理' }));
 
     expect(screen.getByRole('heading', { name: '模型管理' })).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /Anthropic/ })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Anthropic/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Google Gemini/ })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /DeepSeek/ })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /通义千问/ })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /SiliconFlow/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Ollama/ })).toBeInTheDocument();
+    await userEvent.type(screen.getByRole('textbox', { name: '搜索供应商' }), 'Groq');
+    expect(screen.getByRole('button', { name: /Groq/ })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /DeepSeek/ })).not.toBeInTheDocument();
+    await userEvent.clear(screen.getByRole('textbox', { name: '搜索供应商' }));
     const keyInput = screen.getByPlaceholderText('sk-...');
     expect(keyInput).toHaveAttribute('type', 'password');
 
@@ -863,8 +869,8 @@ describe('App', () => {
     await userEvent.click(screen.getByRole('button', { name: '关闭设置' }));
     await userEvent.click(screen.getByRole('button', { name: /当前模型/ }));
 
-    expect(screen.getByRole('button', { name: /deepseek-v4-pro/ })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /deepseek-v4-flash/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /deepseek-chat/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /deepseek-reasoner/ })).toBeInTheDocument();
   });
 
   it('shows sandbox and execution policies in runtime settings', async () => {

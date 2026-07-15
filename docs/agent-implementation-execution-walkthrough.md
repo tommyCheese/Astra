@@ -158,3 +158,72 @@ Engine 收到 loop 结果后，先由 `_complete_answer_stream()` 冲刷剩余�
 最终展示由 [`frontend/src/conversations.ts`](../frontend/src/conversations.ts) 的 `buildPresentation()` 组织。用户消息来自 `chat_messages`；存在 AgentTurn 或 ToolCall 时加入一个携带 Run 快照的 process 消息；存在 result 时加入正式 assistant 消息。App 在流式期间过滤正式答案，显示临时气泡；终态快照到达后临时气泡消失，ProcessPanel 与结构化结果接管界面。Artifact 的具体关联与安全渲染继续遵循 [一次 Run 如何返回并展示工具输出](run-result-and-contextual-tool-output.md)。
 
 因此，从用户视角看是“一问一答”，从实现视角看则是同一个 Run 上三条同步推进的轨迹：Engine 持续改变持久化状态，Agent Loop 以 AgentTurn 形成决策闭环，Event 流只把已经提交的变化及时送到浏览器。最终可信结果不是最后一个模型 token，而是经过工具审计、Artifact 引用清洗、Verification 和 CompletionGate 后写入 Run.result 的结构化快照。
+
+
+
+```mermaid
+sequenceDiagram
+    participant U as 用户
+    participant UI as "App.tsx"
+    participant API as "api/runs.py"
+    participant DB as "RunRepository / SQLAlchemy"
+    participant E as "RunEngine"
+    participant P as "PlanService / Scheduler"
+    participant L as "AgentLoop"
+    participant M as "ModelClient"
+    participant T as "ToolRouter"
+    participant S as "Docker Sandbox"
+    participant V as "Verification / CompletionGate"
+
+    U->>UI: 输入目标并发送
+    UI->>API: POST /api/runs
+    API->>DB: 创建或复用 Task，创建新 Run
+    API->>DB: 冻结策略与 Agent Profile
+    API-)E: asyncio.create_task
+    API-->>UI: run_id + task_id + created
+
+    UI->>API: GET /api/runs/{id}
+    UI->>API: EventSource /api/runs/{id}/events
+    API-->>UI: stream.ready
+
+    E->>DB: 读取 Run 和最近 6 个历史 Run
+    E->>M: contract / plan
+    E->>P: 创建 Plan、PlanNode、PlanEdge
+    E->>DB: 初始化 AgentState
+
+    loop 每个 Agent Turn
+        P->>DB: 选择 ready PlanNode
+        L->>DB: 重读状态、Observation、Memory
+        L->>M: decide_with_answer
+        M-->>L: Decision JSON
+
+        alt call_tool
+            L->>T: 权限、能力、输入、风险校验
+            T->>DB: ToolCall running
+            T->>S: 执行 web_search / web_fetch / chart.render
+            S-->>T: 输出与 Artifact
+            T->>DB: ToolCall succeeded/failed
+            L->>DB: Observation + Evaluation
+        else complete_node
+            L->>DB: Evaluation matched 后完成 PlanNode
+        else reflect / replan
+            L->>M: reflect
+            M-->>L: ReflectionPatch / PlanPatch
+            L->>DB: 新 State 版本或新 Plan 版本
+        else ask_user
+            L->>DB: waiting_user + continuation_token
+        else finalize
+            M-->>E: FinalAnswer.summary 增量
+            E->>DB: answer.delta
+        end
+    end
+
+    L->>DB: Evidence Pack
+    L->>V: Adapter validation + Verification
+    V->>V: CompletionGate
+    L->>DB: CompletionDecision + 最终 AgentState
+    E->>DB: final_answer Artifact + Run 终态
+    DB-->>UI: SSE 变化事件
+    UI->>API: 刷新 RunView
+    UI-->>U: 最终答案、过程、工具、来源、工件
+```

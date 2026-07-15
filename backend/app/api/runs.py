@@ -13,6 +13,7 @@ from app.artifacts import LocalArtifactStore
 from app.core.config import Settings, get_settings
 from app.core.errors import ConfigurationError, ResourceError, StateError, ValidationError
 from app.db.session import SessionLocal, get_session
+from app.model_providers import API_KEY_OPTIONAL_MODEL_PROVIDERS, SUPPORTED_MODEL_PROVIDERS
 from app.repositories.plans import PlanRepository, plan_to_view
 from app.repositories.runs import RunRepository, run_to_view
 from app.repositories.tool_settings import (
@@ -40,7 +41,7 @@ def _apply_model_config(settings: Settings, model: dict[str, str] | None) -> Set
     if not model:
         return settings
     provider = model.get("provider", "")
-    if provider not in {"openai", "deepseek", "qwen", "siliconflow", "compatible"}:
+    if provider not in SUPPORTED_MODEL_PROVIDERS:
         raise ValidationError("MODEL_PROVIDER_UNSUPPORTED", "当前模型供应商尚未接入通用运行时。")
     configured = settings.model_copy(
         update={
@@ -53,7 +54,7 @@ def _apply_model_config(settings: Settings, model: dict[str, str] | None) -> Set
     if (
         not configured.model_name
         or not configured.model_base_url
-        or (provider != "compatible" and not configured.model_api_key)
+        or (provider not in API_KEY_OPTIONAL_MODEL_PROVIDERS and not configured.model_api_key)
     ):
         raise ValidationError(
             "MODEL_CONFIGURATION_REQUIRED", "请先配置模型名称、API 地址和 API Key。"

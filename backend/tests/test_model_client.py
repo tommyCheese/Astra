@@ -5,6 +5,7 @@ import pytest
 from app.agent_profile import ModelOperation
 from app.core.config import Settings
 from app.runner.model_client import (
+    AnthropicModelClient,
     MockModelClient,
     ModelConfigurationError,
     build_model_client,
@@ -106,6 +107,75 @@ def test_mock_model_requires_no_credentials():
     client = build_model_client(Settings(model_provider="mock", model_api_key=""))
 
     assert isinstance(client, MockModelClient)
+
+
+def test_anthropic_provider_uses_native_client():
+    client = build_model_client(
+        Settings(model_provider="anthropic", model_api_key="secret", model_name="claude-test")
+    )
+
+    assert isinstance(client, AnthropicModelClient)
+
+
+async def test_anthropic_client_translates_messages_and_stream_callbacks(monkeypatch):
+    requests = []
+
+    class FakeResponse:
+        def __init__(self):
+            self.headers = {"request-id": "request-1"}
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {
+                "content": [{"type": "text", "text": '{"summary":"完成"}'}],
+                "usage": {"input_tokens": 8, "output_tokens": 3},
+            }
+
+    class FakeAsyncClient:
+        def __init__(self, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def post(self, url, **kwargs):
+            requests.append((url, kwargs))
+            return FakeResponse()
+
+    monkeypatch.setattr("app.runner.model_client.httpx.AsyncClient", FakeAsyncClient)
+    client = AnthropicModelClient(
+        Settings(
+            model_provider="anthropic",
+            model_api_key="secret",
+            model_name="claude-test",
+            model_base_url="https://api.anthropic.test/v1",
+        )
+    )
+    deltas = []
+
+    async def on_delta(value):
+        deltas.append(value)
+
+    payload = await client._chat_json(
+        [
+            {"role": "system", "content": "Return JSON"},
+            {"role": "user", "content": "完成任务"},
+        ],
+        operation=ModelOperation.SYNTHESIS,
+        stream_field="summary",
+        on_field_delta=on_delta,
+    )
+
+    assert payload == {"summary": "完成"}
+    assert requests[0][0] == "https://api.anthropic.test/v1/messages"
+    assert requests[0][1]["headers"]["x-api-key"] == "secret"
+    assert requests[0][1]["json"]["system"] == "Return JSON"
+    assert deltas == ["完成", "\1"]
 
 
 def test_model_json_parser_accepts_fences_and_leading_text():

@@ -1284,7 +1284,13 @@ function RuntimeSettings() {
   </SettingsGroup>;
 }
 
-type ModelProviderId = 'openai' | 'deepseek' | 'qwen' | 'siliconflow' | 'compatible';
+type ModelProviderId =
+  | 'openai' | 'anthropic' | 'google' | 'xai' | 'mistral' | 'groq' | 'openrouter'
+  | 'together' | 'fireworks' | 'perplexity' | 'cohere' | 'cerebras' | 'nvidia'
+  | 'huggingface' | 'azure' | 'deepseek' | 'qwen' | 'siliconflow' | 'moonshot'
+  | 'zhipu' | 'minimax' | 'baidu' | 'tencent' | 'volcengine' | 'ollama'
+  | 'lmstudio' | 'vllm' | 'localai' | 'compatible';
+type ModelProviderGroup = 'global' | 'china' | 'local' | 'custom';
 type ModelProviderConfig = {
   id: ModelProviderId;
   name: string;
@@ -1294,19 +1300,67 @@ type ModelProviderConfig = {
   apiKey: string;
 };
 
-const modelProviders: Array<{ id: ModelProviderId; name: string; detail: string; mark: string }> = [
-  { id: 'openai', name: 'OpenAI', detail: 'Chat Completions API', mark: 'O' },
-  { id: 'deepseek', name: 'DeepSeek', detail: 'DeepSeek 开放平台', mark: 'D' },
-  { id: 'qwen', name: '通义千问', detail: '阿里云百炼', mark: 'Q' },
-  { id: 'siliconflow', name: 'SiliconFlow', detail: '硅基流动模型广场', mark: 'S' },
-  { id: 'compatible', name: 'OpenAI 兼容', detail: 'Ollama、vLLM、OpenRouter', mark: '↗' },
+const modelProviders: Array<{ id: ModelProviderId; name: string; detail: string; mark: string; group: ModelProviderGroup; protocol: string }> = [
+  { id: 'openai', name: 'OpenAI', detail: 'OpenAI API', mark: 'O', group: 'global', protocol: 'OpenAI Chat Completions' },
+  { id: 'anthropic', name: 'Anthropic', detail: 'Claude 原生 Messages API', mark: 'A', group: 'global', protocol: 'Anthropic Messages API' },
+  { id: 'google', name: 'Google Gemini', detail: 'Gemini API', mark: 'G', group: 'global', protocol: 'OpenAI-compatible' },
+  { id: 'xai', name: 'xAI', detail: 'Grok API', mark: 'x', group: 'global', protocol: 'OpenAI-compatible' },
+  { id: 'mistral', name: 'Mistral AI', detail: 'La Plateforme', mark: 'M', group: 'global', protocol: 'OpenAI-compatible' },
+  { id: 'groq', name: 'Groq', detail: '高速推理云', mark: 'G', group: 'global', protocol: 'OpenAI-compatible' },
+  { id: 'openrouter', name: 'OpenRouter', detail: '多模型聚合平台', mark: 'OR', group: 'global', protocol: 'OpenAI-compatible' },
+  { id: 'together', name: 'Together AI', detail: '开源模型推理平台', mark: 'T', group: 'global', protocol: 'OpenAI-compatible' },
+  { id: 'fireworks', name: 'Fireworks AI', detail: '生成式 AI 推理平台', mark: 'F', group: 'global', protocol: 'OpenAI-compatible' },
+  { id: 'perplexity', name: 'Perplexity', detail: 'Sonar 在线模型', mark: 'P', group: 'global', protocol: 'OpenAI-compatible' },
+  { id: 'cohere', name: 'Cohere', detail: 'Command 系列模型', mark: 'C', group: 'global', protocol: 'OpenAI-compatible' },
+  { id: 'cerebras', name: 'Cerebras', detail: '高速推理服务', mark: 'C', group: 'global', protocol: 'OpenAI-compatible' },
+  { id: 'nvidia', name: 'NVIDIA NIM', detail: 'NVIDIA API Catalog', mark: 'N', group: 'global', protocol: 'OpenAI-compatible' },
+  { id: 'huggingface', name: 'Hugging Face', detail: 'Inference Providers', mark: 'HF', group: 'global', protocol: 'OpenAI-compatible' },
+  { id: 'azure', name: 'Azure OpenAI', detail: 'Azure AI Foundry', mark: 'Az', group: 'global', protocol: 'OpenAI-compatible v1' },
+  { id: 'deepseek', name: 'DeepSeek', detail: 'DeepSeek 开放平台', mark: 'D', group: 'china', protocol: 'OpenAI-compatible' },
+  { id: 'qwen', name: '通义千问', detail: '阿里云百炼', mark: 'Q', group: 'china', protocol: 'OpenAI-compatible' },
+  { id: 'siliconflow', name: 'SiliconFlow', detail: '硅基流动模型广场', mark: 'S', group: 'china', protocol: 'OpenAI-compatible' },
+  { id: 'moonshot', name: 'Moonshot AI', detail: 'Kimi 开放平台', mark: 'K', group: 'china', protocol: 'OpenAI-compatible' },
+  { id: 'zhipu', name: '智谱 AI', detail: 'BigModel 开放平台', mark: 'Z', group: 'china', protocol: 'OpenAI-compatible' },
+  { id: 'minimax', name: 'MiniMax', detail: 'MiniMax 开放平台', mark: 'M', group: 'china', protocol: 'OpenAI-compatible' },
+  { id: 'baidu', name: '百度千帆', detail: '千帆大模型平台', mark: 'B', group: 'china', protocol: 'OpenAI-compatible' },
+  { id: 'tencent', name: '腾讯混元', detail: '混元大模型 API', mark: 'T', group: 'china', protocol: 'OpenAI-compatible' },
+  { id: 'volcengine', name: '火山方舟', detail: '豆包模型服务', mark: 'V', group: 'china', protocol: 'OpenAI-compatible' },
+  { id: 'ollama', name: 'Ollama', detail: '本地模型运行时', mark: 'O', group: 'local', protocol: 'OpenAI-compatible' },
+  { id: 'lmstudio', name: 'LM Studio', detail: '本地模型服务器', mark: 'LM', group: 'local', protocol: 'OpenAI-compatible' },
+  { id: 'vllm', name: 'vLLM', detail: '高吞吐推理服务器', mark: 'vL', group: 'local', protocol: 'OpenAI-compatible' },
+  { id: 'localai', name: 'LocalAI', detail: '本地 OpenAI 替代方案', mark: 'LA', group: 'local', protocol: 'OpenAI-compatible' },
+  { id: 'compatible', name: 'OpenAI 兼容', detail: '自定义兼容端点', mark: '↗', group: 'custom', protocol: 'OpenAI-compatible' },
 ];
 
 const providerDefaults: Record<ModelProviderId, { endpoint: string; models: string }> = {
   openai: { endpoint: 'https://api.openai.com/v1', models: 'gpt-5, gpt-5-mini' },
-  deepseek: { endpoint: 'https://api.deepseek.com', models: 'deepseek-v4-pro, deepseek-v4-flash' },
+  anthropic: { endpoint: 'https://api.anthropic.com/v1', models: 'claude-sonnet-4-5, claude-haiku-4-5' },
+  google: { endpoint: 'https://generativelanguage.googleapis.com/v1beta/openai', models: 'gemini-3.5-flash, gemini-3.5-pro' },
+  xai: { endpoint: 'https://api.x.ai/v1', models: 'grok-4.5' },
+  mistral: { endpoint: 'https://api.mistral.ai/v1', models: 'mistral-large-latest, mistral-small-latest' },
+  groq: { endpoint: 'https://api.groq.com/openai/v1', models: 'openai/gpt-oss-120b, llama-3.3-70b-versatile' },
+  openrouter: { endpoint: 'https://openrouter.ai/api/v1', models: 'openai/gpt-5, anthropic/claude-sonnet-4.5' },
+  together: { endpoint: 'https://api.together.ai/v1', models: 'openai/gpt-oss-120b, meta-llama/Llama-3.3-70B-Instruct-Turbo' },
+  fireworks: { endpoint: 'https://api.fireworks.ai/inference/v1', models: 'accounts/fireworks/models/llama-v3p3-70b-instruct' },
+  perplexity: { endpoint: 'https://api.perplexity.ai', models: 'sonar, sonar-pro' },
+  cohere: { endpoint: 'https://api.cohere.ai/compatibility/v1', models: 'command-a-plus-05-2026, command-a-03-2025' },
+  cerebras: { endpoint: 'https://api.cerebras.ai/v1', models: 'gpt-oss-120b, llama3.1-8b' },
+  nvidia: { endpoint: 'https://integrate.api.nvidia.com/v1', models: 'meta/llama-3.3-70b-instruct' },
+  huggingface: { endpoint: 'https://router.huggingface.co/v1', models: 'openai/gpt-oss-120b' },
+  azure: { endpoint: 'https://YOUR-RESOURCE.openai.azure.com/openai/v1', models: '' },
+  deepseek: { endpoint: 'https://api.deepseek.com', models: 'deepseek-chat, deepseek-reasoner' },
   qwen: { endpoint: 'https://dashscope.aliyuncs.com/compatible-mode/v1', models: 'qwen3.7-plus, qwen-plus' },
   siliconflow: { endpoint: 'https://api.siliconflow.cn/v1', models: 'deepseek-ai/DeepSeek-V3, Qwen/Qwen2.5-72B-Instruct' },
+  moonshot: { endpoint: 'https://api.moonshot.cn/v1', models: 'kimi-k2.5, kimi-k2-turbo-preview' },
+  zhipu: { endpoint: 'https://open.bigmodel.cn/api/paas/v4', models: 'glm-5, glm-4.5' },
+  minimax: { endpoint: 'https://api.minimaxi.com/v1', models: 'MiniMax-M2.5, MiniMax-M2.1' },
+  baidu: { endpoint: 'https://qianfan.baidubce.com/v2', models: 'ernie-4.5-8k-preview' },
+  tencent: { endpoint: 'https://api.hunyuan.cloud.tencent.com/v1', models: 'hunyuan-turbos-latest' },
+  volcengine: { endpoint: 'https://ark.cn-beijing.volces.com/api/v3', models: '' },
+  ollama: { endpoint: 'http://127.0.0.1:11434/v1', models: 'qwen3, llama3.2' },
+  lmstudio: { endpoint: 'http://127.0.0.1:1234/v1', models: '' },
+  vllm: { endpoint: 'http://127.0.0.1:8001/v1', models: '' },
+  localai: { endpoint: 'http://127.0.0.1:8080/v1', models: '' },
   compatible: { endpoint: 'http://127.0.0.1:11434/v1', models: '' },
 };
 
@@ -1389,8 +1443,19 @@ function ModelManagement({ providers, onChange }: { providers: ModelProviderConf
   const { t } = useI18n();
   const [selectedProvider, setSelectedProvider] = useState<ModelProviderId>('openai');
   const [showKey, setShowKey] = useState(false);
+  const [query, setQuery] = useState('');
   const provider = providers.find((item) => item.id === selectedProvider)!;
   const providerMeta = modelProviders.find((item) => item.id === selectedProvider)!;
+  const normalizedQuery = query.trim().toLocaleLowerCase();
+  const visibleProviders = normalizedQuery
+    ? modelProviders.filter((item) => `${item.name} ${item.detail} ${item.id}`.toLocaleLowerCase().includes(normalizedQuery))
+    : modelProviders;
+  const providerGroups: Array<{ id: ModelProviderGroup; label: string }> = [
+    { id: 'global', label: '全球服务' },
+    { id: 'china', label: '中国大陆' },
+    { id: 'local', label: '本地运行时' },
+    { id: 'custom', label: '自定义' },
+  ];
 
   function selectProvider(id: ModelProviderId) {
     setSelectedProvider(id);
@@ -1410,13 +1475,20 @@ function ModelManagement({ providers, onChange }: { providers: ModelProviderConf
       <div className="provider-workspace">
         <aside className="provider-list" aria-label={t('模型供应商')}>
           <div className="provider-list-heading"><span>{t('供应商')}</span><button type="button" aria-label={t('添加供应商')} title={t('添加供应商')} onClick={() => selectProvider('compatible')}>+</button></div>
-          {modelProviders.map((item) => (
-            <button className={`provider-item ${item.id === selectedProvider ? 'active' : ''}`} type="button" key={item.id} onClick={() => selectProvider(item.id)}>
-              <span className={`provider-mark provider-${item.id}`}>{item.mark}</span>
-              <span><strong>{item.name}</strong><small>{t(item.detail)}</small></span>
-              <i className={providers.find((provider) => provider.id === item.id)?.enabled ? 'connected' : ''} />
-            </button>
-          ))}
+          <label className="provider-search"><span aria-hidden="true">⌕</span><input aria-label={t('搜索供应商')} placeholder={t('搜索供应商')} value={query} onChange={(event) => setQuery(event.target.value)} /></label>
+          <div className="provider-list-scroll">
+            {providerGroups.map((group) => {
+              const items = visibleProviders.filter((item) => item.group === group.id);
+              return items.length > 0 && <div className="provider-group" key={group.id}><div className="provider-group-label">{t(group.label)}</div>{items.map((item) => (
+                <button className={`provider-item ${item.id === selectedProvider ? 'active' : ''}`} type="button" key={item.id} onClick={() => selectProvider(item.id)}>
+                  <span className={`provider-mark provider-${item.id}`}>{item.mark}</span>
+                  <span><strong>{item.name}</strong><small>{t(item.detail)}</small></span>
+                  <i className={providers.find((configured) => configured.id === item.id)?.enabled ? 'connected' : ''} />
+                </button>
+              ))}</div>;
+            })}
+            {visibleProviders.length === 0 && <p className="provider-empty">{t('没有匹配的供应商')}</p>}
+          </div>
         </aside>
 
         <section className="provider-editor">
@@ -1432,7 +1504,7 @@ function ModelManagement({ providers, onChange }: { providers: ModelProviderConf
           </div>
 
           <div className="provider-advanced">
-            <div><strong>{t('请求兼容性')}</strong><small>OpenAI Chat Completions</small></div>
+            <div><strong>{t('请求协议')}</strong><small>{providerMeta.protocol}</small></div>
           </div>
 
           <footer className="provider-actions">

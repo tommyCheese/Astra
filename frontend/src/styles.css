@@ -1929,7 +1929,8 @@ textarea {
   border-radius: 14px;
   box-shadow: 0 5px 18px rgba(42, 66, 91, 0.05);
   display: grid;
-  grid-template-columns: 210px minmax(0, 1fr);
+  grid-template-columns: 250px minmax(0, 1fr);
+  height: min(680px, calc(100vh - 230px));
   margin-top: 18px;
   min-height: 520px;
   overflow: hidden;
@@ -1938,7 +1939,63 @@ textarea {
 .provider-list {
   background: rgba(229, 237, 244, 0.52);
   border-right: 1px solid #d7e2e8;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
   padding: 14px 10px;
+}
+
+.provider-list-scroll {
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 2px;
+  scrollbar-gutter: stable;
+}
+
+.provider-search {
+  align-items: center;
+  background: rgba(255, 255, 255, 0.68);
+  border: 1px solid rgba(195, 207, 217, 0.86);
+  border-radius: 8px;
+  display: flex;
+  gap: 6px;
+  margin: 0 4px 10px;
+  padding: 0 8px;
+}
+
+.provider-search span {
+  color: #7b8797;
+  font-size: 17px;
+}
+
+.provider-search input {
+  background: transparent;
+  border: 0;
+  color: #344054;
+  font-size: 12px;
+  height: 34px;
+  min-width: 0;
+  outline: 0;
+  width: 100%;
+}
+
+.provider-group + .provider-group {
+  margin-top: 10px;
+}
+
+.provider-group-label {
+  color: #8994a3;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  padding: 3px 8px 5px;
+}
+
+.provider-empty {
+  color: #7b8797;
+  font-size: 12px;
+  padding: 24px 8px;
+  text-align: center;
 }
 
 .provider-list-heading {
@@ -2046,17 +2103,40 @@ textarea {
   width: 30px;
 }
 
+.provider-openai { background: #202124; }
 .provider-anthropic { background: #b75a32; }
 .provider-google { background: #356bd8; }
+.provider-xai { background: #151515; }
+.provider-mistral { background: #f16a22; }
+.provider-groq { background: #dc5a3f; }
+.provider-openrouter { background: #6657d9; font-size: 8px; }
+.provider-together { background: #1967d2; }
+.provider-fireworks { background: #ee5b34; }
+.provider-perplexity { background: #1f847f; }
+.provider-cohere { background: #3856a4; }
+.provider-cerebras { background: #f05a2a; }
+.provider-nvidia { background: #648b21; }
+.provider-huggingface { background: #e4a800; color: #352b00; font-size: 8px; }
 .provider-deepseek { background: #315bec; }
 .provider-qwen { background: #6f4bd8; }
 .provider-siliconflow { background: #176b55; }
 .provider-azure { background: #087db7; font-size: 9px; }
+.provider-moonshot { background: #151515; }
+.provider-zhipu { background: #345ee8; }
+.provider-minimax { background: #e55b2c; }
+.provider-baidu { background: #315bec; }
+.provider-tencent { background: #176bc0; }
+.provider-volcengine { background: #1f2533; }
+.provider-ollama { background: #252525; }
+.provider-lmstudio,
+.provider-vllm,
+.provider-localai { background: #4e6478; font-size: 8px; }
 .provider-compatible { background: #5b6472; font-size: 15px; }
 
 .provider-editor {
   background: rgba(255, 255, 255, 0.72);
   min-width: 0;
+  overflow-y: auto;
   padding: 18px 20px;
 }
 
@@ -3265,23 +3345,19 @@ html[data-theme="dark"] .question-preview p {
 
   .provider-workspace {
     grid-template-columns: 1fr;
+    height: auto;
   }
 
   .provider-list {
     border-bottom: 1px solid #dbe3eb;
     border-right: 0;
-    display: flex;
-    gap: 6px;
-    overflow-x: auto;
+    max-height: 320px;
   }
 
   .provider-list-heading {
     display: none;
   }
 
-  .provider-item {
-    flex: 0 0 180px;
-  }
 }
 
 @media (max-width: 620px) {
@@ -3409,7 +3485,7 @@ html[data-theme="dark"] .question-preview p {
 
 /* Main window: restrained ChatGPT reading rhythm with macOS material hierarchy. */
 :root {
-  --workspace-content-width: 820px;
+  --workspace-content-width: 920px;
   --astra-mint: #2f8f73;
   --app-canvas: #fff;
   --app-sidebar: rgba(247, 247, 248, .9);
