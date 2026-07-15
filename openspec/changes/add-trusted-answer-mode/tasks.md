@@ -24,3 +24,9 @@
 - [x] 4.1 执行 Alembic 升级、目标后端测试与完整后端回归测试
 - [x] 4.2 执行前端测试、TypeScript 检查和生产构建
 - [x] 4.3 执行 OpenSpec 校验并检查两种模式的关键运行路径与 UI 布局
+
+## 5. 极速快速回答
+
+- [x] 5.1 让 standard Run 跳过 TaskContract、规范计划和 AgentState 初始化，直接进入共享 AgentLoop
+- [x] 5.2 在 standard AgentLoop 中跳过 ObservationEvaluator、反思、Memory 写入、VerificationEngine 与 CompletionGate，同时保留工具权限和执行安全
+- [x] 5.3 增加快速首 token、工具复用、无校验对象和 trusted 完整链路回归测试，并完成全量验证

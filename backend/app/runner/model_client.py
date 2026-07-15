@@ -512,6 +512,9 @@ class OpenAICompatibleModelClient(ModelClient):
                         "never invent IDs, and use an empty list when there is no supporting Artifact. "
                         "The summary must contain the complete user-facing answer, not an introduction or preview; "
                         "use findings only for optional supporting details. "
+                        "When context.answer_mode is standard, use only finalize, call_tool, ask_user, or blocked; "
+                        "never choose complete_node, reflect, or replan, keep reasoning_summary minimal, and begin "
+                        "the final_answer summary as early as the JSON structure permits. "
                         "For call_tool include tool_name and tool_input and omit final_answer. For complete_node "
                         "omit final_answer. "
                         "Do not expose hidden chain-of-thought; reasoning_summary must be concise.",

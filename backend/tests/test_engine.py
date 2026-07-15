@@ -129,6 +129,63 @@ class FinalizeActiveNodeClient(MockModelClient):
         ), FinalAnswer(summary="真正的流式回答")
 
 
+class QuickStreamingClient(MockModelClient):
+    def __init__(self):
+        self.decide_calls = 0
+
+    async def contract(self, goal):
+        raise AssertionError("standard fast path must not build a task contract")
+
+    async def plan(self, goal):
+        raise AssertionError("standard fast path must not build a plan")
+
+    async def decide_with_answer(self, goal, context, *, on_delta=None, on_reasoning_delta=None):
+        self.decide_calls += 1
+        assert context["answer_mode"] == "standard"
+        assert context["task_contract"] == {}
+        assert context["plan_graph"] == {}
+        assert context["memory_reads"] == []
+        assert on_delta is not None
+        assert on_reasoning_delta is None
+        await on_delta("立即")
+        await on_delta("流式回答")
+        await on_delta("\1")
+        return AgentDecision(
+            decision_type="finalize",
+            reasoning_summary="直接回答",
+        ), FinalAnswer(summary="立即流式回答")
+
+
+class QuickToolClient(QuickStreamingClient):
+    async def decide_with_answer(self, goal, context, *, on_delta=None, on_reasoning_delta=None):
+        self.decide_calls += 1
+        if not context["observations"]:
+            return AgentDecision(
+                decision_type="call_tool",
+                reasoning_summary="查询天气",
+                tool_name="weather_lookup",
+                tool_input={"location": "上海", "date": "tomorrow"},
+            ), None
+        assert on_delta is not None
+        await on_delta("适合室内训练")
+        await on_delta("\1")
+        return AgentDecision(
+            decision_type="finalize",
+            reasoning_summary="返回工具结果",
+        ), FinalAnswer(summary="适合室内训练")
+
+
+class QuickForbiddenToolClient(QuickStreamingClient):
+    async def decide_with_answer(self, goal, context, *, on_delta=None, on_reasoning_delta=None):
+        self.decide_calls += 1
+        return AgentDecision(
+            decision_type="call_tool",
+            reasoning_summary="尝试不存在的工具",
+            tool_name="unregistered_tool",
+            tool_input={},
+        ), None
+
+
 async def test_engine_completes_mock_web_query(session):
     settings = Settings(model_provider="mock", web_search_provider="mock")
     repo = RunRepository(session)
@@ -236,7 +293,10 @@ async def test_answer_delta_batching_flushes_first_and_final_content(session):
 
 async def test_final_plan_node_answer_is_regenerated_as_canonical_stream(session):
     settings = Settings(model_provider="mock")
-    profile = RunProfileResolver().resolve(AnswerMode.standard, RequestedReasoningPolicy())
+    profile = RunProfileResolver().resolve(
+        AnswerMode.trusted,
+        RequestedReasoningPolicy(planning_strategy=PlanningStrategy.direct),
+    )
     repo = RunRepository(session)
     run = await repo.create_task_run(
         "生成一个流式回答",
@@ -260,6 +320,101 @@ async def test_final_plan_node_answer_is_regenerated_as_canonical_stream(session
     assert events.index(next(event for event in events if event.type == "answer.delta")) < events.index(
         next(event for event in events if event.type == "answer.completed")
     )
+
+
+async def test_standard_fast_path_skips_plan_state_and_all_quality_gates(session):
+    settings = Settings(model_provider="mock")
+    profile = RunProfileResolver().resolve(AnswerMode.standard, RequestedReasoningPolicy())
+    repo = RunRepository(session)
+    run = await repo.create_task_run(
+        "快速回答",
+        settings.model_policy,
+        reasoning_policy=profile.reasoning_policy.model_dump(mode="json"),
+        answer_mode=profile.answer_mode.value,
+        execution_profile=profile.model_dump(mode="json"),
+    )
+    client = QuickStreamingClient()
+
+    await RunEngine(settings, model_client=client, tool_registry=ToolRegistry())._run_with_repo(
+        repo, run.id
+    )
+
+    loaded = await repo.require_run(run.id)
+    events = await repo.list_events(run.id)
+    assert client.decide_calls == 1
+    assert loaded.status == "completed"
+    assert loaded.task_contract == {}
+    assert loaded.plan_graph == {}
+    assert loaded.agent_state == {}
+    assert loaded.steps == []
+    assert await PlanRepository(session).active_for_run(run.id) is None
+    assert loaded.result["summary"] == "立即流式回答"
+    assert loaded.result["verification_report"] is None
+    assert loaded.result["completion_decision"] is None
+    assert [event.payload["delta"] for event in events if event.type == "answer.delta"] == [
+        "立即",
+        "流式回答",
+    ]
+    assert "verification.created" not in [event.type for event in events]
+    assert "reasoning.completion_decided" not in [event.type for event in events]
+    assert "reasoning.runtime_limits" not in [event.type for event in events]
+    assert "reasoning.decision_validated" not in [event.type for event in events]
+    assert not any(
+        event.type == "reasoning.phase.started"
+        and event.payload.get("phase") in {"planning", "selecting_action", "verifying"}
+        for event in events
+    )
+
+
+async def test_standard_fast_path_reuses_tool_router_without_creating_steps(session):
+    settings = Settings(model_provider="mock")
+    profile = RunProfileResolver().resolve(AnswerMode.standard, RequestedReasoningPolicy())
+    repo = RunRepository(session)
+    run = await repo.create_task_run(
+        "查询天气",
+        settings.model_policy,
+        reasoning_policy=profile.reasoning_policy.model_dump(mode="json"),
+        answer_mode=profile.answer_mode.value,
+        execution_profile=profile.model_dump(mode="json"),
+    )
+    registry = ToolRegistry()
+    registry.register(FakeWeather())
+    client = QuickToolClient()
+
+    await RunEngine(settings, model_client=client, tool_registry=registry)._run_with_repo(repo, run.id)
+
+    loaded = await repo.require_run(run.id)
+    assert client.decide_calls == 2
+    assert loaded.status == "completed"
+    assert loaded.steps == []
+    assert len(loaded.tool_calls) == 1
+    assert loaded.tool_calls[0].status == "succeeded"
+    assert loaded.tool_calls[0].step_id is None
+    assert loaded.result["summary"] == "适合室内训练"
+
+
+async def test_standard_fast_path_keeps_tool_router_security_boundary(session):
+    settings = Settings(model_provider="mock", agent_per_tool_retry_limit=1)
+    profile = RunProfileResolver().resolve(AnswerMode.standard, RequestedReasoningPolicy())
+    repo = RunRepository(session)
+    run = await repo.create_task_run(
+        "调用禁止工具",
+        settings.model_policy,
+        reasoning_policy=profile.reasoning_policy.model_dump(mode="json"),
+        answer_mode=profile.answer_mode.value,
+        execution_profile=profile.model_dump(mode="json"),
+    )
+    client = QuickForbiddenToolClient()
+
+    await RunEngine(settings, model_client=client, tool_registry=ToolRegistry())._run_with_repo(
+        repo, run.id
+    )
+
+    loaded = await repo.require_run(run.id)
+    assert loaded.status == "blocked"
+    assert loaded.tool_calls == []
+    assert loaded.result["verification_report"] is None
+    assert loaded.result["summary"] == "unregistered_tool 已达到重试上限。"
 
 
 async def test_engine_resumes_with_frozen_profile_when_packaged_default_changes(
@@ -338,7 +493,7 @@ async def test_engine_binds_effective_reasoning_effort_before_model_operations(s
     assert client.bound_efforts == ["deep"]
 
 
-async def test_standard_profile_skips_model_contract_and_uses_basic_assurance(session):
+async def test_standard_profile_skips_planning_and_quality_assurance_objects(session):
     settings = Settings(model_provider="mock", web_search_provider="mock")
     profile = RunProfileResolver().resolve(
         AnswerMode.standard, RequestedReasoningPolicy(reasoning_effort="deep")
@@ -362,8 +517,11 @@ async def test_standard_profile_skips_model_contract_and_uses_basic_assurance(se
     assert loaded.answer_mode == "standard"
     assert loaded.result["answer_mode"] == "standard"
     assert loaded.result["assurance_level"] == "basic"
-    assert loaded.result["verification_report"]["assurance_level"] == "basic"
-    assert loaded.result["completion_decision"]["reason"] == "快速回答已完成基础保障检查。"
+    assert loaded.task_contract == {}
+    assert loaded.plan_graph == {}
+    assert loaded.agent_state == {}
+    assert loaded.result["verification_report"] is None
+    assert loaded.result["completion_decision"] is None
 
 
 @pytest.mark.parametrize(

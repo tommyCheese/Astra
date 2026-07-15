@@ -2,7 +2,7 @@
 
 ### Requirement: 完成状态由独立的完成门（Completion Gate）决定
 
-系统 SHALL 让 trusted 模式在进入 `completed` 或 `completed_with_warnings` 前执行完整 CompletionGate 评估；standard 模式 SHALL 通过共享 finalization 执行基础保障和轻量完成处理，但 SHALL NOT 声明已经通过完整契约校验。
+系统 SHALL 让 trusted 模式在进入 `completed` 或 `completed_with_warnings` 前执行完整 CompletionGate 评估；standard 模式 SHALL 跳过 CompletionGate 和 VerificationEngine，并 SHALL NOT 声明已经通过任何可信校验。
 
 #### Scenario: 可信模式控制器提出结束运行
 
@@ -12,9 +12,9 @@
 
 #### Scenario: 快速回答完成
 
-* **WHEN** standard 模式生成最终回答且基础保障通过
-* **THEN** 共享 finalization 可以结束运行并保存基础 assurance 报告
-* **THEN** 结果不得标记为完整校验通过
+* **WHEN** standard 模式生成最终回答
+* **THEN** 运行直接持久化回答和终态，不创建 VerificationReport 或 CompletionDecision
+* **THEN** 结果不得标记为任何可信校验通过
 
 #### Scenario: 可信模式循环预算耗尽
 
@@ -25,11 +25,12 @@
 ## ADDED Requirements
 
 ### Requirement: 基础保障不受回答模式影响
-系统 SHALL 在 standard 和 trusted 两种模式中执行权限与工具硬限制、模型输出 Schema 校验、运行错误处理、取消处理、Artifact 引用清洗和敏感信息边界，并 MUST NOT 允许运行 profile 移除这些保障。
+系统 SHALL 在 standard 和 trusted 两种模式中执行权限与工具硬限制、工具输入 Schema 校验、运行错误处理、取消处理、Artifact 引用清洗和敏感信息边界，并 MUST NOT 允许运行 profile 移除这些保障。
 
 #### Scenario: 快速回答产生无效 Artifact 引用
 - **WHEN** standard 模式最终回答引用不存在或不属于该 Run 的 Artifact
-- **THEN** 系统在交付前清洗该引用并记录基础 assurance warning
+- **THEN** 系统在持久化前静默清洗该引用
+- **THEN** 系统不为此创建 VerificationReport 或启动完成门
 
 #### Scenario: 快速回答请求禁止工具
 - **WHEN** standard 模式模型请求被策略禁止的工具或操作

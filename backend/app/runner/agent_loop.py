@@ -236,6 +236,8 @@ class ContextAssembler:
                 for memory in memories
             ],
             "reasoning_policy": run.reasoning_policy or {},
+            "answer_mode": run.answer_mode,
+            "execution_profile": run.execution_profile or {},
             "task_contract": run.task_contract or {},
             "plan_graph": plan_view,
             "active_node": active_node,
@@ -424,6 +426,7 @@ class AgentLoop:
                 validators=["task_adapter", "artifact_reference"],
             )
         )
+        quick_mode = profile.answer_mode == AnswerMode.standard
         policy = policy_snapshot.effective
         max_turns = min(policy.budgets.max_turns, self.settings.agent_max_turns)
         max_tool_calls = min(policy.budgets.max_tool_calls, self.settings.agent_max_tool_calls)
@@ -728,19 +731,20 @@ class AgentLoop:
             max_reflections,
             max_replans,
         )
-        await repo.add_event(
-            run_id,
-            "reasoning.runtime_limits",
-            {
-                "reasoning_effort": policy.reasoning_effort.value,
-                "planning_strategy": policy.planning_strategy.value,
-                "max_turns": max_turns,
-                "max_tool_calls": max_tool_calls,
-                "max_reflections": max_reflections,
-                "max_replans": max_replans,
-            },
-        )
-        await repo.session.commit()
+        if not quick_mode:
+            await repo.add_event(
+                run_id,
+                "reasoning.runtime_limits",
+                {
+                    "reasoning_effort": policy.reasoning_effort.value,
+                    "planning_strategy": policy.planning_strategy.value,
+                    "max_turns": max_turns,
+                    "max_tool_calls": max_tool_calls,
+                    "max_reflections": max_reflections,
+                    "max_replans": max_replans,
+                },
+            )
+            await repo.session.commit()
 
         start_turn_index = len(initial_run.turns) + 1
         for turn_index in range(start_turn_index, max_turns + 1):
@@ -783,16 +787,17 @@ class AgentLoop:
                 tool_router=self.router,
                 observations=observations,
             )
-            await repo.add_event(
-                run_id,
-                "reasoning.phase.started",
-                {
-                    "phase": "selecting_action",
-                    "label": "正在分析下一步",
-                    "turn_index": turn_index,
-                },
-            )
-            await repo.session.commit()
+            if not quick_mode:
+                await repo.add_event(
+                    run_id,
+                    "reasoning.phase.started",
+                    {
+                        "phase": "selecting_action",
+                        "label": "正在分析下一步",
+                        "turn_index": turn_index,
+                    },
+                )
+                await repo.session.commit()
             reasoning_buffer = ""
             reasoning_summary = ""
             reasoning_last_flush = 0.0
@@ -853,7 +858,7 @@ class AgentLoop:
                     on_delta=on_answer_delta
                     if canonical_plan is None or active_node is None
                     else None,
-                    on_reasoning_delta=on_reasoning_delta,
+                    on_reasoning_delta=None if quick_mode else on_reasoning_delta,
                 )
             except ModelOutputError as exc:
                 logger.exception("agent.decision.invalid run_id=%s turn=%s", run_id, turn_index)
@@ -888,7 +893,7 @@ class AgentLoop:
                 await repo.session.commit()
                 continue
 
-            if not reasoning_completed:
+            if not quick_mode and not reasoning_completed:
                 if reasoning_buffer:
                     await repo.add_event(
                         run_id,
@@ -1005,21 +1010,23 @@ class AgentLoop:
                 )
                 await repo.session.commit()
                 continue
-            await repo.add_event(
-                run_id,
-                "reasoning.decision_validated",
-                {
-                    "turn_index": turn_index,
-                    "decision_type": decision.decision_type,
-                    "target_step_id": decision.target_step_id,
-                },
-            )
-            await repo.session.commit()
+            if not quick_mode:
+                await repo.add_event(
+                    run_id,
+                    "reasoning.decision_validated",
+                    {
+                        "turn_index": turn_index,
+                        "decision_type": decision.decision_type,
+                        "target_step_id": decision.target_step_id,
+                    },
+                )
+                await repo.session.commit()
 
             if decision.decision_type == "finalize":
-                orchestrator.validate_result(
-                    "select_action", NodeResult(next_node="completion_gate")
-                )
+                if not quick_mode:
+                    orchestrator.validate_result(
+                        "select_action", NodeResult(next_node="completion_gate")
+                    )
                 final_turn_id = turn.id
                 if canonical_plan is not None and active_node is not None:
                     (
@@ -1266,8 +1273,11 @@ class AgentLoop:
                 break
 
             try:
-                orchestrator.validate_result("select_action", NodeResult(next_node="policy_gate"))
-                orchestrator.validate_result("policy_gate", NodeResult(next_node="execute"))
+                if not quick_mode:
+                    orchestrator.validate_result(
+                        "select_action", NodeResult(next_node="policy_gate")
+                    )
+                    orchestrator.validate_result("policy_gate", NodeResult(next_node="execute"))
                 action_signature = json.dumps(
                     {"tool": decision.tool_name, "input": decision.tool_input},
                     sort_keys=True,
@@ -1284,13 +1294,15 @@ class AgentLoop:
                 step = (
                     active_node
                     if canonical_plan is not None
+                    else None
+                    if quick_mode
                     else await self._step_for_tool(repo, run_id, tool.spec.name)
                 )
-                if canonical_plan is None:
+                if canonical_plan is None and step is not None:
                     await repo.update_step(step.id, "running")
                 call = await repo.start_tool_call(
                     run_id,
-                    step.id if canonical_plan is None else None,
+                    step.id if canonical_plan is None and step is not None else None,
                     tool.spec.name,
                     tool.spec.version,
                     decision.tool_input,
@@ -1304,7 +1316,7 @@ class AgentLoop:
                     execution_context = ToolExecutionContext(
                         run_id=run_id,
                         tool_call_id=call.id,
-                        step_id=step.id,
+                        step_id=step.id if step is not None else None,
                         trace_id=f"{run_id}:{call.id}",
                         artifact_service=artifact_service,
                         sandbox_service=sandbox_service,
@@ -1338,9 +1350,19 @@ class AgentLoop:
                     step_evidence = {}
                 if canonical_plan is not None and active_node is not None:
                     observation.plan_node_id = active_node.id
-                if canonical_plan is None:
+                if canonical_plan is None and step is not None:
                     await repo.update_step(step.id, "completed", evidence=step_evidence)
                 observations.append(observation.model_dump())
+                if quick_mode:
+                    await repo.update_agent_turn(
+                        turn.id,
+                        status="completed",
+                        observation=observation.model_dump(),
+                        tool_call_id=call.id,
+                        phase="committed",
+                    )
+                    await repo.session.commit()
+                    continue
                 orchestrator.validate_result(
                     "execute", NodeResult(next_node="normalize_observation")
                 )
@@ -1453,12 +1475,16 @@ class AgentLoop:
                     processor.record_failure(
                         decision.tool_name or "", decision.tool_input, exc.to_payload()
                     )
-                reflection = await maybe_reflect(
-                    "tool_failed",
-                    {
-                        "last_observation": observation.model_dump(),
-                        "retry_count": retry_counts[decision.tool_name or "unknown"],
-                    },
+                reflection = (
+                    await maybe_reflect(
+                        "tool_failed",
+                        {
+                            "last_observation": observation.model_dump(),
+                            "retry_count": retry_counts[decision.tool_name or "unknown"],
+                        },
+                    )
+                    if not quick_mode
+                    else None
                 )
                 await repo.update_agent_turn(
                     turn.id,
@@ -1470,16 +1496,17 @@ class AgentLoop:
                     else None,
                     phase="failed",
                 )
-                await repo.add_event(
-                    run_id,
-                    "reasoning.failure_fingerprinted",
-                    {
-                        "fingerprint": fingerprint,
-                        "attempt_count": failed_action_counts[action_signature],
-                        "exhausted": failed_action_counts[action_signature]
-                        >= self.settings.agent_per_tool_retry_limit,
-                    },
-                )
+                if not quick_mode:
+                    await repo.add_event(
+                        run_id,
+                        "reasoning.failure_fingerprinted",
+                        {
+                            "fingerprint": fingerprint,
+                            "attempt_count": failed_action_counts[action_signature],
+                            "exhausted": failed_action_counts[action_signature]
+                            >= self.settings.agent_per_tool_retry_limit,
+                        },
+                    )
                 await repo.session.commit()
                 if (
                     retry_counts[decision.tool_name or "unknown"]
@@ -1501,17 +1528,19 @@ class AgentLoop:
                     break
 
         evidence_pack = self.adapter.build_evidence(goal, self.adapter.attempted)
-        artifact = await repo.create_artifact(
-            run_id,
-            "evidence_pack",
-            content_ref=json.dumps(evidence_pack, ensure_ascii=False),
-            metadata={
-                "format": "json",
-                "audited_sources": len(evidence_pack["fetched_sources"]),
-                "failed_sources": len(evidence_pack["failed_sources"]),
-            },
-        )
-        evidence_pack["artifact_id"] = artifact.id
+        artifact = None
+        if not quick_mode:
+            artifact = await repo.create_artifact(
+                run_id,
+                "evidence_pack",
+                content_ref=json.dumps(evidence_pack, ensure_ascii=False),
+                metadata={
+                    "format": "json",
+                    "audited_sources": len(evidence_pack["fetched_sources"]),
+                    "failed_sources": len(evidence_pack["failed_sources"]),
+                },
+            )
+            evidence_pack["artifact_id"] = artifact.id
         final_context = {
             "run_id": run_id,
             "observations": observations,
@@ -1534,6 +1563,29 @@ class AgentLoop:
         final_answer, invalid_artifact_references, referenced_artifact_ids = (
             normalize_final_answer_artifact_references(final_answer, current_artifacts)
         )
+        if quick_mode:
+            final_status = terminal_override or TerminalState.completed.value
+            result = final_answer.model_dump()
+            result["answer_mode"] = profile.answer_mode.value
+            result["assurance_level"] = profile.assurance_level.value
+            result["verification_report"] = None
+            result["completion_decision"] = None
+            result["audit_refs"] = {
+                "agent_turn_count": len((await repo.require_run(run_id)).turns),
+                "referenced_artifact_ids": referenced_artifact_ids,
+            }
+            if final_turn_id:
+                await repo.update_agent_turn(
+                    final_turn_id,
+                    status="completed",
+                    observation={
+                        "kind": "final_answer",
+                        "status": final_status,
+                        "summary": final_answer.summary,
+                    },
+                )
+            await repo.session.commit()
+            return {"answer": final_answer, "result": result, "status": final_status}
         memory_writes = await memory_manager.write_candidates(
             run_id=run_id,
             goal=goal,
@@ -1657,7 +1709,7 @@ class AgentLoop:
         result["assurance_level"] = profile.assurance_level.value
         result["verification_report"] = report.model_dump()
         result["audit_refs"] = {
-            "evidence_pack_artifact_id": artifact.id,
+            "evidence_pack_artifact_id": artifact.id if artifact is not None else None,
             "agent_turn_count": len(observations) + (1 if final_turn_id else 0),
             "referenced_artifact_ids": referenced_artifact_ids,
         }
@@ -1674,7 +1726,7 @@ class AgentLoop:
                     "status": final_status,
                     "summary": final_answer.summary,
                 },
-                artifact_id=artifact.id,
+                artifact_id=artifact.id if artifact is not None else None,
                 memory_writes=memory_writes,
                 reflection=completion_reflection.model_dump() if completion_reflection else None,
             )

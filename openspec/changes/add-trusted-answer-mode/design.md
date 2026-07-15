@@ -11,7 +11,7 @@ Astra 当前只有一条生产执行路径：`POST /api/runs` 编译 `RequestedR
 - 默认提供低等待感的快速回答，并在输入区显著提供可信模式开关。
 - 两种模式共享模型、权限、工具、Agent Loop、SSE、会话、Artifact、取消与分享能力。
 - 可信模式应用持久化对话策略并执行完整契约和验证链路。
-- 两种模式都保留不可关闭的安全、权限、Schema、Artifact 引用和错误处理保障。
+- 两种模式都保留不可关闭的权限、工具输入、执行安全、Artifact 引用和错误处理保障；快速模式不执行产品质量校验。
 - 将首选模式与每次 Run 的不可变模式/profile 快照持久化，并保证续跑语义稳定。
 - 让可信模式的校验状态在过程与结果中可见、可审计。
 
@@ -36,13 +36,13 @@ Astra 当前只有一条生产执行路径：`POST /api/runs` 编译 `RequestedR
 
 默认快速策略由后端决定，前端只发送模式和执行审批，防止客户端伪造一个看似快速但实际较重的组合。可信策略仍通过现有偏好 API 编辑并持久化。
 
-### 3. 基础保障和完整校验分层
+### 3. 极速回答和完整校验分层
 
-共享基础保障包括权限门、工具与预算硬上限、模型输出 Schema、运行错误、取消、Artifact 引用清洗和敏感数据边界。它们不受模式控制。
+共享硬边界包括权限门、工具与预算硬上限、工具输入 Schema、运行错误、取消、Artifact 引用清洗和敏感数据边界。它们不受模式控制。
 
-可信 profile 额外启用模型 TaskContract、mandatory requirements、TaskAdapter 领域 outcome、VerificationEngine 聚合和 CompletionGate 严格判断。快速 profile 使用系统生成的最小契约和单节点直接计划以复用状态/计划基础设施，但不调用模型生成契约，也不使用完整契约覆盖率阻塞普通回答；最终仍生成轻量 VerificationReport，明确 `assurance_level=basic`，供统一结果 Schema 与审计展示使用。
+可信 profile 启用模型 TaskContract、规范计划、mandatory requirements、TaskAdapter 领域 outcome、VerificationEngine 聚合和 CompletionGate 严格判断。快速 profile 直接进入共享 AgentLoop 的无计划分支：首轮模型立即选择 `finalize`、`call_tool`、`ask_user` 或 `blocked`，不创建 TaskContract、Plan、AgentState、Evidence Pack Artifact、Memory 写入、VerificationReport 或 CompletionDecision。
 
-选择轻量报告而不是完全删除验证对象，可以保持 RunResult、历史投影和分享兼容，同时避免把快速回答误标为“完整校验通过”。
+快速结果继续使用同一 RunResult 边界，但 `verification_report` 和 `completion_decision` 为 null，明确表示未执行可信校验。工具调用后只保留结果归一化与权限/执行安全路径，不执行 ObservationEvaluator、反思或任务完成准则覆盖。
 
 ### 4. 可信续跑沿用原 Run 快照
 
@@ -64,7 +64,7 @@ Astra 当前只有一条生产执行路径：`POST /api/runs` 编译 `RequestedR
 
 ## Risks / Trade-offs
 
-- [快速模式仍复用规范计划和 AgentLoop，速度提升不及独立聊天接口] → 跳过模型契约、使用 direct/fast、关闭可选反思并减少预算，先获得主要收益且避免双运行时漂移。
+- [快速模式裁剪过多后与可信运行时漂移] → 继续复用 AgentLoop、ToolRouter、模型客户端和事件协议，仅在 profile 边界跳过计划、状态评估与最终校验。
 - [“可信”被理解为事实保证] → 文案统一为“更完整策略与结果校验”，并展示 warning/blocked，不宣传绝对正确。
 - [轻量最终化意外绕过安全检查] → 将基础保障显式建模为不可裁剪的 validator 集合，并增加两种模式安全回归测试。
 - [偏好与 Run 快照竞态] → 保留 touched guard、串行 PUT 和后端不可变快照；resume 只读原 Run。

@@ -25,6 +25,7 @@ from app.runner.reasoning import (
     validate_contract,
 )
 from app.schemas.agent import (
+    AnswerMode,
     ContractMode,
     FinalAnswer,
     PlanOutput,
@@ -116,6 +117,19 @@ class RunEngine:
         self.model_client.bind_agent_profile(profile)
         self._bind_reasoning_effort(run)
         goal = await self._conversation_goal(repo, run)
+        execution_profile = (
+            RunExecutionProfile.model_validate(run.execution_profile)
+            if run.execution_profile
+            else None
+        )
+        policy_snapshot = ReasoningPolicySnapshot.model_validate(run.reasoning_policy or {})
+        if (
+            execution_profile is not None
+            and execution_profile.answer_mode == AnswerMode.standard
+            and policy_snapshot.effective.execution_mode.value != "plan_only"
+        ):
+            await self._execute_agent_loop(repo, run_id, goal)
+            return
 
         if run.state_version and run.agent_state:
             await self._execute_agent_loop(repo, run_id, goal)
@@ -355,11 +369,16 @@ class RunEngine:
                 "The general Agent runtime is required; the legacy Web workflow has been removed"
             )
 
-        logger.info("run.phase run_id=%s phase=executing", run_id)
+        run = await repo.require_run(run_id)
+        quick_mode = run.answer_mode == AnswerMode.standard.value
+        logger.info("run.phase run_id=%s phase=executing quick=%s", run_id, quick_mode)
         await repo.add_event(
             run_id,
             "reasoning.phase.started",
-            {"phase": "executing", "label": "正在执行计划"},
+            {
+                "phase": "executing",
+                "label": "正在快速回答" if quick_mode else "正在执行计划",
+            },
         )
         await repo.update_run_status(run_id, "executing")
         agent_loop = AgentLoop(
@@ -394,6 +413,19 @@ class RunEngine:
         result: dict[str, Any],
         status: str,
     ) -> None:
+        if result.get("answer_mode") == AnswerMode.standard.value:
+            await repo.update_run_status(
+                run_id,
+                status,
+                summary=final_answer.summary,
+                result=result,
+            )
+            logger.info(
+                "run.complete run_id=%s status=%s mode=standard fast_path=true",
+                run_id,
+                status,
+            )
+            return
         await repo.add_event(
             run_id,
             "reasoning.phase.started",
