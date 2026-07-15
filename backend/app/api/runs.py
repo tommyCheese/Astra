@@ -22,7 +22,7 @@ from app.repositories.tool_settings import (
     default_tool_states,
 )
 from app.runner.engine import start_run_in_process
-from app.runner.reasoning import PolicyCompiler
+from app.runner.reasoning import RunProfileResolver
 from app.schemas.agent import (
     AgentState,
     ContinueRunRequest,
@@ -158,12 +158,15 @@ async def create_run(
         # Keep the database-backed tool configuration active at creation time.
         run_settings = apply_tool_states(settings, tool_states)
         run_settings = _apply_model_config(run_settings, payload.model)
-        policy = PolicyCompiler().compile(payload.reasoning_policy)
+        profile = RunProfileResolver().resolve(payload.answer_mode, payload.reasoning_policy)
+        policy = profile.reasoning_policy
         run = await repo.create_task_run(
             goal,
             run_settings.model_policy,
             payload.task_id,
             reasoning_policy=policy.model_dump(mode="json"),
+            answer_mode=profile.answer_mode.value,
+            execution_profile=profile.model_dump(mode="json"),
             agent_profile_snapshot=load_agent_profile().snapshot(),
         )
         for adjustment in policy.adjustments:
@@ -184,7 +187,12 @@ async def create_run(
     logger.info(
         "run.create.accepted run_id=%s task_id=%s status=%s", run.id, run.task_id, run.status
     )
-    return CreateRunResponse(task_id=run.task_id, run_id=run.id, status=run.status)
+    return CreateRunResponse(
+        task_id=run.task_id,
+        run_id=run.id,
+        status=run.status,
+        answer_mode=profile.answer_mode,
+    )
 
 
 @router.get("/runs/{run_id}", response_model=RunView)
@@ -261,7 +269,12 @@ async def activate_planned_run(
     await session.commit()
     tool_states = await ToolSettingsRepository(session).get_or_create(default_tool_states(settings))
     _schedule_run(run_id, apply_tool_states(settings, tool_states))
-    return CreateRunResponse(task_id=run.task_id, run_id=run.id, status=run.status)
+    return CreateRunResponse(
+        task_id=run.task_id,
+        run_id=run.id,
+        status=run.status,
+        answer_mode=run.answer_mode,
+    )
 
 
 @router.post("/runs/{run_id}/resume", response_model=CreateRunResponse)
@@ -297,7 +310,12 @@ async def resume_run(
             raise StateError("CONTINUATION_INVALID", "任务恢复凭据已失效，请刷新后重试。") from exc
         raise StateError("RUN_RESUME_CONFLICT", "当前任务无法恢复。") from exc
     _schedule_run(run.id, run_settings)
-    return CreateRunResponse(task_id=run.task_id, run_id=run.id, status=run.status)
+    return CreateRunResponse(
+        task_id=run.task_id,
+        run_id=run.id,
+        status=run.status,
+        answer_mode=run.answer_mode,
+    )
 
 
 @router.get("/runs/{run_id}/events")

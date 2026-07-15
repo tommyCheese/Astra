@@ -5,7 +5,7 @@ import { App } from '../src/App';
 import { buildRuntime, cancelRun, cancelRuntimeBuild, createConversationShare, createRun, deleteConversation, getConversation, getConversationStrategy, getRun, getRuntimeProfile, listConversationShares, listConversations, listRuns, revokeConversationShare, streamRunEvents, updateConversation, updateConversationStrategy, updateToolSettings, type RunStreamEvent } from '../src/api';
 
 vi.mock('../src/api', () => ({
-  getConversationStrategy: vi.fn(async () => ({ reasoning_effort: 'balanced', max_tool_calls: 8, planning_strategy: 'adaptive', reflection_enabled: true, reflection_trigger: 'adaptive' })),
+  getConversationStrategy: vi.fn(async () => ({ preferred_answer_mode: 'standard', reasoning_effort: 'balanced', max_tool_calls: 8, planning_strategy: 'adaptive', reflection_enabled: true, reflection_trigger: 'adaptive' })),
   updateConversationStrategy: vi.fn(async (strategy) => strategy),
   getToolSettings: vi.fn(async () => ({ tools: [
     { name: 'web_search', label: 'Web Search', description: '搜索公开网页并生成候选来源', enabled: true, available: true },
@@ -17,7 +17,7 @@ vi.mock('../src/api', () => ({
   buildRuntime: vi.fn(async () => ({ dependencies: [{ name: 'polars', version: '' }], core_dependencies: [], active_image: 'astra-data-viz:0.1.0', dependency_digest: 'base', build: { id: 'build-1', status: 'queued', phase: '等待构建', progress: 0, log: '等待构建' } })),
   cancelRuntimeBuild: vi.fn(async () => ({ dependencies: [{ name: 'polars', version: '' }], core_dependencies: [], active_image: 'astra-data-viz:0.1.0', dependency_digest: 'base', build: { id: 'build-1', status: 'cancelled', phase: '已取消', progress: 12, log: '构建已由用户取消' } })),
   streamRunEvents: vi.fn(() => () => undefined),
-  createRun: vi.fn(async () => ({ run_id: 'run-1', task_id: 'task-1', status: 'created' })),
+  createRun: vi.fn(async () => ({ run_id: 'run-1', task_id: 'task-1', status: 'created', answer_mode: 'standard' })),
   cancelRun: vi.fn(async () => ({
     id: 'run-1', task_id: 'task-1', status: 'cancelled', mode: 'general-agent', summary: '已终止本次运行。', result: { summary: '已终止本次运行。', findings: [], sources: [], failed_sources: [], source_quality: [], conflicts: [], caveats: ['运行已由用户终止，未继续执行后续步骤。'], verification_notes: [] },
     steps: [], tool_calls: [], artifacts: [], events: [{ id: 1, type: 'run.cancelled', payload: { category: 'user_cancelled' }, created_at: '2026-07-14T00:00:00Z' }], turns: [], memories: [], chat_messages: [{ id: 'run-1-terminal', role: 'assistant', content: '已终止本次运行。', status: 'completed', metadata: { terminal_status: 'cancelled' } }],
@@ -43,6 +43,7 @@ vi.mock('../src/api', () => ({
     task_id: 'task-1',
     status: 'completed',
     mode: 'web_agent',
+    answer_mode: 'standard',
     summary: '完成',
     result: {
       summary: '已完成查询',
@@ -273,7 +274,7 @@ describe('App', () => {
   });
 
   it('remembers a stop request while run creation is pending and allows a follow-up', async () => {
-    let resolveCreate: ((value: { run_id: string; task_id: string; status: string }) => void) | undefined;
+    let resolveCreate: ((value: { run_id: string; task_id: string; status: string; answer_mode?: 'standard' | 'trusted' }) => void) | undefined;
     vi.mocked(createRun).mockImplementationOnce(() => new Promise((resolve) => { resolveCreate = resolve; }));
     render(<App />);
 
@@ -285,7 +286,7 @@ describe('App', () => {
     await waitFor(() => expect(cancelRun).toHaveBeenCalledWith('run-pending'));
     await userEvent.type(screen.getByRole('textbox'), '继续追问');
     await userEvent.click(screen.getByRole('button', { name: '发送' }));
-    await waitFor(() => expect(createRun).toHaveBeenLastCalledWith('继续追问', 'task-1', expect.anything(), expect.anything()));
+    await waitFor(() => expect(createRun).toHaveBeenLastCalledWith('继续追问', 'task-1', 'standard', expect.anything(), expect.anything()));
   });
 
   it('renders referenced artifacts beside findings and only links repeated references', async () => {
@@ -546,6 +547,7 @@ describe('App', () => {
 
   it('sends selected reasoning policy with a run', async () => {
     render(<App />);
+    await userEvent.click(screen.getByRole('switch', { name: '可信模式' }));
     await userEvent.type(screen.getByRole('textbox'), '分析复杂问题');
     await userEvent.click(screen.getByRole('button', { name: '当前模型：gpt-5' }));
     await userEvent.click(screen.getByRole('button', { name: '深入' }));
@@ -558,6 +560,7 @@ describe('App', () => {
     expect(vi.mocked(createRun)).toHaveBeenLastCalledWith(
       expect.any(String),
       undefined,
+      'trusted',
       expect.objectContaining({ reasoning_effort: 'deep', max_tool_calls: 42, planning_strategy: 'plan_first' }),
       expect.objectContaining({ provider: 'openai', name: 'gpt-5' }),
     );
@@ -565,6 +568,7 @@ describe('App', () => {
 
   it('restores conversation strategy from the database and persists manual changes in order', async () => {
     vi.mocked(getConversationStrategy).mockResolvedValueOnce({
+      preferred_answer_mode: 'trusted',
       reasoning_effort: 'deep',
       max_tool_calls: 32,
       planning_strategy: 'plan_first',
@@ -583,6 +587,7 @@ describe('App', () => {
     await userEvent.click(screen.getByRole('button', { name: '快速' }));
     await userEvent.click(screen.getByRole('button', { name: '直接' }));
     await waitFor(() => expect(updateConversationStrategy).toHaveBeenLastCalledWith({
+      preferred_answer_mode: 'trusted',
       reasoning_effort: 'fast',
       max_tool_calls: 5,
       planning_strategy: 'direct',
@@ -595,6 +600,7 @@ describe('App', () => {
     expect(createRun).toHaveBeenLastCalledWith(
       expect.any(String),
       undefined,
+      'trusted',
       expect.objectContaining({
         reasoning_effort: 'fast',
         max_tool_calls: 5,
@@ -733,7 +739,7 @@ describe('App', () => {
     await userEvent.type(screen.getByRole('textbox'), '继续追问{Enter}');
     await screen.findAllByText('已完成查询');
 
-    expect(vi.mocked(createRun)).toHaveBeenLastCalledWith('继续追问', 'task-1', expect.objectContaining({
+    expect(vi.mocked(createRun)).toHaveBeenLastCalledWith('继续追问', 'task-1', 'standard', expect.objectContaining({
       reasoning_effort: 'balanced',
       max_tool_calls: 8,
       planning_strategy: 'adaptive',
@@ -1005,6 +1011,7 @@ describe('App', () => {
     expect(screen.getByText('Choose the interface language')).toBeInTheDocument();
     expect(document.documentElement.lang).toBe('en');
     await userEvent.click(screen.getByRole('button', { name: 'Close settings' }));
+    await userEvent.click(screen.getByRole('switch', { name: 'Trusted mode' }));
     const modelSelector = screen.getByRole('button', { name: 'Current model: gpt-5' });
     expect(modelSelector).toHaveTextContent('Balanced · 8 tool calls · Adaptive reflection');
     await userEvent.click(modelSelector);
@@ -1036,6 +1043,7 @@ describe('App', () => {
   it('keeps conversation reasoning controls in the model menu', async () => {
     render(<App />);
 
+    await userEvent.click(screen.getByRole('switch', { name: '可信模式' }));
     await userEvent.click(screen.getByRole('button', { name: '当前模型：gpt-5' }));
 
     expect(screen.getByText('规划策略')).toBeInTheDocument();
@@ -1046,12 +1054,50 @@ describe('App', () => {
     expect(screen.getByText('当前强度可调整范围：6–15 次')).toBeInTheDocument();
   });
 
+  it('defaults to quick answers and persists the prominent trusted mode switch', async () => {
+    render(<App />);
+
+    const trustedSwitch = screen.getByRole('switch', { name: '可信模式' });
+    expect(trustedSwitch).toHaveAttribute('aria-checked', 'false');
+    expect(trustedSwitch).toHaveTextContent('快速回答');
+    await userEvent.click(screen.getByRole('button', { name: '当前模型：gpt-5' }));
+    expect(screen.getByText('开启可信模式后可配置完整对话策略与结果校验。')).toBeInTheDocument();
+    expect(screen.queryByText('规划策略')).not.toBeInTheDocument();
+
+    await userEvent.click(trustedSwitch);
+    expect(trustedSwitch).toHaveAttribute('aria-checked', 'true');
+    await waitFor(() => expect(updateConversationStrategy).toHaveBeenLastCalledWith(expect.objectContaining({
+      preferred_answer_mode: 'trusted',
+    })));
+  });
+
+  it('shows the full verification outcome on trusted answers', async () => {
+    const snapshot = await vi.mocked(getRun)('fixture');
+    vi.mocked(createRun).mockResolvedValueOnce({ run_id: 'run-trusted', task_id: 'task-trusted', status: 'created', answer_mode: 'trusted' });
+    vi.mocked(getRun).mockResolvedValueOnce({
+      ...snapshot,
+      id: 'run-trusted',
+      task_id: 'task-trusted',
+      answer_mode: 'trusted',
+      status: 'completed_with_warnings',
+      result: snapshot.result ? { ...snapshot.result, answer_mode: 'trusted', assurance_level: 'full' } : null,
+    });
+    render(<App />);
+
+    await userEvent.click(screen.getByRole('switch', { name: '可信模式' }));
+    await userEvent.type(screen.getByRole('textbox'), '执行可信回答');
+    await userEvent.click(screen.getByRole('button', { name: '发送' }));
+
+    expect(await screen.findByText('可信模式 · 校验带警告')).toBeInTheDocument();
+  });
+
   it('keeps the task input focused when non-interactive composer content is clicked', async () => {
     const { container } = render(<App />);
     const composer = container.querySelector<HTMLElement>('.chat-composer');
     const input = screen.getByRole('textbox');
 
     expect(composer).not.toBeNull();
+    await userEvent.click(screen.getByRole('switch', { name: '可信模式' }));
     await userEvent.click(composer!);
     expect(input).toHaveFocus();
 
@@ -1064,6 +1110,7 @@ describe('App', () => {
   it('explains each conversation strategy from the model menu', async () => {
     render(<App />);
 
+    await userEvent.click(screen.getByRole('switch', { name: '可信模式' }));
     await userEvent.click(screen.getByRole('button', { name: '当前模型：gpt-5' }));
     const helpButton = screen.getByRole('button', { name: '了解对话策略' });
     expect(helpButton.querySelector('svg')).toBeInTheDocument();
@@ -1119,9 +1166,10 @@ describe('App', () => {
   it('hides reflection trigger choices when reflection is disabled', async () => {
     render(<App />);
 
+    await userEvent.click(screen.getByRole('switch', { name: '可信模式' }));
     await userEvent.click(screen.getByRole('button', { name: '当前模型：gpt-5' }));
     expect(screen.getByText('触发方式')).toBeInTheDocument();
-    await userEvent.click(screen.getByRole('switch'));
+    await userEvent.click(screen.getByRole('switch', { name: '反思循环' }));
     expect(screen.queryByText('触发方式')).not.toBeInTheDocument();
   });
 
@@ -1146,9 +1194,10 @@ describe('App', () => {
     await userEvent.click(document.body);
     expect(screen.queryByText('上传文件')).not.toBeInTheDocument();
 
+    await userEvent.click(screen.getByRole('switch', { name: '可信模式' }));
     await userEvent.click(screen.getByRole('button', { name: '当前模型：gpt-5' }));
-    expect(screen.getByText('对话策略')).toBeInTheDocument();
+    expect(screen.getByText('可信对话策略')).toBeInTheDocument();
     await userEvent.keyboard('{Escape}');
-    expect(screen.queryByText('对话策略')).not.toBeInTheDocument();
+    expect(screen.queryByText('可信对话策略')).not.toBeInTheDocument();
   });
 });

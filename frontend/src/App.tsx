@@ -18,6 +18,7 @@ const STORAGE_KEYS = {
   selectedModel: 'astra.selected-model.v1',
 };
 const DEFAULT_CONVERSATION_STRATEGY: ConversationStrategyPreferences = {
+  preferred_answer_mode: 'standard',
   reasoning_effort: 'balanced',
   max_tool_calls: 8,
   planning_strategy: 'adaptive',
@@ -86,6 +87,7 @@ function AppContent() {
   const [providerConfigs, setProviderConfigs] = useState<ModelProviderConfig[]>(loadProviderConfigs);
   const [selectedModelKey, setSelectedModelKey] = useState(() => readLocalString(STORAGE_KEYS.selectedModel) || 'openai:gpt-5');
   const [reflectionEnabled, setReflectionEnabled] = useState(true);
+  const [answerMode, setAnswerMode] = useState<'standard' | 'trusted'>('standard');
   const [reasoningEffort, setReasoningEffort] = useState('均衡');
   const [toolCallLimit, setToolCallLimit] = useState(8);
   const [planningStrategy, setPlanningStrategy] = useState('自适应');
@@ -127,6 +129,7 @@ function AppContent() {
     void getConversationStrategy(controller.signal).then((strategy) => {
       if (!active || conversationStrategyTouchedRef.current) return;
       conversationStrategyRef.current = strategy;
+      setAnswerMode(strategy.preferred_answer_mode ?? 'standard');
       setReasoningEffort(reasoningEffortLabel(strategy.reasoning_effort));
       setToolCallLimit(strategy.max_tool_calls);
       setPlanningStrategy(planningStrategyLabel(strategy.planning_strategy));
@@ -275,6 +278,7 @@ function AppContent() {
     conversationStrategyTouchedRef.current = true;
     const next = { ...conversationStrategyRef.current, ...patch };
     conversationStrategyRef.current = next;
+    setAnswerMode(next.preferred_answer_mode);
     setReasoningEffort(reasoningEffortLabel(next.reasoning_effort));
     setToolCallLimit(next.max_tool_calls);
     setPlanningStrategy(planningStrategyLabel(next.planning_strategy));
@@ -346,7 +350,7 @@ function AppContent() {
       } : undefined;
       const created = run?.status === 'waiting_user'
         ? await resumeRun(run.id, trimmedGoal, typeof run.waiting_state?.continuation_token === 'string' ? run.waiting_state.continuation_token : undefined, modelConfig)
-        : await createRun(trimmedGoal, run?.task_id, {
+        : await createRun(trimmedGoal, run?.task_id, answerMode, {
         reasoning_effort: conversationStrategyRef.current.reasoning_effort,
         max_tool_calls: conversationStrategyRef.current.max_tool_calls,
         planning_strategy: conversationStrategyRef.current.planning_strategy,
@@ -355,11 +359,14 @@ function AppContent() {
         execution_mode: executionMode === 'plan' ? 'plan_only' : executionMode === 'bypass' ? 'auto_approval' : 'request_approval',
         verification_level: 'standard',
         }, modelConfig);
+      const createdAnswerMode = (created as { answer_mode?: 'standard' | 'trusted' }).answer_mode;
       const current = normalizeRunView({
         id: created.run_id,
         task_id: created.task_id,
         status: created.status,
         mode: 'general-agent',
+        answer_mode: createdAnswerMode ?? answerMode,
+        execution_profile: {},
         result: null,
         steps: [], tool_calls: [], artifacts: [], events: [], turns: [], memories: [],
         chat_messages: [{ id: `optimistic-${created.run_id}`, role: 'user', content: trimmedGoal, status: 'completed', metadata: {} }],
@@ -666,6 +673,18 @@ function AppContent() {
               goalInputRef.current?.focus({ preventScroll: true });
             }
           }}>
+            <button
+              className={`trusted-mode-toggle ${answerMode === 'trusted' ? 'active' : ''}`}
+              type="button"
+              role="switch"
+              aria-checked={answerMode === 'trusted'}
+              aria-label={t('可信模式')}
+              onClick={() => persistConversationStrategy({ preferred_answer_mode: answerMode === 'trusted' ? 'standard' : 'trusted' })}
+            >
+              <Icon name="requestApprove" />
+              <span>{answerMode === 'trusted' ? t('可信模式') : t('快速回答')}</span>
+              <i aria-hidden="true"><b /></i>
+            </button>
             <div className="composer-menu-wrap" ref={attachMenuRef}>
               <button
                 className="composer-icon-button"
@@ -724,11 +743,12 @@ function AppContent() {
                 setAttachOpen(false);
                 setExecutionMenuOpen(false);
               }}>
-                <span>{selectedModel || t('未配置模型')}</span><small>{t(reasoningEffort)} · {t('{count} 次工具').replace('{count}', String(toolCallLimit))} · {reflectionEnabled ? `${t(reflectionTrigger)} ${t('反思')}` : t('反思关闭')}</small><b>⌄</b>
+                <span>{selectedModel || t('未配置模型')}</span><small>{answerMode === 'trusted' ? `${t(reasoningEffort)} · ${t('{count} 次工具').replace('{count}', String(toolCallLimit))} · ${reflectionEnabled ? `${t(reflectionTrigger)} ${t('反思')}` : t('反思关闭')}` : t('快速策略 · 工具按需')}</small><b>⌄</b>
               </button>
               {modelOpen && (
                 <ModelMenu
                   selectedModelKey={selectedModelKey}
+                  trusted={answerMode === 'trusted'}
                   onModelChange={setSelectedModelKey}
                   modelOptions={availableModels}
                   reasoningEffort={reasoningEffort}
@@ -1552,10 +1572,11 @@ function BypassConfirmation({ onCancel, onConfirm }: { onCancel: () => void; onC
   return <div className="modal-backdrop" role="presentation" onMouseDown={onCancel}><section className="confirmation-modal" role="alertdialog" aria-modal="true" aria-labelledby="bypass-title" onMouseDown={(event) => event.stopPropagation()}><div className="warning-mark">!</div><h2 id="bypass-title">{t('启用自动批准模式？')}</h2><p>{t('自动批准模式将允许 Agent 自动执行所有命令和工具，包括可能修改文件、访问网络或影响外部系统的高风险操作。')}</p><div className="confirmation-note"><strong>{t('仅在你信任当前任务和运行环境时启用。')}</strong></div><div className="confirmation-actions"><button className="secondary-button" type="button" onClick={onCancel}>{t('取消')}</button><button className="danger-confirm-button" type="button" onClick={onConfirm}>{t('确认启用自动批准')}</button></div></section></div>;
 }
 
-function ModelMenu({ selectedModelKey, onModelChange, modelOptions, reasoningEffort, onReasoningEffortChange, toolCallLimit, onToolCallLimitChange, planningStrategy, onPlanningStrategyChange, reflectionEnabled, onReflectionChange, reflectionTrigger, onReflectionTriggerChange, onOpenStrategyHelp }: {
+function ModelMenu({ selectedModelKey, onModelChange, modelOptions, trusted, reasoningEffort, onReasoningEffortChange, toolCallLimit, onToolCallLimitChange, planningStrategy, onPlanningStrategyChange, reflectionEnabled, onReflectionChange, reflectionTrigger, onReflectionTriggerChange, onOpenStrategyHelp }: {
   selectedModelKey: string;
   onModelChange: (modelKey: string) => void;
   modelOptions: Array<{ key: string; model: string; providerId: ModelProviderId; providerName: string }>;
+  trusted: boolean;
   reasoningEffort: string;
   onReasoningEffortChange: (effort: string) => void;
   toolCallLimit: number;
@@ -1577,7 +1598,7 @@ function ModelMenu({ selectedModelKey, onModelChange, modelOptions, reasoningEff
   }, []);
   const effort = reasoningEffortValue(reasoningEffort);
   const limitRange = TOOL_CALL_LIMITS[effort];
-  return <div className="floating-menu model-menu"><div className="menu-heading">{t('模型')}</div>{groups.length ? groups.map((group) => <div className="model-provider-group" key={group.providerId}><div className="model-provider-heading"><span className={`provider-mark provider-${group.providerId}`}>{modelProviders.find((provider) => provider.id === group.providerId)?.mark}</span><span>{group.providerName}</span></div>{group.models.map((item) => <button className={`model-option ${selectedModelKey === item.key ? 'selected' : ''}`} type="button" key={item.key} onClick={() => onModelChange(item.key)}><div><strong>{item.model}</strong><small>{group.providerName}</small></div><span>{selectedModelKey === item.key ? '✓' : ''}</span></button>)}</div>) : <div className="model-menu-empty">{t('请先在模型管理中启用供应商并配置模型')}</div>}<div className="menu-divider" /><div className="menu-heading menu-heading-with-help"><span>{t('对话策略')}</span><button className="strategy-help-button" type="button" aria-label={t('了解对话策略')} onClick={onOpenStrategyHelp}><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M7.6 7.3a2.6 2.6 0 1 1 3.15 2.54c-.75.23-1.25.72-1.25 1.46v.3" /><circle cx="9.5" cy="14.35" r=".72" fill="currentColor" stroke="none" /></svg></button></div><MenuChoice label="推理强度" value={reasoningEffort} options={['快速', '均衡', '深入']} onChange={onReasoningEffortChange} /><ToolCallLimitControl value={toolCallLimit} min={limitRange.min} max={limitRange.max} onChange={onToolCallLimitChange} /><MenuChoice label="规划策略" value={planningStrategy} options={['直接', '自适应', '先规划']} onChange={onPlanningStrategyChange} /><div className="menu-toggle"><div><strong>{t('反思循环')}</strong><small>{t('检查结果并修订下一步策略')}</small></div><Toggle checked={reflectionEnabled} onChange={onReflectionChange} label={t('反思循环')} /></div>{reflectionEnabled && <MenuChoice label="触发方式" value={reflectionTrigger} options={['失败时', '按需', '每轮']} onChange={onReflectionTriggerChange} />}</div>;
+  return <div className="floating-menu model-menu"><div className="menu-heading">{t('模型')}</div>{groups.length ? groups.map((group) => <div className="model-provider-group" key={group.providerId}><div className="model-provider-heading"><span className={`provider-mark provider-${group.providerId}`}>{modelProviders.find((provider) => provider.id === group.providerId)?.mark}</span><span>{group.providerName}</span></div>{group.models.map((item) => <button className={`model-option ${selectedModelKey === item.key ? 'selected' : ''}`} type="button" key={item.key} onClick={() => onModelChange(item.key)}><div><strong>{item.model}</strong><small>{group.providerName}</small></div><span>{selectedModelKey === item.key ? '✓' : ''}</span></button>)}</div>) : <div className="model-menu-empty">{t('请先在模型管理中启用供应商并配置模型')}</div>}<div className="menu-divider" />{trusted ? <><div className="menu-heading menu-heading-with-help"><span>{t('可信对话策略')}</span><button className="strategy-help-button" type="button" aria-label={t('了解对话策略')} onClick={onOpenStrategyHelp}><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M7.6 7.3a2.6 2.6 0 1 1 3.15 2.54c-.75.23-1.25.72-1.25 1.46v.3" /><circle cx="9.5" cy="14.35" r=".72" fill="currentColor" stroke="none" /></svg></button></div><MenuChoice label="推理强度" value={reasoningEffort} options={['快速', '均衡', '深入']} onChange={onReasoningEffortChange} /><ToolCallLimitControl value={toolCallLimit} min={limitRange.min} max={limitRange.max} onChange={onToolCallLimitChange} /><MenuChoice label="规划策略" value={planningStrategy} options={['直接', '自适应', '先规划']} onChange={onPlanningStrategyChange} /><div className="menu-toggle"><div><strong>{t('反思循环')}</strong><small>{t('检查结果并修订下一步策略')}</small></div><Toggle checked={reflectionEnabled} onChange={onReflectionChange} label={t('反思循环')} /></div>{reflectionEnabled && <MenuChoice label="触发方式" value={reflectionTrigger} options={['失败时', '按需', '每轮']} onChange={onReflectionTriggerChange} />}</> : <div className="standard-mode-note"><Icon name="requestApprove" /><div><strong>{t('快速回答')}</strong><small>{t('开启可信模式后可配置完整对话策略与结果校验。')}</small></div></div>}</div>;
 }
 
 function StrategyHelpDialog({ onClose }: { onClose: () => void }) {
@@ -1746,8 +1767,18 @@ function FinalAnswer({ run, fallback }: { run: RunView; fallback: string }) {
   }
   const placements = planArtifactPlacements(result.findings, run.artifacts);
   const notes = [...new Set(result.caveats)];
+  const trustedStatus = run.answer_mode === 'trusted'
+    ? run.status === 'completed'
+      ? '已校验'
+      : run.status === 'completed_with_warnings'
+        ? '校验带警告'
+        : ['blocked', 'failed'].includes(run.status)
+          ? '未通过完整校验'
+          : null
+    : null;
   return (
     <div className="answer-content">
+      {trustedStatus && <div className={`trusted-result-status status-${run.status}`}><Icon name="requestApprove" /><span>{t('可信模式')} · {t(trustedStatus)}</span></div>}
       <MarkdownContent content={result.summary || fallback} />
       {placements.findings.length > 0 && <details className="answer-support evidence-support"><summary>{t('数据与证据 · {count}').replace('{count}', String(placements.findings.length))}</summary><div className="evidence-list">
         {placements.findings.map(({ finding, artifacts, repeatedArtifactIds }, index) => (

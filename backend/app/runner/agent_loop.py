@@ -26,7 +26,10 @@ from app.sandbox.runtime import SandboxJobService, SandboxSupervisor
 from app.schemas.agent import (
     AgentObservation,
     AgentState,
+    AnswerMode,
+    AssuranceLevel,
     CompletionDecision,
+    ContractMode,
     EvaluationOutcome,
     ExpectedObservation,
     FailureFingerprint,
@@ -34,6 +37,7 @@ from app.schemas.agent import (
     NodeResult,
     PlanNodeStatus,
     ReasoningPolicySnapshot,
+    RunExecutionProfile,
     TerminalState,
     ValidationIssue,
     ValidationOutcome,
@@ -296,6 +300,7 @@ class VerificationEngine:
         *,
         validation_outcomes: list[ValidationOutcome] | None = None,
         invalid_artifact_references: int = 0,
+        assurance_level: AssuranceLevel = AssuranceLevel.full,
     ) -> VerificationReport:
         fetched_sources = evidence_pack.get("fetched_sources", [])
         low_quality = [
@@ -347,6 +352,7 @@ class VerificationEngine:
         )
         return VerificationReport(
             status=status,
+            assurance_level=assurance_level,
             source_count=len(final_answer.sources),
             caveat_count=len(final_answer.caveats),
             low_quality_sources=low_quality,
@@ -407,6 +413,17 @@ class AgentLoop:
         orchestrator = LoopOrchestrator()
         no_progress = NoProgressDetector()
         policy_snapshot = ReasoningPolicySnapshot.model_validate(initial_run.reasoning_policy or {})
+        profile = (
+            RunExecutionProfile.model_validate(initial_run.execution_profile)
+            if initial_run.execution_profile
+            else RunExecutionProfile(
+                answer_mode=AnswerMode.trusted,
+                contract_mode=ContractMode.model,
+                assurance_level=AssuranceLevel.full,
+                reasoning_policy=policy_snapshot,
+                validators=["task_adapter", "artifact_reference"],
+            )
+        )
         policy = policy_snapshot.effective
         max_turns = min(policy.budgets.max_turns, self.settings.agent_max_turns)
         max_tool_calls = min(policy.budgets.max_tool_calls, self.settings.agent_max_tool_calls)
@@ -1053,12 +1070,14 @@ class AgentLoop:
                     await repo.session.commit()
                     canonical_plan = await plan_repository.active_for_run(run_id)
                     active_node = None
-                    if canonical_plan and any(
-                        node.status == PlanNodeStatus.pending.value for node in canonical_plan.nodes
-                    ):
-                        final_turn_id = None
-                        streamed_final_answer = None
-                        continue
+                    # The answer generated while an active node was selected was deliberately
+                    # not streamed because it was still provisional. Even when that was the
+                    # final plan node, start one canonical answer turn with no active node so
+                    # the user-facing response can be emitted incrementally instead of being
+                    # revealed only by answer.completed.
+                    final_turn_id = None
+                    streamed_final_answer = None
+                    continue
                 streamed_final_answer = candidate_answer
                 await repo.update_agent_turn(turn.id, status="completed")
                 break
@@ -1520,16 +1539,19 @@ class AgentLoop:
             goal=goal,
             context=final_context,
         )
-        adapter_outcome = (
-            self.chart_adapter.validate(final_answer.model_dump(), {})
-            if self.chart_adapter.attempted and not self.adapter.attempted
-            else self.adapter.validate(final_answer.model_dump(), evidence_pack)
-        )
+        adapter_outcomes = []
+        if profile.assurance_level == AssuranceLevel.full:
+            adapter_outcomes = [
+                self.chart_adapter.validate(final_answer.model_dump(), {})
+                if self.chart_adapter.attempted and not self.adapter.attempted
+                else self.adapter.validate(final_answer.model_dump(), evidence_pack)
+            ]
         report = verifier.verify(
             final_answer,
             evidence_pack,
-            validation_outcomes=[adapter_outcome],
+            validation_outcomes=adapter_outcomes,
             invalid_artifact_references=invalid_artifact_references,
+            assurance_level=profile.assurance_level,
         )
         run_record = await repo.require_run(run_id)
         if run_record.agent_state:
@@ -1558,15 +1580,25 @@ class AgentLoop:
                 else {},
                 waiting_state=run_record.waiting_state,
             )
-            gate_decision = self.completion_gate.evaluate(
-                state,
-                validation_outcomes=report.validation_outcomes,
-                plan=plan_to_view(await plan_repository.active_for_run(run_id))
-                if canonical_plan is not None
-                else None,
-                required_user_action=(run_record.waiting_state or {}).get("request")
+            required_user_action = (
+                (run_record.waiting_state or {}).get("request")
                 if terminal_override == "waiting_user"
-                else None,
+                else None
+            )
+            gate_decision = (
+                self.completion_gate.evaluate(
+                    state,
+                    validation_outcomes=report.validation_outcomes,
+                    plan=plan_to_view(await plan_repository.active_for_run(run_id))
+                    if canonical_plan is not None
+                    else None,
+                    required_user_action=required_user_action,
+                )
+                if profile.assurance_level == AssuranceLevel.full
+                else self.completion_gate.evaluate_basic(
+                    validation_outcomes=report.validation_outcomes,
+                    required_user_action=required_user_action,
+                )
             )
         else:
             blocking = [
@@ -1621,6 +1653,8 @@ class AgentLoop:
             )
         final_status = gate_decision.state.value
         result = final_answer.model_dump()
+        result["answer_mode"] = profile.answer_mode.value
+        result["assurance_level"] = profile.assurance_level.value
         result["verification_report"] = report.model_dump()
         result["audit_refs"] = {
             "evidence_pack_artifact_id": artifact.id,

@@ -1171,6 +1171,43 @@ html[data-theme="dark"] .process-decision-children .process-step.status-running 
   z-index: 12;
 }
 
+.trusted-mode-toggle {
+  align-items: center;
+  background: rgba(100, 116, 139, .07);
+  border: 1px solid rgba(148, 163, 184, .2);
+  border-radius: 999px;
+  color: #667085;
+  display: inline-flex;
+  font-size: 11px;
+  font-weight: 700;
+  gap: 6px;
+  min-height: 28px;
+  padding: 3px 7px 3px 8px;
+  position: absolute;
+  right: 12px;
+  top: 12px;
+  z-index: 1;
+}
+
+.trusted-mode-toggle > .ui-icon { height: 14px; width: 14px; }
+.trusted-mode-toggle > i { background: rgba(100, 116, 139, .24); border-radius: 999px; display: block; height: 16px; padding: 2px; width: 28px; }
+.trusted-mode-toggle > i > b { background: #fff; border-radius: 50%; box-shadow: 0 1px 3px rgba(15, 23, 42, .2); display: block; height: 12px; transition: transform 160ms ease; width: 12px; }
+.trusted-mode-toggle.active { background: rgba(47, 143, 115, .1); border-color: rgba(47, 143, 115, .22); color: #20745d; }
+.trusted-mode-toggle.active > i { background: #3a9d7d; }
+.trusted-mode-toggle.active > i > b { transform: translateX(12px); }
+.trusted-mode-toggle:hover { background: rgba(47, 143, 115, .12); }
+
+.standard-mode-note { align-items: center; color: #667085; display: flex; gap: 9px; padding: 9px 10px 5px; }
+.standard-mode-note > .ui-icon { flex: 0 0 auto; height: 17px; width: 17px; }
+.standard-mode-note strong, .standard-mode-note small { display: block; }
+.standard-mode-note strong { color: #344054; font-size: 12px; }
+.standard-mode-note small { font-size: 11px; line-height: 1.35; margin-top: 2px; }
+
+.trusted-result-status { align-items: center; color: #24745f; display: inline-flex; font-size: 11px; font-weight: 700; gap: 5px; margin-bottom: 10px; }
+.trusted-result-status > .ui-icon { height: 14px; width: 14px; }
+.trusted-result-status.status-completed_with_warnings { color: #9a6700; }
+.trusted-result-status.status-blocked, .trusted-result-status.status-failed { color: #b04438; }
+
 .jump-latest-button {
   align-items: center;
   backdrop-filter: blur(22px) saturate(170%);
@@ -1683,6 +1720,7 @@ textarea {
 .chat-composer textarea {
   grid-area: input;
   min-height: 54px;
+  padding-right: 146px;
   width: 100%;
 }
 
@@ -3689,6 +3727,9 @@ html[data-theme="dark"] .evidence-content .markdown-content { color: #d7dce2; }
   .workspace { padding-inline: 8px; }
   .chat-composer {
     gap: 8px;
+    grid-template-areas:
+      "input input input input input"
+      "attach mode spacer model send";
     grid-template-columns: 40px 40px minmax(0, 1fr) minmax(72px, 108px) 42px;
     padding: 8px;
   }

@@ -75,6 +75,21 @@ class VerificationLevel(str, Enum):
     strict = "strict"
 
 
+class AnswerMode(str, Enum):
+    standard = "standard"
+    trusted = "trusted"
+
+
+class AssuranceLevel(str, Enum):
+    basic = "basic"
+    full = "full"
+
+
+class ContractMode(str, Enum):
+    system_minimal = "system_minimal"
+    model = "model"
+
+
 class CriterionStatus(str, Enum):
     pending = "pending"
     satisfied = "satisfied"
@@ -142,6 +157,15 @@ class ReasoningPolicySnapshot(BaseModel):
     requested: RequestedReasoningPolicy = Field(default_factory=RequestedReasoningPolicy)
     effective: EffectiveReasoningPolicy = Field(default_factory=EffectiveReasoningPolicy)
     adjustments: list[PolicyAdjustment] = Field(default_factory=list)
+    version: int = 1
+
+
+class RunExecutionProfile(BaseModel):
+    answer_mode: AnswerMode
+    contract_mode: ContractMode
+    assurance_level: AssuranceLevel
+    reasoning_policy: ReasoningPolicySnapshot
+    validators: list[str] = Field(default_factory=list)
     version: int = 1
 
 
@@ -365,6 +389,7 @@ class NodeResult(BaseModel):
 class CreateRunRequest(BaseModel):
     goal: str = Field(min_length=1, max_length=4000)
     task_id: str | None = None
+    answer_mode: AnswerMode = AnswerMode.standard
     reasoning_policy: RequestedReasoningPolicy = Field(default_factory=RequestedReasoningPolicy)
     model: dict[str, str] | None = None
 
@@ -373,6 +398,7 @@ class CreateRunResponse(BaseModel):
     task_id: str
     run_id: str
     status: str
+    answer_mode: AnswerMode
 
 
 class ContinueRunRequest(BaseModel):
@@ -517,6 +543,7 @@ class ValidationOutcome(BaseModel):
 
 class VerificationReport(BaseModel):
     status: str
+    assurance_level: AssuranceLevel = AssuranceLevel.full
     source_count: int = 0
     caveat_count: int = 0
     low_quality_sources: list[dict[str, Any]] = Field(default_factory=list)
@@ -584,6 +611,8 @@ class RunResult(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     summary: str = ""
+    answer_mode: AnswerMode = AnswerMode.trusted
+    assurance_level: AssuranceLevel = AssuranceLevel.full
     findings: list[Finding] = Field(default_factory=list)
     sources: list[SourceReference] = Field(default_factory=list)
     failed_sources: list[FailedSource] = Field(default_factory=list)
@@ -869,6 +898,8 @@ class RunView(BaseModel):
     task_id: str
     status: str
     mode: str
+    answer_mode: AnswerMode = AnswerMode.trusted
+    execution_profile: dict[str, Any] = Field(default_factory=dict)
     summary: str | None
     result: RunResult | None
     steps: list[StepView]

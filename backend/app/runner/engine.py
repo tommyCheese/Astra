@@ -25,10 +25,12 @@ from app.runner.reasoning import (
     validate_contract,
 )
 from app.schemas.agent import (
+    ContractMode,
     FinalAnswer,
     PlanOutput,
     PlanStep,
     ReasoningPolicySnapshot,
+    RunExecutionProfile,
     TaskContract,
 )
 from app.tools.base import ToolRegistry
@@ -126,7 +128,12 @@ class RunEngine:
             {"phase": "planning", "label": "正在理解任务并制定计划"},
         )
         await repo.update_run_status(run_id, "planning")
-        contract, plan = await self._prepare_plan(run_id, goal, run.reasoning_policy or {})
+        contract, plan = await self._prepare_plan(
+            run_id,
+            goal,
+            run.reasoning_policy or {},
+            run.execution_profile or {},
+        )
         logger.info(
             "run.plan.ready run_id=%s steps=%s tools=%s",
             run_id,
@@ -205,17 +212,35 @@ class RunEngine:
             self.model_client.bind_reasoning_effort("balanced")
 
     async def _prepare_plan(
-        self, run_id: str, goal: str, reasoning_policy: dict[str, Any]
+        self,
+        run_id: str,
+        goal: str,
+        reasoning_policy: dict[str, Any],
+        execution_profile: dict[str, Any] | None = None,
     ) -> tuple[TaskContract | None, PlanOutput]:
         snapshot = ReasoningPolicySnapshot.model_validate(reasoning_policy)
+        profile = (
+            RunExecutionProfile.model_validate(execution_profile)
+            if execution_profile
+            else None
+        )
         planning_strategy = snapshot.effective.planning_strategy.value
         plan_only = snapshot.effective.execution_mode.value == "plan_only"
+        use_model_contract = (
+            profile.contract_mode == ContractMode.model
+            if profile
+            else planning_strategy != "direct" or plan_only
+        )
         if planning_strategy == "direct" and not plan_only:
-            contract_result = build_default_contract(goal)
+            contract_result = (
+                await self.model_client.contract(goal)
+                if use_model_contract and self.settings.agent_use_general_runtime
+                else build_default_contract(goal)
+            )
             plan_result = self._default_plan("处理请求", "根据任务需要直接回答或选择工具")
             logger.info("run.plan.direct_start run_id=%s", run_id)
         elif planning_strategy == "adaptive" and not plan_only:
-            if self.settings.agent_use_general_runtime:
+            if use_model_contract and self.settings.agent_use_general_runtime:
                 try:
                     contract_result = await self.model_client.contract(goal)
                 except ModelOutputError as exc:

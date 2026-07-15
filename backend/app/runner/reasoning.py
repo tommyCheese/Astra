@@ -6,7 +6,10 @@ from typing import Any, ClassVar
 from app.schemas.agent import (
     AgentObservation,
     AgentState,
+    AnswerMode,
+    AssuranceLevel,
     CompletionDecision,
+    ContractMode,
     CriterionStatus,
     EffectiveReasoningPolicy,
     Evaluation,
@@ -23,6 +26,7 @@ from app.schemas.agent import (
     ReflectionTrigger,
     RequestedReasoningPolicy,
     RunBudgets,
+    RunExecutionProfile,
     SuccessCriterion,
     TaskContract,
     TerminalState,
@@ -131,6 +135,53 @@ class PolicyCompiler:
             PolicyAdjustment(
                 field=field, requested=requested, effective=value, rule=rule, reason=reason
             )
+        )
+
+
+class RunProfileResolver:
+    """Resolve product answer modes into immutable runtime facts."""
+
+    STANDARD_VALIDATORS: ClassVar[list[str]] = ["artifact_reference"]
+    TRUSTED_VALIDATORS: ClassVar[list[str]] = ["task_adapter", "artifact_reference"]
+
+    def resolve(
+        self,
+        answer_mode: AnswerMode,
+        requested: RequestedReasoningPolicy,
+        *,
+        risk_level: str = "low",
+        complexity: str = "normal",
+    ) -> RunExecutionProfile:
+        if answer_mode == AnswerMode.standard:
+            effective_request = requested.model_copy(
+                update={
+                    "reasoning_effort": ReasoningEffort.fast,
+                    "max_tool_calls": 5,
+                    "planning_strategy": PlanningStrategy.direct,
+                    "reflection_enabled": False,
+                    "reflection_trigger": ReflectionTrigger.failure_only,
+                    "verification_level": VerificationLevel.basic,
+                }
+            )
+            contract_mode = ContractMode.system_minimal
+            assurance_level = AssuranceLevel.basic
+            validators = self.STANDARD_VALIDATORS
+        else:
+            effective_request = requested.model_copy(
+                update={"verification_level": VerificationLevel.strict}
+            )
+            contract_mode = ContractMode.model
+            assurance_level = AssuranceLevel.full
+            validators = self.TRUSTED_VALIDATORS
+        policy = PolicyCompiler().compile(
+            effective_request, risk_level=risk_level, complexity=complexity
+        )
+        return RunExecutionProfile(
+            answer_mode=answer_mode,
+            contract_mode=contract_mode,
+            assurance_level=assurance_level,
+            reasoning_policy=policy,
+            validators=list(validators),
         )
 
 
@@ -357,6 +408,56 @@ def failure_fingerprint(
 
 
 class CompletionGate:
+    def evaluate_basic(
+        self,
+        *,
+        validation_outcomes: list[ValidationOutcome],
+        required_user_action: str | None = None,
+        runtime_error: str | None = None,
+    ) -> CompletionDecision:
+        if runtime_error:
+            return CompletionDecision(state=TerminalState.failed, reason=runtime_error)
+        if required_user_action:
+            return CompletionDecision(
+                state=TerminalState.waiting_user,
+                reason="需要用户输入后才能继续。",
+                required_user_action=required_user_action,
+            )
+        blocking = [
+            outcome.validator
+            for outcome in validation_outcomes
+            if not outcome.passed and outcome.blocking
+        ]
+        warnings = list(
+            dict.fromkeys(
+                [
+                    warning
+                    for outcome in validation_outcomes
+                    for warning in outcome.warnings
+                ]
+                + [
+                    issue.message
+                    for outcome in validation_outcomes
+                    for issue in outcome.issues
+                    if issue.severity == "warning"
+                ]
+            )
+        )
+        if blocking:
+            return CompletionDecision(
+                state=TerminalState.blocked,
+                reason="基础保障存在阻塞问题。",
+                unmet_criteria=[f"validator:{validator}" for validator in blocking],
+                warnings=warnings,
+            )
+        return CompletionDecision(
+            state=TerminalState.completed_with_warnings
+            if warnings
+            else TerminalState.completed,
+            reason="快速回答已完成基础保障检查。",
+            warnings=warnings,
+        )
+
     def evaluate(
         self,
         state: AgentState,

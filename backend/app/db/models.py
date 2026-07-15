@@ -45,6 +45,9 @@ class ConversationStrategyPreferenceRecord(Base):
     __tablename__ = "conversation_strategy_preferences"
 
     id: Mapped[str] = mapped_column(String(40), primary_key=True, default="default")
+    preferred_answer_mode: Mapped[str] = mapped_column(
+        String(40), nullable=False, default="standard"
+    )
     reasoning_effort: Mapped[str] = mapped_column(String(40), nullable=False)
     max_tool_calls: Mapped[int] = mapped_column(Integer, nullable=False, default=8)
     planning_strategy: Mapped[str] = mapped_column(String(40), nullable=False)
@@ -104,6 +107,8 @@ class RunRecord(Base):
     task_id: Mapped[str] = mapped_column(ForeignKey("tasks.id"))
     status: Mapped[str] = mapped_column(String(40), default="created")
     mode: Mapped[str] = mapped_column(String(80), default="web_data_query")
+    answer_mode: Mapped[str] = mapped_column(String(40), nullable=False, default="standard")
+    execution_profile: Mapped[dict] = mapped_column(JsonType, default=dict)
     model_policy: Mapped[dict] = mapped_column(JsonType, default=dict)
     agent_profile_snapshot: Mapped[dict] = mapped_column(JsonType, default=dict)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

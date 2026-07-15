@@ -46,6 +46,8 @@ class RunRepository:
         task_id: str | None = None,
         *,
         reasoning_policy: dict[str, Any] | None = None,
+        answer_mode: str = "standard",
+        execution_profile: dict[str, Any] | None = None,
         agent_profile_snapshot: dict[str, Any] | None = None,
     ) -> RunRecord:
         now = utc_now()
@@ -68,6 +70,8 @@ class RunRepository:
             task=task,
             status="created",
             mode="web_agent",
+            answer_mode=answer_mode,
+            execution_profile=deepcopy(execution_profile or {}),
             model_policy=run_policy,
             agent_profile_snapshot=deepcopy(agent_profile_snapshot or {}),
             reasoning_policy=reasoning_policy or {},
@@ -893,6 +897,8 @@ def run_to_view(run: RunRecord) -> dict[str, Any]:
         "task_id": run.task_id,
         "status": run.status,
         "mode": run.mode,
+        "answer_mode": run.answer_mode or "trusted",
+        "execution_profile": run.execution_profile or {},
         "summary": run.summary,
         "result": result_payload,
         "steps": canonical_steps

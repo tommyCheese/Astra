@@ -26,6 +26,7 @@ async def test_tool_settings_are_created_and_persisted(session):
 async def test_conversation_strategy_is_created_and_persisted(session):
     repo = ConversationStrategyRepository(session)
     assert await repo.get_or_create() == {
+        "preferred_answer_mode": "standard",
         "reasoning_effort": "balanced",
         "max_tool_calls": 8,
         "planning_strategy": "adaptive",
@@ -35,6 +36,7 @@ async def test_conversation_strategy_is_created_and_persisted(session):
     await session.commit()
 
     updated = {
+        "preferred_answer_mode": "trusted",
         "reasoning_effort": "deep",
         "max_tool_calls": 32,
         "planning_strategy": "plan_first",
@@ -72,6 +74,8 @@ async def test_run_lifecycle_persistence(session):
     view = run_to_view(loaded)
 
     assert view["status"] == "completed_with_warnings"
+    assert view["answer_mode"] == "standard"
+    assert view["execution_profile"] == {}
     assert len(view["steps"]) == 1
     assert len(view["tool_calls"]) == 1
     assert view["tool_calls"][0]["status"] == "succeeded"

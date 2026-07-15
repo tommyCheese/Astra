@@ -106,6 +106,7 @@ export type ChatMessage = {
 
 export type VerificationReport = {
   status: string;
+  assurance_level?: 'basic' | 'full';
   source_count: number;
   caveat_count: number;
   low_quality_sources: Array<Record<string, unknown>>;
@@ -171,6 +172,8 @@ export type RunError = {
 
 export type RunResult = {
   summary: string;
+  answer_mode?: 'standard' | 'trusted';
+  assurance_level?: 'basic' | 'full';
   findings: Array<{ text: string; source_urls: string[]; artifact_ids: string[] }>;
   sources: Array<{ url: string; title?: string | null; retrieved_at?: string | null }>;
   failed_sources: FailedSource[];
@@ -206,6 +209,8 @@ export type RunView = {
   task_id: string;
   status: string;
   mode: string;
+  answer_mode?: 'standard' | 'trusted';
+  execution_profile?: Record<string, unknown>;
   summary?: string | null;
   result: RunResult | null;
   steps: StepView[];

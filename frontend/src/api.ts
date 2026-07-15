@@ -72,6 +72,7 @@ export type ToolSetting = {
 export type ToolSettings = { tools: ToolSetting[] };
 
 export type ConversationStrategyPreferences = {
+  preferred_answer_mode: 'standard' | 'trusted';
   reasoning_effort: 'fast' | 'balanced' | 'deep';
   max_tool_calls: number;
   planning_strategy: 'direct' | 'adaptive' | 'plan_first';
@@ -163,11 +164,11 @@ export async function cancelRuntimeBuild(buildId: string): Promise<RuntimeProfil
   return response.json();
 }
 
-export async function createRun(goal: string, taskId?: string, reasoningPolicy?: ReasoningPolicyRequest, model?: RunModelConfig): Promise<{ run_id: string; task_id: string; status: string }> {
+export async function createRun(goal: string, taskId: string | undefined, answerMode: 'standard' | 'trusted', reasoningPolicy?: ReasoningPolicyRequest, model?: RunModelConfig): Promise<{ run_id: string; task_id: string; status: string; answer_mode?: 'standard' | 'trusted' }> {
   const response = await fetchWithTimeout('/api/runs', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ goal, task_id: taskId, reasoning_policy: reasoningPolicy, model }),
+    body: JSON.stringify({ goal, task_id: taskId, answer_mode: answerMode, reasoning_policy: reasoningPolicy, model }),
   });
   if (!response.ok) {
     throw await responseError(response);

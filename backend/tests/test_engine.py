@@ -10,9 +10,10 @@ from app.repositories.runs import RunRepository
 from app.runner.engine import RunEngine
 from app.runner.model_client import MockModelClient
 from app.runner.planning import PlanScheduler, PlanService, canonical_agent_state
-from app.runner.reasoning import PolicyCompiler, build_default_contract
+from app.runner.reasoning import PolicyCompiler, RunProfileResolver, build_default_contract
 from app.schemas.agent import (
     AgentDecision,
+    AnswerMode,
     ExpectedObservation,
     FinalAnswer,
     PlanDraft,
@@ -104,6 +105,28 @@ class RecoveryClient(MockModelClient):
             on_delta=on_delta,
             on_reasoning_delta=on_reasoning_delta,
         )
+
+
+class FinalizeActiveNodeClient(MockModelClient):
+    def __init__(self):
+        self.answer_callbacks: list[bool] = []
+
+    async def decide_with_answer(self, goal, context, *, on_delta=None, on_reasoning_delta=None):
+        self.answer_callbacks.append(on_delta is not None)
+        active = context.get("active_node")
+        if active is not None:
+            return AgentDecision(
+                decision_type="finalize",
+                reasoning_summary="完成当前计划节点",
+            ), FinalAnswer(summary="尚未提交的节点内答案")
+        assert on_delta is not None
+        await on_delta("真正的")
+        await on_delta("流式回答")
+        await on_delta("\1")
+        return AgentDecision(
+            decision_type="finalize",
+            reasoning_summary="计划完成后生成正式回答",
+        ), FinalAnswer(summary="真正的流式回答")
 
 
 async def test_engine_completes_mock_web_query(session):
@@ -211,6 +234,34 @@ async def test_answer_delta_batching_flushes_first_and_final_content(session):
     assert events[-1].payload == {"content": "首尾", "status": "answer_complete"}
 
 
+async def test_final_plan_node_answer_is_regenerated_as_canonical_stream(session):
+    settings = Settings(model_provider="mock")
+    profile = RunProfileResolver().resolve(AnswerMode.standard, RequestedReasoningPolicy())
+    repo = RunRepository(session)
+    run = await repo.create_task_run(
+        "生成一个流式回答",
+        settings.model_policy,
+        reasoning_policy=profile.reasoning_policy.model_dump(mode="json"),
+        answer_mode=profile.answer_mode.value,
+        execution_profile=profile.model_dump(mode="json"),
+    )
+    client = FinalizeActiveNodeClient()
+
+    await RunEngine(settings, model_client=client, tool_registry=ToolRegistry())._run_with_repo(
+        repo, run.id
+    )
+
+    loaded = await repo.require_run(run.id)
+    events = await repo.list_events(run.id)
+    deltas = [event.payload["delta"] for event in events if event.type == "answer.delta"]
+    assert loaded.result["summary"] == "真正的流式回答"
+    assert client.answer_callbacks == [False, True]
+    assert deltas == ["真正的", "流式回答"]
+    assert events.index(next(event for event in events if event.type == "answer.delta")) < events.index(
+        next(event for event in events if event.type == "answer.completed")
+    )
+
+
 async def test_engine_resumes_with_frozen_profile_when_packaged_default_changes(
     session, monkeypatch
 ):
@@ -285,6 +336,34 @@ async def test_engine_binds_effective_reasoning_effort_before_model_operations(s
     )._run_with_repo(repo, run.id)
 
     assert client.bound_efforts == ["deep"]
+
+
+async def test_standard_profile_skips_model_contract_and_uses_basic_assurance(session):
+    settings = Settings(model_provider="mock", web_search_provider="mock")
+    profile = RunProfileResolver().resolve(
+        AnswerMode.standard, RequestedReasoningPolicy(reasoning_effort="deep")
+    )
+    repo = RunRepository(session)
+    run = await repo.create_task_run(
+        "快速回答",
+        settings.model_policy,
+        reasoning_policy=profile.reasoning_policy.model_dump(mode="json"),
+        answer_mode=profile.answer_mode.value,
+        execution_profile=profile.model_dump(mode="json"),
+    )
+    client = PlanningSpyClient()
+
+    await RunEngine(
+        settings, model_client=client, tool_registry=fake_web_registry()
+    )._run_with_repo(repo, run.id)
+
+    loaded = await repo.require_run(run.id)
+    assert client.contract_calls == 0
+    assert loaded.answer_mode == "standard"
+    assert loaded.result["answer_mode"] == "standard"
+    assert loaded.result["assurance_level"] == "basic"
+    assert loaded.result["verification_report"]["assurance_level"] == "basic"
+    assert loaded.result["completion_decision"]["reason"] == "快速回答已完成基础保障检查。"
 
 
 @pytest.mark.parametrize(

@@ -3,6 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.models import ConversationStrategyPreferenceRecord, utc_now
 
 DEFAULT_CONVERSATION_STRATEGY = {
+    "preferred_answer_mode": "standard",
     "reasoning_effort": "balanced",
     "max_tool_calls": 8,
     "planning_strategy": "adaptive",
@@ -29,6 +30,7 @@ class ConversationStrategyRepository:
         await self.get_or_create()
         record = await self.session.get(ConversationStrategyPreferenceRecord, "default")
         assert record is not None
+        record.preferred_answer_mode = str(strategy["preferred_answer_mode"])
         record.reasoning_effort = str(strategy["reasoning_effort"])
         record.max_tool_calls = int(strategy["max_tool_calls"])
         record.planning_strategy = str(strategy["planning_strategy"])
@@ -41,6 +43,7 @@ class ConversationStrategyRepository:
     @staticmethod
     def _serialize(record: ConversationStrategyPreferenceRecord) -> dict[str, str | bool | int]:
         return {
+            "preferred_answer_mode": record.preferred_answer_mode,
             "reasoning_effort": record.reasoning_effort,
             "max_tool_calls": record.max_tool_calls,
             "planning_strategy": record.planning_strategy,

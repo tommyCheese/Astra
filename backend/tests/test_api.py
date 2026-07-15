@@ -181,6 +181,7 @@ async def test_conversation_strategy_can_be_restored_and_updated(app_client):
     loaded = await app_client.get("/api/preferences/conversation-strategy")
     assert loaded.status_code == 200
     assert loaded.json() == {
+        "preferred_answer_mode": "standard",
         "reasoning_effort": "balanced",
         "max_tool_calls": 8,
         "planning_strategy": "adaptive",
@@ -189,6 +190,7 @@ async def test_conversation_strategy_can_be_restored_and_updated(app_client):
     }
 
     updated = {
+        "preferred_answer_mode": "trusted",
         "reasoning_effort": "deep",
         "max_tool_calls": 32,
         "planning_strategy": "plan_first",
@@ -551,6 +553,7 @@ async def test_create_run_compiles_reasoning_policy(app_client):
         "/api/runs",
         json={
             "goal": "分析复杂问题",
+            "answer_mode": "trusted",
             "reasoning_policy": {
                 "reasoning_effort": "deep",
                 "max_tool_calls": 42,
@@ -564,9 +567,36 @@ async def test_create_run_compiles_reasoning_policy(app_client):
     )
     run_id = created.json()["run_id"]
     body = (await app_client.get(f"/api/runs/{run_id}")).json()
+    assert created.json()["answer_mode"] == "trusted"
+    assert body["answer_mode"] == "trusted"
+    assert body["execution_profile"]["assurance_level"] == "full"
     assert body["reasoning_policy"]["requested"]["reasoning_effort"] == "deep"
     assert body["reasoning_policy"]["effective"]["budgets"]["max_tool_calls"] == 42
     assert body["reasoning_policy"]["effective"]["budgets"]["max_reflections"] == 6
+
+
+async def test_create_run_defaults_to_standard_profile(app_client):
+    created = await app_client.post(
+        "/api/runs",
+        json={
+            "goal": "快速回答",
+            "reasoning_policy": {
+                "reasoning_effort": "deep",
+                "max_tool_calls": 42,
+                "planning_strategy": "plan_first",
+                "reflection_enabled": True,
+                "execution_mode": "request_approval",
+            },
+        },
+    )
+    body = (await app_client.get(f"/api/runs/{created.json()['run_id']}")).json()
+    assert created.json()["answer_mode"] == "standard"
+    assert body["answer_mode"] == "standard"
+    assert body["execution_profile"]["assurance_level"] == "basic"
+    assert body["reasoning_policy"]["effective"]["reasoning_effort"] == "fast"
+    assert body["reasoning_policy"]["effective"]["planning_strategy"] == "direct"
+    assert body["reasoning_policy"]["effective"]["reflection_enabled"] is False
+    assert body["reasoning_policy"]["effective"]["budgets"]["max_tool_calls"] == 5
 
 
 async def test_create_run_rejects_unknown_model_provider(app_client):

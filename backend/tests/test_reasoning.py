@@ -6,6 +6,7 @@ from app.runner.reasoning import (
     ObservationEvaluator,
     PolicyCompiler,
     ReflectionGate,
+    RunProfileResolver,
     StateVersionConflict,
     apply_reflection_patch,
     apply_validation_outcomes,
@@ -19,6 +20,7 @@ from app.runner.runtime import InvalidTransition, LoopOrchestrator, NoProgressDe
 from app.schemas.agent import (
     AgentObservation,
     AgentState,
+    AnswerMode,
     CriterionStatus,
     ExecutionMode,
     ExpectedObservation,
@@ -48,6 +50,49 @@ def test_policy_defaults_and_safety_floor():
     assert high.effective.planning_strategy == PlanningStrategy.plan_first
     assert high.effective.execution_mode == ExecutionMode.request_approval
     assert len(high.adjustments) == 3
+
+
+def test_standard_profile_is_fixed_and_preserves_execution_approval():
+    profile = RunProfileResolver().resolve(
+        AnswerMode.standard,
+        RequestedReasoningPolicy(
+            reasoning_effort="deep",
+            max_tool_calls=42,
+            planning_strategy="plan_first",
+            reflection_enabled=True,
+            execution_mode="auto_approval",
+        ),
+    )
+    policy = profile.reasoning_policy.effective
+    assert profile.answer_mode == AnswerMode.standard
+    assert profile.assurance_level.value == "basic"
+    assert profile.contract_mode.value == "system_minimal"
+    assert policy.reasoning_effort == ReasoningEffort.fast
+    assert policy.planning_strategy == PlanningStrategy.direct
+    assert policy.reflection_enabled is False
+    assert policy.budgets.max_tool_calls == 5
+    assert policy.execution_mode == ExecutionMode.auto_approval
+    assert policy.verification_level.value == "basic"
+
+
+def test_trusted_profile_uses_requested_strategy_and_full_assurance():
+    profile = RunProfileResolver().resolve(
+        AnswerMode.trusted,
+        RequestedReasoningPolicy(
+            reasoning_effort="deep",
+            max_tool_calls=42,
+            planning_strategy="plan_first",
+            reflection_enabled=False,
+        ),
+    )
+    policy = profile.reasoning_policy.effective
+    assert profile.answer_mode == AnswerMode.trusted
+    assert profile.assurance_level.value == "full"
+    assert profile.contract_mode.value == "model"
+    assert policy.reasoning_effort == ReasoningEffort.deep
+    assert policy.planning_strategy == PlanningStrategy.plan_first
+    assert policy.budgets.max_tool_calls == 42
+    assert policy.verification_level.value == "strict"
 
 
 @pytest.mark.parametrize(
@@ -151,6 +196,21 @@ def test_completion_gate_requires_criteria():
         CompletionGate().evaluate(state, validation_outcomes=[passed]).state
         == TerminalState.completed
     )
+
+
+def test_basic_completion_ignores_full_contract_but_preserves_warnings_and_blockers():
+    gate = CompletionGate()
+    warning = ValidationOutcome(
+        validator="artifact_reference",
+        passed=True,
+        blocking=False,
+        warnings=["已清洗无效引用"],
+    )
+    assert gate.evaluate_basic(validation_outcomes=[warning]).state == TerminalState.completed_with_warnings
+    blocked = ValidationOutcome(validator="safety", passed=False, blocking=True)
+    decision = gate.evaluate_basic(validation_outcomes=[blocked])
+    assert decision.state == TerminalState.blocked
+    assert decision.unmet_criteria == ["validator:safety"]
 
 
 def test_completion_gate_distinguishes_waiting_failure_and_warning():
