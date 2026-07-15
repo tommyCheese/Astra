@@ -12,6 +12,7 @@ from app.db.models import (
     ConversationShareRecord,
     MemoryRecord,
     ModelInvocationRecord,
+    PlanRecord,
     RunEventRecord,
     RunRecord,
     SandboxJobRecord,
@@ -60,6 +61,8 @@ class ConversationRepository:
                 selectinload(RunRecord.tool_calls), selectinload(RunRecord.artifacts),
                 selectinload(RunRecord.events), selectinload(RunRecord.turns),
                 selectinload(RunRecord.memories), selectinload(RunRecord.sandbox_jobs),
+                selectinload(RunRecord.plans).selectinload(PlanRecord.nodes),
+                selectinload(RunRecord.plans).selectinload(PlanRecord.edges),
             )
         )
         return result.scalar_one_or_none()

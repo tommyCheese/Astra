@@ -101,6 +101,45 @@ async def test_activate_plan_starts_a_planned_run(app_client):
         assert loaded.completed_at is None
 
 
+async def test_conversation_detail_eager_loads_canonical_plan(app_client):
+    async with app_client._astra_session() as session:
+        repo = RunRepository(session)
+        run = await repo.create_task_run("读取规范计划对话", {"provider": "mock"})
+        contract = build_default_contract("读取规范计划对话")
+        plan = await PlanService(PlanRepository(session)).create(
+            run.id,
+            PlanDraft(
+                strategy=PlanningStrategy.direct,
+                nodes=[
+                    PlanNodeDraft(
+                        node_key="respond",
+                        title="生成回复",
+                        intent="回应用户",
+                        success_criteria_refs=["criterion-result"],
+                        expected_outcome=ExpectedObservation(
+                            kind="final_answer", success_condition="answer exists"
+                        ),
+                    )
+                ],
+            ),
+            contract=contract,
+        )
+        state = canonical_agent_state(contract, plan, policy_version=1)
+        await repo.initialize_reasoning_state(
+            run.id,
+            task_contract=contract.model_dump(mode="json"),
+            plan_graph=plan_to_view(plan).model_dump(mode="json"),
+            agent_state=state.model_dump(mode="json"),
+        )
+        conversation_id = run.task_id
+
+    response = await app_client.get(f"/api/conversations/{conversation_id}")
+
+    assert response.status_code == 200
+    assert response.json()["runs"][0]["plan_graph"]["id"] == plan.id
+    assert response.json()["runs"][0]["steps"][0]["node_key"] == "respond"
+
+
 async def test_create_run_rejects_invalid_agent_profile_as_configuration_error(
     app_client, monkeypatch
 ):
