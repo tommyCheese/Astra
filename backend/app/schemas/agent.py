@@ -41,6 +41,22 @@ class PlanningStrategy(str, Enum):
     plan_first = "plan_first"
 
 
+class PlanStatus(str, Enum):
+    planned = "planned"
+    active = "active"
+    superseded = "superseded"
+    completed = "completed"
+
+
+class PlanNodeStatus(str, Enum):
+    pending = "pending"
+    running = "running"
+    completed = "completed"
+    failed = "failed"
+    blocked = "blocked"
+    skipped = "skipped"
+
+
 class ReflectionTrigger(str, Enum):
     failure_only = "failure_only"
     adaptive = "adaptive"
@@ -199,6 +215,68 @@ class PlanGraph(BaseModel):
         ]
 
 
+class PlanNodeDraft(BaseModel):
+    node_key: str = Field(min_length=1, max_length=120)
+    title: str = Field(min_length=1, max_length=240)
+    intent: str = Field(min_length=1)
+    depends_on: list[str] = Field(default_factory=list)
+    required_capabilities: list[str] = Field(default_factory=list)
+    success_criteria_refs: list[str] = Field(default_factory=list)
+    expected_outcome: ExpectedObservation
+    risk_level: str = "low"
+    optional: bool = False
+
+
+class PlanDraft(BaseModel):
+    strategy: PlanningStrategy = PlanningStrategy.adaptive
+    nodes: list[PlanNodeDraft] = Field(min_length=1)
+
+
+class PlanNodeView(BaseModel):
+    id: str
+    plan_id: str
+    plan_version: int
+    node_key: str
+    index: int
+    title: str
+    intent: str
+    status: PlanNodeStatus
+    depends_on: list[str] = Field(default_factory=list)
+    required_capabilities: list[str] = Field(default_factory=list)
+    success_criteria_refs: list[str] = Field(default_factory=list)
+    expected_outcome: ExpectedObservation | None = None
+    risk_level: str = "low"
+    optional: bool = False
+    evidence_refs: list[str] = Field(default_factory=list)
+    failure: dict[str, Any] | None = None
+
+
+class PlanView(BaseModel):
+    id: str
+    run_id: str
+    version: int
+    strategy: PlanningStrategy
+    status: PlanStatus
+    supersedes_plan_id: str | None = None
+    nodes: list[PlanNodeView] = Field(default_factory=list)
+
+
+class PlanPatchOperation(BaseModel):
+    operation: str
+    node_key: str | None = None
+    node: PlanNodeDraft | None = None
+    predecessor_key: str | None = None
+    successor_key: str | None = None
+    updates: dict[str, Any] = Field(default_factory=dict)
+    reason: str | None = None
+
+
+class PlanPatch(BaseModel):
+    expected_plan_version: int = Field(ge=1)
+    reason: str
+    operations: list[PlanPatchOperation] = Field(min_length=1)
+
+
 class AcceptedFact(BaseModel):
     id: str
     statement: str
@@ -219,7 +297,11 @@ class AgentState(BaseModel):
     version: int = 1
     task_contract: TaskContract
     policy_version: int = 1
-    plan: PlanGraph
+    active_plan_id: str | None = None
+    active_plan_version: int = 0
+    active_node_id: str | None = None
+    # Read-only compatibility for Runs created before canonical Plan persistence.
+    plan: PlanGraph | None = None
     accepted_facts: list[AcceptedFact] = Field(default_factory=list)
     open_questions: list[str] = Field(default_factory=list)
     observations: list[dict[str, Any]] = Field(default_factory=list)
@@ -646,10 +728,21 @@ class EvidencePack(BaseModel):
 
 class StepView(BaseModel):
     id: str
+    plan_id: str | None = None
+    plan_version: int | None = None
+    node_key: str | None = None
     index: int
     title: str
     intent: str
     status: str
+    depends_on: list[str] = Field(default_factory=list)
+    required_capabilities: list[str] = Field(default_factory=list)
+    success_criteria_refs: list[str] = Field(default_factory=list)
+    expected_outcome: ExpectedObservation | None = None
+    risk_level: str = "low"
+    optional: bool = False
+    evidence_refs: list[str] = Field(default_factory=list)
+    failure: dict[str, Any] | None = None
     evidence: dict[str, Any] | None = None
     started_at: datetime | None = None
     completed_at: datetime | None = None
@@ -658,6 +751,7 @@ class StepView(BaseModel):
 class ToolCallView(BaseModel):
     id: str
     step_id: str | None
+    plan_node_id: str | None = None
     tool_name: str
     tool_version: str
     input: dict[str, Any]
@@ -681,6 +775,7 @@ class ArtifactView(BaseModel):
     checksum: str | None = None
     security_status: str = "pending"
     tool_call_id: str | None = None
+    plan_node_id: str | None = None
     sandbox_job_id: str | None = None
     provenance: dict[str, Any] = Field(default_factory=dict)
     content_url: str | None = None
@@ -697,6 +792,7 @@ class RunEventView(BaseModel):
 class AgentTurnView(BaseModel):
     id: str
     run_id: str
+    plan_node_id: str | None = None
     turn_index: int
     decision_type: str
     reasoning_summary: str

@@ -8,6 +8,7 @@ from typing import Any
 from app.artifacts import ArtifactService, LocalArtifactStore
 from app.core.config import Settings
 from app.repositories.runs import RunRepository
+from app.repositories.plans import PlanRepository, plan_to_view
 from app.runner.adapters import ChartTaskAdapter, ProcessorRegistry, WebTaskAdapter
 from app.runner.model_client import ModelClient, ModelOutputError
 from app.runner.reasoning import (
@@ -18,6 +19,7 @@ from app.runner.reasoning import (
     apply_validation_outcomes,
     failure_fingerprint,
 )
+from app.runner.planning import PlanScheduler, PlanService, PlanStateError
 from app.sandbox.docker_provider import build_sandbox_provider
 from app.sandbox.runtime import SandboxJobService, SandboxSupervisor
 from app.schemas.agent import (
@@ -30,6 +32,10 @@ from app.schemas.agent import (
     ValidationIssue,
     ValidationOutcome,
     VerificationReport,
+    ExpectedObservation,
+    EvaluationOutcome,
+    PlanNodeStatus,
+    PlanPatch,
 )
 from app.tools.base import (
     CapabilityAvailability,
@@ -180,6 +186,13 @@ class ContextAssembler:
     ) -> dict[str, Any]:
         memories = await self.repo.list_memories(run_id=run_id, min_confidence=0.0, limit=8)
         run = await self.repo.require_run(run_id)
+        plan = await PlanRepository(self.repo.session).active_for_run(run_id)
+        plan_view = plan_to_view(plan).model_dump(mode="json") if plan else run.plan_graph or {}
+        active_node_id = (run.agent_state or {}).get("active_node_id")
+        active_node = next(
+            (item for item in plan_view.get("nodes", []) if item.get("id") == active_node_id),
+            None,
+        )
         specs, unavailable = tool_registry.specs(), {}
         if tool_router is not None:
             specs, unavailable = tool_router.eligible_specs()
@@ -203,7 +216,8 @@ class ContextAssembler:
             ],
             "reasoning_policy": run.reasoning_policy or {},
             "task_contract": run.task_contract or {},
-            "plan_graph": run.plan_graph or {},
+            "plan_graph": plan_view,
+            "active_node": active_node,
             "agent_state": run.agent_state or {},
         }
 

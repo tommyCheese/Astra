@@ -15,16 +15,16 @@ from app.core.errors import run_error_from_exception
 from app.db.models import RunRecord
 from app.db.session import SessionLocal
 from app.repositories.runs import RunRepository
+from app.repositories.plans import PlanRepository, plan_to_view
 from app.runner.agent_loop import AgentLoop
 from app.runner.model_client import ModelConfigurationError, ModelOutputError, build_model_client
 from app.runner.reasoning import (
     build_default_contract,
-    build_plan_graph,
     normalize_contract,
     validate_contract,
 )
+from app.runner.planning import PlanService, canonical_agent_state, plan_output_to_draft
 from app.schemas.agent import (
-    AgentState,
     FinalAnswer,
     PlanOutput,
     PlanStep,
@@ -132,38 +132,49 @@ class RunEngine:
             len(plan.steps),
             len(plan.required_tools),
         )
-        await self._persist_plan(repo, run_id, plan)
         run = await repo.require_run(run_id)
         snapshot = ReasoningPolicySnapshot.model_validate(run.reasoning_policy or {})
+        contract = contract or build_default_contract(goal)
+        draft = plan_output_to_draft(
+            plan,
+            strategy=snapshot.effective.planning_strategy,
+            contract=contract,
+        )
+        capabilities = set(self.tool_registry.specs())
+        for spec in self.tool_registry.specs().values():
+            capabilities.update(spec.capabilities)
+        canonical_plan = await PlanService(PlanRepository(repo.session)).create(
+            run_id,
+            draft,
+            contract=contract,
+            capabilities=capabilities,
+            budgets=snapshot.effective.budgets,
+            activate=snapshot.effective.execution_mode.value != "plan_only",
+        )
+        await repo.session.commit()
         if snapshot.effective.execution_mode.value == "plan_only":
             await self._complete_plan_only(repo, run_id, plan)
             return
 
-        if contract:
-            graph = build_plan_graph(
-                contract,
-                snapshot.effective.planning_strategy,
-                [step.model_dump() for step in plan.steps],
+        state = canonical_agent_state(contract, canonical_plan, policy_version=snapshot.version)
+        if not run.state_version:
+            await repo.initialize_reasoning_state(
+                run_id,
+                task_contract=contract.model_dump(mode="json"),
+                plan_graph=plan_to_view(canonical_plan).model_dump(mode="json"),
+                agent_state=state.model_dump(mode="json"),
             )
-            state = AgentState(task_contract=contract, policy_version=snapshot.version, plan=graph)
-            if not run.state_version:
-                await repo.initialize_reasoning_state(
-                    run_id,
-                    task_contract=contract.model_dump(mode="json"),
-                    plan_graph=graph.model_dump(mode="json"),
-                    agent_state=state.model_dump(mode="json"),
-                )
-            if contract.ambiguity_status != "clear":
-                await repo.set_waiting_state(
-                    run_id,
-                    {
-                        "paused_node": "build_contract",
-                        "state_version": state.version,
-                        "plan_version": graph.version,
-                        "request": contract.clarification_question,
-                    },
-                )
-                return
+        if contract.ambiguity_status != "clear":
+            await repo.set_waiting_state(
+                run_id,
+                {
+                    "paused_node": "build_contract",
+                    "state_version": state.version,
+                    "plan_version": canonical_plan.version,
+                    "request": contract.clarification_question,
+                },
+            )
+            return
 
         await self._execute_agent_loop(repo, run_id, goal)
 
@@ -252,7 +263,6 @@ class RunEngine:
             "caveats": ["当前运行使用仅规划模式。"],
             "verification_notes": ["已在执行前停止。"],
         }
-        await self._complete_pending_steps(repo, run_id)
         await self._emit_answer_stream(repo, run_id, summary)
         await repo.update_run_status(run_id, "completed", summary=summary, result=result)
         logger.info(

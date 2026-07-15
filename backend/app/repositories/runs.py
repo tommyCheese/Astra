@@ -11,6 +11,7 @@ from app.db.models import (
     ArtifactRecord,
     MemoryRecord,
     ModelInvocationRecord,
+    PlanRecord,
     RunEventRecord,
     RunRecord,
     SandboxJobRecord,
@@ -221,6 +222,8 @@ class RunRepository:
                 selectinload(RunRecord.turns),
                 selectinload(RunRecord.memories),
                 selectinload(RunRecord.sandbox_jobs),
+                selectinload(RunRecord.plans).selectinload(PlanRecord.nodes),
+                selectinload(RunRecord.plans).selectinload(PlanRecord.edges),
             )
         )
         return result.scalar_one_or_none()
@@ -243,6 +246,8 @@ class RunRepository:
                 selectinload(RunRecord.turns),
                 selectinload(RunRecord.memories),
                 selectinload(RunRecord.sandbox_jobs),
+                selectinload(RunRecord.plans).selectinload(PlanRecord.nodes),
+                selectinload(RunRecord.plans).selectinload(PlanRecord.edges),
             )
         )
         return list(result.scalars().all())
@@ -427,10 +432,13 @@ class RunRepository:
         tool_input: dict[str, Any],
         permission: str,
         side_effect_level: str,
+        *,
+        plan_node_id: str | None = None,
     ) -> ToolCallRecord:
         call = ToolCallRecord(
             run_id=run_id,
             step_id=step_id,
+            plan_node_id=plan_node_id,
             tool_name=tool_name,
             tool_version=tool_version,
             input=tool_input,
@@ -444,7 +452,12 @@ class RunRepository:
         await self.add_event(
             run_id,
             "tool_call.started",
-            {"tool_call_id": call.id, "step_id": step_id, "tool_name": tool_name},
+            {
+                "tool_call_id": call.id,
+                "step_id": step_id,
+                "plan_node_id": plan_node_id,
+                "tool_name": tool_name,
+            },
         )
         await self.session.commit()
         return call
@@ -491,6 +504,7 @@ class RunRepository:
         storage_key: str | None = None,
         security_status: str = "pending",
         provenance: dict[str, Any] | None = None,
+        plan_node_id: str | None = None,
     ) -> ArtifactRecord:
         artifact = ArtifactRecord(
             run_id=run_id,
@@ -499,6 +513,7 @@ class RunRepository:
             content_ref=content_ref,
             metadata_=metadata or {},
             tool_call_id=tool_call_id,
+            plan_node_id=plan_node_id,
             sandbox_job_id=sandbox_job_id,
             mime_type=mime_type,
             size_bytes=size_bytes,
@@ -603,10 +618,12 @@ class RunRepository:
         plan_version: int = 1,
         phase: str = "created",
         idempotency_key: str | None = None,
+        plan_node_id: str | None = None,
     ) -> AgentTurnRecord:
         now = utc_now()
         turn = AgentTurnRecord(
             run_id=run_id,
+            plan_node_id=plan_node_id,
             turn_index=turn_index,
             decision_type=decision_type,
             reasoning_summary=reasoning_summary,
@@ -810,11 +827,51 @@ class RunRepository:
 
 
 def run_to_view(run: RunRecord) -> dict[str, Any]:
+    from app.repositories.plans import plan_to_view
+
     result_payload = None
     if run.result is not None:
         raw_result = dict(run.result) if isinstance(run.result, dict) else {}
         raw_result.setdefault("summary", run.summary or "")
         result_payload = RunResult.model_validate(raw_result).model_dump(mode="json")
+    active_plan = next(
+        (plan for plan in getattr(run, "plans", []) if plan.id == run.active_plan_id), None
+    )
+    plan_view = plan_to_view(active_plan) if active_plan is not None else None
+    canonical_steps = (
+        [
+            {
+                "id": node.id,
+                "plan_id": node.plan_id,
+                "plan_version": node.plan_version,
+                "node_key": node.node_key,
+                "index": node.index,
+                "title": node.title,
+                "intent": node.intent,
+                "status": node.status.value,
+                "depends_on": node.depends_on,
+                "required_capabilities": node.required_capabilities,
+                "success_criteria_refs": node.success_criteria_refs,
+                "expected_outcome": node.expected_outcome.model_dump(mode="json")
+                if node.expected_outcome
+                else None,
+                "risk_level": node.risk_level,
+                "optional": node.optional,
+                "evidence_refs": node.evidence_refs,
+                "evidence": {"refs": node.evidence_refs} if node.evidence_refs else None,
+                "failure": node.failure,
+                "started_at": next(
+                    item.started_at for item in active_plan.nodes if item.id == node.id
+                ),
+                "completed_at": next(
+                    item.completed_at for item in active_plan.nodes if item.id == node.id
+                ),
+            }
+            for node in plan_view.nodes
+        ]
+        if plan_view
+        else None
+    )
     return {
         "id": run.id,
         "task_id": run.task_id,
@@ -822,13 +879,14 @@ def run_to_view(run: RunRecord) -> dict[str, Any]:
         "mode": run.mode,
         "summary": run.summary,
         "result": result_payload,
-        "steps": [
+        "steps": canonical_steps or [
             {
                 "id": step.id,
                 "index": step.index,
                 "title": step.title,
                 "intent": step.intent,
                 "status": step.status,
+                "depends_on": step.depends_on or [],
                 "evidence": step.evidence,
                 "started_at": step.started_at,
                 "completed_at": step.completed_at,
@@ -839,6 +897,7 @@ def run_to_view(run: RunRecord) -> dict[str, Any]:
             {
                 "id": call.id,
                 "step_id": call.step_id,
+                "plan_node_id": call.plan_node_id,
                 "tool_name": call.tool_name,
                 "tool_version": call.tool_version,
                 "input": call.input,
@@ -864,6 +923,7 @@ def run_to_view(run: RunRecord) -> dict[str, Any]:
                 "checksum": artifact.checksum,
                 "security_status": artifact.security_status,
                 "tool_call_id": artifact.tool_call_id,
+                "plan_node_id": artifact.plan_node_id,
                 "sandbox_job_id": artifact.sandbox_job_id,
                 "provenance": artifact.provenance,
                 "content_url": f"/api/artifacts/{artifact.id}/content"
@@ -908,6 +968,7 @@ def run_to_view(run: RunRecord) -> dict[str, Any]:
             {
                 "id": turn.id,
                 "run_id": turn.run_id,
+                "plan_node_id": turn.plan_node_id,
                 "turn_index": turn.turn_index,
                 "decision_type": turn.decision_type,
                 "reasoning_summary": turn.reasoning_summary,
@@ -952,7 +1013,7 @@ def run_to_view(run: RunRecord) -> dict[str, Any]:
         "chat_messages": build_chat_messages(run),
         "reasoning_policy": run.reasoning_policy or {},
         "task_contract": run.task_contract or {},
-        "plan_graph": run.plan_graph or {},
+        "plan_graph": plan_view.model_dump(mode="json") if plan_view else run.plan_graph or {},
         "agent_state": run.agent_state or {},
         "state_version": run.state_version or 0,
         "terminal_reason": run.terminal_reason,

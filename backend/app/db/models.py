@@ -109,6 +109,7 @@ class RunRecord(Base):
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     current_step_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    active_plan_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     summary: Mapped[str | None] = mapped_column(Text, nullable=True)
     result: Mapped[dict | None] = mapped_column(JsonType, nullable=True)
     reasoning_policy: Mapped[dict] = mapped_column(JsonType, default=dict)
@@ -137,6 +138,99 @@ class RunRecord(Base):
     memories: Mapped[list["MemoryRecord"]] = relationship(back_populates="run")
     sandbox_jobs: Mapped[list["SandboxJobRecord"]] = relationship(back_populates="run")
     model_invocations: Mapped[list["ModelInvocationRecord"]] = relationship(back_populates="run")
+    plans: Mapped[list["PlanRecord"]] = relationship(
+        back_populates="run", foreign_keys="PlanRecord.run_id", order_by="PlanRecord.version"
+    )
+
+
+class PlanRecord(Base):
+    __tablename__ = "plans"
+    __table_args__ = (
+        UniqueConstraint("run_id", "version", name="uq_plans_run_version"),
+        Index("ix_plans_run_status", "run_id", "status"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_str)
+    run_id: Mapped[str] = mapped_column(ForeignKey("runs.id"))
+    version: Mapped[int] = mapped_column(Integer)
+    strategy: Mapped[str] = mapped_column(String(40))
+    status: Mapped[str] = mapped_column(String(40), default="planned")
+    supersedes_plan_id: Mapped[str | None] = mapped_column(
+        ForeignKey("plans.id"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    activated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    run: Mapped[RunRecord] = relationship(back_populates="plans", foreign_keys=[run_id])
+    nodes: Mapped[list["PlanNodeRecord"]] = relationship(
+        back_populates="plan", order_by="PlanNodeRecord.index", cascade="all, delete-orphan"
+    )
+    edges: Mapped[list["PlanEdgeRecord"]] = relationship(
+        back_populates="plan", cascade="all, delete-orphan"
+    )
+
+
+class PlanNodeRecord(Base):
+    __tablename__ = "plan_nodes"
+    __table_args__ = (
+        UniqueConstraint("plan_id", "node_key", name="uq_plan_nodes_plan_key"),
+        UniqueConstraint("plan_id", "index", name="uq_plan_nodes_plan_index"),
+        Index("ix_plan_nodes_plan_status", "plan_id", "status"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_str)
+    plan_id: Mapped[str] = mapped_column(ForeignKey("plans.id"))
+    node_key: Mapped[str] = mapped_column(String(120))
+    index: Mapped[int] = mapped_column(Integer)
+    title: Mapped[str] = mapped_column(String(240))
+    intent: Mapped[str] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(40), default="pending")
+    required_capabilities: Mapped[list] = mapped_column(JsonType, default=list)
+    success_criteria_refs: Mapped[list] = mapped_column(JsonType, default=list)
+    expected_outcome: Mapped[dict] = mapped_column(JsonType, default=dict)
+    risk_level: Mapped[str] = mapped_column(String(40), default="low")
+    optional: Mapped[bool] = mapped_column(Boolean, default=False)
+    evidence_refs: Mapped[list] = mapped_column(JsonType, default=list)
+    failure: Mapped[dict | None] = mapped_column(JsonType, nullable=True)
+    lineage_node_id: Mapped[str | None] = mapped_column(
+        ForeignKey("plan_nodes.id"), nullable=True
+    )
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    plan: Mapped[PlanRecord] = relationship(back_populates="nodes", foreign_keys=[plan_id])
+    outgoing_edges: Mapped[list["PlanEdgeRecord"]] = relationship(
+        back_populates="predecessor", foreign_keys="PlanEdgeRecord.predecessor_id"
+    )
+    incoming_edges: Mapped[list["PlanEdgeRecord"]] = relationship(
+        back_populates="successor", foreign_keys="PlanEdgeRecord.successor_id"
+    )
+    tool_calls: Mapped[list["ToolCallRecord"]] = relationship(back_populates="plan_node")
+
+
+class PlanEdgeRecord(Base):
+    __tablename__ = "plan_edges"
+    __table_args__ = (
+        UniqueConstraint(
+            "plan_id", "predecessor_id", "successor_id", name="uq_plan_edges_nodes"
+        ),
+        Index("ix_plan_edges_successor", "successor_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_str)
+    plan_id: Mapped[str] = mapped_column(ForeignKey("plans.id"))
+    predecessor_id: Mapped[str] = mapped_column(ForeignKey("plan_nodes.id"))
+    successor_id: Mapped[str] = mapped_column(ForeignKey("plan_nodes.id"))
+    dependency_type: Mapped[str] = mapped_column(String(40), default="hard")
+
+    plan: Mapped[PlanRecord] = relationship(back_populates="edges")
+    predecessor: Mapped[PlanNodeRecord] = relationship(
+        back_populates="outgoing_edges", foreign_keys=[predecessor_id]
+    )
+    successor: Mapped[PlanNodeRecord] = relationship(
+        back_populates="incoming_edges", foreign_keys=[successor_id]
+    )
 
 
 class ModelInvocationRecord(Base):
@@ -198,6 +292,9 @@ class ToolCallRecord(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_str)
     run_id: Mapped[str] = mapped_column(ForeignKey("runs.id"))
     step_id: Mapped[str | None] = mapped_column(ForeignKey("steps.id"), nullable=True)
+    plan_node_id: Mapped[str | None] = mapped_column(
+        ForeignKey("plan_nodes.id"), nullable=True
+    )
     tool_name: Mapped[str] = mapped_column(String(120))
     tool_version: Mapped[str] = mapped_column(String(40))
     input: Mapped[dict] = mapped_column(JsonType)
@@ -211,6 +308,7 @@ class ToolCallRecord(Base):
 
     run: Mapped[RunRecord] = relationship(back_populates="tool_calls")
     step: Mapped[StepRecord | None] = relationship(back_populates="tool_calls")
+    plan_node: Mapped[PlanNodeRecord | None] = relationship(back_populates="tool_calls")
 
 
 class ArtifactRecord(Base):
@@ -222,6 +320,9 @@ class ArtifactRecord(Base):
     path: Mapped[str | None] = mapped_column(String(500), nullable=True)
     content_ref: Mapped[str | None] = mapped_column(Text, nullable=True)
     tool_call_id: Mapped[str | None] = mapped_column(ForeignKey("tool_calls.id"), nullable=True)
+    plan_node_id: Mapped[str | None] = mapped_column(
+        ForeignKey("plan_nodes.id"), nullable=True
+    )
     sandbox_job_id: Mapped[str | None] = mapped_column(ForeignKey("sandbox_jobs.id"), nullable=True)
     mime_type: Mapped[str | None] = mapped_column(String(160), nullable=True)
     size_bytes: Mapped[int] = mapped_column(Integer, default=0)
@@ -280,6 +381,9 @@ class AgentTurnRecord(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_str)
     run_id: Mapped[str] = mapped_column(ForeignKey("runs.id"))
+    plan_node_id: Mapped[str | None] = mapped_column(
+        ForeignKey("plan_nodes.id"), nullable=True
+    )
     turn_index: Mapped[int] = mapped_column(Integer)
     decision_type: Mapped[str] = mapped_column(String(40))
     reasoning_summary: Mapped[str] = mapped_column(Text)
