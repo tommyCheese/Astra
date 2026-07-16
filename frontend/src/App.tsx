@@ -917,7 +917,7 @@ function Sidebar({ open, run, activeConversationId, conversations, activeView, o
   }, [menuId]);
 
   const renderConversation = (conversation: ConversationEntry) => <div className={`history-item ${activeConversationId === conversation.id ? 'active' : ''}`} key={conversation.id} ref={menuId === conversation.id ? menuRootRef : undefined}>
-    <button className="history-select" type="button" onClick={() => { setMenuId(null); onSelectConversation(conversation); }}><Icon name="message" /><span>{conversation.title ?? (conversation.run ? conversationTitle(conversation.run, t('当前 Web Agent 会话')) : t('未命名对话'))}</span><small>{conversation.run ? statusLabel(conversation.run.status) : ''}</small></button>
+    <button className="history-select" type="button" onClick={() => { setMenuId(null); onSelectConversation(conversation); }}><Icon name="message" /><span>{conversation.title ?? (conversation.run ? conversationTitle(conversation.run, t('当前 Web Agent 会话')) : t('未命名对话'))}</span></button>
     <button className="history-more" type="button" aria-label={`${t('更多操作')} ${conversation.title ?? ''}`} aria-expanded={menuId === conversation.id} aria-haspopup="menu" onClick={(event) => { event.stopPropagation(); setMenuId((current) => current === conversation.id ? null : conversation.id); }}>•••</button>
     {menuId === conversation.id && <div className="history-menu" role="menu">
       <button role="menuitem" type="button" onClick={() => { setMenuId(null); onConversationAction('rename', conversation); }}>{t('重命名')}</button>

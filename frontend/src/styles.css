@@ -543,10 +543,9 @@ p {
 
 .history-group-title { color: #7d8997; font-size: 10px; font-weight: 700; letter-spacing: .08em; padding: 9px 10px 3px; text-transform: uppercase; }
 .history-item { align-items: center; display: flex; overflow: visible; padding: 0; position: relative; }
-.history-select { align-items: center; background: transparent; border: 0; color: inherit; display: grid; flex: 1; gap: 8px; grid-template-columns: 20px minmax(0, 1fr) 78px; min-height: 42px; min-width: 0; padding: 8px 34px 8px 10px; text-align: left; }
+.history-select { align-items: center; background: transparent; border: 0; color: inherit; display: grid; flex: 1; gap: 8px; grid-template-columns: 20px minmax(0, 1fr); min-height: 42px; min-width: 0; padding: 8px 34px 8px 10px; text-align: left; }
 .history-select > .ui-icon { justify-self: center; }
 .history-select span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.history-select small { justify-self: end; max-width: 78px; text-align: right; }
 .history-more { align-items: center; background: transparent; border: 0; border-radius: 7px; color: #788493; cursor: pointer; display: flex; font-size: 11px; height: 28px; justify-content: center; line-height: 1; opacity: 0; padding: 0; position: absolute; right: 4px; width: 28px; z-index: 2; }
 .history-item:hover .history-more, .history-more:focus, .history-more[aria-expanded="true"] { opacity: 1; }
 .history-menu { background: rgba(255,255,255,.98); border: 1px solid rgba(109,124,142,.2); border-radius: 10px; box-shadow: 0 12px 30px rgba(35,45,58,.18); display: grid; min-width: 132px; padding: 5px; position: absolute; right: 5px; top: 34px; z-index: 40; }
