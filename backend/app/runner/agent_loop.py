@@ -10,6 +10,7 @@ from app.core.config import Settings
 from app.repositories.plans import PlanRepository, plan_to_view
 from app.repositories.runs import RunRepository
 from app.runner.adapters import ChartTaskAdapter, ProcessorRegistry, WebTaskAdapter
+from app.runner.approvals import ApprovalPolicy, input_hash, safe_preview, similar_matcher
 from app.runner.model_client import ModelClient, ModelOutputError
 from app.runner.planning import PlanScheduler, PlanService
 from app.runner.reasoning import (
@@ -24,6 +25,7 @@ from app.runner.runtime import LoopOrchestrator, NoProgressDetector
 from app.sandbox.docker_provider import build_sandbox_provider
 from app.sandbox.runtime import SandboxJobService, SandboxSupervisor
 from app.schemas.agent import (
+    AgentDecision,
     AgentObservation,
     AgentState,
     AnswerMode,
@@ -116,13 +118,15 @@ class ToolRouter:
             "network_read",
             "sandboxed_compute",
             "artifact_write",
+            "command_execute",
         }
         self.allowed_permissions = allowed_permissions or {
             "network_read",
             "sandboxed_compute",
             "artifact_write",
+            "command_execute",
         }
-        self.allowed_risks = allowed_risks or {"low", "sandboxed"}
+        self.allowed_risks = allowed_risks or {"low", "sandboxed", "high"}
         self.available_backends = available_backends or {"in_process"}
 
     def resolve(self, tool_name: str | None, tool_input: dict[str, Any]):
@@ -446,6 +450,31 @@ class AgentLoop:
         reflection_count = 0
         replan_count = 0
         active_node = None
+        approved_call = await repo.get_approved_tool_call(run_id)
+        if approved_call is not None and (
+            approved_call.approval_request is None
+            or approved_call.approval_request.status != "approved"
+            or approved_call.approval_request.input_hash != input_hash(approved_call.input)
+            or approved_call.approval_request.frozen_input != approved_call.input
+        ):
+            await repo.finish_tool_call(
+                approved_call.id,
+                error={
+                    "category": "approval_integrity_error",
+                    "message": "Approved tool input no longer matches the frozen action",
+                },
+            )
+            raise ToolExecutionError(
+                "approval_integrity_error", "Approved tool input failed integrity validation"
+            )
+        approved_turn = (
+            next(
+                (turn for turn in initial_run.turns if turn.tool_call_id == approved_call.id),
+                None,
+            )
+            if approved_call is not None
+            else None
+        )
         if initial_run.turns:
             checkpoint = sorted(initial_run.turns, key=lambda item: item.turn_index)[-1]
             call = next(
@@ -746,7 +775,7 @@ class AgentLoop:
             )
             await repo.session.commit()
 
-        start_turn_index = len(initial_run.turns) + 1
+        start_turn_index = approved_turn.turn_index if approved_turn is not None else len(initial_run.turns) + 1
         for turn_index in range(start_turn_index, max_turns + 1):
             if terminal_override == "waiting_user":
                 break
@@ -848,18 +877,28 @@ class AgentLoop:
                     reasoning_last_flush = now
                     await repo.session.commit()
 
+            forced_action = approved_call is not None and approved_turn is not None
             try:
-                decision, candidate_answer = await self.model_client.decide_with_answer(
-                    goal,
-                    context,
-                    # A node-level answer is provisional. Only stream after the
-                    # canonical plan has no active node left, otherwise a model
-                    # could expose an intermediate node result as the task answer.
-                    on_delta=on_answer_delta
-                    if canonical_plan is None or active_node is None
-                    else None,
-                    on_reasoning_delta=None if quick_mode else on_reasoning_delta,
-                )
+                if forced_action:
+                    decision = AgentDecision.model_validate(approved_turn.decision).model_copy(
+                        update={
+                            "tool_name": approved_call.tool_name,
+                            "tool_input": dict(approved_call.input),
+                        }
+                    )
+                    candidate_answer = None
+                else:
+                    decision, candidate_answer = await self.model_client.decide_with_answer(
+                        goal,
+                        context,
+                        # A node-level answer is provisional. Only stream after the
+                        # canonical plan has no active node left, otherwise a model
+                        # could expose an intermediate node result as the task answer.
+                        on_delta=on_answer_delta
+                        if canonical_plan is None or active_node is None
+                        else None,
+                        on_reasoning_delta=None if quick_mode else on_reasoning_delta,
+                    )
             except ModelOutputError as exc:
                 logger.exception("agent.decision.invalid run_id=%s turn=%s", run_id, turn_index)
                 if on_answer_delta:
@@ -982,20 +1021,23 @@ class AgentLoop:
                     ensure_ascii=False,
                 )
                 idempotency_key = hashlib.sha256(encoded.encode()).hexdigest()
-            turn = await repo.create_agent_turn(
-                run_id,
-                turn_index,
-                decision.decision_type,
-                decision.reasoning_summary,
-                selected_tool=decision.tool_name,
-                decision=decision.model_dump(),
-                memory_reads=context["memory_reads"],
-                state_version_before=(await repo.require_run(run_id)).state_version,
-                plan_version=((await repo.require_run(run_id)).plan_graph or {}).get("version", 1),
-                phase="prepared" if decision.decision_type == "call_tool" else "created",
-                idempotency_key=idempotency_key,
-                plan_node_id=active_node.id if active_node is not None else None,
-            )
+            if forced_action:
+                turn = approved_turn
+            else:
+                turn = await repo.create_agent_turn(
+                    run_id,
+                    turn_index,
+                    decision.decision_type,
+                    decision.reasoning_summary,
+                    selected_tool=decision.tool_name,
+                    decision=decision.model_dump(),
+                    memory_reads=context["memory_reads"],
+                    state_version_before=(await repo.require_run(run_id)).state_version,
+                    plan_version=((await repo.require_run(run_id)).plan_graph or {}).get("version", 1),
+                    phase="prepared" if decision.decision_type == "call_tool" else "created",
+                    idempotency_key=idempotency_key,
+                    plan_node_id=active_node.id if active_node is not None else None,
+                )
             if disallowed_tool_observation is not None:
                 observations.append(disallowed_tool_observation.model_dump(mode="json"))
                 await repo.update_agent_turn(
@@ -1300,17 +1342,75 @@ class AgentLoop:
                 )
                 if canonical_plan is None and step is not None:
                     await repo.update_step(step.id, "running")
-                call = await repo.start_tool_call(
-                    run_id,
-                    step.id if canonical_plan is None and step is not None else None,
-                    tool.spec.name,
-                    tool.spec.version,
-                    decision.tool_input,
-                    tool.spec.permission,
-                    tool.spec.side_effect_level,
-                    plan_node_id=step.id if canonical_plan is not None else None,
-                )
-                tool_call_count += 1
+                if forced_action:
+                    call = approved_call
+                    await repo.transition_tool_call(call.id, "running")
+                    approved_call = None
+                    approved_turn = None
+                    tool_call_count += 1
+                else:
+                    grants = await repo.list_approval_grants(
+                        run_id, tool.spec.name, tool.spec.version
+                    )
+                    approval = ApprovalPolicy().evaluate(
+                        policy.execution_mode, decision.tool_input, grants
+                    )
+                    if not approval.approved:
+                        call = await repo.start_tool_call(
+                            run_id,
+                            step.id if canonical_plan is None and step is not None else None,
+                            tool.spec.name,
+                            tool.spec.version,
+                            decision.tool_input,
+                            tool.spec.permission,
+                            tool.spec.side_effect_level,
+                            plan_node_id=step.id if canonical_plan is not None else None,
+                            status="awaiting_approval",
+                        )
+                        request = await repo.create_approval_request(
+                            run_id=run_id,
+                            turn_id=turn.id,
+                            tool_call_id=call.id,
+                            tool_name=tool.spec.name,
+                            tool_version=tool.spec.version,
+                            frozen_input=decision.tool_input,
+                            input_hash=input_hash(decision.tool_input),
+                            preview=safe_preview(tool.spec.name, decision.tool_input),
+                            permission=tool.spec.permission,
+                            impact=tool.spec.side_effect_level,
+                            similar_matcher=similar_matcher(tool.spec.name, decision.tool_input),
+                        )
+                        await repo.update_agent_turn(
+                            turn.id,
+                            status="waiting_user",
+                            phase="awaiting_approval",
+                            paused_node="policy_gate",
+                            tool_call_id=call.id,
+                        )
+                        terminal_override = "waiting_user"
+                        terminal_summary = f"等待批准工具调用：{tool.spec.name}"
+                        await repo.set_waiting_state(
+                            run_id,
+                            {
+                                "kind": "tool_approval",
+                                "approval_id": request.id,
+                                "tool_call_id": call.id,
+                                "paused_node": "policy_gate",
+                                "request": terminal_summary,
+                            },
+                        )
+                        break
+                    call = await repo.start_tool_call(
+                        run_id,
+                        step.id if canonical_plan is None and step is not None else None,
+                        tool.spec.name,
+                        tool.spec.version,
+                        decision.tool_input,
+                        tool.spec.permission,
+                        tool.spec.side_effect_level,
+                        plan_node_id=step.id if canonical_plan is not None else None,
+                    )
+                    tool_call_count += 1
                 await repo.update_agent_turn(turn.id, phase="executing", tool_call_id=call.id)
                 try:
                     execution_context = ToolExecutionContext(
@@ -1675,7 +1775,15 @@ class AgentLoop:
                 unmet_criteria=[f"validator:{item.validator}" for item in blocking],
                 warnings=outcome_warnings,
             )
-        if terminal_override == "blocked":
+        if terminal_override == "waiting_user":
+            gate_decision = gate_decision.model_copy(
+                update={
+                    "state": TerminalState.waiting_user,
+                    "reason": terminal_summary or gate_decision.reason,
+                    "required_user_action": terminal_summary,
+                }
+            )
+        elif terminal_override == "blocked":
             gate_decision = gate_decision.model_copy(
                 update={
                     "state": TerminalState.blocked,

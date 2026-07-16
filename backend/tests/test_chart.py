@@ -5,8 +5,9 @@ from app.core.config import Settings
 from app.repositories.runs import RunRepository
 from app.runner.agent_loop import AgentLoop
 from app.runner.model_client import MockModelClient
+from app.runner.reasoning import PolicyCompiler
 from app.sandbox.runtime import SandboxHandle, SandboxProvider, SandboxResult
-from app.schemas.agent import AgentDecision, FinalAnswer
+from app.schemas.agent import AgentDecision, FinalAnswer, RequestedReasoningPolicy
 from app.tools.chart import ChartRequest, select_backend
 from app.tools.registry import build_tool_registry
 
@@ -128,7 +129,14 @@ async def test_chart_only_agent_run_creates_sandbox_artifact_without_web_evidenc
         artifact_store_path=str(tmp_path / "store"),
     )
     repo = RunRepository(session)
-    run = await repo.create_task_run("生成折线图", settings.model_policy)
+    policy = PolicyCompiler().compile(
+        RequestedReasoningPolicy(execution_mode="auto_approval")
+    )
+    run = await repo.create_task_run(
+        "生成折线图",
+        settings.model_policy,
+        reasoning_policy=policy.model_dump(mode="json"),
+    )
     registry = build_tool_registry(settings)
     output = await AgentLoop(
         settings,

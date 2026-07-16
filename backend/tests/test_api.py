@@ -172,15 +172,26 @@ async def test_tool_settings_can_be_read_and_updated(app_client):
         "web_search",
         "web_fetch",
         "chart_render",
+        "bash_execute",
     }
 
     updated = await app_client.put(
         "/api/tools",
-        json={"web_search": False, "web_fetch": True, "chart_render": False},
+        json={
+            "web_search": False,
+            "web_fetch": True,
+            "chart_render": False,
+            "bash_execute": True,
+        },
     )
     assert updated.status_code == 200
     states = {tool["name"]: tool["enabled"] for tool in updated.json()["tools"]}
-    assert states == {"web_search": False, "web_fetch": True, "chart_render": False}
+    assert states == {
+        "web_search": False,
+        "web_fetch": True,
+        "chart_render": False,
+        "bash_execute": True,
+    }
     reloaded = await app_client.get("/api/tools")
     persisted = {tool["name"]: tool["enabled"] for tool in reloaded.json()["tools"]}
     assert persisted == states
@@ -606,6 +617,73 @@ async def test_create_run_defaults_to_standard_profile(app_client):
     assert body["reasoning_policy"]["effective"]["planning_strategy"] == "adaptive"
     assert body["reasoning_policy"]["effective"]["reflection_enabled"] is False
     assert body["reasoning_policy"]["effective"]["budgets"]["max_tool_calls"] == 5
+
+
+async def test_tool_approval_decision_api_consumes_token_once(app_client):
+    async with app_client._astra_session() as session:
+        repo = RunRepository(session)
+        run = await repo.create_task_run("批准命令", {"provider": "mock"})
+        turn = await repo.create_agent_turn(
+            run.id,
+            1,
+            "call_tool",
+            "执行命令",
+            selected_tool="bash_execute",
+            decision={
+                "decision_type": "call_tool",
+                "reasoning_summary": "执行命令",
+                "tool_name": "bash_execute",
+                "tool_input": {"command": "printf ok"},
+            },
+            phase="prepared",
+        )
+        call = await repo.start_tool_call(
+            run.id,
+            None,
+            "bash_execute",
+            "1.0",
+            {"command": "printf ok"},
+            "command_execute",
+            "external_side_effect",
+            status="awaiting_approval",
+        )
+        await repo.update_agent_turn(turn.id, tool_call_id=call.id, phase="awaiting_approval")
+        approval = await repo.create_approval_request(
+            run_id=run.id,
+            turn_id=turn.id,
+            tool_call_id=call.id,
+            tool_name="bash_execute",
+            tool_version="1.0",
+            frozen_input={"command": "printf ok"},
+            input_hash="hash",
+            preview="printf ok",
+            permission="command_execute",
+            impact="external_side_effect",
+            similar_matcher={"kind": "command_prefix", "tokens": ["printf"]},
+        )
+        waiting = await repo.set_waiting_state(
+            run.id,
+            {"kind": "tool_approval", "approval_id": approval.id, "tool_call_id": call.id},
+        )
+        token = waiting.waiting_state["continuation_token"]
+        run_id = run.id
+
+    accepted = await app_client.post(
+        f"/api/runs/{run_id}/approvals/{approval.id}/decision",
+        json={"decision": "allow_similar", "continuation_token": token},
+    )
+    replay = await app_client.post(
+        f"/api/runs/{run_id}/approvals/{approval.id}/decision",
+        json={"decision": "allow_similar", "continuation_token": token},
+    )
+
+    assert accepted.status_code == 200
+    assert accepted.json()["status"] == "executing"
+    assert replay.status_code == 409
+    async with app_client._astra_session() as session:
+        loaded = await RunRepository(session).require_run(run_id)
+        assert loaded.tool_calls[0].status == "approved"
+        assert len(loaded.approval_grants) == 1
 
 
 async def test_create_run_rejects_unknown_model_provider(app_client):

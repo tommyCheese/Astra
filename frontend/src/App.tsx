@@ -1,10 +1,10 @@
 import { FormEvent, MouseEvent, ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { AstraApiError, ApiErrorPayload, buildRuntime, cancelRun, cancelRuntimeBuild, createConversationShare, createRun, deleteConversation, getConversation, getConversationStrategy, getRun, getRuntimeProfile, getToolSettings, listConversationShares, listConversations, listRuns, resumeRun, revokeConversationShare, streamRunEvents, updateConversation, updateConversationStrategy, updateToolSettings, type ConversationStrategyPreferences, type ToolSetting } from './api';
+import { AstraApiError, ApiErrorPayload, buildRuntime, cancelRun, cancelRuntimeBuild, createConversationShare, createRun, decideToolApproval, deleteConversation, getConversation, getConversationStrategy, getRun, getRuntimeProfile, getToolSettings, listConversationShares, listConversations, listRuns, resumeRun, revokeConversationShare, streamRunEvents, updateConversation, updateConversationStrategy, updateToolSettings, type ConversationStrategyPreferences, type RunModelConfig, type ToolSetting } from './api';
 import { I18nProvider, useI18n } from './i18n';
 import { ThemeProvider, useTheme } from './theme';
-import type { ArtifactView, ChatMessage, ConversationShare, ConversationShareSummary, ConversationSummary, RunView } from './types';
+import type { ArtifactView, ChatMessage, ConversationShare, ConversationShareSummary, ConversationSummary, PendingApproval, RunView } from './types';
 import { UsageDashboard } from './UsageDashboard';
 import { buildPresentation, HISTORY_LIMIT, normalizeRunView, type ConversationEntry } from './conversations';
 import { createOptimisticProcessState, isDecisionGroup, reconcileProcessSnapshot, reduceProcessEvent, type ProcessStreamItem, type ProcessStreamState } from './processStream';
@@ -66,6 +66,7 @@ function AppContent() {
   const [priorMessages, setPriorMessages] = useState<ChatMessage[]>([]);
   const [loading, setLoading] = useState(false);
   const [stopping, setStopping] = useState(false);
+  const [approvalSubmitting, setApprovalSubmitting] = useState(false);
   const [streamingAnswer, setStreamingAnswer] = useState('');
   const [answerComplete, setAnswerComplete] = useState(false);
   const [answerSettling, setAnswerSettling] = useState(false);
@@ -349,7 +350,7 @@ function AppContent() {
 
   async function submit(event: FormEvent) {
     event.preventDefault();
-    if (loading || (run && !terminalStatuses.has(run.status))) return;
+    if (loading || run?.pending_approval || (run && !terminalStatuses.has(run.status))) return;
     const trimmedGoal = goal.trim();
     if (!trimmedGoal) {
       setError({ type: 'validation.input_invalid', code: 'GOAL_REQUIRED', message: t('请输入你想完成的目标。'), retryable: false, trace_id: 'local' });
@@ -422,6 +423,39 @@ function AppContent() {
       setError(err instanceof AstraApiError ? err.payload : { type: 'runtime.internal_error', code: 'REQUEST_FAILED', message: t('服务暂时出现异常，请稍后重试。'), retryable: true, trace_id: 'unavailable' });
     } finally {
       setLoading(false);
+    }
+  }
+
+  function selectedRunModel(): RunModelConfig | undefined {
+    const selectedOption = availableModels.find((item) => item.key === selectedModelKey);
+    const selectedProvider = providerConfigs.find((item) => item.id === selectedOption?.providerId);
+    return selectedOption && selectedProvider ? {
+      provider: selectedProvider.id,
+      name: selectedOption.model,
+      api_key: selectedProvider.apiKey,
+      base_url: selectedProvider.endpoint,
+    } : undefined;
+  }
+
+  async function decideApproval(decision: 'approve_once' | 'allow_similar' | 'reject') {
+    const approval = run?.pending_approval;
+    const token = run?.waiting_state?.continuation_token;
+    if (!run || !approval || typeof token !== 'string' || approvalSubmitting) return;
+    setApprovalSubmitting(true);
+    setError(null);
+    try {
+      const resumed = await decideToolApproval(run.id, approval.id, decision, token, selectedRunModel());
+      const optimistic = { ...run, status: resumed.status, pending_approval: null, waiting_state: null };
+      setRun(optimistic);
+      rememberConversation(optimistic);
+      const snapshot = normalizeRunView(await getRun(run.id));
+      setRun(snapshot);
+      setProcessState((state) => reconcileProcessSnapshot(state, snapshot));
+      rememberConversation(snapshot);
+    } catch (err) {
+      setError(err instanceof AstraApiError ? err.payload : { type: 'runtime.internal_error', code: 'APPROVAL_FAILED', message: t('提交批准决定失败，请刷新后重试。'), retryable: true, trace_id: 'unavailable' });
+    } finally {
+      setApprovalSubmitting(false);
     }
   }
 
@@ -535,7 +569,7 @@ function AppContent() {
       if (refreshTimerRef.current !== undefined) window.clearTimeout(refreshTimerRef.current);
       if (fallback !== undefined) window.clearInterval(fallback);
     };
-  }, [run?.id]);
+  }, [run?.id, run?.status === 'waiting_user']);
 
   const messages = useMemo(() => {
     const currentMessages = buildPresentation(run)
@@ -698,7 +732,14 @@ function AppContent() {
           </div>
 
           {showJumpToLatest && <button className="jump-latest-button" type="button" onClick={jumpToLatest}><span aria-hidden="true">↓</span>{t('回到最新')}</button>}
-          <form className="chat-composer" onSubmit={submit} onClick={(event) => {
+          {run?.pending_approval && (
+            <ApprovalCard
+              approval={run.pending_approval}
+              submitting={approvalSubmitting}
+              onDecision={(decision) => { void decideApproval(decision); }}
+            />
+          )}
+          <form className={`chat-composer ${run?.pending_approval ? 'approval-pending' : ''}`} onSubmit={submit} onClick={(event) => {
             const target = event.target as HTMLElement;
             if (!target.closest('button, textarea, input, select, a, [role="button"]')) {
               goalInputRef.current?.focus({ preventScroll: true });
@@ -759,6 +800,7 @@ function AppContent() {
             <textarea
               ref={goalInputRef}
               value={goal}
+              disabled={Boolean(run?.pending_approval)}
               onChange={(event) => setGoal(event.target.value)}
               onKeyDown={(event) => {
                 if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
@@ -807,7 +849,7 @@ function AppContent() {
                 <span aria-hidden="true" />
               </button>
             ) : (
-              <button className="send-button" type="submit" aria-label={t('发送')} disabled={!conversationStrategyReady}>↑</button>
+              <button className="send-button" type="submit" aria-label={t('发送')} disabled={!conversationStrategyReady || Boolean(run?.pending_approval)}>↑</button>
             )}
           </form>
           {error && <ErrorDialog error={error} onClose={() => setError(null)} onRetry={error.retryable ? () => document.querySelector<HTMLFormElement>('.chat-composer')?.requestSubmit() : undefined} />}
@@ -1596,6 +1638,27 @@ function ExecutionModeMenu({ value, onChange }: { value: 'plan' | 'default' | 'b
     { id: 'bypass' as const, title: '自动批准', detail: '自动执行所有命令和工具，不再请求确认', icon: 'autoApprove' as const },
   ];
   return <div className="floating-menu execution-menu"><div className="menu-heading">{t('执行模式')}</div>{modes.map((mode) => <button className={value === mode.id ? 'selected' : ''} type="button" key={mode.id} onClick={() => onChange(mode.id)}><Icon name={mode.icon} /><div><strong>{t(mode.title)}</strong><small>{t(mode.detail)}</small></div><span className="mode-selected-mark">{value === mode.id ? '✓' : ''}</span></button>)}</div>;
+}
+
+function ApprovalCard({ approval, submitting, onDecision }: { approval: PendingApproval; submitting: boolean; onDecision: (decision: 'approve_once' | 'allow_similar' | 'reject') => void }) {
+  const { t } = useI18n();
+  return <section className="approval-card" role="group" aria-label={t('工具执行等待批准')}>
+    <div className="approval-card-header">
+      <Icon name="requestApprove" />
+      <div><strong>{t('工具执行等待批准')}</strong><span>{t('将要调用')} <code>{approval.tool_name}</code></span></div>
+    </div>
+    <pre className="approval-preview">{approval.preview}</pre>
+    <div className="approval-meta">
+      <span>{t('权限')}: <b>{approval.permission}</b></span>
+      <span>{t('影响范围')}: <b>{approval.impact}</b></span>
+    </div>
+    <div className="approval-actions">
+      <button type="button" disabled={submitting} onClick={() => onDecision('approve_once')}>{t('仅本次')}</button>
+      {approval.decisions.includes('allow_similar') && <button type="button" disabled={submitting} onClick={() => onDecision('allow_similar')}>{t('允许类似命令')}</button>}
+      <button className="approval-reject" type="button" disabled={submitting} onClick={() => onDecision('reject')}>{t('拒绝')}</button>
+    </div>
+    {submitting && <span className="approval-submitting" role="status">{t('正在提交批准决定…')}</span>}
+  </section>;
 }
 
 function BypassConfirmation({ onCancel, onConfirm }: { onCancel: () => void; onConfirm: () => void }) {

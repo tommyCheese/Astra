@@ -2,7 +2,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { App } from '../src/App';
-import { buildRuntime, cancelRun, cancelRuntimeBuild, createConversationShare, createRun, deleteConversation, getConversation, getConversationStrategy, getRun, getRuntimeProfile, listConversationShares, listConversations, listRuns, revokeConversationShare, streamRunEvents, updateConversation, updateConversationStrategy, updateToolSettings, type RunStreamEvent } from '../src/api';
+import { buildRuntime, cancelRun, cancelRuntimeBuild, createConversationShare, createRun, decideToolApproval, deleteConversation, getConversation, getConversationStrategy, getRun, getRuntimeProfile, listConversationShares, listConversations, listRuns, revokeConversationShare, streamRunEvents, updateConversation, updateConversationStrategy, updateToolSettings, type RunStreamEvent } from '../src/api';
 
 vi.mock('../src/api', () => ({
   getConversationStrategy: vi.fn(async () => ({ preferred_answer_mode: 'standard', reasoning_effort: 'balanced', max_tool_calls: 8, planning_strategy: 'adaptive', reflection_enabled: true, reflection_trigger: 'adaptive' })),
@@ -11,6 +11,7 @@ vi.mock('../src/api', () => ({
     { name: 'web_search', label: 'Web Search', description: '搜索公开网页并生成候选来源', enabled: true, available: true },
     { name: 'web_fetch', label: 'Web Fetch', description: '自适应提取页面主要内容', enabled: true, available: true },
     { name: 'chart_render', label: 'Chart Render', description: '在隔离的 Docker 运行时中生成图表', enabled: true, available: false, unavailable_reason: '需要先启用 Docker 沙箱。' },
+    { name: 'bash_execute', label: 'Bash Execute', description: '在隔离容器中执行命令', enabled: false, available: true },
   ] })),
   updateToolSettings: vi.fn(async (tools) => ({ tools })),
   getRuntimeProfile: vi.fn(async () => ({ dependencies: [], core_dependencies: [{ name: 'numpy', version: '2.2.6' }, { name: 'matplotlib', version: '3.10.3' }], active_image: 'astra-data-viz:0.1.0', dependency_digest: 'base', build: null })),
@@ -31,6 +32,7 @@ vi.mock('../src/api', () => ({
   listConversationShares: vi.fn(async () => []),
   listRuns: vi.fn(async () => []),
   resumeRun: vi.fn(async () => ({ run_id: 'run-1', task_id: 'task-1', status: 'executing' })),
+  decideToolApproval: vi.fn(async () => ({ run_id: 'run-1', task_id: 'task-1', status: 'executing' })),
   getUsageSummary: vi.fn(async () => ({
     scope: 'task', from: null, to: null,
     overview: { model_invocations: 3, successful_invocations: 3, failed_invocations: 0, interrupted_invocations: 0, agent_turns: 2, tool_calls: 2, successful_tool_calls: 2, failed_tool_calls: 0, tool_success_rate: 1, memories: 1, sandbox_jobs: 0, artifacts: 0, artifact_bytes: 0 },
@@ -1159,6 +1161,69 @@ describe('App', () => {
     await userEvent.click(screen.getByRole('button', { name: /自动批准/ }));
     await userEvent.click(screen.getByRole('button', { name: '确认启用自动批准' }));
     expect(screen.getByRole('button', { name: /自动批准/ })).toHaveClass('mode-bypass');
+  });
+
+  it('restores a pending approval above the composer and submits allow similar', async () => {
+    const completed = await vi.mocked(getRun)('fixture');
+    const pending = {
+      ...completed,
+      status: 'waiting_user',
+      result: null,
+      summary: null,
+      pending_approval: {
+        id: 'approval-1',
+        tool_call_id: 'call-1',
+        tool_name: 'bash_execute',
+        preview: 'pytest tests/test_api.py -q',
+        permission: 'command_execute',
+        impact: 'external_side_effect',
+        decisions: ['approve_once', 'allow_similar', 'reject'] as Array<'approve_once' | 'allow_similar' | 'reject'>,
+        created_at: 'now',
+      },
+      waiting_state: { kind: 'tool_approval', continuation_token: 'continue-1' },
+      chat_messages: [{ id: 'u-approval', role: 'user', content: '运行测试', status: 'completed', metadata: {} }],
+    };
+    vi.mocked(createRun).mockResolvedValueOnce({ run_id: 'run-1', task_id: 'task-1', status: 'waiting_user' });
+    vi.mocked(getRun).mockReset();
+    vi.mocked(getRun).mockResolvedValueOnce(pending).mockResolvedValue(completed);
+
+    render(<App />);
+    await userEvent.type(screen.getByRole('textbox'), '运行测试');
+    await userEvent.click(screen.getByRole('button', { name: '发送' }));
+
+    expect(await screen.findByRole('group', { name: '工具执行等待批准' })).toBeInTheDocument();
+    expect(screen.getByText('pytest tests/test_api.py -q')).toBeInTheDocument();
+    expect(screen.getByRole('textbox')).toBeDisabled();
+    await userEvent.click(screen.getByRole('button', { name: '允许类似命令' }));
+
+    expect(decideToolApproval).toHaveBeenCalledWith('run-1', 'approval-1', 'allow_similar', 'continue-1', expect.any(Object));
+    await waitFor(() => expect(screen.queryByRole('group', { name: '工具执行等待批准' })).not.toBeInTheDocument());
+  });
+
+  it('omits similar-command approval when the backend does not offer it', async () => {
+    const snapshot = await vi.mocked(getRun)('fixture');
+    const pending = {
+      ...snapshot,
+      status: 'waiting_user',
+      result: null,
+      pending_approval: {
+        id: 'approval-exact', tool_call_id: 'call-exact', tool_name: 'web_search',
+        preview: '{"query":"Astra"}', permission: 'network_read', impact: 'read_only',
+        decisions: ['approve_once', 'reject'] as Array<'approve_once' | 'allow_similar' | 'reject'>, created_at: 'now',
+      },
+      waiting_state: { continuation_token: 'continue-exact' },
+    };
+    vi.mocked(createRun).mockResolvedValueOnce({ run_id: 'run-1', task_id: 'task-1', status: 'waiting_user' });
+    vi.mocked(getRun).mockReset();
+    vi.mocked(getRun).mockResolvedValue(pending);
+
+    render(<App />);
+    await userEvent.type(screen.getByRole('textbox'), '需要搜索');
+    await userEvent.click(screen.getByRole('button', { name: '发送' }));
+
+    expect(await screen.findByRole('button', { name: '仅本次' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '拒绝' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '允许类似命令' })).not.toBeInTheDocument();
   });
 
   it('uses translated execution mode names in the English interface', async () => {

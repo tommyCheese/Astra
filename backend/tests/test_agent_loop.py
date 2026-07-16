@@ -120,7 +120,9 @@ def test_verification_engine_aggregates_artifact_warning_without_overwriting_out
 async def test_agent_loop_completes_mock_web_run(session):
     settings = Settings(model_provider="mock", web_search_provider="mock", agent_max_turns=8)
     repo = RunRepository(session)
-    run = await repo.create_task_run("查询 mock 数据", settings.model_policy)
+    run = await repo.create_task_run(
+        "查询 mock 数据", settings.model_policy, reasoning_policy=compiled_policy()
+    )
     client = MockModelClient()
     loop = AgentLoop(settings, model_client=client, tool_registry=fake_web_registry())
 
@@ -140,7 +142,9 @@ async def test_agent_loop_completes_mock_web_run(session):
 async def test_agent_loop_injects_auditable_tool_execution_context(session):
     settings = Settings(model_provider="mock")
     repo = RunRepository(session)
-    run = await repo.create_task_run("查询上下文", settings.model_policy)
+    run = await repo.create_task_run(
+        "查询上下文", settings.model_policy, reasoning_policy=compiled_policy()
+    )
     registry = fake_web_registry()
     search = registry.get("web_search")
 
@@ -157,8 +161,12 @@ async def test_agent_loop_injects_auditable_tool_execution_context(session):
 async def test_agent_loop_persists_only_current_run_accessible_artifact_references(session):
     settings = Settings(model_provider="mock")
     repo = RunRepository(session)
-    run = await repo.create_task_run("生成图表结论", settings.model_policy)
-    other_run = await repo.create_task_run("其他运行", settings.model_policy)
+    run = await repo.create_task_run(
+        "生成图表结论", settings.model_policy, reasoning_policy=compiled_policy()
+    )
+    other_run = await repo.create_task_run(
+        "其他运行", settings.model_policy, reasoning_policy=compiled_policy()
+    )
     valid = await repo.create_artifact(
         run.id,
         "sandbox_output",
@@ -193,7 +201,9 @@ async def test_agent_loop_persists_only_current_run_accessible_artifact_referenc
 async def test_agent_loop_keeps_verification_status_separate_from_blocked_run(session):
     settings = Settings(model_provider="mock", web_search_provider="mock", agent_max_turns=8)
     repo = RunRepository(session)
-    run = await repo.create_task_run("查询 mock 数据", settings.model_policy)
+    run = await repo.create_task_run(
+        "查询 mock 数据", settings.model_policy, reasoning_policy=compiled_policy()
+    )
     contract = build_default_contract(run.task.description)
     contract.verification_requirements[0].validator = "security_validator"
     graph = build_plan_graph(contract, PlanningStrategy.direct)
@@ -223,7 +233,9 @@ async def test_agent_loop_blocks_at_turn_limit(session):
         agent_max_tool_calls=1,
     )
     repo = RunRepository(session)
-    run = await repo.create_task_run("查询 mock 数据", settings.model_policy)
+    run = await repo.create_task_run(
+        "查询 mock 数据", settings.model_policy, reasoning_policy=compiled_policy()
+    )
     loop = AgentLoop(
         settings, model_client=MockModelClient(), tool_registry=build_web_registry(settings)
     )
@@ -410,6 +422,7 @@ class TwoToolsThenFinalizeClient(MockModelClient):
 
 
 def compiled_policy(**updates):
+    updates.setdefault("execution_mode", "auto_approval")
     return PolicyCompiler().compile(RequestedReasoningPolicy(**updates)).model_dump(mode="json")
 
 

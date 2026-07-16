@@ -36,6 +36,17 @@ export type ToolCallView = {
   error?: Record<string, unknown> | null;
 };
 
+export type PendingApproval = {
+  id: string;
+  tool_call_id: string;
+  tool_name: string;
+  preview: string;
+  permission: string;
+  impact: string;
+  decisions: Array<'approve_once' | 'allow_similar' | 'reject'>;
+  created_at: string;
+};
+
 export type ArtifactView = {
   id: string;
   type: string;
@@ -228,6 +239,7 @@ export type RunView = {
   state_version?: number;
   terminal_reason?: Record<string, unknown> | null;
   waiting_state?: Record<string, unknown> | null;
+  pending_approval?: PendingApproval | null;
   task_adapter?: string;
 };
 

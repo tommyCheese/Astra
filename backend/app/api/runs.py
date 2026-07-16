@@ -25,6 +25,7 @@ from app.runner.engine import start_run_in_process
 from app.runner.reasoning import RunProfileResolver
 from app.schemas.agent import (
     AgentState,
+    ApprovalDecisionRequest,
     ContinueRunRequest,
     CreateRunRequest,
     CreateRunResponse,
@@ -310,6 +311,46 @@ async def resume_run(
             raise StateError("CONTINUATION_INVALID", "任务恢复凭据已失效，请刷新后重试。") from exc
         raise StateError("RUN_RESUME_CONFLICT", "当前任务无法恢复。") from exc
     _schedule_run(run.id, run_settings)
+    return CreateRunResponse(
+        task_id=run.task_id,
+        run_id=run.id,
+        status=run.status,
+        answer_mode=run.answer_mode,
+    )
+
+
+@router.post(
+    "/runs/{run_id}/approvals/{approval_id}/decision",
+    response_model=CreateRunResponse,
+)
+async def decide_tool_approval(
+    run_id: str,
+    approval_id: str,
+    payload: ApprovalDecisionRequest,
+    session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+) -> CreateRunResponse:
+    repo = RunRepository(session)
+    tool_states = await ToolSettingsRepository(session).get_or_create(default_tool_states(settings))
+    run_settings = _apply_model_config(apply_tool_states(settings, tool_states), payload.model)
+    try:
+        await repo.decide_approval(
+            run_id,
+            approval_id,
+            payload.decision.value,
+            continuation_token=payload.continuation_token,
+        )
+    except ValueError as exc:
+        message = str(exc)
+        if "continuation token" in message:
+            raise StateError("CONTINUATION_INVALID", "批准凭据已失效，请刷新后重试。") from exc
+        if "already been decided" in message:
+            raise StateError("APPROVAL_ALREADY_DECIDED", "该工具调用已经处理。") from exc
+        if "not available" in message:
+            raise StateError("SIMILAR_APPROVAL_UNAVAILABLE", "该命令不能使用相似命令授权。") from exc
+        raise StateError("APPROVAL_CONFLICT", "该批准请求当前无法处理。") from exc
+    run = await repo.require_run(run_id)
+    _schedule_run(run_id, run_settings)
     return CreateRunResponse(
         task_id=run.task_id,
         run_id=run.id,

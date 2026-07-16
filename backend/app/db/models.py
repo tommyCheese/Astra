@@ -143,6 +143,10 @@ class RunRecord(Base):
     memories: Mapped[list["MemoryRecord"]] = relationship(back_populates="run")
     sandbox_jobs: Mapped[list["SandboxJobRecord"]] = relationship(back_populates="run")
     model_invocations: Mapped[list["ModelInvocationRecord"]] = relationship(back_populates="run")
+    approval_requests: Mapped[list["ApprovalRequestRecord"]] = relationship(
+        back_populates="run", order_by="ApprovalRequestRecord.created_at"
+    )
+    approval_grants: Mapped[list["ApprovalGrantRecord"]] = relationship(back_populates="run")
     plans: Mapped[list["PlanRecord"]] = relationship(
         back_populates="run", foreign_keys="PlanRecord.run_id", order_by="PlanRecord.version"
     )
@@ -306,6 +310,52 @@ class ToolCallRecord(Base):
     run: Mapped[RunRecord] = relationship(back_populates="tool_calls")
     step: Mapped[StepRecord | None] = relationship(back_populates="tool_calls")
     plan_node: Mapped[PlanNodeRecord | None] = relationship(back_populates="tool_calls")
+    approval_request: Mapped["ApprovalRequestRecord | None"] = relationship(
+        back_populates="tool_call", uselist=False
+    )
+
+
+class ApprovalRequestRecord(Base):
+    __tablename__ = "approval_requests"
+    __table_args__ = (
+        Index("ix_approval_requests_run_status", "run_id", "status"),
+        UniqueConstraint("tool_call_id", name="uq_approval_requests_tool_call_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_str)
+    run_id: Mapped[str] = mapped_column(ForeignKey("runs.id"))
+    turn_id: Mapped[str] = mapped_column(ForeignKey("agent_turns.id"))
+    tool_call_id: Mapped[str] = mapped_column(ForeignKey("tool_calls.id"))
+    tool_name: Mapped[str] = mapped_column(String(120))
+    tool_version: Mapped[str] = mapped_column(String(40))
+    frozen_input: Mapped[dict] = mapped_column(JsonType)
+    input_hash: Mapped[str] = mapped_column(String(64))
+    preview: Mapped[str] = mapped_column(Text)
+    permission: Mapped[str] = mapped_column(String(80))
+    impact: Mapped[str] = mapped_column(String(80))
+    similar_matcher: Mapped[dict | None] = mapped_column(JsonType, nullable=True)
+    status: Mapped[str] = mapped_column(String(40), default="pending")
+    decision: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    run: Mapped[RunRecord] = relationship(back_populates="approval_requests")
+    tool_call: Mapped[ToolCallRecord] = relationship(back_populates="approval_request")
+
+
+class ApprovalGrantRecord(Base):
+    __tablename__ = "approval_grants"
+    __table_args__ = (Index("ix_approval_grants_run_tool", "run_id", "tool_name"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_str)
+    run_id: Mapped[str] = mapped_column(ForeignKey("runs.id"))
+    tool_name: Mapped[str] = mapped_column(String(120))
+    tool_version: Mapped[str] = mapped_column(String(40))
+    matcher: Mapped[dict] = mapped_column(JsonType)
+    source_approval_id: Mapped[str] = mapped_column(ForeignKey("approval_requests.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+    run: Mapped[RunRecord] = relationship(back_populates="approval_grants")
 
 
 class ArtifactRecord(Base):

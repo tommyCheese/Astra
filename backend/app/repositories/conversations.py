@@ -8,6 +8,8 @@ from sqlalchemy.orm import selectinload
 
 from app.db.models import (
     AgentTurnRecord,
+    ApprovalGrantRecord,
+    ApprovalRequestRecord,
     ArtifactRecord,
     ConversationShareRecord,
     MemoryRecord,
@@ -61,6 +63,8 @@ class ConversationRepository:
                 selectinload(RunRecord.tool_calls), selectinload(RunRecord.artifacts),
                 selectinload(RunRecord.events), selectinload(RunRecord.turns),
                 selectinload(RunRecord.memories), selectinload(RunRecord.sandbox_jobs),
+                selectinload(RunRecord.approval_requests),
+                selectinload(RunRecord.approval_grants),
                 selectinload(RunRecord.plans).selectinload(PlanRecord.nodes),
                 selectinload(RunRecord.plans).selectinload(PlanRecord.edges),
             )
@@ -189,7 +193,8 @@ class ConversationRepository:
                     ArtifactRecord.run_id.in_(run_ids), ArtifactRecord.storage_key.is_not(None)
                 )
             )).all())
-            for model in (ArtifactRecord, SandboxJobRecord, ToolCallRecord, StepRecord,
+            for model in (ApprovalGrantRecord, ApprovalRequestRecord,
+                          ArtifactRecord, SandboxJobRecord, ToolCallRecord, StepRecord,
                           RunEventRecord, AgentTurnRecord, MemoryRecord, ModelInvocationRecord):
                 await self.session.execute(delete(model).where(model.run_id.in_(run_ids)))
             await self.session.execute(delete(RunRecord).where(RunRecord.id.in_(run_ids)))

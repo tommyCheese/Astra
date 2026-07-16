@@ -13,6 +13,7 @@ class Settings(BaseSettings):
     tool_web_search_enabled: bool = True
     tool_web_fetch_enabled: bool = True
     tool_chart_render_enabled: bool = True
+    tool_bash_execute_enabled: bool = False
     web_search_provider: str = "auto"
     web_search_api_key: str = ""
     google_search_api_key: str = ""
@@ -51,6 +52,7 @@ class Settings(BaseSettings):
     sandbox_memory_mb: int = 1024
     sandbox_cpus: float = 1.0
     sandbox_pids: int = 128
+    bash_output_max_chars: int = 12000
     runtime_profile_path: str = "./runtime-profile.json"
     runtime_build_timeout_seconds: int = 600
     runtime_image_keep_recent: int = 3

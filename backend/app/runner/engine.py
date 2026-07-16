@@ -405,7 +405,13 @@ class RunEngine:
         final_answer = loop_result["answer"]
         result = loop_result["result"]
         status = loop_result["status"]
-        await self._complete_answer_stream(repo, run_id, final_answer.summary)
+        if status == "waiting_user":
+            self._answer_buffers.pop(run_id, None)
+            self._answer_flush_at.pop(run_id, None)
+            await repo.add_event(run_id, "answer.paused", {"status": status})
+            await repo.session.commit()
+        else:
+            await self._complete_answer_stream(repo, run_id, final_answer.summary)
         await self._finalize_agent_loop(repo, run_id, final_answer, result, status)
 
     async def _finalize_agent_loop(
@@ -416,6 +422,10 @@ class RunEngine:
         result: dict[str, Any],
         status: str,
     ) -> None:
+        if status == "waiting_user":
+            await repo.update_run_status(run_id, status, summary=final_answer.summary)
+            logger.info("run.paused run_id=%s status=waiting_user", run_id)
+            return
         if result.get("answer_mode") == AnswerMode.standard.value:
             await repo.update_run_status(
                 run_id,

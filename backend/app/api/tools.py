@@ -27,6 +27,7 @@ class ToolSettingsUpdate(BaseModel):
     web_search: bool
     web_fetch: bool
     chart_render: bool
+    bash_execute: bool | None = None
 
 
 def _tool_settings(settings: Settings, states: dict[str, bool]) -> ToolSettingsResponse:
@@ -62,6 +63,14 @@ def _tool_settings(settings: Settings, states: dict[str, bool]) -> ToolSettingsR
                 available=sandbox_ready,
                 unavailable_reason=unavailable_reason,
             ),
+            ToolToggle(
+                name="bash_execute",
+                label="Bash Execute",
+                description="在无网络、无工作区挂载的一次性 Docker 容器中执行命令",
+                enabled=states["bash_execute"],
+                available=sandbox_ready,
+                unavailable_reason=unavailable_reason,
+            ),
         ]
     )
 
@@ -82,8 +91,10 @@ async def update_tool_settings(
     settings: Settings = Depends(get_settings),
     session: AsyncSession = Depends(get_session),
 ) -> ToolSettingsResponse:
-    states = await ToolSettingsRepository(session).set_all(
-        update.model_dump(), default_tool_states(settings)
+    repository = ToolSettingsRepository(session)
+    await repository.set_all(
+        update.model_dump(exclude_none=True), default_tool_states(settings)
     )
+    states = await repository.get_or_create(default_tool_states(settings))
     await session.commit()
     return _tool_settings(settings, states)

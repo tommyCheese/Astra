@@ -431,6 +431,35 @@ class ContinueRunRequest(BaseModel):
     model: dict[str, str] | None = None
 
 
+class ApprovalDecision(str, Enum):
+    approve_once = "approve_once"
+    allow_similar = "allow_similar"
+    reject = "reject"
+
+
+class ApprovalDecisionRequest(BaseModel):
+    decision: ApprovalDecision
+    continuation_token: str
+    model: dict[str, str] | None = None
+
+
+class PendingApprovalView(BaseModel):
+    id: str
+    tool_call_id: str
+    tool_name: str
+    preview: str
+    permission: str
+    impact: str
+    decisions: list[ApprovalDecision]
+    created_at: datetime
+
+
+class BashExecuteResult(BaseModel):
+    exit_code: int
+    stdout: str = ""
+    stderr: str = ""
+
+
 class PlanStep(BaseModel):
     title: str
     intent: str
@@ -940,5 +969,6 @@ class RunView(BaseModel):
     state_version: int = 0
     terminal_reason: dict[str, Any] | None = None
     waiting_state: dict[str, Any] | None = None
+    pending_approval: PendingApprovalView | None = None
     task_adapter: str = "web"
     agent_profile: dict[str, Any] = Field(default_factory=dict)

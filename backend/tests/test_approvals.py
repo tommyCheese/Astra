@@ -1,0 +1,134 @@
+import pytest
+from fake_web_tools import fake_web_registry
+
+from app.core.config import Settings
+from app.repositories.runs import RunRepository, run_to_view
+from app.runner.agent_loop import AgentLoop
+from app.runner.approvals import ApprovalPolicy, matcher_matches, similar_matcher
+from app.runner.model_client import MockModelClient
+from app.runner.reasoning import PolicyCompiler
+from app.schemas.agent import ExecutionMode, RequestedReasoningPolicy
+from app.tools.base import ToolExecutionError
+
+
+def policy(mode: str) -> dict:
+    return PolicyCompiler().compile(
+        RequestedReasoningPolicy(execution_mode=mode, reflection_enabled=False)
+    ).model_dump(mode="json")
+
+
+async def test_request_approval_freezes_tool_before_execution(session):
+    settings = Settings(model_provider="mock")
+    repo = RunRepository(session)
+    run = await repo.create_task_run(
+        "查询批准流程", settings.model_policy, reasoning_policy=policy("request_approval")
+    )
+    registry = fake_web_registry()
+
+    result = await AgentLoop(
+        settings, model_client=MockModelClient(), tool_registry=registry
+    ).run(repo, run.id, run.task.description)
+    loaded = await repo.require_run(run.id)
+    view = run_to_view(loaded)
+
+    assert result["status"] == "waiting_user"
+    assert loaded.tool_calls[0].status == "awaiting_approval"
+    assert not hasattr(registry.get("web_search"), "last_context")
+    assert view["pending_approval"]["tool_name"] == "web_search"
+    assert view["pending_approval"]["decisions"] == ["approve_once", "reject"]
+
+
+async def test_approve_once_resumes_exact_frozen_call(session):
+    settings = Settings(model_provider="mock")
+    repo = RunRepository(session)
+    run = await repo.create_task_run(
+        "查询批准恢复", settings.model_policy, reasoning_policy=policy("request_approval")
+    )
+    registry = fake_web_registry()
+    client = MockModelClient()
+    loop = AgentLoop(settings, model_client=client, tool_registry=registry)
+    await loop.run(repo, run.id, run.task.description)
+    waiting = await repo.require_run(run.id)
+    approval = waiting.approval_requests[-1]
+
+    await repo.decide_approval(
+        run.id,
+        approval.id,
+        "approve_once",
+        continuation_token=waiting.waiting_state["continuation_token"],
+    )
+    await loop.run(repo, run.id, run.task.description)
+    loaded = await repo.require_run(run.id)
+
+    assert loaded.tool_calls[0].status == "succeeded"
+    assert loaded.tool_calls[0].input == approval.frozen_input
+    assert registry.get("web_search").last_context.tool_call_id == loaded.tool_calls[0].id
+    assert loaded.tool_calls[1].tool_name == "web_fetch"
+    assert loaded.tool_calls[1].status == "awaiting_approval"
+
+
+async def test_rejection_never_executes_rejected_call_and_replay_fails(session):
+    settings = Settings(model_provider="mock")
+    repo = RunRepository(session)
+    run = await repo.create_task_run(
+        "拒绝工具", settings.model_policy, reasoning_policy=policy("request_approval")
+    )
+    registry = fake_web_registry()
+    await AgentLoop(settings, model_client=MockModelClient(), tool_registry=registry).run(
+        repo, run.id, run.task.description
+    )
+    waiting = await repo.require_run(run.id)
+    approval = waiting.approval_requests[-1]
+    token = waiting.waiting_state["continuation_token"]
+
+    await repo.decide_approval(run.id, approval.id, "reject", continuation_token=token)
+    with pytest.raises(ValueError):
+        await repo.decide_approval(run.id, approval.id, "reject", continuation_token=token)
+    loaded = await repo.require_run(run.id)
+
+    assert loaded.tool_calls[0].status == "rejected"
+    assert not hasattr(registry.get("web_search"), "last_context")
+    assert loaded.agent_state["observations"][-1]["kind"] == "approval_result"
+
+
+async def test_approved_action_fails_closed_when_frozen_input_is_tampered(session):
+    settings = Settings(model_provider="mock")
+    repo = RunRepository(session)
+    run = await repo.create_task_run(
+        "验证冻结输入", settings.model_policy, reasoning_policy=policy("request_approval")
+    )
+    registry = fake_web_registry()
+    loop = AgentLoop(settings, model_client=MockModelClient(), tool_registry=registry)
+    await loop.run(repo, run.id, run.task.description)
+    waiting = await repo.require_run(run.id)
+    approval = waiting.approval_requests[-1]
+    await repo.decide_approval(
+        run.id,
+        approval.id,
+        "approve_once",
+        continuation_token=waiting.waiting_state["continuation_token"],
+    )
+    call = waiting.tool_calls[0]
+    call.input = {"query": "tampered"}
+    await session.commit()
+
+    with pytest.raises(ToolExecutionError) as error:
+        await loop.run(repo, run.id, run.task.description)
+
+    assert error.value.category == "approval_integrity_error"
+    assert not hasattr(registry.get("web_search"), "last_context")
+
+
+def test_bash_similar_matchers_are_narrow_and_complex_commands_are_exact_only():
+    matcher = similar_matcher("bash_execute", {"command": "pytest tests/test_api.py -q"})
+
+    assert matcher == {"kind": "command_prefix", "tokens": ["pytest"]}
+    assert matcher_matches(matcher, {"command": "pytest tests/test_tools.py -q"})
+    assert not matcher_matches(matcher, {"command": "python -m pytest"})
+    assert similar_matcher("bash_execute", {"command": "pytest && rm -rf /tmp/x"}) is None
+
+
+def test_auto_approval_only_skips_interactive_policy():
+    result = ApprovalPolicy().evaluate(ExecutionMode.auto_approval, {}, [])
+    assert result.approved is True
+    assert result.reason == "auto_approval"

@@ -8,6 +8,8 @@ from sqlalchemy.orm import selectinload
 
 from app.db.models import (
     AgentTurnRecord,
+    ApprovalGrantRecord,
+    ApprovalRequestRecord,
     ArtifactRecord,
     MemoryRecord,
     ModelInvocationRecord,
@@ -229,6 +231,8 @@ class RunRepository:
                 selectinload(RunRecord.turns),
                 selectinload(RunRecord.memories),
                 selectinload(RunRecord.sandbox_jobs),
+                selectinload(RunRecord.approval_requests),
+                selectinload(RunRecord.approval_grants),
                 selectinload(RunRecord.plans).selectinload(PlanRecord.nodes),
                 selectinload(RunRecord.plans).selectinload(PlanRecord.edges),
             )
@@ -253,6 +257,8 @@ class RunRepository:
                 selectinload(RunRecord.turns),
                 selectinload(RunRecord.memories),
                 selectinload(RunRecord.sandbox_jobs),
+                selectinload(RunRecord.approval_requests),
+                selectinload(RunRecord.approval_grants),
                 selectinload(RunRecord.plans).selectinload(PlanRecord.nodes),
                 selectinload(RunRecord.plans).selectinload(PlanRecord.edges),
             )
@@ -454,6 +460,7 @@ class RunRepository:
         side_effect_level: str,
         *,
         plan_node_id: str | None = None,
+        status: str = "running",
     ) -> ToolCallRecord:
         call = ToolCallRecord(
             run_id=run_id,
@@ -462,7 +469,7 @@ class RunRepository:
             tool_name=tool_name,
             tool_version=tool_version,
             input=tool_input,
-            status="running",
+            status=status,
             permission=permission,
             side_effect_level=side_effect_level,
             started_at=utc_now(),
@@ -471,16 +478,185 @@ class RunRepository:
         await self.session.flush()
         await self.add_event(
             run_id,
-            "tool_call.started",
+            "tool_call.proposed" if status == "awaiting_approval" else "tool_call.started",
             {
                 "tool_call_id": call.id,
                 "step_id": step_id,
                 "plan_node_id": plan_node_id,
                 "tool_name": tool_name,
+                "status": status,
             },
         )
         await self.session.commit()
         return call
+
+    async def transition_tool_call(self, tool_call_id: str, status: str) -> ToolCallRecord:
+        call = await self._require_tool_call(tool_call_id)
+        call.status = status
+        if status in {"rejected", "failed", "cancelled"}:
+            call.completed_at = utc_now()
+        await self.add_event(
+            call.run_id,
+            "tool_call.started" if status == "running" else "tool_call.status_changed",
+            {"tool_call_id": call.id, "tool_name": call.tool_name, "status": status},
+        )
+        await self.session.commit()
+        return call
+
+    async def create_approval_request(
+        self,
+        *,
+        run_id: str,
+        turn_id: str,
+        tool_call_id: str,
+        tool_name: str,
+        tool_version: str,
+        frozen_input: dict[str, Any],
+        input_hash: str,
+        preview: str,
+        permission: str,
+        impact: str,
+        similar_matcher: dict[str, Any] | None,
+    ) -> ApprovalRequestRecord:
+        request = ApprovalRequestRecord(
+            run_id=run_id,
+            turn_id=turn_id,
+            tool_call_id=tool_call_id,
+            tool_name=tool_name,
+            tool_version=tool_version,
+            frozen_input=deepcopy(frozen_input),
+            input_hash=input_hash,
+            preview=preview,
+            permission=permission,
+            impact=impact,
+            similar_matcher=deepcopy(similar_matcher),
+            status="pending",
+        )
+        self.session.add(request)
+        await self.session.flush()
+        await self.add_event(
+            run_id,
+            "approval.requested",
+            {
+                "approval_id": request.id,
+                "tool_call_id": tool_call_id,
+                "tool_name": tool_name,
+                "preview": preview,
+                "permission": permission,
+                "impact": impact,
+                "allow_similar": similar_matcher is not None,
+            },
+        )
+        await self.session.commit()
+        return request
+
+    async def decide_approval(
+        self,
+        run_id: str,
+        approval_id: str,
+        decision: str,
+        *,
+        continuation_token: str,
+    ) -> tuple[ApprovalRequestRecord, ToolCallRecord]:
+        run = await self.require_run(run_id)
+        if run.status != "waiting_user" or not run.waiting_state:
+            raise ValueError("Run is not waiting for approval")
+        if run.waiting_state.get("approval_id") != approval_id:
+            raise ValueError("Approval is not pending for this run")
+        if run.waiting_state.get("continuation_token") != continuation_token:
+            raise ValueError("Invalid continuation token")
+        request = await self.session.get(ApprovalRequestRecord, approval_id)
+        if request is None or request.run_id != run_id or request.status != "pending":
+            raise ValueError("Approval has already been decided")
+        if decision == "allow_similar" and request.similar_matcher is None:
+            raise ValueError("Similar approval is not available")
+        decided_at = utc_now()
+        claimed = await self.session.execute(
+            update(ApprovalRequestRecord)
+            .where(
+                ApprovalRequestRecord.id == approval_id,
+                ApprovalRequestRecord.run_id == run_id,
+                ApprovalRequestRecord.status == "pending",
+            )
+            .values(
+                status="approved" if decision != "reject" else "rejected",
+                decision=decision,
+                decided_at=decided_at,
+            )
+        )
+        if claimed.rowcount != 1:
+            await self.session.rollback()
+            raise ValueError("Approval has already been decided")
+        await self.session.refresh(request)
+        call = await self._require_tool_call(request.tool_call_id)
+        call.status = "approved" if decision != "reject" else "rejected"
+        if decision == "reject":
+            call.completed_at = utc_now()
+            turn = await self._require_agent_turn(request.turn_id)
+            observation = {
+                "kind": "approval_result",
+                "status": "rejected",
+                "summary": f"User rejected {request.tool_name}",
+                "data": {"approved": False, "tool_call_id": call.id},
+            }
+            turn.status = "completed"
+            turn.phase = "committed"
+            turn.observation = observation
+            state = dict(run.agent_state or {})
+            observations = list(state.get("observations", []))
+            observations.append(observation)
+            state["observations"] = observations
+            state["version"] = int(state.get("version", run.state_version)) + 1
+            run.agent_state = state
+            run.state_version = state["version"]
+        if decision == "allow_similar":
+            self.session.add(
+                ApprovalGrantRecord(
+                    run_id=run_id,
+                    tool_name=request.tool_name,
+                    tool_version=request.tool_version,
+                    matcher=deepcopy(request.similar_matcher),
+                    source_approval_id=request.id,
+                )
+            )
+        run.waiting_state = None
+        run.status = "executing"
+        run.completed_at = None
+        run.updated_at = utc_now()
+        await self.add_event(
+            run_id,
+            "approval.decided",
+            {
+                "approval_id": request.id,
+                "tool_call_id": call.id,
+                "tool_name": request.tool_name,
+                "decision": decision,
+            },
+        )
+        await self.session.commit()
+        return request, call
+
+    async def list_approval_grants(
+        self, run_id: str, tool_name: str, tool_version: str
+    ) -> list[ApprovalGrantRecord]:
+        result = await self.session.execute(
+            select(ApprovalGrantRecord).where(
+                ApprovalGrantRecord.run_id == run_id,
+                ApprovalGrantRecord.tool_name == tool_name,
+                ApprovalGrantRecord.tool_version == tool_version,
+            )
+        )
+        return list(result.scalars().all())
+
+    async def get_approved_tool_call(self, run_id: str) -> ToolCallRecord | None:
+        result = await self.session.execute(
+            select(ToolCallRecord)
+            .where(ToolCallRecord.run_id == run_id, ToolCallRecord.status == "approved")
+            .options(selectinload(ToolCallRecord.approval_request))
+            .order_by(ToolCallRecord.started_at)
+            .limit(1)
+        )
+        return result.scalar_one_or_none()
 
     async def finish_tool_call(
         self,
@@ -892,6 +1068,9 @@ def run_to_view(run: RunRecord) -> dict[str, Any]:
         if plan_view
         else None
     )
+    pending = next(
+        (item for item in reversed(run.approval_requests) if item.status == "pending"), None
+    )
     return {
         "id": run.id,
         "task_id": run.task_id,
@@ -1041,6 +1220,20 @@ def run_to_view(run: RunRecord) -> dict[str, Any]:
         "state_version": run.state_version or 0,
         "terminal_reason": run.terminal_reason,
         "waiting_state": run.waiting_state,
+        "pending_approval": {
+            "id": pending.id,
+            "tool_call_id": pending.tool_call_id,
+            "tool_name": pending.tool_name,
+            "preview": pending.preview,
+            "permission": pending.permission,
+            "impact": pending.impact,
+            "decisions": ["approve_once"]
+            + (["allow_similar"] if pending.similar_matcher is not None else [])
+            + ["reject"],
+            "created_at": pending.created_at,
+        }
+        if pending
+        else None,
         "task_adapter": run.task_adapter or "web",
         "agent_profile": safe_agent_profile_manifest(run.agent_profile_snapshot or {}),
     }

@@ -22,148 +22,99 @@
 ## 0. 先建立一张完整调用图
 
 ```mermaid
-sequenceDiagram
-    autonumber
-    actor User as 用户
-    participant App as "AppContent / App.tsx"
-    participant FEAPI as "api.ts"
-    participant RunsAPI as "api/runs.py"
-    participant Profile as "RunProfileResolver"
-    participant Repo as "RunRepository"
-    participant DB as "SQLAlchemy DB"
-    participant Engine as "RunEngine"
-    participant Plan as "PlanService / PlanScheduler"
-    participant Loop as "AgentLoop"
-    participant Model as "ModelClient"
-    participant Router as "ToolRouter"
-    participant Tool as "Tool + Artifact/Sandbox Service"
+graph TD
+    U["用户输入目标、模式和模型"] --> SUBMIT["AppContent.submit"]
+    SUBMIT --> WAITING{"当前 Run 是否为 waiting_user"}
 
-    User->>App: 输入目标、模式、模型并发送
-    App->>FEAPI: createRun(...) 或 resumeRun(...)
-    alt 新建一次 Run
-        FEAPI->>RunsAPI: POST /api/runs
-        RunsAPI->>Profile: resolve(answer_mode, requested_policy)
-        Profile-->>RunsAPI: RunExecutionProfile + policy snapshot
-        RunsAPI->>Repo: create_task_run(...)
-        Repo->>DB: INSERT Task/Run/Event 并 COMMIT
-        DB-->>Repo: 持久化完成
-        RunsAPI-)Engine: _schedule_run -> asyncio.create_task
-        RunsAPI-->>FEAPI: run_id + task_id + created
-    else 恢复 waiting_user Run
-        FEAPI->>RunsAPI: POST /api/runs/{id}/resume
-        RunsAPI->>Repo: resume_waiting_run(..., continuation_token)
-        Repo->>DB: UPDATE 同一 Run/AgentState 并 COMMIT
-        DB-->>Repo: 持久化完成
-        RunsAPI-)Engine: _schedule_run -> asyncio.create_task
-        RunsAPI-->>FEAPI: 原 run_id + task_id + executing
-    end
-    FEAPI-->>App: 创建/恢复响应
-    App->>App: 建立乐观 RunView 与 ProcessState
+    WAITING -->|否| CREATE_CLIENT["api.ts createRun"]
+    CREATE_CLIENT --> CREATE_API["POST /api/runs"]
+    CREATE_API --> PROFILE["RunProfileResolver.resolve"]
+    PROFILE --> CREATE_RUN["RunRepository.create_task_run"]
+    CREATE_RUN --> DB["SQLAlchemy 数据库"]
 
-    par 后台执行
-    Engine->>Repo: require_run + list_task_runs
-    Repo->>DB: SELECT Run 与最近历史 Run
-    DB-->>Repo: 当前状态与对话历史
-    Engine->>Model: bind_agent_profile + bind_reasoning_effort
-    alt standard 且不是 plan_only
-        Engine->>Repo: status=executing + answer.started
-        Engine->>Loop: 直接进入快速 Agent Loop
-    else 已有 AgentState（resume / activate-plan / recovery）
-        Engine->>Repo: status=executing + answer.started
-        Engine->>Loop: 不重复规划，恢复 Agent Loop
-    else 首次完整初始化（trusted 或 plan_only）
-        Engine->>Repo: status=planning
-        Engine->>Model: contract / plan
-        Model-->>Engine: TaskContract / PlanOutput
-        Engine->>Plan: 校验并持久化规范 Plan
-        Plan->>DB: INSERT Plan/PlanNode/PlanEdge
-        Engine->>Repo: 初始化 AgentState
-        alt execution_mode = plan_only
-            Engine->>Repo: 保存规划结果并结束，不进入 AgentLoop
-        else Contract 仍有歧义
-            Engine->>Repo: status=waiting_user + continuation_token
-        else 可执行
-            Engine->>Repo: status=executing + answer.started
-            Engine->>Loop: 进入完整 Agent Loop
-        end
-    end
+    WAITING -->|是| RESUME_CLIENT["api.ts resumeRun"]
+    RESUME_CLIENT --> RESUME_API["POST /api/runs/id/resume"]
+    RESUME_API --> RESTORE["RunRepository.resume_waiting_run"]
+    RESTORE --> DB
 
-    opt 已进入 AgentLoop
-    loop 每个 AgentTurn
-        opt 存在 active canonical Plan
-            Loop->>Plan: 选择 ready PlanNode 并置为 running
-            Plan->>DB: 更新 PlanNode 与 active_node_id
-        end
-        Loop->>Repo: ContextAssembler 重读状态与 Run Memory
-        Repo->>DB: SELECT Plan/State/Memory
-        DB-->>Repo: 当前已提交事实
-        Loop->>Model: decide_with_answer(goal, context)
-        Model-->>Loop: AgentDecision + 可选 FinalAnswer
-        alt call_tool
-            Loop->>Router: resolve：输入/能力/权限/风险/后端校验
-            Router-->>Loop: 返回已校验 Tool
-            Loop->>Repo: AgentTurn prepared + ToolCall running
-            Repo->>DB: INSERT/UPDATE Turn 与 ToolCall
-            Loop->>Tool: tool.run(input, ToolExecutionContext)
-            Tool->>Repo: 可选写 SandboxJob / Artifact
-            Tool-->>Loop: 原始 output 或 ToolExecutionError
-            Loop->>Repo: 完成 ToolCall，写 Observation/Evaluation/checkpoint
-        else complete_node
-            Loop->>Plan: Evaluation matched 后完成 active node
-            Plan->>DB: PlanNode running -> completed
-        else reflect / replan
-            Loop->>Model: reflect(...)
-            Model-->>Loop: AgentReflection + 可选 PlanPatch
-            Loop->>Plan: 可选 PlanPatch 生成新版本
-        else ask_user
-            Loop->>Repo: waiting_user + continuation_token
-        else finalize
-            Model-->>Engine: answer summary 增量回调
-            Loop->>Repo: 提交最终 AgentTurn
-        end
-    end
+    CREATE_RUN --> SCHEDULE["_schedule_run 创建 asyncio Task"]
+    RESTORE --> SCHEDULE
+    SCHEDULE --> ACCEPTED["返回 run_id、task_id 和 status"]
+    ACCEPTED --> OPTIMISTIC["前端建立乐观 RunView 和 ProcessState"]
+    SCHEDULE --> ENGINE["start_run_in_process 进入 RunEngine"]
 
-    alt standard 快速路径
-        Loop-->>Engine: FinalAnswer + basic result
-        Engine->>Repo: answer.completed + Run.result + 终态
-    else trusted 完整路径
-        Loop->>Repo: EvidencePack Artifact + Verification + CompletionDecision
-        Loop-->>Engine: FinalAnswer + verified result
-        Engine->>Repo: answer.completed
-        Engine->>Repo: synthesizing -> final_answer Artifact -> verifying -> 终态
-    end
-    end
+    ENGINE --> LOAD["读取 Run、历史对话、Profile 和 Policy"]
+    LOAD --> ENTRY{"Engine 选择入口"}
+    ENTRY -->|standard 且非 plan_only| EXECUTE["status executing 并写 answer.started"]
+    ENTRY -->|已有 AgentState| EXECUTE
+    ENTRY -->|首次完整初始化| PLANNING["status planning"]
 
-    and 浏览器观察
-    App->>RunsAPI: EventSource /api/runs/{id}/events
-    App->>RunsAPI: GET /api/runs/{id}
-    RunsAPI->>Repo: get_run
-    Repo->>DB: SELECT Run 及关联记录
-    DB-->>Repo: Run 聚合记录
-    Repo-->>RunsAPI: RunRecord
-    RunsAPI->>RunsAPI: run_to_view(RunRecord)
-    RunsAPI-->>App: 初始 RunView 快照
-    loop Run 非终态时每 50ms 拉取，而不是数据库主动推送
-        RunsAPI->>Repo: list_events(after_id) + get_run_status
-        Repo->>DB: SELECT 新 Event 与 Run.status
-        DB-->>Repo: Event records + status
-        Repo-->>RunsAPI: 查询结果
-        RunsAPI-->>App: SSE event / heartbeat
-        opt 收到非纯文本事件或 3 秒兜底轮询
-            App->>RunsAPI: GET /api/runs/{id}
-            RunsAPI->>Repo: get_run
-            Repo->>DB: SELECT 最新 Run 聚合
-            DB-->>Repo: 最新关联记录
-            Repo-->>RunsAPI: RunRecord
-            RunsAPI->>RunsAPI: run_to_view(RunRecord)
-            RunsAPI-->>App: 最新 RunView
-        end
-    end
-    end
-    App-->>User: 过程、答案、来源与 Artifact
+    PLANNING --> CONTRACT_PLAN["ModelClient 生成 TaskContract 和 PlanOutput"]
+    CONTRACT_PLAN --> VALIDATE_PLAN["PlanValidator 校验并创建规范 Plan"]
+    VALIDATE_PLAN --> INIT_STATE["初始化 AgentState 和 state_version"]
+    INIT_STATE --> INIT_RESULT{"初始化结果"}
+    INIT_RESULT -->|plan_only| PLAN_ONLY["写答案事件、规划结果并结束"]
+    INIT_RESULT -->|Contract 有歧义| WAIT_INIT["持久化 waiting_user 和 continuation_token"]
+    INIT_RESULT -->|可以执行| EXECUTE
+
+    EXECUTE --> LOOP_START["AgentLoop 开始或恢复下一轮"]
+    LOOP_START --> HAS_PLAN{"是否存在 active canonical Plan"}
+    HAS_PLAN -->|是| SELECT_NODE["PlanScheduler 选择 ready node"]
+    HAS_PLAN -->|否| CONTEXT["ContextAssembler 重读已提交状态"]
+    SELECT_NODE --> CONTEXT
+    CONTEXT --> DECIDE["ModelClient.decide_with_answer"]
+    DECIDE --> ACTION{"AgentDecision.decision_type"}
+
+    ACTION -->|call_tool| ROUTER["ToolRouter 校验输入、能力、权限、风险和后端"]
+    ROUTER --> START_CALL["持久化 AgentTurn 和 running ToolCall"]
+    START_CALL --> TOOL["Tool.run 和可选 SandboxJob、Artifact"]
+    TOOL --> OBSERVE["完成 ToolCall 并归一化 Observation"]
+    OBSERVE --> EVALUATE["可信路径执行 Evaluation 并更新 AgentState"]
+    EVALUATE --> LOOP_START
+
+    ACTION -->|complete_node| NODE_EVAL["Evaluation matched 后完成 PlanNode"]
+    NODE_EVAL --> LOOP_START
+
+    ACTION -->|reflect 或 replan| REFLECT["ModelClient.reflect"]
+    REFLECT --> PATCH["可选 ReflectionPatch 和新版 Plan"]
+    PATCH --> LOOP_START
+
+    ACTION -->|ask_user| WAIT_ACTION["持久化 waiting_user 和 continuation_token"]
+    WAIT_ACTION --> STOP_RESULT["构造未完成状态 FinalAnswer"]
+    ACTION -->|blocked| STOP_RESULT
+    STOP_RESULT --> FINAL_MODE
+    ACTION -->|finalize| FINAL_MODE{"answer_mode"}
+
+    FINAL_MODE -->|standard| BASIC_RESULT["生成 basic result，不运行完整质量门"]
+    FINAL_MODE -->|trusted| EVIDENCE["生成 EvidencePack Artifact"]
+    EVIDENCE --> VERIFY["VerificationEngine.verify"]
+    VERIFY --> GATE["CompletionGate.evaluate"]
+    GATE --> TRUSTED_RESULT["生成 verified result"]
+
+    BASIC_RESULT --> ANSWER_DONE["Engine 写 answer.completed"]
+    TRUSTED_RESULT --> ANSWER_DONE
+    ANSWER_DONE --> FINALIZE_MODE{"是否为 trusted"}
+    FINALIZE_MODE -->|否| TERMINAL["持久化 Run.result 和终态"]
+    FINALIZE_MODE -->|是| TRUSTED_FINALIZE["synthesizing、final_answer Artifact、verifying"]
+    TRUSTED_FINALIZE --> TERMINAL
+    PLAN_ONLY --> DB
+    WAIT_INIT --> DB
+    TERMINAL --> DB
+
+    OPTIMISTIC --> OPEN_STREAM["打开 EventSource 和首次 GET Run"]
+    OPEN_STREAM --> POLL["API 每 50ms 查询 Event 和 Run.status"]
+    DB --> POLL
+    POLL --> EVENT["SSE event 或 heartbeat"]
+    EVENT --> REDUCE["reduceProcessEvent 更新过程面板"]
+    EVENT --> REFRESH["非纯文本事件触发 GET Run"]
+    OPTIMISTIC --> FALLBACK["每 3 秒快照轮询兜底"]
+    FALLBACK --> REFRESH
+    REFRESH --> VIEW["run_to_view 生成最新 RunView"]
+    DB --> VIEW
+    VIEW --> RENDER["渲染过程、答案、来源和 Artifact"]
 ```
 
-读图时需要注意：`par` 的两条分支表示 Engine 后台执行与浏览器观察通道并行推进。最重要的事实仍然是：**SSE 不是执行状态本身，模型输出也不是最终事实本身。数据库中的 Run、Plan、Turn、ToolCall、Artifact、Event 和 `Run.result` 才是系统可恢复、可展示、可审计的状态。**
+这张图使用基础 `graph TD` 语法，以兼容当前文档渲染器。`SCHEDULE` 之后，Engine 后台执行与前端的 SSE/快照观察链路实际并行推进。最重要的事实仍然是：**SSE 不是执行状态本身，模型输出也不是最终事实本身。数据库中的 Run、Plan、Turn、ToolCall、Artifact、Event 和 `Run.result` 才是系统可恢复、可展示、可审计的状态。**
 
 ## 1. 从前端发送开始：`submit()` 构造的不是一条普通聊天消息
 

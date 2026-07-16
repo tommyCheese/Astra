@@ -355,7 +355,16 @@ async def test_real_model_operations_use_explicit_profile_composition():
     captured = []
     payloads = {
         ModelOperation.CONTRACT: {},
-        ModelOperation.PLAN: {"steps": []},
+        ModelOperation.PLAN: {
+            "steps": [
+                {
+                    "title": "回答",
+                    "intent": "完成目标",
+                    "required_tools": [],
+                    "success_criteria": ["产生回答"],
+                }
+            ]
+        },
         ModelOperation.SYNTHESIS: {"summary": "完成"},
         ModelOperation.DECISION: {
             "decision_type": "finalize",

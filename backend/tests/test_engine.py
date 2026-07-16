@@ -189,7 +189,11 @@ class QuickForbiddenToolClient(QuickStreamingClient):
 async def test_engine_completes_mock_web_query(session):
     settings = Settings(model_provider="mock", web_search_provider="mock")
     repo = RunRepository(session)
-    run = await repo.create_task_run("查询 mock 数据", settings.model_policy)
+    run = await repo.create_task_run(
+        "查询 mock 数据",
+        settings.model_policy,
+        reasoning_policy=engine_policy("direct", "auto_approval"),
+    )
 
     engine = RunEngine(
         settings,
@@ -247,7 +251,7 @@ async def test_weather_plan_executes_nodes_in_dependency_order(session):
     run = await repo.create_task_run(
         "查询明天上海天气并判断是否适合跑步",
         settings.model_policy,
-        reasoning_policy=engine_policy("plan_first", "request_approval"),
+        reasoning_policy=engine_policy("plan_first", "auto_approval"),
     )
     registry = ToolRegistry()
     registry.register(FakeWeather())
@@ -324,7 +328,9 @@ async def test_final_plan_node_answer_is_regenerated_as_canonical_stream(session
 
 async def test_standard_fast_path_skips_plan_state_and_all_quality_gates(session):
     settings = Settings(model_provider="mock")
-    profile = RunProfileResolver().resolve(AnswerMode.standard, RequestedReasoningPolicy())
+    profile = RunProfileResolver().resolve(
+        AnswerMode.standard, RequestedReasoningPolicy(execution_mode="auto_approval")
+    )
     repo = RunRepository(session)
     run = await repo.create_task_run(
         "快速回答",
@@ -368,7 +374,9 @@ async def test_standard_fast_path_skips_plan_state_and_all_quality_gates(session
 
 async def test_standard_fast_path_reuses_tool_router_without_creating_steps(session):
     settings = Settings(model_provider="mock")
-    profile = RunProfileResolver().resolve(AnswerMode.standard, RequestedReasoningPolicy())
+    profile = RunProfileResolver().resolve(
+        AnswerMode.standard, RequestedReasoningPolicy(execution_mode="auto_approval")
+    )
     repo = RunRepository(session)
     run = await repo.create_task_run(
         "查询天气",
@@ -506,7 +514,8 @@ async def test_engine_binds_effective_reasoning_effort_before_model_operations(s
 async def test_standard_profile_skips_planning_and_quality_assurance_objects(session):
     settings = Settings(model_provider="mock", web_search_provider="mock")
     profile = RunProfileResolver().resolve(
-        AnswerMode.standard, RequestedReasoningPolicy(reasoning_effort="deep")
+        AnswerMode.standard,
+        RequestedReasoningPolicy(reasoning_effort="deep", execution_mode="auto_approval"),
     )
     repo = RunRepository(session)
     run = await repo.create_task_run(
@@ -639,6 +648,13 @@ async def test_plan_only_plan_can_be_activated_and_executed(session):
         agent_state=state,
         plan_graph=plan_to_view(planned).model_dump(mode="json"),
     )
+    loaded = await repo.require_run(run.id)
+    reasoning_policy = dict(loaded.reasoning_policy)
+    effective = dict(reasoning_policy["effective"])
+    effective["execution_mode"] = "auto_approval"
+    reasoning_policy["effective"] = effective
+    loaded.reasoning_policy = reasoning_policy
+    await session.commit()
     await engine._run_with_repo(repo, run.id)
     executed = await PlanRepository(session).active_for_run(run.id)
     assert executed is not None

@@ -8,6 +8,7 @@ TOOL_SETTING_FIELDS = {
     "web_search": "tool_web_search_enabled",
     "web_fetch": "tool_web_fetch_enabled",
     "chart_render": "tool_chart_render_enabled",
+    "bash_execute": "tool_bash_execute_enabled",
 }
 
 

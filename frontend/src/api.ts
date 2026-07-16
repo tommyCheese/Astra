@@ -61,7 +61,7 @@ export type RuntimeProfile = {
 };
 
 export type ToolSetting = {
-  name: 'web_search' | 'web_fetch' | 'chart_render';
+  name: 'web_search' | 'web_fetch' | 'chart_render' | 'bash_execute';
   label: string;
   description: string;
   enabled: boolean;
@@ -186,6 +186,22 @@ export async function getRun(runId: string, signal?: AbortSignal): Promise<RunVi
 
 export async function cancelRun(runId: string): Promise<RunView> {
   const response = await fetch(`/api/runs/${runId}/cancel`, { method: 'POST' });
+  if (!response.ok) throw await responseError(response);
+  return response.json();
+}
+
+export async function decideToolApproval(
+  runId: string,
+  approvalId: string,
+  decision: 'approve_once' | 'allow_similar' | 'reject',
+  continuationToken: string,
+  model?: RunModelConfig,
+): Promise<{ run_id: string; task_id: string; status: string }> {
+  const response = await fetchWithTimeout(`/api/runs/${runId}/approvals/${approvalId}/decision`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ decision, continuation_token: continuationToken, model }),
+  });
   if (!response.ok) throw await responseError(response);
   return response.json();
 }
