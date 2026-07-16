@@ -714,7 +714,7 @@ function AppContent() {
         <section className="chat-topbar">
           <button className="mobile-sidebar-trigger" type="button" aria-label={t('打开导航')} onClick={() => setSidebarOpen(true)}><span /><span /><span /></button>
           <h1>{activeConversationTitle || 'Astra'}</h1>
-          {run && <div className="topbar-run-controls"><button type="button" onClick={() => setControlCenterOpen(true)}>{t('权限与文件')}</button><span className={`status status-${run.status}`}>{statusLabel(run.status)}</span></div>}
+          {run && <div className="topbar-run-controls"><button type="button" onClick={() => setControlCenterOpen(true)}>{t('安全与文件')}</button><span className={`status status-${run.status}`}>{statusLabel(run.status)}</span></div>}
         </section>
 
         <section className="chat-surface">
@@ -1650,25 +1650,87 @@ function ExecutionModeMenu({ value, onChange }: { value: 'plan' | 'default' | 'b
   return <div className="floating-menu execution-menu"><div className="menu-heading">{t('执行模式')}</div>{modes.map((mode) => <button className={value === mode.id ? 'selected' : ''} type="button" key={mode.id} onClick={() => onChange(mode.id)}><Icon name={mode.icon} /><div><strong>{t(mode.title)}</strong><small>{t(mode.detail)}</small></div><span className="mode-selected-mark">{value === mode.id ? '✓' : ''}</span></button>)}</div>;
 }
 
+function approvalResourceLabel(resource: string) {
+  const workspaceMatch = resource.match(/^task:\/\/[^/]+\/workspace\/(.+)$/);
+  if (workspaceMatch) return workspaceMatch[1];
+  if (resource.startsWith('network://')) return '外部网络';
+  if (resource.startsWith('external://')) return '外部服务';
+  return '';
+}
+
+function friendlyApprovalContent(approval: PendingApproval) {
+  const effects = new Set(approval.effect_kinds || []);
+  const resources = (approval.affected_resources || []).map(approvalResourceLabel).filter(Boolean);
+  const target = resources[0];
+  if (effects.has('workspace_delete')) {
+    return {
+      title: target ? `删除 ${target}` : '删除任务文件',
+      description: '删除后文件将不再出现在任务工作区中。',
+      risk: '会删除文件',
+      resources,
+    };
+  }
+  if (effects.has('workspace_write') || effects.has('artifact_write')) {
+    return {
+      title: target ? `保存 ${target}` : '保存任务文件',
+      description: '文件会保存在当前任务中，后续工具可以继续使用。',
+      risk: '会创建或修改文件',
+      resources,
+    };
+  }
+  if (effects.has('external_write') || effects.has('network_write')) {
+    return {
+      title: target ? `修改 ${target}` : '修改外部内容',
+      description: '这项操作会向任务工作区之外发送数据或修改外部系统。',
+      risk: '会影响外部系统',
+      resources,
+    };
+  }
+  if (effects.has('credential_use') || effects.has('sensitive_data_read')) {
+    return {
+      title: effects.has('credential_use') ? '使用已连接的账户' : '读取敏感信息',
+      description: 'Astra 只会在本次操作所需的最小范围内使用这些信息。',
+      risk: effects.has('credential_use') ? '会使用账户权限' : '包含敏感信息',
+      resources,
+    };
+  }
+  if (effects.has('process_execute_unknown')) {
+    return {
+      title: '运行一项未完全识别的操作',
+      description: 'Astra 无法可靠判断它是否会修改文件或环境。',
+      risk: '影响范围不确定',
+      resources,
+    };
+  }
+  return {
+    title: approval.action_summary || '执行这项操作',
+    description: 'Astra 需要你的确认后才能继续。',
+    risk: approval.impact === 'high' ? '风险较高' : '需要确认',
+    resources,
+  };
+}
+
 function ApprovalCard({ approval, submitting, onDecision }: { approval: PendingApproval; submitting: boolean; onDecision: (decision: 'approve_once' | 'allow_similar' | 'allow_task' | 'reject') => void }) {
   const { t } = useI18n();
-  return <section className="approval-card" role="group" aria-label={t('工具执行等待批准')}>
+  const content = friendlyApprovalContent(approval);
+  return <section className="approval-card" role="group" aria-label={t('需要你的确认')}>
     <div className="approval-card-header">
       <Icon name="requestApprove" />
-      <div><strong>{t('工具执行等待批准')}</strong><span>{approval.action_summary || `${t('将要调用')} ${approval.tool_name}`}</span></div>
+      <div><strong>{t('需要你的确认')}</strong><span>{t(content.title)}</span></div>
     </div>
-    <pre className="approval-preview">{approval.preview}</pre>
-    <div className="approval-meta">
-      <span>{t('权限')}: <b>{approval.permission}</b></span>
-      <span>{t('影响范围')}: <b>{approval.impact}</b></span>
-      {approval.working_directory && <span>{t('工作目录')}: <b>{approval.working_directory}</b></span>}
+    <p className="approval-friendly-description">{t(content.description)}</p>
+    {approval.tool_name === 'bash_execute' && approval.preview && <div className="approval-command">
+      <span>{t('将执行的命令')}</span>
+      <pre>{approval.preview}</pre>
+    </div>}
+    <div className="approval-friendly-summary">
+      <span className="approval-risk-pill">{t(content.risk)}</span>
+      {content.resources.slice(0, 3).map((resource) => <span className="approval-resource-pill" key={resource}>{resource}</span>)}
     </div>
-    {approval.risk_reason && <p className="approval-risk-reason">{approval.risk_reason}</p>}
-    {Boolean(approval.affected_resources?.length) && <div className="approval-resources"><strong>{t('涉及资源')}</strong>{approval.affected_resources?.map((resource) => <code key={resource}>{resource}</code>)}</div>}
     <div className="approval-actions">
-      <button type="button" disabled={submitting} onClick={() => onDecision('approve_once')}>{t('仅本次')}</button>
-      {approval.decisions.includes('allow_similar') && <button type="button" disabled={submitting} onClick={() => onDecision('allow_similar')}>{t('允许类似命令')}</button>}
-      {approval.decisions.includes('allow_task') && <button type="button" disabled={submitting} onClick={() => onDecision('allow_task')}>{t('本任务内允许')}</button>}
+      <button type="button" disabled={submitting} onClick={() => onDecision('approve_once')}>{t('允许这次')}</button>
+      {approval.decisions.includes('allow_similar') && <button type="button" disabled={submitting} onClick={() => onDecision('allow_similar')}>{t('当前运行内允许')}</button>}
+      {approval.decisions.includes('allow_task') && <button type="button" disabled={submitting} onClick={() => onDecision('allow_task')}>{t('当前任务内允许')}</button>}
       <button className="approval-reject" type="button" disabled={submitting} onClick={() => onDecision('reject')}>{t('拒绝')}</button>
     </div>
     {submitting && <span className="approval-submitting" role="status">{t('正在提交批准决定…')}</span>}
@@ -1771,6 +1833,7 @@ function ControlCenterDialog({ run, onClose }: { run: RunView; onClose: () => vo
   const activeGrants = permissions?.grants.filter((grant) => grant.status === 'active') ?? [];
   const deliverableFiles = workspace?.files.filter((file) => file.status === 'present' && file.deliverable_candidate) ?? [];
   const deletedFiles = workspace?.changes.filter((change) => change.kind === 'deleted') ?? [];
+  const meaningfulCheckpoints = workspace?.checkpoints.filter((checkpoint) => checkpoint.file_count > 0) ?? [];
   const recentEvents = permissions?.policy_explanations?.slice(0, 6) ?? [];
   return <div className="modal-backdrop" role="presentation" onMouseDown={onClose}>
     <section className="control-center-modal" role="dialog" aria-modal="true" aria-label={t('任务安全与文件')} onMouseDown={(event) => event.stopPropagation()}>
@@ -1778,7 +1841,7 @@ function ControlCenterDialog({ run, onClose }: { run: RunView; onClose: () => vo
       {loadError && <p className="control-center-error">{loadError}</p>}
       {!permissions || !workspace ? <p>{t('正在加载…')}</p> : <>
         <div className="control-center-overview" aria-label={t('任务安全概览')}>
-          <div><strong>{activeGrants.length}</strong><span>{t('项持续授权')}</span><small>{activeGrants.length ? t('可随时撤销') : t('危险操作仍会询问')}</small></div>
+          <div><strong>{activeGrants.length}</strong><span>{t('项有效授权')}</span><small>{activeGrants.length ? t('可随时撤销') : t('危险操作仍会询问')}</small></div>
           <div><strong>{deliverableFiles.length}</strong><span>{t('个任务文件')}</span><small>{deliverableFiles.length ? t('可安全预览或下载') : t('尚未生成可交付文件')}</small></div>
           <div><strong>{permissions.credentials.filter((item) => !item.revoked_at).length}</strong><span>{t('项凭据使用')}</span><small>{permissions.credentials.some((item) => !item.revoked_at) ? t('均为短期受限凭据') : t('未使用外部服务凭据')}</small></div>
         </div>
@@ -1823,8 +1886,8 @@ function ControlCenterDialog({ run, onClose }: { run: RunView; onClose: () => vo
 
           <section className="control-center-panel workspace-history-panel">
             <div className="control-center-section-heading"><div><h3>{t('文件历史')}</h3><p>{t('记录任务文件的状态快照和删除行为。')}</p></div></div>
-            {workspace.checkpoints.length || deletedFiles.length ? <div className="workspace-history-list">
-              {workspace.checkpoints.slice(0, 3).map((checkpoint) => <div className="control-center-item" key={checkpoint.id}><strong>{t('已保存文件状态')}</strong><span>{t('{count} 个文件').replace('{count}', String(checkpoint.file_count))} · {new Date(checkpoint.created_at).toLocaleString()}</span></div>)}
+            {meaningfulCheckpoints.length || deletedFiles.length ? <div className="workspace-history-list">
+              {meaningfulCheckpoints.slice(0, 3).map((checkpoint) => <div className="control-center-item" key={checkpoint.id}><strong>{t('已保存文件状态')}</strong><span>{t('{count} 个文件').replace('{count}', String(checkpoint.file_count))} · {new Date(checkpoint.created_at).toLocaleString()}</span></div>)}
               {deletedFiles.slice(0, 5).map((change) => <div className="control-center-item" key={change.id}><strong>{change.path}</strong><span>{t('已删除')} · {new Date(change.created_at).toLocaleString()}</span></div>)}
             </div> : <div className="control-center-empty compact"><span>{t('还没有文件状态或删除记录')}</span></div>}
           </section>

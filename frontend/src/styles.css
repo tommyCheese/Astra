@@ -1296,7 +1296,7 @@ html[data-theme="dark"] .process-decision-children .process-step.status-running 
 .approval-card {
   width: min(780px, calc(100% - 32px));
   margin: 0 auto;
-  padding: 14px 16px;
+  padding: 15px 17px;
   border: 1px solid rgba(197, 139, 42, .38);
   border-radius: 16px;
   background: color-mix(in srgb, var(--surface, #fff) 94%, #fff3d5);
@@ -1305,12 +1305,15 @@ html[data-theme="dark"] .process-decision-children .process-step.status-running 
 .approval-card-header { display: flex; align-items: center; gap: 10px; }
 .approval-card-header svg { width: 20px; height: 20px; color: #a66a09; }
 .approval-card-header div { display: grid; gap: 2px; }
-.approval-card-header span, .approval-meta { color: var(--muted, #6c6c6c); font-size: 12px; }
-.approval-preview { margin: 12px 0; padding: 10px 12px; max-height: 150px; overflow: auto; border-radius: 10px; background: rgba(25, 25, 25, .06); white-space: pre-wrap; overflow-wrap: anywhere; }
-.approval-meta { display: flex; flex-wrap: wrap; gap: 8px 18px; }
-.approval-risk-reason { margin: 0; color: #9a5a08; font-size: 12px; line-height: 1.5; }
-.approval-resources { display: grid; gap: 6px; color: var(--muted, #6c6c6c); font-size: 12px; }
-.approval-resources code { overflow-wrap: anywhere; border-radius: 8px; background: rgba(127, 127, 127, 0.08); padding: 6px 8px; color: var(--text, #263142); }
+.approval-card-header span { color: var(--text, #263142); font-size: 14px; font-weight: 700; }
+.approval-friendly-description { margin: 9px 0 0 30px; color: var(--muted, #6c6c6c); font-size: 12px; line-height: 1.5; }
+.approval-command { display: grid; gap: 5px; margin: 10px 0 0 30px; }
+.approval-command > span { color: var(--muted, #6c6c6c); font-size: 10px; font-weight: 700; }
+.approval-command pre { max-height: 78px; overflow: auto; margin: 0; border-radius: 9px; background: rgba(25, 25, 25, .055); color: var(--text, #263142); font-size: 11px; line-height: 1.45; padding: 8px 10px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.approval-friendly-summary { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0 0 30px; }
+.approval-risk-pill, .approval-resource-pill { max-width: 100%; overflow: hidden; border-radius: 999px; font-size: 11px; padding: 4px 8px; text-overflow: ellipsis; white-space: nowrap; }
+.approval-risk-pill { background: rgba(190, 126, 28, .1); color: #956614; }
+.approval-resource-pill { background: rgba(91, 104, 123, .08); color: #5f6c7d; }
 .approval-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
 .approval-actions button { border: 1px solid rgba(47, 143, 115, .32); border-radius: 9px; padding: 8px 12px; background: rgba(47, 143, 115, .09); color: inherit; cursor: pointer; }
 .approval-actions button:hover:not(:disabled) { background: rgba(47, 143, 115, .16); }
@@ -1398,6 +1401,7 @@ html[data-theme="dark"] .process-decision-children .process-step.status-running 
 
 @media (max-width: 640px) {
   .approval-card { width: calc(100% - 20px); padding: 12px; border-radius: 14px; }
+  .approval-friendly-description, .approval-command, .approval-friendly-summary { margin-left: 0; }
   .approval-actions { display: grid; grid-template-columns: 1fr; }
   .approval-actions .approval-reject { margin-left: 0; }
 }

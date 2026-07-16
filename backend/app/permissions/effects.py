@@ -348,6 +348,10 @@ class BashEffectAnalyzer(ToolEffectAnalyzer):
             )
             summary = "执行行为未知的 Bash 命令"
         effects = _deduplicate_effects(effects)
+        if any(item.kind == EffectKind.workspace_delete for item in effects):
+            summary = "删除任务工作区文件"
+        elif any(item.kind == EffectKind.workspace_write for item in effects):
+            summary = "创建或修改任务工作区文件"
         side_effecting = any(
             item.kind
             in {

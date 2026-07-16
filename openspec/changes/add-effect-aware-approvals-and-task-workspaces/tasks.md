@@ -29,6 +29,7 @@
 - [x] 4.2 Add Bash parsing for read-only commands, redirection, file mutation, deletion, network methods, and unknown programs
 - [x] 4.3 Add effect analyzers for chart, file, artifact, dependency, credential, delegation, and external-write actions
 - [x] 4.4 Add analyzer-version integrity checks and security-focused classification tests
+- [x] 4.5 Keep Bash ToolSpec maximum permissions aligned with analyzer-produced temporary-compute and workspace-write effects
 
 ## 5. Identity, credentials, data, and extension trust
 
@@ -65,6 +66,7 @@
 - [x] 8.4 Update execution-mode labels and help text to explain side-effect-free plan-only behavior
 - [x] 8.5 Add the permission center, Grant revocation, tool trust, delegation, credential use, and policy explanation UI
 - [ ] 8.6 Redesign the permission center around human-readable active permissions, files, safety activity, and progressively disclosed technical details
+- [x] 8.7 Simplify approval cards to action, user-visible resource, practical risk, and friendly scope choices only
 
 ## 9. Verification
 
