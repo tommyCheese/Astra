@@ -61,6 +61,7 @@ class BashExecuteTool(Tool):
         permissions=[
             "command_execute",
             "process_execute",
+            "temporary_compute",
             "workspace_read",
             "workspace_write",
             "workspace_delete",

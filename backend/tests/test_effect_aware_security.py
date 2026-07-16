@@ -64,6 +64,11 @@ def test_effect_matrix_classifies_safe_mutating_forbidden_and_artifact_actions()
     assert temporary.approval_required is False
     assert {item.kind.value for item in temporary.effects} == {"temporary_compute"}
     assert create.approval_required is True
+    assert set(create.required_permissions) <= set(BashExecuteTool.spec.permissions)
+    assert {item.kind.value for item in create.effects} == {
+        "temporary_compute",
+        "workspace_write",
+    }
     assert modify.approval_required is True
     assert {item.kind.value for item in delete.effects} == {"workspace_delete"}
     assert platform_denial_reason(forbidden)

@@ -49,7 +49,14 @@ def test_bash_execute_is_disabled_by_default_and_registered_explicitly():
     assert "bash_execute" not in disabled.specs()
     spec = enabled.specs()["bash_execute"]
     assert spec.execution_backend == "sandbox.remote"
-    assert {"command_execute", "workspace_read", "workspace_write", "workspace_delete"} <= set(spec.permissions)
+    assert {
+        "command_execute",
+        "process_execute",
+        "temporary_compute",
+        "workspace_read",
+        "workspace_write",
+        "workspace_delete",
+    } <= set(spec.permissions)
     assert spec.risk == "high"
 
 
