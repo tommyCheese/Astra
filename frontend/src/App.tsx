@@ -732,14 +732,15 @@ function AppContent() {
           </div>
 
           {showJumpToLatest && <button className="jump-latest-button" type="button" onClick={jumpToLatest}><span aria-hidden="true">↓</span>{t('回到最新')}</button>}
-          {run?.pending_approval && (
-            <ApprovalCard
-              approval={run.pending_approval}
-              submitting={approvalSubmitting}
-              onDecision={(decision) => { void decideApproval(decision); }}
-            />
-          )}
-          <form className={`chat-composer ${run?.pending_approval ? 'approval-pending' : ''}`} onSubmit={submit} onClick={(event) => {
+          <div className={`composer-dock ${run?.pending_approval ? 'has-approval' : ''}`}>
+            {run?.pending_approval && (
+              <ApprovalCard
+                approval={run.pending_approval}
+                submitting={approvalSubmitting}
+                onDecision={(decision) => { void decideApproval(decision); }}
+              />
+            )}
+            <form className={`chat-composer ${run?.pending_approval ? 'approval-pending' : ''}`} onSubmit={submit} onClick={(event) => {
             const target = event.target as HTMLElement;
             if (!target.closest('button, textarea, input, select, a, [role="button"]')) {
               goalInputRef.current?.focus({ preventScroll: true });
@@ -851,7 +852,8 @@ function AppContent() {
             ) : (
               <button className="send-button" type="submit" aria-label={t('发送')} disabled={!conversationStrategyReady || Boolean(run?.pending_approval)}>↑</button>
             )}
-          </form>
+            </form>
+          </div>
           {error && <ErrorDialog error={error} onClose={() => setError(null)} onRetry={error.retryable ? () => document.querySelector<HTMLFormElement>('.chat-composer')?.requestSubmit() : undefined} />}
         </section>
 

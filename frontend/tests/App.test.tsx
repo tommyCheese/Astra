@@ -1191,7 +1191,11 @@ describe('App', () => {
     await userEvent.type(screen.getByRole('textbox'), '运行测试');
     await userEvent.click(screen.getByRole('button', { name: '发送' }));
 
-    expect(await screen.findByRole('group', { name: '工具执行等待批准' })).toBeInTheDocument();
+    const approvalCard = await screen.findByRole('group', { name: '工具执行等待批准' });
+    const composerDock = approvalCard.closest('.composer-dock');
+    expect(composerDock).not.toBeNull();
+    expect(composerDock?.querySelector('.chat-composer')).toBeInTheDocument();
+    expect(approvalCard.nextElementSibling).toHaveClass('chat-composer');
     expect(screen.getByText('pytest tests/test_api.py -q')).toBeInTheDocument();
     expect(screen.getByRole('textbox')).toBeDisabled();
     await userEvent.click(screen.getByRole('button', { name: '允许类似命令' }));
