@@ -452,6 +452,16 @@ class PlanningSpyClient(MockModelClient):
         return await super().plan(goal)
 
 
+class EmptyPlanClient(MockModelClient):
+    async def plan(self, goal):
+        return PlanOutput.model_construct(
+            steps=[],
+            required_tools=[],
+            success_criteria=[],
+            risk_level="low",
+        )
+
+
 class EffortSpyClient(MockModelClient):
     def __init__(self):
         self.bound_efforts = []
@@ -549,6 +559,25 @@ async def test_engine_planning_strategy_selects_distinct_path(
 
     assert client.contract_calls == contract_calls
     assert client.plan_calls == plan_calls
+
+
+async def test_engine_falls_back_when_model_returns_empty_plan(session):
+    settings = Settings(model_provider="mock", web_search_provider="mock")
+    repo = RunRepository(session)
+    run = await repo.create_task_run(
+        "解释当前报错",
+        settings.model_policy,
+        reasoning_policy=engine_policy("plan_first", "plan_only"),
+    )
+
+    await RunEngine(
+        settings, model_client=EmptyPlanClient(), tool_registry=fake_web_registry()
+    )._run_with_repo(repo, run.id)
+
+    loaded = await repo.require_run(run.id)
+    assert loaded.status == "completed"
+    assert loaded.plan_graph["nodes"][0]["title"] == "生成回复"
+    assert loaded.result["findings"][0]["text"] == "生成回复：直接回应用户当前请求"
 
 
 async def test_plan_only_result_does_not_expose_internal_conversation_wrapper(session):

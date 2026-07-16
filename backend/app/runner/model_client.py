@@ -1170,7 +1170,9 @@ def normalize_plan_payload(payload: dict[str, Any]) -> dict[str, Any]:
     for field in ("required_tools", "success_criteria"):
         value = normalized.get(field) or []
         normalized[field] = value if isinstance(value, list) else [str(value)]
-    steps = normalized.get("steps") or []
+    steps = normalized.get("steps")
+    if steps is None:
+        steps = []
     normalized["steps"] = [
         item if isinstance(item, dict) else {"title": str(item), "intent": str(item)}
         for item in (steps if isinstance(steps, list) else [steps])

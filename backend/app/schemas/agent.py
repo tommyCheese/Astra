@@ -439,7 +439,7 @@ class PlanStep(BaseModel):
 
 
 class PlanOutput(BaseModel):
-    steps: list[PlanStep]
+    steps: list[PlanStep] = Field(min_length=1)
     required_tools: list[str] = Field(default_factory=list)
     success_criteria: list[str] = Field(default_factory=list)
     risk_level: str = "low"

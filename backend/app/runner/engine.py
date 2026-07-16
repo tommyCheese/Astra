@@ -296,7 +296,10 @@ class RunEngine:
 
     def _resolve_plan(self, run_id: str, result: PlanOutput | Exception) -> PlanOutput:
         if not isinstance(result, Exception):
-            return result
+            if result.steps:
+                return result
+            logger.warning("run.plan.fallback run_id=%s reason=empty plan steps", run_id)
+            return self._default_plan("生成回复", "直接回应用户当前请求")
         if not isinstance(result, ModelOutputError):
             raise result
         logger.warning("run.plan.fallback run_id=%s reason=%s", run_id, str(result))

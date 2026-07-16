@@ -17,6 +17,7 @@
 
 ## 现有专题文档
 
+- [Astra 端到端代码串讲](end-to-end-code-walkthrough.md)：从前端 `submit()` 开始，逐函数跟踪 Run 创建、standard/trusted 分流、规划、Agent Loop、工具、沙箱、Artifact、反思、验证、SSE 与最终渲染；适合打开源码同步阅读。
 - [跟着上下文流读懂 Astra Agent](agent-implementation-execution-walkthrough.md)：按真实交互顺序理解 Agent Loop Harness、工具、证据、反思、验证与前端交付。
 - [一次 Run 如何返回并展示工具输出](run-result-and-contextual-tool-output.md)：沿最终化、引用校验、持久化和前端消费顺序解释结果格式与多工具输出布局。
 

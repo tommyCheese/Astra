@@ -14,6 +14,7 @@ from app.schemas.agent import (
     PlanNodeDraft,
     PlanNodeStatus,
     PlanOutput,
+    PlanStep,
     PlanPatch,
     PlanStatus,
     RunBudgets,
@@ -97,7 +98,14 @@ def plan_output_to_draft(
 ) -> PlanDraft:
     criterion_ids = [item.id for item in contract.success_criteria]
     nodes: list[PlanNodeDraft] = []
-    for index, item in enumerate(plan.steps, start=1):
+    steps = list(plan.steps) or [
+        PlanStep(
+            title="处理请求",
+            intent=f"根据任务目标完成回复：{contract.original_goal}",
+            success_criteria=["正确回应用户当前请求"],
+        )
+    ]
+    for index, item in enumerate(steps, start=1):
         node_key = f"step-{index}"
         nodes.append(
             PlanNodeDraft(
