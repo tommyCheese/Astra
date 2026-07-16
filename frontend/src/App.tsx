@@ -1675,6 +1675,80 @@ function ApprovalCard({ approval, submitting, onDecision }: { approval: PendingA
   </section>;
 }
 
+function permissionToolLabel(toolName: string) {
+  const labels: Record<string, string> = {
+    bash_execute: '命令工具',
+    chart_render: '图表工具',
+    web_search: '网页搜索',
+    web_fetch: '网页读取',
+  };
+  return labels[toolName] || toolName.replace(/_/g, ' ');
+}
+
+function permissionEffectLabel(effectKind: string) {
+  const labels: Record<string, string> = {
+    workspace_read: '读取任务文件',
+    workspace_write: '创建或修改任务文件',
+    workspace_delete: '删除任务文件',
+    network_read: '读取公开网络内容',
+    network_write: '向外部服务发送或修改数据',
+    process_execute: '执行程序',
+    process_execute_unknown: '执行未完全识别的程序',
+    command_execute: '执行命令',
+    sensitive_data_read: '读取敏感数据',
+    credential_use: '使用服务凭据',
+    external_write: '修改外部系统',
+  };
+  return labels[effectKind] || effectKind.replace(/_/g, ' ');
+}
+
+function permissionScopeLabel(scope: string) {
+  return scope === 'task' ? '当前任务持续有效' : scope === 'run' ? '仅当前运行有效' : '临时授权';
+}
+
+function identityTypeLabel(type: string) {
+  const labels: Record<string, string> = {
+    main_agent: '主 Agent',
+    reviewer: '审批用户',
+    tool_provider: '工具提供方',
+    tool_runtime: '工具运行时',
+    subagent: '子 Agent',
+  };
+  return labels[type] || type.replace(/_/g, ' ');
+}
+
+function trustLevelLabel(level: string) {
+  return level === 'platform' ? '平台内置' : level === 'user' ? '当前用户' : level === 'managed' ? '受管理' : level;
+}
+
+function permissionEventLabel(type: string, payload: Record<string, unknown>) {
+  if (type === 'approval.requested') return `请求确认 ${permissionToolLabel(String(payload.tool_name || '工具'))} 的操作`;
+  if (type === 'approval.decided') {
+    const decision = String(payload.decision || '');
+    const labels: Record<string, string> = {
+      approve_once: '已允许本次操作',
+      allow_similar: '已允许当前运行中的类似操作',
+      allow_task: '已允许当前任务中的类似操作',
+      reject: '已拒绝操作',
+    };
+    return labels[decision] || '已作出权限决定';
+  }
+  if (type === 'tool_call.effect_blocked_by_mode') return '仅规划模式阻止了一项会产生副作用的操作';
+  return String(payload.summary || payload.tool_name || '记录了一项权限事件');
+}
+
+function readableResourceMatcher(matcher: Record<string, unknown>) {
+  const values = Object.values(matcher).flatMap((value) => Array.isArray(value) ? value : [value]).filter((value) => typeof value === 'string') as string[];
+  if (!values.length) return '';
+  return values.slice(0, 2).map((value) => value.replace(/^task:\/\/[^/]+\/workspace\//, '工作区/')).join('、');
+}
+
+function formatFileSize(bytes: number) {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(bytes < 10240 ? 1 : 0)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
 function ControlCenterDialog({ run, onClose }: { run: RunView; onClose: () => void }) {
   const { t } = useI18n();
   const [permissions, setPermissions] = useState<PermissionCenterView | null>(null);
@@ -1694,17 +1768,77 @@ function ControlCenterDialog({ run, onClose }: { run: RunView; onClose: () => vo
     }
   }, [run.id, run.task_id, t]);
   useEffect(() => { void refresh(); }, [refresh]);
+  const activeGrants = permissions?.grants.filter((grant) => grant.status === 'active') ?? [];
+  const deliverableFiles = workspace?.files.filter((file) => file.status === 'present' && file.deliverable_candidate) ?? [];
+  const deletedFiles = workspace?.changes.filter((change) => change.kind === 'deleted') ?? [];
+  const recentEvents = permissions?.policy_explanations?.slice(0, 6) ?? [];
   return <div className="modal-backdrop" role="presentation" onMouseDown={onClose}>
-    <section className="control-center-modal" role="dialog" aria-modal="true" aria-label={t('权限与文件')} onMouseDown={(event) => event.stopPropagation()}>
-      <header><div><h2>{t('权限与文件')}</h2><p>{t('查看当前任务的授权边界、身份链和持久化工作区。')}</p></div><button type="button" aria-label={t('关闭')} onClick={onClose}>×</button></header>
+    <section className="control-center-modal" role="dialog" aria-modal="true" aria-label={t('任务安全与文件')} onMouseDown={(event) => event.stopPropagation()}>
+      <header><div><h2>{t('任务安全与文件')}</h2><p>{t('管理 Astra 在这个任务中可以继续执行的操作，并查看已生成的文件。')}</p></div><button type="button" aria-label={t('关闭')} onClick={onClose}>×</button></header>
       {loadError && <p className="control-center-error">{loadError}</p>}
-      {!permissions || !workspace ? <p>{t('正在加载…')}</p> : <div className="control-center-grid">
-        <section><h3>{t('生效授权')}</h3>{permissions.grants.length ? permissions.grants.map((grant) => <div className="control-center-item" key={grant.id}><strong>{grant.tool_name} · {grant.scope}</strong><span>{grant.effect_kinds.join(', ') || t('旧版匹配规则')}</span>{grant.status === 'active' && <button type="button" onClick={async () => { await revokePermissionGrant(grant.id); await refresh(); }}>{t('撤销')}</button>}</div>) : <p>{t('没有持久授权')}</p>}</section>
-        <section><h3>{t('身份与工具信任')}</h3>{permissions.identities.map((identity) => <div className="control-center-item" key={identity.id}><strong>{identity.type}</strong><span>{identity.principal} · {identity.trust_level}</span></div>)}{permissions.delegations.map((delegation) => <div className="control-center-item" key={delegation.id}><strong>{t('委派')}</strong><span>{delegation.parent_identity_id.slice(0, 8)} → {delegation.child_identity_id.slice(0, 8)}</span></div>)}{permissions.credentials.map((credential) => <div className="control-center-item" key={credential.id}><strong>{t('凭据使用')} · {credential.service}</strong><span>{credential.scopes.join(', ')} · {credential.revoked_at ? t('已撤销') : t('短期有效')}</span></div>)}{permissions.tool_catalog && <small>Catalog · {permissions.tool_catalog.digest.slice(0, 12)}</small>}</section>
-        <section className="workspace-files-section"><h3>{t('任务文件')}</h3>{workspace.files.filter((file) => file.status === 'present' && file.deliverable_candidate).map((file) => <div className="control-center-item" key={file.id}><strong>{file.path}</strong><span>{file.mime_type || t('未知类型')} · {file.size_bytes} B</span>{file.content_url && <a href={file.content_url}>{t('预览或下载')}</a>}</div>)}{!workspace.files.some((file) => file.status === 'present' && file.deliverable_candidate) && <p>{t('暂无可交付文件')}</p>}</section>
-        <section><h3>{t('删除与检查点')}</h3>{workspace.changes.filter((change) => change.kind === 'deleted').slice(0, 10).map((change) => <div className="control-center-item" key={change.id}><strong>{change.path}</strong><span>{t('已删除')} · {new Date(change.created_at).toLocaleString()}</span></div>)}{workspace.checkpoints.slice(0, 5).map((checkpoint) => <div className="control-center-item" key={checkpoint.id}><strong>Checkpoint · {checkpoint.file_count}</strong><span>{checkpoint.manifest_hash.slice(0, 12)}</span></div>)}</section>
-        <section><h3>{t('策略解释')}</h3>{permissions.policy_explanations?.slice(0, 10).map((item) => <div className="control-center-item" key={item.id}><strong>{item.type}</strong><span>{String(item.payload.tool_name || item.payload.decision || item.payload.summary || '')}</span></div>)}{!permissions.policy_explanations?.length && <p>{t('暂无审批决策')}</p>}</section>
-      </div>}
+      {!permissions || !workspace ? <p>{t('正在加载…')}</p> : <>
+        <div className="control-center-overview" aria-label={t('任务安全概览')}>
+          <div><strong>{activeGrants.length}</strong><span>{t('项持续授权')}</span><small>{activeGrants.length ? t('可随时撤销') : t('危险操作仍会询问')}</small></div>
+          <div><strong>{deliverableFiles.length}</strong><span>{t('个任务文件')}</span><small>{deliverableFiles.length ? t('可安全预览或下载') : t('尚未生成可交付文件')}</small></div>
+          <div><strong>{permissions.credentials.filter((item) => !item.revoked_at).length}</strong><span>{t('项凭据使用')}</span><small>{permissions.credentials.some((item) => !item.revoked_at) ? t('均为短期受限凭据') : t('未使用外部服务凭据')}</small></div>
+        </div>
+
+        <div className="control-center-primary">
+          <section className="control-center-panel grants-panel">
+            <div className="control-center-section-heading"><div><h3>{t('允许的操作')}</h3><p>{t('这些操作在有效范围内再次发生时，不会重复询问。')}</p></div></div>
+            {activeGrants.length ? <div className="permission-grant-list">{activeGrants.map((grant) => {
+              const effects = grant.effect_kinds.length ? grant.effect_kinds.map(permissionEffectLabel) : [];
+              const resource = readableResourceMatcher(grant.resource_matcher);
+              return <article className="permission-grant-card" key={grant.id}>
+                <div className="permission-grant-main">
+                  <div className="permission-grant-icon" aria-hidden="true">✓</div>
+                  <div><strong>{effects.length ? `${permissionToolLabel(grant.tool_name)}可以${effects.join('、')}` : `${permissionToolLabel(grant.tool_name)}的有限操作`}</strong>
+                    <div className="permission-grant-badges"><span>{t(permissionScopeLabel(grant.scope))}</span>{grant.effect_kinds.length === 0 && <span className="legacy-note">{t('兼容旧授权')}</span>}</div>
+                  </div>
+                </div>
+                <div className="permission-grant-details">
+                  {resource && <span><b>{t('适用范围')}</b>{resource}</span>}
+                  <span><b>{t('使用情况')}</b>{t('已使用 {count} 次').replace('{count}', String(grant.use_count))}{grant.max_uses ? ` / ${grant.max_uses}` : ''}</span>
+                  {grant.expires_at && <span><b>{t('有效期')}</b>{new Date(grant.expires_at).toLocaleString()}</span>}
+                  {!grant.effect_kinds.length && <p>{t('这条授权来自旧版本；范围不明确时 Astra 仍会再次询问。')}</p>}
+                </div>
+                <button className="permission-revoke-button" type="button" onClick={async () => { await revokePermissionGrant(grant.id); await refresh(); }}>{t('撤销授权')}</button>
+              </article>;
+            })}</div> : <div className="control-center-empty"><strong>{t('没有持续授权')}</strong><span>{t('Astra 遇到写文件、删除或外部修改等危险操作时会再次询问你。')}</span></div>}
+          </section>
+
+          <section className="control-center-panel workspace-files-section">
+            <div className="control-center-section-heading"><div><h3>{t('任务文件')}</h3><p>{t('在这个任务中保存、可继续使用的文件。')}</p></div><span>{deliverableFiles.length}</span></div>
+            {deliverableFiles.length ? <div className="workspace-file-list">{deliverableFiles.map((file) => <article className="workspace-file-card" key={file.id}>
+              <div className="workspace-file-icon" aria-hidden="true">{file.path.split('.').pop()?.slice(0, 3).toUpperCase() || 'FILE'}</div>
+              <div><strong>{file.path}</strong><span>{file.mime_type || t('未知类型')} · {formatFileSize(file.size_bytes)}</span></div>
+              {file.content_url && <a href={file.content_url}>{t('打开')}</a>}
+            </article>)}</div> : <div className="control-center-empty"><strong>{t('还没有任务文件')}</strong><span>{t('通过工具保存的 CSV、图片、文档和代码会显示在这里，并可供后续工具继续使用。')}</span></div>}
+          </section>
+
+          <section className="control-center-panel permission-activity-panel">
+            <div className="control-center-section-heading"><div><h3>{t('最近的安全活动')}</h3><p>{t('用自然语言说明最近为什么询问、允许或阻止操作。')}</p></div></div>
+            {recentEvents.length ? <div className="permission-activity-list">{recentEvents.map((item) => <div className="permission-activity-item" key={item.id}><span className={`permission-activity-dot ${item.type === 'approval.decided' ? 'decided' : ''}`} /><div><strong>{t(permissionEventLabel(item.type, item.payload))}</strong><span>{new Date(item.created_at).toLocaleString()}</span></div></div>)}</div> : <div className="control-center-empty compact"><span>{t('暂无需要说明的权限活动')}</span></div>}
+          </section>
+
+          <section className="control-center-panel workspace-history-panel">
+            <div className="control-center-section-heading"><div><h3>{t('文件历史')}</h3><p>{t('记录任务文件的状态快照和删除行为。')}</p></div></div>
+            {workspace.checkpoints.length || deletedFiles.length ? <div className="workspace-history-list">
+              {workspace.checkpoints.slice(0, 3).map((checkpoint) => <div className="control-center-item" key={checkpoint.id}><strong>{t('已保存文件状态')}</strong><span>{t('{count} 个文件').replace('{count}', String(checkpoint.file_count))} · {new Date(checkpoint.created_at).toLocaleString()}</span></div>)}
+              {deletedFiles.slice(0, 5).map((change) => <div className="control-center-item" key={change.id}><strong>{change.path}</strong><span>{t('已删除')} · {new Date(change.created_at).toLocaleString()}</span></div>)}
+            </div> : <div className="control-center-empty compact"><span>{t('还没有文件状态或删除记录')}</span></div>}
+          </section>
+        </div>
+
+        <details className="control-center-technical">
+          <summary><span>{t('技术与审计详情')}</span><small>{t('身份链、工具来源、凭据和内部决策记录')}</small></summary>
+          <div className="control-center-technical-grid">
+            <section><h3>{t('执行身份')}</h3>{permissions.identities.map((identity) => <div className="control-center-item" key={identity.id}><strong>{t(identityTypeLabel(identity.type))}</strong><span>{identity.principal} · {t(trustLevelLabel(identity.trust_level))}</span></div>)}{permissions.delegations.map((delegation) => <div className="control-center-item" key={delegation.id}><strong>{t('权限委派')}</strong><span>{delegation.parent_identity_id.slice(0, 8)} → {delegation.child_identity_id.slice(0, 8)}</span></div>)}</section>
+            <section><h3>{t('工具与凭据')}</h3>{permissions.credentials.map((credential) => <div className="control-center-item" key={credential.id}><strong>{credential.service}</strong><span>{credential.scopes.join(', ') || t('最小权限')} · {credential.revoked_at ? t('已撤销') : t('短期有效')}</span></div>)}{!permissions.credentials.length && <p>{t('未使用服务凭据')}</p>}{permissions.tool_catalog && <div className="control-center-item"><strong>{t('本次运行的工具目录')}</strong><span>{permissions.tool_catalog.catalog.length} {t('个工具')} · {t('完整性校验')} {permissions.tool_catalog.digest.slice(0, 12)}</span></div>}</section>
+            <section className="technical-policy-events"><h3>{t('内部决策记录')}</h3>{permissions.policy_explanations?.slice(0, 10).map((item) => <div className="control-center-item" key={item.id}><strong>{item.type}</strong><span>{String(item.payload.tool_name || item.payload.decision || item.payload.summary || '')}</span></div>)}{!permissions.policy_explanations?.length && <p>{t('暂无审批决策')}</p>}</section>
+          </div>
+        </details>
+      </>}
     </section>
   </div>;
 }

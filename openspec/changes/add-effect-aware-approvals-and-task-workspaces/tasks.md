@@ -64,6 +64,7 @@
 - [x] 8.3 Restore pending effect approvals after refresh/restart and prevent stale or replayed decisions
 - [x] 8.4 Update execution-mode labels and help text to explain side-effect-free plan-only behavior
 - [x] 8.5 Add the permission center, Grant revocation, tool trust, delegation, credential use, and policy explanation UI
+- [ ] 8.6 Redesign the permission center around human-readable active permissions, files, safety activity, and progressively disclosed technical details
 
 ## 9. Verification
 
@@ -75,3 +76,4 @@
 - [x] 9.6 Test cross-tool and cross-Run workspace sharing, checkpoints, deletion tombstones, quotas, and cleanup
 - [x] 9.7 Test malicious filenames, symlink/hardlink escapes, Git hooks, shell startup files, package lifecycle scripts, language autoloading, archive bombs, prompt injection, and resource exhaustion
 - [x] 9.8 Run backend, frontend, migration, Sandbox, OpenSpec, and security regression suites
+- [ ] 9.9 Build and browser-check the redesigned permission center at desktop and narrow viewport sizes

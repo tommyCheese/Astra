@@ -207,9 +207,9 @@ export async function decideToolApproval(
 }
 
 export type PermissionCenterView = {
-  grants: Array<{ id: string; scope: string; tool_name: string; effect_kinds: string[]; resource_matcher: Record<string, unknown>; status: string; use_count: number; max_uses?: number | null; expires_at?: string | null }>;
-  identities: Array<{ id: string; type: string; principal: string; trust_level: string; parent_identity_id?: string | null }>;
-  delegations: Array<{ id: string; parent_identity_id: string; child_identity_id: string; delegated_scope: Record<string, unknown> }>;
+  grants: Array<{ id: string; scope: string; tool_name: string; tool_version?: string | null; effect_kinds: string[]; resource_matcher: Record<string, unknown>; invocation_constraints?: Record<string, unknown>; status: string; use_count: number; max_uses?: number | null; expires_at?: string | null; created_at?: string | null }>;
+  identities: Array<{ id: string; type: string; principal: string; trust_level: string; parent_identity_id?: string | null; revoked_at?: string | null }>;
+  delegations: Array<{ id: string; parent_identity_id: string; child_identity_id: string; delegated_scope: Record<string, unknown>; expires_at?: string | null; revoked_at?: string | null }>;
   credentials: Array<{ id: string; service: string; scopes: string[]; expires_at: string; revoked_at?: string | null }>;
   data_flow?: Record<string, unknown> | null;
   tool_catalog?: { digest: string; catalog: Array<Record<string, unknown>> } | null;

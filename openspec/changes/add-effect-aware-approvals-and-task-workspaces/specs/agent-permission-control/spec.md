@@ -54,3 +54,6 @@ The system SHALL provide authorized users and administrators with current polici
 - **WHEN** a user opens Task permission management
 - **THEN** the UI lists active Run and Task Grants, their scopes, sources, expiry, last use, and revocation controls
 
+#### Scenario: User reviews permissions without security expertise
+- **WHEN** a user opens Task permission management
+- **THEN** the UI first summarizes allowed actions, effective duration, usage, task files, and recent safety activity in human language, while identity chains, catalog digests, and raw policy events remain available under progressive technical disclosure
