@@ -748,7 +748,7 @@ describe('App', () => {
       reflection_enabled: true,
       execution_mode: 'request_approval',
     }), expect.objectContaining({ provider: 'openai', name: 'gpt-5' }));
-    expect(screen.getAllByRole('button', { name: /查询 Astra 已完成/ })).toHaveLength(1);
+    expect(screen.getAllByRole('button', { name: '查询 Astra' })).toHaveLength(1);
     expect(screen.getAllByRole('button', { name: /跳转到问题/ })).toHaveLength(2);
     const firstQuestion = screen.getByRole('button', { name: '跳转到问题 1' });
     const secondQuestion = screen.getByRole('button', { name: '跳转到问题 2' });
@@ -814,7 +814,7 @@ describe('App', () => {
     cleanup();
     render(<App />);
 
-    expect(screen.getByRole('button', { name: /持久化测试 已完成/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '持久化测试' })).toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: /设置/ }));
     expect(screen.getByPlaceholderText('sk-...')).toHaveValue('persisted-secret');
   });
@@ -831,7 +831,7 @@ describe('App', () => {
 
     render(<App />);
 
-    expect(await screen.findByRole('button', { name: '历史会话 8 已完成' })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: '历史会话 8' })).toBeInTheDocument();
     expect(screen.getByText('最多保留最近 100 个会话')).toBeInTheDocument();
   });
 
@@ -857,8 +857,8 @@ describe('App', () => {
     ] as never);
     render(<App />);
 
-    const failed = await screen.findByRole('button', { name: '失败记录 已阻塞' });
-    const empty = screen.getByRole('button', { name: '空数组记录 已完成' });
+    const failed = await screen.findByRole('button', { name: '失败记录' });
+    const empty = screen.getByRole('button', { name: '空数组记录' });
     await userEvent.click(failed);
     expect(screen.getByText('模型调用失败')).toBeInTheDocument();
     await userEvent.click(empty);

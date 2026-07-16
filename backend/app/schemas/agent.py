@@ -474,12 +474,6 @@ class PlanOutput(BaseModel):
     risk_level: str = "low"
 
 
-class ToolDecision(BaseModel):
-    tool_name: str
-    input: dict[str, Any]
-    reason: str
-
-
 class SourceReference(BaseModel):
     url: str
     title: str | None = None
@@ -791,15 +785,6 @@ class ExtractedSource(BaseModel):
     content_length: int
     source_type: str = "web_page"
     warnings: list[str] = Field(default_factory=list)
-    retrieved_at: str
-
-
-class FetchOutput(BaseModel):
-    url: str
-    status_code: int
-    title: str | None = None
-    content: str
-    metadata: dict[str, Any] = Field(default_factory=dict)
     retrieved_at: str
 
 

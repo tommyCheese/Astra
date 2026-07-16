@@ -265,9 +265,10 @@ function AppContent() {
     } catch (error) {
       if (controller.signal.aborted) return;
       if (conversation.run) {
+        const snapshot = normalizeRunView(conversation.run);
         setPriorMessages(conversation.priorMessages);
-        setRun(normalizeRunView(conversation.run));
-        setProcessState(reconcileProcessSnapshot(null, normalizeRunView(conversation.run)));
+        setRun(snapshot);
+        setProcessState(reconcileProcessSnapshot(null, snapshot));
       } else {
         setActiveConversationId(previousConversationId);
         setError({ type: 'infrastructure.database', code: 'CONVERSATION_LOAD_FAILED', message: t('无法加载该对话，请稍后重试。'), retryable: true, trace_id: 'unavailable' });

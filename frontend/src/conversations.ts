@@ -78,7 +78,7 @@ export function buildConversation(run: RunView | null): ChatMessage[] {
 export function buildPresentation(run: RunView | null): ChatMessage[] {
   if (!run) return [];
   const snapshot = normalizeRunView(run);
-  const presented: ChatMessage[] = buildConversation(run)
+  const presented: ChatMessage[] = buildConversation(snapshot)
     .filter((message) => message.role === 'user')
     .map((message) => ({
       ...message,

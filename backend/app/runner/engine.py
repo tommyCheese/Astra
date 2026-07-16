@@ -510,20 +510,6 @@ class RunEngine:
             await repo.freeze_agent_profile_snapshot(run_id, profile.snapshot())
         return profile
 
-    async def _persist_plan(self, repo: RunRepository, run_id: str, plan: PlanOutput) -> None:
-        if not plan.steps:
-            plan = plan.model_copy(
-                update={"steps": [PlanStep(title="生成回复", intent="直接回应用户请求")]}
-            )
-        for index, step in enumerate(plan.steps, start=1):
-            await repo.create_step(
-                run_id,
-                index,
-                step.title,
-                step.intent,
-                depends_on=[],
-            )
-
     async def _emit_answer_stream(self, repo: RunRepository, run_id: str, content: str) -> None:
         await self._start_answer_stream(repo, run_id)
         await self._answer_delta(repo, run_id, content)

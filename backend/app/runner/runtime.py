@@ -2,7 +2,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass, field
 from typing import Any
 
-from app.schemas.agent import AgentObservation, NodeResult
+from app.schemas.agent import NodeResult
 
 TRANSITIONS: dict[str, set[str]] = {
     "init": {"compile_policy"},
@@ -85,31 +85,6 @@ class LoopOrchestrator:
         if phase == "executing":
             return "waiting_user"
         return "blocked"
-
-
-class ObservationNormalizer:
-    def normalize(
-        self,
-        source: str,
-        *,
-        status: str,
-        summary: str,
-        data: dict[str, Any] | None = None,
-        error: dict[str, Any] | None = None,
-    ) -> AgentObservation:
-        kinds = {
-            "tool": "tool_result" if status == "succeeded" else "tool_error",
-            "user": "user_response",
-            "approval": "approval_result",
-            "validator": "validator_result",
-        }
-        return AgentObservation(
-            kind=kinds.get(source, source),
-            status=status,
-            summary=summary,
-            data=data or {},
-            error=error,
-        )
 
 
 @dataclass

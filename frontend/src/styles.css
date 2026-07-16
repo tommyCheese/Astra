@@ -515,20 +515,17 @@ p {
   white-space: nowrap;
 }
 
-.history-item > .ui-icon,
 .side-action > .ui-icon {
   color: #78909f;
   height: 17px;
   width: 17px;
 }
 
-.history-item.active > .ui-icon,
 .side-action:hover > .ui-icon,
 .side-action.active > .ui-icon {
   color: #256c85;
 }
 
-.history-item small,
 .side-action small,
 .capability-item small {
   color: #697586;
