@@ -120,6 +120,8 @@ class EffectKind(str, Enum):
     workspace_read = "workspace_read"
     workspace_write = "workspace_write"
     workspace_delete = "workspace_delete"
+    artifact_write = "artifact_write"
+    dependency_change = "dependency_change"
     temporary_compute = "temporary_compute"
     process_execute = "process_execute"
     process_execute_unknown = "process_execute_unknown"
@@ -262,6 +264,44 @@ class DataFlowState(BaseModel):
     retention: dict[str, Any] = Field(default_factory=dict)
     state_version: int = Field(default=1, ge=1)
     updated_at: datetime | None = None
+
+
+class PermissionBundle(BaseModel):
+    id: str
+    version: str
+    allowed_actions: list[str] = Field(default_factory=list)
+    allowed_resources: list[str] = Field(default_factory=list)
+    allowed_effect_kinds: list[EffectKind] = Field(default_factory=list)
+    allowed_tool_identities: list[str] = Field(default_factory=list)
+    network_destinations: list[str] = Field(default_factory=list)
+    max_tool_calls: int | None = Field(default=None, ge=1)
+    max_runtime_seconds: int | None = Field(default=None, ge=1)
+    expires_at: datetime | None = None
+    digest: str
+
+
+class PolicySimulationRequest(BaseModel):
+    request: PermissionRequest
+    policies: PermissionPolicySet
+    shadow_policies: PermissionPolicySet | None = None
+
+
+class PolicySimulationResult(BaseModel):
+    effective: PermissionDecision
+    shadow: PermissionDecision | None = None
+    changed: bool = False
+
+
+class ExtensionDescriptor(BaseModel):
+    extension_type: str
+    id: str
+    version: str
+    provider_id: str
+    digest: str
+    trust_level: str
+    enabled: bool = True
+    schema_digest: str | None = None
+    annotations: dict[str, Any] = Field(default_factory=dict)
 
 
 PermissionDecision.model_rebuild()

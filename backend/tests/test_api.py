@@ -32,7 +32,11 @@ async def app_client(monkeypatch, tmp_path):
         return None
 
     monkeypatch.setattr(runs_api, "start_run_in_process", noop_runner)
-    settings = Settings(model_provider="mock", artifact_store_path=str(tmp_path / "artifacts"))
+    settings = Settings(
+        model_provider="mock",
+        artifact_store_path=str(tmp_path / "artifacts"),
+        task_workspace_store_path=str(tmp_path / "workspaces"),
+    )
     app = create_app(settings)
     app.dependency_overrides[get_session] = override_session
     app.dependency_overrides[get_settings] = lambda: settings
@@ -53,6 +57,79 @@ async def test_create_run_rejects_empty_goal(app_client):
     assert error["code"] == "GOAL_REQUIRED"
     assert error["type"] == "validation.input_invalid"
     assert error["trace_id"].startswith("req_")
+
+
+async def test_unattended_run_requires_permission_bundle(app_client):
+    response = await app_client.post(
+        "/api/runs", json={"goal": "后台整理", "interactive": False}
+    )
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "PERMISSION_BUNDLE_REQUIRED"
+
+
+async def test_policy_simulation_reports_shadow_decision_change(app_client):
+    payload = {
+        "request": {
+            "subject": {"agent_id": "agent-1", "task_id": "task-1", "run_id": "run-1"},
+            "action": "workspace.file.write",
+            "resource": "task://task-1/workspace/report.txt",
+        },
+        "policies": {
+            "version": "1",
+            "rules": [{
+                "id": "allow", "source": "user", "tier": "user", "decision": "allow",
+                "actions": ["workspace.file.write"], "resources": ["task://*/workspace/**"],
+                "reason_code": "allowed",
+            }],
+        },
+        "shadow_policies": {
+            "version": "2",
+            "rules": [{
+                "id": "deny", "source": "managed", "tier": "managed", "decision": "deny",
+                "actions": ["workspace.file.write"], "resources": ["task://*/workspace/**"],
+                "reason_code": "managed_deny",
+            }],
+        },
+    }
+    response = await app_client.post("/api/permissions/simulate", json=payload)
+    assert response.status_code == 200
+    assert response.json()["effective"]["decision"] == "allow"
+    assert response.json()["shadow"]["decision"] == "deny"
+    assert response.json()["changed"] is True
+
+
+async def test_workspace_file_view_and_safe_download(app_client):
+    from app.repositories.workspaces import WorkspaceRepository
+    from app.workspaces.runtime import WorkspaceRuntimeService
+
+    async with app_client._astra_session() as session:
+        run = await RunRepository(session).create_task_run("生成文件", {})
+        runtime = WorkspaceRuntimeService(
+            WorkspaceRepository(session),
+            app_client._astra_settings.task_workspace_store_path,
+            max_files=100,
+            max_bytes=1024 * 1024,
+            max_file_bytes=1024 * 1024,
+        )
+        path = await runtime.prepare(run.task_id)
+        before = runtime.scan(path)
+        (path / "report.md").write_text("# report", encoding="utf-8")
+        await runtime.capture_changes(
+            run_id=run.id,
+            tool_call_id=None,
+            workspace_dir=path,
+            before=before,
+        )
+        task_id = run.task_id
+
+    view = await app_client.get(f"/api/tasks/{task_id}/workspace")
+    assert view.status_code == 200
+    file = view.json()["files"][0]
+    assert file["security_status"] == "verified"
+    assert file["content_url"]
+    content = await app_client.get(file["content_url"])
+    assert content.status_code == 200
+    assert content.text == "# report"
 
 
 async def test_create_run_rejects_removed_direct_planning_strategy(app_client):

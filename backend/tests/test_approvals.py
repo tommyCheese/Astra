@@ -7,8 +7,51 @@ from app.runner.agent_loop import AgentLoop
 from app.runner.approvals import ApprovalPolicy, matcher_matches, similar_matcher
 from app.runner.model_client import MockModelClient
 from app.runner.reasoning import PolicyCompiler
-from app.schemas.agent import ExecutionMode, RequestedReasoningPolicy
-from app.tools.base import ToolExecutionError
+from app.schemas.agent import AgentDecision, ExecutionMode, RequestedReasoningPolicy
+from app.tools.base import Tool, ToolExecutionError, ToolRegistry, ToolSpec
+
+
+class FakeWrite(Tool):
+    spec = ToolSpec(
+        name="file_write",
+        version="test",
+        input_schema={"required": ["path", "content"]},
+        output_schema={},
+        permission="workspace_write",
+        permissions=["workspace_write", "process_execute_unknown"],
+        side_effect_level="persistent_side_effect",
+        idempotent=False,
+    )
+
+    async def run(self, tool_input, *, context=None):
+        self.last_context = context
+        return {"path": tool_input["path"], "written": True}
+
+
+class WriteModelClient(MockModelClient):
+    async def decide(self, goal, context):
+        if not any(
+            item.get("kind") == "tool_result"
+            and item.get("data", {}).get("tool_name") == "file_write"
+            for item in context.get("observations", [])
+        ):
+            return AgentDecision(
+                decision_type="call_tool",
+                reasoning_summary="写入任务文件。",
+                tool_name="file_write",
+                tool_input={"path": "report.txt", "content": goal},
+                expected_observation="文件写入完成。",
+                stop_condition="写入完成后结束。",
+            )
+        return AgentDecision(
+            decision_type="finalize",
+            reasoning_summary="文件已写入。",
+            expected_observation="返回完成结果。",
+        )
+
+
+def fake_write_registry():
+    return ToolRegistry().extend([FakeWrite()])
 
 
 def policy(mode: str) -> dict:
@@ -23,19 +66,21 @@ async def test_request_approval_freezes_tool_before_execution(session):
     run = await repo.create_task_run(
         "查询批准流程", settings.model_policy, reasoning_policy=policy("request_approval")
     )
-    registry = fake_web_registry()
+    registry = fake_write_registry()
 
     result = await AgentLoop(
-        settings, model_client=MockModelClient(), tool_registry=registry
+        settings, model_client=WriteModelClient(), tool_registry=registry
     ).run(repo, run.id, run.task.description)
     loaded = await repo.require_run(run.id)
     view = run_to_view(loaded)
 
     assert result["status"] == "waiting_user"
     assert loaded.tool_calls[0].status == "awaiting_approval"
-    assert not hasattr(registry.get("web_search"), "last_context")
-    assert view["pending_approval"]["tool_name"] == "web_search"
-    assert view["pending_approval"]["decisions"] == ["approve_once", "reject"]
+    assert not hasattr(registry.get("file_write"), "last_context")
+    assert view["pending_approval"]["tool_name"] == "file_write"
+    assert view["pending_approval"]["decisions"] == [
+        "approve_once", "allow_similar", "allow_task", "reject"
+    ]
 
 
 async def test_approve_once_resumes_exact_frozen_call(session):
@@ -44,8 +89,8 @@ async def test_approve_once_resumes_exact_frozen_call(session):
     run = await repo.create_task_run(
         "查询批准恢复", settings.model_policy, reasoning_policy=policy("request_approval")
     )
-    registry = fake_web_registry()
-    client = MockModelClient()
+    registry = fake_write_registry()
+    client = WriteModelClient()
     loop = AgentLoop(settings, model_client=client, tool_registry=registry)
     await loop.run(repo, run.id, run.task.description)
     waiting = await repo.require_run(run.id)
@@ -62,9 +107,8 @@ async def test_approve_once_resumes_exact_frozen_call(session):
 
     assert loaded.tool_calls[0].status == "succeeded"
     assert loaded.tool_calls[0].input == approval.frozen_input
-    assert registry.get("web_search").last_context.tool_call_id == loaded.tool_calls[0].id
-    assert loaded.tool_calls[1].tool_name == "web_fetch"
-    assert loaded.tool_calls[1].status == "awaiting_approval"
+    assert registry.get("file_write").last_context.tool_call_id == loaded.tool_calls[0].id
+    assert loaded.status in {"executing", "completed"}
 
 
 async def test_rejection_never_executes_rejected_call_and_replay_fails(session):
@@ -73,8 +117,8 @@ async def test_rejection_never_executes_rejected_call_and_replay_fails(session):
     run = await repo.create_task_run(
         "拒绝工具", settings.model_policy, reasoning_policy=policy("request_approval")
     )
-    registry = fake_web_registry()
-    await AgentLoop(settings, model_client=MockModelClient(), tool_registry=registry).run(
+    registry = fake_write_registry()
+    await AgentLoop(settings, model_client=WriteModelClient(), tool_registry=registry).run(
         repo, run.id, run.task.description
     )
     waiting = await repo.require_run(run.id)
@@ -87,7 +131,7 @@ async def test_rejection_never_executes_rejected_call_and_replay_fails(session):
     loaded = await repo.require_run(run.id)
 
     assert loaded.tool_calls[0].status == "rejected"
-    assert not hasattr(registry.get("web_search"), "last_context")
+    assert not hasattr(registry.get("file_write"), "last_context")
     assert loaded.agent_state["observations"][-1]["kind"] == "approval_result"
 
 
@@ -97,8 +141,8 @@ async def test_approved_action_fails_closed_when_frozen_input_is_tampered(sessio
     run = await repo.create_task_run(
         "验证冻结输入", settings.model_policy, reasoning_policy=policy("request_approval")
     )
-    registry = fake_web_registry()
-    loop = AgentLoop(settings, model_client=MockModelClient(), tool_registry=registry)
+    registry = fake_write_registry()
+    loop = AgentLoop(settings, model_client=WriteModelClient(), tool_registry=registry)
     await loop.run(repo, run.id, run.task.description)
     waiting = await repo.require_run(run.id)
     approval = waiting.approval_requests[-1]
@@ -116,7 +160,7 @@ async def test_approved_action_fails_closed_when_frozen_input_is_tampered(sessio
         await loop.run(repo, run.id, run.task.description)
 
     assert error.value.category == "approval_integrity_error"
-    assert not hasattr(registry.get("web_search"), "last_context")
+    assert not hasattr(registry.get("file_write"), "last_context")
 
 
 def test_bash_similar_matchers_are_narrow_and_complex_commands_are_exact_only():

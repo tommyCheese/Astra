@@ -555,6 +555,18 @@ class RunRepository:
                 "permission": permission,
                 "impact": impact,
                 "allow_similar": similar_matcher is not None,
+                "effect_plan_hash": effect_plan_hash,
+                "action_summary": (frozen_effect_plan or {}).get("summary"),
+                "effect_kinds": [
+                    item.get("kind")
+                    for item in (frozen_effect_plan or {}).get("effects", [])
+                    if isinstance(item, dict)
+                ],
+                "resources": [
+                    item.get("resource")
+                    for item in (frozen_effect_plan or {}).get("effects", [])
+                    if isinstance(item, dict)
+                ],
             },
         )
         await self.session.commit()
@@ -568,6 +580,7 @@ class RunRepository:
         *,
         continuation_token: str,
         reviewer_identity: dict[str, Any] | None = None,
+        rejection_guidance: str | None = None,
     ) -> tuple[ApprovalRequestRecord, ToolCallRecord]:
         run = await self.require_run(run_id)
         if run.status != "waiting_user" or not run.waiting_state:
@@ -579,8 +592,12 @@ class RunRepository:
         request = await self.session.get(ApprovalRequestRecord, approval_id)
         if request is None or request.run_id != run_id or request.status != "pending":
             raise ValueError("Approval has already been decided")
-        if decision == "allow_similar" and request.similar_matcher is None:
+        if decision in {"allow_similar", "allow_task"} and request.similar_matcher is None:
             raise ValueError("Similar approval is not available")
+        if reviewer_identity and reviewer_identity.get("identity_type") in {
+            "main_agent", "subagent", "tool_runtime", "external_provider"
+        }:
+            raise ValueError("Agent identities cannot approve their own actions")
         decided_at = utc_now()
         claimed = await self.session.execute(
             update(ApprovalRequestRecord)
@@ -611,6 +628,8 @@ class RunRepository:
                 "summary": f"User rejected {request.tool_name}",
                 "data": {"approved": False, "tool_call_id": call.id},
             }
+            if rejection_guidance:
+                observation["data"]["guidance"] = rejection_guidance
             turn.status = "completed"
             turn.phase = "committed"
             turn.observation = observation
@@ -621,28 +640,30 @@ class RunRepository:
             state["version"] = int(state.get("version", run.state_version)) + 1
             run.agent_state = state
             run.state_version = state["version"]
-        if decision == "allow_similar":
+        if decision in {"allow_similar", "allow_task"}:
             effect_kinds = [
                 effect["kind"]
                 for effect in request.frozen_effect_plan.get("effects", [])
                 if isinstance(effect, dict) and isinstance(effect.get("kind"), str)
             ]
+            proposal = request.similar_matcher or {}
+            invocation_constraints = (
+                proposal.get("invocation_constraints", {})
+                if "effect_kinds" in proposal
+                else proposal
+            )
             self.session.add(
                 ApprovalGrantRecord(
                     run_id=run_id,
                     task_id=run.task_id,
-                    scope="run",
+                    scope="task" if decision == "allow_task" else "run",
                     subject={"run_id": run_id, "task_id": run.task_id},
                     tool_name=request.tool_name,
                     tool_version=request.tool_version,
-                    matcher=deepcopy(request.similar_matcher),
-                    effect_kinds=effect_kinds,
-                    resource_matcher=deepcopy(
-                        request.similar_matcher.get("resource_matcher", {})
-                        if request.similar_matcher
-                        else {}
-                    ),
-                    invocation_constraints=deepcopy(request.similar_matcher or {}),
+                    matcher=deepcopy(invocation_constraints),
+                    effect_kinds=deepcopy(proposal.get("effect_kinds", effect_kinds)),
+                    resource_matcher=deepcopy(proposal.get("resource_matcher", {})),
+                    invocation_constraints=deepcopy(invocation_constraints),
                     source_approval_id=request.id,
                 )
             )
@@ -658,6 +679,7 @@ class RunRepository:
                 "tool_call_id": call.id,
                 "tool_name": request.tool_name,
                 "decision": decision,
+                "guidance": rejection_guidance if decision == "reject" else None,
             },
         )
         await self.session.commit()
@@ -1351,8 +1373,35 @@ def run_to_view(run: RunRecord) -> dict[str, Any]:
             "preview": pending.preview,
             "permission": pending.permission,
             "impact": pending.impact,
+            "action_summary": pending.frozen_effect_plan.get("summary"),
+            "affected_resources": [
+                effect.get("resource")
+                for effect in pending.frozen_effect_plan.get("effects", [])
+                if isinstance(effect, dict) and effect.get("resource")
+            ],
+            "risk_reason": _approval_risk_reason(pending.frozen_effect_plan),
+            "working_directory": pending.frozen_effect_plan.get("cwd"),
+            "network_scope": pending.frozen_effect_plan.get("network_scope", {}),
+            "effect_kinds": [
+                effect.get("kind")
+                for effect in pending.frozen_effect_plan.get("effects", [])
+                if isinstance(effect, dict) and effect.get("kind")
+            ],
+            "grant_proposals": (
+                [
+                    {**pending.similar_matcher, "scope": "run"},
+                    {**pending.similar_matcher, "scope": "task"},
+                ]
+                if pending.similar_matcher is not None
+                else []
+            ),
+            "reviewer_identity": pending.reviewer_identity,
             "decisions": ["approve_once"]
-            + (["allow_similar"] if pending.similar_matcher is not None else [])
+            + (
+                ["allow_similar", "allow_task"]
+                if pending.similar_matcher is not None
+                else []
+            )
             + ["reject"],
             "created_at": pending.created_at,
         }
@@ -1361,6 +1410,23 @@ def run_to_view(run: RunRecord) -> dict[str, Any]:
         "task_adapter": run.task_adapter or "web",
         "agent_profile": safe_agent_profile_manifest(run.agent_profile_snapshot or {}),
     }
+
+
+def _approval_risk_reason(effect_plan: dict[str, Any]) -> str | None:
+    risky = [
+        effect
+        for effect in effect_plan.get("effects", [])
+        if isinstance(effect, dict)
+        and (
+            effect.get("persistent")
+            or effect.get("reversible") is False
+            or effect.get("risk") in {"moderate", "high", "critical"}
+        )
+    ]
+    if not risky:
+        return None
+    labels = ", ".join(str(effect.get("kind", "unknown")) for effect in risky)
+    return f"该操作包含持久化或不可逆影响：{labels}"
 
 
 def safe_agent_profile_manifest(snapshot: dict[str, Any]) -> dict[str, Any]:

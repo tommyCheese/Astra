@@ -67,6 +67,51 @@ async def test_docker_provider_uses_bridge_only_for_explicit_internet_access(tmp
     assert not any(part.startswith("/Users/") for part in create)
 
 
+async def test_docker_provider_mounts_managed_workspace_with_requested_access(tmp_path):
+    provider = RecordingDockerProvider()
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    await provider.create(
+        SandboxRequest(
+            "image",
+            ["render"],
+            tmp_path,
+            tmp_path / "out",
+            workspace_dir=workspace,
+            workspace_mode="read_only",
+        )
+    )
+
+    create = next(call for call in provider.calls if call[0] == "create")
+    mount = create[create.index("--mount") + 1]
+    assert f"src={workspace.resolve()}" in mount
+    assert "dst=/workspace" in mount
+    assert mount.endswith(",readonly")
+
+
+async def test_docker_provider_sanitizes_startup_hooks_and_language_autoloading():
+    provider = RecordingDockerProvider()
+    await provider.execute(
+        type("Handle", (), {"id": "container-id"})(),
+        ["sh", "-c", "true"],
+        10,
+        {
+            "PATH": "/workspace/bin",
+            "BASH_ENV": "/workspace/.bashrc",
+            "PYTHONPATH": "/workspace",
+            "SAFE_INPUT": "ok",
+        },
+    )
+    execute = provider.calls[-1]
+    joined = " ".join(execute)
+    assert "PATH=/usr/local/bin:/usr/bin:/bin" in joined
+    assert "BASH_ENV=/dev/null" in joined
+    assert "PYTHONPATH=" not in joined
+    assert "GIT_CONFIG_VALUE_0=/dev/null" in joined
+    assert "npm_config_ignore_scripts=true" in joined
+    assert "SAFE_INPUT=ok" in joined
+
+
 class TimeoutDockerProvider(RecordingDockerProvider):
     async def execute(self, handle, command, timeout, environment):
         await asyncio.sleep(timeout + 1)

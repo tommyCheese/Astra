@@ -1,4 +1,6 @@
 import logging
+import shutil
+from pathlib import Path
 
 from fastapi import APIRouter, Depends, Query, Response
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -76,6 +78,11 @@ async def delete_conversation(
             store.delete(key)
         except Exception:
             logger.warning("conversation.artifact_cleanup_failed key=%s", key, exc_info=True)
+    workspace_root = Path(settings.task_workspace_store_path).resolve()
+    workspace_path = (workspace_root / "tasks" / task.id).resolve()
+    if workspace_path.is_relative_to(workspace_root):
+        shutil.rmtree(workspace_path, ignore_errors=True)
+    return Response(status_code=204)
     return Response(status_code=204)
 
 

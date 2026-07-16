@@ -8,7 +8,7 @@ from app.runner.model_client import MockModelClient
 from app.runner.reasoning import PolicyCompiler
 from app.sandbox.runtime import SandboxHandle, SandboxProvider, SandboxResult
 from app.schemas.agent import AgentDecision, FinalAnswer, RequestedReasoningPolicy
-from app.tools.chart import ChartRequest, select_backend
+from app.tools.chart import ChartRenderTool, ChartRequest, select_backend
 from app.tools.registry import build_tool_registry
 
 
@@ -47,6 +47,28 @@ def test_chart_request_rejects_oversized_dataset_and_value():
         request(data={"columns": ["x", "y"], "rows": [[index, index] for index in range(10001)]})
     with pytest.raises(ValidationError):
         request(data={"columns": ["x", "y"], "rows": [[1, "x" * 10001]]})
+
+
+def test_chart_request_accepts_workspace_csv_as_data_source():
+    parsed = ChartRequest.model_validate(
+        {
+            "input_workspace_path": "test.csv",
+            "chart_type": "line",
+            "x": "x",
+            "y": ["y"],
+        }
+    )
+
+    assert parsed.input_workspace_path == "test.csv"
+
+
+def test_chart_tool_reads_bounded_workspace_csv(tmp_path):
+    (tmp_path / "test.csv").write_text("x,y\n1,2\n2,3\n", encoding="utf-8")
+
+    data = ChartRenderTool._load_workspace_csv("test.csv", tmp_path)
+
+    assert data.columns == ["x", "y"]
+    assert data.rows == [[1, 2], [2, 3]]
 
 
 def test_chart_tool_is_registered_only_when_sandbox_enabled():

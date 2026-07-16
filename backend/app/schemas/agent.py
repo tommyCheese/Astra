@@ -415,6 +415,8 @@ class CreateRunRequest(BaseModel):
     answer_mode: AnswerMode = AnswerMode.standard
     reasoning_policy: RequestedReasoningPolicy = Field(default_factory=RequestedReasoningPolicy)
     model: dict[str, str] | None = None
+    interactive: bool = True
+    permission_bundle: dict[str, Any] | None = None
 
 
 class CreateRunResponse(BaseModel):
@@ -434,6 +436,7 @@ class ContinueRunRequest(BaseModel):
 class ApprovalDecision(str, Enum):
     approve_once = "approve_once"
     allow_similar = "allow_similar"
+    allow_task = "allow_task"
     reject = "reject"
 
 
@@ -441,6 +444,7 @@ class ApprovalDecisionRequest(BaseModel):
     decision: ApprovalDecision
     continuation_token: str
     model: dict[str, str] | None = None
+    guidance: str | None = Field(default=None, max_length=1000)
 
 
 class PendingApprovalView(BaseModel):
@@ -450,6 +454,14 @@ class PendingApprovalView(BaseModel):
     preview: str
     permission: str
     impact: str
+    action_summary: str | None = None
+    affected_resources: list[str] = Field(default_factory=list)
+    risk_reason: str | None = None
+    working_directory: str | None = None
+    network_scope: dict[str, Any] = Field(default_factory=dict)
+    effect_kinds: list[str] = Field(default_factory=list)
+    grant_proposals: list[dict[str, Any]] = Field(default_factory=list)
+    reviewer_identity: dict[str, Any] | None = None
     decisions: list[ApprovalDecision]
     created_at: datetime
 

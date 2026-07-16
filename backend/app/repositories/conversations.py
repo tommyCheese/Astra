@@ -8,10 +8,14 @@ from sqlalchemy.orm import selectinload
 
 from app.db.models import (
     AgentTurnRecord,
+    AgentDelegationRecord,
+    AgentIdentityRecord,
     ApprovalGrantRecord,
     ApprovalRequestRecord,
     ArtifactRecord,
     ConversationShareRecord,
+    CredentialGrantRecord,
+    DataFlowStateRecord,
     MemoryRecord,
     ModelInvocationRecord,
     PlanRecord,
@@ -20,7 +24,12 @@ from app.db.models import (
     SandboxJobRecord,
     StepRecord,
     TaskRecord,
+    TaskWorkspaceRecord,
+    ToolCatalogSnapshotRecord,
     ToolCallRecord,
+    WorkspaceChangeRecord,
+    WorkspaceCheckpointRecord,
+    WorkspaceFileRecord,
     utc_now,
 )
 from app.repositories.runs import build_chat_messages, run_to_view
@@ -193,9 +202,45 @@ class ConversationRepository:
                     ArtifactRecord.run_id.in_(run_ids), ArtifactRecord.storage_key.is_not(None)
                 )
             )).all())
+            workspace = await self.session.scalar(
+                select(TaskWorkspaceRecord).where(TaskWorkspaceRecord.task_id == task.id)
+            )
+            if workspace is not None:
+                for model in (WorkspaceChangeRecord, WorkspaceCheckpointRecord, WorkspaceFileRecord):
+                    await self.session.execute(
+                        delete(model).where(model.workspace_id == workspace.id)
+                    )
+                await self.session.delete(workspace)
+            identity_ids = list(
+                (
+                    await self.session.scalars(
+                        select(AgentIdentityRecord.id).where(
+                            AgentIdentityRecord.run_id.in_(run_ids)
+                        )
+                    )
+                ).all()
+            )
+            if identity_ids:
+                await self.session.execute(
+                    delete(AgentDelegationRecord).where(
+                        AgentDelegationRecord.parent_identity_id.in_(identity_ids)
+                        | AgentDelegationRecord.child_identity_id.in_(identity_ids)
+                    )
+                )
+            for model in (
+                CredentialGrantRecord,
+                DataFlowStateRecord,
+                ToolCatalogSnapshotRecord,
+            ):
+                await self.session.execute(delete(model).where(model.run_id.in_(run_ids)))
+            if identity_ids:
+                await self.session.execute(
+                    delete(AgentIdentityRecord).where(AgentIdentityRecord.id.in_(identity_ids))
+                )
             for model in (ApprovalGrantRecord, ApprovalRequestRecord,
                           ArtifactRecord, SandboxJobRecord, ToolCallRecord, StepRecord,
-                          RunEventRecord, AgentTurnRecord, MemoryRecord, ModelInvocationRecord):
+                          RunEventRecord, AgentTurnRecord, MemoryRecord, ModelInvocationRecord,
+                          PlanRecord):
                 await self.session.execute(delete(model).where(model.run_id.in_(run_ids)))
             await self.session.execute(delete(RunRecord).where(RunRecord.id.in_(run_ids)))
         await self.session.execute(delete(ConversationShareRecord).where(ConversationShareRecord.conversation_id == task.id))

@@ -2,6 +2,7 @@ import asyncio
 import re
 import sys
 import time
+from contextlib import asynccontextmanager
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -62,6 +63,8 @@ class SandboxRequest:
     record_stdout: bool = True
     environment: dict[str, str] = field(default_factory=dict)
     metadata: dict[str, str] = field(default_factory=dict)
+    workspace_dir: Path | None = None
+    workspace_mode: str = "none"
 
 
 @dataclass
@@ -146,8 +149,9 @@ class SandboxSupervisor:
 
 
 class SandboxJobService:
-    def __init__(self, repo, supervisor: SandboxSupervisor, artifact_service):
+    def __init__(self, repo, supervisor: SandboxSupervisor, artifact_service, workspace_service=None):
         self.repo, self.supervisor, self.artifact_service = repo, supervisor, artifact_service
+        self.workspace_service = workspace_service
 
     async def _record_terminal_state(
         self,
@@ -199,7 +203,58 @@ class SandboxJobService:
             runtime_profile=runtime_profile,
             resource_limits=resource_limits,
         )
+        guard = (
+            self.workspace_service.access_guard(request.workspace_dir, request.workspace_mode)
+            if request.workspace_dir is not None and self.workspace_service is not None
+            else _empty_guard()
+        )
         try:
+            async with guard:
+                return await self._execute_locked(
+                    request,
+                    run_id=run_id,
+                    tool_call_id=tool_call_id,
+                    runtime_profile=runtime_profile,
+                    resource_limits=resource_limits,
+                    job=job,
+                    started=started,
+                )
+        except SandboxError as exc:
+            status = "timed_out" if exc.category == "sandbox_timeout" else "failed"
+            await self._record_terminal_state(
+                job, run_id=run_id, started=started, status=status,
+                category=exc.category, message=exc.safe_message,
+            )
+            raise
+        except asyncio.CancelledError:
+            await self._record_terminal_state(
+                job, run_id=run_id, started=started, status="cancelled",
+                category="cancelled", message="Sandbox job was cancelled",
+            )
+            raise
+        except Exception as exc:
+            await self._record_terminal_state(
+                job, run_id=run_id, started=started, status="failed",
+                category=getattr(exc, "category", "render_failed"),
+                message=getattr(exc, "message", "Sandbox job failed"),
+            )
+            raise
+
+    async def _execute_locked(
+        self,
+        request: SandboxRequest,
+        *,
+        run_id: str,
+        tool_call_id: str,
+        runtime_profile: dict,
+        resource_limits: dict,
+        job,
+        started: float,
+    ):
+        try:
+            before_manifest = None
+            if request.workspace_dir is not None and self.workspace_service is not None:
+                before_manifest = self.workspace_service.scan(request.workspace_dir)
             await self.repo.transition_sandbox_job(job.id, "preparing")
             await self.repo.transition_sandbox_job(job.id, "running")
             result = await self.supervisor.run(request)
@@ -219,6 +274,18 @@ class SandboxJobService:
                 output_dir=request.output_dir,
                 provenance=provenance,
             )
+            workspace_changes = []
+            if (
+                request.workspace_dir is not None
+                and self.workspace_service is not None
+                and before_manifest is not None
+            ):
+                workspace_changes = await self.workspace_service.capture_changes(
+                    run_id=run_id,
+                    tool_call_id=tool_call_id,
+                    workspace_dir=request.workspace_dir,
+                    before=before_manifest,
+                )
             await self.repo.transition_sandbox_job(
                 job.id,
                 "succeeded",
@@ -236,41 +303,16 @@ class SandboxJobService:
                     "backend": runtime_profile.get("backend"),
                     "provider": result.provider,
                     "status": "succeeded",
+                    "workspace_change_count": len(workspace_changes),
                     **result.metrics,
                 },
             )
             await self.repo.session.commit()
             return job, refs, result
-        except SandboxError as exc:
-            status = "timed_out" if exc.category == "sandbox_timeout" else "failed"
-            await self._record_terminal_state(
-                job,
-                run_id=run_id,
-                started=started,
-                status=status,
-                category=exc.category,
-                message=exc.safe_message,
-            )
+        except Exception:
             raise
-        except asyncio.CancelledError:
-            await self._record_terminal_state(
-                job,
-                run_id=run_id,
-                started=started,
-                status="cancelled",
-                category="cancelled",
-                message="Sandbox job was cancelled",
-            )
-            raise
-        except Exception as exc:
-            category = getattr(exc, "category", "render_failed")
-            message = getattr(exc, "message", "Sandbox job failed")
-            await self._record_terminal_state(
-                job,
-                run_id=run_id,
-                started=started,
-                status="failed",
-                category=category,
-                message=message,
-            )
-            raise
+
+
+@asynccontextmanager
+async def _empty_guard():
+    yield

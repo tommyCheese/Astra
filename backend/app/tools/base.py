@@ -1,6 +1,7 @@
 from abc import ABC, abstractmethod
 from collections.abc import Iterable
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -34,6 +35,9 @@ class ToolSpec(BaseModel):
     execution_backend: str = "in_process"
     resource_profile: dict[str, Any] = Field(default_factory=dict)
     artifact_behavior: dict[str, Any] = Field(default_factory=dict)
+    provider_id: str = "astra.builtin"
+    provider_digest: str = "builtin"
+    trust_level: str = "platform"
 
     def model_post_init(self, __context: Any) -> None:
         if not self.permissions:
@@ -74,6 +78,11 @@ class ToolExecutionContext:
     trace_id: str
     artifact_service: Any
     sandbox_service: Any
+    task_id: str | None = None
+    workspace_path: Path | None = None
+    workspace_mode: str = "none"
+    effect_plan: dict[str, Any] | None = None
+    runtime_identity_id: str | None = None
 
 
 class Tool(ABC):

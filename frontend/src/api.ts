@@ -193,7 +193,7 @@ export async function cancelRun(runId: string): Promise<RunView> {
 export async function decideToolApproval(
   runId: string,
   approvalId: string,
-  decision: 'approve_once' | 'allow_similar' | 'reject',
+  decision: 'approve_once' | 'allow_similar' | 'allow_task' | 'reject',
   continuationToken: string,
   model?: RunModelConfig,
 ): Promise<{ run_id: string; task_id: string; status: string }> {
@@ -202,6 +202,43 @@ export async function decideToolApproval(
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ decision, continuation_token: continuationToken, model }),
   });
+  if (!response.ok) throw await responseError(response);
+  return response.json();
+}
+
+export type PermissionCenterView = {
+  grants: Array<{ id: string; scope: string; tool_name: string; effect_kinds: string[]; resource_matcher: Record<string, unknown>; status: string; use_count: number; max_uses?: number | null; expires_at?: string | null }>;
+  identities: Array<{ id: string; type: string; principal: string; trust_level: string; parent_identity_id?: string | null }>;
+  delegations: Array<{ id: string; parent_identity_id: string; child_identity_id: string; delegated_scope: Record<string, unknown> }>;
+  credentials: Array<{ id: string; service: string; scopes: string[]; expires_at: string; revoked_at?: string | null }>;
+  data_flow?: Record<string, unknown> | null;
+  tool_catalog?: { digest: string; catalog: Array<Record<string, unknown>> } | null;
+  policy_explanations?: Array<{ id: number; type: string; payload: Record<string, unknown>; created_at: string }>;
+};
+
+export type WorkspaceView = {
+  id: string;
+  task_id: string;
+  status: string;
+  quotas: Record<string, number>;
+  files: Array<{ id: string; path: string; status: string; mime_type?: string | null; size_bytes: number; deliverable_candidate: boolean; content_url?: string | null; deleted_at?: string | null }>;
+  changes: Array<{ id: string; run_id: string; path: string; kind: string; created_at: string }>;
+  checkpoints: Array<{ id: string; run_id: string; manifest_hash: string; file_count: number; created_at: string }>;
+};
+
+export async function getPermissionCenter(runId: string): Promise<PermissionCenterView> {
+  const response = await fetch(`/api/runs/${runId}/permissions`);
+  if (!response.ok) throw await responseError(response);
+  return response.json();
+}
+
+export async function revokePermissionGrant(grantId: string): Promise<void> {
+  const response = await fetch(`/api/permission-grants/${grantId}`, { method: 'DELETE' });
+  if (!response.ok) throw await responseError(response);
+}
+
+export async function getTaskWorkspace(taskId: string): Promise<WorkspaceView> {
+  const response = await fetch(`/api/tasks/${taskId}/workspace`);
   if (!response.ok) throw await responseError(response);
   return response.json();
 }

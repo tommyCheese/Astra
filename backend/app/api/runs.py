@@ -15,6 +15,7 @@ from app.core.errors import ConfigurationError, ResourceError, StateError, Valid
 from app.db.session import SessionLocal, get_session
 from app.model_providers import API_KEY_OPTIONAL_MODEL_PROVIDERS, SUPPORTED_MODEL_PROVIDERS
 from app.repositories.plans import PlanRepository, plan_to_view
+from app.repositories.permissions import PermissionRepository
 from app.repositories.runs import RunRepository, run_to_view
 from app.repositories.tool_settings import (
     ToolSettingsRepository,
@@ -160,14 +161,22 @@ async def create_run(
         run_settings = apply_tool_states(settings, tool_states)
         run_settings = _apply_model_config(run_settings, payload.model)
         profile = RunProfileResolver().resolve(payload.answer_mode, payload.reasoning_policy)
+        if not payload.interactive and payload.permission_bundle is None:
+            raise ValidationError(
+                "PERMISSION_BUNDLE_REQUIRED",
+                "无人值守、定时或后台运行必须提供显式权限包。",
+            )
         policy = profile.reasoning_policy
+        execution_profile = profile.model_dump(mode="json")
+        execution_profile["interactive"] = payload.interactive
+        execution_profile["permission_bundle"] = payload.permission_bundle
         run = await repo.create_task_run(
             goal,
             run_settings.model_policy,
             payload.task_id,
             reasoning_policy=policy.model_dump(mode="json"),
             answer_mode=profile.answer_mode.value,
-            execution_profile=profile.model_dump(mode="json"),
+            execution_profile=execution_profile,
             agent_profile_snapshot=load_agent_profile().snapshot(),
         )
         for adjustment in policy.adjustments:
@@ -334,11 +343,25 @@ async def decide_tool_approval(
     tool_states = await ToolSettingsRepository(session).get_or_create(default_tool_states(settings))
     run_settings = _apply_model_config(apply_tool_states(settings, tool_states), payload.model)
     try:
+        run = await repo.require_run(run_id)
+        reviewer = await PermissionRepository(session).get_or_create_identity(
+            identity_type="reviewer",
+            principal="local-user",
+            task_id=run.task_id,
+            run_id=run_id,
+            trust_level="user",
+        )
         await repo.decide_approval(
             run_id,
             approval_id,
             payload.decision.value,
             continuation_token=payload.continuation_token,
+            reviewer_identity={
+                "id": reviewer.id,
+                "identity_type": reviewer.identity_type,
+                "principal": reviewer.principal,
+            },
+            rejection_guidance=payload.guidance,
         )
     except ValueError as exc:
         message = str(exc)

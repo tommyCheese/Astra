@@ -1,7 +1,7 @@
 import { FormEvent, MouseEvent, ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { AstraApiError, ApiErrorPayload, buildRuntime, cancelRun, cancelRuntimeBuild, createConversationShare, createRun, decideToolApproval, deleteConversation, getConversation, getConversationStrategy, getRun, getRuntimeProfile, getToolSettings, listConversationShares, listConversations, listRuns, resumeRun, revokeConversationShare, streamRunEvents, updateConversation, updateConversationStrategy, updateToolSettings, type ConversationStrategyPreferences, type RunModelConfig, type ToolSetting } from './api';
+import { AstraApiError, ApiErrorPayload, buildRuntime, cancelRun, cancelRuntimeBuild, createConversationShare, createRun, decideToolApproval, deleteConversation, getConversation, getConversationStrategy, getPermissionCenter, getRun, getRuntimeProfile, getTaskWorkspace, getToolSettings, listConversationShares, listConversations, listRuns, resumeRun, revokeConversationShare, revokePermissionGrant, streamRunEvents, updateConversation, updateConversationStrategy, updateToolSettings, type ConversationStrategyPreferences, type PermissionCenterView, type RunModelConfig, type ToolSetting, type WorkspaceView } from './api';
 import { I18nProvider, useI18n } from './i18n';
 import { ThemeProvider, useTheme } from './theme';
 import type { ArtifactView, ChatMessage, ConversationShare, ConversationShareSummary, ConversationSummary, PendingApproval, RunView } from './types';
@@ -78,6 +78,7 @@ function AppContent() {
   const [view, setView] = useState<'chat' | 'settings' | 'shares'>('chat');
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [usageOpen, setUsageOpen] = useState(false);
+  const [controlCenterOpen, setControlCenterOpen] = useState(false);
   const [strategyHelpOpen, setStrategyHelpOpen] = useState(false);
   const [conversationAction, setConversationAction] = useState<{ kind: 'rename' | 'share' | 'delete'; conversation: ConversationEntry } | null>(null);
   const [modelOpen, setModelOpen] = useState(false);
@@ -430,6 +431,12 @@ function AppContent() {
   function selectedRunModel(): RunModelConfig | undefined {
     const selectedOption = availableModels.find((item) => item.key === selectedModelKey);
     const selectedProvider = providerConfigs.find((item) => item.id === selectedOption?.providerId);
+    const keyOptional = selectedProvider
+      ? ['ollama', 'lmstudio', 'vllm', 'localai'].includes(selectedProvider.id)
+      : false;
+    if (!selectedProvider || (!selectedProvider.apiKey.trim() && !keyOptional)) {
+      return undefined;
+    }
     return selectedOption && selectedProvider ? {
       provider: selectedProvider.id,
       name: selectedOption.model,
@@ -438,7 +445,7 @@ function AppContent() {
     } : undefined;
   }
 
-  async function decideApproval(decision: 'approve_once' | 'allow_similar' | 'reject') {
+  async function decideApproval(decision: 'approve_once' | 'allow_similar' | 'allow_task' | 'reject') {
     const approval = run?.pending_approval;
     const token = run?.waiting_state?.continuation_token;
     if (!run || !approval || typeof token !== 'string' || approvalSubmitting) return;
@@ -707,7 +714,7 @@ function AppContent() {
         <section className="chat-topbar">
           <button className="mobile-sidebar-trigger" type="button" aria-label={t('打开导航')} onClick={() => setSidebarOpen(true)}><span /><span /><span /></button>
           <h1>{activeConversationTitle || 'Astra'}</h1>
-          {run && <span className={`status status-${run.status}`}>{statusLabel(run.status)}</span>}
+          {run && <div className="topbar-run-controls"><button type="button" onClick={() => setControlCenterOpen(true)}>{t('权限与文件')}</button><span className={`status status-${run.status}`}>{statusLabel(run.status)}</span></div>}
         </section>
 
         <section className="chat-surface">
@@ -861,6 +868,7 @@ function AppContent() {
         </>}
       </section>
       {usageOpen && <UsageDashboard taskId={run?.task_id} runId={run?.id} onClose={() => setUsageOpen(false)} />}
+      {controlCenterOpen && run && <ControlCenterDialog run={run} onClose={() => setControlCenterOpen(false)} />}
       {strategyHelpOpen && <StrategyHelpDialog onClose={() => setStrategyHelpOpen(false)} />}
       {bypassConfirmOpen && <BypassConfirmation onCancel={() => setBypassConfirmOpen(false)} onConfirm={() => {
         setExecutionMode('bypass');
@@ -1635,37 +1643,75 @@ function Toggle({ checked = false, onChange, disabled = false, label }: { checke
 function ExecutionModeMenu({ value, onChange }: { value: 'plan' | 'default' | 'bypass'; onChange: (mode: 'plan' | 'default' | 'bypass') => void }) {
   const { t } = useI18n();
   const modes = [
-    { id: 'plan' as const, title: '仅规划', detail: '只规划任务，不调用工具或执行命令', icon: 'route' as const },
-    { id: 'default' as const, title: '请求批准', detail: '自动执行低风险操作，高风险权限需要确认', icon: 'requestApprove' as const },
-    { id: 'bypass' as const, title: '自动批准', detail: '自动执行所有命令和工具，不再请求确认', icon: 'autoApprove' as const },
+    { id: 'plan' as const, title: '仅规划', detail: '可执行查询与临时计算，不执行持久化或外部副作用', icon: 'route' as const },
+    { id: 'default' as const, title: '请求批准', detail: '无副作用行为自动执行，危险行为按影响范围确认', icon: 'requestApprove' as const },
+    { id: 'bypass' as const, title: '自动批准', detail: '跳过可批准行为的确认，平台禁止项仍不可执行', icon: 'autoApprove' as const },
   ];
   return <div className="floating-menu execution-menu"><div className="menu-heading">{t('执行模式')}</div>{modes.map((mode) => <button className={value === mode.id ? 'selected' : ''} type="button" key={mode.id} onClick={() => onChange(mode.id)}><Icon name={mode.icon} /><div><strong>{t(mode.title)}</strong><small>{t(mode.detail)}</small></div><span className="mode-selected-mark">{value === mode.id ? '✓' : ''}</span></button>)}</div>;
 }
 
-function ApprovalCard({ approval, submitting, onDecision }: { approval: PendingApproval; submitting: boolean; onDecision: (decision: 'approve_once' | 'allow_similar' | 'reject') => void }) {
+function ApprovalCard({ approval, submitting, onDecision }: { approval: PendingApproval; submitting: boolean; onDecision: (decision: 'approve_once' | 'allow_similar' | 'allow_task' | 'reject') => void }) {
   const { t } = useI18n();
   return <section className="approval-card" role="group" aria-label={t('工具执行等待批准')}>
     <div className="approval-card-header">
       <Icon name="requestApprove" />
-      <div><strong>{t('工具执行等待批准')}</strong><span>{t('将要调用')} <code>{approval.tool_name}</code></span></div>
+      <div><strong>{t('工具执行等待批准')}</strong><span>{approval.action_summary || `${t('将要调用')} ${approval.tool_name}`}</span></div>
     </div>
     <pre className="approval-preview">{approval.preview}</pre>
     <div className="approval-meta">
       <span>{t('权限')}: <b>{approval.permission}</b></span>
       <span>{t('影响范围')}: <b>{approval.impact}</b></span>
+      {approval.working_directory && <span>{t('工作目录')}: <b>{approval.working_directory}</b></span>}
     </div>
+    {approval.risk_reason && <p className="approval-risk-reason">{approval.risk_reason}</p>}
+    {Boolean(approval.affected_resources?.length) && <div className="approval-resources"><strong>{t('涉及资源')}</strong>{approval.affected_resources?.map((resource) => <code key={resource}>{resource}</code>)}</div>}
     <div className="approval-actions">
       <button type="button" disabled={submitting} onClick={() => onDecision('approve_once')}>{t('仅本次')}</button>
       {approval.decisions.includes('allow_similar') && <button type="button" disabled={submitting} onClick={() => onDecision('allow_similar')}>{t('允许类似命令')}</button>}
+      {approval.decisions.includes('allow_task') && <button type="button" disabled={submitting} onClick={() => onDecision('allow_task')}>{t('本任务内允许')}</button>}
       <button className="approval-reject" type="button" disabled={submitting} onClick={() => onDecision('reject')}>{t('拒绝')}</button>
     </div>
     {submitting && <span className="approval-submitting" role="status">{t('正在提交批准决定…')}</span>}
   </section>;
 }
 
+function ControlCenterDialog({ run, onClose }: { run: RunView; onClose: () => void }) {
+  const { t } = useI18n();
+  const [permissions, setPermissions] = useState<PermissionCenterView | null>(null);
+  const [workspace, setWorkspace] = useState<WorkspaceView | null>(null);
+  const [loadError, setLoadError] = useState('');
+  const refresh = useCallback(async () => {
+    try {
+      const [permissionView, workspaceView] = await Promise.all([
+        getPermissionCenter(run.id),
+        getTaskWorkspace(run.task_id),
+      ]);
+      setPermissions(permissionView);
+      setWorkspace(workspaceView);
+      setLoadError('');
+    } catch (error) {
+      setLoadError(error instanceof Error ? error.message : t('加载权限与文件失败'));
+    }
+  }, [run.id, run.task_id, t]);
+  useEffect(() => { void refresh(); }, [refresh]);
+  return <div className="modal-backdrop" role="presentation" onMouseDown={onClose}>
+    <section className="control-center-modal" role="dialog" aria-modal="true" aria-label={t('权限与文件')} onMouseDown={(event) => event.stopPropagation()}>
+      <header><div><h2>{t('权限与文件')}</h2><p>{t('查看当前任务的授权边界、身份链和持久化工作区。')}</p></div><button type="button" aria-label={t('关闭')} onClick={onClose}>×</button></header>
+      {loadError && <p className="control-center-error">{loadError}</p>}
+      {!permissions || !workspace ? <p>{t('正在加载…')}</p> : <div className="control-center-grid">
+        <section><h3>{t('生效授权')}</h3>{permissions.grants.length ? permissions.grants.map((grant) => <div className="control-center-item" key={grant.id}><strong>{grant.tool_name} · {grant.scope}</strong><span>{grant.effect_kinds.join(', ') || t('旧版匹配规则')}</span>{grant.status === 'active' && <button type="button" onClick={async () => { await revokePermissionGrant(grant.id); await refresh(); }}>{t('撤销')}</button>}</div>) : <p>{t('没有持久授权')}</p>}</section>
+        <section><h3>{t('身份与工具信任')}</h3>{permissions.identities.map((identity) => <div className="control-center-item" key={identity.id}><strong>{identity.type}</strong><span>{identity.principal} · {identity.trust_level}</span></div>)}{permissions.delegations.map((delegation) => <div className="control-center-item" key={delegation.id}><strong>{t('委派')}</strong><span>{delegation.parent_identity_id.slice(0, 8)} → {delegation.child_identity_id.slice(0, 8)}</span></div>)}{permissions.credentials.map((credential) => <div className="control-center-item" key={credential.id}><strong>{t('凭据使用')} · {credential.service}</strong><span>{credential.scopes.join(', ')} · {credential.revoked_at ? t('已撤销') : t('短期有效')}</span></div>)}{permissions.tool_catalog && <small>Catalog · {permissions.tool_catalog.digest.slice(0, 12)}</small>}</section>
+        <section className="workspace-files-section"><h3>{t('任务文件')}</h3>{workspace.files.filter((file) => file.status === 'present' && file.deliverable_candidate).map((file) => <div className="control-center-item" key={file.id}><strong>{file.path}</strong><span>{file.mime_type || t('未知类型')} · {file.size_bytes} B</span>{file.content_url && <a href={file.content_url}>{t('预览或下载')}</a>}</div>)}{!workspace.files.some((file) => file.status === 'present' && file.deliverable_candidate) && <p>{t('暂无可交付文件')}</p>}</section>
+        <section><h3>{t('删除与检查点')}</h3>{workspace.changes.filter((change) => change.kind === 'deleted').slice(0, 10).map((change) => <div className="control-center-item" key={change.id}><strong>{change.path}</strong><span>{t('已删除')} · {new Date(change.created_at).toLocaleString()}</span></div>)}{workspace.checkpoints.slice(0, 5).map((checkpoint) => <div className="control-center-item" key={checkpoint.id}><strong>Checkpoint · {checkpoint.file_count}</strong><span>{checkpoint.manifest_hash.slice(0, 12)}</span></div>)}</section>
+        <section><h3>{t('策略解释')}</h3>{permissions.policy_explanations?.slice(0, 10).map((item) => <div className="control-center-item" key={item.id}><strong>{item.type}</strong><span>{String(item.payload.tool_name || item.payload.decision || item.payload.summary || '')}</span></div>)}{!permissions.policy_explanations?.length && <p>{t('暂无审批决策')}</p>}</section>
+      </div>}
+    </section>
+  </div>;
+}
+
 function BypassConfirmation({ onCancel, onConfirm }: { onCancel: () => void; onConfirm: () => void }) {
   const { t } = useI18n();
-  return <div className="modal-backdrop" role="presentation" onMouseDown={onCancel}><section className="confirmation-modal" role="alertdialog" aria-modal="true" aria-labelledby="bypass-title" onMouseDown={(event) => event.stopPropagation()}><div className="warning-mark">!</div><h2 id="bypass-title">{t('启用自动批准模式？')}</h2><p>{t('自动批准模式将允许 Agent 自动执行所有命令和工具，包括可能修改文件、访问网络或影响外部系统的高风险操作。')}</p><div className="confirmation-note"><strong>{t('仅在你信任当前任务和运行环境时启用。')}</strong></div><div className="confirmation-actions"><button className="secondary-button" type="button" onClick={onCancel}>{t('取消')}</button><button className="danger-confirm-button" type="button" onClick={onConfirm}>{t('确认启用自动批准')}</button></div></section></div>;
+  return <div className="modal-backdrop" role="presentation" onMouseDown={onCancel}><section className="confirmation-modal" role="alertdialog" aria-modal="true" aria-labelledby="bypass-title" onMouseDown={(event) => event.stopPropagation()}><div className="warning-mark">!</div><h2 id="bypass-title">{t('启用自动批准模式？')}</h2><p>{t('自动批准模式会跳过可批准行为的交互确认，但仍受平台禁止项、权限边界、预算和沙箱限制。')}</p><div className="confirmation-note"><strong>{t('仅在你信任当前任务和运行环境时启用。')}</strong></div><div className="confirmation-actions"><button className="secondary-button" type="button" onClick={onCancel}>{t('取消')}</button><button className="danger-confirm-button" type="button" onClick={onConfirm}>{t('确认启用自动批准')}</button></div></section></div>;
 }
 
 function ModelMenu({ selectedModelKey, onModelChange, modelOptions, trusted, reasoningEffort, onReasoningEffortChange, toolCallLimit, onToolCallLimitChange, planningStrategy, onPlanningStrategyChange, reflectionEnabled, onReflectionChange, reflectionTrigger, onReflectionTriggerChange, onOpenStrategyHelp }: {

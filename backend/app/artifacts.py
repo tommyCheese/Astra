@@ -3,6 +3,7 @@ import json
 import mimetypes
 import shutil
 import uuid
+import zipfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import ClassVar, Protocol
@@ -41,9 +42,26 @@ class LocalArtifactStore:
 class ArtifactCollector:
     MAGIC: ClassVar[dict[str, tuple[bytes, str]]] = {
         ".png": (b"\x89PNG\r\n\x1a\n", "image/png"),
+        ".jpg": (b"\xff\xd8\xff", "image/jpeg"),
+        ".jpeg": (b"\xff\xd8\xff", "image/jpeg"),
+        ".gif": (b"GIF8", "image/gif"),
+        ".webp": (b"RIFF", "image/webp"),
         ".svg": (b"<", "image/svg+xml"),
+        ".pdf": (b"%PDF-", "application/pdf"),
         ".json": (b"", "application/json"),
         ".html": (b"", "text/html"),
+        ".txt": (b"", "text/plain"),
+        ".md": (b"", "text/markdown"),
+        ".csv": (b"", "text/csv"),
+        ".tsv": (b"", "text/tab-separated-values"),
+        ".py": (b"", "text/x-python"),
+        ".js": (b"", "text/javascript"),
+        ".ts": (b"", "text/typescript"),
+        ".tsx": (b"", "text/typescript"),
+        ".css": (b"", "text/css"),
+        ".xml": (b"", "application/xml"),
+        ".docx": (b"PK\x03\x04", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"),
+        ".xlsx": (b"PK\x03\x04", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"),
     }
 
     def __init__(self, output_dir: Path, *, max_files: int, max_bytes: int):
@@ -85,6 +103,17 @@ class ArtifactCollector:
                 json.loads(data)
             except (json.JSONDecodeError, UnicodeDecodeError) as exc:
                 raise ToolExecutionError("invalid_artifact", "JSON artifact is malformed") from exc
+        if suffix in {
+            ".txt", ".md", ".csv", ".tsv", ".py", ".js", ".ts", ".tsx", ".css", ".xml"
+        }:
+            if b"\x00" in data:
+                raise ToolExecutionError("invalid_artifact", "Text artifact contains binary data")
+            try:
+                data.decode("utf-8")
+            except UnicodeDecodeError as exc:
+                raise ToolExecutionError("invalid_artifact", "Text artifact must be UTF-8") from exc
+        if suffix in {".docx", ".xlsx"}:
+            self._validate_office_archive(resolved, suffix)
         if suffix == ".svg" and any(
             token in lowered
             for token in (
@@ -115,6 +144,38 @@ class ArtifactCollector:
             "size_bytes": len(data),
             "checksum": hashlib.sha256(data).hexdigest(),
         }
+
+    def _validate_office_archive(self, path: Path, suffix: str) -> None:
+        try:
+            with zipfile.ZipFile(path) as archive:
+                entries = archive.infolist()
+                if len(entries) > self.max_files:
+                    raise ToolExecutionError(
+                        "artifact_limit_exceeded", "Office document contains too many entries"
+                    )
+                expanded = sum(item.file_size for item in entries)
+                if expanded > self.max_bytes * 20:
+                    raise ToolExecutionError(
+                        "artifact_limit_exceeded", "Office document expansion exceeds policy"
+                    )
+                names = {item.filename for item in entries}
+                for item in entries:
+                    candidate = Path(item.filename)
+                    if candidate.is_absolute() or ".." in candidate.parts:
+                        raise ToolExecutionError(
+                            "sandbox_policy_violation", "Office document contains path traversal"
+                        )
+                required = "word/document.xml" if suffix == ".docx" else "xl/workbook.xml"
+                if "[Content_Types].xml" not in names or required not in names:
+                    raise ToolExecutionError(
+                        "invalid_artifact", "Office document structure is incomplete"
+                    )
+                if any(name.lower().endswith((".bin", ".vba", ".vbs", ".exe")) for name in names):
+                    raise ToolExecutionError(
+                        "invalid_artifact", "Active Office document content is not allowed"
+                    )
+        except zipfile.BadZipFile as exc:
+            raise ToolExecutionError("invalid_artifact", "Office artifact is malformed") from exc
 
 
 def artifact_ref(record) -> ArtifactRef:

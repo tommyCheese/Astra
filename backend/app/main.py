@@ -10,6 +10,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from app.api.conversations import router as conversations_router
 from app.api.preferences import router as preferences_router
+from app.api.permissions import router as permissions_router
 from app.api.runs import router as runs_router
 from app.api.runtime import router as runtime_router
 from app.api.tools import router as tools_router
@@ -63,6 +64,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(runs_router)
     app.include_router(conversations_router)
     app.include_router(preferences_router)
+    app.include_router(permissions_router)
     app.include_router(runtime_router)
     app.include_router(tools_router)
     app.include_router(usage_router)

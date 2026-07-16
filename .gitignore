@@ -14,6 +14,8 @@ backend/*.egg-info/
 backend/build/
 backend/*.db
 backend/runtime-profile.json
+backend/astra-workspaces/
+backend/.test-workspaces/
 
 # Node
 node_modules/

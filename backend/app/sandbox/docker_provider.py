@@ -81,7 +81,7 @@ class DockerSandboxProvider(SandboxProvider):
 
     async def create(self, request: SandboxRequest) -> SandboxHandle:
         network = "none" if not request.allow_internet_access else "bridge"
-        _, stdout, _ = await self._run(
+        create_args = [
             "create",
             "--rm",
             "--network",
@@ -105,10 +105,65 @@ class DockerSandboxProvider(SandboxProvider):
             "/output:rw,noexec,nosuid,nodev,mode=1777",
             "--tmpfs",
             "/tmp:rw,nosuid,nodev,mode=1777",
+            "--env",
+            "PATH=/usr/local/bin:/usr/bin:/bin",
+            "--env",
+            "HOME=/tmp/astra-home",
+            "--env",
+            "LANG=C.UTF-8",
+            "--env",
+            "LC_ALL=C.UTF-8",
+            "--env",
+            "GIT_CONFIG_NOSYSTEM=1",
+            "--env",
+            "GIT_CONFIG_GLOBAL=/dev/null",
+            "--env",
+            "BASH_ENV=/dev/null",
+            "--env",
+            "ENV=/dev/null",
+            "--env",
+            "GIT_CONFIG_COUNT=1",
+            "--env",
+            "GIT_CONFIG_KEY_0=core.hooksPath",
+            "--env",
+            "GIT_CONFIG_VALUE_0=/dev/null",
+            "--env",
+            "npm_config_ignore_scripts=true",
+            "--env",
+            "YARN_IGNORE_SCRIPTS=1",
+            "--env",
+            "PIP_NO_CONFIG_FILE=1",
+            "--env",
+            "PYTHONNOUSERSITE=1",
+            "--env",
+            "PYTHONSAFEPATH=1",
+        ]
+        if request.workspace_mode not in {"none", "read_only", "read_write"}:
+            raise SandboxError("sandbox_policy_violation", "Invalid Workspace mount mode")
+        if request.workspace_mode != "none":
+            if request.workspace_dir is None:
+                raise SandboxError(
+                    "sandbox_policy_violation", "Workspace mount path is required"
+                )
+            workspace_dir = request.workspace_dir.resolve(strict=True)
+            if workspace_dir.is_symlink() or not workspace_dir.is_dir():
+                raise SandboxError(
+                    "sandbox_policy_violation", "Workspace mount path is invalid"
+                )
+            mount = f"type=bind,src={workspace_dir},dst=/workspace"
+            if request.workspace_mode == "read_only":
+                mount += ",readonly"
+            create_args.extend(["--mount", mount])
+        else:
+            create_args.extend(["--tmpfs", "/workspace:rw,nosuid,nodev,mode=1777"])
+        create_args.extend(
+            [
             request.template,
             "sleep",
             "infinity",
+            ]
         )
+        _, stdout, _ = await self._run(*create_args)
         container_id = stdout.decode().strip()
         if not container_id:
             raise SandboxError("render_failed", "Docker did not return a container ID")
@@ -135,8 +190,36 @@ class DockerSandboxProvider(SandboxProvider):
     async def execute(
         self, handle: SandboxHandle, command: list[str], timeout: int, environment: dict[str, str]
     ) -> SandboxResult:
-        args = ["exec"]
-        for key, value in environment.items():
+        safe_environment = {
+            **{
+                key: value
+                for key, value in environment.items()
+                if key
+                not in {
+                    "PATH", "HOME", "LANG", "LC_ALL", "BASH_ENV", "ENV",
+                    "PYTHONPATH", "PYTHONHOME", "NODE_OPTIONS", "RUBYOPT",
+                    "GIT_CONFIG_COUNT", "GIT_CONFIG_KEY_0", "GIT_CONFIG_VALUE_0",
+                }
+            },
+            "PATH": "/usr/local/bin:/usr/bin:/bin",
+            "HOME": "/tmp/astra-home",
+            "LANG": "C.UTF-8",
+            "LC_ALL": "C.UTF-8",
+            "GIT_CONFIG_NOSYSTEM": "1",
+            "GIT_CONFIG_GLOBAL": "/dev/null",
+            "BASH_ENV": "/dev/null",
+            "ENV": "/dev/null",
+            "GIT_CONFIG_COUNT": "1",
+            "GIT_CONFIG_KEY_0": "core.hooksPath",
+            "GIT_CONFIG_VALUE_0": "/dev/null",
+            "npm_config_ignore_scripts": "true",
+            "YARN_IGNORE_SCRIPTS": "1",
+            "PIP_NO_CONFIG_FILE": "1",
+            "PYTHONNOUSERSITE": "1",
+            "PYTHONSAFEPATH": "1",
+        }
+        args = ["exec", "--workdir", "/workspace" if command else "/tmp"]
+        for key, value in safe_environment.items():
             args.extend(["--env", f"{key}={value}"])
         args.extend([handle.id, *command])
         code, stdout, stderr = await self._run(*args, timeout=timeout, check=False)

@@ -59,6 +59,38 @@ class PermissionRepository:
         await self.session.commit()
         return identity
 
+    async def get_or_create_identity(
+        self,
+        *,
+        identity_type: str,
+        principal: str,
+        task_id: str | None = None,
+        run_id: str | None = None,
+        parent_identity_id: str | None = None,
+        trust_level: str = "internal",
+        attributes: dict[str, Any] | None = None,
+    ) -> AgentIdentityRecord:
+        identity = await self.session.scalar(
+            select(AgentIdentityRecord).where(
+                AgentIdentityRecord.identity_type == identity_type,
+                AgentIdentityRecord.principal == principal,
+                AgentIdentityRecord.task_id == task_id,
+                AgentIdentityRecord.run_id == run_id,
+                AgentIdentityRecord.revoked_at.is_(None),
+            )
+        )
+        if identity is not None:
+            return identity
+        return await self.create_identity(
+            identity_type=identity_type,
+            principal=principal,
+            task_id=task_id,
+            run_id=run_id,
+            parent_identity_id=parent_identity_id,
+            trust_level=trust_level,
+            attributes=attributes,
+        )
+
     async def create_delegation(
         self,
         *,
@@ -75,6 +107,9 @@ class PermissionRepository:
             raise ValueError("Child identity is attached to another parent")
         if parent.task_id is not None and child.task_id != parent.task_id:
             raise ValueError("Delegation cannot cross Task boundaries")
+        parent_scope = parent.attributes.get("permission_scope", {})
+        if parent_scope and not _scope_is_subset(delegated_scope, parent_scope):
+            raise ValueError("Delegation cannot amplify the parent permission scope")
         child.parent_identity_id = parent.id
         delegation = AgentDelegationRecord(
             parent_identity_id=parent.id,
@@ -192,6 +227,11 @@ class PermissionRepository:
         await self.session.commit()
         return state
 
+    async def get_data_flow_state(self, run_id: str) -> DataFlowStateRecord | None:
+        return await self.session.scalar(
+            select(DataFlowStateRecord).where(DataFlowStateRecord.run_id == run_id)
+        )
+
     async def _require_run(self, run_id: str) -> RunRecord:
         run = await self.session.get(RunRecord, run_id)
         if run is None:
@@ -211,3 +251,16 @@ class PermissionRepository:
         if identity.revoked_at is not None:
             raise ValueError("Agent identity is revoked")
         return identity
+
+
+def _scope_is_subset(child: dict[str, Any], parent: dict[str, Any]) -> bool:
+    for key in ("actions", "resources", "effect_kinds"):
+        parent_values = set(parent.get(key, []))
+        child_values = set(child.get(key, []))
+        if parent_values and not child_values <= parent_values:
+            return False
+    parent_budget = parent.get("max_uses")
+    child_budget = child.get("max_uses")
+    if parent_budget is not None and (child_budget is None or child_budget > parent_budget):
+        return False
+    return True

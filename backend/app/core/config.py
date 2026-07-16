@@ -14,6 +14,7 @@ class Settings(BaseSettings):
     tool_web_fetch_enabled: bool = True
     tool_chart_render_enabled: bool = True
     tool_bash_execute_enabled: bool = False
+    trusted_tool_providers: str = "astra.builtin=builtin"
     web_search_provider: str = "auto"
     web_search_api_key: str = ""
     google_search_api_key: str = ""
@@ -38,6 +39,10 @@ class Settings(BaseSettings):
     allow_network_read: bool = True
     cors_origins: str = "http://localhost:5173"
     artifact_store_path: str = "./astra-artifacts"
+    task_workspace_store_path: str = "./astra-workspaces"
+    task_workspace_max_files: int = 10_000
+    task_workspace_max_bytes: int = 1024 * 1024 * 1024
+    task_workspace_max_file_bytes: int = 100 * 1024 * 1024
     artifact_max_files: int = 16
     artifact_max_bytes: int = 20 * 1024 * 1024
     artifact_retention_days: int = 30
@@ -71,6 +76,15 @@ class Settings(BaseSettings):
             "model": self.model_name,
             "base_url": self.model_base_url,
         }
+
+    @property
+    def trusted_tool_provider_map(self) -> dict[str, set[str]]:
+        result: dict[str, set[str]] = {}
+        for item in self.trusted_tool_providers.split(","):
+            provider, separator, digest = item.strip().partition("=")
+            if provider and separator and digest:
+                result.setdefault(provider, set()).add(digest)
+        return result
 
 
 @lru_cache

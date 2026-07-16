@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from pathlib import PurePosixPath
+import unicodedata
 from typing import Any
 
 from sqlalchemy import select
@@ -27,14 +28,29 @@ DEFAULT_WORKSPACE_QUOTAS = {
 
 
 def validate_workspace_path(relative_path: str) -> str:
-    if not relative_path or "\x00" in relative_path or "\\" in relative_path:
+    if (
+        not relative_path
+        or len(relative_path.encode("utf-8")) > 4000
+        or "\x00" in relative_path
+        or "\\" in relative_path
+        or any(
+            unicodedata.category(character) in {"Cc", "Cf"}
+            for character in relative_path
+        )
+    ):
         raise ValueError("Invalid Workspace path")
+    normalized_unicode = unicodedata.normalize("NFC", relative_path)
+    if normalized_unicode != relative_path:
+        raise ValueError("Workspace path must use normalized Unicode")
     path = PurePosixPath(relative_path)
-    if path.is_absolute() or any(part in {"", ".", ".."} for part in path.parts):
+    if path.is_absolute() or any(
+        part in {"", ".", ".."}
+        or part.startswith("-")
+        or part.endswith((" ", "."))
+        for part in path.parts
+    ):
         raise ValueError("Workspace path must be a normalized relative path")
     normalized = path.as_posix()
-    if normalized.startswith("-"):
-        raise ValueError("Workspace path cannot begin with '-'")
     return normalized
 
 
@@ -65,6 +81,10 @@ class WorkspaceRepository:
         self.session.add(workspace)
         await self.session.commit()
         return workspace
+
+    async def for_run(self, run_id: str) -> TaskWorkspaceRecord:
+        run = await self._require_run(run_id)
+        return await self.get_or_create(run.task_id)
 
     async def upsert_file(
         self,

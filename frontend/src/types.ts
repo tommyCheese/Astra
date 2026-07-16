@@ -43,7 +43,15 @@ export type PendingApproval = {
   preview: string;
   permission: string;
   impact: string;
-  decisions: Array<'approve_once' | 'allow_similar' | 'reject'>;
+  action_summary?: string | null;
+  affected_resources?: string[];
+  risk_reason?: string | null;
+  working_directory?: string | null;
+  network_scope?: Record<string, unknown>;
+  effect_kinds?: string[];
+  grant_proposals?: Array<Record<string, unknown>>;
+  reviewer_identity?: Record<string, unknown> | null;
+  decisions: Array<'approve_once' | 'allow_similar' | 'allow_task' | 'reject'>;
   created_at: string;
 };
 

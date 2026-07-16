@@ -17,7 +17,7 @@ import subprocess
 request = json.load(open("/input/request.json", encoding="utf-8"))
 completed = subprocess.run(
     ["/bin/bash", "--noprofile", "--norc", "-c", request["command"]],
-    cwd="/tmp",
+    cwd="/workspace",
     stdin=subprocess.DEVNULL,
     stdout=subprocess.PIPE,
     stderr=subprocess.PIPE,
@@ -41,7 +41,10 @@ class BashExecuteTool(Tool):
     spec = ToolSpec(
         name="bash_execute",
         version="1.0",
-        description="Execute a Bash command in an isolated, offline, one-time container",
+        description=(
+            "Execute an offline Bash command in the current Task Workspace. "
+            "Files written under /workspace persist for later tools and Runs."
+        ),
         input_schema={
             "type": "object",
             "properties": {
@@ -55,14 +58,22 @@ class BashExecuteTool(Tool):
         permission="command_execute",
         side_effect_level="external_side_effect",
         capabilities=["command_execute"],
-        permissions=["command_execute"],
+        permissions=[
+            "command_execute",
+            "process_execute",
+            "workspace_read",
+            "workspace_write",
+            "workspace_delete",
+            "process_execute_unknown",
+            "network_write",
+        ],
         risk="high",
         execution_backend="sandbox.remote",
         timeout_seconds=120,
         retry_policy={"max_attempts": 1},
         error_categories=["invalid_input", "sandbox_unavailable", "sandbox_timeout"],
         idempotent=False,
-        resource_profile={"runtime": "oci", "network": "none", "workspace": "none"},
+        resource_profile={"runtime": "oci", "network": "none", "workspace": "read_write"},
     )
 
     def __init__(self, settings: Settings):
@@ -73,6 +84,10 @@ class BashExecuteTool(Tool):
     ) -> dict[str, Any]:
         if context is None:
             raise ToolExecutionError("invalid_decision", "bash_execute requires execution context")
+        if context.workspace_path is None:
+            raise ToolExecutionError(
+                "sandbox_policy_violation", "bash_execute requires a Task Workspace"
+            )
         try:
             parsed = BashExecuteRequest.model_validate(tool_input)
         except Exception as exc:
@@ -96,6 +111,9 @@ class BashExecuteTool(Tool):
             encoding="utf-8",
         )
         (input_dir / "runner.py").write_text(RUNNER, encoding="utf-8")
+        workspace_mode = (
+            context.workspace_mode if context.effect_plan is not None else "read_write"
+        )
         request = SandboxRequest(
             template=self.settings.sandbox_runtime_image,
             command=["python", "/input/runner.py"],
@@ -107,6 +125,8 @@ class BashExecuteTool(Tool):
             record_stdout=False,
             environment={"TZ": "UTC", "PYTHONHASHSEED": "0", "HOME": "/tmp"},
             metadata={"tool": "bash_execute", "protocol": "1"},
+            workspace_dir=context.workspace_path if workspace_mode != "none" else None,
+            workspace_mode=workspace_mode,
         )
         try:
             _job, _refs, result = await context.sandbox_service.execute(
@@ -117,7 +137,8 @@ class BashExecuteTool(Tool):
                     "backend": "sandboxed-bash",
                     "image": self.settings.sandbox_runtime_image,
                     "network": "none",
-                    "workspace": "none",
+                    "workspace": workspace_mode,
+                    "workspace_path": "/workspace",
                     "trace_id": context.trace_id,
                 },
                 resource_limits={

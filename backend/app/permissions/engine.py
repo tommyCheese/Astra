@@ -197,6 +197,48 @@ class PermissionEngine:
             decided_at=now,
         )
 
+    def evaluate_egress(
+        self,
+        request: PermissionRequest,
+        *,
+        data_labels: Iterable[str],
+        trust_sources: Iterable[str],
+        allowed_destinations: Iterable[str],
+        prohibited_destinations: Iterable[str],
+    ) -> PermissionDecision | None:
+        destination = request.conditions.network_destination or request.resource
+        if any(fnmatchcase(destination, pattern) for pattern in prohibited_destinations):
+            return self._decision(
+                PermissionDecisionKind.deny,
+                "data_egress_prohibited",
+                "The destination is prohibited for this Run.",
+                [],
+                utc_now(),
+            )
+        sensitive = bool(
+            set(data_labels)
+            & {"secret", "credential", "personal", "financial", "private", "source_code"}
+        )
+        untrusted = any(source.startswith(("workspace:", "web:", "external:")) for source in trust_sources)
+        allowed = any(fnmatchcase(destination, pattern) for pattern in allowed_destinations)
+        if sensitive and not allowed:
+            return self._decision(
+                PermissionDecisionKind.deny,
+                "sensitive_data_egress_denied",
+                "Sensitive data cannot be sent to an unapproved destination.",
+                [],
+                utc_now(),
+            )
+        if untrusted and _is_mutating_action(request.action) and not allowed:
+            return self._decision(
+                PermissionDecisionKind.ask,
+                "untrusted_data_external_write",
+                "Untrusted input is influencing an external write.",
+                [],
+                utc_now(),
+            )
+        return None
+
     @staticmethod
     def _decision(
         decision: PermissionDecisionKind,

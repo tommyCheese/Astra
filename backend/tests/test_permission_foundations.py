@@ -14,6 +14,7 @@ from app.schemas.permissions import (
     PermissionRequest,
     PermissionSubject,
 )
+from app.workspaces.runtime import WorkspaceRuntimeService
 
 
 def test_permission_and_effect_schemas_preserve_identity_and_integrity_fields():
@@ -64,7 +65,10 @@ def test_permission_and_effect_schemas_preserve_identity_and_integrity_fields():
 
 def test_workspace_paths_reject_escape_and_shell_ambiguous_names():
     assert validate_workspace_path("reports/summary.md") == "reports/summary.md"
-    for unsafe in ("../secret", "/etc/passwd", "-rf", "dir\\file", "a/../b"):
+    for unsafe in (
+        "../secret", "/etc/passwd", "-rf", "dir/-rf", "dir\\file", "a/../b",
+        "bad\nname", "report\u202etxt", "trailing. ",
+    ):
         with pytest.raises(ValueError):
             validate_workspace_path(unsafe)
 
@@ -103,6 +107,33 @@ async def test_workspace_repository_persists_files_tombstones_and_checkpoints(se
     assert persisted_file.status == "deleted"
     assert persisted_file.deleted_at is not None
     assert checkpoint.manifest_hash == "sha256:manifest"
+
+
+async def test_workspace_runtime_persists_cross_tool_files_and_change_manifest(session, tmp_path):
+    run = await RunRepository(session).create_task_run("Shared Workspace", {})
+    repository = WorkspaceRepository(session)
+    runtime = WorkspaceRuntimeService(
+        repository,
+        str(tmp_path / "workspaces"),
+        max_files=100,
+        max_bytes=1024 * 1024,
+        max_file_bytes=1024 * 1024,
+    )
+    workspace_path = await runtime.prepare(run.task_id)
+    before = runtime.scan(workspace_path)
+    (workspace_path / "test.csv").write_text("x,y\n1,2\n", encoding="utf-8")
+
+    changes = await runtime.capture_changes(
+        run_id=run.id,
+        tool_call_id=None,
+        workspace_dir=workspace_path,
+        before=before,
+    )
+    later_path = await runtime.prepare(run.task_id)
+
+    assert later_path == workspace_path
+    assert (later_path / "test.csv").is_file()
+    assert changes == [{"path": "test.csv", "kind": "created"}]
 
 
 async def test_permission_repository_persists_identity_delegation_catalog_and_data_flow(session):

@@ -8,7 +8,18 @@ from typing import Any
 from app.artifacts import ArtifactService, LocalArtifactStore
 from app.core.config import Settings
 from app.repositories.plans import PlanRepository, plan_to_view
+from app.repositories.permissions import PermissionRepository
 from app.repositories.runs import RunRepository
+from app.repositories.workspaces import WorkspaceRepository
+from app.permissions.effects import (
+    DefaultEffectAnalyzer,
+    effect_plan_hash,
+    grant_proposals,
+    platform_denial_reason,
+    workspace_mount_mode,
+)
+from app.permissions.governance import ExtensionTrustPolicy, PermissionBundleEvaluator
+from app.permissions.engine import PermissionEngine
 from app.runner.adapters import ChartTaskAdapter, ProcessorRegistry, WebTaskAdapter
 from app.runner.approvals import ApprovalPolicy, input_hash, safe_preview, similar_matcher
 from app.runner.model_client import ModelClient, ModelOutputError
@@ -45,12 +56,21 @@ from app.schemas.agent import (
     ValidationOutcome,
     VerificationReport,
 )
+from app.schemas.permissions import (
+    PermissionBundle,
+    PermissionConditions,
+    PermissionDecisionKind,
+    ExtensionDescriptor,
+    PermissionRequest,
+    PermissionSubject,
+)
 from app.tools.base import (
     CapabilityAvailability,
     ToolExecutionContext,
     ToolExecutionError,
     ToolRegistry,
 )
+from app.workspaces.runtime import WorkspaceRuntimeService
 
 logger = logging.getLogger("astra.agent_loop")
 
@@ -117,14 +137,40 @@ class ToolRouter:
         self.allowed_capabilities = allowed_capabilities or {
             "network_read",
             "sandboxed_compute",
+            "temporary_compute",
             "artifact_write",
+            "dependency_change",
             "command_execute",
+            "process_execute",
+            "process_execute_unknown",
+            "workspace_read",
+            "workspace_write",
+            "workspace_delete",
+            "network_write",
+            "external_write",
+            "sensitive_data_read",
+            "credential_use",
+            "delegation_create",
+            "permission_change",
         }
         self.allowed_permissions = allowed_permissions or {
             "network_read",
             "sandboxed_compute",
+            "temporary_compute",
             "artifact_write",
+            "dependency_change",
             "command_execute",
+            "process_execute",
+            "process_execute_unknown",
+            "workspace_read",
+            "workspace_write",
+            "workspace_delete",
+            "network_write",
+            "external_write",
+            "sensitive_data_read",
+            "credential_use",
+            "delegation_create",
+            "permission_change",
         }
         self.allowed_risks = allowed_risks or {"low", "sandboxed", "high"}
         self.available_backends = available_backends or {"in_process"}
@@ -411,8 +457,69 @@ class AgentLoop:
             max_bytes=self.settings.artifact_max_bytes,
         )
         provider = self.sandbox_provider or build_sandbox_provider(self.settings)
-        sandbox_service = SandboxJobService(repo, SandboxSupervisor(provider), artifact_service)
         initial_run = await repo.require_run(run_id)
+        permission_repository = PermissionRepository(repo.session)
+        main_identity = await permission_repository.get_or_create_identity(
+            identity_type="main_agent",
+            principal="astra.agent",
+            task_id=initial_run.task_id,
+            run_id=run_id,
+            trust_level="platform",
+            attributes={"permission_scope": {"actions": ["*"], "resources": ["*"]}},
+        )
+        provider_identities: dict[str, Any] = {}
+        catalog = [
+            spec.model_dump(mode="json")
+            for _, spec in sorted(self.tool_registry.specs().items())
+        ]
+        extension_policy = ExtensionTrustPolicy()
+        try:
+            extension_policy.inventory(
+                [
+                    ExtensionDescriptor(
+                        extension_type="tool",
+                        id=entry["name"],
+                        version=entry["version"],
+                        provider_id=entry["provider_id"],
+                        digest=entry["provider_digest"],
+                        trust_level=entry["trust_level"],
+                        schema_digest=hashlib.sha256(
+                            json.dumps(
+                                entry["input_schema"],
+                                sort_keys=True,
+                                separators=(",", ":"),
+                            ).encode()
+                        ).hexdigest(),
+                        annotations={"description": entry.get("description", "")},
+                    )
+                    for entry in catalog
+                ],
+                allowed_providers=self.settings.trusted_tool_provider_map,
+            )
+        except ValueError as exc:
+            raise ToolExecutionError("extension_trust_denied", str(exc)) from exc
+        catalog_digest = hashlib.sha256(
+            json.dumps(catalog, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+        await permission_repository.freeze_tool_catalog(
+            run_id,
+            catalog=catalog,
+            digest=catalog_digest,
+        )
+        workspace_service = WorkspaceRuntimeService(
+            WorkspaceRepository(repo.session),
+            self.settings.task_workspace_store_path,
+            max_files=self.settings.task_workspace_max_files,
+            max_bytes=self.settings.task_workspace_max_bytes,
+            max_file_bytes=self.settings.task_workspace_max_file_bytes,
+        )
+        workspace_path = await workspace_service.prepare(initial_run.task_id)
+        sandbox_service = SandboxJobService(
+            repo,
+            SandboxSupervisor(provider),
+            artifact_service,
+            workspace_service,
+        )
         plan_repository = PlanRepository(repo.session)
         scheduler = PlanScheduler(plan_repository)
         canonical_plan = await plan_repository.active_for_run(run_id)
@@ -451,6 +558,18 @@ class AgentLoop:
         replan_count = 0
         active_node = None
         approved_call = await repo.get_approved_tool_call(run_id)
+        approved_request_snapshot = (
+            {
+                "effect_plan_hash": approved_call.approval_request.effect_plan_hash,
+                "frozen_effect_plan": dict(
+                    approved_call.approval_request.frozen_effect_plan or {}
+                ),
+                "analyzer_version": approved_call.approval_request.analyzer_version,
+                "analyzer_digest": approved_call.approval_request.analyzer_digest,
+            }
+            if approved_call is not None and approved_call.approval_request is not None
+            else None
+        )
         if approved_call is not None and (
             approved_call.approval_request is None
             or approved_call.approval_request.status != "approved"
@@ -1333,6 +1452,121 @@ class AgentLoop:
                         "retry_exhausted", "Equivalent failed strategy exhausted its retry budget"
                     )
                 tool = self.router.resolve(decision.tool_name, decision.tool_input)
+                provider_identity = provider_identities.get(tool.spec.provider_id)
+                if provider_identity is None:
+                    provider_identity = await permission_repository.get_or_create_identity(
+                        identity_type="external_provider"
+                        if tool.spec.provider_id != "astra.builtin"
+                        else "tool_provider",
+                        principal=tool.spec.provider_id,
+                        task_id=initial_run.task_id,
+                        run_id=run_id,
+                        parent_identity_id=main_identity.id,
+                        trust_level=tool.spec.trust_level,
+                        attributes={"provider_digest": tool.spec.provider_digest},
+                    )
+                    provider_identities[tool.spec.provider_id] = provider_identity
+                runtime_identity = await permission_repository.get_or_create_identity(
+                    identity_type="tool_runtime",
+                    principal=f"{tool.spec.provider_id}:{tool.spec.name}@{tool.spec.version}",
+                    task_id=initial_run.task_id,
+                    run_id=run_id,
+                    parent_identity_id=provider_identity.id,
+                    trust_level=tool.spec.trust_level,
+                    attributes={
+                        "provider_digest": tool.spec.provider_digest,
+                        "schema_digest": hashlib.sha256(
+                            json.dumps(
+                                tool.spec.input_schema,
+                                sort_keys=True,
+                                separators=(",", ":"),
+                            ).encode()
+                        ).hexdigest(),
+                        "permission_scope": {
+                            "actions": tool.spec.permissions,
+                            "resources": ["*"],
+                        },
+                    },
+                )
+                effect_plan = DefaultEffectAnalyzer().analyze(
+                    tool.spec,
+                    decision.tool_input,
+                    task_id=initial_run.task_id,
+                )
+                undeclared_permissions = set(effect_plan.required_permissions) - set(
+                    tool.spec.permissions
+                )
+                if undeclared_permissions:
+                    raise ToolExecutionError(
+                        "tool_permission_violation",
+                        "Effect analyzer requested permissions outside the ToolSpec maximum: "
+                        + ", ".join(sorted(undeclared_permissions)),
+                    )
+                platform_denial = platform_denial_reason(effect_plan)
+                if platform_denial:
+                    raise ToolExecutionError("platform_policy_denied", platform_denial)
+                data_flow = await permission_repository.get_data_flow_state(run_id)
+                if data_flow is not None and any(
+                    effect.kind.value in {"network_write", "external_write"}
+                    for effect in effect_plan.effects
+                ):
+                    external_effect = next(
+                        effect
+                        for effect in effect_plan.effects
+                        if effect.kind.value in {"network_write", "external_write"}
+                    )
+                    egress = PermissionEngine().evaluate_egress(
+                        PermissionRequest(
+                            subject=PermissionSubject(
+                                agent_id=runtime_identity.id,
+                                identity_type="tool_runtime",
+                                task_id=initial_run.task_id,
+                                run_id=run_id,
+                                parent_agent_id=provider_identity.id,
+                                delegation_chain=[
+                                    main_identity.id,
+                                    provider_identity.id,
+                                    runtime_identity.id,
+                                ],
+                            ),
+                            action=external_effect.kind.value,
+                            resource=external_effect.resource,
+                            conditions=PermissionConditions(
+                                tool_name=tool.spec.name,
+                                tool_version=tool.spec.version,
+                                network_destination=external_effect.resource,
+                                data_labels=list(
+                                    set(data_flow.data_labels)
+                                    | set(external_effect.data_labels)
+                                ),
+                            ),
+                        ),
+                        data_labels=data_flow.data_labels,
+                        trust_sources=data_flow.trust_sources,
+                        allowed_destinations=data_flow.allowed_destinations,
+                        prohibited_destinations=data_flow.prohibited_destinations,
+                    )
+                    if egress is not None and egress.decision == PermissionDecisionKind.deny:
+                        raise ToolExecutionError(
+                            "data_egress_denied", egress.explanation.summary
+                        )
+                raw_profile = initial_run.execution_profile or {}
+                unattended = not bool(raw_profile.get("interactive", True))
+                raw_bundle = raw_profile.get("permission_bundle")
+                bundle = PermissionBundle.model_validate(raw_bundle) if raw_bundle else None
+                bundle_allowed, bundle_reason = PermissionBundleEvaluator().validate(
+                    bundle,
+                    effect_plan,
+                    tool_identity=(
+                        f"{tool.spec.provider_id}:{tool.spec.name}@{tool.spec.version}:"
+                        f"{tool.spec.provider_digest}"
+                    ),
+                    unattended=unattended,
+                    tool_call_count=tool_call_count,
+                )
+                if not bundle_allowed:
+                    raise ToolExecutionError("permission_bundle_denied", bundle_reason)
+                effect_hash = effect_plan_hash(effect_plan)
                 step = (
                     active_node
                     if canonical_plan is not None
@@ -1344,17 +1578,69 @@ class AgentLoop:
                     await repo.update_step(step.id, "running")
                 if forced_action:
                     call = approved_call
+                    approved_request = approved_request_snapshot
+                    if approved_request is None or (
+                        approved_request["effect_plan_hash"] is not None
+                        and (
+                            approved_request["effect_plan_hash"] != effect_hash
+                            or approved_request["frozen_effect_plan"]
+                            != effect_plan.model_dump(mode="json")
+                            or approved_request["analyzer_version"] != effect_plan.analyzer_version
+                            or approved_request["analyzer_digest"] != effect_plan.analyzer_digest
+                        )
+                    ):
+                        await repo.finish_tool_call(
+                            call.id,
+                            error={
+                                "category": "approval_integrity_error",
+                                "message": "Approved effect plan no longer matches the invocation",
+                            },
+                        )
+                        raise ToolExecutionError(
+                            "approval_integrity_error",
+                            "Approved effect plan failed integrity validation",
+                        )
                     await repo.transition_tool_call(call.id, "running")
                     approved_call = None
                     approved_turn = None
+                    approved_request_snapshot = None
                     tool_call_count += 1
                 else:
                     grants = await repo.list_approval_grants(
                         run_id, tool.spec.name, tool.spec.version
                     )
                     approval = ApprovalPolicy().evaluate(
-                        policy.execution_mode, decision.tool_input, grants
+                        policy.execution_mode,
+                        decision.tool_input,
+                        grants,
+                        effect_plan,
                     )
+                    if approval.grant_id is not None:
+                        await repo.consume_approval_grant(approval.grant_id)
+                    if approval.blocked:
+                        observation = AgentObservation(
+                            kind="effect_blocked_by_mode",
+                            status="blocked",
+                            summary=f"仅规划模式未执行：{effect_plan.summary}",
+                            data={
+                                "tool_name": tool.spec.name,
+                                "effect_plan": effect_plan.model_dump(mode="json"),
+                            },
+                        )
+                        observations.append(observation.model_dump(mode="json"))
+                        await repo.update_agent_turn(
+                            turn.id,
+                            status="completed",
+                            phase="committed",
+                            observation=observation.model_dump(mode="json"),
+                        )
+                        await repo.add_event(
+                            run_id,
+                            "tool_call.effect_blocked_by_mode",
+                            observation.model_dump(mode="json"),
+                        )
+                        await repo.session.commit()
+                        continue
                     if not approval.approved:
                         call = await repo.start_tool_call(
                             run_id,
@@ -1376,9 +1662,20 @@ class AgentLoop:
                             frozen_input=decision.tool_input,
                             input_hash=input_hash(decision.tool_input),
                             preview=safe_preview(tool.spec.name, decision.tool_input),
-                            permission=tool.spec.permission,
-                            impact=tool.spec.side_effect_level,
-                            similar_matcher=similar_matcher(tool.spec.name, decision.tool_input),
+                            permission=", ".join(effect_plan.required_permissions),
+                            impact=max(
+                                (effect.risk for effect in effect_plan.effects),
+                                default=tool.spec.side_effect_level,
+                            ),
+                            similar_matcher=(
+                                grant_proposals(effect_plan)[0]
+                                if grant_proposals(effect_plan)
+                                else similar_matcher(tool.spec.name, decision.tool_input)
+                            ),
+                            frozen_effect_plan=effect_plan.model_dump(mode="json"),
+                            effect_plan_hash=effect_hash,
+                            analyzer_version=effect_plan.analyzer_version,
+                            analyzer_digest=effect_plan.analyzer_digest,
                         )
                         await repo.update_agent_turn(
                             turn.id,
@@ -1420,12 +1717,42 @@ class AgentLoop:
                         trace_id=f"{run_id}:{call.id}",
                         artifact_service=artifact_service,
                         sandbox_service=sandbox_service,
+                        task_id=initial_run.task_id,
+                        workspace_path=workspace_path,
+                        workspace_mode=workspace_mount_mode(effect_plan),
+                        effect_plan=effect_plan.model_dump(mode="json"),
+                        runtime_identity_id=runtime_identity.id,
                     )
                     output = await tool.run(decision.tool_input, context=execution_context)
                 except ToolExecutionError as exc:
                     await repo.finish_tool_call(call.id, error=exc.to_payload())
                     raise
                 await repo.finish_tool_call(call.id, output=output)
+                observed_kinds = {item.kind.value for item in effect_plan.effects}
+                if observed_kinds & {"workspace_read", "network_read", "sensitive_data_read"}:
+                    current_flow = await permission_repository.get_data_flow_state(run_id)
+                    trust_sources = list(current_flow.trust_sources if current_flow else [])
+                    data_labels = list(current_flow.data_labels if current_flow else [])
+                    if "workspace_read" in observed_kinds:
+                        trust_sources.append(f"workspace:{initial_run.task_id}")
+                        data_labels.append("untrusted")
+                    if "network_read" in observed_kinds:
+                        trust_sources.append("web:public")
+                        data_labels.append("untrusted")
+                    if "sensitive_data_read" in observed_kinds:
+                        data_labels.append("sensitive")
+                    await permission_repository.update_data_flow_state(
+                        run_id,
+                        expected_version=current_flow.state_version if current_flow else 0,
+                        trust_sources=list(dict.fromkeys(trust_sources)),
+                        data_labels=list(dict.fromkeys(data_labels)),
+                        allowed_destinations=(
+                            current_flow.allowed_destinations if current_flow else []
+                        ),
+                        prohibited_destinations=(
+                            current_flow.prohibited_destinations if current_flow else []
+                        ),
+                    )
                 await repo.update_agent_turn(turn.id, phase="result_recorded", tool_call_id=call.id)
                 logger.info(
                     "tool.complete run_id=%s turn=%s tool=%s call_id=%s",
@@ -1684,6 +2011,11 @@ class AgentLoop:
                         "summary": final_answer.summary,
                     },
                 )
+            if final_status not in {"waiting_user", "executing"}:
+                checkpoint = await workspace_service.create_checkpoint(
+                    run_id=run_id, workspace_dir=workspace_path
+                )
+                await repo.add_event(run_id, "workspace.checkpoint_created", checkpoint)
             await repo.session.commit()
             return {"answer": final_answer, "result": result, "status": final_status}
         memory_writes = await memory_manager.write_candidates(
@@ -1839,6 +2171,11 @@ class AgentLoop:
                 reflection=completion_reflection.model_dump() if completion_reflection else None,
             )
         await repo.add_event(run_id, "verification.created", report.model_dump())
+        if final_status not in {"waiting_user", "executing"}:
+            checkpoint = await workspace_service.create_checkpoint(
+                run_id=run_id, workspace_dir=workspace_path
+            )
+            await repo.add_event(run_id, "workspace.checkpoint_created", checkpoint)
         await repo.session.commit()
         return {"answer": final_answer, "result": result, "status": final_status}
 
