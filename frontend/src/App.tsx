@@ -950,7 +950,6 @@ function Sidebar({ open, run, activeConversationId, conversations, activeView, o
           {recent.map(renderConversation)}
           {!conversations.length && <div className="history-empty">{t('暂无对话')}</div>}
         </div>
-        {conversations.length >= HISTORY_LIMIT && <p className="history-retention-note">{t('较早的会话会自动移出此列表')}</p>}
       </nav>
 
       <div className="sidebar-bottom">

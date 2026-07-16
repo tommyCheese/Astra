@@ -77,6 +77,9 @@ class TaskRecord(Base):
     share: Mapped["ConversationShareRecord | None"] = relationship(
         back_populates="conversation", uselist=False
     )
+    task_workspace: Mapped["TaskWorkspaceRecord | None"] = relationship(
+        back_populates="task", uselist=False
+    )
 
 
 class ConversationShareRecord(Base):
@@ -147,6 +150,13 @@ class RunRecord(Base):
         back_populates="run", order_by="ApprovalRequestRecord.created_at"
     )
     approval_grants: Mapped[list["ApprovalGrantRecord"]] = relationship(back_populates="run")
+    agent_identities: Mapped[list["AgentIdentityRecord"]] = relationship(back_populates="run")
+    tool_catalog_snapshot: Mapped["ToolCatalogSnapshotRecord | None"] = relationship(
+        back_populates="run", uselist=False
+    )
+    data_flow_state: Mapped["DataFlowStateRecord | None"] = relationship(
+        back_populates="run", uselist=False
+    )
     plans: Mapped[list["PlanRecord"]] = relationship(
         back_populates="run", foreign_keys="PlanRecord.run_id", order_by="PlanRecord.version"
     )
@@ -330,6 +340,11 @@ class ApprovalRequestRecord(Base):
     tool_version: Mapped[str] = mapped_column(String(40))
     frozen_input: Mapped[dict] = mapped_column(JsonType)
     input_hash: Mapped[str] = mapped_column(String(64))
+    frozen_effect_plan: Mapped[dict] = mapped_column(JsonType, default=dict)
+    effect_plan_hash: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    analyzer_version: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    analyzer_digest: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    reviewer_identity: Mapped[dict | None] = mapped_column(JsonType, nullable=True)
     preview: Mapped[str] = mapped_column(Text)
     permission: Mapped[str] = mapped_column(String(80))
     impact: Mapped[str] = mapped_column(String(80))
@@ -345,17 +360,218 @@ class ApprovalRequestRecord(Base):
 
 class ApprovalGrantRecord(Base):
     __tablename__ = "approval_grants"
-    __table_args__ = (Index("ix_approval_grants_run_tool", "run_id", "tool_name"),)
+    __table_args__ = (
+        Index("ix_approval_grants_run_tool", "run_id", "tool_name"),
+        Index("ix_approval_grants_task_scope", "task_id", "scope", "status"),
+    )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_str)
     run_id: Mapped[str] = mapped_column(ForeignKey("runs.id"))
+    task_id: Mapped[str | None] = mapped_column(ForeignKey("tasks.id"), nullable=True)
+    scope: Mapped[str] = mapped_column(String(40), default="run")
+    subject: Mapped[dict] = mapped_column(JsonType, default=dict)
     tool_name: Mapped[str] = mapped_column(String(120))
     tool_version: Mapped[str] = mapped_column(String(40))
     matcher: Mapped[dict] = mapped_column(JsonType)
+    effect_kinds: Mapped[list] = mapped_column(JsonType, default=list)
+    resource_matcher: Mapped[dict] = mapped_column(JsonType, default=dict)
+    invocation_constraints: Mapped[dict] = mapped_column(JsonType, default=dict)
     source_approval_id: Mapped[str] = mapped_column(ForeignKey("approval_requests.id"))
+    status: Mapped[str] = mapped_column(String(40), default="active")
+    max_uses: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    use_count: Mapped[int] = mapped_column(Integer, default=0)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
     run: Mapped[RunRecord] = relationship(back_populates="approval_grants")
+
+
+class TaskWorkspaceRecord(Base):
+    __tablename__ = "task_workspaces"
+    __table_args__ = (UniqueConstraint("task_id", name="uq_task_workspaces_task_id"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_str)
+    task_id: Mapped[str] = mapped_column(ForeignKey("tasks.id"))
+    storage_key: Mapped[str] = mapped_column(String(500))
+    status: Mapped[str] = mapped_column(String(40), default="active")
+    quotas: Mapped[dict] = mapped_column(JsonType, default=dict)
+    metadata_: Mapped[dict] = mapped_column("metadata", JsonType, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    task: Mapped[TaskRecord] = relationship(back_populates="task_workspace")
+    files: Mapped[list["WorkspaceFileRecord"]] = relationship(back_populates="workspace")
+    changes: Mapped[list["WorkspaceChangeRecord"]] = relationship(back_populates="workspace")
+    checkpoints: Mapped[list["WorkspaceCheckpointRecord"]] = relationship(
+        back_populates="workspace"
+    )
+
+
+class WorkspaceFileRecord(Base):
+    __tablename__ = "workspace_files"
+    __table_args__ = (
+        UniqueConstraint("workspace_id", "relative_path", name="uq_workspace_files_path"),
+        Index("ix_workspace_files_workspace_status", "workspace_id", "status"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_str)
+    workspace_id: Mapped[str] = mapped_column(ForeignKey("task_workspaces.id"))
+    relative_path: Mapped[str] = mapped_column(String(1000))
+    status: Mapped[str] = mapped_column(String(40), default="present")
+    mime_type: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    size_bytes: Mapped[int] = mapped_column(Integer, default=0)
+    checksum: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    security_status: Mapped[str] = mapped_column(String(40), default="pending")
+    deliverable_candidate: Mapped[bool] = mapped_column(Boolean, default=False)
+    metadata_: Mapped[dict] = mapped_column("metadata", JsonType, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    workspace: Mapped[TaskWorkspaceRecord] = relationship(back_populates="files")
+
+
+class WorkspaceCheckpointRecord(Base):
+    __tablename__ = "workspace_checkpoints"
+    __table_args__ = (
+        Index("ix_workspace_checkpoints_workspace_created", "workspace_id", "created_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_str)
+    workspace_id: Mapped[str] = mapped_column(ForeignKey("task_workspaces.id"))
+    run_id: Mapped[str] = mapped_column(ForeignKey("runs.id"))
+    manifest: Mapped[dict] = mapped_column(JsonType, default=dict)
+    manifest_hash: Mapped[str] = mapped_column(String(120))
+    status: Mapped[str] = mapped_column(String(40), default="valid")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+    workspace: Mapped[TaskWorkspaceRecord] = relationship(back_populates="checkpoints")
+
+
+class WorkspaceChangeRecord(Base):
+    __tablename__ = "workspace_changes"
+    __table_args__ = (
+        Index("ix_workspace_changes_run_created", "run_id", "created_at"),
+        Index("ix_workspace_changes_workspace_path", "workspace_id", "relative_path"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_str)
+    workspace_id: Mapped[str] = mapped_column(ForeignKey("task_workspaces.id"))
+    run_id: Mapped[str] = mapped_column(ForeignKey("runs.id"))
+    tool_call_id: Mapped[str | None] = mapped_column(ForeignKey("tool_calls.id"), nullable=True)
+    checkpoint_id: Mapped[str | None] = mapped_column(
+        ForeignKey("workspace_checkpoints.id"), nullable=True
+    )
+    relative_path: Mapped[str] = mapped_column(String(1000))
+    change_kind: Mapped[str] = mapped_column(String(40))
+    before_checksum: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    after_checksum: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    mime_type: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    size_bytes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    security_status: Mapped[str] = mapped_column(String(40), default="pending")
+    deliverable_candidate: Mapped[bool] = mapped_column(Boolean, default=False)
+    metadata_: Mapped[dict] = mapped_column("metadata", JsonType, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+    workspace: Mapped[TaskWorkspaceRecord] = relationship(back_populates="changes")
+
+
+class AgentIdentityRecord(Base):
+    __tablename__ = "agent_identities"
+    __table_args__ = (
+        Index("ix_agent_identities_run_type", "run_id", "identity_type"),
+        Index("ix_agent_identities_task_type", "task_id", "identity_type"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_str)
+    task_id: Mapped[str | None] = mapped_column(ForeignKey("tasks.id"), nullable=True)
+    run_id: Mapped[str | None] = mapped_column(ForeignKey("runs.id"), nullable=True)
+    parent_identity_id: Mapped[str | None] = mapped_column(
+        ForeignKey("agent_identities.id"), nullable=True
+    )
+    identity_type: Mapped[str] = mapped_column(String(80))
+    principal: Mapped[str] = mapped_column(String(240))
+    trust_level: Mapped[str] = mapped_column(String(40), default="internal")
+    attributes: Mapped[dict] = mapped_column(JsonType, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    run: Mapped[RunRecord | None] = relationship(back_populates="agent_identities")
+
+
+class AgentDelegationRecord(Base):
+    __tablename__ = "agent_delegations"
+    __table_args__ = (
+        Index("ix_agent_delegations_parent", "parent_identity_id", "revoked_at"),
+        UniqueConstraint(
+            "parent_identity_id",
+            "child_identity_id",
+            name="uq_agent_delegations_parent_child",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_str)
+    parent_identity_id: Mapped[str] = mapped_column(ForeignKey("agent_identities.id"))
+    child_identity_id: Mapped[str] = mapped_column(ForeignKey("agent_identities.id"))
+    delegated_scope: Mapped[dict] = mapped_column(JsonType, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class ToolCatalogSnapshotRecord(Base):
+    __tablename__ = "tool_catalog_snapshots"
+    __table_args__ = (UniqueConstraint("run_id", name="uq_tool_catalog_snapshots_run_id"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_str)
+    run_id: Mapped[str] = mapped_column(ForeignKey("runs.id"))
+    catalog: Mapped[list] = mapped_column(JsonType, default=list)
+    digest: Mapped[str] = mapped_column(String(120))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+    run: Mapped[RunRecord] = relationship(back_populates="tool_catalog_snapshot")
+
+
+class CredentialGrantRecord(Base):
+    __tablename__ = "credential_grants"
+    __table_args__ = (
+        Index("ix_credential_grants_run_service", "run_id", "service"),
+        Index("ix_credential_grants_task_revoked", "task_id", "revoked_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_str)
+    task_id: Mapped[str] = mapped_column(ForeignKey("tasks.id"))
+    run_id: Mapped[str] = mapped_column(ForeignKey("runs.id"))
+    agent_identity_id: Mapped[str] = mapped_column(ForeignKey("agent_identities.id"))
+    service: Mapped[str] = mapped_column(String(160))
+    tenant: Mapped[str | None] = mapped_column(String(240), nullable=True)
+    scopes: Mapped[list] = mapped_column(JsonType, default=list)
+    resources: Mapped[list] = mapped_column(JsonType, default=list)
+    actions: Mapped[list] = mapped_column(JsonType, default=list)
+    metadata_: Mapped[dict] = mapped_column("metadata", JsonType, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class DataFlowStateRecord(Base):
+    __tablename__ = "data_flow_states"
+    __table_args__ = (UniqueConstraint("run_id", name="uq_data_flow_states_run_id"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_str)
+    run_id: Mapped[str] = mapped_column(ForeignKey("runs.id"))
+    trust_sources: Mapped[list] = mapped_column(JsonType, default=list)
+    data_labels: Mapped[list] = mapped_column(JsonType, default=list)
+    allowed_destinations: Mapped[list] = mapped_column(JsonType, default=list)
+    prohibited_destinations: Mapped[list] = mapped_column(JsonType, default=list)
+    retention: Mapped[dict] = mapped_column(JsonType, default=dict)
+    state_version: Mapped[int] = mapped_column(Integer, default=1)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+    run: Mapped[RunRecord] = relationship(back_populates="data_flow_state")
 
 
 class ArtifactRecord(Base):

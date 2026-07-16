@@ -452,7 +452,6 @@ p {
 .history-heading { align-items: baseline; display: flex; gap: 12px; justify-content: space-between; padding: 0 14px 0 10px; }
 .history-heading small { color: #8a95a3; font-size: 9px; text-align: right; white-space: nowrap; }
 .history-list { display: grid; gap: 2px; min-height: 0; overflow-x: hidden; overflow-y: auto; padding-right: 3px; scrollbar-gutter: stable; }
-.history-retention-note { color: #8a95a3; font-size: 10px; line-height: 1.35; margin: 3px 10px 0; }
 
 .side-title {
   color: #697586;

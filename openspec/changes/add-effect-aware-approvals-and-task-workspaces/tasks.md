@@ -1,17 +1,17 @@
 ## 1. Permission contracts and persistence
 
-- [ ] 1.1 Add PermissionRequest/Decision, subject identity, delegation chain, policy explanation, and audit schemas
-- [ ] 1.2 Add ActionEffectPlan, effect item, grant proposal, workspace change, and checkpoint schemas
-- [ ] 1.3 Extend ApprovalRequest persistence with frozen effect plans, analyzer versions, and reviewer identity
-- [ ] 1.4 Extend ApprovalGrant persistence with Run/Task scope, leases, expiry, usage limits, effect kinds, resource matchers, and invocation constraints
-- [ ] 1.5 Add Task Workspace, workspace file, change tombstone, and checkpoint persistence
-- [ ] 1.6 Add Agent identity, delegation, Tool Catalog Snapshot, Credential Grant, and DataFlowState persistence
+- [x] 1.1 Add PermissionRequest/Decision, subject identity, delegation chain, policy explanation, and audit schemas
+- [x] 1.2 Add ActionEffectPlan, effect item, grant proposal, workspace change, and checkpoint schemas
+- [x] 1.3 Extend ApprovalRequest persistence with frozen effect plans, analyzer versions, and reviewer identity
+- [x] 1.4 Extend ApprovalGrant persistence with Run/Task scope, leases, expiry, usage limits, effect kinds, resource matchers, and invocation constraints
+- [x] 1.5 Add Task Workspace, workspace file, change tombstone, and checkpoint persistence
+- [x] 1.6 Add Agent identity, delegation, Tool Catalog Snapshot, Credential Grant, and DataFlowState persistence
 
 ## 2. Permission engine and policy governance
 
-- [ ] 2.1 Implement typed platform, managed, user, Task, Run, and one-time policy layers with deny → ask → allow precedence
-- [ ] 2.2 Add protected resources and prevent lower-trust policy from expanding higher-trust boundaries
-- [ ] 2.3 Add conditional permission leases, expiry, usage limits, revocation, and integrity invalidation
+- [x] 2.1 Implement typed platform, managed, user, Task, Run, and one-time policy layers with deny → ask → allow precedence
+- [x] 2.2 Add protected resources and prevent lower-trust policy from expanding higher-trust boundaries
+- [x] 2.3 Add conditional permission leases, expiry, usage limits, revocation, and integrity invalidation
 - [ ] 2.4 Add Policy Explain, permission center, policy simulation, and shadow-decision comparison
 - [ ] 2.5 Add Permission Bundles and fail-closed behavior for scheduled, headless, and background Runs
 

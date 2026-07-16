@@ -1,0 +1,308 @@
+from __future__ import annotations
+
+from collections.abc import Iterable
+from datetime import datetime, timezone
+from fnmatch import fnmatchcase
+from typing import Any
+
+from app.db.models import ApprovalGrantRecord, utc_now
+from app.schemas.permissions import (
+    PermissionDecision,
+    PermissionDecisionKind,
+    PermissionPolicySet,
+    PermissionRequest,
+    PolicyExplanation,
+    PolicyMatch,
+    PolicyTier,
+)
+
+PROTECTED_RESOURCE_PATTERNS = (
+    "astra://permission/**",
+    "astra://approval/**",
+    "astra://audit/**",
+    "astra://credential/**",
+    "astra://identity/**",
+    "astra://runtime/**",
+    "astra://sandbox-policy/**",
+    "host://docker.sock",
+    "host://system/**",
+    "task://*/workspace/.astra/**",
+)
+
+TIER_ORDER = {
+    PolicyTier.platform: 0,
+    PolicyTier.managed: 1,
+    PolicyTier.deployment: 2,
+    PolicyTier.user: 3,
+    PolicyTier.task: 4,
+    PolicyTier.run: 5,
+    PolicyTier.once: 6,
+}
+
+DECISION_ORDER = {
+    PermissionDecisionKind.allow: 0,
+    PermissionDecisionKind.ask: 1,
+    PermissionDecisionKind.deny: 2,
+}
+
+
+class LeaseValidator:
+    def matches(
+        self,
+        grant: ApprovalGrantRecord,
+        request: PermissionRequest,
+        *,
+        now: datetime | None = None,
+    ) -> tuple[bool, str]:
+        now = now or utc_now()
+        if grant.status != "active" or grant.revoked_at is not None:
+            return False, "grant_inactive"
+        if grant.expires_at is not None and _as_utc(grant.expires_at) <= _as_utc(now):
+            return False, "grant_expired"
+        if grant.max_uses is not None and grant.use_count >= grant.max_uses:
+            return False, "grant_usage_exhausted"
+        if grant.scope == "run" and grant.run_id != request.subject.run_id:
+            return False, "grant_run_mismatch"
+        if grant.scope == "task" and grant.task_id != request.subject.task_id:
+            return False, "grant_task_mismatch"
+        if grant.scope not in {"run", "task"}:
+            return False, "grant_scope_invalid"
+        if not _subject_matches(grant.subject or {}, request):
+            return False, "grant_subject_mismatch"
+        if grant.effect_kinds:
+            requested_effects = set(request.context.get("effect_kinds", []))
+            if not requested_effects or not requested_effects <= set(grant.effect_kinds):
+                return False, "grant_effect_mismatch"
+        if not _resource_matcher_matches(grant.resource_matcher or {}, request.resource):
+            return False, "grant_resource_mismatch"
+        if not _invocation_matches(grant.invocation_constraints or {}, request):
+            return False, "grant_invocation_mismatch"
+        return True, "grant_match"
+
+
+class PermissionEngine:
+    def __init__(
+        self,
+        *,
+        protected_resource_patterns: Iterable[str] = PROTECTED_RESOURCE_PATTERNS,
+    ):
+        self.protected_resource_patterns = tuple(protected_resource_patterns)
+        self.lease_validator = LeaseValidator()
+
+    def evaluate(
+        self,
+        request: PermissionRequest,
+        policies: PermissionPolicySet,
+        grants: Iterable[ApprovalGrantRecord] = (),
+        *,
+        now: datetime | None = None,
+    ) -> PermissionDecision:
+        now = now or utc_now()
+        protected_pattern = next(
+            (
+                pattern
+                for pattern in self.protected_resource_patterns
+                if fnmatchcase(request.resource, pattern)
+            ),
+            None,
+        )
+        if protected_pattern is not None and _is_mutating_action(request.action):
+            return PermissionDecision(
+                decision=PermissionDecisionKind.deny,
+                explanation=PolicyExplanation(
+                    reason_code="protected_resource",
+                    summary="The requested action targets a protected control-plane resource.",
+                    enforced_scope={"resource_pattern": protected_pattern},
+                    trace=["platform protected-resource guard denied the request"],
+                ),
+                decided_at=now,
+            )
+
+        matches = [
+            rule
+            for rule in policies.rules
+            if _rule_matches(rule, request, now=now)
+        ]
+        matches.sort(key=lambda rule: (TIER_ORDER[rule.tier], rule.id))
+        policy_matches = [
+            PolicyMatch(
+                policy_id=rule.id,
+                source=rule.source,
+                tier=rule.tier.value,
+                decision=rule.decision,
+                reason_code=rule.reason_code,
+                constraints=rule.conditions,
+            )
+            for rule in matches
+        ]
+        strongest = max(
+            (rule.decision for rule in matches),
+            key=lambda decision: DECISION_ORDER[decision],
+            default=None,
+        )
+        if strongest == PermissionDecisionKind.deny:
+            return self._decision(
+                PermissionDecisionKind.deny,
+                "policy_denied",
+                "A matching policy denied the action.",
+                policy_matches,
+                now,
+            )
+        if strongest == PermissionDecisionKind.ask:
+            return self._decision(
+                PermissionDecisionKind.ask,
+                "policy_requires_approval",
+                "A matching policy requires explicit approval.",
+                policy_matches,
+                now,
+            )
+        if strongest == PermissionDecisionKind.allow:
+            return self._decision(
+                PermissionDecisionKind.allow,
+                "policy_allowed",
+                "The action is allowed by the effective policy.",
+                policy_matches,
+                now,
+            )
+
+        lease_reasons: list[str] = []
+        for grant in grants:
+            matched, reason = self.lease_validator.matches(grant, request, now=now)
+            lease_reasons.append(f"{grant.id}:{reason}")
+            if matched:
+                return PermissionDecision(
+                    decision=PermissionDecisionKind.allow,
+                    explanation=PolicyExplanation(
+                        reason_code="permission_lease",
+                        summary="A scoped permission lease allows the action.",
+                        matched_policies=policy_matches,
+                        enforced_scope={
+                            "grant_id": grant.id,
+                            "scope": grant.scope,
+                            "resource_matcher": grant.resource_matcher,
+                            "effect_kinds": grant.effect_kinds,
+                        },
+                        trace=lease_reasons,
+                    ),
+                    decided_at=now,
+                )
+        return PermissionDecision(
+            decision=PermissionDecisionKind.ask,
+            explanation=PolicyExplanation(
+                reason_code="default_ask",
+                summary="No policy or active permission lease allows the action.",
+                matched_policies=policy_matches,
+                trace=lease_reasons or ["no matching policy or permission lease"],
+            ),
+            decided_at=now,
+        )
+
+    @staticmethod
+    def _decision(
+        decision: PermissionDecisionKind,
+        reason_code: str,
+        summary: str,
+        matches: list[PolicyMatch],
+        now: datetime,
+    ) -> PermissionDecision:
+        return PermissionDecision(
+            decision=decision,
+            explanation=PolicyExplanation(
+                reason_code=reason_code,
+                summary=summary,
+                matched_policies=matches,
+                trace=[
+                    f"{match.tier}:{match.policy_id}:{match.decision.value}"
+                    for match in matches
+                ],
+            ),
+            decided_at=now,
+        )
+
+
+def _rule_matches(rule: Any, request: PermissionRequest, *, now: datetime) -> bool:
+    if not rule.enabled:
+        return False
+    if rule.expires_at is not None and _as_utc(rule.expires_at) <= _as_utc(now):
+        return False
+    if not any(fnmatchcase(request.action, pattern) for pattern in rule.actions):
+        return False
+    if not any(fnmatchcase(request.resource, pattern) for pattern in rule.resources):
+        return False
+    values = request.conditions.model_dump(mode="json")
+    for key, expected in rule.conditions.items():
+        actual = values.get(key, request.context.get(key))
+        if isinstance(expected, list):
+            if isinstance(actual, list):
+                if not set(expected) <= set(actual):
+                    return False
+            elif actual not in expected:
+                return False
+        elif expected != actual:
+            return False
+    return True
+
+
+def _subject_matches(subject: dict[str, Any], request: PermissionRequest) -> bool:
+    for key in ("agent_id", "user_id", "task_id", "run_id"):
+        expected = subject.get(key)
+        if expected is not None and expected != getattr(request.subject, key):
+            return False
+    return True
+
+
+def _resource_matcher_matches(matcher: dict[str, Any], resource: str) -> bool:
+    if not matcher:
+        return False
+    if "exact" in matcher:
+        return resource == matcher["exact"]
+    if "prefix" in matcher:
+        return resource.startswith(matcher["prefix"])
+    if "glob" in matcher:
+        return fnmatchcase(resource, matcher["glob"])
+    if "globs" in matcher:
+        return any(fnmatchcase(resource, pattern) for pattern in matcher["globs"])
+    return False
+
+
+def _invocation_matches(constraints: dict[str, Any], request: PermissionRequest) -> bool:
+    if not constraints:
+        return True
+    condition_values = request.conditions.model_dump(mode="json")
+    for key in (
+        "tool_name",
+        "tool_version",
+        "provider_id",
+        "schema_digest",
+        "analyzer_version",
+        "working_directory",
+        "network_destination",
+    ):
+        expected = constraints.get(key)
+        if expected is not None and condition_values.get(key) != expected:
+            return False
+    kind = constraints.get("kind")
+    tool_input = request.context.get("tool_input", {})
+    if kind == "exact_args":
+        return tool_input == constraints.get("input")
+    if kind == "command_prefix":
+        command = tool_input.get("command")
+        if not isinstance(command, str):
+            return False
+        tokens = command.split()
+        expected_tokens = constraints.get("tokens", [])
+        return tokens[: len(expected_tokens)] == expected_tokens
+    return True
+
+
+def _is_mutating_action(action: str) -> bool:
+    return any(
+        marker in action
+        for marker in ("write", "delete", "modify", "create", "grant", "revoke", "execute")
+    )
+
+
+def _as_utc(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)

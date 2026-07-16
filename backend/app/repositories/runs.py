@@ -517,6 +517,11 @@ class RunRepository:
         permission: str,
         impact: str,
         similar_matcher: dict[str, Any] | None,
+        frozen_effect_plan: dict[str, Any] | None = None,
+        effect_plan_hash: str | None = None,
+        analyzer_version: str | None = None,
+        analyzer_digest: str | None = None,
+        reviewer_identity: dict[str, Any] | None = None,
     ) -> ApprovalRequestRecord:
         request = ApprovalRequestRecord(
             run_id=run_id,
@@ -526,6 +531,11 @@ class RunRepository:
             tool_version=tool_version,
             frozen_input=deepcopy(frozen_input),
             input_hash=input_hash,
+            frozen_effect_plan=deepcopy(frozen_effect_plan or {}),
+            effect_plan_hash=effect_plan_hash,
+            analyzer_version=analyzer_version,
+            analyzer_digest=analyzer_digest,
+            reviewer_identity=deepcopy(reviewer_identity),
             preview=preview,
             permission=permission,
             impact=impact,
@@ -557,6 +567,7 @@ class RunRepository:
         decision: str,
         *,
         continuation_token: str,
+        reviewer_identity: dict[str, Any] | None = None,
     ) -> tuple[ApprovalRequestRecord, ToolCallRecord]:
         run = await self.require_run(run_id)
         if run.status != "waiting_user" or not run.waiting_state:
@@ -582,6 +593,7 @@ class RunRepository:
                 status="approved" if decision != "reject" else "rejected",
                 decision=decision,
                 decided_at=decided_at,
+                reviewer_identity=deepcopy(reviewer_identity),
             )
         )
         if claimed.rowcount != 1:
@@ -610,12 +622,27 @@ class RunRepository:
             run.agent_state = state
             run.state_version = state["version"]
         if decision == "allow_similar":
+            effect_kinds = [
+                effect["kind"]
+                for effect in request.frozen_effect_plan.get("effects", [])
+                if isinstance(effect, dict) and isinstance(effect.get("kind"), str)
+            ]
             self.session.add(
                 ApprovalGrantRecord(
                     run_id=run_id,
+                    task_id=run.task_id,
+                    scope="run",
+                    subject={"run_id": run_id, "task_id": run.task_id},
                     tool_name=request.tool_name,
                     tool_version=request.tool_version,
                     matcher=deepcopy(request.similar_matcher),
+                    effect_kinds=effect_kinds,
+                    resource_matcher=deepcopy(
+                        request.similar_matcher.get("resource_matcher", {})
+                        if request.similar_matcher
+                        else {}
+                    ),
+                    invocation_constraints=deepcopy(request.similar_matcher or {}),
                     source_approval_id=request.id,
                 )
             )
@@ -639,14 +666,111 @@ class RunRepository:
     async def list_approval_grants(
         self, run_id: str, tool_name: str, tool_version: str
     ) -> list[ApprovalGrantRecord]:
+        run = await self.require_run(run_id)
+        now = utc_now()
         result = await self.session.execute(
             select(ApprovalGrantRecord).where(
-                ApprovalGrantRecord.run_id == run_id,
                 ApprovalGrantRecord.tool_name == tool_name,
                 ApprovalGrantRecord.tool_version == tool_version,
+                ApprovalGrantRecord.status == "active",
+                ApprovalGrantRecord.revoked_at.is_(None),
+                (ApprovalGrantRecord.expires_at.is_(None) | (ApprovalGrantRecord.expires_at > now)),
+                (
+                    (ApprovalGrantRecord.scope == "run")
+                    & (ApprovalGrantRecord.run_id == run_id)
+                    | (ApprovalGrantRecord.scope == "task")
+                    & (ApprovalGrantRecord.task_id == run.task_id)
+                ),
             )
         )
-        return list(result.scalars().all())
+        return [
+            grant
+            for grant in result.scalars().all()
+            if grant.max_uses is None or grant.use_count < grant.max_uses
+        ]
+
+    async def consume_approval_grant(self, grant_id: str) -> ApprovalGrantRecord:
+        grant = await self.session.get(ApprovalGrantRecord, grant_id)
+        if grant is None:
+            raise ValueError(f"Approval Grant not found: {grant_id}")
+        now = utc_now()
+        if grant.status != "active" or grant.revoked_at is not None:
+            raise ValueError("Approval Grant is not active")
+        if grant.expires_at is not None:
+            expires_at = grant.expires_at
+            if expires_at.tzinfo is None:
+                expires_at = expires_at.replace(tzinfo=now.tzinfo)
+            if expires_at <= now:
+                raise ValueError("Approval Grant has expired")
+        if grant.max_uses is not None and grant.use_count >= grant.max_uses:
+            raise ValueError("Approval Grant usage limit is exhausted")
+        consumed = await self.session.execute(
+            update(ApprovalGrantRecord)
+            .where(
+                ApprovalGrantRecord.id == grant_id,
+                ApprovalGrantRecord.status == "active",
+                ApprovalGrantRecord.revoked_at.is_(None),
+                ApprovalGrantRecord.use_count == grant.use_count,
+            )
+            .values(use_count=grant.use_count + 1, last_used_at=now)
+        )
+        if consumed.rowcount != 1:
+            await self.session.rollback()
+            raise ValueError("Approval Grant changed while being consumed")
+        await self.session.refresh(grant)
+        await self.session.commit()
+        return grant
+
+    async def revoke_approval_grant(self, grant_id: str) -> ApprovalGrantRecord:
+        grant = await self.session.get(ApprovalGrantRecord, grant_id)
+        if grant is None:
+            raise ValueError(f"Approval Grant not found: {grant_id}")
+        if grant.revoked_at is None:
+            grant.status = "revoked"
+            grant.revoked_at = utc_now()
+            await self.session.commit()
+        return grant
+
+    async def invalidate_approval_grants_for_tool_identity(
+        self,
+        run_id: str,
+        *,
+        tool_name: str,
+        tool_version: str,
+        schema_digest: str | None = None,
+        analyzer_digest: str | None = None,
+    ) -> list[ApprovalGrantRecord]:
+        run = await self.require_run(run_id)
+        result = await self.session.execute(
+            select(ApprovalGrantRecord).where(
+                ApprovalGrantRecord.tool_name == tool_name,
+                ApprovalGrantRecord.status == "active",
+                (
+                    (ApprovalGrantRecord.scope == "run")
+                    & (ApprovalGrantRecord.run_id == run_id)
+                    | (ApprovalGrantRecord.scope == "task")
+                    & (ApprovalGrantRecord.task_id == run.task_id)
+                ),
+            )
+        )
+        invalidated: list[ApprovalGrantRecord] = []
+        expected = {
+            "tool_version": tool_version,
+            "schema_digest": schema_digest,
+            "analyzer_digest": analyzer_digest,
+        }
+        for grant in result.scalars().all():
+            constraints = grant.invocation_constraints or {}
+            if any(
+                constraints.get(key) is not None and constraints[key] != value
+                for key, value in expected.items()
+            ):
+                grant.status = "invalidated"
+                grant.revoked_at = utc_now()
+                invalidated.append(grant)
+        if invalidated:
+            await self.session.commit()
+        return invalidated
 
     async def get_approved_tool_call(self, run_id: str) -> ToolCallRecord | None:
         result = await self.session.execute(
