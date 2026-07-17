@@ -412,19 +412,6 @@ def is_side_effecting(plan: ActionEffectPlan) -> bool:
     )
 
 
-def platform_denial_reason(plan: ActionEffectPlan) -> str | None:
-    if plan.network_scope.get("mode") == "blocked":
-        return "Bash runtime network access is prohibited by the platform sandbox policy."
-    protected_prefixes = (
-        "astra://",
-        "host://",
-    )
-    for effect in plan.effects:
-        if effect.resource.startswith(protected_prefixes):
-            return "The action targets a protected control-plane or host resource."
-    return None
-
-
 def grant_proposals(plan: ActionEffectPlan) -> list[dict[str, Any]]:
     if not is_side_effecting(plan):
         return []

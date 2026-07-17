@@ -15,13 +15,12 @@ from app.permissions.effects import (
     DefaultEffectAnalyzer,
     effect_plan_hash,
     grant_proposals,
-    platform_denial_reason,
     workspace_mount_mode,
 )
-from app.permissions.governance import ExtensionTrustPolicy, PermissionBundleEvaluator
+from app.permissions.governance import ExtensionTrustPolicy
 from app.permissions.engine import PermissionEngine
 from app.runner.adapters import ChartTaskAdapter, ProcessorRegistry, WebTaskAdapter
-from app.runner.approvals import ApprovalPolicy, input_hash, safe_preview, similar_matcher
+from app.runner.approvals import input_hash, safe_preview, similar_matcher
 from app.runner.model_client import ModelClient, ModelOutputError
 from app.runner.planning import PlanScheduler, PlanService
 from app.runner.reasoning import (
@@ -58,10 +57,8 @@ from app.schemas.agent import (
 )
 from app.schemas.permissions import (
     PermissionBundle,
-    PermissionConditions,
     PermissionDecisionKind,
     ExtensionDescriptor,
-    PermissionRequest,
     PermissionSubject,
 )
 from app.tools.base import (
@@ -119,6 +116,42 @@ def normalize_final_answer_artifact_references(
         invalid_count,
         referenced_ids,
     )
+
+
+def _quick_workspace_change_completes_goal(
+    goal: str, workspace_changes: list[dict[str, Any]]
+) -> bool:
+    """Finish a one-step file task once its requested target actually changed."""
+    if not workspace_changes:
+        return False
+    normalized_goal = goal.casefold()
+    multi_step_markers = (
+        "图表",
+        "绘图",
+        "可视化",
+        "渲染",
+        "图片",
+        "chart",
+        "plot",
+        "visuali",
+        "render",
+        "image",
+    )
+    if any(marker in normalized_goal for marker in multi_step_markers):
+        return False
+    for change in workspace_changes:
+        path = str(change.get("path") or "").strip()
+        if not path:
+            continue
+        filename = path.rsplit("/", 1)[-1].casefold()
+        if filename and filename in normalized_goal:
+            return True
+    if any(
+        marker in normalized_goal
+        for marker in ("删除工作区", "清空工作区", "delete workspace", "clear workspace")
+    ):
+        return all(change.get("kind") == "deleted" for change in workspace_changes)
+    return False
 
 
 class ToolRouter:
@@ -506,8 +539,9 @@ class AgentLoop:
             catalog=catalog,
             digest=catalog_digest,
         )
+        workspace_repository = WorkspaceRepository(repo.session)
         workspace_service = WorkspaceRuntimeService(
-            WorkspaceRepository(repo.session),
+            workspace_repository,
             self.settings.task_workspace_store_path,
             max_files=self.settings.task_workspace_max_files,
             max_bytes=self.settings.task_workspace_max_bytes,
@@ -547,7 +581,11 @@ class AgentLoop:
             (initial_run.agent_state or {}).get("observations", [])
         )
         tool_outputs: list[dict[str, Any]] = []
-        tool_call_count = 0
+        tool_call_count = sum(
+            1
+            for call in initial_run.tool_calls
+            if call.status in {"running", "succeeded", "failed"}
+        )
         retry_counts: dict[str, int] = {}
         failed_action_counts: dict[str, int] = {}
         final_turn_id: str | None = None
@@ -1466,6 +1504,13 @@ class AgentLoop:
                         attributes={"provider_digest": tool.spec.provider_digest},
                     )
                     provider_identities[tool.spec.provider_id] = provider_identity
+                schema_digest = hashlib.sha256(
+                    json.dumps(
+                        tool.spec.input_schema,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ).encode()
+                ).hexdigest()
                 runtime_identity = await permission_repository.get_or_create_identity(
                     identity_type="tool_runtime",
                     principal=f"{tool.spec.provider_id}:{tool.spec.name}@{tool.spec.version}",
@@ -1475,13 +1520,7 @@ class AgentLoop:
                     trust_level=tool.spec.trust_level,
                     attributes={
                         "provider_digest": tool.spec.provider_digest,
-                        "schema_digest": hashlib.sha256(
-                            json.dumps(
-                                tool.spec.input_schema,
-                                sort_keys=True,
-                                separators=(",", ":"),
-                            ).encode()
-                        ).hexdigest(),
+                        "schema_digest": schema_digest,
                         "permission_scope": {
                             "actions": tool.spec.permissions,
                             "resources": ["*"],
@@ -1493,80 +1532,12 @@ class AgentLoop:
                     decision.tool_input,
                     task_id=initial_run.task_id,
                 )
-                undeclared_permissions = set(effect_plan.required_permissions) - set(
-                    tool.spec.permissions
-                )
-                if undeclared_permissions:
-                    raise ToolExecutionError(
-                        "tool_permission_violation",
-                        "Effect analyzer requested permissions outside the ToolSpec maximum: "
-                        + ", ".join(sorted(undeclared_permissions)),
-                    )
-                platform_denial = platform_denial_reason(effect_plan)
-                if platform_denial:
-                    raise ToolExecutionError("platform_policy_denied", platform_denial)
+                effect_hash = effect_plan_hash(effect_plan)
                 data_flow = await permission_repository.get_data_flow_state(run_id)
-                if data_flow is not None and any(
-                    effect.kind.value in {"network_write", "external_write"}
-                    for effect in effect_plan.effects
-                ):
-                    external_effect = next(
-                        effect
-                        for effect in effect_plan.effects
-                        if effect.kind.value in {"network_write", "external_write"}
-                    )
-                    egress = PermissionEngine().evaluate_egress(
-                        PermissionRequest(
-                            subject=PermissionSubject(
-                                agent_id=runtime_identity.id,
-                                identity_type="tool_runtime",
-                                task_id=initial_run.task_id,
-                                run_id=run_id,
-                                parent_agent_id=provider_identity.id,
-                                delegation_chain=[
-                                    main_identity.id,
-                                    provider_identity.id,
-                                    runtime_identity.id,
-                                ],
-                            ),
-                            action=external_effect.kind.value,
-                            resource=external_effect.resource,
-                            conditions=PermissionConditions(
-                                tool_name=tool.spec.name,
-                                tool_version=tool.spec.version,
-                                network_destination=external_effect.resource,
-                                data_labels=list(
-                                    set(data_flow.data_labels)
-                                    | set(external_effect.data_labels)
-                                ),
-                            ),
-                        ),
-                        data_labels=data_flow.data_labels,
-                        trust_sources=data_flow.trust_sources,
-                        allowed_destinations=data_flow.allowed_destinations,
-                        prohibited_destinations=data_flow.prohibited_destinations,
-                    )
-                    if egress is not None and egress.decision == PermissionDecisionKind.deny:
-                        raise ToolExecutionError(
-                            "data_egress_denied", egress.explanation.summary
-                        )
                 raw_profile = initial_run.execution_profile or {}
                 unattended = not bool(raw_profile.get("interactive", True))
                 raw_bundle = raw_profile.get("permission_bundle")
                 bundle = PermissionBundle.model_validate(raw_bundle) if raw_bundle else None
-                bundle_allowed, bundle_reason = PermissionBundleEvaluator().validate(
-                    bundle,
-                    effect_plan,
-                    tool_identity=(
-                        f"{tool.spec.provider_id}:{tool.spec.name}@{tool.spec.version}:"
-                        f"{tool.spec.provider_digest}"
-                    ),
-                    unattended=unattended,
-                    tool_call_count=tool_call_count,
-                )
-                if not bundle_allowed:
-                    raise ToolExecutionError("permission_bundle_denied", bundle_reason)
-                effect_hash = effect_plan_hash(effect_plan)
                 step = (
                     active_node
                     if canonical_plan is not None
@@ -1600,103 +1571,180 @@ class AgentLoop:
                             "approval_integrity_error",
                             "Approved effect plan failed integrity validation",
                         )
+                grants = await repo.list_approval_grants(
+                    run_id, tool.spec.name, tool.spec.version
+                )
+                authorization = PermissionEngine().authorize_invocation(
+                    subject=PermissionSubject(
+                        agent_id=runtime_identity.id,
+                        identity_type="tool_runtime",
+                        task_id=initial_run.task_id,
+                        run_id=run_id,
+                        parent_agent_id=provider_identity.id,
+                        delegation_chain=[
+                            main_identity.id,
+                            provider_identity.id,
+                            runtime_identity.id,
+                        ],
+                    ),
+                    effect_plan=effect_plan,
+                    effect_plan_hash=effect_hash,
+                    tool_input=decision.tool_input,
+                    declared_permissions=tool.spec.permissions,
+                    execution_mode=policy.execution_mode,
+                    grants=grants,
+                    provider_id=tool.spec.provider_id,
+                    schema_digest=schema_digest,
+                    once_approved=forced_action,
+                    data_flow=data_flow,
+                    permission_bundle=bundle,
+                    unattended=unattended,
+                    tool_identity=(
+                        f"{tool.spec.provider_id}:{tool.spec.name}@{tool.spec.version}:"
+                        f"{tool.spec.provider_digest}"
+                    ),
+                    tool_call_count=tool_call_count,
+                )
+                await repo.add_event(
+                    run_id,
+                    "permission.decided",
+                    {
+                        "tool_name": tool.spec.name,
+                        "effect_plan_hash": effect_hash,
+                        "decision": authorization.decision.decision.value,
+                        "reason_code": authorization.decision.explanation.reason_code,
+                        "requests": [
+                            {
+                                "action": request.action,
+                                "resource": request.resource,
+                                "subject_id": request.subject.agent_id,
+                            }
+                            for request in authorization.requests
+                        ],
+                    },
+                )
+                if authorization.blocked_by_mode:
+                    if forced_action:
+                        await repo.finish_tool_call(
+                            call.id,
+                            error={
+                                "category": "effect_blocked_by_mode",
+                                "message": authorization.decision.explanation.summary,
+                            },
+                        )
+                    observation = AgentObservation(
+                        kind="effect_blocked_by_mode",
+                        status="blocked",
+                        summary=f"仅规划模式未执行：{effect_plan.summary}",
+                        data={
+                            "tool_name": tool.spec.name,
+                            "effect_plan": effect_plan.model_dump(mode="json"),
+                        },
+                    )
+                    observations.append(observation.model_dump(mode="json"))
+                    await repo.update_agent_turn(
+                        turn.id,
+                        status="completed",
+                        phase="committed",
+                        observation=observation.model_dump(mode="json"),
+                    )
+                    await repo.add_event(
+                        run_id,
+                        "tool_call.effect_blocked_by_mode",
+                        observation.model_dump(mode="json"),
+                    )
+                    await repo.session.commit()
+                    continue
+                if authorization.decision.decision == PermissionDecisionKind.deny:
+                    if forced_action:
+                        await repo.finish_tool_call(
+                            call.id,
+                            error={
+                                "category": authorization.decision.explanation.reason_code,
+                                "message": authorization.decision.explanation.summary,
+                            },
+                        )
+                    raise ToolExecutionError(
+                        authorization.decision.explanation.reason_code,
+                        authorization.decision.explanation.summary,
+                    )
+                if authorization.decision.decision == PermissionDecisionKind.ask:
+                    if forced_action:
+                        await repo.finish_tool_call(
+                            call.id,
+                            error={
+                                "category": "approval_revalidation_required",
+                                "message": authorization.decision.explanation.summary,
+                            },
+                        )
+                        raise ToolExecutionError(
+                            "approval_revalidation_required",
+                            authorization.decision.explanation.summary,
+                        )
+                    call = await repo.start_tool_call(
+                        run_id,
+                        step.id if canonical_plan is None and step is not None else None,
+                        tool.spec.name,
+                        tool.spec.version,
+                        decision.tool_input,
+                        tool.spec.permission,
+                        tool.spec.side_effect_level,
+                        plan_node_id=step.id if canonical_plan is not None else None,
+                        status="awaiting_approval",
+                    )
+                    request = await repo.create_approval_request(
+                        run_id=run_id,
+                        turn_id=turn.id,
+                        tool_call_id=call.id,
+                        tool_name=tool.spec.name,
+                        tool_version=tool.spec.version,
+                        frozen_input=decision.tool_input,
+                        input_hash=input_hash(decision.tool_input),
+                        preview=safe_preview(tool.spec.name, decision.tool_input),
+                        permission=", ".join(effect_plan.required_permissions),
+                        impact=max(
+                            (effect.risk for effect in effect_plan.effects),
+                            default=tool.spec.side_effect_level,
+                        ),
+                        similar_matcher=(
+                            grant_proposals(effect_plan)[0]
+                            if grant_proposals(effect_plan)
+                            else similar_matcher(tool.spec.name, decision.tool_input)
+                        ),
+                        frozen_effect_plan=effect_plan.model_dump(mode="json"),
+                        effect_plan_hash=effect_hash,
+                        analyzer_version=effect_plan.analyzer_version,
+                        analyzer_digest=effect_plan.analyzer_digest,
+                    )
+                    await repo.update_agent_turn(
+                        turn.id,
+                        status="waiting_user",
+                        phase="awaiting_approval",
+                        paused_node="policy_gate",
+                        tool_call_id=call.id,
+                    )
+                    terminal_override = "waiting_user"
+                    terminal_summary = f"等待批准工具调用：{tool.spec.name}"
+                    await repo.set_waiting_state(
+                        run_id,
+                        {
+                            "kind": "tool_approval",
+                            "approval_id": request.id,
+                            "tool_call_id": call.id,
+                            "paused_node": "policy_gate",
+                            "request": terminal_summary,
+                        },
+                    )
+                    break
+                if authorization.grant_id is not None:
+                    await repo.consume_approval_grant(authorization.grant_id)
+                if forced_action:
                     await repo.transition_tool_call(call.id, "running")
                     approved_call = None
                     approved_turn = None
                     approved_request_snapshot = None
                     tool_call_count += 1
                 else:
-                    grants = await repo.list_approval_grants(
-                        run_id, tool.spec.name, tool.spec.version
-                    )
-                    approval = ApprovalPolicy().evaluate(
-                        policy.execution_mode,
-                        decision.tool_input,
-                        grants,
-                        effect_plan,
-                    )
-                    if approval.grant_id is not None:
-                        await repo.consume_approval_grant(approval.grant_id)
-                    if approval.blocked:
-                        observation = AgentObservation(
-                            kind="effect_blocked_by_mode",
-                            status="blocked",
-                            summary=f"仅规划模式未执行：{effect_plan.summary}",
-                            data={
-                                "tool_name": tool.spec.name,
-                                "effect_plan": effect_plan.model_dump(mode="json"),
-                            },
-                        )
-                        observations.append(observation.model_dump(mode="json"))
-                        await repo.update_agent_turn(
-                            turn.id,
-                            status="completed",
-                            phase="committed",
-                            observation=observation.model_dump(mode="json"),
-                        )
-                        await repo.add_event(
-                            run_id,
-                            "tool_call.effect_blocked_by_mode",
-                            observation.model_dump(mode="json"),
-                        )
-                        await repo.session.commit()
-                        continue
-                    if not approval.approved:
-                        call = await repo.start_tool_call(
-                            run_id,
-                            step.id if canonical_plan is None and step is not None else None,
-                            tool.spec.name,
-                            tool.spec.version,
-                            decision.tool_input,
-                            tool.spec.permission,
-                            tool.spec.side_effect_level,
-                            plan_node_id=step.id if canonical_plan is not None else None,
-                            status="awaiting_approval",
-                        )
-                        request = await repo.create_approval_request(
-                            run_id=run_id,
-                            turn_id=turn.id,
-                            tool_call_id=call.id,
-                            tool_name=tool.spec.name,
-                            tool_version=tool.spec.version,
-                            frozen_input=decision.tool_input,
-                            input_hash=input_hash(decision.tool_input),
-                            preview=safe_preview(tool.spec.name, decision.tool_input),
-                            permission=", ".join(effect_plan.required_permissions),
-                            impact=max(
-                                (effect.risk for effect in effect_plan.effects),
-                                default=tool.spec.side_effect_level,
-                            ),
-                            similar_matcher=(
-                                grant_proposals(effect_plan)[0]
-                                if grant_proposals(effect_plan)
-                                else similar_matcher(tool.spec.name, decision.tool_input)
-                            ),
-                            frozen_effect_plan=effect_plan.model_dump(mode="json"),
-                            effect_plan_hash=effect_hash,
-                            analyzer_version=effect_plan.analyzer_version,
-                            analyzer_digest=effect_plan.analyzer_digest,
-                        )
-                        await repo.update_agent_turn(
-                            turn.id,
-                            status="waiting_user",
-                            phase="awaiting_approval",
-                            paused_node="policy_gate",
-                            tool_call_id=call.id,
-                        )
-                        terminal_override = "waiting_user"
-                        terminal_summary = f"等待批准工具调用：{tool.spec.name}"
-                        await repo.set_waiting_state(
-                            run_id,
-                            {
-                                "kind": "tool_approval",
-                                "approval_id": request.id,
-                                "tool_call_id": call.id,
-                                "paused_node": "policy_gate",
-                                "request": terminal_summary,
-                            },
-                        )
-                        break
                     call = await repo.start_tool_call(
                         run_id,
                         step.id if canonical_plan is None and step is not None else None,
@@ -1727,6 +1775,25 @@ class AgentLoop:
                 except ToolExecutionError as exc:
                     await repo.finish_tool_call(call.id, error=exc.to_payload())
                     raise
+                workspace_changes = await workspace_repository.list_changes_for_tool_call(
+                    call.id
+                )
+                if workspace_changes:
+                    output = {
+                        **output,
+                        "data": {
+                            **dict(output.get("data") or {}),
+                            "workspace_changes": [
+                                {
+                                    "kind": change.change_kind,
+                                    "path": change.relative_path,
+                                    "size_bytes": change.size_bytes,
+                                    "mime_type": change.mime_type,
+                                }
+                                for change in workspace_changes
+                            ],
+                        },
+                    }
                 await repo.finish_tool_call(call.id, output=output)
                 observed_kinds = {item.kind.value for item in effect_plan.effects}
                 if observed_kinds & {"workspace_read", "network_read", "sensitive_data_read"}:
@@ -1781,6 +1848,13 @@ class AgentLoop:
                     await repo.update_step(step.id, "completed", evidence=step_evidence)
                 observations.append(observation.model_dump())
                 if quick_mode:
+                    completed_by_workspace_change = (
+                        tool.spec.name == "bash_execute"
+                        and _quick_workspace_change_completes_goal(
+                            goal,
+                            list(output.get("data", {}).get("workspace_changes", [])),
+                        )
+                    )
                     await repo.update_agent_turn(
                         turn.id,
                         status="completed",
@@ -1788,7 +1862,19 @@ class AgentLoop:
                         tool_call_id=call.id,
                         phase="committed",
                     )
+                    if completed_by_workspace_change:
+                        await repo.add_event(
+                            run_id,
+                            "reasoning.quick_completion_detected",
+                            {
+                                "tool_call_id": call.id,
+                                "reason": "requested_workspace_target_changed",
+                                "workspace_changes": output["data"]["workspace_changes"],
+                            },
+                        )
                     await repo.session.commit()
+                    if completed_by_workspace_change:
+                        break
                     continue
                 orchestrator.validate_result(
                     "execute", NodeResult(next_node="normalize_observation")

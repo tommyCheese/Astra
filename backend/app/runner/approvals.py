@@ -2,12 +2,7 @@ import hashlib
 import json
 import re
 import shlex
-from dataclasses import dataclass
 from typing import Any
-
-from app.schemas.agent import ExecutionMode
-from app.schemas.permissions import ActionEffectPlan
-from app.permissions.effects import is_side_effecting
 
 SHELL_META = re.compile(r"(?:&&|\|\||[|;&<>`]|\$\(|\$\{|\n|\r)")
 SECRET_VALUE = re.compile(
@@ -63,97 +58,3 @@ def matcher_matches(matcher: dict[str, Any], tool_input: dict[str, Any]) -> bool
     prefix = matcher.get("tokens")
     return isinstance(prefix, list) and bool(prefix) and tokens[: len(prefix)] == prefix
 
-
-@dataclass(frozen=True)
-class ApprovalEvaluation:
-    approved: bool
-    reason: str
-    blocked: bool = False
-    grant_id: str | None = None
-
-
-class ApprovalPolicy:
-    def evaluate(
-        self,
-        execution_mode: ExecutionMode,
-        tool_input: dict[str, Any],
-        grants: list[Any],
-        effect_plan: ActionEffectPlan | None = None,
-    ) -> ApprovalEvaluation:
-        if effect_plan is not None:
-            side_effecting = is_side_effecting(effect_plan)
-            if execution_mode == ExecutionMode.plan_only:
-                return ApprovalEvaluation(
-                    not side_effecting,
-                    "safe_action" if not side_effecting else "effect_blocked_by_mode",
-                    blocked=side_effecting,
-                )
-            if not side_effecting:
-                return ApprovalEvaluation(True, "safe_action")
-            for grant in grants:
-                if _effect_grant_matches(grant, effect_plan, tool_input):
-                    return ApprovalEvaluation(
-                        True, f"{grant.scope}_grant", grant_id=grant.id
-                    )
-            if execution_mode == ExecutionMode.auto_approval:
-                return ApprovalEvaluation(True, "auto_approval")
-            return ApprovalEvaluation(False, "approval_required")
-        if execution_mode == ExecutionMode.auto_approval:
-            return ApprovalEvaluation(True, "auto_approval")
-        if execution_mode == ExecutionMode.plan_only:
-            return ApprovalEvaluation(False, "plan_only")
-        for grant in grants:
-            if matcher_matches(grant.matcher, tool_input):
-                return ApprovalEvaluation(True, "run_grant")
-        return ApprovalEvaluation(False, "approval_required")
-
-
-def _effect_grant_matches(
-    grant: Any,
-    plan: ActionEffectPlan,
-    tool_input: dict[str, Any],
-) -> bool:
-    if getattr(grant, "effect_kinds", None):
-        required = {effect.kind.value for effect in plan.effects}
-        if not required <= set(grant.effect_kinds):
-            return False
-        matcher = getattr(grant, "resource_matcher", None) or {}
-        resources = [effect.resource for effect in plan.effects]
-        if matcher:
-            pattern = matcher.get("glob")
-            patterns = matcher.get("globs")
-            prefix = matcher.get("prefix")
-            exact = matcher.get("exact")
-            if pattern and not all(_glob_match(resource, pattern) for resource in resources):
-                return False
-            if prefix and not all(resource.startswith(prefix) for resource in resources):
-                return False
-            if exact and resources != [exact]:
-                return False
-            if patterns and not all(
-                any(_glob_match(resource, item) for item in patterns)
-                for resource in resources
-            ):
-                return False
-        constraints = getattr(grant, "invocation_constraints", None) or {}
-        expected_values = {
-            "tool_name": plan.tool_name,
-            "tool_version": plan.tool_version,
-            "analyzer_version": plan.analyzer_version,
-            "analyzer_digest": plan.analyzer_digest,
-            "working_directory": plan.cwd,
-        }
-        if any(
-            constraints.get(key) is not None
-            and constraints.get(key) != actual
-            for key, actual in expected_values.items()
-        ):
-            return False
-        return True
-    return matcher_matches(grant.matcher, tool_input)
-
-
-def _glob_match(value: str, pattern: str) -> bool:
-    from fnmatch import fnmatchcase
-
-    return fnmatchcase(value, pattern)

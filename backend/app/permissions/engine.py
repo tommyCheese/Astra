@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from fnmatch import fnmatchcase
 from typing import Any
 
 from app.db.models import ApprovalGrantRecord, utc_now
 from app.schemas.permissions import (
+    ActionEffectPlan,
+    PermissionBundle,
     PermissionDecision,
     PermissionDecisionKind,
     PermissionPolicySet,
@@ -15,6 +18,9 @@ from app.schemas.permissions import (
     PolicyMatch,
     PolicyTier,
 )
+from app.schemas.agent import ExecutionMode
+from app.permissions.effects import is_side_effecting
+from app.permissions.governance import PermissionBundleEvaluator
 
 PROTECTED_RESOURCE_PATTERNS = (
     "astra://permission/**",
@@ -46,6 +52,20 @@ DECISION_ORDER = {
 }
 
 
+@dataclass(frozen=True)
+class InvocationAuthorizationResult:
+    """The single runtime authorization outcome for one frozen invocation."""
+
+    decision: PermissionDecision
+    requests: tuple[PermissionRequest, ...]
+    decisions: tuple[PermissionDecision, ...]
+    grant_id: str | None = None
+
+    @property
+    def blocked_by_mode(self) -> bool:
+        return self.decision.explanation.reason_code == "effect_blocked_by_mode"
+
+
 class LeaseValidator:
     def matches(
         self,
@@ -67,7 +87,10 @@ class LeaseValidator:
             return False, "grant_task_mismatch"
         if grant.scope not in {"run", "task"}:
             return False, "grant_scope_invalid"
-        if not _subject_matches(grant.subject or {}, request):
+        grant_subject = dict(grant.subject or {})
+        if grant.scope == "task":
+            grant_subject.pop("run_id", None)
+        if not _subject_matches(grant_subject, request):
             return False, "grant_subject_mismatch"
         if grant.effect_kinds:
             requested_effects = set(request.context.get("effect_kinds", []))
@@ -88,6 +111,333 @@ class PermissionEngine:
     ):
         self.protected_resource_patterns = tuple(protected_resource_patterns)
         self.lease_validator = LeaseValidator()
+
+    def authorize_invocation(
+        self,
+        *,
+        subject: Any,
+        effect_plan: ActionEffectPlan,
+        effect_plan_hash: str,
+        tool_input: dict[str, Any],
+        declared_permissions: Iterable[str],
+        execution_mode: ExecutionMode,
+        grants: Iterable[ApprovalGrantRecord] = (),
+        provider_id: str | None = None,
+        schema_digest: str | None = None,
+        once_approved: bool = False,
+        data_flow: Any | None = None,
+        permission_bundle: PermissionBundle | None = None,
+        unattended: bool = False,
+        tool_identity: str = "",
+        tool_call_count: int = 0,
+        now: datetime | None = None,
+    ) -> InvocationAuthorizationResult:
+        """Authorize a tool invocation through one PermissionRequest pipeline.
+
+        ToolSpec attenuation, platform boundaries, execution mode, leases,
+        unattended bundles, and data-flow egress all converge here. Callers
+        must only act on the returned aggregate decision.
+        """
+        now = now or utc_now()
+        requests = tuple(
+            self._request_for_effect(
+                subject=subject,
+                effect_plan=effect_plan,
+                effect_plan_hash=effect_plan_hash,
+                tool_input=tool_input,
+                effect=effect,
+                provider_id=provider_id,
+                schema_digest=schema_digest,
+            )
+            for effect in effect_plan.effects
+        )
+        if not requests:
+            return self._invocation_result(
+                self._decision(
+                    PermissionDecisionKind.deny,
+                    "empty_effect_plan",
+                    "The invocation has no enforceable effect classification.",
+                    [],
+                    now,
+                ),
+                requests,
+            )
+
+        undeclared = set(effect_plan.required_permissions) - set(declared_permissions)
+        if undeclared:
+            return self._invocation_result(
+                self._decision(
+                    PermissionDecisionKind.deny,
+                    "tool_permission_violation",
+                    "The invocation exceeds the ToolSpec permission ceiling: "
+                    + ", ".join(sorted(undeclared)),
+                    [],
+                    now,
+                ),
+                requests,
+            )
+
+        bundle_allowed, bundle_reason = PermissionBundleEvaluator().validate(
+            permission_bundle,
+            effect_plan,
+            tool_identity=tool_identity,
+            unattended=unattended,
+            tool_call_count=tool_call_count,
+            now=now,
+        )
+        if not bundle_allowed:
+            return self._invocation_result(
+                self._decision(
+                    PermissionDecisionKind.deny,
+                    bundle_reason,
+                    "The unattended Permission Bundle does not authorize this invocation.",
+                    [],
+                    now,
+                ),
+                requests,
+            )
+
+        policies = self._invocation_policies(
+            requests=requests,
+            effect_plan=effect_plan,
+            execution_mode=execution_mode,
+            once_approved=once_approved,
+            data_flow=data_flow,
+            now=now,
+        )
+        grant_list = tuple(grants)
+        decisions = tuple(
+            self.evaluate(request, policies, grant_list, now=now)
+            for request in requests
+        )
+        aggregate = max(
+            decisions,
+            key=lambda item: DECISION_ORDER[item.decision],
+        )
+        decisive_match = next(
+            (
+                match
+                for match in aggregate.explanation.matched_policies
+                if match.decision == aggregate.decision
+            ),
+            None,
+        )
+        if decisive_match is not None:
+            aggregate = aggregate.model_copy(update={
+                "explanation": aggregate.explanation.model_copy(update={
+                    "reason_code": decisive_match.reason_code,
+                })
+            })
+        if unattended and aggregate.decision == PermissionDecisionKind.ask:
+            aggregate = self._decision(
+                PermissionDecisionKind.deny,
+                "unattended_approval_unavailable",
+                "The unattended Run cannot request interactive approval.",
+                aggregate.explanation.matched_policies,
+                now,
+            )
+        grant_ids = {
+            decision.explanation.enforced_scope.get("grant_id")
+            for decision in decisions
+            if decision.explanation.enforced_scope.get("grant_id")
+        }
+        return InvocationAuthorizationResult(
+            decision=aggregate,
+            requests=requests,
+            decisions=decisions,
+            grant_id=(
+                next(iter(grant_ids))
+                if aggregate.decision == PermissionDecisionKind.allow
+                and len(grant_ids) == 1
+                else None
+            ),
+        )
+
+    @staticmethod
+    def _request_for_effect(
+        *,
+        subject: Any,
+        effect_plan: ActionEffectPlan,
+        effect_plan_hash: str,
+        tool_input: dict[str, Any],
+        effect: Any,
+        provider_id: str | None,
+        schema_digest: str | None,
+    ) -> PermissionRequest:
+        from app.schemas.permissions import PermissionConditions
+
+        return PermissionRequest(
+            subject=subject,
+            action=effect.kind.value,
+            resource=effect.resource,
+            conditions=PermissionConditions(
+                tool_name=effect_plan.tool_name,
+                tool_version=effect_plan.tool_version,
+                provider_id=provider_id,
+                schema_digest=schema_digest,
+                analyzer_version=effect_plan.analyzer_version,
+                working_directory=effect_plan.cwd,
+                network_destination=(
+                    effect.resource
+                    if effect.kind.value in {"network_write", "external_write"}
+                    else None
+                ),
+                data_labels=list(effect.data_labels),
+            ),
+            effect_plan_hash=effect_plan_hash,
+            context={
+                "effect_kinds": sorted(
+                    {item.kind.value for item in effect_plan.effects}
+                ),
+                "tool_input": tool_input,
+                "analyzer_digest": effect_plan.analyzer_digest,
+                "persistent": effect.persistent,
+                "risk": effect.risk,
+            },
+        )
+
+    def _invocation_policies(
+        self,
+        *,
+        requests: tuple[PermissionRequest, ...],
+        effect_plan: ActionEffectPlan,
+        execution_mode: ExecutionMode,
+        once_approved: bool,
+        data_flow: Any | None,
+        now: datetime,
+    ) -> PermissionPolicySet:
+        from app.schemas.permissions import PermissionRule
+
+        rules: list[PermissionRule] = []
+        if effect_plan.network_scope.get("mode") == "blocked":
+            rules.append(PermissionRule(
+                id="platform.network.blocked",
+                source="astra.platform",
+                tier=PolicyTier.platform,
+                decision=PermissionDecisionKind.deny,
+                actions=["network_write"],
+                resources=["*"],
+                reason_code="platform_network_denied",
+            ))
+
+        side_effecting = is_side_effecting(effect_plan)
+        if execution_mode == ExecutionMode.plan_only and side_effecting:
+            rules.append(PermissionRule(
+                id="run.mode.plan-only",
+                source="run.execution_mode",
+                tier=PolicyTier.run,
+                decision=PermissionDecisionKind.deny,
+                actions=["*"],
+                resources=["*"],
+                reason_code="effect_blocked_by_mode",
+            ))
+        elif once_approved:
+            rules.append(PermissionRule(
+                id="once.user-approved",
+                source="user.approval",
+                tier=PolicyTier.once,
+                decision=PermissionDecisionKind.allow,
+                actions=["*"],
+                resources=["*"],
+                reason_code="once_approved",
+            ))
+        elif execution_mode == ExecutionMode.auto_approval or not side_effecting:
+            rules.append(PermissionRule(
+                id=(
+                    "run.mode.auto-approval"
+                    if execution_mode == ExecutionMode.auto_approval
+                    else "platform.safe-action"
+                ),
+                source="run.execution_mode",
+                tier=PolicyTier.run,
+                decision=PermissionDecisionKind.allow,
+                actions=["*"],
+                resources=["*"],
+                reason_code=(
+                    "auto_approval" if side_effecting else "safe_action"
+                ),
+            ))
+
+        if data_flow is not None:
+            rules.extend(self._data_flow_rules(requests, data_flow))
+        return PermissionPolicySet(
+            version=f"runtime:{int(now.timestamp())}",
+            rules=rules,
+            source_digests={},
+        )
+
+    @staticmethod
+    def _data_flow_rules(
+        requests: tuple[PermissionRequest, ...],
+        data_flow: Any,
+    ) -> list[Any]:
+        from app.schemas.permissions import PermissionRule
+
+        external = [
+            request for request in requests
+            if request.action in {"network_write", "external_write"}
+        ]
+        if not external:
+            return []
+        labels = set(getattr(data_flow, "data_labels", []) or [])
+        sources = getattr(data_flow, "trust_sources", []) or []
+        allowed = getattr(data_flow, "allowed_destinations", []) or []
+        prohibited = getattr(data_flow, "prohibited_destinations", []) or []
+        rules: list[PermissionRule] = []
+        for index, request in enumerate(external):
+            destination = request.conditions.network_destination or request.resource
+            if any(fnmatchcase(destination, pattern) for pattern in prohibited):
+                rules.append(PermissionRule(
+                    id=f"data-flow.prohibited.{index}",
+                    source="run.data_flow",
+                    tier=PolicyTier.run,
+                    decision=PermissionDecisionKind.deny,
+                    actions=[request.action],
+                    resources=[request.resource],
+                    reason_code="data_egress_prohibited",
+                ))
+                continue
+            destination_allowed = any(
+                fnmatchcase(destination, pattern) for pattern in allowed
+            )
+            sensitive = bool(labels & {
+                "secret", "credential", "personal", "financial", "private", "source_code"
+            })
+            if sensitive and not destination_allowed:
+                rules.append(PermissionRule(
+                    id=f"data-flow.sensitive.{index}",
+                    source="run.data_flow",
+                    tier=PolicyTier.run,
+                    decision=PermissionDecisionKind.deny,
+                    actions=[request.action],
+                    resources=[request.resource],
+                    reason_code="sensitive_data_egress_denied",
+                ))
+            elif any(
+                source.startswith(("workspace:", "web:", "external:"))
+                for source in sources
+            ) and not destination_allowed:
+                rules.append(PermissionRule(
+                    id=f"data-flow.untrusted.{index}",
+                    source="run.data_flow",
+                    tier=PolicyTier.run,
+                    decision=PermissionDecisionKind.ask,
+                    actions=[request.action],
+                    resources=[request.resource],
+                    reason_code="untrusted_data_external_write",
+                ))
+        return rules
+
+    @staticmethod
+    def _invocation_result(
+        decision: PermissionDecision,
+        requests: tuple[PermissionRequest, ...],
+    ) -> InvocationAuthorizationResult:
+        return InvocationAuthorizationResult(
+            decision=decision,
+            requests=requests,
+            decisions=(decision,),
+        )
 
     def evaluate(
         self,
@@ -197,48 +547,6 @@ class PermissionEngine:
             decided_at=now,
         )
 
-    def evaluate_egress(
-        self,
-        request: PermissionRequest,
-        *,
-        data_labels: Iterable[str],
-        trust_sources: Iterable[str],
-        allowed_destinations: Iterable[str],
-        prohibited_destinations: Iterable[str],
-    ) -> PermissionDecision | None:
-        destination = request.conditions.network_destination or request.resource
-        if any(fnmatchcase(destination, pattern) for pattern in prohibited_destinations):
-            return self._decision(
-                PermissionDecisionKind.deny,
-                "data_egress_prohibited",
-                "The destination is prohibited for this Run.",
-                [],
-                utc_now(),
-            )
-        sensitive = bool(
-            set(data_labels)
-            & {"secret", "credential", "personal", "financial", "private", "source_code"}
-        )
-        untrusted = any(source.startswith(("workspace:", "web:", "external:")) for source in trust_sources)
-        allowed = any(fnmatchcase(destination, pattern) for pattern in allowed_destinations)
-        if sensitive and not allowed:
-            return self._decision(
-                PermissionDecisionKind.deny,
-                "sensitive_data_egress_denied",
-                "Sensitive data cannot be sent to an unapproved destination.",
-                [],
-                utc_now(),
-            )
-        if untrusted and _is_mutating_action(request.action) and not allowed:
-            return self._decision(
-                PermissionDecisionKind.ask,
-                "untrusted_data_external_write",
-                "Untrusted input is influencing an external write.",
-                [],
-                utc_now(),
-            )
-        return None
-
     @staticmethod
     def _decision(
         decision: PermissionDecisionKind,
@@ -323,6 +631,12 @@ def _invocation_matches(constraints: dict[str, Any], request: PermissionRequest)
         expected = constraints.get(key)
         if expected is not None and condition_values.get(key) != expected:
             return False
+    expected_analyzer_digest = constraints.get("analyzer_digest")
+    if (
+        expected_analyzer_digest is not None
+        and request.context.get("analyzer_digest") != expected_analyzer_digest
+    ):
+        return False
     kind = constraints.get("kind")
     tool_input = request.context.get("tool_input", {})
     if kind == "exact_args":

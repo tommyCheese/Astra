@@ -185,6 +185,16 @@ class WorkspaceRepository:
         await self.session.commit()
         return change
 
+    async def list_changes_for_tool_call(
+        self, tool_call_id: str
+    ) -> list[WorkspaceChangeRecord]:
+        result = await self.session.scalars(
+            select(WorkspaceChangeRecord)
+            .where(WorkspaceChangeRecord.tool_call_id == tool_call_id)
+            .order_by(WorkspaceChangeRecord.created_at, WorkspaceChangeRecord.id)
+        )
+        return list(result.all())
+
     async def create_checkpoint(
         self,
         *,

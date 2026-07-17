@@ -657,7 +657,11 @@ class RunRepository:
                     run_id=run_id,
                     task_id=run.task_id,
                     scope="task" if decision == "allow_task" else "run",
-                    subject={"run_id": run_id, "task_id": run.task_id},
+                    subject=(
+                        {"task_id": run.task_id}
+                        if decision == "allow_task"
+                        else {"run_id": run_id, "task_id": run.task_id}
+                    ),
                     tool_name=request.tool_name,
                     tool_version=request.tool_version,
                     matcher=deepcopy(invocation_constraints),

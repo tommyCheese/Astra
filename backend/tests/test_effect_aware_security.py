@@ -3,18 +3,18 @@ import os
 import tarfile
 import zipfile
 from datetime import timedelta
+from types import SimpleNamespace
 
 import pytest
 
 from app.core.config import Settings
-from app.db.models import utc_now
+from app.db.models import ApprovalGrantRecord, utc_now
 from app.permissions.credentials import CredentialBroker
 from app.permissions.effects import (
     ANALYZER_DIGEST,
     BashEffectAnalyzer,
     DefaultEffectAnalyzer,
     grant_proposals,
-    platform_denial_reason,
     workspace_mount_mode,
 )
 from app.permissions.engine import PermissionEngine
@@ -22,7 +22,6 @@ from app.permissions.governance import ExtensionTrustPolicy, PermissionBundleEva
 from app.repositories.permissions import PermissionRepository
 from app.repositories.runs import RunRepository
 from app.repositories.workspaces import WorkspaceRepository
-from app.runner.approvals import ApprovalPolicy
 from app.schemas.agent import ExecutionMode
 from app.schemas.permissions import (
     ActionEffectPlan,
@@ -72,7 +71,7 @@ def test_effect_matrix_classifies_safe_mutating_forbidden_and_artifact_actions()
     }
     assert modify.approval_required is True
     assert {item.kind.value for item in delete.effects} == {"workspace_delete"}
-    assert platform_denial_reason(forbidden)
+    assert forbidden.network_scope["mode"] == "blocked"
     assert {item.kind.value for item in artifact.effects} >= {
         "temporary_compute", "artifact_write"
     }
@@ -80,19 +79,129 @@ def test_effect_matrix_classifies_safe_mutating_forbidden_and_artifact_actions()
 
 
 @pytest.mark.parametrize(
-    ("mode", "plan", "approved", "blocked"),
+    ("mode", "command", "expected", "reason"),
     [
-        (ExecutionMode.plan_only, bash_plan("ls"), True, False),
-        (ExecutionMode.plan_only, bash_plan("touch x.txt"), False, True),
-        (ExecutionMode.request_approval, bash_plan("ls"), True, False),
-        (ExecutionMode.request_approval, bash_plan("touch x.txt"), False, False),
-        (ExecutionMode.auto_approval, bash_plan("touch x.txt"), True, False),
+        (ExecutionMode.plan_only, "ls", PermissionDecisionKind.allow, "safe_action"),
+        (
+            ExecutionMode.plan_only,
+            "touch report.txt",
+            PermissionDecisionKind.deny,
+            "effect_blocked_by_mode",
+        ),
+        (
+            ExecutionMode.request_approval,
+            "touch report.txt",
+            PermissionDecisionKind.ask,
+            "default_ask",
+        ),
+        (
+            ExecutionMode.auto_approval,
+            "touch report.txt",
+            PermissionDecisionKind.allow,
+            "auto_approval",
+        ),
+        (
+            ExecutionMode.auto_approval,
+            "curl https://example.com",
+            PermissionDecisionKind.deny,
+            "platform_network_denied",
+        ),
     ],
 )
-def test_execution_mode_effect_matrix(mode, plan, approved, blocked):
-    result = ApprovalPolicy().evaluate(mode, {}, [], plan)
-    assert result.approved is approved
-    assert result.blocked is blocked
+def test_unified_invocation_authorization_entry(mode, command, expected, reason):
+    plan = bash_plan(command)
+    result = PermissionEngine().authorize_invocation(
+        subject=PermissionSubject(
+            agent_id="tool-runtime-1",
+            task_id="task-1",
+            run_id="run-1",
+        ),
+        effect_plan=plan,
+        effect_plan_hash="sha256:plan",
+        tool_input={"command": command},
+        declared_permissions=BashExecuteTool.spec.permissions,
+        execution_mode=mode,
+        tool_identity="bash",
+    )
+
+    assert result.decision.decision == expected
+    assert result.decision.explanation.reason_code == reason
+    assert result.blocked_by_mode is (reason == "effect_blocked_by_mode")
+
+
+def test_unified_authorization_uses_task_lease_across_runs_and_data_flow_rules():
+    plan = bash_plan("touch report.txt")
+    proposal = grant_proposals(plan)[1]
+    grant = ApprovalGrantRecord(
+        id="grant-task",
+        run_id="run-old",
+        task_id="task-1",
+        scope="task",
+        subject={"task_id": "task-1"},
+        tool_name=BashExecuteTool.spec.name,
+        tool_version=BashExecuteTool.spec.version,
+        matcher={},
+        effect_kinds=proposal["effect_kinds"],
+        resource_matcher=proposal["resource_matcher"],
+        invocation_constraints=proposal["invocation_constraints"],
+        source_approval_id="approval-1",
+        status="active",
+        use_count=0,
+    )
+    engine = PermissionEngine()
+    allowed = engine.authorize_invocation(
+        subject=PermissionSubject(
+            agent_id="tool-runtime-2",
+            task_id="task-1",
+            run_id="run-new",
+        ),
+        effect_plan=plan,
+        effect_plan_hash="sha256:plan",
+        tool_input={"command": "touch report.txt"},
+        declared_permissions=BashExecuteTool.spec.permissions,
+        execution_mode=ExecutionMode.request_approval,
+        grants=[grant],
+        tool_identity="bash",
+    )
+
+    external_plan = ActionEffectPlan(
+        tool_name="external.send",
+        tool_version="1",
+        summary="send",
+        effects=[EffectItem(
+            kind="external_write",
+            resource="https://example.com/upload",
+            persistent=True,
+        )],
+        required_permissions=["external_write"],
+        analyzer_version="1",
+        analyzer_digest="digest",
+        approval_required=True,
+    )
+    denied = engine.authorize_invocation(
+        subject=PermissionSubject(
+            agent_id="tool-runtime-2",
+            task_id="task-1",
+            run_id="run-new",
+        ),
+        effect_plan=external_plan,
+        effect_plan_hash="sha256:external",
+        tool_input={"destination": "https://example.com/upload"},
+        declared_permissions=["external_write"],
+        execution_mode=ExecutionMode.auto_approval,
+        data_flow=SimpleNamespace(
+            data_labels=["personal"],
+            trust_sources=["workspace:task-1"],
+            allowed_destinations=[],
+            prohibited_destinations=[],
+        ),
+        tool_identity="external",
+    )
+
+    assert allowed.decision.decision == PermissionDecisionKind.allow
+    assert allowed.grant_id == grant.id
+    assert denied.decision.decision == PermissionDecisionKind.deny
+    assert denied.decision.explanation.reason_code == "sensitive_data_egress_denied"
 
 
 def test_grant_proposals_are_narrow_and_include_run_and_task_scopes():
@@ -129,32 +238,6 @@ def test_unattended_permission_bundle_fails_closed_and_enforces_identity_budget(
     assert evaluator.validate(
         bundle, plan, tool_identity=allowed_identity, unattended=True, tool_call_count=1
     ) == (False, "permission_bundle_budget_exhausted")
-
-
-def test_data_flow_egress_denies_sensitive_payload_and_asks_for_untrusted_write():
-    request = PermissionRequest(
-        subject=PermissionSubject(agent_id="tool-1", task_id="task-1", run_id="run-1"),
-        action="external_write",
-        resource="https://example.com/upload",
-        conditions=PermissionConditions(network_destination="https://example.com/upload"),
-    )
-    engine = PermissionEngine()
-    denied = engine.evaluate_egress(
-        request,
-        data_labels=["personal"],
-        trust_sources=["workspace:task-1"],
-        allowed_destinations=[],
-        prohibited_destinations=[],
-    )
-    asked = engine.evaluate_egress(
-        request,
-        data_labels=["untrusted"],
-        trust_sources=["workspace:task-1"],
-        allowed_destinations=[],
-        prohibited_destinations=[],
-    )
-    assert denied and denied.decision == PermissionDecisionKind.deny
-    assert asked and asked.decision == PermissionDecisionKind.ask
 
 
 async def test_credential_broker_scopes_redacts_and_revokes(session):

@@ -4,10 +4,10 @@ from fake_web_tools import fake_web_registry
 from app.core.config import Settings
 from app.repositories.runs import RunRepository, run_to_view
 from app.runner.agent_loop import AgentLoop
-from app.runner.approvals import ApprovalPolicy, matcher_matches, similar_matcher
+from app.runner.approvals import matcher_matches, similar_matcher
 from app.runner.model_client import MockModelClient
 from app.runner.reasoning import PolicyCompiler
-from app.schemas.agent import AgentDecision, ExecutionMode, RequestedReasoningPolicy
+from app.schemas.agent import AgentDecision, RequestedReasoningPolicy
 from app.tools.base import Tool, ToolExecutionError, ToolRegistry, ToolSpec
 
 
@@ -170,9 +170,3 @@ def test_bash_similar_matchers_are_narrow_and_complex_commands_are_exact_only():
     assert matcher_matches(matcher, {"command": "pytest tests/test_tools.py -q"})
     assert not matcher_matches(matcher, {"command": "python -m pytest"})
     assert similar_matcher("bash_execute", {"command": "pytest && rm -rf /tmp/x"}) is None
-
-
-def test_auto_approval_only_skips_interactive_policy():
-    result = ApprovalPolicy().evaluate(ExecutionMode.auto_approval, {}, [])
-    assert result.approved is True
-    assert result.reason == "auto_approval"
