@@ -36,6 +36,45 @@ class ChartRequest(BaseModel):
     width: int = Field(default=1200, ge=320, le=4096)
     height: int = Field(default=720, ge=240, le=4096)
 
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_inline_data(cls, value: Any) -> Any:
+        if not isinstance(value, dict):
+            return value
+        data = value.get("data")
+        normalized = cls._normalize_inline_data(data)
+        if normalized is data:
+            return value
+        return {**value, "data": normalized}
+
+    @staticmethod
+    def _normalize_inline_data(data: Any) -> Any:
+        if isinstance(data, list) and data and all(isinstance(row, dict) for row in data):
+            columns = list(data[0])
+            if columns and all(set(row) == set(columns) for row in data):
+                return {
+                    "columns": columns,
+                    "rows": [[row[column] for column in columns] for row in data],
+                }
+        if (
+            isinstance(data, dict)
+            and "columns" not in data
+            and "rows" not in data
+            and data
+            and all(isinstance(column, list) for column in data.values())
+        ):
+            lengths = {len(column) for column in data.values()}
+            if len(lengths) == 1 and lengths != {0}:
+                columns = list(data)
+                return {
+                    "columns": columns,
+                    "rows": [
+                        list(row)
+                        for row in zip(*(data[column] for column in columns), strict=True)
+                    ],
+                }
+        return data
+
     @model_validator(mode="after")
     def validate_request(self):
         sources = sum(
@@ -77,7 +116,28 @@ class ChartRenderTool(Tool):
             "required": ["chart_type", "x", "y"],
             "type": "object",
             "properties": {
-                "data": {"type": "object"},
+                "data": {
+                    "description": (
+                        "Inline chart data. Prefer {columns: [name...], rows: [[value...], ...]}; "
+                        "column-oriented {name: [value...]} and record rows [{name: value}] "
+                        "are also accepted."
+                    ),
+                    "anyOf": [
+                        {
+                            "type": "object",
+                            "required": ["columns", "rows"],
+                            "properties": {
+                                "columns": {"type": "array", "items": {"type": "string"}},
+                                "rows": {
+                                    "type": "array",
+                                    "items": {"type": "array"},
+                                },
+                            },
+                        },
+                        {"type": "object"},
+                        {"type": "array", "items": {"type": "object"}},
+                    ],
+                },
                 "input_workspace_path": {
                     "type": "string",
                     "description": (

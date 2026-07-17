@@ -49,6 +49,32 @@ def test_chart_request_rejects_oversized_dataset_and_value():
         request(data={"columns": ["x", "y"], "rows": [[1, "x" * 10001]]})
 
 
+@pytest.mark.parametrize(
+    "data",
+    [
+        {"category": ["A", "B"], "value": [10, 20]},
+        [{"category": "A", "value": 10}, {"category": "B", "value": 20}],
+    ],
+)
+def test_chart_request_normalizes_common_inline_data_shapes(data):
+    parsed = request(data=data, chart_type="bar", x="category", y=["value"])
+
+    assert parsed.data.columns == ["category", "value"]
+    assert parsed.data.rows == [["A", 10], ["B", 20]]
+
+
+@pytest.mark.parametrize(
+    "data",
+    [
+        {"category": ["A", "B"], "value": [10]},
+        [{"category": "A", "value": 10}, {"category": "B"}],
+    ],
+)
+def test_chart_request_rejects_ambiguous_inline_data_shapes(data):
+    with pytest.raises(ValidationError):
+        request(data=data, chart_type="bar", x="category", y=["value"])
+
+
 def test_chart_request_accepts_workspace_csv_as_data_source():
     parsed = ChartRequest.model_validate(
         {
