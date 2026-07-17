@@ -7,9 +7,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.db.models import (
-    AgentTurnRecord,
     AgentDelegationRecord,
     AgentIdentityRecord,
+    AgentTurnRecord,
     ApprovalGrantRecord,
     ApprovalRequestRecord,
     ArtifactRecord,
@@ -25,8 +25,8 @@ from app.db.models import (
     StepRecord,
     TaskRecord,
     TaskWorkspaceRecord,
-    ToolCatalogSnapshotRecord,
     ToolCallRecord,
+    ToolCatalogSnapshotRecord,
     WorkspaceChangeRecord,
     WorkspaceCheckpointRecord,
     WorkspaceFileRecord,

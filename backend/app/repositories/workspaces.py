@@ -1,8 +1,8 @@
 from __future__ import annotations
 
+import unicodedata
 from copy import deepcopy
 from pathlib import PurePosixPath
-import unicodedata
 from typing import Any
 
 from sqlalchemy import select

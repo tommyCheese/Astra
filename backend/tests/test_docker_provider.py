@@ -95,6 +95,8 @@ async def test_docker_provider_overlays_protected_workspace_paths_read_only(tmp_
     workspace.mkdir()
     for relative in (".astra", ".git", ".codex"):
         (workspace / relative).mkdir()
+    (workspace / "nested").mkdir()
+    (workspace / "nested" / ".git").mkdir()
 
     await provider.create(
         SandboxRequest(
@@ -118,6 +120,10 @@ async def test_docker_provider_overlays_protected_workspace_paths_read_only(tmp_
             f"dst=/workspace/{relative}" in mount and mount.endswith(",readonly")
             for mount in mounts
         )
+    assert any(
+        "dst=/workspace/nested/.git" in mount and mount.endswith(",readonly")
+        for mount in mounts
+    )
 
 
 async def test_docker_provider_sanitizes_startup_hooks_and_language_autoloading():

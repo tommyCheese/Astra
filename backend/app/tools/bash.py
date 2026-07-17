@@ -62,6 +62,7 @@ class BashExecuteTool(Tool):
             "command_execute",
             "process_execute",
             "temporary_compute",
+            "artifact_write",
             "workspace_read",
             "workspace_write",
             "workspace_delete",
@@ -124,6 +125,11 @@ class BashExecuteTool(Tool):
             secure=True,
             allow_internet_access=False,
             record_stdout=False,
+            collect_output_artifacts=any(
+                effect.get("kind") == "artifact_write"
+                for effect in (context.effect_plan or {}).get("effects", [])
+                if isinstance(effect, dict)
+            ),
             environment={"TZ": "UTC", "PYTHONHASHSEED": "0", "HOME": "/tmp"},
             metadata={"tool": "bash_execute", "protocol": "1"},
             workspace_dir=context.workspace_path if workspace_mode != "none" else None,

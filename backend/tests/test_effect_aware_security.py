@@ -2,11 +2,12 @@ import io
 import os
 import tarfile
 import zipfile
+from datetime import timedelta
 from types import SimpleNamespace
 
 import pytest
 
-from app.db.models import ApprovalGrantRecord
+from app.db.models import ApprovalGrantRecord, utc_now
 from app.permissions.credentials import CredentialBroker
 from app.permissions.effects import (
     ANALYZER_DIGEST,
@@ -50,6 +51,7 @@ def bash_plan(command: str):
 def test_effect_matrix_classifies_safe_mutating_forbidden_and_artifact_actions():
     read = bash_plan("ls -la")
     temporary = bash_plan("printf hello > /tmp/result.txt")
+    bash_artifact = bash_plan("printf hello > /output/result.txt")
     create = bash_plan("printf hello > report.txt")
     modify = bash_plan("sed -i s/a/b/ report.txt")
     delete = bash_plan("find reports -type f -delete")
@@ -64,6 +66,13 @@ def test_effect_matrix_classifies_safe_mutating_forbidden_and_artifact_actions()
     assert workspace_mount_mode(read) == "read_only"
     assert temporary.approval_required is False
     assert {item.kind.value for item in temporary.effects} == {"temporary_compute"}
+    assert {item.kind.value for item in bash_artifact.effects} == {
+        "artifact_write",
+        "temporary_compute",
+    }
+    assert set(bash_artifact.required_permissions) <= set(
+        BashExecuteTool.spec.permissions
+    )
     assert create.approval_required is True
     assert create.summary == "创建或修改任务工作区文件"
     assert set(create.required_permissions) <= set(BashExecuteTool.spec.permissions)
@@ -86,6 +95,7 @@ def test_bash_analysis_fails_closed_for_ambiguous_and_multi_target_commands():
     disguised = bash_plan("/workspace/ls")
     substitution = bash_plan("cat <(touch /output/bypass.txt)")
     find_exec = bash_plan("find . -exec touch changed.txt +")
+    chained = bash_plan("touch approved.txt && rm secret.txt")
 
     assert {item.resource for item in multi_write.effects} == {
         "task://task-1/workspace/approved.txt",
@@ -95,7 +105,7 @@ def test_bash_analysis_fails_closed_for_ambiguous_and_multi_target_commands():
         "workspace_delete",
         "workspace_write",
     }
-    for plan in (disguised, substitution, find_exec):
+    for plan in (disguised, substitution, find_exec, chained):
         assert {item.kind.value for item in plan.effects} == {
             "process_execute_unknown"
         }
@@ -339,6 +349,17 @@ def test_unattended_permission_bundle_fails_closed_and_enforces_identity_budget(
     assert evaluator.validate(
         tampered, plan, tool_identity=allowed_identity, unattended=True
     ) == (False, "permission_bundle_signature_invalid")
+    runtime_limited = bundle.model_copy(update={"max_runtime_seconds": 1, "digest": "pending"})
+    runtime_limited = runtime_limited.model_copy(
+        update={"digest": permission_bundle_digest(runtime_limited, secret)}
+    )
+    assert evaluator.validate(
+        runtime_limited,
+        plan,
+        tool_identity=allowed_identity,
+        unattended=True,
+        run_started_at=utc_now() - timedelta(seconds=2),
+    ) == (False, "permission_bundle_runtime_exhausted")
 
 
 async def test_credential_broker_scopes_redacts_and_revokes(session):
@@ -368,6 +389,17 @@ async def test_credential_broker_scopes_redacts_and_revokes(session):
             reason_code="test_credential_allow",
         )],
     )
+    with pytest.raises(PermissionError, match="not authorized"):
+        await broker.issue(
+            run_id=run.id,
+            agent_identity_id=identity.id,
+            service="records",
+            scopes=["read"],
+            allowed_scopes=["read"],
+            on_behalf_of="local-user",
+            subject=subject,
+            policies=PermissionPolicySet(version="deny-by-default"),
+        )
     credential = await broker.issue(
         run_id=run.id,
         agent_identity_id=identity.id,
@@ -560,6 +592,19 @@ async def test_workspace_security_rejects_links_archives_and_enforces_checkpoint
     (workspace / "safe.txt").write_text("safe", encoding="utf-8")
     checkpoint = await runtime.create_checkpoint(run_id=run.id, workspace_dir=workspace)
     assert checkpoint["files"] == 1
+
+    before = runtime.scan(workspace)
+    before_protected = runtime.protected_paths(workspace)
+    (workspace / "nested" / ".git").mkdir(parents=True)
+    with pytest.raises(ToolExecutionError, match="protected Workspace"):
+        await runtime.capture_changes(
+            run_id=run.id,
+            tool_call_id=None,
+            workspace_dir=workspace,
+            before=before,
+            before_protected_paths=before_protected,
+        )
+    assert not (workspace / "nested" / ".git").exists()
 
     os.symlink("/etc/passwd", workspace / "escape")
     with pytest.raises(ToolExecutionError, match="Workspace"):

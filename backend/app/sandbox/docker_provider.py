@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from app.sandbox.runtime import (
+    PROTECTED_WORKSPACE_PATHS,
     SandboxError,
     SandboxHandle,
     SandboxProvider,
@@ -155,17 +156,28 @@ class DockerSandboxProvider(SandboxProvider):
                 mount += ",readonly"
             create_args.extend(["--mount", mount])
             if request.workspace_mode == "read_write":
-                for relative in request.protected_workspace_paths:
-                    protected = (workspace_dir / relative).resolve(strict=True)
+                protected_entries = {
+                    candidate
+                    for candidate in workspace_dir.rglob("*")
+                    if candidate.name in PROTECTED_WORKSPACE_PATHS
+                } | {
+                    workspace_dir / relative
+                    for relative in PROTECTED_WORKSPACE_PATHS
+                }
+                for candidate in sorted(protected_entries):
+                    protected = candidate.resolve(strict=True)
                     if not protected.is_relative_to(workspace_dir):
                         raise SandboxError(
                             "sandbox_policy_violation",
                             "Protected Workspace path escaped its root",
                         )
-                    create_args.extend([
-                        "--mount",
-                        f"type=bind,src={protected},dst=/workspace/{relative},readonly",
-                    ])
+                    relative = protected.relative_to(workspace_dir).as_posix()
+                    create_args.extend(
+                        [
+                            "--mount",
+                            f"type=bind,src={protected},dst=/workspace/{relative},readonly",
+                        ]
+                    )
         else:
             create_args.extend(["--tmpfs", "/workspace:rw,nosuid,nodev,mode=1777"])
         create_args.extend(

@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import secrets
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Iterable
 
 from app.permissions.engine import PermissionEngine
 from app.repositories.permissions import PermissionRepository

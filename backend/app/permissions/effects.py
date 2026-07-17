@@ -45,7 +45,7 @@ WRITE_COMMANDS = {
 DELETE_COMMANDS = {"rm", "rmdir", "unlink"}
 NETWORK_COMMANDS = {"curl", "wget", "nc", "ncat", "ssh", "scp", "rsync"}
 SAFE_SHELL_BUILTINS = {"echo", "printf", "true", "false"}
-SHELL_COMPLEX = re.compile(r"(?:&&|\|\||[;&`]|\$\(|\$\{|[<>]\(|\n|\r)")
+SHELL_COMPLEX = re.compile(r"(?:&&|\|\||[|;&`]|\$\(|\$\{|[<>]\(|\n|\r)")
 REDIRECTION = re.compile(r"(?<!<)(?:>>?|[0-9]+>>?)\s*([^\s;&|]+)")
 
 
@@ -275,7 +275,10 @@ class BashEffectAnalyzer(ToolEffectAnalyzer):
             effects.append(_path_mutation_effect(
                 task_id, _clean_shell_path(match.group(1)), delete=False
             ))
-        if trusted_executable and executable in DELETE_COMMANDS:
+        if complex_shell:
+            effects.append(_unknown_process_effect(task_id))
+            summary = "执行行为复杂的 Bash 命令"
+        elif trusted_executable and executable in DELETE_COMMANDS:
             targets = _simple_operands(tokens)
             if not targets:
                 targets = ["**"]
@@ -554,11 +557,10 @@ def _safe_read_only_invocation(executable: str, tokens: list[str]) -> bool:
         token == "-o" or token.startswith("--output=") for token in tokens[1:]
     ):
         return False
-    if executable == "diff" and any(
-        token.startswith("--output=") for token in tokens[1:]
-    ):
-        return False
-    return True
+    return not (
+        executable == "diff"
+        and any(token.startswith("--output=") for token in tokens[1:])
+    )
 
 
 def _safe_git_invocation(tokens: list[str]) -> bool:

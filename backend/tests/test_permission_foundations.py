@@ -158,6 +158,15 @@ async def test_permission_repository_persists_identity_delegation_catalog_and_da
         run_id=run.id,
         parent_identity_id=parent.id,
     )
+    with pytest.raises(PermissionError, match="not authorized"):
+        await repository.create_delegation(
+            parent_identity_id=parent.id,
+            child_identity_id=child.id,
+            delegated_scope={
+                "actions": ["workspace.file.read"],
+                "resources": ["task://workspace/**"],
+            },
+        )
     delegation = await repository.create_delegation(
         parent_identity_id=parent.id,
         child_identity_id=child.id,

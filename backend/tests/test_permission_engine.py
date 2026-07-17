@@ -1,5 +1,7 @@
 from datetime import timedelta
 
+import pytest
+
 from app.db.models import ApprovalGrantRecord, utc_now
 from app.permissions.engine import PermissionEngine
 from app.repositories.runs import RunRepository
@@ -338,3 +340,68 @@ async def test_permission_lease_consumption_revocation_and_integrity_invalidatio
     revoked = await repository.revoke_approval_grant(second.id)
     assert revoked.status == "revoked"
     assert revoked.revoked_at is not None
+
+
+async def test_multiple_approval_grants_are_consumed_together(session):
+    repository = RunRepository(session)
+    run = await repository.create_task_run("Atomic lease consumption", {})
+    turn = await repository.create_agent_turn(
+        run.id, 1, "call_tool", "compound", selected_tool="compound", phase="prepared"
+    )
+    call = await repository.start_tool_call(
+        run.id,
+        None,
+        "compound",
+        "1",
+        {},
+        "workspace_write, artifact_write",
+        "persistent_side_effect",
+        status="awaiting_approval",
+    )
+    approval = await repository.create_approval_request(
+        run_id=run.id,
+        turn_id=turn.id,
+        tool_call_id=call.id,
+        tool_name="compound",
+        tool_version="1",
+        frozen_input={},
+        input_hash="hash",
+        preview="compound",
+        permission="workspace_write, artifact_write",
+        impact="moderate",
+        similar_matcher=None,
+    )
+    grants = [
+        ApprovalGrantRecord(
+            run_id=run.id,
+            task_id=run.task_id,
+            scope="run",
+            subject={"run_id": run.id, "task_id": run.task_id},
+            tool_name="compound",
+            tool_version="1",
+            matcher={},
+            effect_kinds=["workspace_write", "artifact_write"],
+            resource_matcher={"exact": resource},
+            invocation_constraints={"tool_name": "compound", "tool_version": "1"},
+            source_approval_id=approval.id,
+            status="active",
+            use_count=0,
+            max_uses=1,
+        )
+        for resource in (
+            f"task://{run.task_id}/workspace/report.txt",
+            f"artifact://task/{run.task_id}/report",
+        )
+    ]
+    session.add_all(grants)
+    await session.commit()
+
+    consumed = await repository.consume_approval_grants(
+        tuple(grant.id for grant in grants)
+    )
+    assert [grant.use_count for grant in consumed] == [1, 1]
+    with pytest.raises(ValueError, match="exhausted"):
+        await repository.consume_approval_grants(
+            tuple(grant.id for grant in grants)
+        )
+    assert [grant.use_count for grant in grants] == [1, 1]

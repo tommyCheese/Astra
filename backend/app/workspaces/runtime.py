@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import fcntl
 import hashlib
 import mimetypes
 import os
@@ -7,16 +9,15 @@ import shutil
 import stat
 import tarfile
 import zipfile
-import asyncio
-import fcntl
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
-from app.repositories.workspaces import WorkspaceRepository, validate_workspace_path
-from app.db.models import utc_now
 from app.artifacts import ArtifactCollector
+from app.db.models import utc_now
+from app.repositories.workspaces import WorkspaceRepository, validate_workspace_path
+from app.sandbox.runtime import PROTECTED_WORKSPACE_PATHS
 from app.tools.base import ToolExecutionError
 
 
@@ -28,8 +29,8 @@ class ManifestEntry:
 
 
 class WorkspaceRuntimeService:
-    _write_locks: dict[str, asyncio.Lock] = {}
-    PROTECTED_PATHS = (".astra", ".git", ".codex")
+    _write_locks: ClassVar[dict[str, asyncio.Lock]] = {}
+    PROTECTED_PATHS = PROTECTED_WORKSPACE_PATHS
 
     def __init__(
         self,
@@ -123,6 +124,18 @@ class WorkspaceRuntimeService:
                 )
         return manifest
 
+    def protected_paths(self, workspace_dir: Path) -> set[str]:
+        root = workspace_dir.resolve(strict=True)
+        if not root.is_relative_to(self.root):
+            raise ToolExecutionError(
+                "sandbox_policy_violation", "Workspace is outside the managed root"
+            )
+        return {
+            candidate.relative_to(root).as_posix()
+            for candidate in root.rglob("*")
+            if candidate.name in PROTECTED_WORKSPACE_PATHS
+        }
+
     @asynccontextmanager
     async def access_guard(self, workspace_dir: Path, mode: str):
         if mode != "read_write":
@@ -210,8 +223,34 @@ class WorkspaceRuntimeService:
         tool_call_id: str,
         workspace_dir: Path,
         before: dict[str, ManifestEntry],
+        before_protected_paths: set[str] | None = None,
     ) -> list[dict[str, Any]]:
         after = self.scan(workspace_dir)
+        current_protected_paths = self.protected_paths(workspace_dir)
+        protected_path_changes = (
+            current_protected_paths ^ before_protected_paths
+            if before_protected_paths is not None
+            else set()
+        )
+        protected_changes = [
+            relative_path
+            for relative_path, entry in after.items()
+            if any(
+                part in PROTECTED_WORKSPACE_PATHS
+                for part in Path(relative_path).parts
+            )
+            and before.get(relative_path) != entry
+        ]
+        if protected_changes or protected_path_changes:
+            self._remove_new_protected_paths(
+                workspace_dir,
+                before,
+                [*protected_changes, *protected_path_changes],
+            )
+            raise ToolExecutionError(
+                "sandbox_policy_violation",
+                "Tool execution attempted to modify a protected Workspace path",
+            )
         workspace = await self.repository.for_run(run_id)
         changes: list[dict[str, Any]] = []
         for relative_path in sorted(before.keys() | after.keys()):
@@ -261,6 +300,37 @@ class WorkspaceRuntimeService:
                 )
             changes.append({"path": relative_path, "kind": kind})
         return changes
+
+    @staticmethod
+    def _remove_new_protected_paths(
+        workspace_dir: Path,
+        before: dict[str, ManifestEntry],
+        changed_paths: list[str],
+    ) -> None:
+        protected_roots: set[Path] = set()
+        for relative_path in changed_paths:
+            parts = Path(relative_path).parts
+            protected_index = next(
+                index
+                for index, part in enumerate(parts)
+                if part in PROTECTED_WORKSPACE_PATHS
+            )
+            protected_roots.add(Path(*parts[: protected_index + 1]))
+        for relative_root in sorted(protected_roots, reverse=True):
+            prefix = f"{relative_root.as_posix()}/"
+            existed_before = any(
+                path == relative_root.as_posix() or path.startswith(prefix)
+                for path in before
+            )
+            if existed_before:
+                continue
+            target = workspace_dir / relative_root
+            if target.is_dir():
+                shutil.rmtree(target)
+            elif target.exists():
+                target.unlink()
+            if len(relative_root.parts) == 1:
+                target.mkdir(mode=0o755)
 
     def resolve_file(self, workspace_dir: Path, relative_path: str) -> Path:
         root = workspace_dir.resolve(strict=True)

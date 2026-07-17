@@ -2,8 +2,8 @@ import asyncio
 import re
 import sys
 import time
-from contextlib import asynccontextmanager
 from abc import ABC, abstractmethod
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -18,6 +18,7 @@ ERROR_CATEGORIES = {
     "invalid_artifact",
     "render_failed",
 }
+PROTECTED_WORKSPACE_PATHS = (".astra", ".git", ".codex")
 TRANSITIONS = {
     "queued": {"preparing", "failed", "cancelled"},
     "preparing": {"running", "failed", "cancelled"},
@@ -61,11 +62,11 @@ class SandboxRequest:
     secure: bool = True
     allow_internet_access: bool = False
     record_stdout: bool = True
+    collect_output_artifacts: bool = True
     environment: dict[str, str] = field(default_factory=dict)
     metadata: dict[str, str] = field(default_factory=dict)
     workspace_dir: Path | None = None
     workspace_mode: str = "none"
-    protected_workspace_paths: tuple[str, ...] = (".astra", ".git", ".codex")
 
 
 @dataclass
@@ -254,8 +255,12 @@ class SandboxJobService:
     ):
         try:
             before_manifest = None
+            before_protected_paths = None
             if request.workspace_dir is not None and self.workspace_service is not None:
                 before_manifest = self.workspace_service.scan(request.workspace_dir)
+                before_protected_paths = self.workspace_service.protected_paths(
+                    request.workspace_dir
+                )
             await self.repo.transition_sandbox_job(job.id, "preparing")
             await self.repo.transition_sandbox_job(job.id, "running")
             result = await self.supervisor.run(request)
@@ -268,12 +273,16 @@ class SandboxJobService:
                 "metrics": result.metrics,
                 **runtime_profile,
             }
-            refs = await self.artifact_service.persist_output(
-                run_id=run_id,
-                tool_call_id=tool_call_id,
-                sandbox_job_id=job.id,
-                output_dir=request.output_dir,
-                provenance=provenance,
+            refs = (
+                await self.artifact_service.persist_output(
+                    run_id=run_id,
+                    tool_call_id=tool_call_id,
+                    sandbox_job_id=job.id,
+                    output_dir=request.output_dir,
+                    provenance=provenance,
+                )
+                if request.collect_output_artifacts
+                else []
             )
             workspace_changes = []
             if (
@@ -286,6 +295,7 @@ class SandboxJobService:
                     tool_call_id=tool_call_id,
                     workspace_dir=request.workspace_dir,
                     before=before_manifest,
+                    before_protected_paths=before_protected_paths,
                 )
             await self.repo.transition_sandbox_job(
                 job.id,

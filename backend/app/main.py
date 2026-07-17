@@ -10,8 +10,8 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.api.conversations import router as conversations_router
-from app.api.preferences import router as preferences_router
 from app.api.permissions import router as permissions_router
+from app.api.preferences import router as preferences_router
 from app.api.runs import router as runs_router
 from app.api.runtime import router as runtime_router
 from app.api.tools import router as tools_router
