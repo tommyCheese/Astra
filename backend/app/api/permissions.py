@@ -113,9 +113,12 @@ async def permission_center(
                 "id": item.id,
                 "type": item.identity_type,
                 "principal": item.principal,
+                "task_id": item.task_id,
+                "run_id": item.run_id,
                 "parent_identity_id": item.parent_identity_id,
                 "trust_level": item.trust_level,
                 "attributes": item.attributes,
+                "created_at": item.created_at,
                 "revoked_at": item.revoked_at,
             }
             for item in identities

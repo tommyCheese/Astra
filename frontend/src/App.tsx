@@ -2,6 +2,7 @@ import { FormEvent, MouseEvent, ReactNode, useCallback, useEffect, useMemo, useR
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { AstraApiError, ApiErrorPayload, buildRuntime, cancelRun, cancelRuntimeBuild, createConversationShare, createRun, decideToolApproval, deleteConversation, getConversation, getConversationStrategy, getPermissionCenter, getRun, getRuntimeProfile, getTaskWorkspace, getToolSettings, listConversationShares, listConversations, listRuns, resumeRun, revokeConversationShare, revokePermissionGrant, streamRunEvents, updateConversation, updateConversationStrategy, updateToolSettings, type ConversationStrategyPreferences, type PermissionCenterView, type RunModelConfig, type ToolSetting, type WorkspaceView } from './api';
+import { buildAuditLog, buildIdentityPresentation, type IdentityGroup } from './auditPresentation';
 import { I18nProvider, useI18n } from './i18n';
 import { ThemeProvider, useTheme } from './theme';
 import type { ArtifactView, ChatMessage, ConversationShare, ConversationShareSummary, ConversationSummary, PendingApproval, RunView } from './types';
@@ -1783,20 +1784,22 @@ function trustLevelLabel(level: string) {
   return level === 'platform' ? '平台内置' : level === 'user' ? '当前用户' : level === 'managed' ? '受管理' : level;
 }
 
-function permissionEventLabel(type: string, payload: Record<string, unknown>) {
-  if (type === 'approval.requested') return `请求确认 ${permissionToolLabel(String(payload.tool_name || '工具'))} 的操作`;
-  if (type === 'approval.decided') {
-    const decision = String(payload.decision || '');
-    const labels: Record<string, string> = {
-      approve_once: '已允许本次操作',
-      allow_similar: '已允许当前运行中的类似操作',
-      allow_task: '已允许当前任务中的类似操作',
-      reject: '已拒绝操作',
-    };
-    return labels[decision] || '已作出权限决定';
-  }
-  if (type === 'tool_call.effect_blocked_by_mode') return '仅规划模式阻止了一项会产生副作用的操作';
-  return String(payload.summary || payload.tool_name || '记录了一项权限事件');
+function identityRoleDescription(identity: IdentityGroup) {
+  const descriptions: Record<string, string> = {
+    main_agent: '理解任务并发起工具调用',
+    subagent: '在授权范围内处理委派任务',
+    tool_provider: '声明并提供受信任工具',
+    external_provider: '提供外部扩展工具',
+    tool_runtime: '以最小权限执行具体工具',
+    reviewer: '确认或拒绝需要审批的操作',
+  };
+  return descriptions[identity.type] || '参与本次运行的审计主体';
+}
+
+function formatAuditTime(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString([], { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
 }
 
 function readableResourceMatcher(matcher: Record<string, unknown>) {
@@ -1834,7 +1837,8 @@ function ControlCenterDialog({ run, onClose }: { run: RunView; onClose: () => vo
   const deliverableFiles = workspace?.files.filter((file) => file.status === 'present' && file.deliverable_candidate) ?? [];
   const deletedFiles = workspace?.changes.filter((change) => change.kind === 'deleted') ?? [];
   const meaningfulCheckpoints = workspace?.checkpoints.filter((checkpoint) => checkpoint.file_count > 0) ?? [];
-  const recentEvents = permissions?.policy_explanations?.slice(0, 6) ?? [];
+  const identityPresentation = buildIdentityPresentation(permissions?.identities ?? [], run.id);
+  const auditEntries = buildAuditLog(permissions?.policy_explanations ?? []);
   return <div className="modal-backdrop" role="presentation" onMouseDown={onClose}>
     <section className="control-center-modal" role="dialog" aria-modal="true" aria-label={t('任务安全与文件')} onMouseDown={(event) => event.stopPropagation()}>
       <header><div><h2>{t('任务安全与文件')}</h2><p>{t('管理 Astra 在这个任务中可以继续执行的操作，并查看已生成的文件。')}</p></div><button type="button" aria-label={t('关闭')} onClick={onClose}>×</button></header>
@@ -1881,7 +1885,7 @@ function ControlCenterDialog({ run, onClose }: { run: RunView; onClose: () => vo
 
           <section className="control-center-panel permission-activity-panel">
             <div className="control-center-section-heading"><div><h3>{t('最近的安全活动')}</h3><p>{t('用自然语言说明最近为什么询问、允许或阻止操作。')}</p></div></div>
-            {recentEvents.length ? <div className="permission-activity-list">{recentEvents.map((item) => <div className="permission-activity-item" key={item.id}><span className={`permission-activity-dot ${item.type === 'approval.decided' ? 'decided' : ''}`} /><div><strong>{t(permissionEventLabel(item.type, item.payload))}</strong><span>{new Date(item.created_at).toLocaleString()}</span></div></div>)}</div> : <div className="control-center-empty compact"><span>{t('暂无需要说明的权限活动')}</span></div>}
+            {auditEntries.length ? <div className="permission-activity-list">{auditEntries.slice(0, 4).map((entry) => <div className="permission-activity-item" key={entry.id}><span className={`permission-activity-dot tone-${entry.tone}`} /><div><strong>{t(entry.title)}</strong><span>{entry.actor} · {formatAuditTime(entry.createdAt)}</span></div></div>)}</div> : <div className="control-center-empty compact"><span>{t('暂无需要说明的权限活动')}</span></div>}
           </section>
 
           <section className="control-center-panel workspace-history-panel">
@@ -1896,9 +1900,24 @@ function ControlCenterDialog({ run, onClose }: { run: RunView; onClose: () => vo
         <details className="control-center-technical">
           <summary><span>{t('技术与审计详情')}</span><small>{t('身份链、工具来源、凭据和内部决策记录')}</small></summary>
           <div className="control-center-technical-grid">
-            <section><h3>{t('执行身份')}</h3>{permissions.identities.map((identity) => <div className="control-center-item" key={identity.id}><strong>{t(identityTypeLabel(identity.type))}</strong><span>{identity.principal} · {t(trustLevelLabel(identity.trust_level))}</span></div>)}{permissions.delegations.map((delegation) => <div className="control-center-item" key={delegation.id}><strong>{t('权限委派')}</strong><span>{delegation.parent_identity_id.slice(0, 8)} → {delegation.child_identity_id.slice(0, 8)}</span></div>)}</section>
+            <section className="identity-chain-section"><div className="technical-section-heading"><div><h3>{t('本次运行身份链')}</h3><p>{t('从任务协调者到具体工具运行时的责任边界。')}</p></div><span>{identityPresentation.execution.length}</span></div>
+              {identityPresentation.execution.length ? <div className="identity-chain">{identityPresentation.execution.map((identity, index) => <div className="identity-chain-step" key={`${identity.type}:${identity.principal}:${identity.parent_identity_id || ''}`}>
+                {index > 0 && <span className="identity-chain-connector" aria-hidden="true">↓</span>}
+                <div className={`identity-role-icon identity-${identity.type}`} aria-hidden="true">{index + 1}</div>
+                <div className="identity-role-main"><strong>{t(identityTypeLabel(identity.type))}{identity.count > 1 && <small>×{identity.count}</small>}</strong><code>{identity.principal}</code><span>{t(identityRoleDescription(identity))}</span></div>
+                <span className="identity-trust-badge">{t(trustLevelLabel(identity.trust_level))}</span>
+              </div>)}</div> : <div className="control-center-empty compact"><span>{t('本次运行尚未登记执行身份')}</span></div>}
+              {identityPresentation.reviewers.length > 0 && <div className="identity-reviewers"><span>{t('审批主体')}</span>{identityPresentation.reviewers.map((identity) => <div key={identity.id}><strong>{identity.principal}</strong><small>{t(trustLevelLabel(identity.trust_level))} · {t(identityRoleDescription(identity))}</small></div>)}</div>}
+              {identityPresentation.historicalCount > 0 && <div className="identity-history-note">{t('已折叠当前任务其他运行的 {count} 条身份记录').replace('{count}', String(identityPresentation.historicalCount))}</div>}
+            </section>
             <section><h3>{t('工具与凭据')}</h3>{permissions.credentials.map((credential) => <div className="control-center-item" key={credential.id}><strong>{credential.service}</strong><span>{credential.scopes.join(', ') || t('最小权限')} · {credential.revoked_at ? t('已撤销') : t('短期有效')}</span></div>)}{!permissions.credentials.length && <p>{t('未使用服务凭据')}</p>}{permissions.tool_catalog && <div className="control-center-item"><strong>{t('本次运行的工具目录')}</strong><span>{permissions.tool_catalog.catalog.length} {t('个工具')} · {t('完整性校验')} {permissions.tool_catalog.digest.slice(0, 12)}</span></div>}</section>
-            <section className="technical-policy-events"><h3>{t('内部决策记录')}</h3>{permissions.policy_explanations?.slice(0, 10).map((item) => <div className="control-center-item" key={item.id}><strong>{item.type}</strong><span>{String(item.payload.tool_name || item.payload.decision || item.payload.summary || '')}</span></div>)}{!permissions.policy_explanations?.length && <p>{t('暂无审批决策')}</p>}</section>
+            <section className="technical-policy-events"><div className="technical-section-heading"><div><h3>{t('审计流')}</h3><p>{t('按时间倒序记录权限请求、判定、用户决策与阻止事件。')}</p></div><span>{auditEntries.length}</span></div>
+              {auditEntries.length ? <div className="audit-log" role="log" aria-label={t('权限审计日志')}>{auditEntries.map((entry) => <article className={`audit-log-entry tone-${entry.tone}`} key={entry.id}>
+                <time dateTime={entry.createdAt}>{formatAuditTime(entry.createdAt)}</time>
+                <span className="audit-level">{entry.tone === 'danger' ? 'BLOCK' : entry.tone === 'warning' ? 'ASK' : entry.tone === 'success' ? 'ALLOW' : 'INFO'}</span>
+                <div className="audit-log-message"><strong>{t(entry.title)}</strong><span>{t(entry.detail)}</span><small>{entry.actor} · <code>{entry.code}</code> · #{entry.id}</small></div>
+              </article>)}</div> : <div className="control-center-empty compact"><span>{t('暂无权限审计事件')}</span></div>}
+            </section>
           </div>
         </details>
       </>}
