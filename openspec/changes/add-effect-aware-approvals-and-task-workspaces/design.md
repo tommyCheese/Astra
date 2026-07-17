@@ -62,6 +62,8 @@ allow | ask | deny
 
 并附带命中的策略、授予范围、强制执行参数、原因代码和审计字段。`ActionEffectPlan` 是生成 PermissionRequest 的重要输入，但权限系统不局限于工具执行；读取敏感数据、签发凭据、创建子 Agent、连接 MCP、导出 Library 内容和修改安全设置都必须经过同一引擎。
 
+运行时只允许一个可执行授权入口：`PermissionEngine.authorize_invocation(...)`。该入口把一个冻结的 ActionEffectPlan 规范化为一个或多个 PermissionRequest，并在内部统一合并 ToolSpec 权限上限、受保护资源、执行模式、Run/Task lease、一次性批准、无人值守 Permission Bundle、DataFlowState 和网络外发约束。它返回聚合后的唯一 `allow | ask | deny` 结果；AgentLoop 只负责按结果执行、创建 ApprovalRequest 或阻断，不能再分别调用 Bash 特判、外发判断、Bundle 判断或旧 ApprovalPolicy。ApprovalRequest 只是 `ask` 决策的交互与恢复载体，不是第二套授权系统。
+
 ### 策略层级只允许收窄权限
 
 策略来源按信任边界分层：

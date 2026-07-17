@@ -693,7 +693,8 @@ async def test_create_run_defaults_to_standard_profile(app_client):
     assert body["reasoning_policy"]["effective"]["reasoning_effort"] == "fast"
     assert body["reasoning_policy"]["effective"]["planning_strategy"] == "adaptive"
     assert body["reasoning_policy"]["effective"]["reflection_enabled"] is False
-    assert body["reasoning_policy"]["effective"]["budgets"]["max_tool_calls"] == 5
+    assert body["reasoning_policy"]["effective"]["budgets"]["max_tool_calls"] is None
+    assert body["reasoning_policy"]["effective"]["budgets"]["max_turns"] is None
 
 
 async def test_tool_approval_decision_api_consumes_token_once(app_client):

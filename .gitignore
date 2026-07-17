@@ -15,6 +15,7 @@ backend/build/
 backend/*.db
 backend/runtime-profile.json
 backend/astra-workspaces/
+backend/astra-artifacts/
 backend/.test-workspaces/
 
 # Node

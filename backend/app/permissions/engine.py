@@ -7,6 +7,9 @@ from fnmatch import fnmatchcase
 from typing import Any
 
 from app.db.models import ApprovalGrantRecord, utc_now
+from app.permissions.effects import is_side_effecting
+from app.permissions.governance import PermissionBundleEvaluator
+from app.schemas.agent import ExecutionMode
 from app.schemas.permissions import (
     ActionEffectPlan,
     PermissionBundle,
@@ -18,9 +21,6 @@ from app.schemas.permissions import (
     PolicyMatch,
     PolicyTier,
 )
-from app.schemas.agent import ExecutionMode
-from app.permissions.effects import is_side_effecting
-from app.permissions.governance import PermissionBundleEvaluator
 
 PROTECTED_RESOURCE_PATTERNS = (
     "astra://permission/**",
@@ -121,6 +121,7 @@ class PermissionEngine:
         tool_input: dict[str, Any],
         declared_permissions: Iterable[str],
         execution_mode: ExecutionMode,
+        policies: PermissionPolicySet | None = None,
         grants: Iterable[ApprovalGrantRecord] = (),
         provider_id: str | None = None,
         schema_digest: str | None = None,
@@ -148,6 +149,7 @@ class PermissionEngine:
                 effect=effect,
                 provider_id=provider_id,
                 schema_digest=schema_digest,
+                data_flow=data_flow,
             )
             for effect in effect_plan.effects
         )
@@ -203,6 +205,7 @@ class PermissionEngine:
             execution_mode=execution_mode,
             once_approved=once_approved,
             data_flow=data_flow,
+            base_policies=policies,
             now=now,
         )
         grant_list = tuple(grants)
@@ -263,6 +266,7 @@ class PermissionEngine:
         effect: Any,
         provider_id: str | None,
         schema_digest: str | None,
+        data_flow: Any | None,
     ) -> PermissionRequest:
         from app.schemas.permissions import PermissionConditions
 
@@ -282,7 +286,10 @@ class PermissionEngine:
                     if effect.kind.value in {"network_write", "external_write"}
                     else None
                 ),
-                data_labels=list(effect.data_labels),
+                data_labels=sorted(
+                    set(effect.data_labels)
+                    | set(getattr(data_flow, "data_labels", []) or [])
+                ),
             ),
             effect_plan_hash=effect_plan_hash,
             context={
@@ -293,6 +300,9 @@ class PermissionEngine:
                 "analyzer_digest": effect_plan.analyzer_digest,
                 "persistent": effect.persistent,
                 "risk": effect.risk,
+                "trust_sources": list(
+                    getattr(data_flow, "trust_sources", []) or []
+                ),
             },
         )
 
@@ -304,11 +314,12 @@ class PermissionEngine:
         execution_mode: ExecutionMode,
         once_approved: bool,
         data_flow: Any | None,
+        base_policies: PermissionPolicySet | None,
         now: datetime,
     ) -> PermissionPolicySet:
         from app.schemas.permissions import PermissionRule
 
-        rules: list[PermissionRule] = []
+        rules: list[PermissionRule] = list(base_policies.rules if base_policies else [])
         if effect_plan.network_scope.get("mode") == "blocked":
             rules.append(PermissionRule(
                 id="platform.network.blocked",
@@ -361,9 +372,13 @@ class PermissionEngine:
         if data_flow is not None:
             rules.extend(self._data_flow_rules(requests, data_flow))
         return PermissionPolicySet(
-            version=f"runtime:{int(now.timestamp())}",
+            version=(
+                f"{base_policies.version}+runtime:{int(now.timestamp())}"
+                if base_policies
+                else f"runtime:{int(now.timestamp())}"
+            ),
             rules=rules,
-            source_digests={},
+            source_digests=dict(base_policies.source_digests if base_policies else {}),
         )
 
     @staticmethod

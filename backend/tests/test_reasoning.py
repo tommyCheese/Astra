@@ -71,7 +71,8 @@ def test_standard_profile_is_fixed_and_preserves_execution_approval():
     assert policy.reasoning_effort == ReasoningEffort.fast
     assert policy.planning_strategy == PlanningStrategy.adaptive
     assert policy.reflection_enabled is False
-    assert policy.budgets.max_tool_calls == 5
+    assert policy.budgets.max_tool_calls is None
+    assert policy.budgets.max_turns is None
     assert policy.execution_mode == ExecutionMode.auto_approval
     assert policy.verification_level.value == "basic"
 

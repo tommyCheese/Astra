@@ -148,7 +148,7 @@ class RunProfileResolver:
             effective_request = requested.model_copy(
                 update={
                     "reasoning_effort": ReasoningEffort.fast,
-                    "max_tool_calls": 5,
+                    "max_tool_calls": None,
                     "planning_strategy": RequestedPlanningStrategy.adaptive,
                     "reflection_enabled": False,
                     "reflection_trigger": ReflectionTrigger.failure_only,
@@ -168,6 +168,15 @@ class RunProfileResolver:
         policy = PolicyCompiler().compile(
             effective_request, risk_level=risk_level, complexity=complexity
         )
+        if answer_mode == AnswerMode.standard:
+            budgets = policy.effective.budgets.model_copy(
+                update={"max_turns": None, "max_tool_calls": None}
+            )
+            policy = policy.model_copy(
+                update={
+                    "effective": policy.effective.model_copy(update={"budgets": budgets})
+                }
+            )
         return RunExecutionProfile(
             answer_mode=answer_mode,
             contract_mode=contract_mode,

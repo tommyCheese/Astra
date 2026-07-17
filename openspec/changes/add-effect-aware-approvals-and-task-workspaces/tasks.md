@@ -14,6 +14,7 @@
 - [x] 2.3 Add conditional permission leases, expiry, usage limits, revocation, and integrity invalidation
 - [x] 2.4 Add Policy Explain, permission center, policy simulation, and shadow-decision comparison
 - [x] 2.5 Add Permission Bundles and fail-closed behavior for scheduled, headless, and background Runs
+- [x] 2.6 Route ToolSpec attenuation, execution modes, Grants, Permission Bundles, protected resources, and data-flow egress through one Permission Engine invocation entry
 
 ## 3. Tool permission and execution-mode policy
 
@@ -57,7 +58,7 @@
 - [x] 7.2 Create Run checkpoints and expose the current Task file view
 - [x] 7.3 Expand Artifact validation and preview support for images, documents, text, source, and common data files
 - [x] 7.4 Render final file summaries, previews, downloads, and deletion history
-- [ ] 7.5 Feed ToolCall-level Workspace changes back into Bash observations and use them to stop completed one-step file tasks
+- [x] 7.5 Feed ToolCall-level Workspace changes back into Bash observations and use them to stop completed one-step file tasks
 
 ## 8. Permission and approval experience
 
@@ -66,9 +67,9 @@
 - [x] 8.3 Restore pending effect approvals after refresh/restart and prevent stale or replayed decisions
 - [x] 8.4 Update execution-mode labels and help text to explain side-effect-free plan-only behavior
 - [x] 8.5 Add the permission center, Grant revocation, tool trust, delegation, credential use, and policy explanation UI
-- [ ] 8.6 Redesign the permission center around human-readable active permissions, files, safety activity, and progressively disclosed technical details
+- [x] 8.6 Redesign the permission center around human-readable active permissions, files, safety activity, and progressively disclosed technical details
 - [x] 8.7 Simplify approval cards to action, user-visible resource, practical risk, and friendly scope choices only
-- [ ] 8.8 Render each ToolCall completion state once in the reasoning timeline
+- [x] 8.8 Render each ToolCall completion state once in the reasoning timeline
 
 ## 9. Verification
 
@@ -80,5 +81,6 @@
 - [x] 9.6 Test cross-tool and cross-Run workspace sharing, checkpoints, deletion tombstones, quotas, and cleanup
 - [x] 9.7 Test malicious filenames, symlink/hardlink escapes, Git hooks, shell startup files, package lifecycle scripts, language autoloading, archive bombs, prompt injection, and resource exhaustion
 - [x] 9.8 Run backend, frontend, migration, Sandbox, OpenSpec, and security regression suites
-- [ ] 9.9 Build and browser-check the redesigned permission center at desktop and narrow viewport sizes
-- [ ] 9.10 Verify approval resume preserves the tool-call budget and a successful single-file Bash task executes exactly once
+- [x] 9.9 Build and browser-check the redesigned permission center at desktop and narrow viewport sizes
+- [x] 9.10 Verify approval resume preserves the tool-call budget and a successful single-file Bash task executes exactly once
+- [x] 9.11 Test the unified invocation authorization entry across safe, ask, deny, auto-approval, Task lease, network, and sensitive-data cases

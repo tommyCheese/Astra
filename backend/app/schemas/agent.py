@@ -129,8 +129,8 @@ class RunBudgets(BaseModel):
     max_model_calls: int = 24
     max_reflections: int = 3
     max_replans: int = 2
-    max_turns: int = 12
-    max_tool_calls: int = 8
+    max_turns: int | None = 12
+    max_tool_calls: int | None = 8
     verification_coverage: int = 2
 
 

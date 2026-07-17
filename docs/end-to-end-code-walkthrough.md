@@ -248,7 +248,7 @@ run = await repo.create_task_run(
 | 运行事实 | `standard` | `trusted` |
 |---|---|---|
 | `reasoning_effort` | 强制 `fast` | 保留用户选择 |
-| `max_tool_calls` | 强制 5 | 保留用户选择并受服务上限约束 |
+| `max_tool_calls` / `max_turns` | 不设置 Run 级上限，仅受部署硬上限约束 | 保留用户选择并受部署硬上限约束 |
 | `planning_strategy` | 强制 `adaptive` | 保留 `adaptive` / `plan_first` |
 | Reflection | 关闭 | 按用户策略 |
 | `contract_mode` | `system_minimal` | `model` |
@@ -468,13 +468,13 @@ loop_result = await agent_loop.run(
 真正预算取两层限制的较小值：
 
 ```python
-max_turns = min(policy.budgets.max_turns, settings.agent_max_turns)
-max_tool_calls = min(policy.budgets.max_tool_calls, settings.agent_max_tool_calls)
+max_turns = settings.agent_max_turns if policy.budgets.max_turns is None else min(policy.budgets.max_turns, settings.agent_max_turns)
+max_tool_calls = settings.agent_max_tool_calls if policy.budgets.max_tool_calls is None else min(policy.budgets.max_tool_calls, settings.agent_max_tool_calls)
 max_reflections = min(policy.budgets.max_reflections, settings.agent_max_reflections)
 max_replans = min(policy.budgets.max_replans, settings.agent_max_replans)
 ```
 
-所以 UI 配置的是本 Run 的上限请求，部署级 Settings 仍是硬边界。
+`standard` 将前两项 Run 级预算记录为 `None`，因此直接采用部署硬上限；`trusted` 仍取用户预算与部署硬上限的较小值。
 
 ### 6.1 中断恢复发生在新 turn 前
 

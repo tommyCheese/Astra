@@ -7,18 +7,18 @@ from typing import Any
 
 from app.artifacts import ArtifactService, LocalArtifactStore
 from app.core.config import Settings
-from app.repositories.plans import PlanRepository, plan_to_view
-from app.repositories.permissions import PermissionRepository
-from app.repositories.runs import RunRepository
-from app.repositories.workspaces import WorkspaceRepository
 from app.permissions.effects import (
     DefaultEffectAnalyzer,
     effect_plan_hash,
     grant_proposals,
     workspace_mount_mode,
 )
-from app.permissions.governance import ExtensionTrustPolicy
 from app.permissions.engine import PermissionEngine
+from app.permissions.governance import ExtensionTrustPolicy
+from app.repositories.permissions import PermissionRepository
+from app.repositories.plans import PlanRepository, plan_to_view
+from app.repositories.runs import RunRepository
+from app.repositories.workspaces import WorkspaceRepository
 from app.runner.adapters import ChartTaskAdapter, ProcessorRegistry, WebTaskAdapter
 from app.runner.approvals import input_hash, safe_preview, similar_matcher
 from app.runner.model_client import ModelClient, ModelOutputError
@@ -56,9 +56,10 @@ from app.schemas.agent import (
     VerificationReport,
 )
 from app.schemas.permissions import (
+    ExtensionDescriptor,
     PermissionBundle,
     PermissionDecisionKind,
-    ExtensionDescriptor,
+    PermissionPolicySet,
     PermissionSubject,
 )
 from app.tools.base import (
@@ -573,8 +574,16 @@ class AgentLoop:
         )
         quick_mode = profile.answer_mode == AnswerMode.standard
         policy = policy_snapshot.effective
-        max_turns = min(policy.budgets.max_turns, self.settings.agent_max_turns)
-        max_tool_calls = min(policy.budgets.max_tool_calls, self.settings.agent_max_tool_calls)
+        max_turns = (
+            self.settings.agent_max_turns
+            if policy.budgets.max_turns is None
+            else min(policy.budgets.max_turns, self.settings.agent_max_turns)
+        )
+        max_tool_calls = (
+            self.settings.agent_max_tool_calls
+            if policy.budgets.max_tool_calls is None
+            else min(policy.budgets.max_tool_calls, self.settings.agent_max_tool_calls)
+        )
         max_reflections = min(policy.budgets.max_reflections, self.settings.agent_max_reflections)
         max_replans = min(policy.budgets.max_replans, self.settings.agent_max_replans)
         observations: list[dict[str, Any]] = list(
@@ -1538,6 +1547,12 @@ class AgentLoop:
                 unattended = not bool(raw_profile.get("interactive", True))
                 raw_bundle = raw_profile.get("permission_bundle")
                 bundle = PermissionBundle.model_validate(raw_bundle) if raw_bundle else None
+                raw_permission_policies = raw_profile.get("permission_policy_set")
+                permission_policies = (
+                    PermissionPolicySet.model_validate(raw_permission_policies)
+                    if raw_permission_policies
+                    else None
+                )
                 step = (
                     active_node
                     if canonical_plan is not None
@@ -1592,6 +1607,7 @@ class AgentLoop:
                     tool_input=decision.tool_input,
                     declared_permissions=tool.spec.permissions,
                     execution_mode=policy.execution_mode,
+                    policies=permission_policies,
                     grants=grants,
                     provider_id=tool.spec.provider_id,
                     schema_digest=schema_digest,

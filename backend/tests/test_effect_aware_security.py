@@ -2,13 +2,11 @@ import io
 import os
 import tarfile
 import zipfile
-from datetime import timedelta
 from types import SimpleNamespace
 
 import pytest
 
-from app.core.config import Settings
-from app.db.models import ApprovalGrantRecord, utc_now
+from app.db.models import ApprovalGrantRecord
 from app.permissions.credentials import CredentialBroker
 from app.permissions.effects import (
     ANALYZER_DIGEST,
@@ -26,12 +24,12 @@ from app.schemas.agent import ExecutionMode
 from app.schemas.permissions import (
     ActionEffectPlan,
     EffectItem,
-    PermissionBundle,
-    PermissionConditions,
-    PermissionDecisionKind,
-    PermissionRequest,
-    PermissionSubject,
     ExtensionDescriptor,
+    PermissionBundle,
+    PermissionDecisionKind,
+    PermissionPolicySet,
+    PermissionRule,
+    PermissionSubject,
 )
 from app.tools.base import ToolExecutionError, ToolSpec
 from app.tools.bash import BashExecuteTool
@@ -202,6 +200,41 @@ def test_unified_authorization_uses_task_lease_across_runs_and_data_flow_rules()
     assert allowed.grant_id == grant.id
     assert denied.decision.decision == PermissionDecisionKind.deny
     assert denied.decision.explanation.reason_code == "sensitive_data_egress_denied"
+
+
+def test_unified_authorization_does_not_let_auto_or_once_override_managed_deny():
+    plan = bash_plan("touch report.txt")
+    policies = PermissionPolicySet(
+        version="managed-1",
+        rules=[PermissionRule(
+            id="managed.workspace-write-deny",
+            source="organization",
+            tier="managed",
+            decision="deny",
+            actions=["workspace_write"],
+            resources=["task://*/workspace/**"],
+            reason_code="managed_workspace_write_denied",
+        )],
+    )
+
+    result = PermissionEngine().authorize_invocation(
+        subject=PermissionSubject(
+            agent_id="tool-runtime-1",
+            task_id="task-1",
+            run_id="run-1",
+        ),
+        effect_plan=plan,
+        effect_plan_hash="sha256:plan",
+        tool_input={"command": "touch report.txt"},
+        declared_permissions=BashExecuteTool.spec.permissions,
+        execution_mode=ExecutionMode.auto_approval,
+        policies=policies,
+        once_approved=True,
+        tool_identity="bash",
+    )
+
+    assert result.decision.decision == PermissionDecisionKind.deny
+    assert result.decision.explanation.reason_code == "managed_workspace_write_denied"
 
 
 def test_grant_proposals_are_narrow_and_include_run_and_task_scopes():

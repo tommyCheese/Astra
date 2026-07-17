@@ -14,8 +14,8 @@ from app.db.models import (
     ApprovalGrantRecord,
     CredentialGrantRecord,
     DataFlowStateRecord,
-    RunRecord,
     RunEventRecord,
+    RunRecord,
     ToolCatalogSnapshotRecord,
     WorkspaceChangeRecord,
     WorkspaceCheckpointRecord,
@@ -83,6 +83,7 @@ async def permission_center(
                     [
                         "approval.requested",
                         "approval.decided",
+                        "permission.decided",
                         "tool_call.effect_blocked_by_mode",
                     ]
                 ),

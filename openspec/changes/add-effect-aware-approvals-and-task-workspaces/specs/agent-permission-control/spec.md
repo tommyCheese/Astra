@@ -11,6 +11,11 @@ The system SHALL normalize controlled actions into PermissionRequests containing
 - **WHEN** the system allows, asks, or denies a request
 - **THEN** it records the matched policy sources, reason code, enforced scope, subject, resource, and decision time
 
+#### Scenario: Tool invocation uses the unified authorization entry
+- **WHEN** a resolved tool invocation has a frozen ActionEffectPlan
+- **THEN** ToolSpec attenuation, protected-resource policy, execution mode, Run or Task Grants, unattended Permission Bundles, and data-flow egress constraints are evaluated through one Permission Engine entry that returns the only actionable `allow`, `ask`, or `deny` result
+- **AND** the Agent loop, tool adapter, and approval UI do not independently reinterpret or override that result
+
 ### Requirement: Higher-trust deny and ask policies cannot be overridden
 The system MUST evaluate policy tiers from platform and managed policy through user, Task, Run, and one-time grants, MUST apply deny before ask before allow, and MUST prevent lower-trust sources from widening higher-trust policy.
 

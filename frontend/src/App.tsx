@@ -2089,13 +2089,22 @@ function ProcessTimelineRow({ item, run, anchor = false }: { item: ProcessStream
   const call = item.kind === 'tool' && item.toolCallId ? run.tool_calls.find((candidate) => candidate.id === item.toolCallId) : undefined;
   const outputs = call ? visibleArtifacts(run.artifacts).filter((artifact) => artifact.tool_call_id === call.id) : [];
   const statusLabel = item.status === 'running' ? t('进行中') : item.status === 'failed' ? t('失败') : item.status === 'cancelled' ? t('已终止') : t('已完成');
-  const callDetail = call ? `${call.status}${toolCallDetail(call.output)}` : undefined;
+  const callDetail = call ? `${toolCallStatusLabel(call.status, t)}${toolCallDetail(call.output)}` : undefined;
   const itemDetail = call && item.detail === call.status ? undefined : item.detail;
   const handoff = item.id.startsWith('phase-processing_result-');
   return <div className={`process-step process-${item.kind} status-${item.status} ${anchor ? 'process-group-anchor' : ''} ${handoff ? 'process-handoff' : ''}`}>
     <span className={`process-dot ${item.kind === 'tool' ? 'tool' : ''}`}><Icon name={item.kind === 'tool' ? 'tools' : item.kind === 'verification' ? 'check' : 'brain'} /></span>
     <div><strong>{t(item.title)}</strong>{itemDetail && <p>{itemDetail}</p>}<small>{callDetail ?? statusLabel}</small>{outputs.length > 0 && <a className="process-output-link" href={`#${artifactDomId(outputs[0].id)}`}>{t('{count} 个输出 · 查看输出').replace('{count}', String(outputs.length))}</a>}</div>
   </div>;
+}
+
+function toolCallStatusLabel(status: string, t: (value: string) => string) {
+  if (status === 'running') return t('进行中');
+  if (status === 'failed') return t('失败');
+  if (status === 'rejected') return t('已拒绝');
+  if (status === 'cancelled') return t('已终止');
+  if (status === 'awaiting_approval' || status === 'approved') return t('等待批准');
+  return t('已完成');
 }
 
 function FinalAnswer({ run, fallback }: { run: RunView; fallback: string }) {

@@ -218,6 +218,7 @@ describe('App', () => {
     expect(screen.getByText('发现一条证据')).toBeInTheDocument();
     expect(screen.getByText('发现一条证据').tagName).toBe('STRONG');
     expect(screen.getByText(/92%/)).toBeInTheDocument();
+    expect(screen.queryByText('succeeded')).not.toBeInTheDocument();
     expect(screen.getByRole('link', { name: /Example/ })).toHaveAttribute('href', 'https://example.com/docs');
     expect(screen.getByRole('link', { name: '关联来源' })).toHaveAttribute('href', 'https://example.com');
     expect(screen.queryByText('审计详情')).not.toBeInTheDocument();
@@ -1191,17 +1192,17 @@ describe('App', () => {
     await userEvent.type(screen.getByRole('textbox'), '运行测试');
     await userEvent.click(screen.getByRole('button', { name: '发送' }));
 
-    const approvalCard = await screen.findByRole('group', { name: '工具执行等待批准' });
+    const approvalCard = await screen.findByRole('group', { name: '需要你的确认' });
     const composerDock = approvalCard.closest('.composer-dock');
     expect(composerDock).not.toBeNull();
     expect(composerDock?.querySelector('.chat-composer')).toBeInTheDocument();
     expect(approvalCard.nextElementSibling).toHaveClass('chat-composer');
     expect(screen.getByText('pytest tests/test_api.py -q')).toBeInTheDocument();
     expect(screen.getByRole('textbox')).toBeDisabled();
-    await userEvent.click(screen.getByRole('button', { name: '允许类似命令' }));
+    await userEvent.click(screen.getByRole('button', { name: '当前运行内允许' }));
 
-    expect(decideToolApproval).toHaveBeenCalledWith('run-1', 'approval-1', 'allow_similar', 'continue-1', expect.any(Object));
-    await waitFor(() => expect(screen.queryByRole('group', { name: '工具执行等待批准' })).not.toBeInTheDocument());
+    expect(decideToolApproval).toHaveBeenCalledWith('run-1', 'approval-1', 'allow_similar', 'continue-1', undefined);
+    await waitFor(() => expect(screen.queryByRole('group', { name: '需要你的确认' })).not.toBeInTheDocument());
   });
 
   it('omits similar-command approval when the backend does not offer it', async () => {
@@ -1225,9 +1226,9 @@ describe('App', () => {
     await userEvent.type(screen.getByRole('textbox'), '需要搜索');
     await userEvent.click(screen.getByRole('button', { name: '发送' }));
 
-    expect(await screen.findByRole('button', { name: '仅本次' })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: '允许这次' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '拒绝' })).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: '允许类似命令' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '当前运行内允许' })).not.toBeInTheDocument();
   });
 
   it('uses translated execution mode names in the English interface', async () => {

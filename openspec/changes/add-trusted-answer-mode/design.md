@@ -32,7 +32,7 @@ Astra 当前只有一条生产执行路径：`POST /api/runs` 编译 `RequestedR
 
 ### 2. 快速回答使用固定轻量策略，可信模式使用用户策略
 
-`standard` 固定解析为 `fast + direct + reflection disabled + failure_only + max_tool_calls=5 + basic verification`。执行审批模式仍由输入区现有控制独立选择。`trusted` 使用数据库保存的推理强度、工具预算、规划、反思和触发方式，并强制 `strict verification`。
+`standard` 固定解析为 `fast + adaptive + reflection disabled + failure_only + basic verification`，但不设置 Run 级 `max_tool_calls` 与 `max_turns`，只保留部署级硬上限。执行审批模式仍由输入区现有控制独立选择。`trusted` 使用数据库保存的推理强度、工具预算、规划、反思和触发方式，并强制 `strict verification`。
 
 默认快速策略由后端决定，前端只发送模式和执行审批，防止客户端伪造一个看似快速但实际较重的组合。可信策略仍通过现有偏好 API 编辑并持久化。
 

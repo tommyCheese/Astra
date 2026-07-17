@@ -12,15 +12,22 @@ from app.runner.agent_loop import (
     AgentLoop,
     ToolRouter,
     VerificationEngine,
+    _quick_workspace_change_completes_goal,
     normalize_final_answer_artifact_references,
 )
 from app.runner.model_client import MockModelClient, ModelOutputError
-from app.runner.reasoning import PolicyCompiler, build_default_contract, build_plan_graph
+from app.runner.reasoning import (
+    PolicyCompiler,
+    RunProfileResolver,
+    build_default_contract,
+    build_plan_graph,
+)
 from app.schemas.agent import (
     AcceptedFact,
     AgentDecision,
     AgentReflection,
     AgentState,
+    AnswerMode,
     FinalAnswer,
     PlanningStrategy,
     ReflectionPatch,
@@ -41,6 +48,20 @@ def artifact_stub(
         id=artifact_id,
         security_status=security_status,
         storage_key=storage_key,
+    )
+
+
+def test_quick_file_completion_requires_the_requested_file_and_skips_visual_workflows():
+    change = [{"kind": "created", "path": "test2.csv"}]
+
+    assert _quick_workspace_change_completes_goal(
+        "把相同数据保存到 test2.csv", change
+    )
+    assert not _quick_workspace_change_completes_goal(
+        "把 test2.csv 渲染成图表", change
+    )
+    assert not _quick_workspace_change_completes_goal(
+        "创建另一个数据文件", change
     )
 
 
@@ -466,6 +487,60 @@ async def test_fast_policy_limits_tool_calls(session):
 
     assert len(loaded.tool_calls) == 5
     assert client.decide_calls == 6
+    assert result["status"] == "blocked"
+
+
+async def test_standard_mode_uses_deployment_turn_limit(session):
+    settings = Settings(model_provider="mock", agent_max_turns=10)
+    profile = RunProfileResolver().resolve(
+        AnswerMode.standard,
+        RequestedReasoningPolicy(execution_mode="auto_approval"),
+    )
+    repo = RunRepository(session)
+    run = await repo.create_task_run(
+        "持续处理",
+        settings.model_policy,
+        reasoning_policy=profile.reasoning_policy.model_dump(mode="json"),
+        answer_mode=profile.answer_mode.value,
+        execution_profile=profile.model_dump(mode="json"),
+    )
+    client = ContinueDecisionClient()
+
+    await AgentLoop(settings, model_client=client, tool_registry=fake_web_registry()).run(
+        repo, run.id, run.task.description
+    )
+
+    assert client.decide_calls == 10
+
+
+async def test_standard_mode_uses_deployment_tool_limit(session):
+    settings = Settings(
+        model_provider="mock",
+        web_search_provider="mock",
+        agent_max_turns=20,
+        agent_max_tool_calls=7,
+    )
+    profile = RunProfileResolver().resolve(
+        AnswerMode.standard,
+        RequestedReasoningPolicy(execution_mode="auto_approval"),
+    )
+    repo = RunRepository(session)
+    run = await repo.create_task_run(
+        "重复搜索",
+        settings.model_policy,
+        reasoning_policy=profile.reasoning_policy.model_dump(mode="json"),
+        answer_mode=profile.answer_mode.value,
+        execution_profile=profile.model_dump(mode="json"),
+    )
+    client = RepeatedToolClient()
+
+    result = await AgentLoop(
+        settings, model_client=client, tool_registry=fake_web_registry()
+    ).run(repo, run.id, run.task.description)
+    loaded = await repo.require_run(run.id)
+
+    assert len(loaded.tool_calls) == 7
+    assert client.decide_calls == 8
     assert result["status"] == "blocked"
 
 
