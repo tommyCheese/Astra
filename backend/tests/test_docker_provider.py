@@ -89,6 +89,37 @@ async def test_docker_provider_mounts_managed_workspace_with_requested_access(tm
     assert mount.endswith(",readonly")
 
 
+async def test_docker_provider_overlays_protected_workspace_paths_read_only(tmp_path):
+    provider = RecordingDockerProvider()
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    for relative in (".astra", ".git", ".codex"):
+        (workspace / relative).mkdir()
+
+    await provider.create(
+        SandboxRequest(
+            "image",
+            ["render"],
+            tmp_path,
+            tmp_path / "out",
+            workspace_dir=workspace,
+            workspace_mode="read_write",
+        )
+    )
+
+    create = next(call for call in provider.calls if call[0] == "create")
+    mounts = [
+        create[index + 1]
+        for index, value in enumerate(create)
+        if value == "--mount"
+    ]
+    for relative in (".astra", ".git", ".codex"):
+        assert any(
+            f"dst=/workspace/{relative}" in mount and mount.endswith(",readonly")
+            for mount in mounts
+        )
+
+
 async def test_docker_provider_sanitizes_startup_hooks_and_language_autoloading():
     provider = RecordingDockerProvider()
     await provider.execute(

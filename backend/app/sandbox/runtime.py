@@ -65,6 +65,7 @@ class SandboxRequest:
     metadata: dict[str, str] = field(default_factory=dict)
     workspace_dir: Path | None = None
     workspace_mode: str = "none"
+    protected_workspace_paths: tuple[str, ...] = (".astra", ".git", ".codex")
 
 
 @dataclass

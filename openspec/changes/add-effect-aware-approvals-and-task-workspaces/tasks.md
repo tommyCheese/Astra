@@ -84,3 +84,15 @@
 - [x] 9.9 Build and browser-check the redesigned permission center at desktop and narrow viewport sizes
 - [x] 9.10 Verify approval resume preserves the tool-call budget and a successful single-file Bash task executes exactly once
 - [x] 9.11 Test the unified invocation authorization entry across safe, ask, deny, auto-approval, Task lease, network, and sensitive-data cases
+
+## 10. Security remediation
+
+- [ ] 10.1 Make Bash effect analysis fail closed for path-qualified executables, process substitution, ambiguous options, and multi-target mutations
+- [ ] 10.2 Protect control-plane Workspace paths in both permission matching and Sandbox mount enforcement
+- [ ] 10.3 Consume every lease used by a multi-effect invocation atomically
+- [ ] 10.4 Canonicalize sensitive data labels and enforce both accumulated and invocation-local labels during egress decisions
+- [ ] 10.5 Require authenticated Permission Bundles and enforce their runtime, data-label, credential, network, and output constraints
+- [ ] 10.6 Route credential issuance and delegation authorization through explicit unified Permission Engine decisions
+- [ ] 10.7 Reject remote API clients by default for the local single-user deployment model
+- [ ] 10.8 Add regression coverage for the discovered analyzer, protected-resource, lease, data-flow, Bundle, non-tool authorization, and API-boundary failures
+- [ ] 10.9 Run backend, frontend, OpenSpec, and focused security validation suites

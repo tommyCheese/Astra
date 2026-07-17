@@ -154,6 +154,18 @@ class DockerSandboxProvider(SandboxProvider):
             if request.workspace_mode == "read_only":
                 mount += ",readonly"
             create_args.extend(["--mount", mount])
+            if request.workspace_mode == "read_write":
+                for relative in request.protected_workspace_paths:
+                    protected = (workspace_dir / relative).resolve(strict=True)
+                    if not protected.is_relative_to(workspace_dir):
+                        raise SandboxError(
+                            "sandbox_policy_violation",
+                            "Protected Workspace path escaped its root",
+                        )
+                    create_args.extend([
+                        "--mount",
+                        f"type=bind,src={protected},dst=/workspace/{relative},readonly",
+                    ])
         else:
             create_args.extend(["--tmpfs", "/workspace:rw,nosuid,nodev,mode=1777"])
         create_args.extend(

@@ -29,6 +29,7 @@ class ManifestEntry:
 
 class WorkspaceRuntimeService:
     _write_locks: dict[str, asyncio.Lock] = {}
+    PROTECTED_PATHS = (".astra", ".git", ".codex")
 
     def __init__(
         self,
@@ -59,6 +60,10 @@ class WorkspaceRuntimeService:
         path = self._resolve_storage_key(workspace.storage_key)
         path.mkdir(parents=True, exist_ok=True, mode=0o777)
         path.chmod(0o777)
+        for relative in self.PROTECTED_PATHS:
+            protected = path / relative
+            if not protected.exists():
+                protected.mkdir(mode=0o755)
         return path
 
     def scan(self, workspace_dir: Path) -> dict[str, ManifestEntry]:

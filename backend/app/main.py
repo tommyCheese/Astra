@@ -1,6 +1,7 @@
 import logging
 import time
 from contextlib import asynccontextmanager
+from ipaddress import ip_address
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
@@ -68,6 +69,32 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(runtime_router)
     app.include_router(tools_router)
     app.include_router(usage_router)
+
+    @app.middleware("http")
+    async def local_api_boundary(request: Request, call_next):
+        if request.url.path.startswith("/api") and not settings.api_allow_remote:
+            client_host = request.client.host if request.client else ""
+            try:
+                address = ip_address(client_host)
+                mapped = getattr(address, "ipv4_mapped", None)
+                is_loopback = address.is_loopback or (
+                    mapped is not None and mapped.is_loopback
+                )
+            except ValueError:
+                is_loopback = client_host in {"localhost", "testclient"}
+            if not is_loopback:
+                payload = ErrorEnvelope.model_validate({
+                    "error": {
+                        "type": "policy.remote_api_denied",
+                        "code": "REMOTE_API_DENIED",
+                        "message": "Astra API 默认仅允许本机访问。",
+                    }
+                })
+                return JSONResponse(
+                    status_code=403,
+                    content=payload.model_dump(mode="json"),
+                )
+        return await call_next(request)
 
     @app.middleware("http")
     async def request_log(request: Request, call_next):

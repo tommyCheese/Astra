@@ -32,7 +32,18 @@ PROTECTED_RESOURCE_PATTERNS = (
     "astra://sandbox-policy/**",
     "host://docker.sock",
     "host://system/**",
+    "task://*/workspace/.astra",
     "task://*/workspace/.astra/**",
+    "task://*/workspace/.git",
+    "task://*/workspace/.git/**",
+    "task://*/workspace/.codex",
+    "task://*/workspace/.codex/**",
+    "task://*/workspace/**/.astra",
+    "task://*/workspace/**/.astra/**",
+    "task://*/workspace/**/.git",
+    "task://*/workspace/**/.git/**",
+    "task://*/workspace/**/.codex",
+    "task://*/workspace/**/.codex/**",
 )
 
 TIER_ORDER = {
@@ -51,6 +62,17 @@ DECISION_ORDER = {
     PermissionDecisionKind.deny: 2,
 }
 
+SENSITIVE_DATA_LABELS = {
+    "sensitive",
+    "confidential",
+    "secret",
+    "credential",
+    "personal",
+    "financial",
+    "private",
+    "source_code",
+}
+
 
 @dataclass(frozen=True)
 class InvocationAuthorizationResult:
@@ -59,7 +81,12 @@ class InvocationAuthorizationResult:
     decision: PermissionDecision
     requests: tuple[PermissionRequest, ...]
     decisions: tuple[PermissionDecision, ...]
-    grant_id: str | None = None
+    grant_ids: tuple[str, ...] = ()
+
+    @property
+    def grant_id(self) -> str | None:
+        """Backward-compatible single-lease view for audit consumers."""
+        return self.grant_ids[0] if len(self.grant_ids) == 1 else None
 
     @property
     def blocked_by_mode(self) -> bool:
@@ -112,6 +139,22 @@ class PermissionEngine:
         self.protected_resource_patterns = tuple(protected_resource_patterns)
         self.lease_validator = LeaseValidator()
 
+    def authorize_request(
+        self,
+        request: PermissionRequest,
+        policies: PermissionPolicySet | None = None,
+        grants: Iterable[ApprovalGrantRecord] = (),
+        *,
+        now: datetime | None = None,
+    ) -> PermissionDecision:
+        """Authorize a non-tool controlled action through the same policy core."""
+        return self.evaluate(
+            request,
+            policies or PermissionPolicySet(version="runtime", rules=[]),
+            grants,
+            now=now,
+        )
+
     def authorize_invocation(
         self,
         *,
@@ -128,9 +171,11 @@ class PermissionEngine:
         once_approved: bool = False,
         data_flow: Any | None = None,
         permission_bundle: PermissionBundle | None = None,
+        permission_bundle_signing_secret: str = "",
         unattended: bool = False,
         tool_identity: str = "",
         tool_call_count: int = 0,
+        run_started_at: datetime | None = None,
         now: datetime | None = None,
     ) -> InvocationAuthorizationResult:
         """Authorize a tool invocation through one PermissionRequest pipeline.
@@ -179,12 +224,15 @@ class PermissionEngine:
                 requests,
             )
 
-        bundle_allowed, bundle_reason = PermissionBundleEvaluator().validate(
+        bundle_allowed, bundle_reason = PermissionBundleEvaluator(
+            permission_bundle_signing_secret
+        ).validate(
             permission_bundle,
             effect_plan,
             tool_identity=tool_identity,
             unattended=unattended,
             tool_call_count=tool_call_count,
+            run_started_at=run_started_at,
             now=now,
         )
         if not bundle_allowed:
@@ -248,11 +296,10 @@ class PermissionEngine:
             decision=aggregate,
             requests=requests,
             decisions=decisions,
-            grant_id=(
-                next(iter(grant_ids))
+            grant_ids=(
+                tuple(sorted(grant_ids))
                 if aggregate.decision == PermissionDecisionKind.allow
-                and len(grant_ids) == 1
-                else None
+                else ()
             ),
         )
 
@@ -394,12 +441,13 @@ class PermissionEngine:
         ]
         if not external:
             return []
-        labels = set(getattr(data_flow, "data_labels", []) or [])
+        accumulated_labels = set(getattr(data_flow, "data_labels", []) or [])
         sources = getattr(data_flow, "trust_sources", []) or []
         allowed = getattr(data_flow, "allowed_destinations", []) or []
         prohibited = getattr(data_flow, "prohibited_destinations", []) or []
         rules: list[PermissionRule] = []
         for index, request in enumerate(external):
+            labels = accumulated_labels | set(request.conditions.data_labels)
             destination = request.conditions.network_destination or request.resource
             if any(fnmatchcase(destination, pattern) for pattern in prohibited):
                 rules.append(PermissionRule(
@@ -415,9 +463,7 @@ class PermissionEngine:
             destination_allowed = any(
                 fnmatchcase(destination, pattern) for pattern in allowed
             )
-            sensitive = bool(labels & {
-                "secret", "credential", "personal", "financial", "private", "source_code"
-            })
+            sensitive = bool(labels & SENSITIVE_DATA_LABELS)
             if sensitive and not destination_allowed:
                 rules.append(PermissionRule(
                     id=f"data-flow.sensitive.{index}",

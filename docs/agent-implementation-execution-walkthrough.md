@@ -125,7 +125,7 @@ Observation 不是工具输出的别名。ToolCall.output 保留调用结果，O
 
 外部行动在 AgentTurn 上依次留下 `prepared → executing → result_recorded → committed` checkpoint，并保存活动节点和幂等键。进程中断后，已有 `result_recorded` 的调用会直接重放结果而不重复执行；处于 `executing` 的只读行动可按同一幂等键安全重试，结果未知的非幂等行动则进入 `waiting_user`，等待用户确认。
 
-ToolExecutionError 会走另一条闭环。loop 将相同工具与输入序列化成 action signature，同时根据工具、输入、错误类别和意图生成 failure fingerprint，写入失败 Observation，并按策略触发 Reflection。相同失败策略或同一工具达到 `agent_per_tool_retry_limit` 后，Run 以 blocked 意图退出，避免模型无限重复同一动作。
+ToolExecutionError 会走另一条闭环。loop 将相同工具与输入序列化成 action signature，同时根据工具、输入、错误类别和意图生成 failure fingerprint，写入失败 Observation，并按策略触发 Reflection。失败次数会保留在运行上下文和审计事件中，供模型调整策略；重试只受 Run 的最大轮次和最大工具调用次数约束。
 
 ## Reflection 通过 PlanPatch 产生不可变的新计划版本
 

@@ -3,7 +3,10 @@ from datetime import timedelta
 from app.db.models import ApprovalGrantRecord, utc_now
 from app.permissions.engine import PermissionEngine
 from app.repositories.runs import RunRepository
+from app.schemas.agent import ExecutionMode
 from app.schemas.permissions import (
+    ActionEffectPlan,
+    EffectItem,
     PermissionConditions,
     PermissionDecisionKind,
     PermissionPolicySet,
@@ -118,6 +121,25 @@ def test_protected_resources_cannot_be_modified_by_lower_trust_allow():
     assert decision.explanation.reason_code == "protected_resource"
 
 
+def test_workspace_control_paths_are_protected_at_root_and_descendants():
+    engine = PermissionEngine()
+    policies = PermissionPolicySet(
+        version="1",
+        rules=[rule("run-allow", "run", "allow", resources=["*"])],
+    )
+    for resource in (
+        "task://task-1/workspace/.astra",
+        "task://task-1/workspace/.astra/policy.json",
+        "task://task-1/workspace/.git/config",
+        "task://task-1/workspace/nested/.codex/settings.json",
+    ):
+        decision = engine.evaluate(
+            permission_request(action="workspace_write", resource=resource), policies
+        )
+        assert decision.decision == PermissionDecisionKind.deny
+        assert decision.explanation.reason_code == "protected_resource"
+
+
 def test_scoped_lease_requires_matching_subject_effect_resource_and_invocation():
     request = permission_request()
     grant = ApprovalGrantRecord(
@@ -160,6 +182,80 @@ def test_scoped_lease_requires_matching_subject_effect_resource_and_invocation()
     assert allowed.explanation.reason_code == "permission_lease"
     assert asked.decision == PermissionDecisionKind.ask
     assert "grant_invocation_mismatch" in asked.explanation.trace[0]
+
+
+def test_multi_effect_authorization_returns_every_consumed_lease():
+    plan = ActionEffectPlan(
+        tool_name="compound",
+        tool_version="1",
+        summary="write and emit",
+        effects=[
+            EffectItem(
+                kind="workspace_write",
+                resource="task://task-1/workspace/report.txt",
+                persistent=True,
+            ),
+            EffectItem(
+                kind="artifact_write",
+                resource="artifact://task/task-1/report",
+                persistent=True,
+            ),
+        ],
+        required_permissions=["workspace_write", "artifact_write"],
+        analyzer_version="1",
+    )
+    effect_kinds = ["workspace_write", "artifact_write"]
+    grants = [
+        ApprovalGrantRecord(
+            id="grant-workspace",
+            run_id="run-1",
+            task_id="task-1",
+            scope="run",
+            subject={"run_id": "run-1", "task_id": "task-1"},
+            tool_name="compound",
+            tool_version="1",
+            matcher={},
+            effect_kinds=effect_kinds,
+            resource_matcher={"exact": "task://task-1/workspace/report.txt"},
+            invocation_constraints={"tool_name": "compound", "tool_version": "1"},
+            source_approval_id="approval-1",
+            status="active",
+            use_count=0,
+            max_uses=1,
+        ),
+        ApprovalGrantRecord(
+            id="grant-artifact",
+            run_id="run-1",
+            task_id="task-1",
+            scope="run",
+            subject={"run_id": "run-1", "task_id": "task-1"},
+            tool_name="compound",
+            tool_version="1",
+            matcher={},
+            effect_kinds=effect_kinds,
+            resource_matcher={"exact": "artifact://task/task-1/report"},
+            invocation_constraints={"tool_name": "compound", "tool_version": "1"},
+            source_approval_id="approval-1",
+            status="active",
+            use_count=0,
+            max_uses=1,
+        ),
+    ]
+
+    result = PermissionEngine().authorize_invocation(
+        subject=permission_request().subject,
+        effect_plan=plan,
+        effect_plan_hash="hash",
+        tool_input={},
+        declared_permissions=plan.required_permissions,
+        execution_mode=ExecutionMode.request_approval,
+        grants=grants,
+        tool_identity="compound",
+    )
+
+    assert result.decision.decision == PermissionDecisionKind.allow
+    assert result.grant_ids == ("grant-artifact", "grant-workspace")
+    assert result.grant_id is None
 
 
 async def test_permission_lease_consumption_revocation_and_integrity_invalidation(session):

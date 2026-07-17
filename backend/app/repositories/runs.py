@@ -716,36 +716,52 @@ class RunRepository:
         ]
 
     async def consume_approval_grant(self, grant_id: str) -> ApprovalGrantRecord:
-        grant = await self.session.get(ApprovalGrantRecord, grant_id)
-        if grant is None:
-            raise ValueError(f"Approval Grant not found: {grant_id}")
-        now = utc_now()
-        if grant.status != "active" or grant.revoked_at is not None:
-            raise ValueError("Approval Grant is not active")
-        if grant.expires_at is not None:
-            expires_at = grant.expires_at
-            if expires_at.tzinfo is None:
-                expires_at = expires_at.replace(tzinfo=now.tzinfo)
-            if expires_at <= now:
-                raise ValueError("Approval Grant has expired")
-        if grant.max_uses is not None and grant.use_count >= grant.max_uses:
-            raise ValueError("Approval Grant usage limit is exhausted")
-        consumed = await self.session.execute(
-            update(ApprovalGrantRecord)
-            .where(
-                ApprovalGrantRecord.id == grant_id,
-                ApprovalGrantRecord.status == "active",
-                ApprovalGrantRecord.revoked_at.is_(None),
-                ApprovalGrantRecord.use_count == grant.use_count,
-            )
-            .values(use_count=grant.use_count + 1, last_used_at=now)
+        return (await self.consume_approval_grants([grant_id]))[0]
+
+    async def consume_approval_grants(
+        self, grant_ids: list[str] | tuple[str, ...]
+    ) -> list[ApprovalGrantRecord]:
+        ordered_ids = sorted(set(grant_ids))
+        if not ordered_ids:
+            return []
+        result = await self.session.execute(
+            select(ApprovalGrantRecord).where(ApprovalGrantRecord.id.in_(ordered_ids))
         )
-        if consumed.rowcount != 1:
-            await self.session.rollback()
-            raise ValueError("Approval Grant changed while being consumed")
-        await self.session.refresh(grant)
+        by_id = {grant.id: grant for grant in result.scalars().all()}
+        missing = [grant_id for grant_id in ordered_ids if grant_id not in by_id]
+        if missing:
+            raise ValueError(f"Approval Grant not found: {missing[0]}")
+        now = utc_now()
+        grants = [by_id[grant_id] for grant_id in ordered_ids]
+        for grant in grants:
+            if grant.status != "active" or grant.revoked_at is not None:
+                raise ValueError("Approval Grant is not active")
+            if grant.expires_at is not None:
+                expires_at = grant.expires_at
+                if expires_at.tzinfo is None:
+                    expires_at = expires_at.replace(tzinfo=now.tzinfo)
+                if expires_at <= now:
+                    raise ValueError("Approval Grant has expired")
+            if grant.max_uses is not None and grant.use_count >= grant.max_uses:
+                raise ValueError("Approval Grant usage limit is exhausted")
+        for grant in grants:
+            consumed = await self.session.execute(
+                update(ApprovalGrantRecord)
+                .where(
+                    ApprovalGrantRecord.id == grant.id,
+                    ApprovalGrantRecord.status == "active",
+                    ApprovalGrantRecord.revoked_at.is_(None),
+                    ApprovalGrantRecord.use_count == grant.use_count,
+                )
+                .values(use_count=grant.use_count + 1, last_used_at=now)
+            )
+            if consumed.rowcount != 1:
+                await self.session.rollback()
+                raise ValueError("Approval Grant changed while being consumed")
         await self.session.commit()
-        return grant
+        for grant in grants:
+            await self.session.refresh(grant)
+        return grants
 
     async def revoke_approval_grant(self, grant_id: str) -> ApprovalGrantRecord:
         grant = await self.session.get(ApprovalGrantRecord, grant_id)

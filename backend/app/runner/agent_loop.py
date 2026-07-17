@@ -1491,13 +1491,6 @@ class AgentLoop:
                     sort_keys=True,
                     ensure_ascii=False,
                 )
-                if (
-                    failed_action_counts.get(action_signature, 0)
-                    >= self.settings.agent_per_tool_retry_limit
-                ):
-                    raise ToolExecutionError(
-                        "retry_exhausted", "Equivalent failed strategy exhausted its retry budget"
-                    )
                 tool = self.router.resolve(decision.tool_name, decision.tool_input)
                 provider_identity = provider_identities.get(tool.spec.provider_id)
                 if provider_identity is None:
@@ -1614,12 +1607,16 @@ class AgentLoop:
                     once_approved=forced_action,
                     data_flow=data_flow,
                     permission_bundle=bundle,
+                    permission_bundle_signing_secret=(
+                        self.settings.permission_bundle_signing_secret
+                    ),
                     unattended=unattended,
                     tool_identity=(
                         f"{tool.spec.provider_id}:{tool.spec.name}@{tool.spec.version}:"
                         f"{tool.spec.provider_digest}"
                     ),
                     tool_call_count=tool_call_count,
+                    run_started_at=initial_run.started_at or initial_run.created_at,
                 )
                 await repo.add_event(
                     run_id,
@@ -1752,8 +1749,8 @@ class AgentLoop:
                         },
                     )
                     break
-                if authorization.grant_id is not None:
-                    await repo.consume_approval_grant(authorization.grant_id)
+                if authorization.grant_ids:
+                    await repo.consume_approval_grants(authorization.grant_ids)
                 if forced_action:
                     await repo.transition_tool_call(call.id, "running")
                     approved_call = None
@@ -1822,6 +1819,8 @@ class AgentLoop:
                     if "network_read" in observed_kinds:
                         trust_sources.append("web:public")
                         data_labels.append("untrusted")
+                    for effect in effect_plan.effects:
+                        data_labels.extend(effect.data_labels)
                     if "sensitive_data_read" in observed_kinds:
                         data_labels.append("sensitive")
                     await permission_repository.update_data_flow_state(
@@ -2032,29 +2031,9 @@ class AgentLoop:
                         {
                             "fingerprint": fingerprint,
                             "attempt_count": failed_action_counts[action_signature],
-                            "exhausted": failed_action_counts[action_signature]
-                            >= self.settings.agent_per_tool_retry_limit,
                         },
                     )
                 await repo.session.commit()
-                if (
-                    retry_counts[decision.tool_name or "unknown"]
-                    >= self.settings.agent_per_tool_retry_limit
-                ):
-                    terminal_override = "blocked"
-                    terminal_summary = f"{decision.tool_name} 已达到重试上限。"
-                    if canonical_plan is not None and active_node is not None:
-                        await plan_repository.transition_node(
-                            active_node.id,
-                            PlanNodeStatus.failed,
-                            failure={
-                                "category": exc.category,
-                                "fingerprint": fingerprint,
-                                "attempt_count": retry_counts[decision.tool_name or "unknown"],
-                            },
-                        )
-                        await scheduler.clear_active_node(run_id, active_node.id)
-                    break
 
         evidence_pack = self.adapter.build_evidence(goal, self.adapter.attempted)
         artifact = None

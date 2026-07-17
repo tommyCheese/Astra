@@ -178,6 +178,11 @@ class QuickToolClient(QuickStreamingClient):
 class QuickForbiddenToolClient(QuickStreamingClient):
     async def decide_with_answer(self, goal, context, *, on_delta=None, on_reasoning_delta=None):
         self.decide_calls += 1
+        if len(context["observations"]) >= 2:
+            return AgentDecision(
+                decision_type="finalize",
+                reasoning_summary="确认禁止工具不可用",
+            ), FinalAnswer(summary="禁止工具未被执行")
         return AgentDecision(
             decision_type="call_tool",
             reasoning_summary="尝试不存在的工具",
@@ -402,7 +407,7 @@ async def test_standard_fast_path_reuses_tool_router_without_creating_steps(sess
 
 
 async def test_standard_fast_path_keeps_tool_router_security_boundary(session):
-    settings = Settings(model_provider="mock", agent_per_tool_retry_limit=1)
+    settings = Settings(model_provider="mock")
     profile = RunProfileResolver().resolve(AnswerMode.standard, RequestedReasoningPolicy())
     repo = RunRepository(session)
     run = await repo.create_task_run(
@@ -419,10 +424,11 @@ async def test_standard_fast_path_keeps_tool_router_security_boundary(session):
     )
 
     loaded = await repo.require_run(run.id)
-    assert loaded.status == "blocked"
+    assert client.decide_calls == 3
+    assert loaded.status == "completed"
     assert loaded.tool_calls == []
     assert loaded.result["verification_report"] is None
-    assert loaded.result["summary"] == "unregistered_tool 已达到重试上限。"
+    assert loaded.result["summary"] == "禁止工具未被执行"
 
 
 async def test_engine_resumes_with_frozen_profile_when_packaged_default_changes(

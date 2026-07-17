@@ -45,7 +45,7 @@ WRITE_COMMANDS = {
 DELETE_COMMANDS = {"rm", "rmdir", "unlink"}
 NETWORK_COMMANDS = {"curl", "wget", "nc", "ncat", "ssh", "scp", "rsync"}
 SAFE_SHELL_BUILTINS = {"echo", "printf", "true", "false"}
-SHELL_COMPLEX = re.compile(r"(?:&&|\|\||[;&`]|\$\(|\$\{|\n|\r)")
+SHELL_COMPLEX = re.compile(r"(?:&&|\|\||[;&`]|\$\(|\$\{|[<>]\(|\n|\r)")
 REDIRECTION = re.compile(r"(?<!<)(?:>>?|[0-9]+>>?)\s*([^\s;&|]+)")
 
 
@@ -268,21 +268,25 @@ class BashEffectAnalyzer(ToolEffectAnalyzer):
         except ValueError:
             tokens = []
             complex_shell = True
-        executable = PurePosixPath(tokens[0]).name if tokens else ""
+        executable_token = tokens[0] if tokens else ""
+        executable = PurePosixPath(executable_token).name if tokens else ""
+        trusted_executable = bool(executable) and executable_token == executable
         for match in REDIRECTION.finditer(command):
             effects.append(_path_mutation_effect(
                 task_id, _clean_shell_path(match.group(1)), delete=False
             ))
-        if executable in DELETE_COMMANDS:
-            targets = [token for token in tokens[1:] if not token.startswith("-")] or ["**"]
+        if trusted_executable and executable in DELETE_COMMANDS:
+            targets = _simple_operands(tokens)
+            if not targets:
+                targets = ["**"]
             effects.extend(_path_mutation_effect(
                 task_id, _clean_shell_path(target), delete=True
             ) for target in targets)
             summary = "删除任务工作区文件"
-        elif executable == "find" and "-delete" in tokens:
+        elif trusted_executable and executable == "find" and "-delete" in tokens:
             effects.append(_path_mutation_effect(task_id, "**", delete=True))
             summary = "删除 find 匹配的任务工作区文件"
-        elif executable == "sed" and any(
+        elif trusted_executable and executable == "sed" and any(
             token == "-i" or token.startswith("-i") for token in tokens[1:]
         ):
             target = next(
@@ -291,18 +295,56 @@ class BashEffectAnalyzer(ToolEffectAnalyzer):
             )
             effects.append(_path_mutation_effect(task_id, target, delete=False))
             summary = "原地修改任务工作区文件"
-        elif executable in WRITE_COMMANDS:
-            target = next((token for token in reversed(tokens[1:]) if not token.startswith("-")), "**")
-            effects.append(
-                EffectItem(
-                    kind=EffectKind.workspace_write,
-                    resource=_workspace_resource(task_id, _clean_shell_path(target)),
-                    risk="moderate",
-                    persistent=True,
+        elif trusted_executable and executable in WRITE_COMMANDS:
+            operands = _simple_operands(tokens)
+            if operands is None:
+                effects.append(_unknown_process_effect(task_id))
+                summary = "执行目标范围不明确的文件修改命令"
+            elif executable == "mv" and len(operands) >= 2:
+                sources, destination = operands[:-1], operands[-1]
+                effects.extend(
+                    _path_mutation_effect(
+                        task_id, _clean_shell_path(source), delete=True
+                    )
+                    for source in sources
                 )
-            )
-            summary = "创建或修改任务工作区文件"
-        elif executable in NETWORK_COMMANDS:
+                if len(sources) > 1:
+                    destination = f"{destination.rstrip('/')}/**"
+                effects.append(
+                    _path_mutation_effect(
+                        task_id, _clean_shell_path(destination), delete=False
+                    )
+                )
+                summary = "移动任务工作区文件"
+            elif executable in {"cp", "install"} and len(operands) >= 2:
+                sources, destination = operands[:-1], operands[-1]
+                effects.extend(
+                    EffectItem(
+                        kind=EffectKind.workspace_read,
+                        resource=_workspace_resource(task_id, _clean_shell_path(source)),
+                    )
+                    for source in sources
+                )
+                if len(sources) > 1:
+                    destination = f"{destination.rstrip('/')}/**"
+                effects.append(
+                    _path_mutation_effect(
+                        task_id, _clean_shell_path(destination), delete=False
+                    )
+                )
+                summary = "复制或安装任务工作区文件"
+            elif executable in {"mkdir", "tee", "touch", "truncate"} and operands:
+                effects.extend(
+                    _path_mutation_effect(
+                        task_id, _clean_shell_path(target), delete=False
+                    )
+                    for target in operands
+                )
+                summary = "创建或修改任务工作区文件"
+            else:
+                effects.append(_unknown_process_effect(task_id))
+                summary = "执行目标范围不明确的文件修改命令"
+        elif trusted_executable and executable in NETWORK_COMMANDS:
             effects.append(
                 EffectItem(
                     kind=EffectKind.network_write,
@@ -312,7 +354,7 @@ class BashEffectAnalyzer(ToolEffectAnalyzer):
                 )
             )
             summary = "通过 Bash 访问外部网络"
-        elif executable == "git" and _safe_git_invocation(tokens):
+        elif trusted_executable and executable == "git" and _safe_git_invocation(tokens):
             effects.append(
                 EffectItem(
                     kind=EffectKind.workspace_read,
@@ -320,7 +362,12 @@ class BashEffectAnalyzer(ToolEffectAnalyzer):
                 )
             )
             summary = "读取 Git 工作区状态"
-        elif executable in READ_ONLY_COMMANDS and not complex_shell:
+        elif (
+            trusted_executable
+            and executable in READ_ONLY_COMMANDS
+            and not complex_shell
+            and _safe_read_only_invocation(executable, tokens)
+        ):
             effects.append(
                 EffectItem(
                     kind=EffectKind.workspace_read,
@@ -328,7 +375,7 @@ class BashEffectAnalyzer(ToolEffectAnalyzer):
                 )
             )
             summary = "读取任务工作区"
-        elif executable in SAFE_SHELL_BUILTINS and not complex_shell:
+        elif trusted_executable and executable in SAFE_SHELL_BUILTINS and not complex_shell:
             effects.append(
                 EffectItem(
                     kind=EffectKind.temporary_compute,
@@ -337,15 +384,7 @@ class BashEffectAnalyzer(ToolEffectAnalyzer):
             )
             summary = "执行临时 Bash 计算"
         else:
-            effects.append(
-                EffectItem(
-                    kind=EffectKind.process_execute_unknown,
-                    resource=_workspace_resource(task_id, "**"),
-                    risk="high",
-                    reversible=False,
-                    persistent=True,
-                )
-            )
+            effects.append(_unknown_process_effect(task_id))
             summary = "执行行为未知的 Bash 命令"
         effects = _deduplicate_effects(effects)
         if any(item.kind == EffectKind.workspace_delete for item in effects):
@@ -477,6 +516,49 @@ def _path_mutation_effect(task_id: str, path: str, *, delete: bool) -> EffectIte
         reversible=not delete,
         persistent=True,
     )
+
+
+def _unknown_process_effect(task_id: str) -> EffectItem:
+    return EffectItem(
+        kind=EffectKind.process_execute_unknown,
+        resource=_workspace_resource(task_id, "**"),
+        risk="high",
+        reversible=False,
+        persistent=True,
+    )
+
+
+def _simple_operands(tokens: list[str]) -> list[str] | None:
+    """Return operands only when option parsing cannot change their meaning."""
+    operands: list[str] = []
+    options_finished = False
+    for token in tokens[1:]:
+        if token == "--" and not options_finished:
+            options_finished = True
+            continue
+        if not options_finished and token.startswith("-"):
+            return None
+        operands.append(token)
+    return operands
+
+
+def _safe_read_only_invocation(executable: str, tokens: list[str]) -> bool:
+    if executable == "find":
+        unsafe = {
+            "-delete", "-exec", "-execdir", "-ok", "-okdir",
+            "-fprint", "-fprint0", "-fprintf", "-fls",
+        }
+        if any(token in unsafe for token in tokens[1:]):
+            return False
+    if executable == "sort" and any(
+        token == "-o" or token.startswith("--output=") for token in tokens[1:]
+    ):
+        return False
+    if executable == "diff" and any(
+        token.startswith("--output=") for token in tokens[1:]
+    ):
+        return False
+    return True
 
 
 def _safe_git_invocation(tokens: list[str]) -> bool:

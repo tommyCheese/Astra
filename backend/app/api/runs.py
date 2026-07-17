@@ -14,6 +14,7 @@ from app.core.config import Settings, get_settings
 from app.core.errors import ConfigurationError, ResourceError, StateError, ValidationError
 from app.db.session import SessionLocal, get_session
 from app.model_providers import API_KEY_OPTIONAL_MODEL_PROVIDERS, SUPPORTED_MODEL_PROVIDERS
+from app.permissions.governance import verify_permission_bundle
 from app.repositories.plans import PlanRepository, plan_to_view
 from app.repositories.permissions import PermissionRepository
 from app.repositories.runs import RunRepository, run_to_view
@@ -32,6 +33,7 @@ from app.schemas.agent import (
     CreateRunResponse,
     RunView,
 )
+from app.schemas.permissions import PermissionBundle
 
 router = APIRouter(prefix="/api", tags=["runs"])
 logger = logging.getLogger("astra.runs")
@@ -166,10 +168,28 @@ async def create_run(
                 "PERMISSION_BUNDLE_REQUIRED",
                 "无人值守、定时或后台运行必须提供显式权限包。",
             )
+        permission_bundle = None
+        if payload.permission_bundle is not None:
+            try:
+                permission_bundle = PermissionBundle.model_validate(
+                    payload.permission_bundle
+                )
+            except ValueError as exc:
+                raise ValidationError(
+                    "PERMISSION_BUNDLE_INVALID", "权限包格式无效。"
+                ) from exc
+            if not verify_permission_bundle(
+                permission_bundle, settings.permission_bundle_signing_secret
+            ):
+                raise ValidationError(
+                    "PERMISSION_BUNDLE_INVALID", "权限包签名无效或签名密钥未配置。"
+                )
         policy = profile.reasoning_policy
         execution_profile = profile.model_dump(mode="json")
         execution_profile["interactive"] = payload.interactive
-        execution_profile["permission_bundle"] = payload.permission_bundle
+        execution_profile["permission_bundle"] = (
+            permission_bundle.model_dump(mode="json") if permission_bundle else None
+        )
         run = await repo.create_task_run(
             goal,
             run_settings.model_policy,

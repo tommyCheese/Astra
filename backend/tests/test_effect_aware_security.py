@@ -16,7 +16,11 @@ from app.permissions.effects import (
     workspace_mount_mode,
 )
 from app.permissions.engine import PermissionEngine
-from app.permissions.governance import ExtensionTrustPolicy, PermissionBundleEvaluator
+from app.permissions.governance import (
+    ExtensionTrustPolicy,
+    PermissionBundleEvaluator,
+    permission_bundle_digest,
+)
 from app.repositories.permissions import PermissionRepository
 from app.repositories.runs import RunRepository
 from app.repositories.workspaces import WorkspaceRepository
@@ -74,6 +78,28 @@ def test_effect_matrix_classifies_safe_mutating_forbidden_and_artifact_actions()
         "temporary_compute", "artifact_write"
     }
     assert artifact.approval_required is True
+
+
+def test_bash_analysis_fails_closed_for_ambiguous_and_multi_target_commands():
+    multi_write = bash_plan("touch approved.txt unapproved.txt")
+    move = bash_plan("mv secret.txt approved.txt")
+    disguised = bash_plan("/workspace/ls")
+    substitution = bash_plan("cat <(touch /output/bypass.txt)")
+    find_exec = bash_plan("find . -exec touch changed.txt +")
+
+    assert {item.resource for item in multi_write.effects} == {
+        "task://task-1/workspace/approved.txt",
+        "task://task-1/workspace/unapproved.txt",
+    }
+    assert {item.kind.value for item in move.effects} == {
+        "workspace_delete",
+        "workspace_write",
+    }
+    for plan in (disguised, substitution, find_exec):
+        assert {item.kind.value for item in plan.effects} == {
+            "process_execute_unknown"
+        }
+        assert plan.approval_required is True
 
 
 @pytest.mark.parametrize(
@@ -202,6 +228,40 @@ def test_unified_authorization_uses_task_lease_across_runs_and_data_flow_rules()
     assert denied.decision.explanation.reason_code == "sensitive_data_egress_denied"
 
 
+def test_sensitive_label_alias_and_invocation_labels_block_external_egress():
+    plan = ActionEffectPlan(
+        tool_name="external.send",
+        tool_version="1",
+        summary="send sensitive output",
+        effects=[EffectItem(
+            kind="external_write",
+            resource="https://example.com/upload",
+            persistent=True,
+            data_labels=["sensitive"],
+        )],
+        required_permissions=["external_write"],
+        analyzer_version="1",
+    )
+    result = PermissionEngine().authorize_invocation(
+        subject=PermissionSubject(agent_id="tool", task_id="task-1", run_id="run-1"),
+        effect_plan=plan,
+        effect_plan_hash="hash",
+        tool_input={},
+        declared_permissions=plan.required_permissions,
+        execution_mode=ExecutionMode.auto_approval,
+        data_flow=SimpleNamespace(
+            data_labels=[],
+            trust_sources=[],
+            allowed_destinations=[],
+            prohibited_destinations=[],
+        ),
+        tool_identity="external.send",
+    )
+
+    assert result.decision.decision == PermissionDecisionKind.deny
+    assert result.decision.explanation.reason_code == "sensitive_data_egress_denied"
+
+
 def test_unified_authorization_does_not_let_auto_or_once_override_managed_deny():
     plan = bash_plan("touch report.txt")
     policies = PermissionPolicySet(
@@ -247,7 +307,8 @@ def test_grant_proposals_are_narrow_and_include_run_and_task_scopes():
 
 def test_unattended_permission_bundle_fails_closed_and_enforces_identity_budget():
     plan = bash_plan("touch report.txt")
-    evaluator = PermissionBundleEvaluator()
+    secret = "test-bundle-secret"
+    evaluator = PermissionBundleEvaluator(secret)
     allowed_identity = (
         f"{BashExecuteTool.spec.provider_id}:{BashExecuteTool.spec.name}@"
         f"{BashExecuteTool.spec.version}:{BashExecuteTool.spec.provider_digest}"
@@ -260,7 +321,10 @@ def test_unattended_permission_bundle_fails_closed_and_enforces_identity_budget(
         allowed_effect_kinds=[item.kind for item in plan.effects],
         allowed_tool_identities=[allowed_identity],
         max_tool_calls=1,
-        digest="sha256:bundle",
+        digest="pending",
+    )
+    bundle = bundle.model_copy(
+        update={"digest": permission_bundle_digest(bundle, secret)}
     )
     assert evaluator.validate(
         None, plan, tool_identity=allowed_identity, unattended=True
@@ -271,6 +335,10 @@ def test_unattended_permission_bundle_fails_closed_and_enforces_identity_budget(
     assert evaluator.validate(
         bundle, plan, tool_identity=allowed_identity, unattended=True, tool_call_count=1
     ) == (False, "permission_bundle_budget_exhausted")
+    tampered = bundle.model_copy(update={"allowed_resources": ["*"]})
+    assert evaluator.validate(
+        tampered, plan, tool_identity=allowed_identity, unattended=True
+    ) == (False, "permission_bundle_signature_invalid")
 
 
 async def test_credential_broker_scopes_redacts_and_revokes(session):
@@ -282,6 +350,24 @@ async def test_credential_broker_scopes_redacts_and_revokes(session):
         run_id=run.id,
     )
     broker = CredentialBroker(repository)
+    subject = PermissionSubject(
+        agent_id=identity.id,
+        identity_type="tool_runtime",
+        task_id=run.task_id,
+        run_id=run.id,
+    )
+    policies = PermissionPolicySet(
+        version="credential-test",
+        rules=[PermissionRule(
+            id="allow-records",
+            source="test",
+            tier="run",
+            decision="allow",
+            actions=["credential_use"],
+            resources=["credential://records"],
+            reason_code="test_credential_allow",
+        )],
+    )
     credential = await broker.issue(
         run_id=run.id,
         agent_identity_id=identity.id,
@@ -289,6 +375,8 @@ async def test_credential_broker_scopes_redacts_and_revokes(session):
         scopes=["read"],
         allowed_scopes=["read"],
         on_behalf_of="local-user",
+        subject=subject,
+        policies=policies,
     )
     assert broker.redact(f"token={credential.token}") == "token=[REDACTED_CREDENTIAL]"
     with pytest.raises(ValueError):
@@ -299,9 +387,11 @@ async def test_credential_broker_scopes_redacts_and_revokes(session):
             scopes=["admin"],
             allowed_scopes=["read"],
             on_behalf_of="local-user",
+            subject=subject,
+            policies=policies,
         )
     await broker.revoke(credential.grant_id)
-    assert broker.redact(credential.token) == credential.token
+    assert broker.redact(credential.token) == "[REDACTED_CREDENTIAL]"
 
 
 async def test_delegation_attenuation_and_self_approval_are_rejected(session):

@@ -4,7 +4,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Any
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class PermissionDecisionKind(str, Enum):
@@ -267,6 +267,8 @@ class DataFlowState(BaseModel):
 
 
 class PermissionBundle(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     id: str
     version: str
     allowed_actions: list[str] = Field(default_factory=list)
@@ -274,6 +276,9 @@ class PermissionBundle(BaseModel):
     allowed_effect_kinds: list[EffectKind] = Field(default_factory=list)
     allowed_tool_identities: list[str] = Field(default_factory=list)
     network_destinations: list[str] = Field(default_factory=list)
+    allowed_data_labels: list[str] = Field(default_factory=list)
+    allowed_credential_scopes: list[str] = Field(default_factory=list)
+    output_destinations: list[str] = Field(default_factory=list)
     max_tool_calls: int | None = Field(default=None, ge=1)
     max_runtime_seconds: int | None = Field(default=None, ge=1)
     expires_at: datetime | None = None

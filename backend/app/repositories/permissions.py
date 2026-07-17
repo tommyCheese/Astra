@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from datetime import datetime
+from fnmatch import fnmatchcase
 from typing import Any
 
 from sqlalchemy import select
@@ -16,6 +17,13 @@ from app.db.models import (
     TaskRecord,
     ToolCatalogSnapshotRecord,
     utc_now,
+)
+from app.permissions.engine import PermissionEngine
+from app.schemas.permissions import (
+    PermissionDecisionKind,
+    PermissionPolicySet,
+    PermissionRequest,
+    PermissionSubject,
 )
 
 
@@ -98,6 +106,7 @@ class PermissionRepository:
         child_identity_id: str,
         delegated_scope: dict[str, Any],
         expires_at: datetime | None = None,
+        policies: PermissionPolicySet | None = None,
     ) -> AgentDelegationRecord:
         parent = await self._require_identity(parent_identity_id)
         child = await self._require_identity(child_identity_id)
@@ -108,8 +117,26 @@ class PermissionRepository:
         if parent.task_id is not None and child.task_id != parent.task_id:
             raise ValueError("Delegation cannot cross Task boundaries")
         parent_scope = parent.attributes.get("permission_scope", {})
-        if parent_scope and not _scope_is_subset(delegated_scope, parent_scope):
+        if not parent_scope or not _scope_is_subset(delegated_scope, parent_scope):
             raise ValueError("Delegation cannot amplify the parent permission scope")
+        decision = PermissionEngine().authorize_request(
+            PermissionRequest(
+                subject=PermissionSubject(
+                    agent_id=parent.id,
+                    identity_type=parent.identity_type,
+                    task_id=parent.task_id,
+                    run_id=parent.run_id,
+                ),
+                action="delegation_create",
+                resource=f"identity://{child.id}",
+                context={"delegated_scope": deepcopy(delegated_scope)},
+            ),
+            policies,
+        )
+        if decision.decision != PermissionDecisionKind.allow:
+            raise PermissionError(
+                f"Delegation is not authorized: {decision.explanation.reason_code}"
+            )
         child.parent_identity_id = parent.id
         delegation = AgentDelegationRecord(
             parent_identity_id=parent.id,
@@ -254,13 +281,34 @@ class PermissionRepository:
 
 
 def _scope_is_subset(child: dict[str, Any], parent: dict[str, Any]) -> bool:
-    for key in ("actions", "resources", "effect_kinds"):
-        parent_values = set(parent.get(key, []))
-        child_values = set(child.get(key, []))
-        if parent_values and not child_values <= parent_values:
+    for key in (
+        "actions",
+        "resources",
+        "effect_kinds",
+        "tools",
+        "credential_scopes",
+        "data_labels",
+        "network_destinations",
+    ):
+        parent_values = list(parent.get(key, []))
+        child_values = list(child.get(key, []))
+        if child_values and not parent_values:
             return False
-    parent_budget = parent.get("max_uses")
-    child_budget = child.get("max_uses")
-    if parent_budget is not None and (child_budget is None or child_budget > parent_budget):
-        return False
+        if any(
+            not any(
+                parent_value == "*"
+                or child_value == parent_value
+                or fnmatchcase(child_value, parent_value)
+                for parent_value in parent_values
+            )
+            for child_value in child_values
+        ):
+            return False
+    for key in ("max_uses", "max_tool_calls", "max_runtime_seconds"):
+        parent_budget = parent.get(key)
+        child_budget = child.get(key)
+        if parent_budget is not None and (
+            child_budget is None or child_budget > parent_budget
+        ):
+            return False
     return True

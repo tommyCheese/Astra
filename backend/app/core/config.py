@@ -15,6 +15,7 @@ class Settings(BaseSettings):
     tool_chart_render_enabled: bool = True
     tool_bash_execute_enabled: bool = False
     trusted_tool_providers: str = "astra.builtin=builtin"
+    permission_bundle_signing_secret: str = ""
     web_search_provider: str = "auto"
     web_search_api_key: str = ""
     google_search_api_key: str = ""
@@ -31,13 +32,13 @@ class Settings(BaseSettings):
     agent_max_tool_calls: int = 50
     agent_max_reflections: int = 6
     agent_max_replans: int = 4
-    agent_per_tool_retry_limit: int = 2
     agent_memory_write_enabled: bool = True
     agent_use_loop: bool = True
     agent_reasoning_shadow_mode: bool = False
     agent_use_general_runtime: bool = True
     allow_network_read: bool = True
     cors_origins: str = "http://localhost:5173"
+    api_allow_remote: bool = False
     artifact_store_path: str = "./astra-artifacts"
     task_workspace_store_path: str = "./astra-workspaces"
     task_workspace_max_files: int = 10_000

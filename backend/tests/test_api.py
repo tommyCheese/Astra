@@ -67,6 +67,36 @@ async def test_unattended_run_requires_permission_bundle(app_client):
     assert response.json()["error"]["code"] == "PERMISSION_BUNDLE_REQUIRED"
 
 
+async def test_unattended_run_rejects_unsigned_permission_bundle(app_client):
+    response = await app_client.post(
+        "/api/runs",
+        json={
+            "goal": "后台整理",
+            "interactive": False,
+            "permission_bundle": {
+                "id": "forged",
+                "version": "1",
+                "allowed_actions": ["workspace_write"],
+                "allowed_resources": ["*"],
+                "allowed_effect_kinds": ["workspace_write"],
+                "allowed_tool_identities": ["*"],
+                "digest": "hmac-sha256:forged",
+            },
+        },
+    )
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "PERMISSION_BUNDLE_INVALID"
+
+
+async def test_remote_api_clients_are_rejected_by_default():
+    app = create_app(Settings(model_provider="mock"))
+    transport = ASGITransport(app=app, client=("203.0.113.9", 40000))
+    async with AsyncClient(transport=transport, base_url="http://astra") as client:
+        response = await client.get("/api/health")
+    assert response.status_code == 403
+    assert response.json()["error"]["code"] == "REMOTE_API_DENIED"
+
+
 async def test_policy_simulation_reports_shadow_decision_change(app_client):
     payload = {
         "request": {

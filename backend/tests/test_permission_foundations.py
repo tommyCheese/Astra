@@ -11,7 +11,9 @@ from app.schemas.permissions import (
     ActionEffectPlan,
     EffectItem,
     PermissionConditions,
+    PermissionPolicySet,
     PermissionRequest,
+    PermissionRule,
     PermissionSubject,
 )
 from app.workspaces.runtime import WorkspaceRuntimeService
@@ -143,6 +145,12 @@ async def test_permission_repository_persists_identity_delegation_catalog_and_da
         identity_type="main_agent",
         principal="agent:astra-main",
         run_id=run.id,
+        attributes={
+            "permission_scope": {
+                "actions": ["workspace.file.read"],
+                "resources": ["task://workspace/**"],
+            }
+        },
     )
     child = await repository.create_identity(
         identity_type="subagent",
@@ -157,6 +165,18 @@ async def test_permission_repository_persists_identity_delegation_catalog_and_da
             "actions": ["workspace.file.read"],
             "resources": ["task://workspace/**"],
         },
+        policies=PermissionPolicySet(
+            version="delegation-test",
+            rules=[PermissionRule(
+                id="allow-delegation",
+                source="test",
+                tier="run",
+                decision="allow",
+                actions=["delegation_create"],
+                resources=[f"identity://{child.id}"],
+                reason_code="test_delegation_allow",
+            )],
+        ),
     )
     snapshot = await repository.freeze_tool_catalog(
         run.id,
