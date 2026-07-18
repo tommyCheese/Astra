@@ -31,4 +31,5 @@ backend/.env
 # Build artifacts
 dist/
 coverage/
+videos/
 openspec/changes/*.zip
