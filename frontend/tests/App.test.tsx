@@ -277,6 +277,34 @@ describe('App', () => {
     expect(document.querySelector('.sidebar')).not.toHaveClass('mobile-open');
   });
 
+  it('collapses, expands, and keyboard-resizes the desktop sidebar', async () => {
+    render(<App />);
+
+    const layout = document.querySelector('.app-layout') as HTMLElement;
+    const resizeHandle = screen.getByRole('separator', { name: '调整侧边栏宽度' });
+    expect(resizeHandle).toHaveAttribute('aria-valuenow', '260');
+
+    fireEvent.keyDown(resizeHandle, { key: 'ArrowRight' });
+    expect(resizeHandle).toHaveAttribute('aria-valuenow', '276');
+    expect(layout.style.getPropertyValue('--sidebar-width')).toBe('276px');
+    await waitFor(() => expect(window.localStorage.getItem('astra.sidebar-width.v1')).toBe('276'));
+
+    await userEvent.click(screen.getByRole('button', { name: '收起侧边栏' }));
+    expect(layout).toHaveClass('sidebar-collapsed');
+    expect(screen.queryByRole('separator', { name: '调整侧边栏宽度' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Astra 图标' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '展开侧边栏' }).closest('aside')).toHaveClass('sidebar');
+    expect(screen.getByRole('button', { name: '新对话' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '已分享对话' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '用量统计' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '设置' })).toBeInTheDocument();
+    await waitFor(() => expect(window.localStorage.getItem('astra.sidebar-collapsed.v1')).toBe('true'));
+
+    await userEvent.click(screen.getByRole('button', { name: '展开侧边栏' }));
+    expect(layout).not.toHaveClass('sidebar-collapsed');
+    expect(screen.getByRole('separator', { name: '调整侧边栏宽度' })).toHaveAttribute('aria-valuenow', '276');
+  });
+
   it('remembers a stop request while run creation is pending and allows a follow-up', async () => {
     let resolveCreate: ((value: { run_id: string; task_id: string; status: string; answer_mode?: 'standard' | 'trusted' }) => void) | undefined;
     vi.mocked(createRun).mockImplementationOnce(() => new Promise((resolve) => { resolveCreate = resolve; }));

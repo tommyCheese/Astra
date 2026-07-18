@@ -1,4 +1,4 @@
-import { FormEvent, MouseEvent, ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { CSSProperties, FormEvent, KeyboardEvent as ReactKeyboardEvent, MouseEvent, PointerEvent as ReactPointerEvent, ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { AstraApiError, ApiErrorPayload, buildRuntime, cancelRun, cancelRuntimeBuild, createConversationShare, createRun, decideToolApproval, deleteConversation, getConversation, getConversationStrategy, getPermissionCenter, getRun, getRuntimeProfile, getTaskWorkspace, getToolSettings, listConversationShares, listConversations, listRuns, resumeRun, revokeConversationShare, revokePermissionGrant, streamRunEvents, updateConversation, updateConversationStrategy, updateToolSettings, type ConversationStrategyPreferences, type PermissionCenterView, type RunModelConfig, type ToolSetting, type WorkspaceView } from './api';
@@ -17,7 +17,12 @@ const STORAGE_KEYS = {
   processPanelDefaultOpen: 'astra.process-panel-default-open.v1',
   modelProviders: 'astra.model-providers.v1',
   selectedModel: 'astra.selected-model.v1',
+  sidebarCollapsed: 'astra.sidebar-collapsed.v1',
+  sidebarWidth: 'astra.sidebar-width.v1',
 };
+const SIDEBAR_DEFAULT_WIDTH = 260;
+const SIDEBAR_MIN_WIDTH = 220;
+const SIDEBAR_MAX_WIDTH = 420;
 const DEFAULT_CONVERSATION_STRATEGY: ConversationStrategyPreferences = {
   preferred_answer_mode: 'standard',
   reasoning_effort: 'balanced',
@@ -78,6 +83,8 @@ function AppContent() {
   const [error, setError] = useState<ApiErrorPayload | null>(null);
   const [view, setView] = useState<'chat' | 'settings' | 'shares'>('chat');
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => readLocalJson<boolean>(STORAGE_KEYS.sidebarCollapsed) ?? false);
+  const [sidebarWidth, setSidebarWidth] = useState(loadSidebarWidth);
   const [usageOpen, setUsageOpen] = useState(false);
   const [controlCenterOpen, setControlCenterOpen] = useState(false);
   const [strategyHelpOpen, setStrategyHelpOpen] = useState(false);
@@ -127,6 +134,8 @@ function AppContent() {
   useEffect(() => writeLocalJson(STORAGE_KEYS.processPanelDefaultOpen, processPanelDefaultOpen), [processPanelDefaultOpen]);
   useEffect(() => writeLocalJson(STORAGE_KEYS.modelProviders, providerConfigs), [providerConfigs]);
   useEffect(() => writeLocalString(STORAGE_KEYS.selectedModel, selectedModelKey), [selectedModelKey]);
+  useEffect(() => writeLocalJson(STORAGE_KEYS.sidebarCollapsed, sidebarCollapsed), [sidebarCollapsed]);
+  useEffect(() => writeLocalJson(STORAGE_KEYS.sidebarWidth, sidebarWidth), [sidebarWidth]);
   useEffect(() => () => {
     if (trustedTransitionTimerRef.current !== undefined) {
       window.clearTimeout(trustedTransitionTimerRef.current);
@@ -668,7 +677,10 @@ function AppContent() {
   const activeConversationTitle = conversationHistory.find((item) => item.id === activeConversationId)?.title;
 
   return (
-    <main className="app-layout">
+    <main
+      className={`app-layout ${sidebarCollapsed ? 'sidebar-collapsed' : ''}`}
+      style={{ '--sidebar-width': `${sidebarWidth}px` } as CSSProperties}
+    >
       {trustedTransitionActive && (
         <div className="trusted-mode-transition" aria-hidden="true" data-testid="trusted-mode-transition">
           <i className="trusted-mode-transition-wave wave-one" />
@@ -693,6 +705,11 @@ function AppContent() {
         onOpenShares={() => { setSidebarOpen(false); changeView('shares'); }}
         onOpenUsage={() => { setSidebarOpen(false); setUsageOpen(true); }}
         onClose={() => setSidebarOpen(false)}
+        collapsed={sidebarCollapsed}
+        width={sidebarWidth}
+        onCollapse={() => setSidebarCollapsed(true)}
+        onExpand={() => setSidebarCollapsed(false)}
+        onWidthChange={setSidebarWidth}
       />
       {sidebarOpen && <button className="sidebar-backdrop" type="button" aria-label={t('关闭导航遮罩')} onClick={() => setSidebarOpen(false)} />}
 
@@ -713,8 +730,10 @@ function AppContent() {
           />
         ) : <>
         <section className="chat-topbar">
-          <button className="mobile-sidebar-trigger" type="button" aria-label={t('打开导航')} onClick={() => setSidebarOpen(true)}><span /><span /><span /></button>
-          <h1>{activeConversationTitle || 'Astra'}</h1>
+          <div className="chat-topbar-leading">
+            <button className="mobile-sidebar-trigger" type="button" aria-label={t('打开导航')} onClick={() => setSidebarOpen(true)}><span /><span /><span /></button>
+            <h1>{activeConversationTitle || 'Astra'}</h1>
+          </div>
           {run && <div className="topbar-run-controls"><button type="button" onClick={() => setControlCenterOpen(true)}>{t('安全与文件')}</button><span className={`status status-${run.status}`}>{statusLabel(run.status)}</span></div>}
         </section>
 
@@ -884,8 +903,10 @@ function AppContent() {
   );
 }
 
-function Sidebar({ open, run, activeConversationId, conversations, activeView, onNewChat, onSelectConversation, onConversationAction, onTogglePin, onOpenSettings, onOpenShares, onOpenUsage, onClose }: {
+function Sidebar({ open, collapsed, width, run, activeConversationId, conversations, activeView, onNewChat, onSelectConversation, onConversationAction, onTogglePin, onOpenSettings, onOpenShares, onOpenUsage, onClose, onCollapse, onExpand, onWidthChange }: {
   open: boolean;
+  collapsed: boolean;
+  width: number;
   run: RunView | null;
   activeConversationId: string | null;
   conversations: ConversationEntry[];
@@ -898,12 +919,63 @@ function Sidebar({ open, run, activeConversationId, conversations, activeView, o
   onOpenShares: () => void;
   onOpenUsage: () => void;
   onClose: () => void;
+  onCollapse: () => void;
+  onExpand: () => void;
+  onWidthChange: (width: number) => void;
 }) {
   const { t } = useI18n();
   const [menuId, setMenuId] = useState<string | null>(null);
   const menuRootRef = useRef<HTMLDivElement>(null);
+  const resizeCleanupRef = useRef<(() => void) | null>(null);
   const pinned = conversations.filter((item) => item.pinned_at);
   const recent = conversations.filter((item) => !item.pinned_at);
+
+  useEffect(() => () => resizeCleanupRef.current?.(), []);
+
+  const beginResize = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    const startX = event.clientX;
+    const startWidth = width;
+    const layout = event.currentTarget.closest('.app-layout') as HTMLElement | null;
+    let liveWidth = startWidth;
+    let frame: number | null = null;
+    const paint = () => {
+      layout?.style.setProperty('--sidebar-width', `${liveWidth}px`);
+      frame = null;
+    };
+    const move = (moveEvent: PointerEvent) => {
+      liveWidth = clampSidebarWidth(startWidth + moveEvent.clientX - startX);
+      if (frame === null) frame = window.requestAnimationFrame(paint);
+    };
+    const finish = () => {
+      if (frame !== null) window.cancelAnimationFrame(frame);
+      layout?.style.setProperty('--sidebar-width', `${liveWidth}px`);
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', finish);
+      window.removeEventListener('pointercancel', finish);
+      document.documentElement.classList.remove('sidebar-resizing');
+      resizeCleanupRef.current = null;
+      onWidthChange(liveWidth);
+    };
+    resizeCleanupRef.current?.();
+    resizeCleanupRef.current = finish;
+    document.documentElement.classList.add('sidebar-resizing');
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', finish);
+    window.addEventListener('pointercancel', finish);
+  };
+
+  const resizeWithKeyboard = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    const nextWidth = event.key === 'ArrowLeft' ? width - 16
+      : event.key === 'ArrowRight' ? width + 16
+        : event.key === 'Home' ? SIDEBAR_MIN_WIDTH
+          : event.key === 'End' ? SIDEBAR_MAX_WIDTH
+            : null;
+    if (nextWidth === null) return;
+    event.preventDefault();
+    onWidthChange(clampSidebarWidth(nextWidth));
+  };
 
   useEffect(() => {
     if (!menuId) return;
@@ -940,16 +1012,19 @@ function Sidebar({ open, run, activeConversationId, conversations, activeView, o
     <aside className={`sidebar ${open ? 'mobile-open' : ''}`}>
       <div className="brand">
         <AstraBrandIcon />
-        <div>
+        <div className="brand-copy">
           <strong>Astra</strong>
           <span>Agent Console</span>
         </div>
+        <button className="sidebar-collapse-trigger" type="button" aria-label={t('收起侧边栏')} onClick={onCollapse}><SidebarPanelIcon /></button>
         <button className="mobile-sidebar-close" type="button" aria-label={t('关闭导航')} onClick={onClose}>×</button>
       </div>
 
-      <button className="new-chat-button" type="button" onClick={onNewChat}>
+      {collapsed && <button className="sidebar-expand-trigger" type="button" aria-label={t('展开侧边栏')} title={t('展开侧边栏')} onClick={onExpand}><SidebarPanelIcon /></button>}
+
+      <button className="new-chat-button" type="button" aria-label={t('新对话')} title={collapsed ? t('新对话') : undefined} onClick={onNewChat}>
         <span className="button-icon"><Icon name="plus" /></span>
-        {t('新对话')}
+        <span className="new-chat-label">{t('新对话')}</span>
       </button>
 
       <nav className="side-section">
@@ -963,24 +1038,41 @@ function Sidebar({ open, run, activeConversationId, conversations, activeView, o
       </nav>
 
       <div className="sidebar-bottom">
-        <button className={`side-action ${activeView === 'shares' ? 'active' : ''}`} type="button" onClick={onOpenShares}>
+        <button className={`side-action sidebar-share-action ${activeView === 'shares' ? 'active' : ''}`} type="button" aria-label={t('已分享对话')} title={collapsed ? t('已分享对话') : undefined} onClick={onOpenShares}>
           <Icon name="link" />
           <span>{t('已分享对话')}</span>
           <small>{conversations.filter((item) => item.has_active_share).length}</small>
         </button>
-        <button className="side-action" type="button" onClick={onOpenUsage}>
+        <button className="side-action sidebar-usage-action" type="button" aria-label={t('用量统计')} title={collapsed ? t('用量统计') : undefined} onClick={onOpenUsage}>
           <Icon name="chart" />
           <span>{t('用量统计')}</span>
           <small>{run?.tool_calls.length ?? 0} calls</small>
         </button>
-        <button className={`side-action ${activeView === 'settings' ? 'active' : ''}`} type="button" onClick={onOpenSettings}>
+        <button className={`side-action sidebar-settings-action ${activeView === 'settings' ? 'active' : ''}`} type="button" aria-label={t('设置')} title={collapsed ? t('设置') : undefined} onClick={onOpenSettings}>
           <Icon name="settings" />
           <span>{t('设置')}</span>
           <small>{t('本地配置')}</small>
         </button>
       </div>
+      {!collapsed && <div
+        className="sidebar-resizer"
+        role="separator"
+        aria-label={t('调整侧边栏宽度')}
+        aria-orientation="vertical"
+        aria-valuemin={SIDEBAR_MIN_WIDTH}
+        aria-valuemax={SIDEBAR_MAX_WIDTH}
+        aria-valuenow={width}
+        tabIndex={0}
+        onPointerDown={beginResize}
+        onKeyDown={resizeWithKeyboard}
+        onDoubleClick={() => onWidthChange(SIDEBAR_DEFAULT_WIDTH)}
+      />}
     </aside>
   );
+}
+
+function SidebarPanelIcon() {
+  return <svg className="sidebar-panel-icon" viewBox="0 0 20 20" fill="none" aria-hidden="true"><rect x="2.5" y="3" width="15" height="14" rx="2.5" /><path d="M7 3v14" /></svg>;
 }
 
 function conversationTitle(run: RunView, fallback: string) {
@@ -1511,6 +1603,15 @@ function writeLocalString(key: string, value: string) {
   try {
     localStorageOrNull()?.setItem(key, value);
   } catch { /* storage may be disabled or full */ }
+}
+
+function clampSidebarWidth(width: number) {
+  return Math.min(SIDEBAR_MAX_WIDTH, Math.max(SIDEBAR_MIN_WIDTH, width));
+}
+
+function loadSidebarWidth() {
+  const saved = readLocalJson<number>(STORAGE_KEYS.sidebarWidth);
+  return typeof saved === 'number' && Number.isFinite(saved) ? clampSidebarWidth(saved) : SIDEBAR_DEFAULT_WIDTH;
 }
 
 function loadProviderConfigs(): ModelProviderConfig[] {
