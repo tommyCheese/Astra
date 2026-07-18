@@ -1,7 +1,7 @@
 import { CSSProperties, FormEvent, KeyboardEvent as ReactKeyboardEvent, MouseEvent, PointerEvent as ReactPointerEvent, ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { AstraApiError, ApiErrorPayload, buildRuntime, cancelRun, cancelRuntimeBuild, createConversationShare, createRun, decideToolApproval, deleteConversation, getConversation, getConversationStrategy, getPermissionCenter, getRun, getRuntimeProfile, getTaskWorkspace, getToolSettings, listConversationShares, listConversations, listRuns, resumeRun, revokeConversationShare, revokePermissionGrant, streamRunEvents, updateConversation, updateConversationStrategy, updateToolSettings, type ConversationStrategyPreferences, type PermissionCenterView, type RunModelConfig, type ToolSetting, type WorkspaceView } from './api';
+import { AstraApiError, ApiErrorPayload, buildRuntime, cancelRun, cancelRuntimeBuild, createConversationShare, createRun, decideToolApproval, deleteConversation, getConversation, getConversationStrategy, getPermissionCenter, getRun, getRuntimeProfile, getToolSettings, listConversationShares, listConversations, listLibraryFiles, listRuns, resumeRun, revokeConversationShare, revokePermissionGrant, streamRunEvents, updateConversation, updateConversationStrategy, updateToolSettings, type ConversationStrategyPreferences, type LibraryFile, type PermissionCenterView, type RunModelConfig, type ToolSetting } from './api';
 import { buildAuditLog, buildIdentityPresentation, type IdentityGroup } from './auditPresentation';
 import { I18nProvider, useI18n } from './i18n';
 import { ThemeProvider, useTheme } from './theme';
@@ -81,7 +81,7 @@ function AppContent() {
   const [processPanelOpenByRun, setProcessPanelOpenByRun] = useState<Record<string, boolean>>({});
   const [showJumpToLatest, setShowJumpToLatest] = useState(false);
   const [error, setError] = useState<ApiErrorPayload | null>(null);
-  const [view, setView] = useState<'chat' | 'settings' | 'shares'>('chat');
+  const [view, setView] = useState<'chat' | 'settings' | 'shares' | 'library'>('chat');
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => readLocalJson<boolean>(STORAGE_KEYS.sidebarCollapsed) ?? false);
   const [sidebarWidth, setSidebarWidth] = useState(loadSidebarWidth);
@@ -638,7 +638,7 @@ function AppContent() {
     jumpResetTimerRef.current = window.setTimeout(() => { jumpingToLatestRef.current = false; }, 450);
   }
 
-  function changeView(nextView: 'chat' | 'settings' | 'shares') {
+  function changeView(nextView: 'chat' | 'settings' | 'shares' | 'library') {
     setView(nextView);
   }
 
@@ -703,6 +703,7 @@ function AppContent() {
           changeView('settings');
         }}
         onOpenShares={() => { setSidebarOpen(false); changeView('shares'); }}
+        onOpenLibrary={() => { setSidebarOpen(false); changeView('library'); }}
         onOpenUsage={() => { setSidebarOpen(false); setUsageOpen(true); }}
         onClose={() => setSidebarOpen(false)}
         collapsed={sidebarCollapsed}
@@ -714,7 +715,12 @@ function AppContent() {
       {sidebarOpen && <button className="sidebar-backdrop" type="button" aria-label={t('关闭导航遮罩')} onClick={() => setSidebarOpen(false)} />}
 
       <section className="workspace">
-        {view === 'shares' ? (
+        {view === 'library' ? (
+          <LibraryView
+            onClose={() => changeView('chat')}
+            onOpenConversation={(id, title) => { void openConversation({ id, title, priorMessages: [] }); }}
+          />
+        ) : view === 'shares' ? (
           <SharedConversationsView
             onClose={() => changeView('chat')}
             onOpenConversation={(id, title) => { void openConversation({ id, title, priorMessages: [], has_active_share: true }); }}
@@ -734,7 +740,7 @@ function AppContent() {
             <button className="mobile-sidebar-trigger" type="button" aria-label={t('打开导航')} onClick={() => setSidebarOpen(true)}><span /><span /><span /></button>
             <h1>{activeConversationTitle || 'Astra'}</h1>
           </div>
-          {run && <div className="topbar-run-controls"><button type="button" onClick={() => setControlCenterOpen(true)}>{t('安全与文件')}</button><span className={`status status-${run.status}`}>{statusLabel(run.status)}</span></div>}
+          {run && <div className="topbar-run-controls"><button type="button" onClick={() => setControlCenterOpen(true)}>{t('任务安全')}</button><span className={`status status-${run.status}`}>{statusLabel(run.status)}</span></div>}
         </section>
 
         <section className="chat-surface">
@@ -903,20 +909,21 @@ function AppContent() {
   );
 }
 
-function Sidebar({ open, collapsed, width, run, activeConversationId, conversations, activeView, onNewChat, onSelectConversation, onConversationAction, onTogglePin, onOpenSettings, onOpenShares, onOpenUsage, onClose, onCollapse, onExpand, onWidthChange }: {
+function Sidebar({ open, collapsed, width, run, activeConversationId, conversations, activeView, onNewChat, onSelectConversation, onConversationAction, onTogglePin, onOpenSettings, onOpenShares, onOpenLibrary, onOpenUsage, onClose, onCollapse, onExpand, onWidthChange }: {
   open: boolean;
   collapsed: boolean;
   width: number;
   run: RunView | null;
   activeConversationId: string | null;
   conversations: ConversationEntry[];
-  activeView: 'chat' | 'settings' | 'shares';
+  activeView: 'chat' | 'settings' | 'shares' | 'library';
   onNewChat: () => void;
   onSelectConversation: (conversation: ConversationEntry) => void;
   onConversationAction: (kind: 'rename' | 'share' | 'delete', conversation: ConversationEntry) => void;
   onTogglePin: (conversation: ConversationEntry) => void;
   onOpenSettings: () => void;
   onOpenShares: () => void;
+  onOpenLibrary: () => void;
   onOpenUsage: () => void;
   onClose: () => void;
   onCollapse: () => void;
@@ -1038,6 +1045,11 @@ function Sidebar({ open, collapsed, width, run, activeConversationId, conversati
       </nav>
 
       <div className="sidebar-bottom">
+        <button className={`side-action sidebar-library-action ${activeView === 'library' ? 'active' : ''}`} type="button" aria-label={t('资料库')} title={collapsed ? t('资料库') : undefined} onClick={onOpenLibrary}>
+          <Icon name="library" />
+          <span>{t('资料库')}</span>
+          <small>{t('全部文件')}</small>
+        </button>
         <button className={`side-action sidebar-share-action ${activeView === 'shares' ? 'active' : ''}`} type="button" aria-label={t('已分享对话')} title={collapsed ? t('已分享对话') : undefined} onClick={onOpenShares}>
           <Icon name="link" />
           <span>{t('已分享对话')}</span>
@@ -1077,6 +1089,109 @@ function SidebarPanelIcon() {
 
 function conversationTitle(run: RunView, fallback: string) {
   return run.summary?.trim() || run.chat_messages?.find((message) => message.role === 'user')?.content || fallback;
+}
+
+type LibraryGroupMode = 'time' | 'conversation' | 'type';
+type LibrarySortMode = 'updated_desc' | 'updated_asc' | 'name_asc' | 'name_desc' | 'size_desc' | 'size_asc' | 'type_asc';
+type LibraryViewMode = 'gallery' | 'list';
+
+function libraryFileType(file: LibraryFile) {
+  const mime = (file.mime_type ?? '').toLowerCase();
+  const extension = file.path.split('.').pop()?.toLowerCase() ?? '';
+  if (mime.startsWith('image/') || ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'heic'].includes(extension)) return '图片';
+  if (mime.includes('sheet') || mime.includes('csv') || mime.includes('json') || ['csv', 'tsv', 'xls', 'xlsx', 'json', 'parquet'].includes(extension)) return '数据';
+  if (['js', 'jsx', 'ts', 'tsx', 'py', 'java', 'go', 'rs', 'html', 'css', 'sql', 'sh', 'yaml', 'yml'].includes(extension)) return '代码';
+  if (mime.includes('pdf') || mime.includes('word') || mime.startsWith('text/') || ['pdf', 'doc', 'docx', 'md', 'txt', 'rtf'].includes(extension)) return '文档';
+  if (mime.startsWith('audio/') || mime.startsWith('video/') || ['mp3', 'wav', 'mp4', 'mov', 'webm'].includes(extension)) return '媒体';
+  return '其他';
+}
+
+function libraryTimeGroup(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '时间未知';
+  const now = new Date();
+  const startToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  if (date.getTime() >= startToday) return '今天';
+  if (date.getTime() >= startToday - 6 * 24 * 60 * 60 * 1000) return '最近 7 天';
+  return date.toLocaleDateString([], { year: 'numeric', month: 'long' });
+}
+
+function LibraryView({ onClose, onOpenConversation }: { onClose: () => void; onOpenConversation: (id: string, title: string) => void }) {
+  const { t } = useI18n();
+  const [files, setFiles] = useState<LibraryFile[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [groupMode, setGroupMode] = useState<LibraryGroupMode>('time');
+  const [sortMode, setSortMode] = useState<LibrarySortMode>('updated_desc');
+  const [viewMode, setViewMode] = useState<LibraryViewMode>('gallery');
+  const [query, setQuery] = useState('');
+
+  useEffect(() => {
+    let active = true;
+    void listLibraryFiles().then((items) => {
+      if (active) setFiles(items);
+    }).catch((reason) => {
+      if (active) setError(reason instanceof Error ? reason.message : t('资料库加载失败'));
+    }).finally(() => {
+      if (active) setLoading(false);
+    });
+    return () => { active = false; };
+  }, [t]);
+
+  const groups = useMemo(() => {
+    const needle = query.trim().toLocaleLowerCase();
+    const visible = files.filter((file) => !needle || `${file.path} ${file.conversation_title} ${file.mime_type ?? ''}`.toLocaleLowerCase().includes(needle));
+    visible.sort((left, right) => {
+      if (sortMode === 'updated_asc') return new Date(left.updated_at).getTime() - new Date(right.updated_at).getTime();
+      if (sortMode === 'name_asc') return left.path.localeCompare(right.path, 'zh-CN', { numeric: true });
+      if (sortMode === 'name_desc') return right.path.localeCompare(left.path, 'zh-CN', { numeric: true });
+      if (sortMode === 'size_desc') return right.size_bytes - left.size_bytes;
+      if (sortMode === 'size_asc') return left.size_bytes - right.size_bytes;
+      if (sortMode === 'type_asc') return libraryFileType(left).localeCompare(libraryFileType(right), 'zh-CN') || left.path.localeCompare(right.path, 'zh-CN', { numeric: true });
+      return new Date(right.updated_at).getTime() - new Date(left.updated_at).getTime();
+    });
+    const grouped = new Map<string, LibraryFile[]>();
+    for (const file of visible) {
+      const key = groupMode === 'conversation' ? file.conversation_title || t('未命名对话') : groupMode === 'type' ? t(libraryFileType(file)) : t(libraryTimeGroup(file.updated_at));
+      grouped.set(key, [...(grouped.get(key) ?? []), file]);
+    }
+    return [...grouped.entries()];
+  }, [files, groupMode, query, sortMode, t]);
+
+  return <section className="library-page">
+    <header className="library-header">
+      <div><span className="library-eyebrow">Astra Library</span><h2>{t('资料库')}</h2><p>{t('集中查看所有会话生成或保存的文档、图片和其他文件。')}</p></div>
+      <button className="settings-close" type="button" aria-label={t('关闭资料库')} onClick={onClose}>×</button>
+    </header>
+    <div className="library-toolbar">
+      <label className="library-search"><span className="sr-only">{t('搜索资料库')}</span><input value={query} onChange={(event) => setQuery(event.currentTarget.value)} placeholder={t('搜索文件或会话')} /></label>
+      <div className="library-group-switch" aria-label={t('分类方式')}>
+        {([['time', '时间'], ['conversation', '会话'], ['type', '类型']] as const).map(([value, label]) => <button type="button" aria-pressed={groupMode === value} key={value} onClick={() => setGroupMode(value)}>{t(label)}</button>)}
+      </div>
+      <div className="library-view-switch" aria-label={t('展示方式')}>
+        <button type="button" aria-label={t('画廊视图')} aria-pressed={viewMode === 'gallery'} onClick={() => setViewMode('gallery')}><span className="gallery-view-icon" aria-hidden="true"><i /><i /><i /><i /></span><span>{t('画廊')}</span></button>
+        <button type="button" aria-label={t('列表视图')} aria-pressed={viewMode === 'list'} onClick={() => setViewMode('list')}><span className="list-view-icon" aria-hidden="true"><i /><i /><i /></span><span>{t('列表')}</span></button>
+      </div>
+      <label className="library-sort"><span>{t('排序')}</span><select aria-label={t('资料库排序')} value={sortMode} onChange={(event) => setSortMode(event.currentTarget.value as LibrarySortMode)}>
+        <option value="updated_desc">{t('最近更新')}</option><option value="updated_asc">{t('最早更新')}</option><option value="name_asc">{t('名称 A–Z')}</option><option value="name_desc">{t('名称 Z–A')}</option><option value="size_desc">{t('大小：从大到小')}</option><option value="size_asc">{t('大小：从小到大')}</option><option value="type_asc">{t('文件类型')}</option>
+      </select></label>
+    </div>
+    <div className="library-summary"><strong>{files.length}</strong><span>{t('个文件')}</span>{query && <small>{t('当前显示 {count} 个').replace('{count}', String(groups.reduce((total, [, items]) => total + items.length, 0)))}</small>}</div>
+    {loading ? <div className="library-state">{t('正在加载资料库…')}</div> : error ? <div className="library-state error">{error}</div> : !groups.length ? <div className="library-state"><strong>{query ? t('没有匹配的文件') : t('资料库还是空的')}</strong><span>{query ? t('尝试搜索其他名称、会话或文件类型。') : t('任务生成的文件会自动集中到这里。')}</span></div> : <div className={`library-groups view-${viewMode}`}>
+      {groups.map(([label, items]) => <section className="library-group" key={label}><header><h3>{label}</h3><span>{items.length}</span></header><div className="library-grid">
+        {items.map((file) => {
+          const type = libraryFileType(file);
+          const name = file.path.split('/').pop() || file.path;
+          const previewableImage = type === '图片' && file.content_url;
+          return <article className="library-card" key={file.id}>
+            <div className={`library-preview type-${type}`} aria-hidden="true">{previewableImage ? <img src={file.content_url ?? ''} alt="" /> : <span>{file.path.split('.').pop()?.slice(0, 4).toUpperCase() || 'FILE'}</span>}</div>
+            <div className="library-card-body"><strong title={file.path}>{name}</strong><span>{t(type)} · {formatFileSize(file.size_bytes)}</span><time dateTime={file.updated_at}>{new Date(file.updated_at).toLocaleString()}</time></div>
+            <div className="library-card-actions"><button type="button" onClick={() => onOpenConversation(file.task_id, file.conversation_title)}>{file.conversation_title || t('未命名对话')}</button>{file.content_url ? <a href={file.content_url}>{t('打开')}</a> : <span>{t('受保护')}</span>}</div>
+          </article>;
+        })}
+      </div></section>)}
+    </div>}
+  </section>;
 }
 
 function SharedConversationsView({ onClose, onOpenConversation, onShareChanged }: {
@@ -1918,40 +2033,31 @@ function formatFileSize(bytes: number) {
 function ControlCenterDialog({ run, onClose }: { run: RunView; onClose: () => void }) {
   const { t } = useI18n();
   const [permissions, setPermissions] = useState<PermissionCenterView | null>(null);
-  const [workspace, setWorkspace] = useState<WorkspaceView | null>(null);
   const [loadError, setLoadError] = useState('');
   const refresh = useCallback(async () => {
     try {
-      const [permissionView, workspaceView] = await Promise.all([
-        getPermissionCenter(run.id),
-        getTaskWorkspace(run.task_id),
-      ]);
+      const permissionView = await getPermissionCenter(run.id);
       setPermissions(permissionView);
-      setWorkspace(workspaceView);
       setLoadError('');
     } catch (error) {
-      setLoadError(error instanceof Error ? error.message : t('加载权限与文件失败'));
+      setLoadError(error instanceof Error ? error.message : t('加载安全信息失败'));
     }
-  }, [run.id, run.task_id, t]);
+  }, [run.id, t]);
   useEffect(() => { void refresh(); }, [refresh]);
   const activeGrants = permissions?.grants.filter((grant) => grant.status === 'active') ?? [];
-  const deliverableFiles = workspace?.files.filter((file) => file.status === 'present' && file.deliverable_candidate) ?? [];
-  const deletedFiles = workspace?.changes.filter((change) => change.kind === 'deleted') ?? [];
-  const meaningfulCheckpoints = workspace?.checkpoints.filter((checkpoint) => checkpoint.file_count > 0) ?? [];
   const identityPresentation = buildIdentityPresentation(permissions?.identities ?? [], run.id);
   const auditEntries = buildAuditLog(permissions?.policy_explanations ?? []);
   return <div className="modal-backdrop" role="presentation" onMouseDown={onClose}>
-    <section className="control-center-modal" role="dialog" aria-modal="true" aria-label={t('任务安全与文件')} onMouseDown={(event) => event.stopPropagation()}>
-      <header><div><h2>{t('任务安全与文件')}</h2><p>{t('管理 Astra 在这个任务中可以继续执行的操作，并查看已生成的文件。')}</p></div><button type="button" aria-label={t('关闭')} onClick={onClose}>×</button></header>
+    <section className="control-center-modal" role="dialog" aria-modal="true" aria-label={t('任务安全')} onMouseDown={(event) => event.stopPropagation()}>
+      <header><div><h2>{t('任务安全')}</h2><p>{t('管理 Astra 在这个任务中可以继续执行的操作，并查看安全审计记录。')}</p></div><button type="button" aria-label={t('关闭')} onClick={onClose}>×</button></header>
       {loadError && <p className="control-center-error">{loadError}</p>}
-      {!permissions || !workspace ? <p>{t('正在加载…')}</p> : <>
-        <div className="control-center-overview" aria-label={t('任务安全概览')}>
+      {!permissions ? <p>{t('正在加载…')}</p> : <>
+        <div className="control-center-overview security-only" aria-label={t('任务安全概览')}>
           <div><strong>{activeGrants.length}</strong><span>{t('项有效授权')}</span><small>{activeGrants.length ? t('可随时撤销') : t('危险操作仍会询问')}</small></div>
-          <div><strong>{deliverableFiles.length}</strong><span>{t('个任务文件')}</span><small>{deliverableFiles.length ? t('可安全预览或下载') : t('尚未生成可交付文件')}</small></div>
           <div><strong>{permissions.credentials.filter((item) => !item.revoked_at).length}</strong><span>{t('项凭据使用')}</span><small>{permissions.credentials.some((item) => !item.revoked_at) ? t('均为短期受限凭据') : t('未使用外部服务凭据')}</small></div>
         </div>
 
-        <div className="control-center-primary">
+        <div className="control-center-primary security-only">
           <section className="control-center-panel grants-panel">
             <div className="control-center-section-heading"><div><h3>{t('允许的操作')}</h3><p>{t('这些操作在有效范围内再次发生时，不会重复询问。')}</p></div></div>
             {activeGrants.length ? <div className="permission-grant-list">{activeGrants.map((grant) => {
@@ -1975,27 +2081,11 @@ function ControlCenterDialog({ run, onClose }: { run: RunView; onClose: () => vo
             })}</div> : <div className="control-center-empty"><strong>{t('没有持续授权')}</strong><span>{t('Astra 遇到写文件、删除或外部修改等危险操作时会再次询问你。')}</span></div>}
           </section>
 
-          <section className="control-center-panel workspace-files-section">
-            <div className="control-center-section-heading"><div><h3>{t('任务文件')}</h3><p>{t('在这个任务中保存、可继续使用的文件。')}</p></div><span>{deliverableFiles.length}</span></div>
-            {deliverableFiles.length ? <div className="workspace-file-list">{deliverableFiles.map((file) => <article className="workspace-file-card" key={file.id}>
-              <div className="workspace-file-icon" aria-hidden="true">{file.path.split('.').pop()?.slice(0, 3).toUpperCase() || 'FILE'}</div>
-              <div><strong>{file.path}</strong><span>{file.mime_type || t('未知类型')} · {formatFileSize(file.size_bytes)}</span></div>
-              {file.content_url && <a href={file.content_url}>{t('打开')}</a>}
-            </article>)}</div> : <div className="control-center-empty"><strong>{t('还没有任务文件')}</strong><span>{t('通过工具保存的 CSV、图片、文档和代码会显示在这里，并可供后续工具继续使用。')}</span></div>}
-          </section>
-
           <section className="control-center-panel permission-activity-panel">
             <div className="control-center-section-heading"><div><h3>{t('最近的安全活动')}</h3><p>{t('用自然语言说明最近为什么询问、允许或阻止操作。')}</p></div></div>
             {auditEntries.length ? <div className="permission-activity-list">{auditEntries.slice(0, 4).map((entry) => <div className="permission-activity-item" key={entry.id}><span className={`permission-activity-dot tone-${entry.tone}`} /><div><strong>{t(entry.title)}</strong><span>{entry.actor} · {formatAuditTime(entry.createdAt)}</span></div></div>)}</div> : <div className="control-center-empty compact"><span>{t('暂无需要说明的权限活动')}</span></div>}
           </section>
 
-          <section className="control-center-panel workspace-history-panel">
-            <div className="control-center-section-heading"><div><h3>{t('文件历史')}</h3><p>{t('记录任务文件的状态快照和删除行为。')}</p></div></div>
-            {meaningfulCheckpoints.length || deletedFiles.length ? <div className="workspace-history-list">
-              {meaningfulCheckpoints.slice(0, 3).map((checkpoint) => <div className="control-center-item" key={checkpoint.id}><strong>{t('已保存文件状态')}</strong><span>{t('{count} 个文件').replace('{count}', String(checkpoint.file_count))} · {new Date(checkpoint.created_at).toLocaleString()}</span></div>)}
-              {deletedFiles.slice(0, 5).map((change) => <div className="control-center-item" key={change.id}><strong>{change.path}</strong><span>{t('已删除')} · {new Date(change.created_at).toLocaleString()}</span></div>)}
-            </div> : <div className="control-center-empty compact"><span>{t('还没有文件状态或删除记录')}</span></div>}
-          </section>
         </div>
 
         <details className="control-center-technical">
@@ -2111,13 +2201,14 @@ function ErrorDialog({ error, onClose, onRetry }: { error: ApiErrorPayload; onCl
   return <div className="modal-backdrop" role="presentation" onMouseDown={onClose}><section className="confirmation-modal error-dialog" role="alertdialog" aria-modal="true" aria-labelledby="error-title" onMouseDown={(event) => event.stopPropagation()}><div className="warning-mark">!</div><h2 id="error-title">{t(title)}</h2><p>{error.message}</p>{technical && <div className="confirmation-note">{t('错误类型：')}<code>{error.type}</code><br />{t('诊断编号：')}<code>{error.trace_id}</code></div>}<div className="confirmation-actions">{onRetry && <button className="secondary-button" type="button" onClick={onRetry}>{t('重试')}</button>}<button className="danger-confirm-button" type="button" onClick={onClose}>{t('知道了')}</button></div></section></div>;
 }
 
-type IconName = 'plus' | 'message' | 'link' | 'chart' | 'settings' | 'sparkle' | 'tools' | 'terminal' | 'brain' | 'palette' | 'lock' | 'token' | 'check' | 'route' | 'refresh' | 'requestApprove' | 'autoApprove';
+type IconName = 'plus' | 'message' | 'link' | 'library' | 'chart' | 'settings' | 'sparkle' | 'tools' | 'terminal' | 'brain' | 'palette' | 'lock' | 'token' | 'check' | 'route' | 'refresh' | 'requestApprove' | 'autoApprove';
 
 function Icon({ name }: { name: IconName }) {
   const paths: Record<IconName, ReactNode> = {
     plus: <path d="M12 5v14M5 12h14" />,
     message: <path d="M20 11.5a7.5 7.5 0 0 1-8 7.48 8.9 8.9 0 0 1-3.63-.78L4 20l1.34-3.58A7.34 7.34 0 0 1 4 12a7.5 7.5 0 0 1 8-7.48A7.5 7.5 0 0 1 20 11.5Z" />,
     link: <><path d="M10 13a5 5 0 0 0 7.54.54l2-2a5 5 0 0 0-7.07-7.07l-1.15 1.15" /><path d="M14 11a5 5 0 0 0-7.54-.54l-2 2a5 5 0 0 0 7.07 7.07l1.15-1.15" /></>,
+    library: <><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H9l2 2h6.5A2.5 2.5 0 0 1 20 7.5v9A2.5 2.5 0 0 1 17.5 19h-11A2.5 2.5 0 0 1 4 16.5v-11Z" /><path d="M4 8h16" /></>,
     chart: <><path d="M4 19V5M4 19h16" /><path d="m7 15 3-3 3 2 5-6" /></>,
     settings: <><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.06 2.06-.06-.06a1.7 1.7 0 0 0-1.88-.34 1.7 1.7 0 0 0-1 1.55V20h-2.9v-.09a1.7 1.7 0 0 0-1-1.55 1.7 1.7 0 0 0-1.88.34l-.06.06-2.06-2.06.06-.06A1.7 1.7 0 0 0 7.3 14.8a1.7 1.7 0 0 0-1.55-1H5.7v-2.9h.09a1.7 1.7 0 0 0 1.55-1 1.7 1.7 0 0 0-.34-1.88l-.06-.06L9 5.9l.06.06a1.7 1.7 0 0 0 1.88.34 1.7 1.7 0 0 0 1-1.55V4.7h2.9v.09a1.7 1.7 0 0 0 1 1.55 1.7 1.7 0 0 0 1.88-.34l.06-.06 2.06 2.06-.06.06a1.7 1.7 0 0 0-.34 1.88 1.7 1.7 0 0 0 1.55 1h.09v2.9h-.09a1.7 1.7 0 0 0-1.55 1Z" /></>,
     sparkle: <path d="m12 3 .9 5.1L18 9l-5.1.9L12 15l-.9-5.1L6 9l5.1-.9L12 3Zm6 12 .45 2.55L21 18l-2.55.45L18 21l-.45-2.55L15 18l2.55-.45L18 15Z" />,

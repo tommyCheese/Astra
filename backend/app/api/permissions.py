@@ -16,6 +16,8 @@ from app.db.models import (
     DataFlowStateRecord,
     RunEventRecord,
     RunRecord,
+    TaskRecord,
+    TaskWorkspaceRecord,
     ToolCatalogSnapshotRecord,
     WorkspaceChangeRecord,
     WorkspaceCheckpointRecord,
@@ -272,6 +274,39 @@ async def task_workspace_view(
             for item in checkpoints
         ],
     }
+
+
+@router.get("/library/files")
+async def library_files(
+    session: AsyncSession = Depends(get_session),
+) -> list[dict]:
+    rows = (
+        await session.execute(
+            select(WorkspaceFileRecord, TaskWorkspaceRecord, TaskRecord)
+            .join(TaskWorkspaceRecord, WorkspaceFileRecord.workspace_id == TaskWorkspaceRecord.id)
+            .join(TaskRecord, TaskWorkspaceRecord.task_id == TaskRecord.id)
+            .where(WorkspaceFileRecord.status == "present")
+            .order_by(WorkspaceFileRecord.updated_at.desc())
+        )
+    ).all()
+    return [
+        {
+            "id": file.id,
+            "task_id": task.id,
+            "conversation_title": task.title,
+            "path": file.relative_path,
+            "mime_type": file.mime_type,
+            "size_bytes": file.size_bytes,
+            "security_status": file.security_status,
+            "deliverable_candidate": file.deliverable_candidate,
+            "content_url": f"/api/tasks/{task.id}/workspace/files/{file.id}/content"
+            if file.deliverable_candidate
+            else None,
+            "created_at": file.created_at,
+            "updated_at": file.updated_at,
+        }
+        for file, _workspace, task in rows
+    ]
 
 
 @router.get("/tasks/{task_id}/workspace/files/{file_id}/content")

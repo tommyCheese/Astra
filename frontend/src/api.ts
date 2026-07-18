@@ -226,6 +226,20 @@ export type WorkspaceView = {
   checkpoints: Array<{ id: string; run_id: string; manifest_hash: string; file_count: number; created_at: string }>;
 };
 
+export type LibraryFile = {
+  id: string;
+  task_id: string;
+  conversation_title: string;
+  path: string;
+  mime_type?: string | null;
+  size_bytes: number;
+  security_status: string;
+  deliverable_candidate: boolean;
+  content_url?: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
 export async function getPermissionCenter(runId: string): Promise<PermissionCenterView> {
   const response = await fetch(`/api/runs/${runId}/permissions`);
   if (!response.ok) throw await responseError(response);
@@ -239,6 +253,12 @@ export async function revokePermissionGrant(grantId: string): Promise<void> {
 
 export async function getTaskWorkspace(taskId: string): Promise<WorkspaceView> {
   const response = await fetch(`/api/tasks/${taskId}/workspace`);
+  if (!response.ok) throw await responseError(response);
+  return response.json();
+}
+
+export async function listLibraryFiles(): Promise<LibraryFile[]> {
+  const response = await fetch('/api/library/files');
   if (!response.ok) throw await responseError(response);
   return response.json();
 }

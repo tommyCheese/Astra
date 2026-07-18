@@ -162,6 +162,32 @@ async def test_workspace_file_view_and_safe_download(app_client):
     assert content.text == "# report"
 
 
+async def test_library_lists_present_files_with_conversation_context(app_client):
+    from app.repositories.workspaces import WorkspaceRepository
+    from app.workspaces.runtime import WorkspaceRuntimeService
+
+    async with app_client._astra_session() as session:
+        run = await RunRepository(session).create_task_run("资料库测试", {})
+        runtime = WorkspaceRuntimeService(
+            WorkspaceRepository(session),
+            app_client._astra_settings.task_workspace_store_path,
+            max_files=100,
+            max_bytes=1024 * 1024,
+            max_file_bytes=1024 * 1024,
+        )
+        path = await runtime.prepare(run.task_id)
+        before = runtime.scan(path)
+        (path / "library.md").write_text("# library", encoding="utf-8")
+        await runtime.capture_changes(run_id=run.id, tool_call_id=None, workspace_dir=path, before=before)
+
+    response = await app_client.get("/api/library/files")
+    assert response.status_code == 200
+    item = next(file for file in response.json() if file["path"] == "library.md")
+    assert item["task_id"] == run.task_id
+    assert item["conversation_title"] == "资料库测试"
+    assert item["content_url"]
+
+
 async def test_create_run_rejects_removed_direct_planning_strategy(app_client):
     response = await app_client.post(
         "/api/runs",

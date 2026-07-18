@@ -2,7 +2,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { App } from '../src/App';
-import { buildRuntime, cancelRun, cancelRuntimeBuild, createConversationShare, createRun, decideToolApproval, deleteConversation, getConversation, getConversationStrategy, getRun, getRuntimeProfile, listConversationShares, listConversations, listRuns, revokeConversationShare, streamRunEvents, updateConversation, updateConversationStrategy, updateToolSettings, type RunStreamEvent } from '../src/api';
+import { buildRuntime, cancelRun, cancelRuntimeBuild, createConversationShare, createRun, decideToolApproval, deleteConversation, getConversation, getConversationStrategy, getRun, getRuntimeProfile, listConversationShares, listConversations, listLibraryFiles, listRuns, revokeConversationShare, streamRunEvents, updateConversation, updateConversationStrategy, updateToolSettings, type RunStreamEvent } from '../src/api';
 
 vi.mock('../src/api', () => ({
   getConversationStrategy: vi.fn(async () => ({ preferred_answer_mode: 'standard', reasoning_effort: 'balanced', max_tool_calls: 8, planning_strategy: 'adaptive', reflection_enabled: true, reflection_trigger: 'adaptive' })),
@@ -30,6 +30,7 @@ vi.mock('../src/api', () => ({
   createConversationShare: vi.fn(async () => ({ url: '/share/token', created_at: new Date().toISOString(), updated_at: new Date().toISOString() })),
   revokeConversationShare: vi.fn(async () => undefined),
   listConversationShares: vi.fn(async () => []),
+  listLibraryFiles: vi.fn(async () => []),
   listRuns: vi.fn(async () => []),
   resumeRun: vi.fn(async () => ({ run_id: 'run-1', task_id: 'task-1', status: 'executing' })),
   decideToolApproval: vi.fn(async () => ({ run_id: 'run-1', task_id: 'task-1', status: 'executing' })),
@@ -732,6 +733,33 @@ describe('App', () => {
 
     await userEvent.click(screen.getByRole('button', { name: '查看原对话' }));
     await waitFor(() => expect(getConversation).toHaveBeenCalledWith('shared-1', expect.any(AbortSignal)));
+  });
+
+  it('groups and sorts files in the independent library view', async () => {
+    const now = new Date().toISOString();
+    vi.mocked(listLibraryFiles).mockResolvedValueOnce([
+      { id: 'file-image', task_id: 'conversation-1', conversation_title: '图表任务', path: 'outputs/chart.png', mime_type: 'image/png', size_bytes: 2048, security_status: 'verified', deliverable_candidate: true, content_url: '/api/files/chart', created_at: now, updated_at: now },
+      { id: 'file-doc', task_id: 'conversation-2', conversation_title: '报告任务', path: 'reports/summary.pdf', mime_type: 'application/pdf', size_bytes: 8192, security_status: 'verified', deliverable_candidate: true, content_url: '/api/files/report', created_at: now, updated_at: now },
+    ]);
+    render(<App />);
+
+    await userEvent.click(screen.getByRole('button', { name: '资料库' }));
+    expect(await screen.findByRole('heading', { name: '资料库' })).toBeInTheDocument();
+    expect(screen.getByText('chart.png')).toBeInTheDocument();
+    expect(screen.getByText('summary.pdf')).toBeInTheDocument();
+    expect(document.querySelector('a[href="/api/files/chart"]')).toHaveTextContent('打开');
+    expect(document.querySelector('.library-groups')).toHaveClass('view-gallery');
+
+    await userEvent.click(screen.getByRole('button', { name: '列表视图' }));
+    expect(document.querySelector('.library-groups')).toHaveClass('view-list');
+    await userEvent.click(screen.getByRole('button', { name: '画廊视图' }));
+    expect(document.querySelector('.library-groups')).toHaveClass('view-gallery');
+
+    await userEvent.click(screen.getByRole('button', { name: '类型' }));
+    expect(screen.getByRole('heading', { name: '图片' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: '文档' })).toBeInTheDocument();
+    await userEvent.selectOptions(screen.getByRole('combobox', { name: '资料库排序' }), 'size_desc');
+    expect(screen.getByRole('combobox', { name: '资料库排序' })).toHaveValue('size_desc');
   });
 
   it('updates and revokes selected shares in batches', async () => {
