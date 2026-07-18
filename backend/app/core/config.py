@@ -14,7 +14,9 @@ class Settings(BaseSettings):
     tool_web_fetch_enabled: bool = True
     tool_chart_render_enabled: bool = True
     tool_bash_execute_enabled: bool = False
-    trusted_tool_providers: str = "astra.builtin=builtin"
+    trusted_tool_providers: str = (
+        "astra.builtin=builtin,astra.web=builtin,astra.chart=builtin,astra.shell=builtin"
+    )
     permission_bundle_signing_secret: str = ""
     web_search_provider: str = "auto"
     web_search_api_key: str = ""

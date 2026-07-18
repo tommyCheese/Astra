@@ -63,11 +63,11 @@ from app.schemas.permissions import (
     PermissionSubject,
 )
 from app.tools.base import (
-    CapabilityAvailability,
     ToolExecutionContext,
     ToolExecutionError,
     ToolRegistry,
 )
+from app.tools.router import ToolRouter
 from app.workspaces.runtime import WorkspaceRuntimeService
 
 logger = logging.getLogger("astra.agent_loop")
@@ -153,110 +153,6 @@ def _quick_workspace_change_completes_goal(
     ):
         return all(change.get("kind") == "deleted" for change in workspace_changes)
     return False
-
-
-class ToolRouter:
-    def __init__(
-        self,
-        registry: ToolRegistry,
-        allowed_tools: set[str] | None = None,
-        *,
-        allowed_capabilities: set[str] | None = None,
-        allowed_permissions: set[str] | None = None,
-        allowed_risks: set[str] | None = None,
-        available_backends: set[str] | None = None,
-    ):
-        self.registry = registry
-        self.allowed_tools = allowed_tools
-        self.allowed_capabilities = allowed_capabilities or {
-            "network_read",
-            "sandboxed_compute",
-            "temporary_compute",
-            "artifact_write",
-            "dependency_change",
-            "command_execute",
-            "process_execute",
-            "process_execute_unknown",
-            "workspace_read",
-            "workspace_write",
-            "workspace_delete",
-            "network_write",
-            "external_write",
-            "sensitive_data_read",
-            "credential_use",
-            "delegation_create",
-            "permission_change",
-        }
-        self.allowed_permissions = allowed_permissions or {
-            "network_read",
-            "sandboxed_compute",
-            "temporary_compute",
-            "artifact_write",
-            "dependency_change",
-            "command_execute",
-            "process_execute",
-            "process_execute_unknown",
-            "workspace_read",
-            "workspace_write",
-            "workspace_delete",
-            "network_write",
-            "external_write",
-            "sensitive_data_read",
-            "credential_use",
-            "delegation_create",
-            "permission_change",
-        }
-        self.allowed_risks = allowed_risks or {"low", "sandboxed", "high"}
-        self.available_backends = available_backends or {"in_process"}
-
-    def resolve(self, tool_name: str | None, tool_input: dict[str, Any]):
-        if not tool_name:
-            raise ToolExecutionError("invalid_decision", "Agent decision did not include a tool")
-        tool = self.registry.get(tool_name)
-        if self.allowed_tools is not None and tool_name not in self.allowed_tools:
-            raise ToolExecutionError("tool_not_allowed", f"Tool is not allowed: {tool_name}")
-        required = tool.spec.input_schema.get("required", [])
-        missing = [key for key in required if not tool_input.get(key)]
-        if missing:
-            raise ToolExecutionError(
-                "invalid_input", f"Missing required tool input: {', '.join(missing)}"
-            )
-        if not set(tool.spec.capabilities) <= self.allowed_capabilities:
-            raise ToolExecutionError(
-                "tool_not_allowed", f"Tool capability is not allowed: {tool_name}"
-            )
-        if not set(tool.spec.permissions) <= self.allowed_permissions:
-            raise ToolExecutionError(
-                "permission_denied", f"Tool permission is not allowed: {tool_name}"
-            )
-        if tool.spec.risk not in self.allowed_risks:
-            raise ToolExecutionError("permission_denied", f"Tool risk is not allowed: {tool_name}")
-        if tool.spec.execution_backend not in self.available_backends:
-            raise ToolExecutionError(
-                "sandbox_unavailable", f"Tool backend is unavailable: {tool.spec.execution_backend}"
-            )
-        return tool
-
-    def availability(self, tool_name: str) -> CapabilityAvailability:
-        try:
-            spec = self.registry.get(tool_name).spec
-            probe = dict.fromkeys(spec.input_schema.get("required", []), "__manifest_probe__")
-            self.resolve(tool_name, probe)
-            return CapabilityAvailability(capability=tool_name, available=True)
-        except ToolExecutionError as exc:
-            return CapabilityAvailability(
-                capability=tool_name, available=False, reason=exc.category
-            )
-
-    def eligible_specs(self):
-        eligible, unavailable = {}, {}
-        for name, spec in self.registry.specs().items():
-            status = self.availability(name)
-            if status.available:
-                eligible[name] = spec
-            else:
-                unavailable[name] = status.model_dump()
-        return eligible, unavailable
 
 
 class ContextAssembler:
@@ -503,8 +399,7 @@ class AgentLoop:
         )
         provider_identities: dict[str, Any] = {}
         catalog = [
-            spec.model_dump(mode="json")
-            for _, spec in sorted(self.tool_registry.specs().items())
+            spec.model_dump(mode="json") for _, spec in sorted(self.tool_registry.specs().items())
         ]
         extension_policy = ExtensionTrustPolicy()
         try:
@@ -608,9 +503,7 @@ class AgentLoop:
         approved_request_snapshot = (
             {
                 "effect_plan_hash": approved_call.approval_request.effect_plan_hash,
-                "frozen_effect_plan": dict(
-                    approved_call.approval_request.frozen_effect_plan or {}
-                ),
+                "frozen_effect_plan": dict(approved_call.approval_request.frozen_effect_plan or {}),
                 "analyzer_version": approved_call.approval_request.analyzer_version,
                 "analyzer_digest": approved_call.approval_request.analyzer_digest,
             }
@@ -941,7 +834,9 @@ class AgentLoop:
             )
             await repo.session.commit()
 
-        start_turn_index = approved_turn.turn_index if approved_turn is not None else len(initial_run.turns) + 1
+        start_turn_index = (
+            approved_turn.turn_index if approved_turn is not None else len(initial_run.turns) + 1
+        )
         for turn_index in range(start_turn_index, max_turns + 1):
             if terminal_override == "waiting_user":
                 break
@@ -1199,7 +1094,9 @@ class AgentLoop:
                     decision=decision.model_dump(),
                     memory_reads=context["memory_reads"],
                     state_version_before=(await repo.require_run(run_id)).state_version,
-                    plan_version=((await repo.require_run(run_id)).plan_graph or {}).get("version", 1),
+                    plan_version=((await repo.require_run(run_id)).plan_graph or {}).get(
+                        "version", 1
+                    ),
                     phase="prepared" if decision.decision_type == "call_tool" else "created",
                     idempotency_key=idempotency_key,
                     plan_node_id=active_node.id if active_node is not None else None,
@@ -1579,9 +1476,7 @@ class AgentLoop:
                             "approval_integrity_error",
                             "Approved effect plan failed integrity validation",
                         )
-                grants = await repo.list_approval_grants(
-                    run_id, tool.spec.name, tool.spec.version
-                )
+                grants = await repo.list_approval_grants(run_id, tool.spec.name, tool.spec.version)
                 authorization = PermissionEngine().authorize_invocation(
                     subject=PermissionSubject(
                         agent_id=runtime_identity.id,
@@ -1788,9 +1683,7 @@ class AgentLoop:
                 except ToolExecutionError as exc:
                     await repo.finish_tool_call(call.id, error=exc.to_payload())
                     raise
-                workspace_changes = await workspace_repository.list_changes_for_tool_call(
-                    call.id
-                )
+                workspace_changes = await workspace_repository.list_changes_for_tool_call(call.id)
                 if workspace_changes:
                     output = {
                         **output,

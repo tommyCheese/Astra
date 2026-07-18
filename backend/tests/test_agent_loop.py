@@ -307,6 +307,22 @@ def test_tool_router_rejects_unavailable_backend():
     tool.spec = original
 
 
+def test_tool_router_preserves_explicit_empty_authority_sets():
+    registry = fake_web_registry()
+
+    with pytest.raises(ToolExecutionError) as capability:
+        ToolRouter(registry, allowed_capabilities=set()).resolve("web_search", {"query": "Astra"})
+    with pytest.raises(ToolExecutionError) as permission:
+        ToolRouter(
+            registry,
+            allowed_capabilities={"network_read"},
+            allowed_permissions=set(),
+        ).resolve("web_search", {"query": "Astra"})
+
+    assert capability.value.category == "tool_not_allowed"
+    assert permission.value.category == "permission_denied"
+
+
 class ContinueDecisionClient(MockModelClient):
     def __init__(self):
         self.decide_calls = 0

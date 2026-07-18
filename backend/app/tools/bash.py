@@ -170,4 +170,6 @@ class BashExecuteTool(Tool):
             ) from exc
         finally:
             shutil.rmtree(root, ignore_errors=True)
-        return ToolResultEnvelope(data=normalized.model_dump()).model_dump(mode="json")
+        return ToolResultEnvelope(data=normalized.model_dump()).model_dump(
+            mode="json", exclude_none=True
+        )

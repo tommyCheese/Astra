@@ -2,9 +2,9 @@ from abc import ABC, abstractmethod
 from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 
 class ToolExecutionError(RuntimeError):
@@ -47,6 +47,8 @@ class ToolSpec(BaseModel):
 
 
 class ArtifactRef(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     id: str
     type: str
     mime_type: str
@@ -56,12 +58,120 @@ class ArtifactRef(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
+class ToolResultError(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    category: str = Field(min_length=1, max_length=100)
+    message: str = Field(min_length=1, max_length=500)
+
+
 class ToolResultEnvelope(BaseModel):
-    status: str = "succeeded"
+    model_config = ConfigDict(extra="forbid")
+
+    protocol_version: Literal["1"] = "1"
+    status: Literal["succeeded", "failed"] = "succeeded"
     data: dict[str, Any] = Field(default_factory=dict)
     warnings: list[str] = Field(default_factory=list)
     metrics: dict[str, Any] = Field(default_factory=dict)
     artifacts: list[ArtifactRef] = Field(default_factory=list)
+    error: ToolResultError | None = None
+
+    @model_validator(mode="after")
+    def validate_status(self) -> "ToolResultEnvelope":
+        if self.status == "failed" and not self.error:
+            raise ValueError("failed tool result requires an error")
+        if self.status == "succeeded" and self.error:
+            raise ValueError("successful tool result cannot include an error")
+        return self
+
+
+def validate_tool_result(output: dict[str, Any], spec: ToolSpec) -> ToolResultEnvelope:
+    """Validate the host envelope and the tool-declared schema without leaking payload data."""
+    try:
+        envelope = ToolResultEnvelope.model_validate(output)
+        if envelope.status == "succeeded":
+            validate_json_schema(envelope.data, spec.output_schema, path="data")
+    except (TypeError, ValueError, ValidationError) as exc:
+        raise ToolExecutionError(
+            "invalid_result", f"Tool returned an invalid result for {spec.name}"
+        ) from exc
+    return envelope
+
+
+def validate_json_schema(value: Any, schema: dict[str, Any], *, path: str = "value") -> None:
+    """Validate the bounded JSON Schema subset accepted by ToolSpec manifests."""
+    if not schema:
+        return
+    alternatives = schema.get("anyOf")
+    if alternatives is not None:
+        if not isinstance(alternatives, list) or not alternatives:
+            raise ValueError(f"{path} has an invalid anyOf declaration")
+        for alternative in alternatives:
+            if not isinstance(alternative, dict):
+                raise ValueError(f"{path} has an invalid anyOf declaration")
+            try:
+                validate_json_schema(value, alternative, path=path)
+                break
+            except ValueError:
+                continue
+        else:
+            raise ValueError(f"{path} does not match any allowed schema")
+    expected = schema.get("type")
+    type_checks = {
+        "object": lambda item: isinstance(item, dict),
+        "array": lambda item: isinstance(item, list),
+        "string": lambda item: isinstance(item, str),
+        "integer": lambda item: isinstance(item, int) and not isinstance(item, bool),
+        "number": lambda item: isinstance(item, (int, float)) and not isinstance(item, bool),
+        "boolean": lambda item: isinstance(item, bool),
+        "null": lambda item: item is None,
+    }
+    if expected is not None and expected not in type_checks:
+        raise ValueError(f"{path} has an unsupported type declaration")
+    if expected in type_checks and not type_checks[expected](value):
+        raise ValueError(f"{path} does not match type {expected}")
+    if "enum" in schema and value not in schema["enum"]:
+        raise ValueError(f"{path} is not an allowed value")
+    if isinstance(value, dict):
+        required = schema.get("required", [])
+        if not isinstance(required, list) or not all(isinstance(item, str) for item in required):
+            raise ValueError(f"{path} has an invalid required declaration")
+        missing = [key for key in required if key not in value]
+        if missing:
+            raise ValueError(f"{path} is missing required properties")
+        properties = schema.get("properties", {})
+        if not isinstance(properties, dict):
+            raise ValueError(f"{path} has invalid properties")
+        for key, child_schema in properties.items():
+            if key in value:
+                if not isinstance(child_schema, dict):
+                    raise ValueError(f"{path}.{key} has an invalid schema")
+                validate_json_schema(value[key], child_schema, path=f"{path}.{key}")
+        if schema.get("additionalProperties") is False:
+            unknown = set(value) - set(properties)
+            if unknown:
+                raise ValueError(f"{path} has additional properties")
+    if isinstance(value, list) and "items" in schema:
+        item_schema = schema["items"]
+        if not isinstance(item_schema, dict):
+            raise ValueError(f"{path} has invalid items")
+        for index, item in enumerate(value):
+            validate_json_schema(item, item_schema, path=f"{path}[{index}]")
+    if isinstance(value, list):
+        if "minItems" in schema and len(value) < int(schema["minItems"]):
+            raise ValueError(f"{path} has too few items")
+        if "maxItems" in schema and len(value) > int(schema["maxItems"]):
+            raise ValueError(f"{path} has too many items")
+    if isinstance(value, str):
+        if "minLength" in schema and len(value) < int(schema["minLength"]):
+            raise ValueError(f"{path} is shorter than allowed")
+        if "maxLength" in schema and len(value) > int(schema["maxLength"]):
+            raise ValueError(f"{path} is longer than allowed")
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        if "minimum" in schema and value < schema["minimum"]:
+            raise ValueError(f"{path} is below the minimum")
+        if "maximum" in schema and value > schema["maximum"]:
+            raise ValueError(f"{path} is above the maximum")
 
 
 class CapabilityAvailability(BaseModel):

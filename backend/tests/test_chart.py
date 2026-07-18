@@ -10,6 +10,7 @@ from app.sandbox.runtime import SandboxHandle, SandboxProvider, SandboxResult
 from app.schemas.agent import AgentDecision, FinalAnswer, RequestedReasoningPolicy
 from app.tools.chart import ChartRenderTool, ChartRequest, select_backend
 from app.tools.registry import build_tool_registry
+from app.tools.router import ToolRouter
 
 
 def request(**updates):
@@ -115,6 +116,18 @@ def test_chart_tool_switch_overrides_available_sandbox():
     )
 
     assert "chart.render" not in build_tool_registry(settings).specs()
+
+
+def test_chart_manifest_availability_does_not_fabricate_invalid_probe_input():
+    registry = build_tool_registry(
+        Settings(sandbox_enabled=True, sandbox_skip_availability_check=True)
+    )
+
+    status = ToolRouter(registry, available_backends={"sandbox.remote"}).availability(
+        "chart.render"
+    )
+
+    assert status.available is True
 
 
 class ChartClient(MockModelClient):

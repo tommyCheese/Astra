@@ -4,10 +4,10 @@ import hashlib
 import json
 import re
 import shlex
-from abc import ABC, abstractmethod
 from pathlib import PurePosixPath
 from typing import Any
 
+from app.plugins.interfaces import EffectAnalyzer
 from app.schemas.permissions import ActionEffectPlan, EffectItem, EffectKind
 from app.tools.base import ToolSpec
 
@@ -56,15 +56,68 @@ def effect_plan_hash(plan: ActionEffectPlan) -> str:
     ).hexdigest()
 
 
-class ToolEffectAnalyzer(ABC):
-    @abstractmethod
+class ToolEffectAnalyzer(EffectAnalyzer):
+    """Compatibility name for the host effect-analyzer plugin contract."""
+
+
+class WebEffectAnalyzer(ToolEffectAnalyzer):
     def analyze(
         self,
         spec: ToolSpec,
         tool_input: dict[str, Any],
         *,
         task_id: str,
-    ) -> ActionEffectPlan: ...
+    ) -> ActionEffectPlan:
+        resource = (
+            f"web://search/{str(tool_input.get('query', '')).strip()}"
+            if "query" in tool_input and not tool_input.get("url")
+            else str(tool_input.get("url", "web://unknown"))
+        )
+        return DefaultEffectAnalyzer._plan(
+            spec,
+            "读取公开网络内容",
+            [EffectItem(kind=EffectKind.network_read, resource=resource)],
+            ["network_read"],
+            approval_required=False,
+            network_scope={"mode": "public_read"},
+        )
+
+
+class ChartEffectAnalyzer(ToolEffectAnalyzer):
+    def analyze(
+        self,
+        spec: ToolSpec,
+        tool_input: dict[str, Any],
+        *,
+        task_id: str,
+    ) -> ActionEffectPlan:
+        effects = [
+            EffectItem(
+                kind=EffectKind.temporary_compute,
+                resource="sandbox://data-viz",
+                persistent=False,
+            ),
+            EffectItem(
+                kind=EffectKind.artifact_write,
+                resource=f"artifact://task/{task_id}/chart",
+                risk="moderate",
+                persistent=True,
+            ),
+        ]
+        if tool_input.get("input_workspace_path"):
+            effects.append(
+                EffectItem(
+                    kind=EffectKind.workspace_read,
+                    resource=_workspace_resource(task_id, str(tool_input["input_workspace_path"])),
+                )
+            )
+        return DefaultEffectAnalyzer._plan(
+            spec,
+            "读取任务数据并生成图表交付物",
+            effects,
+            ["workspace_read", "temporary_compute", "artifact_write"],
+            approval_required=True,
+        )
 
 
 class DefaultEffectAnalyzer(ToolEffectAnalyzer):
@@ -76,51 +129,11 @@ class DefaultEffectAnalyzer(ToolEffectAnalyzer):
         task_id: str,
     ) -> ActionEffectPlan:
         if spec.name in {"web_search", "web_fetch"}:
-            resource = (
-                f"web://search/{str(tool_input.get('query', '')).strip()}"
-                if spec.name == "web_search"
-                else str(tool_input.get("url", "web://unknown"))
-            )
-            return self._plan(
-                spec,
-                "读取公开网络内容",
-                [EffectItem(kind=EffectKind.network_read, resource=resource)],
-                ["network_read"],
-                approval_required=False,
-                network_scope={"mode": "public_read"},
-            )
+            return WebEffectAnalyzer().analyze(spec, tool_input, task_id=task_id)
         if spec.name == "bash_execute":
             return BashEffectAnalyzer().analyze(spec, tool_input, task_id=task_id)
         if spec.name == "chart.render":
-            effects = [
-                EffectItem(
-                    kind=EffectKind.temporary_compute,
-                    resource="sandbox://data-viz",
-                    persistent=False,
-                ),
-                EffectItem(
-                    kind=EffectKind.artifact_write,
-                    resource=f"artifact://task/{task_id}/chart",
-                    risk="moderate",
-                    persistent=True,
-                ),
-            ]
-            if tool_input.get("input_workspace_path"):
-                effects.append(
-                    EffectItem(
-                        kind=EffectKind.workspace_read,
-                        resource=_workspace_resource(
-                            task_id, str(tool_input["input_workspace_path"])
-                        ),
-                    )
-                )
-            return self._plan(
-                spec,
-                "读取任务数据并生成图表交付物",
-                effects,
-                ["workspace_read", "temporary_compute", "artifact_write"],
-                approval_required=True,
-            )
+            return ChartEffectAnalyzer().analyze(spec, tool_input, task_id=task_id)
         declared = set(spec.permissions)
         mapped: list[EffectItem] = []
         path = str(
@@ -183,11 +196,14 @@ class DefaultEffectAnalyzer(ToolEffectAnalyzer):
                     EffectItem(
                         kind=kind,
                         resource=resource,
-                        risk="high" if kind in {
+                        risk="high"
+                        if kind
+                        in {
                             EffectKind.credential_use,
                             EffectKind.delegation_create,
                             EffectKind.external_write,
-                        } else "moderate",
+                        }
+                        else "moderate",
                         reversible=False,
                         persistent=kind != EffectKind.credential_use,
                         data_labels=list(tool_input.get("data_labels", [])),
@@ -272,9 +288,9 @@ class BashEffectAnalyzer(ToolEffectAnalyzer):
         executable = PurePosixPath(executable_token).name if tokens else ""
         trusted_executable = bool(executable) and executable_token == executable
         for match in REDIRECTION.finditer(command):
-            effects.append(_path_mutation_effect(
-                task_id, _clean_shell_path(match.group(1)), delete=False
-            ))
+            effects.append(
+                _path_mutation_effect(task_id, _clean_shell_path(match.group(1)), delete=False)
+            )
         if complex_shell:
             effects.append(_unknown_process_effect(task_id))
             summary = "执行行为复杂的 Bash 命令"
@@ -282,15 +298,18 @@ class BashEffectAnalyzer(ToolEffectAnalyzer):
             targets = _simple_operands(tokens)
             if not targets:
                 targets = ["**"]
-            effects.extend(_path_mutation_effect(
-                task_id, _clean_shell_path(target), delete=True
-            ) for target in targets)
+            effects.extend(
+                _path_mutation_effect(task_id, _clean_shell_path(target), delete=True)
+                for target in targets
+            )
             summary = "删除任务工作区文件"
         elif trusted_executable and executable == "find" and "-delete" in tokens:
             effects.append(_path_mutation_effect(task_id, "**", delete=True))
             summary = "删除 find 匹配的任务工作区文件"
-        elif trusted_executable and executable == "sed" and any(
-            token == "-i" or token.startswith("-i") for token in tokens[1:]
+        elif (
+            trusted_executable
+            and executable == "sed"
+            and any(token == "-i" or token.startswith("-i") for token in tokens[1:])
         ):
             target = next(
                 (token for token in reversed(tokens[1:]) if not token.startswith("-")),
@@ -306,17 +325,13 @@ class BashEffectAnalyzer(ToolEffectAnalyzer):
             elif executable == "mv" and len(operands) >= 2:
                 sources, destination = operands[:-1], operands[-1]
                 effects.extend(
-                    _path_mutation_effect(
-                        task_id, _clean_shell_path(source), delete=True
-                    )
+                    _path_mutation_effect(task_id, _clean_shell_path(source), delete=True)
                     for source in sources
                 )
                 if len(sources) > 1:
                     destination = f"{destination.rstrip('/')}/**"
                 effects.append(
-                    _path_mutation_effect(
-                        task_id, _clean_shell_path(destination), delete=False
-                    )
+                    _path_mutation_effect(task_id, _clean_shell_path(destination), delete=False)
                 )
                 summary = "移动任务工作区文件"
             elif executable in {"cp", "install"} and len(operands) >= 2:
@@ -331,16 +346,12 @@ class BashEffectAnalyzer(ToolEffectAnalyzer):
                 if len(sources) > 1:
                     destination = f"{destination.rstrip('/')}/**"
                 effects.append(
-                    _path_mutation_effect(
-                        task_id, _clean_shell_path(destination), delete=False
-                    )
+                    _path_mutation_effect(task_id, _clean_shell_path(destination), delete=False)
                 )
                 summary = "复制或安装任务工作区文件"
             elif executable in {"mkdir", "tee", "touch", "truncate"} and operands:
                 effects.extend(
-                    _path_mutation_effect(
-                        task_id, _clean_shell_path(target), delete=False
-                    )
+                    _path_mutation_effect(task_id, _clean_shell_path(target), delete=False)
                     for target in operands
                 )
                 summary = "创建或修改任务工作区文件"
@@ -548,8 +559,15 @@ def _simple_operands(tokens: list[str]) -> list[str] | None:
 def _safe_read_only_invocation(executable: str, tokens: list[str]) -> bool:
     if executable == "find":
         unsafe = {
-            "-delete", "-exec", "-execdir", "-ok", "-okdir",
-            "-fprint", "-fprint0", "-fprintf", "-fls",
+            "-delete",
+            "-exec",
+            "-execdir",
+            "-ok",
+            "-okdir",
+            "-fprint",
+            "-fprint0",
+            "-fprintf",
+            "-fls",
         }
         if any(token in unsafe for token in tokens[1:]):
             return False
@@ -557,10 +575,7 @@ def _safe_read_only_invocation(executable: str, tokens: list[str]) -> bool:
         token == "-o" or token.startswith("--output=") for token in tokens[1:]
     ):
         return False
-    return not (
-        executable == "diff"
-        and any(token.startswith("--output=") for token in tokens[1:])
-    )
+    return not (executable == "diff" and any(token.startswith("--output=") for token in tokens[1:]))
 
 
 def _safe_git_invocation(tokens: list[str]) -> bool:

@@ -136,21 +136,43 @@ class ChartRenderTool(Tool):
                         },
                         {"type": "object"},
                         {"type": "array", "items": {"type": "object"}},
+                        {"type": "null"},
                     ],
                 },
+                "input_artifact_id": {"anyOf": [{"type": "string"}, {"type": "null"}]},
                 "input_workspace_path": {
-                    "type": "string",
+                    "anyOf": [{"type": "string"}, {"type": "null"}],
                     "description": (
                         "Relative CSV path in the current Task Workspace, such as test.csv"
                     ),
                 },
-                "chart_type": {"type": "string"},
+                "version": {"type": "string", "enum": ["1"]},
+                "chart_type": {
+                    "type": "string",
+                    "enum": ["line", "bar", "scatter", "histogram", "box", "violin", "regression"],
+                },
                 "x": {"type": "string"},
-                "y": {"type": "array", "items": {"type": "string"}},
-                "title": {"type": "string"},
-                "backend": {"type": "string"},
-                "outputs": {"type": "array", "items": {"type": "string"}},
+                "y": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "minItems": 1,
+                    "maxItems": 16,
+                },
+                "title": {"type": "string", "maxLength": 240},
+                "backend": {
+                    "type": "string",
+                    "enum": ["auto", "matplotlib", "seaborn", "echarts"],
+                },
+                "outputs": {
+                    "type": "array",
+                    "items": {"type": "string", "enum": ["png", "svg", "html"]},
+                    "minItems": 1,
+                    "maxItems": 3,
+                },
+                "width": {"type": "integer", "minimum": 320, "maximum": 4096},
+                "height": {"type": "integer", "minimum": 240, "maximum": 4096},
             },
+            "additionalProperties": False,
         },
         output_schema={"type": "object"},
         permission="sandboxed_compute",
@@ -252,7 +274,7 @@ class ChartRenderTool(Tool):
         return ToolResultEnvelope(
             data={"backend": backend, "selection_reason": reason, "sandbox_job_id": job.id},
             artifacts=refs,
-        ).model_dump(mode="json")
+        ).model_dump(mode="json", exclude_none=True)
 
     @staticmethod
     def _load_workspace_csv(
