@@ -18,6 +18,15 @@ vi.mock('../src/api', () => ({
 
 describe('SharedConversationPage', () => {
   beforeEach(() => {
+    const values = new Map<string, string>();
+    Object.defineProperty(window, 'localStorage', {
+      configurable: true,
+      value: {
+        getItem: (key: string) => values.get(key) ?? null,
+        setItem: (key: string, value: string) => values.set(key, value),
+        removeItem: (key: string) => values.delete(key),
+      },
+    });
     vi.mocked(getSharedConversation).mockResolvedValue({
       title: '公开标题',
       messages: [
@@ -60,5 +69,16 @@ describe('SharedConversationPage', () => {
     });
     await waitFor(() => expect(screen.queryByRole('heading', { name: '旧分享' })).not.toBeInTheDocument());
     expect(getSharedConversation).toHaveBeenLastCalledWith('new', expect.any(AbortSignal));
+  });
+
+  it('localizes the standalone shared page in English', async () => {
+    window.localStorage.setItem('astra.language', 'en');
+    render(<SharedConversationPage token="token" />);
+
+    expect(await screen.findByText('Shared chat')).toBeInTheDocument();
+    expect(screen.getByText('Reasoning process')).toBeInTheDocument();
+    expect(screen.getByText('2 steps')).toBeInTheDocument();
+    expect(screen.getByText(/Read-only snapshot · Updated/)).toBeInTheDocument();
+    window.localStorage.removeItem('astra.language');
   });
 });

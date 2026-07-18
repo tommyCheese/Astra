@@ -740,7 +740,7 @@ function AppContent() {
             <button className="mobile-sidebar-trigger" type="button" aria-label={t('打开导航')} onClick={() => setSidebarOpen(true)}><span /><span /><span /></button>
             <h1>{activeConversationTitle || 'Astra'}</h1>
           </div>
-          {run && <div className="topbar-run-controls"><button type="button" onClick={() => setControlCenterOpen(true)}>{t('任务安全')}</button><span className={`status status-${run.status}`}>{statusLabel(run.status)}</span></div>}
+          {run && <div className="topbar-run-controls"><button type="button" onClick={() => setControlCenterOpen(true)}>{t('任务安全')}</button><span className={`status status-${run.status}`}>{t(statusLabel(run.status))}</span></div>}
         </section>
 
         <section className="chat-surface">
@@ -1106,18 +1106,18 @@ function libraryFileType(file: LibraryFile) {
   return '其他';
 }
 
-function libraryTimeGroup(value: string) {
+function libraryTimeGroup(value: string, language: string) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return '时间未知';
   const now = new Date();
   const startToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
   if (date.getTime() >= startToday) return '今天';
   if (date.getTime() >= startToday - 6 * 24 * 60 * 60 * 1000) return '最近 7 天';
-  return date.toLocaleDateString([], { year: 'numeric', month: 'long' });
+  return date.toLocaleDateString(language, { year: 'numeric', month: 'long' });
 }
 
 function LibraryView({ onClose, onOpenConversation }: { onClose: () => void; onOpenConversation: (id: string, title: string) => void }) {
-  const { t } = useI18n();
+  const { language, t } = useI18n();
   const [files, setFiles] = useState<LibraryFile[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -1152,11 +1152,11 @@ function LibraryView({ onClose, onOpenConversation }: { onClose: () => void; onO
     });
     const grouped = new Map<string, LibraryFile[]>();
     for (const file of visible) {
-      const key = groupMode === 'conversation' ? file.conversation_title || t('未命名对话') : groupMode === 'type' ? t(libraryFileType(file)) : t(libraryTimeGroup(file.updated_at));
+      const key = groupMode === 'conversation' ? file.conversation_title || t('未命名对话') : groupMode === 'type' ? t(libraryFileType(file)) : t(libraryTimeGroup(file.updated_at, language));
       grouped.set(key, [...(grouped.get(key) ?? []), file]);
     }
     return [...grouped.entries()];
-  }, [files, groupMode, query, sortMode, t]);
+  }, [files, groupMode, language, query, sortMode, t]);
 
   return <section className="library-page">
     <header className="library-header">
@@ -1185,7 +1185,7 @@ function LibraryView({ onClose, onOpenConversation }: { onClose: () => void; onO
           const previewableImage = type === '图片' && file.content_url;
           return <article className="library-card" key={file.id}>
             <div className={`library-preview type-${type}`} aria-hidden="true">{previewableImage ? <img src={file.content_url ?? ''} alt="" /> : <span>{file.path.split('.').pop()?.slice(0, 4).toUpperCase() || 'FILE'}</span>}</div>
-            <div className="library-card-body"><strong title={file.path}>{name}</strong><span>{t(type)} · {formatFileSize(file.size_bytes)}</span><time dateTime={file.updated_at}>{new Date(file.updated_at).toLocaleString()}</time></div>
+            <div className="library-card-body"><strong title={file.path}>{name}</strong><span>{t(type)} · {formatFileSize(file.size_bytes, language)}</span><time dateTime={file.updated_at}>{new Date(file.updated_at).toLocaleString(language)}</time></div>
             <div className="library-card-actions"><button type="button" onClick={() => onOpenConversation(file.task_id, file.conversation_title)}>{file.conversation_title || t('未命名对话')}</button>{file.content_url ? <a href={file.content_url}>{t('打开')}</a> : <span>{t('受保护')}</span>}</div>
           </article>;
         })}
@@ -1199,7 +1199,7 @@ function SharedConversationsView({ onClose, onOpenConversation, onShareChanged }
   onOpenConversation: (id: string, title: string) => void;
   onShareChanged: (ids: string[], active: boolean) => void;
 }) {
-  const { t } = useI18n();
+  const { language, t } = useI18n();
   const [shares, setShares] = useState<ConversationShareSummary[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
@@ -1268,7 +1268,7 @@ function SharedConversationsView({ onClose, onOpenConversation, onShareChanged }
     <div className="shares-list">
       {shares.map((share) => <article className="share-management-item" key={share.conversation_id}>
         <input type="checkbox" aria-label={`${t('选择')} ${share.title}`} checked={selected.has(share.conversation_id)} onChange={() => toggleSelected(share.conversation_id)} />
-        <div className="share-management-main"><h2>{share.title}</h2><p>{t('快照更新时间')} {new Date(share.updated_at).toLocaleString()} · {share.message_count} {t('条消息')}</p></div>
+        <div className="share-management-main"><h2>{share.title}</h2><p>{t('快照更新时间')} {new Date(share.updated_at).toLocaleString(language)} · {share.message_count.toLocaleString(language)} {t('条消息')}</p></div>
         <div className="share-management-actions"><button type="button" onClick={() => onOpenConversation(share.conversation_id, share.title)}>{t('查看原对话')}</button><a href={share.url} target="_blank" rel="noreferrer">{t('打开分享页')}</a></div>
       </article>)}
       {!loading && !shares.length && <div className="shares-empty"><Icon name="link" /><h2>{t('暂无已分享对话')}</h2><p>{t('从对话的更多操作中创建分享链接后，会显示在这里。')}</p></div>}
@@ -1284,7 +1284,7 @@ function ConversationActionDialog({ action, onClose, onRenamed, onDeleted, onSha
   onDeleted: (id: string) => void;
   onShareChanged: (id: string, active: boolean) => void;
 }) {
-  const { t } = useI18n();
+  const { language, t } = useI18n();
   const [title, setTitle] = useState(action.conversation.title ?? '');
   const [share, setShare] = useState<ConversationShare | null>(null);
   const [busy, setBusy] = useState(false);
@@ -1303,7 +1303,7 @@ function ConversationActionDialog({ action, onClose, onRenamed, onDeleted, onSha
     <div className="conversation-action-dialog" role="dialog" aria-modal="true" aria-label={action.kind === 'rename' ? t('重命名对话') : action.kind === 'share' ? t('分享对话') : t('删除对话')} onKeyDown={(event) => { if (event.key === 'Escape') onClose(); }}>
       {action.kind === 'rename' && <form onSubmit={(event) => { event.preventDefault(); void execute(async () => { const updated = await updateConversation(action.conversation.id, { title }); onRenamed(updated); onClose(); }); }}><h2>{t('重命名对话')}</h2><input autoFocus value={title} maxLength={240} onChange={(event) => setTitle(event.target.value)} /><div className="dialog-actions"><button type="button" onClick={onClose}>{t('取消')}</button><button className="primary" disabled={busy || !title.trim()}>{t('保存')}</button></div></form>}
       {action.kind === 'delete' && <><h2>{t('永久删除对话？')}</h2><p>{t('将删除“{title}”的所有消息、执行记录和分享链接，此操作无法撤销。').replace('{title}', action.conversation.title ?? t('未命名对话'))}</p><div className="dialog-actions"><button type="button" onClick={onClose}>{t('取消')}</button><button className="danger" disabled={busy} type="button" onClick={() => { void execute(async () => { await deleteConversation(action.conversation.id); onDeleted(action.conversation.id); onClose(); }); }}>{t('永久删除')}</button></div></>}
-      {action.kind === 'share' && <><h2>{t('分享对话')}</h2><p>{t('任何获得链接的人都可以查看创建时的只读快照。后续消息不会自动公开。')}</p>{share ? <><div className="share-link"><input readOnly value={`${window.location.origin}${share.url}`} /><button type="button" onClick={() => { void navigator.clipboard?.writeText(`${window.location.origin}${share.url}`); }}>{t('复制')}</button></div><small>{t('快照更新时间')} {new Date(share.updated_at).toLocaleString()}</small><div className="dialog-actions"><button type="button" onClick={() => { void execute(async () => { const updated = await createConversationShare(action.conversation.id, true); setShare(updated); }); }}>{t('更新快照')}</button><button className="danger" type="button" onClick={() => { void execute(async () => { await revokeConversationShare(action.conversation.id); setShare(null); onShareChanged(action.conversation.id, false); }); }}>{t('停止分享')}</button></div></> : <div className="dialog-actions"><button type="button" onClick={onClose}>{t('取消')}</button><button className="primary" type="button" onClick={() => { void execute(async () => { const created = await createConversationShare(action.conversation.id); setShare(created); onShareChanged(action.conversation.id, true); }); }}>{t('创建分享链接')}</button></div>}</>}
+      {action.kind === 'share' && <><h2>{t('分享对话')}</h2><p>{t('任何获得链接的人都可以查看创建时的只读快照。后续消息不会自动公开。')}</p>{share ? <><div className="share-link"><input readOnly value={`${window.location.origin}${share.url}`} /><button type="button" onClick={() => { void navigator.clipboard?.writeText(`${window.location.origin}${share.url}`); }}>{t('复制')}</button></div><small>{t('快照更新时间')} {new Date(share.updated_at).toLocaleString(language)}</small><div className="dialog-actions"><button type="button" onClick={() => { void execute(async () => { const updated = await createConversationShare(action.conversation.id, true); setShare(updated); }); }}>{t('更新快照')}</button><button className="danger" type="button" onClick={() => { void execute(async () => { await revokeConversationShare(action.conversation.id); setShare(null); onShareChanged(action.conversation.id, false); }); }}>{t('停止分享')}</button></div></> : <div className="dialog-actions"><button type="button" onClick={onClose}>{t('取消')}</button><button className="primary" type="button" onClick={() => { void execute(async () => { const created = await createConversationShare(action.conversation.id); setShare(created); onShareChanged(action.conversation.id, true); }); }}>{t('创建分享链接')}</button></div>}</>}
       {failure && <p className="dialog-error">{failure}</p>}
     </div>
   </div>;
@@ -1802,7 +1802,7 @@ function ModelManagement({ providers, onChange }: { providers: ModelProviderConf
               return items.length > 0 && <div className="provider-group" key={group.id}><div className="provider-group-label">{t(group.label)}</div>{items.map((item) => (
                 <button className={`provider-item ${item.id === selectedProvider ? 'active' : ''}`} type="button" key={item.id} onClick={() => selectProvider(item.id)}>
                   <span className={`provider-mark provider-${item.id}`}>{item.mark}</span>
-                  <span><strong>{item.name}</strong><small>{t(item.detail)}</small></span>
+                  <span><strong>{t(item.name)}</strong><small>{t(item.detail)}</small></span>
                   <i className={providers.find((configured) => configured.id === item.id)?.enabled ? 'connected' : ''} />
                 </button>
               ))}</div>;
@@ -1813,7 +1813,7 @@ function ModelManagement({ providers, onChange }: { providers: ModelProviderConf
 
         <section className="provider-editor">
           <header className="provider-editor-header">
-            <div><span className={`provider-mark provider-${provider.id}`}>{providerMeta.mark}</span><div><h3>{provider.name}</h3><p>{t(providerMeta.detail)}</p></div></div>
+            <div><span className={`provider-mark provider-${provider.id}`}>{providerMeta.mark}</span><div><h3>{t(provider.name)}</h3><p>{t(providerMeta.detail)}</p></div></div>
             <label className="provider-enabled"><span>{t('启用')}</span><Toggle checked={provider.enabled} onChange={toggleProvider} /></label>
           </header>
 
@@ -1930,10 +1930,12 @@ function friendlyApprovalContent(approval: PendingApproval) {
 function ApprovalCard({ approval, submitting, onDecision }: { approval: PendingApproval; submitting: boolean; onDecision: (decision: 'approve_once' | 'allow_similar' | 'allow_task' | 'reject') => void }) {
   const { t } = useI18n();
   const content = friendlyApprovalContent(approval);
+  const titleMatch = content.title.match(/^(删除|保存|修改) (.+)$/);
+  const localizedTitle = titleMatch ? t(`${titleMatch[1]} {target}`).replace('{target}', titleMatch[2]) : t(content.title);
   return <section className="approval-card" role="group" aria-label={t('需要你的确认')}>
     <div className="approval-card-header">
       <Icon name="requestApprove" />
-      <div><strong>{t('需要你的确认')}</strong><span>{t(content.title)}</span></div>
+      <div><strong>{t('需要你的确认')}</strong><span>{localizedTitle}</span></div>
     </div>
     <p className="approval-friendly-description">{t(content.description)}</p>
     {approval.tool_name === 'bash_execute' && approval.preview && <div className="approval-command">
@@ -1942,7 +1944,7 @@ function ApprovalCard({ approval, submitting, onDecision }: { approval: PendingA
     </div>}
     <div className="approval-friendly-summary">
       <span className="approval-risk-pill">{t(content.risk)}</span>
-      {content.resources.slice(0, 3).map((resource) => <span className="approval-resource-pill" key={resource}>{resource}</span>)}
+      {content.resources.slice(0, 3).map((resource) => <span className="approval-resource-pill" key={resource}>{t(resource)}</span>)}
     </div>
     <div className="approval-actions">
       <button type="button" disabled={submitting} onClick={() => onDecision('approve_once')}>{t('允许这次')}</button>
@@ -2012,26 +2014,27 @@ function identityRoleDescription(identity: IdentityGroup) {
   return descriptions[identity.type] || '参与本次运行的审计主体';
 }
 
-function formatAuditTime(value: string) {
+function formatAuditTime(value: string, language = 'zh-CN') {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
-  return date.toLocaleString([], { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
+  return date.toLocaleString(language, { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
 }
 
-function readableResourceMatcher(matcher: Record<string, unknown>) {
+function readableResourceMatcher(matcher: Record<string, unknown>, language = 'zh-CN') {
   const values = Object.values(matcher).flatMap((value) => Array.isArray(value) ? value : [value]).filter((value) => typeof value === 'string') as string[];
   if (!values.length) return '';
-  return values.slice(0, 2).map((value) => value.replace(/^task:\/\/[^/]+\/workspace\//, '工作区/')).join('、');
+  return values.slice(0, 2).map((value) => value.replace(/^task:\/\/[^/]+\/workspace\//, language === 'en' ? 'Workspace/' : '工作区/')).join(language === 'en' ? ', ' : '、');
 }
 
-function formatFileSize(bytes: number) {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(bytes < 10240 ? 1 : 0)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+function formatFileSize(bytes: number, language = 'zh-CN') {
+  const format = (value: number, maximumFractionDigits: number) => new Intl.NumberFormat(language, { maximumFractionDigits }).format(value);
+  if (bytes < 1024) return `${format(bytes, 0)} B`;
+  if (bytes < 1024 * 1024) return `${format(bytes / 1024, bytes < 10240 ? 1 : 0)} KB`;
+  return `${format(bytes / (1024 * 1024), 1)} MB`;
 }
 
 function ControlCenterDialog({ run, onClose }: { run: RunView; onClose: () => void }) {
-  const { t } = useI18n();
+  const { language, t } = useI18n();
   const [permissions, setPermissions] = useState<PermissionCenterView | null>(null);
   const [loadError, setLoadError] = useState('');
   const refresh = useCallback(async () => {
@@ -2046,10 +2049,10 @@ function ControlCenterDialog({ run, onClose }: { run: RunView; onClose: () => vo
   useEffect(() => { void refresh(); }, [refresh]);
   const activeGrants = permissions?.grants.filter((grant) => grant.status === 'active') ?? [];
   const identityPresentation = buildIdentityPresentation(permissions?.identities ?? [], run.id);
-  const auditEntries = buildAuditLog(permissions?.policy_explanations ?? []);
+  const auditEntries = buildAuditLog(permissions?.policy_explanations ?? [], t);
   return <div className="modal-backdrop" role="presentation" onMouseDown={onClose}>
     <section className="control-center-modal" role="dialog" aria-modal="true" aria-label={t('任务安全')} onMouseDown={(event) => event.stopPropagation()}>
-      <header><div><h2>{t('任务安全')}</h2><p>{t('管理 Astra 在这个任务中可以继续执行的操作，并查看安全审计记录。')}</p></div><button type="button" aria-label={t('关闭')} onClick={onClose}>×</button></header>
+      <header><div><h2>{t('任务安全')}</h2><p>{t('管理 Astra 在这个任务中可以继续执行的操作，并查看安全审计记录。')}</p></div><button type="button" aria-label={t('关闭任务安全')} onClick={onClose}>×</button></header>
       {loadError && <p className="control-center-error">{loadError}</p>}
       {!permissions ? <p>{t('正在加载…')}</p> : <>
         <div className="control-center-overview security-only" aria-label={t('任务安全概览')}>
@@ -2061,19 +2064,19 @@ function ControlCenterDialog({ run, onClose }: { run: RunView; onClose: () => vo
           <section className="control-center-panel grants-panel">
             <div className="control-center-section-heading"><div><h3>{t('允许的操作')}</h3><p>{t('这些操作在有效范围内再次发生时，不会重复询问。')}</p></div></div>
             {activeGrants.length ? <div className="permission-grant-list">{activeGrants.map((grant) => {
-              const effects = grant.effect_kinds.length ? grant.effect_kinds.map(permissionEffectLabel) : [];
-              const resource = readableResourceMatcher(grant.resource_matcher);
+              const effects = grant.effect_kinds.length ? grant.effect_kinds.map((effect) => t(permissionEffectLabel(effect))) : [];
+              const resource = readableResourceMatcher(grant.resource_matcher, language);
               return <article className="permission-grant-card" key={grant.id}>
                 <div className="permission-grant-main">
                   <div className="permission-grant-icon" aria-hidden="true">✓</div>
-                  <div><strong>{effects.length ? `${permissionToolLabel(grant.tool_name)}可以${effects.join('、')}` : `${permissionToolLabel(grant.tool_name)}的有限操作`}</strong>
+                  <div><strong>{effects.length ? t('{tool}可以{effects}').replace('{tool}', t(permissionToolLabel(grant.tool_name))).replace('{effects}', effects.join(language === 'en' ? ', ' : '、')) : t('{tool}的有限操作').replace('{tool}', t(permissionToolLabel(grant.tool_name)))}</strong>
                     <div className="permission-grant-badges"><span>{t(permissionScopeLabel(grant.scope))}</span>{grant.effect_kinds.length === 0 && <span className="legacy-note">{t('兼容旧授权')}</span>}</div>
                   </div>
                 </div>
                 <div className="permission-grant-details">
-                  {resource && <span><b>{t('适用范围')}</b>{resource}</span>}
-                  <span><b>{t('使用情况')}</b>{t('已使用 {count} 次').replace('{count}', String(grant.use_count))}{grant.max_uses ? ` / ${grant.max_uses}` : ''}</span>
-                  {grant.expires_at && <span><b>{t('有效期')}</b>{new Date(grant.expires_at).toLocaleString()}</span>}
+                  {resource && <span><b>{t('适用范围')}</b>{language === 'en' ? ': ' : ''}{resource}</span>}
+                  <span><b>{t('使用情况')}</b>{language === 'en' ? ': ' : ''}{t('已使用 {count} 次').replace('{count}', String(grant.use_count))}{grant.max_uses ? ` / ${grant.max_uses}` : ''}</span>
+                  {grant.expires_at && <span><b>{t('有效期')}</b>{language === 'en' ? ': ' : ''}{new Date(grant.expires_at).toLocaleString(language)}</span>}
                   {!grant.effect_kinds.length && <p>{t('这条授权来自旧版本；范围不明确时 Astra 仍会再次询问。')}</p>}
                 </div>
                 <button className="permission-revoke-button" type="button" onClick={async () => { await revokePermissionGrant(grant.id); await refresh(); }}>{t('撤销授权')}</button>
@@ -2083,7 +2086,7 @@ function ControlCenterDialog({ run, onClose }: { run: RunView; onClose: () => vo
 
           <section className="control-center-panel permission-activity-panel">
             <div className="control-center-section-heading"><div><h3>{t('最近的安全活动')}</h3><p>{t('用自然语言说明最近为什么询问、允许或阻止操作。')}</p></div></div>
-            {auditEntries.length ? <div className="permission-activity-list">{auditEntries.slice(0, 4).map((entry) => <div className="permission-activity-item" key={entry.id}><span className={`permission-activity-dot tone-${entry.tone}`} /><div><strong>{t(entry.title)}</strong><span>{entry.actor} · {formatAuditTime(entry.createdAt)}</span></div></div>)}</div> : <div className="control-center-empty compact"><span>{t('暂无需要说明的权限活动')}</span></div>}
+            {auditEntries.length ? <div className="permission-activity-list">{auditEntries.slice(0, 4).map((entry) => <div className="permission-activity-item" key={entry.id}><span className={`permission-activity-dot tone-${entry.tone}`} /><div><strong>{t(entry.title)}</strong><span>{entry.actor} · {formatAuditTime(entry.createdAt, language)}</span></div></div>)}</div> : <div className="control-center-empty compact"><span>{t('暂无需要说明的权限活动')}</span></div>}
           </section>
 
         </div>
@@ -2104,7 +2107,7 @@ function ControlCenterDialog({ run, onClose }: { run: RunView; onClose: () => vo
             <section><h3>{t('工具与凭据')}</h3>{permissions.credentials.map((credential) => <div className="control-center-item" key={credential.id}><strong>{credential.service}</strong><span>{credential.scopes.join(', ') || t('最小权限')} · {credential.revoked_at ? t('已撤销') : t('短期有效')}</span></div>)}{!permissions.credentials.length && <p>{t('未使用服务凭据')}</p>}{permissions.tool_catalog && <div className="control-center-item"><strong>{t('本次运行的工具目录')}</strong><span>{permissions.tool_catalog.catalog.length} {t('个工具')} · {t('完整性校验')} {permissions.tool_catalog.digest.slice(0, 12)}</span></div>}</section>
             <section className="technical-policy-events"><div className="technical-section-heading"><div><h3>{t('审计流')}</h3><p>{t('按时间倒序记录权限请求、判定、用户决策与阻止事件。')}</p></div><span>{auditEntries.length}</span></div>
               {auditEntries.length ? <div className="audit-log" role="log" aria-label={t('权限审计日志')}>{auditEntries.map((entry) => <article className={`audit-log-entry tone-${entry.tone}`} key={entry.id}>
-                <time dateTime={entry.createdAt}>{formatAuditTime(entry.createdAt)}</time>
+                <time dateTime={entry.createdAt}>{formatAuditTime(entry.createdAt, language)}</time>
                 <span className="audit-level">{entry.tone === 'danger' ? 'BLOCK' : entry.tone === 'warning' ? 'ASK' : entry.tone === 'success' ? 'ALLOW' : 'INFO'}</span>
                 <div className="audit-log-message"><strong>{t(entry.title)}</strong><span>{t(entry.detail)}</span><small>{entry.actor} · <code>{entry.code}</code> · #{entry.id}</small></div>
               </article>)}</div> : <div className="control-center-empty compact"><span>{t('暂无权限审计事件')}</span></div>}
@@ -2395,10 +2398,10 @@ function ArtifactGallery({ artifacts, label }: { artifacts: ArtifactView[]; labe
 }
 
 function ArtifactCard({ artifact }: { artifact: ArtifactView }) {
-  const { t } = useI18n();
+  const { language, t } = useI18n();
   const artifactLabel = String(artifact.metadata?.filename ?? artifact.type);
   if (artifact.mime_type === 'image/png' || artifact.mime_type === 'image/svg+xml') {
-    return <figure className="artifact-card" id={artifactDomId(artifact.id)}><img src={artifact.content_url ?? ''} alt={artifactLabel} onError={(event) => event.currentTarget.parentElement?.classList.add('load-failed')} /><span className="artifact-error" role="status">{t('预览加载失败')}</span><figcaption><strong>{artifactLabel}</strong><span>{artifact.size_bytes?.toLocaleString() ?? 0} bytes</span></figcaption></figure>;
+    return <figure className="artifact-card" id={artifactDomId(artifact.id)}><img src={artifact.content_url ?? ''} alt={artifactLabel} onError={(event) => event.currentTarget.parentElement?.classList.add('load-failed')} /><span className="artifact-error" role="status">{t('预览加载失败')}</span><figcaption><strong>{artifactLabel}</strong><span>{artifact.size_bytes?.toLocaleString(language) ?? 0} bytes</span></figcaption></figure>;
   }
   if (artifact.mime_type === 'text/html') {
     return <figure className="artifact-card interactive" id={artifactDomId(artifact.id)}><iframe src={artifact.content_url ?? ''} title={artifactLabel} sandbox="allow-scripts" referrerPolicy="no-referrer" /><figcaption><strong>{artifactLabel}</strong><span>{t('隔离预览')}</span></figcaption></figure>;
@@ -2430,7 +2433,7 @@ function ReasoningAuditSummary({ run }: { run: RunView }) {
   return <div className="reasoning-audit-grid">
     {policy?.effective && <div><strong>{t('生效策略')}</strong><span>{String(policy.effective.reasoning_effort ?? 'balanced')} · {String(policy.effective.planning_strategy ?? 'adaptive')} · {String(policy.effective.execution_mode ?? 'request_approval')}</span></div>}
     <div><strong>{t('状态版本')}</strong><span>State {run.state_version ?? 0} · Plan {String(run.plan_graph?.version ?? 1)}</span></div>
-    {(run.steps ?? []).map((step) => <div className="plan-node-audit" key={step.id}><strong>{step.index}. {step.title}</strong><span>{planNodeStatusLabel(step.status)}{step.depends_on?.length ? ` · 依赖 ${step.depends_on.join(', ')}` : ''}{step.plan_version ? ` · v${step.plan_version}` : ''}</span>{step.failure && <small>{String(step.failure.category ?? '节点执行失败')}</small>}</div>)}
+    {(run.steps ?? []).map((step) => <div className="plan-node-audit" key={step.id}><strong>{step.index}. {step.title}</strong><span>{t(planNodeStatusLabel(step.status))}{step.depends_on?.length ? ` · ${t('依赖')} ${step.depends_on.join(', ')}` : ''}{step.plan_version ? ` · v${step.plan_version}` : ''}</span>{step.failure && <small>{String(step.failure.category ?? t('节点执行失败'))}</small>}</div>)}
     {criteria.map((criterion) => <div key={String(criterion.id)}><strong>{String(criterion.description)}</strong><span>{String(criterion.status ?? 'pending')}</span></div>)}
     {policy?.adjustments?.map((adjustment, index) => <div key={`adjust-${index}`}><strong>{t('策略调整')}</strong><span>{String(adjustment.reason ?? adjustment.rule)}</span></div>)}
     {run.terminal_reason && <div><strong>{t('终态原因')}</strong><span>{String(run.terminal_reason.reason ?? run.status)}</span></div>}

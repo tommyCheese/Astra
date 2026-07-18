@@ -762,6 +762,19 @@ describe('App', () => {
     expect(screen.getByRole('combobox', { name: '资料库排序' })).toHaveValue('size_desc');
   });
 
+  it('renders the library navigation and controls in English', async () => {
+    window.localStorage.setItem('astra.language', 'en');
+    vi.mocked(listLibraryFiles).mockResolvedValueOnce([]);
+    render(<App />);
+
+    await userEvent.click(screen.getByRole('button', { name: 'Library' }));
+    expect(await screen.findByRole('heading', { name: 'Library' })).toBeInTheDocument();
+    expect(screen.getByPlaceholderText('Search files or chats')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Gallery view' })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByRole('combobox', { name: 'Library sort' })).toHaveValue('updated_desc');
+    expect(document.documentElement).toHaveAttribute('lang', 'en');
+  });
+
   it('updates and revokes selected shares in batches', async () => {
     const now = new Date().toISOString();
     const share = { conversation_id: 'shared-1', title: '分享测试', url: '/share/token-1', created_at: now, updated_at: now, message_count: 4 };
