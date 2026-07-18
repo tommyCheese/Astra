@@ -213,8 +213,9 @@ describe('App', () => {
     await userEvent.click(screen.getByRole('button', { name: '发送' }));
 
     expect(await screen.findByText('已完成查询')).toBeInTheDocument();
-    const evidence = screen.getByText('数据与证据 · 1').closest('details');
-    expect(evidence).not.toHaveAttribute('open');
+    expect(screen.queryByText('最终结果')).not.toBeInTheDocument();
+    const supplementary = screen.getByText('附加信息').closest('section');
+    expect(supplementary).toHaveClass('answer-supplementary-flat');
     expect(screen.getByText('发现一条证据')).toBeInTheDocument();
     expect(screen.getByText('发现一条证据').tagName).toBe('STRONG');
     expect(screen.getByText(/92%/)).toBeInTheDocument();
@@ -292,7 +293,7 @@ describe('App', () => {
     await waitFor(() => expect(createRun).toHaveBeenLastCalledWith('继续追问', 'task-1', 'standard', expect.anything(), expect.anything()));
   });
 
-  it('renders referenced artifacts beside findings and only links repeated references', async () => {
+  it('promotes the primary referenced output and keeps remaining evidence supplementary', async () => {
     const snapshot = await vi.mocked(getRun)('fixture');
     const contextual = {
       ...snapshot,
@@ -318,16 +319,17 @@ describe('App', () => {
     const secondFinding = screen.getByText('第二个结论');
     const chart = screen.getByRole('img', { name: 'chart.png' });
     const html = screen.getByTitle('chart.html');
-    expect(firstFinding.compareDocumentPosition(chart) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(chart.compareDocumentPosition(secondFinding) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(chart.compareDocumentPosition(firstFinding) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(firstFinding.compareDocumentPosition(secondFinding) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(secondFinding.compareDocumentPosition(html) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(document.querySelectorAll('#artifact-output-a-chart')).toHaveLength(1);
-    expect(screen.getByRole('link', { name: '查看上方已展示的输出' })).toHaveAttribute('href', '#artifact-output-a-chart');
+    expect(screen.getAllByRole('link', { name: '查看主要结果' })[0]).toHaveAttribute('href', '#artifact-output-a-chart');
     expect(screen.queryByText('其他输出')).not.toBeInTheDocument();
+    expect(screen.getByText('附件')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: '1 个输出 · 查看输出' })).toHaveAttribute('href', '#artifact-output-a-chart');
   });
 
-  it('sorts unreferenced outputs, collapses more than two, and keeps safe renderers', async () => {
+  it('promotes one unreferenced preview and unifies remaining files under supplementary information', async () => {
     const snapshot = await vi.mocked(getRun)('fixture');
     const unreferenced = {
       ...snapshot,
@@ -347,10 +349,12 @@ describe('App', () => {
     await userEvent.type(screen.getByRole('textbox'), '旧数据降级');
     await userEvent.click(screen.getByRole('button', { name: '发送' }));
 
-    expect(await screen.findByText('其他输出 · 3')).toBeInTheDocument();
-    const cards = [...document.querySelectorAll('.other-artifacts .artifact-card')];
+    expect(await screen.findByText('附加信息')).toBeInTheDocument();
+    expect(screen.getByText('附件')).toBeInTheDocument();
+    const primaryCards = [...document.querySelectorAll('.primary-result-output .artifact-card')];
+    expect(primaryCards.map((card) => card.id)).toEqual(['artifact-output-a-chart']);
+    const cards = [...document.querySelectorAll('.answer-supplementary-flat .artifact-card')];
     expect(cards.map((card) => card.id)).toEqual([
-      'artifact-output-a-chart',
       'artifact-output-a-html',
       'artifact-output-file-c',
     ]);
@@ -386,7 +390,7 @@ describe('App', () => {
     await userEvent.type(screen.getByRole('textbox'), '直接思考');
     await userEvent.click(screen.getByRole('button', { name: '发送' }));
 
-    expect(await screen.findByText('思考完成')).toBeInTheDocument();
+    expect(await screen.findByText('附加信息')).toBeInTheDocument();
     expect(screen.queryByText(/0 次工具调用/)).not.toBeInTheDocument();
   });
 

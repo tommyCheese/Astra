@@ -2132,8 +2132,9 @@ function FinalAnswer({ run, fallback }: { run: RunView; fallback: string }) {
   if (!result) {
     return null;
   }
-  const placements = planArtifactPlacements(result.findings, run.artifacts);
+  const presentation = planAnswerPresentation(result.findings, run.artifacts);
   const notes = [...new Set(result.caveats)];
+  const hasSupplementary = result.findings.length > 0 || presentation.supportingArtifacts.length > 0 || result.sources.length > 0 || notes.length > 0;
   const trustedStatus = run.answer_mode === 'trusted'
     ? run.status === 'completed'
       ? '已校验'
@@ -2147,36 +2148,24 @@ function FinalAnswer({ run, fallback }: { run: RunView; fallback: string }) {
     <div className="answer-content">
       {trustedStatus && <div className={`trusted-result-status status-${run.status}`}><Icon name="requestApprove" /><span>{t('可信模式')} · {t(trustedStatus)}</span></div>}
       <MarkdownContent content={result.summary || fallback} />
-      {placements.findings.length > 0 && <details className="answer-support evidence-support"><summary>{t('数据与证据 · {count}').replace('{count}', String(placements.findings.length))}</summary><div className="evidence-list">
-        {placements.findings.map(({ finding, artifacts, repeatedArtifactIds }, index) => (
-          <section className="finding-block" key={index}>
-            <span className="evidence-index" aria-hidden="true">{index + 1}</span>
-            <div className="evidence-content">
-              {finding.text.trim() !== result.summary.trim() && <MarkdownContent content={finding.text} />}
-              {finding.source_urls.length > 0 && <div className="finding-source-links">{finding.source_urls.map((url) => <a href={externalHref(url)} target="_blank" rel="noreferrer" key={url}>{t('关联来源')}</a>)}</div>}
-              <ArtifactGallery artifacts={artifacts} label={t('关联输出')} />
-              {repeatedArtifactIds.length > 0 && <div className="artifact-repeat-links">{repeatedArtifactIds.map((artifactId) => <a href={`#${artifactDomId(artifactId)}`} key={artifactId}>{t('查看上方已展示的输出')}</a>)}</div>}
-            </div>
-          </section>
-        ))}
-      </div></details>}
-      <OtherArtifacts artifacts={placements.otherArtifacts} />
-      {result.sources.length ? (
-        <details className="answer-support"><summary>{t('来源 · {count}').replace('{count}', String(result.sources.length))}</summary><div className="source-grid">
+      {presentation.primaryArtifacts.length > 0 && <div className="primary-result-output"><ArtifactGallery artifacts={presentation.primaryArtifacts} label={t('主要结果')} /></div>}
+      {hasSupplementary && <section className="answer-supplementary-flat" aria-label={t('附加信息')}><header><span>{t('附加信息')}</span></header>
+        {result.findings.length > 0 && <div className="flat-support-row"><span className="flat-support-label">{t('依据')}</span><div className="flat-evidence-list">
+          {result.findings.map((finding, index) => <div className="flat-evidence-item" key={index}><span>{index + 1}</span><div>
+            {finding.text.trim() !== result.summary.trim() && <MarkdownContent content={finding.text} />}
+            {finding.source_urls.length > 0 && <div className="finding-source-links">{finding.source_urls.map((url) => <a href={externalHref(url)} target="_blank" rel="noreferrer" key={url}>{t('关联来源')}</a>)}</div>}
+            {finding.artifact_ids.some((artifactId) => presentation.primaryArtifacts.some((artifact) => artifact.id === artifactId)) && <a className="primary-output-reference" href={`#${artifactDomId(presentation.primaryArtifacts[0].id)}`}>{t('查看主要结果')}</a>}
+          </div></div>)}
+        </div></div>}
+        {presentation.supportingArtifacts.length > 0 && <div className="flat-support-row"><span className="flat-support-label">{t('附件')}</span><ArtifactGallery artifacts={presentation.supportingArtifacts} label={t('附件')} /></div>}
+        {result.sources.length > 0 && <div className="flat-support-row"><span className="flat-support-label">{t('来源')}</span><div className="source-grid">
           {result.sources.map((source) => {
             const quality = result.source_quality?.find((item) => item.url === source.url);
-            return (
-              <a key={source.url} href={externalHref(source.url)} target="_blank" rel="noreferrer" className="source-card">
-                <strong>{source.title || source.url}</strong>
-                {quality && (
-                  <span>{formatScore(quality.quality_score)} · {quality.extraction_strategy || 'unknown'}</span>
-                )}
-              </a>
-            );
+            return <a key={source.url} href={externalHref(source.url)} target="_blank" rel="noreferrer" className="source-card"><strong>{source.title || source.url}</strong>{quality && <span>{formatScore(quality.quality_score)} · {quality.extraction_strategy || 'unknown'}</span>}</a>;
           })}
-        </div></details>
-      ) : null}
-      {notes.length > 0 && <div className="answer-notes">{notes.map((item, index) => <p key={`note-${index}`}>{item}</p>)}</div>}
+        </div></div>}
+        {notes.length > 0 && <div className="flat-support-row"><span className="flat-support-label">{t('说明')}</span><div className="answer-notes">{notes.map((item, index) => <p key={`note-${index}`}>{item}</p>)}</div></div>}
+      </section>}
     </div>
   );
 }
@@ -2189,38 +2178,23 @@ function artifactDomId(artifactId: string) {
   return `artifact-output-${artifactId}`;
 }
 
-function planArtifactPlacements(findings: RunView['result'] extends infer _Result ? NonNullable<RunView['result']>['findings'] : never, artifacts: ArtifactView[]) {
+function planAnswerPresentation(findings: RunView['result'] extends infer _Result ? NonNullable<RunView['result']>['findings'] : never, artifacts: ArtifactView[]) {
   const visible = visibleArtifacts(artifacts);
   const byId = new Map(visible.map((artifact) => [artifact.id, artifact]));
-  const rendered = new Set<string>();
-  const plannedFindings = findings.map((finding) => {
-    const localArtifacts: ArtifactView[] = [];
-    const repeatedArtifactIds: string[] = [];
-    for (const artifactId of finding.artifact_ids) {
-      const artifact = byId.get(artifactId);
-      if (!artifact) continue;
-      if (rendered.has(artifactId)) {
-        if (!repeatedArtifactIds.includes(artifactId)) repeatedArtifactIds.push(artifactId);
-        continue;
-      }
-      rendered.add(artifactId);
-      localArtifacts.push(artifact);
-    }
-    return { finding, artifacts: localArtifacts, repeatedArtifactIds };
-  });
-  const otherArtifacts = visible
-    .filter((artifact) => !rendered.has(artifact.id))
+  const referencedIds = [...new Set(findings.flatMap((finding) => finding.artifact_ids))];
+  const referenced = referencedIds.flatMap((artifactId) => byId.get(artifactId) ?? []);
+  const isImage = (artifact: ArtifactView) => ['image/png', 'image/svg+xml'].includes(artifact.mime_type ?? '');
+  const isInteractive = (artifact: ArtifactView) => artifact.mime_type === 'text/html';
+  const primary = referenced.find(isImage) ?? referenced.find(isInteractive) ?? visible.find(isImage) ?? visible.find(isInteractive);
+  const primaryArtifacts = primary ? [primary] : [];
+  const supportingArtifacts = [
+    ...referenced.filter((artifact) => artifact.id !== primary?.id),
+    ...visible.filter((artifact) => !referencedIds.includes(artifact.id) && artifact.id !== primary?.id)
+      .sort((a, b) => a.created_at.localeCompare(b.created_at) || a.id.localeCompare(b.id)),
+  ]
+    .filter((artifact, index, items) => items.findIndex((candidate) => candidate.id === artifact.id) === index)
     .sort((a, b) => a.created_at.localeCompare(b.created_at) || a.id.localeCompare(b.id));
-  return { findings: plannedFindings, otherArtifacts };
-}
-
-function OtherArtifacts({ artifacts }: { artifacts: ArtifactView[] }) {
-  const { t } = useI18n();
-  if (!artifacts.length) return null;
-  if (artifacts.length <= 2) {
-    return <section className="other-artifacts"><h3>{t('其他输出')}</h3><ArtifactGallery artifacts={artifacts} label={t('其他输出')} /></section>;
-  }
-  return <details className="other-artifacts collapsible"><summary>{t('其他输出 · {count}').replace('{count}', String(artifacts.length))}</summary><ArtifactGallery artifacts={artifacts} label={t('其他输出')} /></details>;
+  return { primaryArtifacts, supportingArtifacts };
 }
 
 function ArtifactGallery({ artifacts, label }: { artifacts: ArtifactView[]; label: string }) {
