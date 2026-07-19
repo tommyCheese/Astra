@@ -1167,6 +1167,20 @@ describe('App', () => {
     expect(screen.queryByTestId('trusted-mode-transition')).not.toBeInTheDocument();
   });
 
+  it('reveals the Astra brand easter egg after five rapid trusted-mode toggles', async () => {
+    render(<App />);
+
+    const trustedSwitch = screen.getByRole('switch', { name: '可信模式' });
+    for (let index = 0; index < 4; index += 1) await userEvent.click(trustedSwitch);
+    expect(screen.queryByTestId('trusted-easter-egg')).not.toBeInTheDocument();
+
+    await userEvent.click(trustedSwitch);
+    const easterEgg = screen.getByTestId('trusted-easter-egg');
+    expect(easterEgg).toHaveAttribute('role', 'status');
+    expect(easterEgg).toHaveTextContent('Astra');
+    expect(easterEgg).toHaveTextContent('Navigate Ideas. Create Reality.');
+  });
+
   it('shows the full verification outcome on trusted answers', async () => {
     const snapshot = await vi.mocked(getRun)('fixture');
     vi.mocked(createRun).mockResolvedValueOnce({ run_id: 'run-trusted', task_id: 'task-trusted', status: 'created', answer_mode: 'trusted' });

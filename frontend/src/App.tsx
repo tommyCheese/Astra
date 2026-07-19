@@ -104,6 +104,7 @@ function AppContent() {
   const [reflectionTrigger, setReflectionTrigger] = useState('按需');
   const [conversationStrategyReady, setConversationStrategyReady] = useState(false);
   const [trustedTransitionActive, setTrustedTransitionActive] = useState(false);
+  const [trustedEasterEggId, setTrustedEasterEggId] = useState<number | null>(null);
   const [settingsCategory, setSettingsCategory] = useState('模型管理');
   const attachMenuRef = useRef<HTMLDivElement>(null);
   const executionMenuRef = useRef<HTMLDivElement>(null);
@@ -125,6 +126,8 @@ function AppContent() {
   const conversationControllerRef = useRef<AbortController>();
   const cancelRequestedRef = useRef(false);
   const trustedTransitionTimerRef = useRef<number>();
+  const trustedToggleClickTimesRef = useRef<number[]>([]);
+  const trustedEasterEggTimerRef = useRef<number>();
   const availableModels = useMemo(() => providerConfigs
     .filter((provider) => provider.enabled)
     .flatMap((provider) => parseModelIds(provider.models).map((model) => ({ key: `${provider.id}:${model}`, model, providerId: provider.id, providerName: provider.name }))), [providerConfigs]);
@@ -139,6 +142,9 @@ function AppContent() {
   useEffect(() => () => {
     if (trustedTransitionTimerRef.current !== undefined) {
       window.clearTimeout(trustedTransitionTimerRef.current);
+    }
+    if (trustedEasterEggTimerRef.current !== undefined) {
+      window.clearTimeout(trustedEasterEggTimerRef.current);
     }
   }, []);
 
@@ -313,6 +319,17 @@ function AppContent() {
   }
 
   function toggleTrustedMode() {
+    const now = Date.now();
+    trustedToggleClickTimesRef.current = [...trustedToggleClickTimesRef.current.filter((time) => now - time < 1800), now];
+    if (trustedToggleClickTimesRef.current.length >= 5) {
+      trustedToggleClickTimesRef.current = [];
+      setTrustedEasterEggId((current) => (current ?? 0) + 1);
+      if (trustedEasterEggTimerRef.current !== undefined) window.clearTimeout(trustedEasterEggTimerRef.current);
+      trustedEasterEggTimerRef.current = window.setTimeout(() => {
+        setTrustedEasterEggId(null);
+        trustedEasterEggTimerRef.current = undefined;
+      }, 3000);
+    }
     const nextMode = answerMode === 'trusted' ? 'standard' : 'trusted';
     if (trustedTransitionTimerRef.current !== undefined) {
       window.clearTimeout(trustedTransitionTimerRef.current);
@@ -322,7 +339,7 @@ function AppContent() {
       trustedTransitionTimerRef.current = window.setTimeout(() => {
         setTrustedTransitionActive(false);
         trustedTransitionTimerRef.current = undefined;
-      }, 1800);
+      }, 1150);
     } else {
       setTrustedTransitionActive(false);
       trustedTransitionTimerRef.current = undefined;
@@ -685,6 +702,16 @@ function AppContent() {
         <div className="trusted-mode-transition" aria-hidden="true" data-testid="trusted-mode-transition">
           <i className="trusted-mode-transition-wave wave-one" />
           <i className="trusted-mode-transition-wave wave-two" />
+        </div>
+      )}
+      {trustedEasterEggId !== null && (
+        <div className="trusted-easter-egg" data-testid="trusted-easter-egg" role="status" aria-live="polite" key={trustedEasterEggId}>
+          <div className="trusted-easter-brand">
+            <span className="trusted-easter-halo" aria-hidden="true" />
+            <img src="/astra.svg" alt="" />
+            <strong>Astra</strong>
+            <p>{t('Navigate Ideas. Create Reality.')}</p>
+          </div>
         </div>
       )}
       <Sidebar
