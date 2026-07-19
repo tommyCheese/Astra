@@ -320,7 +320,7 @@ function AppContent() {
 
   function toggleTrustedMode() {
     const now = Date.now();
-    trustedToggleClickTimesRef.current = [...trustedToggleClickTimesRef.current.filter((time) => now - time < 1800), now];
+    trustedToggleClickTimesRef.current = [...trustedToggleClickTimesRef.current.filter((time) => now - time < 4000), now];
     if (trustedToggleClickTimesRef.current.length >= 5) {
       trustedToggleClickTimesRef.current = [];
       setTrustedEasterEggId((current) => (current ?? 0) + 1);
