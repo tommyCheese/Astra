@@ -789,7 +789,7 @@ function AppContent() {
               onClick={toggleTrustedMode}
             >
               <Icon name="requestApprove" />
-              <span>{answerMode === 'trusted' ? t('可信模式') : t('快速回答')}</span>
+              <span>{t('可信模式')}</span>
               <i aria-hidden="true"><b /></i>
             </button>
             <div className="composer-menu-wrap" ref={attachMenuRef}>
@@ -2204,7 +2204,7 @@ function ErrorDialog({ error, onClose, onRetry }: { error: ApiErrorPayload; onCl
   return <div className="modal-backdrop" role="presentation" onMouseDown={onClose}><section className="confirmation-modal error-dialog" role="alertdialog" aria-modal="true" aria-labelledby="error-title" onMouseDown={(event) => event.stopPropagation()}><div className="warning-mark">!</div><h2 id="error-title">{t(title)}</h2><p>{error.message}</p>{technical && <div className="confirmation-note">{t('错误类型：')}<code>{error.type}</code><br />{t('诊断编号：')}<code>{error.trace_id}</code></div>}<div className="confirmation-actions">{onRetry && <button className="secondary-button" type="button" onClick={onRetry}>{t('重试')}</button>}<button className="danger-confirm-button" type="button" onClick={onClose}>{t('知道了')}</button></div></section></div>;
 }
 
-type IconName = 'plus' | 'message' | 'link' | 'library' | 'chart' | 'settings' | 'sparkle' | 'tools' | 'terminal' | 'brain' | 'palette' | 'lock' | 'token' | 'check' | 'route' | 'refresh' | 'requestApprove' | 'autoApprove';
+type IconName = 'plus' | 'message' | 'link' | 'library' | 'chart' | 'settings' | 'sparkle' | 'tools' | 'terminal' | 'brain' | 'palette' | 'lock' | 'token' | 'check' | 'info' | 'route' | 'refresh' | 'requestApprove' | 'autoApprove';
 
 function Icon({ name }: { name: IconName }) {
   const paths: Record<IconName, ReactNode> = {
@@ -2222,6 +2222,7 @@ function Icon({ name }: { name: IconName }) {
     lock: <><rect x="5" y="10" width="14" height="10" rx="2" /><path d="M8 10V7a4 4 0 0 1 8 0v3m-4 4v2" /></>,
     token: <><circle cx="12" cy="12" r="8" /><path d="M9 9h6v6H9zM12 6v3m0 6v3m-6-6h3m6 0h3" /></>,
     check: <><circle cx="12" cy="12" r="8" /><path d="m8.5 12 2.2 2.2 4.8-5" /></>,
+    info: <><circle cx="12" cy="12" r="8" /><path d="M12 11v5m0-8h.01" /></>,
     route: <><circle cx="6" cy="6" r="2" /><circle cx="18" cy="18" r="2" /><path d="M8 6h4a3 3 0 0 1 3 3v6" /></>,
     refresh: <><path d="M20 11a8 8 0 0 0-14.8-3M4 5v3h3" /><path d="M4 13a8 8 0 0 0 14.8 3M20 19v-3h-3" /></>,
     requestApprove: <><path d="M12 3 19 6v5c0 4.6-3 7.7-7 10-4-2.3-7-5.4-7-10V6l7-3Z" /><path d="M12 8v4m0 4h.01" /></>,
@@ -2249,7 +2250,8 @@ function MessageBubble({ message, run, processState, processPanelDefaultOpen, pr
   }
 
   if (presentation === 'answer' && snapshot?.result) {
-    return <article className="bubble assistant answer-message" id={`message-${message.id}`}><span className="bubble-label">Astra</span><FinalAnswer run={snapshot} fallback={message.content} /></article>;
+    const trustedStatus = trustedResultStatus(snapshot);
+    return <article className="bubble assistant answer-message" id={`message-${message.id}`}><div className="answer-identity-row"><span className="bubble-label">Astra</span>{trustedStatus && <span className={`trusted-result-status status-${snapshot.status}`}><Icon name="requestApprove" /><span>{t('可信模式')} · {t(trustedStatus)}</span></span>}</div><FinalAnswer run={snapshot} fallback={message.content} /></article>;
   }
 
   if (!presentation) {
@@ -2330,22 +2332,13 @@ function FinalAnswer({ run, fallback }: { run: RunView; fallback: string }) {
   const presentation = planAnswerPresentation(result.findings, run.artifacts);
   const notes = [...new Set(result.caveats)];
   const hasSupplementary = result.findings.length > 0 || presentation.supportingArtifacts.length > 0 || result.sources.length > 0 || notes.length > 0;
-  const trustedStatus = run.answer_mode === 'trusted'
-    ? run.status === 'completed'
-      ? '已校验'
-      : run.status === 'completed_with_warnings'
-        ? '校验带警告'
-        : ['blocked', 'failed'].includes(run.status)
-          ? '未通过完整校验'
-          : null
-    : null;
+  const supplementaryCount = result.findings.length + presentation.supportingArtifacts.length + result.sources.length + notes.length;
   return (
     <div className="answer-content">
-      {trustedStatus && <div className={`trusted-result-status status-${run.status}`}><Icon name="requestApprove" /><span>{t('可信模式')} · {t(trustedStatus)}</span></div>}
       <MarkdownContent content={result.summary || fallback} />
       {presentation.primaryArtifacts.length > 0 && <div className="primary-result-output"><ArtifactGallery artifacts={presentation.primaryArtifacts} label={t('主要结果')} /></div>}
-      {hasSupplementary && <section className="answer-supplementary-flat" aria-label={t('附加信息')}><header><span>{t('附加信息')}</span></header>
-        {result.findings.length > 0 && <div className="flat-support-row"><span className="flat-support-label">{t('依据')}</span><div className="flat-evidence-list">
+      {hasSupplementary && <details className="answer-supplementary-flat"><summary><Icon name="info" /><span>{t('附加信息')}</span><small>{t('{count} 项').replace('{count}', String(supplementaryCount))}</small><span className="answer-supplementary-chevron" aria-hidden="true">›</span></summary><div className="answer-supplementary-content">
+        {result.findings.length > 0 && <div className="flat-support-row"><span className="flat-support-label">{t('支撑证据')}</span><div className="flat-evidence-list">
           {result.findings.map((finding, index) => <div className="flat-evidence-item" key={index}><span>{index + 1}</span><div>
             {finding.text.trim() !== result.summary.trim() && <MarkdownContent content={finding.text} />}
             {finding.source_urls.length > 0 && <div className="finding-source-links">{finding.source_urls.map((url) => <a href={externalHref(url)} target="_blank" rel="noreferrer" key={url}>{t('关联来源')}</a>)}</div>}
@@ -2359,10 +2352,18 @@ function FinalAnswer({ run, fallback }: { run: RunView; fallback: string }) {
             return <a key={source.url} href={externalHref(source.url)} target="_blank" rel="noreferrer" className="source-card"><strong>{source.title || source.url}</strong>{quality && <span>{formatScore(quality.quality_score)} · {quality.extraction_strategy || 'unknown'}</span>}</a>;
           })}
         </div></div>}
-        {notes.length > 0 && <div className="flat-support-row"><span className="flat-support-label">{t('说明')}</span><div className="answer-notes">{notes.map((item, index) => <p key={`note-${index}`}>{item}</p>)}</div></div>}
-      </section>}
+        {notes.length > 0 && <div className="flat-support-row"><span className="flat-support-label">{t('限制与注意事项')}</span><div className="answer-notes">{notes.map((item, index) => <p key={`note-${index}`}>{item}</p>)}</div></div>}
+      </div></details>}
     </div>
   );
+}
+
+function trustedResultStatus(run: RunView) {
+  if (run.answer_mode !== 'trusted') return null;
+  if (run.status === 'completed') return '已校验';
+  if (run.status === 'completed_with_warnings') return '校验带警告';
+  if (['blocked', 'failed'].includes(run.status)) return '未通过完整校验';
+  return null;
 }
 
 function visibleArtifacts(artifacts: RunView['artifacts']) {

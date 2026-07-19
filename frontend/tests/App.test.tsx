@@ -215,8 +215,15 @@ describe('App', () => {
 
     expect(await screen.findByText('已完成查询')).toBeInTheDocument();
     expect(screen.queryByText('最终结果')).not.toBeInTheDocument();
-    const supplementary = screen.getByText('附加信息').closest('section');
+    const supplementarySummary = screen.getByText('附加信息').closest('summary');
+    const supplementary = supplementarySummary?.closest('details');
     expect(supplementary).toHaveClass('answer-supplementary-flat');
+    expect(supplementary).not.toHaveAttribute('open');
+    expect(screen.getByText('支撑证据')).toBeInTheDocument();
+    expect(screen.getByText('限制与注意事项')).toBeInTheDocument();
+    await userEvent.click(supplementarySummary!);
+    expect(supplementary).toHaveAttribute('open');
+    expect(supplementary?.querySelectorAll('details')).toHaveLength(0);
     expect(screen.getByText('发现一条证据')).toBeInTheDocument();
     expect(screen.getByText('发现一条证据').tagName).toBe('STRONG');
     expect(screen.getByText(/92%/)).toBeInTheDocument();
@@ -1135,7 +1142,8 @@ describe('App', () => {
 
     const trustedSwitch = screen.getByRole('switch', { name: '可信模式' });
     expect(trustedSwitch).toHaveAttribute('aria-checked', 'false');
-    expect(trustedSwitch).toHaveTextContent('快速回答');
+    expect(trustedSwitch).toHaveTextContent('可信模式');
+    expect(trustedSwitch).not.toHaveTextContent('快速回答');
     await userEvent.click(screen.getByRole('button', { name: '当前模型：gpt-5' }));
     expect(screen.getByText('开启可信模式后可配置完整对话策略与结果校验。')).toBeInTheDocument();
     expect(screen.queryByText('规划策略')).not.toBeInTheDocument();
@@ -1176,7 +1184,11 @@ describe('App', () => {
     await userEvent.type(screen.getByRole('textbox'), '执行可信回答');
     await userEvent.click(screen.getByRole('button', { name: '发送' }));
 
-    expect(await screen.findByText('可信模式 · 校验带警告')).toBeInTheDocument();
+    const verificationStatus = await screen.findByText('可信模式 · 校验带警告');
+    expect(verificationStatus).toBeInTheDocument();
+    const identityRow = verificationStatus.closest('.answer-identity-row');
+    expect(identityRow).toHaveTextContent('Astra');
+    expect(identityRow?.nextElementSibling).toHaveClass('answer-content');
   });
 
   it('keeps the task input focused when non-interactive composer content is clicked', async () => {
