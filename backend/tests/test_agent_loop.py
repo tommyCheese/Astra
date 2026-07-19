@@ -560,6 +560,32 @@ async def test_standard_mode_uses_deployment_tool_limit(session):
     assert result["status"] == "blocked"
 
 
+async def test_deep_trusted_mode_has_no_tool_call_limit(session):
+    settings = Settings(
+        model_provider="mock",
+        web_search_provider="mock",
+        agent_max_turns=10,
+        agent_max_tool_calls=2,
+    )
+    repo = RunRepository(session)
+    run = await repo.create_task_run(
+        "持续搜索",
+        settings.model_policy,
+        reasoning_policy=compiled_policy(reasoning_effort="deep", reflection_enabled=False),
+    )
+    client = RepeatedToolClient()
+
+    await AgentLoop(settings, model_client=client, tool_registry=fake_web_registry()).run(
+        repo, run.id, run.task.description
+    )
+    loaded = await repo.require_run(run.id)
+    events = await repo.list_events(run.id)
+    limits = next(event.payload for event in events if event.type == "reasoning.runtime_limits")
+
+    assert len(loaded.tool_calls) > settings.agent_max_tool_calls
+    assert limits["max_tool_calls"] is None
+
+
 async def test_custom_balanced_policy_can_reach_fifteen_tool_calls(session):
     settings = Settings(
         model_provider="mock",

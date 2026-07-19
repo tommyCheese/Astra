@@ -58,7 +58,7 @@ def test_standard_profile_is_fixed_and_preserves_execution_approval():
         AnswerMode.standard,
         RequestedReasoningPolicy(
             reasoning_effort="deep",
-            max_tool_calls=42,
+            max_tool_calls=None,
             planning_strategy="plan_first",
             reflection_enabled=True,
             execution_mode="auto_approval",
@@ -82,7 +82,7 @@ def test_trusted_profile_uses_requested_strategy_and_full_assurance():
         AnswerMode.trusted,
         RequestedReasoningPolicy(
             reasoning_effort="deep",
-            max_tool_calls=42,
+            max_tool_calls=None,
             planning_strategy="plan_first",
             reflection_enabled=False,
         ),
@@ -93,7 +93,7 @@ def test_trusted_profile_uses_requested_strategy_and_full_assurance():
     assert profile.contract_mode.value == "model"
     assert policy.reasoning_effort == ReasoningEffort.deep
     assert policy.planning_strategy == PlanningStrategy.plan_first
-    assert policy.budgets.max_tool_calls == 42
+    assert policy.budgets.max_tool_calls is None
     assert policy.verification_level.value == "strict"
 
 
@@ -113,7 +113,7 @@ def test_new_requested_policy_rejects_direct_but_legacy_snapshot_remains_readabl
 
 @pytest.mark.parametrize(
     ("effort", "limit"),
-    [("fast", 0), ("fast", 5), ("balanced", 6), ("balanced", 15), ("deep", 16), ("deep", 50)],
+    [("fast", 0), ("fast", 5), ("balanced", 6), ("balanced", 15)],
 )
 def test_policy_compiler_uses_custom_tool_call_limit(effort, limit):
     snapshot = PolicyCompiler().compile(
@@ -126,7 +126,7 @@ def test_policy_compiler_uses_custom_tool_call_limit(effort, limit):
 
 @pytest.mark.parametrize(
     ("effort", "limit"),
-    [("fast", 6), ("balanced", 5), ("balanced", 16), ("deep", 15), ("deep", 51)],
+    [("fast", 6), ("balanced", 5), ("balanced", 16), ("deep", 15), ("deep", 50)],
 )
 def test_policy_rejects_custom_tool_call_limit_outside_effort_range(effort, limit):
     with pytest.raises(ValueError):

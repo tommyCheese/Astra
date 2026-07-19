@@ -19,7 +19,7 @@ router = APIRouter(prefix="/api/preferences", tags=["preferences"])
 class ConversationStrategyPreferences(BaseModel):
     preferred_answer_mode: AnswerMode = AnswerMode.standard
     reasoning_effort: ReasoningEffort = ReasoningEffort.balanced
-    max_tool_calls: int = 8
+    max_tool_calls: int | None = 8
     planning_strategy: RequestedPlanningStrategy = RequestedPlanningStrategy.adaptive
     reflection_enabled: bool = True
     reflection_trigger: ReflectionTrigger = ReflectionTrigger.adaptive
@@ -28,7 +28,13 @@ class ConversationStrategyPreferences(BaseModel):
     def validate_tool_budget(self) -> "ConversationStrategyPreferences":
         if "max_tool_calls" not in self.model_fields_set:
             self.max_tool_calls = TOOL_CALL_LIMIT_DEFAULTS[self.reasoning_effort]
-        validate_tool_call_limit(self.reasoning_effort, self.max_tool_calls)
+        if self.reasoning_effort == ReasoningEffort.deep:
+            if self.max_tool_calls is not None:
+                validate_tool_call_limit(self.reasoning_effort, self.max_tool_calls)
+        elif self.max_tool_calls is None:
+            raise ValueError("max_tool_calls is required for non-deep reasoning")
+        else:
+            validate_tool_call_limit(self.reasoning_effort, self.max_tool_calls)
         return self
 
 

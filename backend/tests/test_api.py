@@ -345,7 +345,7 @@ async def test_conversation_strategy_can_be_restored_and_updated(app_client):
     updated = {
         "preferred_answer_mode": "trusted",
         "reasoning_effort": "deep",
-        "max_tool_calls": 32,
+        "max_tool_calls": None,
         "planning_strategy": "plan_first",
         "reflection_enabled": False,
         "reflection_trigger": "failure_only",
@@ -382,12 +382,12 @@ async def test_conversation_strategy_uses_effort_default_when_legacy_client_omit
         },
     )
     assert response.status_code == 200
-    assert response.json()["max_tool_calls"] == 16
+    assert response.json()["max_tool_calls"] is None
 
 
 @pytest.mark.parametrize(
     ("effort", "limit"),
-    [("fast", 0), ("fast", 5), ("balanced", 6), ("balanced", 15), ("deep", 16), ("deep", 50)],
+    [("fast", 0), ("fast", 5), ("balanced", 6), ("balanced", 15), ("deep", None)],
 )
 async def test_conversation_strategy_accepts_tool_limits_for_each_effort(app_client, effort, limit):
     response = await app_client.put(
@@ -406,7 +406,7 @@ async def test_conversation_strategy_accepts_tool_limits_for_each_effort(app_cli
 
 @pytest.mark.parametrize(
     ("effort", "limit"),
-    [("fast", 6), ("balanced", 5), ("balanced", 16), ("deep", 15), ("deep", 51)],
+    [("fast", 6), ("balanced", 5), ("balanced", 16), ("deep", 15), ("deep", 50)],
 )
 async def test_conversation_strategy_rejects_tool_limits_outside_effort_range(
     app_client, effort, limit
@@ -709,7 +709,7 @@ async def test_create_run_compiles_reasoning_policy(app_client):
             "answer_mode": "trusted",
             "reasoning_policy": {
                 "reasoning_effort": "deep",
-                "max_tool_calls": 42,
+                "max_tool_calls": None,
                 "planning_strategy": "plan_first",
                 "reflection_enabled": False,
                 "reflection_trigger": "adaptive",
@@ -724,7 +724,7 @@ async def test_create_run_compiles_reasoning_policy(app_client):
     assert body["answer_mode"] == "trusted"
     assert body["execution_profile"]["assurance_level"] == "full"
     assert body["reasoning_policy"]["requested"]["reasoning_effort"] == "deep"
-    assert body["reasoning_policy"]["effective"]["budgets"]["max_tool_calls"] == 42
+    assert body["reasoning_policy"]["effective"]["budgets"]["max_tool_calls"] is None
     assert body["reasoning_policy"]["effective"]["budgets"]["max_reflections"] == 6
 
 
@@ -735,7 +735,7 @@ async def test_create_run_defaults_to_standard_profile(app_client):
             "goal": "快速回答",
             "reasoning_policy": {
                 "reasoning_effort": "deep",
-                "max_tool_calls": 42,
+                "max_tool_calls": None,
                 "planning_strategy": "plan_first",
                 "reflection_enabled": True,
                 "execution_mode": "request_approval",

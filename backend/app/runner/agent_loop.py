@@ -48,6 +48,7 @@ from app.schemas.agent import (
     FinalAnswer,
     NodeResult,
     PlanNodeStatus,
+    ReasoningEffort,
     ReasoningPolicySnapshot,
     RunExecutionProfile,
     TerminalState,
@@ -474,8 +475,15 @@ class AgentLoop:
             if policy.budgets.max_turns is None
             else min(policy.budgets.max_turns, self.settings.agent_max_turns)
         )
+        unlimited_tool_calls = (
+            profile.answer_mode == AnswerMode.trusted
+            and policy.reasoning_effort == ReasoningEffort.deep
+            and policy.budgets.max_tool_calls is None
+        )
         max_tool_calls = (
-            self.settings.agent_max_tool_calls
+            None
+            if unlimited_tool_calls
+            else self.settings.agent_max_tool_calls
             if policy.budgets.max_tool_calls is None
             else min(policy.budgets.max_tool_calls, self.settings.agent_max_tool_calls)
         )
@@ -1355,7 +1363,7 @@ class AgentLoop:
                 )
                 continue
 
-            if tool_call_count >= max_tool_calls:
+            if max_tool_calls is not None and tool_call_count >= max_tool_calls:
                 observation = AgentObservation(
                     kind="limit",
                     status="blocked",

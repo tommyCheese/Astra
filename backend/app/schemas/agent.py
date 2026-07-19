@@ -16,17 +16,18 @@ class ReasoningEffort(str, Enum):
 TOOL_CALL_LIMIT_RANGES: dict[ReasoningEffort, tuple[int, int]] = {
     ReasoningEffort.fast: (0, 5),
     ReasoningEffort.balanced: (6, 15),
-    ReasoningEffort.deep: (16, 50),
 }
 
-TOOL_CALL_LIMIT_DEFAULTS: dict[ReasoningEffort, int] = {
+TOOL_CALL_LIMIT_DEFAULTS: dict[ReasoningEffort, int | None] = {
     ReasoningEffort.fast: 5,
     ReasoningEffort.balanced: 8,
-    ReasoningEffort.deep: 16,
+    ReasoningEffort.deep: None,
 }
 
 
 def validate_tool_call_limit(effort: ReasoningEffort, value: int) -> int:
+    if effort == ReasoningEffort.deep:
+        raise ValueError("max_tool_calls must be unlimited for deep reasoning")
     minimum, maximum = TOOL_CALL_LIMIT_RANGES[effort]
     if not minimum <= value <= maximum:
         raise ValueError(
@@ -136,7 +137,7 @@ class RunBudgets(BaseModel):
 
 class RequestedReasoningPolicy(BaseModel):
     reasoning_effort: ReasoningEffort = ReasoningEffort.balanced
-    max_tool_calls: int | None = Field(default=None, ge=0, le=50)
+    max_tool_calls: int | None = Field(default=None, ge=0)
     planning_strategy: RequestedPlanningStrategy = RequestedPlanningStrategy.adaptive
     reflection_enabled: bool = True
     reflection_trigger: ReflectionTrigger = ReflectionTrigger.adaptive

@@ -32,19 +32,19 @@ const DEFAULT_CONVERSATION_STRATEGY: ConversationStrategyPreferences = {
   reflection_trigger: 'adaptive',
 };
 
-const TOOL_CALL_LIMITS: Record<ConversationStrategyPreferences['reasoning_effort'], { min: number; max: number; defaultValue: number }> = {
+const TOOL_CALL_LIMITS: Record<'fast' | 'balanced', { min: number; max: number; defaultValue: number }> = {
   fast: { min: 0, max: 5, defaultValue: 5 },
   balanced: { min: 6, max: 15, defaultValue: 8 },
-  deep: { min: 16, max: 50, defaultValue: 16 },
 };
 
 function reasoningEffortValue(label: string): ConversationStrategyPreferences['reasoning_effort'] {
   return label === '快速' ? 'fast' : label === '深入' ? 'deep' : 'balanced';
 }
 
-function toolLimitForEffort(effort: ConversationStrategyPreferences['reasoning_effort'], current: number) {
+function toolLimitForEffort(effort: ConversationStrategyPreferences['reasoning_effort'], current: number | null): number | null {
+  if (effort === 'deep') return null;
   const range = TOOL_CALL_LIMITS[effort];
-  return current >= range.min && current <= range.max ? current : range.defaultValue;
+  return current !== null && current >= range.min && current <= range.max ? current : range.defaultValue;
 }
 
 function reasoningEffortLabel(value: ConversationStrategyPreferences['reasoning_effort']): string {
@@ -99,7 +99,7 @@ function AppContent() {
   const [reflectionEnabled, setReflectionEnabled] = useState(true);
   const [answerMode, setAnswerMode] = useState<'standard' | 'trusted'>('standard');
   const [reasoningEffort, setReasoningEffort] = useState('均衡');
-  const [toolCallLimit, setToolCallLimit] = useState(8);
+  const [toolCallLimit, setToolCallLimit] = useState<number | null>(8);
   const [planningStrategy, setPlanningStrategy] = useState('自适应');
   const [reflectionTrigger, setReflectionTrigger] = useState('按需');
   const [conversationStrategyReady, setConversationStrategyReady] = useState(false);
@@ -881,7 +881,7 @@ function AppContent() {
                 setAttachOpen(false);
                 setExecutionMenuOpen(false);
               }}>
-                <span>{selectedModel || t('未配置模型')}</span><small>{answerMode === 'trusted' ? `${t(reasoningEffort)} · ${t('{count} 次工具').replace('{count}', String(toolCallLimit))} · ${reflectionEnabled ? `${t(reflectionTrigger)} ${t('反思')}` : t('反思关闭')}` : t('快速策略 · 工具按需')}</small><b>⌄</b>
+                <span>{selectedModel || t('未配置模型')}</span><small>{answerMode === 'trusted' ? `${t(reasoningEffort)} · ${toolCallLimit === null ? t('工具不限') : t('{count} 次工具').replace('{count}', String(toolCallLimit))} · ${reflectionEnabled ? `${t(reflectionTrigger)} ${t('反思')}` : t('反思关闭')}` : t('快速策略 · 工具按需')}</small><b>⌄</b>
               </button>
               {modelOpen && (
                 <ModelMenu
@@ -2162,7 +2162,7 @@ function ModelMenu({ selectedModelKey, onModelChange, modelOptions, trusted, rea
   trusted: boolean;
   reasoningEffort: string;
   onReasoningEffortChange: (effort: string) => void;
-  toolCallLimit: number;
+  toolCallLimit: number | null;
   onToolCallLimitChange: (limit: number) => void;
   planningStrategy: string;
   planningStrategyDisabled: boolean;
@@ -2181,8 +2181,8 @@ function ModelMenu({ selectedModelKey, onModelChange, modelOptions, trusted, rea
     return result;
   }, []);
   const effort = reasoningEffortValue(reasoningEffort);
-  const limitRange = TOOL_CALL_LIMITS[effort];
-  return <div className="floating-menu model-menu"><div className="menu-heading">{t('模型')}</div>{groups.length ? groups.map((group) => <div className="model-provider-group" key={group.providerId}><div className="model-provider-heading"><span className={`provider-mark provider-${group.providerId}`}>{modelProviders.find((provider) => provider.id === group.providerId)?.mark}</span><span>{group.providerName}</span></div>{group.models.map((item) => <button className={`model-option ${selectedModelKey === item.key ? 'selected' : ''}`} type="button" key={item.key} onClick={() => onModelChange(item.key)}><div><strong>{item.model}</strong><small>{group.providerName}</small></div><span>{selectedModelKey === item.key ? '✓' : ''}</span></button>)}</div>) : <div className="model-menu-empty">{t('请先在模型管理中启用供应商并配置模型')}</div>}<div className="menu-divider" />{trusted ? <><div className="menu-heading menu-heading-with-help"><span>{t('可信对话策略')}</span><button className="strategy-help-button" type="button" aria-label={t('了解对话策略')} onClick={onOpenStrategyHelp}><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M7.6 7.3a2.6 2.6 0 1 1 3.15 2.54c-.75.23-1.25.72-1.25 1.46v.3" /><circle cx="9.5" cy="14.35" r=".72" fill="currentColor" stroke="none" /></svg></button></div><MenuChoice label="推理强度" value={reasoningEffort} options={['快速', '均衡', '深入']} onChange={onReasoningEffortChange} /><ToolCallLimitControl value={toolCallLimit} min={limitRange.min} max={limitRange.max} onChange={onToolCallLimitChange} /><MenuChoice label="规划策略" value={planningStrategy} options={['自适应', '先规划']} onChange={onPlanningStrategyChange} disabled={planningStrategyDisabled} disabledOptionHints={{ 自适应: '当前处于仅规划模式，无法使用自适应规划策略。' }} /><div className="menu-toggle"><div><strong>{t('反思循环')}</strong><small>{t('检查结果并修订下一步策略')}</small></div><Toggle checked={reflectionEnabled} onChange={onReflectionChange} label={t('反思循环')} /></div>{reflectionEnabled && <MenuChoice label="触发方式" value={reflectionTrigger} options={['失败时', '按需', '每轮']} onChange={onReflectionTriggerChange} />}</> : <div className="standard-mode-note"><Icon name="requestApprove" /><div><strong>{t('快速回答')}</strong><small>{t('开启可信模式后可配置完整对话策略与结果校验。')}</small></div></div>}</div>;
+  const limitRange = effort === 'deep' ? null : TOOL_CALL_LIMITS[effort];
+  return <div className="floating-menu model-menu"><div className="menu-heading">{t('模型')}</div>{groups.length ? groups.map((group) => <div className="model-provider-group" key={group.providerId}><div className="model-provider-heading"><span className={`provider-mark provider-${group.providerId}`}>{modelProviders.find((provider) => provider.id === group.providerId)?.mark}</span><span>{group.providerName}</span></div>{group.models.map((item) => <button className={`model-option ${selectedModelKey === item.key ? 'selected' : ''}`} type="button" key={item.key} onClick={() => onModelChange(item.key)}><div><strong>{item.model}</strong><small>{group.providerName}</small></div><span>{selectedModelKey === item.key ? '✓' : ''}</span></button>)}</div>) : <div className="model-menu-empty">{t('请先在模型管理中启用供应商并配置模型')}</div>}<div className="menu-divider" />{trusted ? <><div className="menu-heading menu-heading-with-help"><span>{t('可信对话策略')}</span><button className="strategy-help-button" type="button" aria-label={t('了解对话策略')} onClick={onOpenStrategyHelp}><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M7.6 7.3a2.6 2.6 0 1 1 3.15 2.54c-.75.23-1.25.72-1.25 1.46v.3" /><circle cx="9.5" cy="14.35" r=".72" fill="currentColor" stroke="none" /></svg></button></div><MenuChoice label="推理强度" value={reasoningEffort} options={['快速', '均衡', '深入']} onChange={onReasoningEffortChange} />{limitRange ? <ToolCallLimitControl value={toolCallLimit ?? limitRange.defaultValue} min={limitRange.min} max={limitRange.max} onChange={onToolCallLimitChange} /> : <UnlimitedToolCallLimitControl />}<MenuChoice label="规划策略" value={planningStrategy} options={['自适应', '先规划']} onChange={onPlanningStrategyChange} disabled={planningStrategyDisabled} disabledOptionHints={{ 自适应: '当前处于仅规划模式，无法使用自适应规划策略。' }} /><div className="menu-toggle"><div><strong>{t('反思循环')}</strong><small>{t('检查结果并修订下一步策略')}</small></div><Toggle checked={reflectionEnabled} onChange={onReflectionChange} label={t('反思循环')} /></div>{reflectionEnabled && <MenuChoice label="触发方式" value={reflectionTrigger} options={['失败时', '按需', '每轮']} onChange={onReflectionTriggerChange} />}</> : <div className="standard-mode-note"><Icon name="requestApprove" /><div><strong>{t('快速回答')}</strong><small>{t('开启可信模式后可配置完整对话策略与结果校验。')}</small></div></div>}</div>;
 }
 
 function StrategyHelpDialog({ onClose }: { onClose: () => void }) {
@@ -2196,7 +2196,7 @@ function StrategyHelpDialog({ onClose }: { onClose: () => void }) {
     { title: '推理强度', items: [
       ['快速', '允许 0–5 次工具调用，简单任务更快；启用反思时，提供轻量反思能力。'],
       ['均衡', '允许 6–15 次工具调用，兼顾速度与检查深度；启用反思时，提供基本的反思能力。'],
-      ['深入', '允许 16–50 次工具调用，为复杂任务提供更多执行预算；启用反思时，允许更深层的反思能力。'],
+      ['深入', '工具调用次数不限，为复杂任务提供充分执行空间；启用反思时，允许更深层的反思能力。'],
     ] },
     { title: '规划策略', items: [
       ['自适应', '轻量启动，按结果决定是否调整计划。'],
@@ -2220,6 +2220,11 @@ function MenuChoice({ label, value, options, onChange, disabled = false, disable
 function ToolCallLimitControl({ value, min, max, onChange }: { value: number; min: number; max: number; onChange: (value: number) => void }) {
   const { t } = useI18n();
   return <div className="tool-limit-control"><div><span>{t('工具调用上限')}</span><output>{t('{count} 次').replace('{count}', String(value))}</output></div><input type="range" aria-label={t('工具调用上限')} min={min} max={max} value={value} onChange={(event) => onChange(Number(event.currentTarget.value))} /><small>{t('当前强度可调整范围：{min}–{max} 次').replace('{min}', String(min)).replace('{max}', String(max))}</small></div>;
+}
+
+function UnlimitedToolCallLimitControl() {
+  const { t } = useI18n();
+  return <div className="tool-limit-control"><div><span>{t('工具调用上限')}</span><output>{t('不限')}</output></div><small>{t('深入推理不限制工具调用次数')}</small></div>;
 }
 
 function ErrorDialog({ error, onClose, onRetry }: { error: ApiErrorPayload; onClose: () => void; onRetry?: () => void }) {

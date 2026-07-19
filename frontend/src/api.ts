@@ -30,7 +30,7 @@ async function responseError(response: Response): Promise<AstraApiError> {
 
 export type ReasoningPolicyRequest = {
   reasoning_effort: 'fast' | 'balanced' | 'deep';
-  max_tool_calls: number;
+  max_tool_calls: number | null;
   planning_strategy: 'adaptive' | 'plan_first';
   reflection_enabled: boolean;
   reflection_trigger: 'failure_only' | 'adaptive' | 'every_turn';
@@ -74,7 +74,7 @@ export type ToolSettings = { tools: ToolSetting[] };
 export type ConversationStrategyPreferences = {
   preferred_answer_mode: 'standard' | 'trusted';
   reasoning_effort: 'fast' | 'balanced' | 'deep';
-  max_tool_calls: number;
+  max_tool_calls: number | null;
   planning_strategy: 'adaptive' | 'plan_first';
   reflection_enabled: boolean;
   reflection_trigger: 'failure_only' | 'adaptive' | 'every_turn';

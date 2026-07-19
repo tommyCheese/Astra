@@ -61,7 +61,7 @@ class PolicyCompiler:
             max_reflections=6,
             max_replans=4,
             max_turns=20,
-            max_tool_calls=16,
+            max_tool_calls=None,
             verification_coverage=3,
         ),
     }

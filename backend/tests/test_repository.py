@@ -38,7 +38,7 @@ async def test_conversation_strategy_is_created_and_persisted(session):
     updated = {
         "preferred_answer_mode": "trusted",
         "reasoning_effort": "deep",
-        "max_tool_calls": 32,
+        "max_tool_calls": None,
         "planning_strategy": "plan_first",
         "reflection_enabled": False,
         "reflection_trigger": "failure_only",
