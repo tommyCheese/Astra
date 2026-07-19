@@ -2098,6 +2098,10 @@ html[data-theme="dark"] .process-decision-children .process-step.status-running 
   padding: 2px;
 }
 
+.segmented-control.segments-2 {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
 .floating-menu .segmented-control button {
   background: transparent;
   border-radius: 6px;
@@ -2112,11 +2116,24 @@ html[data-theme="dark"] .process-decision-children .process-step.status-running 
   background: rgba(255, 255, 255, 0.72);
 }
 
+.floating-menu .segmented-control button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.floating-menu .segmented-control button:disabled:hover {
+  background: transparent;
+}
+
 .floating-menu .segmented-control button.active {
   background: #fff;
   box-shadow: 0 1px 3px rgba(15, 23, 42, 0.12);
   color: #176a52;
   font-weight: 700;
+}
+
+.floating-menu .segmented-control button.active:disabled {
+  opacity: 1;
 }
 
 textarea {

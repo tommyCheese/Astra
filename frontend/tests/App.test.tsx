@@ -1263,6 +1263,47 @@ describe('App', () => {
     expect(screen.getByRole('button', { name: /自动批准/ })).toHaveClass('mode-bypass');
   });
 
+  it('locks plan-only mode to the plan-first two-position planning strategy', async () => {
+    vi.mocked(getConversationStrategy).mockResolvedValueOnce({
+      preferred_answer_mode: 'trusted',
+      reasoning_effort: 'balanced',
+      max_tool_calls: 8,
+      planning_strategy: 'adaptive',
+      reflection_enabled: true,
+      reflection_trigger: 'adaptive',
+    });
+    render(<App />);
+
+    await userEvent.click(screen.getByRole('button', { name: '当前模型：gpt-5' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: '自适应' })).toHaveClass('active'));
+    await userEvent.click(screen.getByRole('button', { name: '当前模型：gpt-5' }));
+
+    await userEvent.click(screen.getByRole('button', { name: /请求批准/ }));
+    await userEvent.click(screen.getByRole('button', { name: /仅规划/ }));
+    await waitFor(() => expect(updateConversationStrategy).toHaveBeenLastCalledWith(expect.objectContaining({ planning_strategy: 'plan_first' })));
+
+    await userEvent.click(screen.getByRole('button', { name: '当前模型：gpt-5' }));
+    const adaptive = screen.getByRole('button', { name: '自适应' });
+    const planFirst = screen.getByRole('button', { name: '先规划' });
+    expect(planFirst).toHaveClass('active');
+    expect(adaptive).toBeDisabled();
+    expect(adaptive).toHaveAttribute('title', '当前处于仅规划模式，无法使用自适应规划策略。');
+    expect(planFirst).toBeDisabled();
+    expect(planFirst).not.toHaveAttribute('title');
+    expect(adaptive.closest('.segmented-control')).toHaveClass('segments-2');
+    expect(adaptive.closest('.segmented-control')?.querySelectorAll('button')).toHaveLength(2);
+
+    await userEvent.type(screen.getByRole('textbox'), '只生成计划');
+    await userEvent.click(screen.getByRole('button', { name: '发送' }));
+    expect(vi.mocked(createRun)).toHaveBeenLastCalledWith(
+      '只生成计划',
+      undefined,
+      'trusted',
+      expect.objectContaining({ planning_strategy: 'plan_first', execution_mode: 'plan_only' }),
+      expect.objectContaining({ provider: 'openai', name: 'gpt-5' }),
+    );
+  });
+
   it('restores a pending approval above the composer and submits allow similar', async () => {
     const completed = await vi.mocked(getRun)('fixture');
     const pending = {

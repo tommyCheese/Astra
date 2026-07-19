@@ -408,7 +408,7 @@ function AppContent() {
         : await createRun(trimmedGoal, run?.task_id, answerMode, {
         reasoning_effort: conversationStrategyRef.current.reasoning_effort,
         max_tool_calls: conversationStrategyRef.current.max_tool_calls,
-        planning_strategy: conversationStrategyRef.current.planning_strategy,
+        planning_strategy: executionMode === 'plan' ? 'plan_first' : conversationStrategyRef.current.planning_strategy,
         reflection_enabled: conversationStrategyRef.current.reflection_enabled,
         reflection_trigger: conversationStrategyRef.current.reflection_trigger,
         execution_mode: executionMode === 'plan' ? 'plan_only' : executionMode === 'bypass' ? 'auto_approval' : 'request_approval',
@@ -854,6 +854,9 @@ function AppContent() {
               {executionMenuOpen && <ExecutionModeMenu value={executionMode} onChange={(mode) => {
                 if (mode === 'bypass') setBypassConfirmOpen(true);
                 else {
+                  if (mode === 'plan' && conversationStrategyRef.current.planning_strategy !== 'plan_first') {
+                    persistConversationStrategy({ planning_strategy: 'plan_first' });
+                  }
                   setExecutionMode(mode);
                   setExecutionMenuOpen(false);
                 }
@@ -894,6 +897,7 @@ function AppContent() {
                   toolCallLimit={toolCallLimit}
                   onToolCallLimitChange={(value) => persistConversationStrategy({ max_tool_calls: value })}
                   planningStrategy={planningStrategy}
+                  planningStrategyDisabled={executionMode === 'plan'}
                   onPlanningStrategyChange={(value) => persistConversationStrategy({ planning_strategy: value === '先规划' ? 'plan_first' : 'adaptive' })}
                   reflectionEnabled={reflectionEnabled}
                   onReflectionChange={(enabled) => persistConversationStrategy({ reflection_enabled: enabled })}
@@ -2151,7 +2155,7 @@ function BypassConfirmation({ onCancel, onConfirm }: { onCancel: () => void; onC
   return <div className="modal-backdrop" role="presentation" onMouseDown={onCancel}><section className="confirmation-modal" role="alertdialog" aria-modal="true" aria-labelledby="bypass-title" onMouseDown={(event) => event.stopPropagation()}><div className="warning-mark">!</div><h2 id="bypass-title">{t('启用自动批准模式？')}</h2><p>{t('自动批准模式会跳过可批准行为的交互确认，但仍受平台禁止项、权限边界、预算和沙箱限制。')}</p><div className="confirmation-note"><strong>{t('仅在你信任当前任务和运行环境时启用。')}</strong></div><div className="confirmation-actions"><button className="secondary-button" type="button" onClick={onCancel}>{t('取消')}</button><button className="danger-confirm-button" type="button" onClick={onConfirm}>{t('确认启用自动批准')}</button></div></section></div>;
 }
 
-function ModelMenu({ selectedModelKey, onModelChange, modelOptions, trusted, reasoningEffort, onReasoningEffortChange, toolCallLimit, onToolCallLimitChange, planningStrategy, onPlanningStrategyChange, reflectionEnabled, onReflectionChange, reflectionTrigger, onReflectionTriggerChange, onOpenStrategyHelp }: {
+function ModelMenu({ selectedModelKey, onModelChange, modelOptions, trusted, reasoningEffort, onReasoningEffortChange, toolCallLimit, onToolCallLimitChange, planningStrategy, planningStrategyDisabled, onPlanningStrategyChange, reflectionEnabled, onReflectionChange, reflectionTrigger, onReflectionTriggerChange, onOpenStrategyHelp }: {
   selectedModelKey: string;
   onModelChange: (modelKey: string) => void;
   modelOptions: Array<{ key: string; model: string; providerId: ModelProviderId; providerName: string }>;
@@ -2161,6 +2165,7 @@ function ModelMenu({ selectedModelKey, onModelChange, modelOptions, trusted, rea
   toolCallLimit: number;
   onToolCallLimitChange: (limit: number) => void;
   planningStrategy: string;
+  planningStrategyDisabled: boolean;
   onPlanningStrategyChange: (strategy: string) => void;
   reflectionEnabled: boolean;
   onReflectionChange: (enabled: boolean) => void;
@@ -2177,7 +2182,7 @@ function ModelMenu({ selectedModelKey, onModelChange, modelOptions, trusted, rea
   }, []);
   const effort = reasoningEffortValue(reasoningEffort);
   const limitRange = TOOL_CALL_LIMITS[effort];
-  return <div className="floating-menu model-menu"><div className="menu-heading">{t('模型')}</div>{groups.length ? groups.map((group) => <div className="model-provider-group" key={group.providerId}><div className="model-provider-heading"><span className={`provider-mark provider-${group.providerId}`}>{modelProviders.find((provider) => provider.id === group.providerId)?.mark}</span><span>{group.providerName}</span></div>{group.models.map((item) => <button className={`model-option ${selectedModelKey === item.key ? 'selected' : ''}`} type="button" key={item.key} onClick={() => onModelChange(item.key)}><div><strong>{item.model}</strong><small>{group.providerName}</small></div><span>{selectedModelKey === item.key ? '✓' : ''}</span></button>)}</div>) : <div className="model-menu-empty">{t('请先在模型管理中启用供应商并配置模型')}</div>}<div className="menu-divider" />{trusted ? <><div className="menu-heading menu-heading-with-help"><span>{t('可信对话策略')}</span><button className="strategy-help-button" type="button" aria-label={t('了解对话策略')} onClick={onOpenStrategyHelp}><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M7.6 7.3a2.6 2.6 0 1 1 3.15 2.54c-.75.23-1.25.72-1.25 1.46v.3" /><circle cx="9.5" cy="14.35" r=".72" fill="currentColor" stroke="none" /></svg></button></div><MenuChoice label="推理强度" value={reasoningEffort} options={['快速', '均衡', '深入']} onChange={onReasoningEffortChange} /><ToolCallLimitControl value={toolCallLimit} min={limitRange.min} max={limitRange.max} onChange={onToolCallLimitChange} /><MenuChoice label="规划策略" value={planningStrategy} options={['自适应', '先规划']} onChange={onPlanningStrategyChange} /><div className="menu-toggle"><div><strong>{t('反思循环')}</strong><small>{t('检查结果并修订下一步策略')}</small></div><Toggle checked={reflectionEnabled} onChange={onReflectionChange} label={t('反思循环')} /></div>{reflectionEnabled && <MenuChoice label="触发方式" value={reflectionTrigger} options={['失败时', '按需', '每轮']} onChange={onReflectionTriggerChange} />}</> : <div className="standard-mode-note"><Icon name="requestApprove" /><div><strong>{t('快速回答')}</strong><small>{t('开启可信模式后可配置完整对话策略与结果校验。')}</small></div></div>}</div>;
+  return <div className="floating-menu model-menu"><div className="menu-heading">{t('模型')}</div>{groups.length ? groups.map((group) => <div className="model-provider-group" key={group.providerId}><div className="model-provider-heading"><span className={`provider-mark provider-${group.providerId}`}>{modelProviders.find((provider) => provider.id === group.providerId)?.mark}</span><span>{group.providerName}</span></div>{group.models.map((item) => <button className={`model-option ${selectedModelKey === item.key ? 'selected' : ''}`} type="button" key={item.key} onClick={() => onModelChange(item.key)}><div><strong>{item.model}</strong><small>{group.providerName}</small></div><span>{selectedModelKey === item.key ? '✓' : ''}</span></button>)}</div>) : <div className="model-menu-empty">{t('请先在模型管理中启用供应商并配置模型')}</div>}<div className="menu-divider" />{trusted ? <><div className="menu-heading menu-heading-with-help"><span>{t('可信对话策略')}</span><button className="strategy-help-button" type="button" aria-label={t('了解对话策略')} onClick={onOpenStrategyHelp}><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M7.6 7.3a2.6 2.6 0 1 1 3.15 2.54c-.75.23-1.25.72-1.25 1.46v.3" /><circle cx="9.5" cy="14.35" r=".72" fill="currentColor" stroke="none" /></svg></button></div><MenuChoice label="推理强度" value={reasoningEffort} options={['快速', '均衡', '深入']} onChange={onReasoningEffortChange} /><ToolCallLimitControl value={toolCallLimit} min={limitRange.min} max={limitRange.max} onChange={onToolCallLimitChange} /><MenuChoice label="规划策略" value={planningStrategy} options={['自适应', '先规划']} onChange={onPlanningStrategyChange} disabled={planningStrategyDisabled} disabledOptionHints={{ 自适应: '当前处于仅规划模式，无法使用自适应规划策略。' }} /><div className="menu-toggle"><div><strong>{t('反思循环')}</strong><small>{t('检查结果并修订下一步策略')}</small></div><Toggle checked={reflectionEnabled} onChange={onReflectionChange} label={t('反思循环')} /></div>{reflectionEnabled && <MenuChoice label="触发方式" value={reflectionTrigger} options={['失败时', '按需', '每轮']} onChange={onReflectionTriggerChange} />}</> : <div className="standard-mode-note"><Icon name="requestApprove" /><div><strong>{t('快速回答')}</strong><small>{t('开启可信模式后可配置完整对话策略与结果校验。')}</small></div></div>}</div>;
 }
 
 function StrategyHelpDialog({ onClose }: { onClose: () => void }) {
@@ -2207,9 +2212,9 @@ function StrategyHelpDialog({ onClose }: { onClose: () => void }) {
   return <div className="modal-backdrop" role="presentation" onMouseDown={onClose}><section className="usage-modal strategy-guide-modal" role="dialog" aria-modal="true" aria-labelledby="strategy-guide-title" onMouseDown={(event) => event.stopPropagation()}><header><div><span>{t('对话策略')}</span><h2 id="strategy-guide-title">{t('策略说明')}</h2></div><button className="close-button" type="button" aria-label={t('关闭策略说明')} onClick={onClose}>×</button></header><div className="strategy-guide-grid">{groups.map((group) => <section className="strategy-guide-group" key={group.title}><h3>{t(group.title)}</h3>{group.items.map(([label, detail]) => <div className="strategy-guide-item" key={label}><strong>{t(label)}</strong><p>{t(detail)}</p></div>)}</section>)}</div></section></div>;
 }
 
-function MenuChoice({ label, value, options, onChange }: { label: string; value: string; options: string[]; onChange: (value: string) => void }) {
+function MenuChoice({ label, value, options, onChange, disabled = false, disabledOptionHints }: { label: string; value: string; options: string[]; onChange: (value: string) => void; disabled?: boolean; disabledOptionHints?: Record<string, string> }) {
   const { t } = useI18n();
-  return <div className="menu-choice"><span>{t(label)}</span><div className="segmented-control">{options.map((option) => <button className={value === option ? 'active' : ''} type="button" key={option} onClick={() => onChange(option)}>{t(option)}</button>)}</div></div>;
+  return <div className="menu-choice"><span>{t(label)}</span><div className={`segmented-control segments-${options.length}`}>{options.map((option) => <button className={value === option ? 'active' : ''} type="button" key={option} disabled={disabled} title={disabled && disabledOptionHints?.[option] ? t(disabledOptionHints[option]) : undefined} onClick={() => onChange(option)}>{t(option)}</button>)}</div></div>;
 }
 
 function ToolCallLimitControl({ value, min, max, onChange }: { value: number; min: number; max: number; onChange: (value: number) => void }) {
