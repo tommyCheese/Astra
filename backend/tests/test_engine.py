@@ -19,8 +19,6 @@ from app.schemas.agent import (
     PlanDraft,
     PlanningStrategy,
     PlanNodeDraft,
-    PlanOutput,
-    PlanStep,
     RequestedReasoningPolicy,
 )
 from app.tools.base import Tool, ToolRegistry, ToolSpec
@@ -47,20 +45,56 @@ class FakeWeather(Tool):
 
 
 class WeatherPlanClient(MockModelClient):
-    async def plan(self, goal):
-        return PlanOutput(
-            steps=[
-                PlanStep(title="解析查询条件", intent="确定上海和明天"),
-                PlanStep(
+    async def plan(self, goal, *, contract, strategy):
+        criterion_ids = [item.id for item in contract.success_criteria]
+        return PlanDraft(
+            strategy=strategy,
+            nodes=[
+                PlanNodeDraft(
+                    node_key="step-1",
+                    title="解析查询条件",
+                    intent="确定上海和明天",
+                    success_criteria_refs=criterion_ids,
+                    expected_outcome=ExpectedObservation(
+                        kind="query_parameters",
+                        success_condition="地点和日期已确定",
+                    ),
+                ),
+                PlanNodeDraft(
+                    node_key="step-2",
                     title="查询天气",
                     intent="调用 weather_lookup",
-                    required_tools=["weather_lookup"],
+                    depends_on=["step-1"],
+                    required_capabilities=["weather_lookup"],
+                    success_criteria_refs=criterion_ids,
+                    expected_outcome=ExpectedObservation(
+                        kind="weather_result",
+                        success_condition="天气结果可用",
+                    ),
                 ),
-                PlanStep(title="评估跑步条件", intent="分析温度和降雨"),
-                PlanStep(title="生成回答", intent="给出天气与跑步建议"),
+                PlanNodeDraft(
+                    node_key="step-3",
+                    title="评估跑步条件",
+                    intent="分析温度和降雨",
+                    depends_on=["step-2"],
+                    success_criteria_refs=criterion_ids,
+                    expected_outcome=ExpectedObservation(
+                        kind="analysis",
+                        success_condition="跑步条件已评估",
+                    ),
+                ),
+                PlanNodeDraft(
+                    node_key="step-4",
+                    title="生成回答",
+                    intent="给出天气与跑步建议",
+                    depends_on=["step-3"],
+                    success_criteria_refs=criterion_ids,
+                    expected_outcome=ExpectedObservation(
+                        kind="final_answer",
+                        success_condition="建议已生成",
+                    ),
+                ),
             ],
-            required_tools=["weather_lookup"],
-            success_criteria=["天气与建议完整"],
         )
 
     async def decide_with_answer(self, goal, context, *, on_delta=None, on_reasoning_delta=None):
@@ -136,7 +170,7 @@ class QuickStreamingClient(MockModelClient):
     async def contract(self, goal):
         raise AssertionError("standard fast path must not build a task contract")
 
-    async def plan(self, goal):
+    async def plan(self, goal, **kwargs):
         raise AssertionError("standard fast path must not build a plan")
 
     async def decide_with_answer(self, goal, context, *, on_delta=None, on_reasoning_delta=None):
@@ -461,19 +495,14 @@ class PlanningSpyClient(MockModelClient):
         self.contract_calls += 1
         return await super().contract(goal)
 
-    async def plan(self, goal):
+    async def plan(self, goal, **kwargs):
         self.plan_calls += 1
-        return await super().plan(goal)
+        return await super().plan(goal, **kwargs)
 
 
 class EmptyPlanClient(MockModelClient):
-    async def plan(self, goal):
-        return PlanOutput.model_construct(
-            steps=[],
-            required_tools=[],
-            success_criteria=[],
-            risk_level="low",
-        )
+    async def plan(self, goal, *, contract, strategy):
+        return PlanDraft.model_construct(strategy=strategy, nodes=[])
 
 
 class EffortSpyClient(MockModelClient):
@@ -620,6 +649,11 @@ async def test_plan_only_result_does_not_expose_internal_conversation_wrapper(se
     assert planned is not None
     assert planned.status == "planned"
     assert all(node.status == "pending" for node in planned.nodes)
+    projected = plan_to_view(planned)
+    assert next(node for node in projected.nodes if node.node_key == "step-6").depends_on == [
+        "step-4",
+        "step-5",
+    ]
     assert loaded.agent_state["active_plan_id"] is None
 
 

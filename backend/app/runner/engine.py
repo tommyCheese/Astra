@@ -18,7 +18,7 @@ from app.repositories.plans import PlanRepository, plan_to_view
 from app.repositories.runs import RunRepository
 from app.runner.agent_loop import AgentLoop
 from app.runner.model_client import ModelConfigurationError, ModelOutputError, build_model_client
-from app.runner.planning import PlanService, canonical_agent_state, plan_output_to_draft
+from app.runner.planning import PlanService, canonical_agent_state
 from app.runner.reasoning import (
     build_default_contract,
     normalize_contract,
@@ -27,9 +27,11 @@ from app.runner.reasoning import (
 from app.schemas.agent import (
     AnswerMode,
     ContractMode,
+    ExpectedObservation,
     FinalAnswer,
-    PlanOutput,
-    PlanStep,
+    PlanDraft,
+    PlanningStrategy,
+    PlanNodeDraft,
     ReasoningPolicySnapshot,
     RunExecutionProfile,
     TaskContract,
@@ -149,25 +151,26 @@ class RunEngine:
             run.execution_profile or {},
         )
         logger.info(
-            "run.plan.ready run_id=%s steps=%s tools=%s",
+            "run.plan.ready run_id=%s nodes=%s capabilities=%s",
             run_id,
-            len(plan.steps),
-            len(plan.required_tools),
+            len(plan.nodes),
+            len(
+                {
+                    capability
+                    for node in plan.nodes
+                    for capability in node.required_capabilities
+                }
+            ),
         )
         run = await repo.require_run(run_id)
         snapshot = ReasoningPolicySnapshot.model_validate(run.reasoning_policy or {})
         contract = contract or build_default_contract(goal)
-        draft = plan_output_to_draft(
-            plan,
-            strategy=snapshot.effective.planning_strategy,
-            contract=contract,
-        )
         capabilities = set(self.tool_registry.specs())
         for spec in self.tool_registry.specs().values():
             capabilities.update(spec.capabilities)
         canonical_plan = await PlanService(PlanRepository(repo.session)).create(
             run_id,
-            draft,
+            plan,
             contract=contract,
             capabilities=capabilities,
             budgets=snapshot.effective.budgets,
@@ -231,29 +234,36 @@ class RunEngine:
         goal: str,
         reasoning_policy: dict[str, Any],
         execution_profile: dict[str, Any] | None = None,
-    ) -> tuple[TaskContract | None, PlanOutput]:
+    ) -> tuple[TaskContract, PlanDraft]:
         snapshot = ReasoningPolicySnapshot.model_validate(reasoning_policy)
         profile = (
             RunExecutionProfile.model_validate(execution_profile)
             if execution_profile
             else None
         )
-        planning_strategy = snapshot.effective.planning_strategy.value
+        planning_strategy = snapshot.effective.planning_strategy
         plan_only = snapshot.effective.execution_mode.value == "plan_only"
         use_model_contract = (
             profile.contract_mode == ContractMode.model
             if profile
-            else planning_strategy != "direct" or plan_only
+            else planning_strategy != PlanningStrategy.direct or plan_only
         )
-        if planning_strategy == "direct" and not plan_only:
+        if planning_strategy == PlanningStrategy.direct and not plan_only:
             contract_result = (
                 await self.model_client.contract(goal)
                 if use_model_contract and self.settings.agent_use_general_runtime
                 else build_default_contract(goal)
             )
-            plan_result = self._default_plan("处理请求", "根据任务需要直接回答或选择工具")
+            contract = self._resolve_contract(run_id, goal, contract_result)
+            plan = self._default_plan(
+                "处理请求",
+                "根据任务需要直接回答或选择工具",
+                contract=contract,
+                strategy=planning_strategy,
+            )
             logger.info("run.plan.direct_start run_id=%s", run_id)
-        elif planning_strategy == "adaptive" and not plan_only:
+            return contract, plan
+        if planning_strategy == PlanningStrategy.adaptive and not plan_only:
             if use_model_contract and self.settings.agent_use_general_runtime:
                 try:
                     contract_result = await self.model_client.contract(goal)
@@ -261,25 +271,42 @@ class RunEngine:
                     contract_result = exc
             else:
                 contract_result = build_default_contract(goal)
-            plan_result = self._default_plan(
-                "自适应处理", "根据观察决定直接回答、调用工具、反思或重新规划"
+            contract = self._resolve_contract(run_id, goal, contract_result)
+            plan = self._default_plan(
+                "自适应处理",
+                "根据观察决定直接回答、调用工具、反思或重新规划",
+                contract=contract,
+                strategy=planning_strategy,
             )
             logger.info("run.plan.adaptive_start run_id=%s", run_id)
-        elif self.settings.agent_use_general_runtime:
-            contract_result, plan_result = await asyncio.gather(
-                self.model_client.contract(goal),
-                self.model_client.plan(goal),
-                return_exceptions=True,
-            )
+            return contract, plan
+        if use_model_contract and self.settings.agent_use_general_runtime:
+            try:
+                contract_result = await self.model_client.contract(goal)
+            except ModelOutputError as exc:
+                contract_result = exc
         else:
-            contract_result, plan_result = None, await self.model_client.plan(goal)
+            contract_result = build_default_contract(goal)
         contract = self._resolve_contract(run_id, goal, contract_result)
-        plan = self._resolve_plan(run_id, plan_result)
+        try:
+            plan_result = await self.model_client.plan(
+                goal,
+                contract=contract,
+                strategy=planning_strategy,
+            )
+        except ModelOutputError as exc:
+            plan_result = exc
+        plan = self._resolve_plan(
+            run_id,
+            plan_result,
+            contract=contract,
+            strategy=planning_strategy,
+        )
         return contract, plan
 
     def _resolve_contract(
         self, run_id: str, goal: str, result: TaskContract | Exception | None
-    ) -> TaskContract | None:
+    ) -> TaskContract:
         contract = result
         if isinstance(result, Exception):
             if not isinstance(result, ModelOutputError):
@@ -292,37 +319,71 @@ class RunEngine:
                 validate_contract(contract)
             except ValueError as exc:
                 raise ModelOutputError(f"Invalid task contract: {exc}") from exc
-        return contract
+        return contract or build_default_contract(goal)
 
-    def _resolve_plan(self, run_id: str, result: PlanOutput | Exception) -> PlanOutput:
+    def _resolve_plan(
+        self,
+        run_id: str,
+        result: PlanDraft | Exception,
+        *,
+        contract: TaskContract,
+        strategy: PlanningStrategy,
+    ) -> PlanDraft:
         if not isinstance(result, Exception):
-            if result.steps:
-                return result
-            logger.warning("run.plan.fallback run_id=%s reason=empty plan steps", run_id)
-            return self._default_plan("生成回复", "直接回应用户当前请求")
+            if result.nodes:
+                return result.model_copy(update={"strategy": strategy})
+            logger.warning("run.plan.fallback run_id=%s reason=empty plan nodes", run_id)
+            return self._default_plan(
+                "生成回复",
+                "直接回应用户当前请求",
+                contract=contract,
+                strategy=strategy,
+            )
         if not isinstance(result, ModelOutputError):
             raise result
         logger.warning("run.plan.fallback run_id=%s reason=%s", run_id, str(result))
-        return self._default_plan("生成回复", "直接回应用户当前请求")
-
-    @staticmethod
-    def _default_plan(title: str, intent: str) -> PlanOutput:
-        return PlanOutput(
-            steps=[PlanStep(title=title, intent=intent)],
-            success_criteria=["正确回应用户当前请求"],
-            risk_level="low",
+        return self._default_plan(
+            "生成回复",
+            "直接回应用户当前请求",
+            contract=contract,
+            strategy=strategy,
         )
 
-    async def _complete_plan_only(self, repo: RunRepository, run_id: str, plan: PlanOutput) -> None:
+    @staticmethod
+    def _default_plan(
+        title: str,
+        intent: str,
+        *,
+        contract: TaskContract,
+        strategy: PlanningStrategy,
+    ) -> PlanDraft:
+        return PlanDraft(
+            strategy=strategy,
+            nodes=[
+                PlanNodeDraft(
+                    node_key="step-1",
+                    title=title,
+                    intent=intent,
+                    success_criteria_refs=[item.id for item in contract.success_criteria],
+                    expected_outcome=ExpectedObservation(
+                        kind="step_result",
+                        success_condition="step completed with accepted evidence",
+                    ),
+                    risk_level=contract.risk_level,
+                )
+            ],
+        )
+
+    async def _complete_plan_only(self, repo: RunRepository, run_id: str, plan: PlanDraft) -> None:
         summary = "规划已生成，未执行工具或外部操作。"
         result = {
             "summary": summary,
             "findings": [
                 {
-                    "text": self._public_plan_text(f"{step.title}：{step.intent}"),
+                    "text": self._public_plan_text(f"{node.title}：{node.intent}"),
                     "source_urls": [],
                 }
-                for step in plan.steps
+                for node in plan.nodes
             ],
             "sources": [],
             "failed_sources": [],
@@ -334,9 +395,9 @@ class RunEngine:
         await self._emit_answer_stream(repo, run_id, summary)
         await repo.update_run_status(run_id, "completed", summary=summary, result=result)
         logger.info(
-            "run.complete run_id=%s status=completed mode=plan_only steps=%s",
+            "run.complete run_id=%s status=completed mode=plan_only nodes=%s",
             run_id,
-            len(plan.steps),
+            len(plan.nodes),
         )
 
     @staticmethod

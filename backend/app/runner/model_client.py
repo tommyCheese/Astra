@@ -16,11 +16,13 @@ from app.runner.model_reasoning import attach_reasoning_usage, resolve_model_rea
 from app.schemas.agent import (
     AgentDecision,
     AgentReflection,
+    ExpectedObservation,
     FinalAnswer,
     Finding,
     MemoryRecord,
-    PlanOutput,
-    PlanStep,
+    PlanDraft,
+    PlanningStrategy,
+    PlanNodeDraft,
     ReasoningEffort,
     SourceReference,
     TaskContract,
@@ -53,7 +55,13 @@ class ModelClient(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    async def plan(self, goal: str) -> PlanOutput:
+    async def plan(
+        self,
+        goal: str,
+        *,
+        contract: TaskContract,
+        strategy: PlanningStrategy,
+    ) -> PlanDraft:
         raise NotImplementedError
 
     @abstractmethod
@@ -109,49 +117,69 @@ class MockModelClient(ModelClient):
 
         return build_default_contract(goal)
 
-    async def plan(self, goal: str) -> PlanOutput:
-        return PlanOutput(
-            steps=[
-                PlanStep(
-                    title="搜索候选来源",
-                    intent=f"围绕用户目标搜索相关来源：{goal}",
-                    required_tools=["web_search"],
-                    success_criteria=["返回至少一个候选来源"],
-                ),
-                PlanStep(
-                    title="筛选和去重来源",
-                    intent="筛选搜索候选来源并去除重复 URL",
-                    required_tools=[],
-                    success_criteria=["记录筛选和去重数量"],
-                ),
-                PlanStep(
-                    title="抓取来源内容",
-                    intent="抓取候选来源并提取可用于回答的文本证据",
-                    required_tools=["web_fetch"],
-                    success_criteria=["至少一个来源被成功抓取"],
-                ),
-                PlanStep(
-                    title="构造证据包",
-                    intent="基于已审计工具调用构造 Evidence Pack",
-                    required_tools=[],
-                    success_criteria=["Evidence Pack 包含来源质量和失败来源"],
-                ),
-                PlanStep(
-                    title="综合答案",
-                    intent="基于已记录的工具输出生成带来源的答案",
-                    required_tools=[],
-                    success_criteria=["答案包含摘要、发现、来源和限制说明"],
-                ),
-                PlanStep(
-                    title="验证证据",
-                    intent="检查来源是否足以支撑最终答案",
-                    required_tools=[],
-                    success_criteria=["输出验证备注"],
-                ),
+    async def plan(
+        self,
+        goal: str,
+        *,
+        contract: TaskContract,
+        strategy: PlanningStrategy,
+    ) -> PlanDraft:
+        criterion_ids = [item.id for item in contract.success_criteria]
+        definitions = [
+            {
+                "title": "搜索候选来源",
+                "intent": f"围绕用户目标搜索相关来源：{goal}",
+                "required_capabilities": ["web_search"],
+                "depends_on": [],
+            },
+            {
+                "title": "筛选和去重来源",
+                "intent": "筛选搜索候选来源并去除重复 URL",
+                "required_capabilities": [],
+                "depends_on": ["step-1"],
+            },
+            {
+                "title": "抓取来源内容",
+                "intent": "抓取候选来源并提取可用于回答的文本证据",
+                "required_capabilities": ["web_fetch"],
+                "depends_on": ["step-2"],
+            },
+            {
+                "title": "构造证据包",
+                "intent": "基于已审计工具调用构造 Evidence Pack",
+                "required_capabilities": [],
+                "depends_on": ["step-3"],
+            },
+            {
+                "title": "综合答案",
+                "intent": "基于已记录的工具输出生成带来源的答案",
+                "required_capabilities": [],
+                "depends_on": ["step-3"],
+            },
+            {
+                "title": "验证证据",
+                "intent": "检查来源是否足以支撑最终答案",
+                "required_capabilities": [],
+                "depends_on": ["step-4", "step-5"],
+            },
+        ]
+        return PlanDraft(
+            strategy=strategy,
+            nodes=[
+                PlanNodeDraft(
+                    node_key=f"step-{index}",
+                    title=item["title"],
+                    intent=item["intent"],
+                    depends_on=item["depends_on"],
+                    required_capabilities=item["required_capabilities"],
+                    success_criteria_refs=criterion_ids,
+                    expected_outcome=ExpectedObservation(
+                        kind="step_result",
+                        success_condition="step completed with accepted evidence",
+                    ),
+                )
+                for index, item in enumerate(definitions, start=1)
             ],
-            required_tools=["web_search", "web_fetch"],
-            success_criteria=["最终答案包含来源和验证备注"],
-            risk_level="low",
         )
 
     async def synthesize(
@@ -365,7 +393,13 @@ class OpenAICompatibleModelClient(ModelClient):
     def bind_reasoning_effort(self, effort: ReasoningEffort | str) -> None:
         self.reasoning_effort = ReasoningEffort(effort)
 
-    async def plan(self, goal: str) -> PlanOutput:
+    async def plan(
+        self,
+        goal: str,
+        *,
+        contract: TaskContract,
+        strategy: PlanningStrategy,
+    ) -> PlanDraft:
         operation = ModelOperation.PLAN
         payload = await self._chat_json(
             [
@@ -373,9 +407,13 @@ class OpenAICompatibleModelClient(ModelClient):
                     "role": "system",
                     "content": self.prompt_composer.compose(
                         operation,
-                        "You are the planner. Return JSON only with keys: "
-                        "steps, required_tools, success_criteria, risk_level. "
-                        "Each step has title, intent, required_tools, success_criteria.",
+                        "You are the planner. Return one executable PlanDraft JSON object with "
+                        "keys: strategy and nodes. Each node must contain node_key, title, intent, "
+                        "depends_on, required_capabilities, success_criteria_refs, expected_outcome, "
+                        "risk_level, and optional. expected_outcome must contain kind, "
+                        "success_condition, and required_fields. Dependencies must form a DAG. "
+                        f"The effective strategy is {strategy.value}. Reference only criterion IDs "
+                        f"from this task contract: {contract.model_dump_json()}.",
                     ),
                 },
                 {"role": "user", "content": self.prompt_composer.user_request(goal)},
@@ -383,7 +421,9 @@ class OpenAICompatibleModelClient(ModelClient):
             operation=operation,
         )
         try:
-            return PlanOutput.model_validate(normalize_plan_payload(payload))
+            return PlanDraft.model_validate(
+                normalize_plan_payload(payload, contract=contract, strategy=strategy)
+            )
         except Exception as exc:
             raise ModelOutputError(f"Invalid plan output: {exc}") from exc
 
@@ -1165,25 +1205,69 @@ def normalize_goal_text(value: str) -> str:
     return "".join(value.lower().split()).strip("。！？!?.,，")
 
 
-def normalize_plan_payload(payload: dict[str, Any]) -> dict[str, Any]:
-    normalized = dict(payload)
-    for field in ("required_tools", "success_criteria"):
-        value = normalized.get(field) or []
-        normalized[field] = value if isinstance(value, list) else [str(value)]
-    steps = normalized.get("steps")
-    if steps is None:
-        steps = []
-    normalized["steps"] = [
-        item if isinstance(item, dict) else {"title": str(item), "intent": str(item)}
-        for item in (steps if isinstance(steps, list) else [steps])
-    ]
-    for index, item in enumerate(normalized["steps"], start=1):
-        item.setdefault("title", f"步骤 {index}")
-        item.setdefault("intent", item["title"])
-        for field in ("required_tools", "success_criteria"):
-            value = item.get(field) or []
-            item[field] = value if isinstance(value, list) else [str(value)]
-    return normalized
+def normalize_plan_payload(
+    payload: dict[str, Any],
+    *,
+    contract: TaskContract,
+    strategy: PlanningStrategy,
+) -> dict[str, Any]:
+    criterion_ids = [item.id for item in contract.success_criteria]
+    raw_nodes = payload.get("nodes") or []
+    nodes = raw_nodes if isinstance(raw_nodes, list) else [raw_nodes]
+    normalized_nodes = []
+    for index, raw_node in enumerate(nodes, start=1):
+        node = dict(raw_node) if isinstance(raw_node, dict) else {"title": str(raw_node)}
+        node_key = str(node.get("node_key") or f"step-{index}")
+        title = str(node.get("title") or node_key)
+        dependencies = node.get("depends_on") or []
+        capabilities = node.get("required_capabilities") or []
+        criterion_refs = node.get("success_criteria_refs") or criterion_ids
+        expected = node.get("expected_outcome")
+        if not isinstance(expected, dict):
+            expected = {}
+        normalized_nodes.append(
+            {
+                "node_key": node_key,
+                "title": title,
+                "intent": str(node.get("intent") or title),
+                "depends_on": [
+                    str(item)
+                    for item in (
+                        dependencies if isinstance(dependencies, list) else [dependencies]
+                    )
+                ],
+                "required_capabilities": [
+                    str(item)
+                    for item in (
+                        capabilities if isinstance(capabilities, list) else [capabilities]
+                    )
+                ],
+                "success_criteria_refs": [
+                    str(item)
+                    for item in (
+                        criterion_refs if isinstance(criterion_refs, list) else [criterion_refs]
+                    )
+                ],
+                "expected_outcome": {
+                    "kind": str(expected.get("kind") or "step_result"),
+                    "success_condition": str(
+                        expected.get("success_condition")
+                        or "step completed with accepted evidence"
+                    ),
+                    "required_fields": [
+                        str(item)
+                        for item in (
+                            expected.get("required_fields")
+                            if isinstance(expected.get("required_fields"), list)
+                            else []
+                        )
+                    ],
+                },
+                "risk_level": str(node.get("risk_level") or "low"),
+                "optional": bool(node.get("optional", False)),
+            }
+        )
+    return {"strategy": strategy.value, "nodes": normalized_nodes}
 
 
 def normalize_final_answer_payload(payload: dict[str, Any]) -> dict[str, Any]:

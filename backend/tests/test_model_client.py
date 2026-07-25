@@ -18,19 +18,33 @@ from app.runner.model_client import (
     normalize_reflection_payload,
     parse_json_object,
 )
-from app.schemas.agent import AgentReflection, FinalAnswer, MemoryRecord, PlanOutput, TaskContract
+from app.runner.reasoning import build_default_contract
+from app.schemas.agent import (
+    AgentReflection,
+    FinalAnswer,
+    MemoryRecord,
+    PlanDraft,
+    PlanningStrategy,
+    TaskContract,
+)
 
 
 async def test_mock_model_client_returns_structured_outputs():
     client = MockModelClient()
-    plan = await client.plan("查询 Astra")
+    contract = build_default_contract("查询 Astra")
+    plan = await client.plan(
+        "查询 Astra",
+        contract=contract,
+        strategy=PlanningStrategy.plan_first,
+    )
     answer = await client.synthesize(
         "查询 Astra",
         [{"url": "https://example.com/a", "content": "示例内容", "retrieved_at": "now"}],
     )
 
-    assert plan.steps
-    assert "web_search" in plan.required_tools
+    assert plan.nodes
+    assert "web_search" in plan.nodes[0].required_capabilities
+    assert plan.nodes[-1].depends_on == ["step-4", "step-5"]
     assert answer.sources[0].url == "https://example.com/a"
 
 
@@ -217,22 +231,28 @@ def test_model_payload_normalization_accepts_shorthand_contract_and_plan():
             "你好",
         )
     )
-    plan = PlanOutput.model_validate(
+    plan = PlanDraft.model_validate(
         normalize_plan_payload(
             {
-                "steps": [
-                    {"title": "生成回复", "intent": "问候", "success_criteria": "用户收到回复"}
-                ],
-                "success_criteria": "用户感到被回应",
-            }
+                "nodes": [
+                    {
+                        "node_key": "answer",
+                        "title": "生成回复",
+                        "intent": "问候",
+                        "success_criteria_refs": "criterion-1",
+                    }
+                ]
+            },
+            contract=contract,
+            strategy=PlanningStrategy.plan_first,
         )
     )
 
     assert contract.assumptions[0].statement == "用户希望得到问候"
     assert contract.success_criteria[0].verification_method == "task_adapter"
-    assert plan.steps[0].intent == "问候"
-    assert plan.steps[0].success_criteria == ["用户收到回复"]
-    assert plan.success_criteria == ["用户感到被回应"]
+    assert plan.nodes[0].intent == "问候"
+    assert plan.nodes[0].success_criteria_refs == ["criterion-1"]
+    assert plan.nodes[0].expected_outcome.kind == "step_result"
 
 
 def test_contract_goal_mismatch_falls_back_to_user_request():
@@ -356,12 +376,18 @@ async def test_real_model_operations_use_explicit_profile_composition():
     payloads = {
         ModelOperation.CONTRACT: {},
         ModelOperation.PLAN: {
-            "steps": [
+            "nodes": [
                 {
+                    "node_key": "answer",
                     "title": "回答",
                     "intent": "完成目标",
-                    "required_tools": [],
-                    "success_criteria": ["产生回答"],
+                    "depends_on": [],
+                    "required_capabilities": [],
+                    "success_criteria_refs": ["criterion-result"],
+                    "expected_outcome": {
+                        "kind": "final_answer",
+                        "success_condition": "产生回答",
+                    },
                 }
             ]
         },
@@ -385,7 +411,11 @@ async def test_real_model_operations_use_explicit_profile_composition():
 
     client._chat_json = AsyncMock(side_effect=fake_chat)
     await client.contract("目标")
-    await client.plan("目标")
+    await client.plan(
+        "目标",
+        contract=build_default_contract("目标"),
+        strategy=PlanningStrategy.plan_first,
+    )
     await client.synthesize("目标", [])
     await client.decide("目标", {"memory_reads": []})
     await client.decide_with_answer("目标", {"memory_reads": []})

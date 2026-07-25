@@ -8,15 +8,11 @@ from app.schemas.agent import (
     AgentState,
     Evaluation,
     EvaluationOutcome,
-    ExpectedObservation,
     PlanDraft,
-    PlanningStrategy,
     PlanNodeDraft,
     PlanNodeStatus,
-    PlanOutput,
     PlanPatch,
     PlanStatus,
-    PlanStep,
     RunBudgets,
     TaskContract,
 )
@@ -88,43 +84,6 @@ class PlanValidator:
                 depth[key] = 1 + max((depth[item] for item in dependencies[key]), default=0)
                 resolved.add(key)
         return max(depth.values(), default=0)
-
-
-def plan_output_to_draft(
-    plan: PlanOutput,
-    *,
-    strategy: PlanningStrategy,
-    contract: TaskContract,
-) -> PlanDraft:
-    criterion_ids = [item.id for item in contract.success_criteria]
-    nodes: list[PlanNodeDraft] = []
-    steps = list(plan.steps) or [
-        PlanStep(
-            title="处理请求",
-            intent=f"根据任务目标完成回复：{contract.original_goal}",
-            success_criteria=["正确回应用户当前请求"],
-        )
-    ]
-    for index, item in enumerate(steps, start=1):
-        node_key = f"step-{index}"
-        nodes.append(
-            PlanNodeDraft(
-                node_key=node_key,
-                title=item.title,
-                intent=item.intent,
-                depends_on=[]
-                if strategy == PlanningStrategy.direct or index == 1
-                else [f"step-{index - 1}"],
-                required_capabilities=list(item.required_tools),
-                success_criteria_refs=criterion_ids,
-                expected_outcome=ExpectedObservation(
-                    kind="step_result",
-                    success_condition="step completed with accepted evidence",
-                ),
-                risk_level=plan.risk_level,
-            )
-        )
-    return PlanDraft(strategy=strategy, nodes=nodes)
 
 
 class PlanService:

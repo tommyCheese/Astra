@@ -10,7 +10,6 @@ from app.runner.planning import (
     PlanValidationError,
     PlanValidator,
     canonical_agent_state,
-    plan_output_to_draft,
 )
 from app.runner.reasoning import build_default_contract
 from app.schemas.agent import (
@@ -19,7 +18,6 @@ from app.schemas.agent import (
     PlanningStrategy,
     PlanNodeDraft,
     PlanNodeStatus,
-    PlanOutput,
     PlanPatch,
     PlanPatchOperation,
 )
@@ -83,26 +81,6 @@ def test_validator_accepts_weather_plan_and_rejects_cycles():
             task_contract=contract,
             available_capabilities={"weather.lookup"},
         )
-
-
-def test_plan_output_to_draft_falls_back_when_steps_are_empty():
-    contract = build_default_contract("解释当前报错")
-    empty_plan = PlanOutput.model_construct(
-        steps=[],
-        required_tools=[],
-        success_criteria=[],
-        risk_level="low",
-    )
-
-    draft = plan_output_to_draft(
-        empty_plan,
-        strategy=PlanningStrategy.adaptive,
-        contract=contract,
-    )
-
-    assert len(draft.nodes) == 1
-    assert draft.nodes[0].title == "处理请求"
-    assert draft.nodes[0].success_criteria_refs == ["criterion-result"]
 
 
 def test_validator_rejects_unknown_references_and_capabilities():

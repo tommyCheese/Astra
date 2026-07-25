@@ -442,20 +442,6 @@ class BashExecuteResult(BaseModel):
     stderr: str = ""
 
 
-class PlanStep(BaseModel):
-    title: str
-    intent: str
-    required_tools: list[str] = Field(default_factory=list)
-    success_criteria: list[str] = Field(default_factory=list)
-
-
-class PlanOutput(BaseModel):
-    steps: list[PlanStep] = Field(min_length=1)
-    required_tools: list[str] = Field(default_factory=list)
-    success_criteria: list[str] = Field(default_factory=list)
-    risk_level: str = "low"
-
-
 class SourceReference(BaseModel):
     url: str
     title: str | None = None
