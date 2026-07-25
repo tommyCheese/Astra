@@ -6,8 +6,8 @@ from app.repositories.conversation_strategy import ConversationStrategyRepositor
 from app.repositories.runs import RunRepository, run_to_view
 from app.repositories.tool_settings import ToolSettingsRepository
 from app.repositories.usage import UsageRepository
-from app.runner.reasoning import build_default_contract, build_plan_graph
-from app.schemas.agent import AgentState, PlanningStrategy, RunView
+from app.runner.reasoning import build_default_contract
+from app.schemas.agent import AgentState, RunView
 
 
 async def test_tool_settings_are_created_and_persisted(session):
@@ -302,12 +302,11 @@ async def test_reasoning_state_is_versioned_and_waiting_run_resumes(session):
         "需要选择", {"provider": "mock"}, reasoning_policy={"version": 1}
     )
     contract = build_default_contract("需要选择")
-    graph = build_plan_graph(contract, PlanningStrategy.adaptive)
-    state = AgentState(task_contract=contract, plan=graph)
+    state = AgentState(task_contract=contract)
     await repo.initialize_reasoning_state(
         run.id,
         task_contract=contract.model_dump(mode="json"),
-        plan_graph=graph.model_dump(mode="json"),
+        plan_graph={},
         agent_state=state.model_dump(mode="json"),
     )
     await repo.set_waiting_state(run.id, {"paused_node": "build_contract", "request": "请选择"})
@@ -332,12 +331,11 @@ async def test_reasoning_state_rejects_stale_version(session):
     repo = RunRepository(session)
     run = await repo.create_task_run("版本测试", {"provider": "mock"})
     contract = build_default_contract("版本测试")
-    graph = build_plan_graph(contract, PlanningStrategy.direct)
-    state = AgentState(task_contract=contract, plan=graph)
+    state = AgentState(task_contract=contract)
     await repo.initialize_reasoning_state(
         run.id,
         task_contract=contract.model_dump(mode="json"),
-        plan_graph=graph.model_dump(mode="json"),
+        plan_graph={},
         agent_state=state.model_dump(mode="json"),
     )
     try:

@@ -16,8 +16,6 @@ from app.schemas.agent import (
     EvaluationOutcome,
     ExecutionMode,
     ExpectedObservation,
-    PlanGraph,
-    PlanGraphStep,
     PlanningStrategy,
     PolicyAdjustment,
     ReasoningEffort,
@@ -261,44 +259,6 @@ def validate_contract(contract: TaskContract) -> None:
         raise ValueError("Ambiguous contract requires a clarification question")
 
 
-def build_plan_graph(
-    contract: TaskContract,
-    strategy: PlanningStrategy,
-    steps: Iterable[dict[str, Any]] | None = None,
-) -> PlanGraph:
-    criterion_ids = [item.id for item in contract.success_criteria]
-    source = list(steps or [])
-    if not source:
-        source = [
-            {
-                "title": "执行任务",
-                "intent": contract.original_goal,
-                "required_tools": [],
-                "success_criteria": criterion_ids,
-            }
-        ]
-    graph_steps = []
-    prior: list[str] = []
-    for index, item in enumerate(source, start=1):
-        step_id = f"step-{index}"
-        dependencies = [] if strategy == PlanningStrategy.direct else prior[-1:]
-        graph_steps.append(
-            PlanGraphStep(
-                id=step_id,
-                title=item.get("title", step_id),
-                intent=item.get("intent", ""),
-                depends_on=dependencies,
-                required_capabilities=item.get("required_tools", []),
-                success_criteria_refs=item.get("success_criteria_refs", criterion_ids),
-                expected_outcome=ExpectedObservation(
-                    kind="step_result", success_condition="step completed with accepted evidence"
-                ),
-            )
-        )
-        prior.append(step_id)
-    return PlanGraph(strategy=strategy, steps=graph_steps)
-
-
 class ObservationEvaluator:
     def evaluate(
         self,
@@ -370,12 +330,6 @@ def apply_reflection_patch(
     for criterion in updated.task_contract.success_criteria:
         if criterion.id in patch.criterion_updates:
             criterion.status = patch.criterion_updates[criterion.id]
-    if patch.replacement_plan:
-        if updated.plan is None:
-            raise ValueError("Legacy replacement_plan cannot modify a canonical Plan")
-        if patch.replacement_plan.version <= updated.plan.version:
-            raise ValueError("Replacement plan version must increase")
-        updated.plan = patch.replacement_plan
     updated.task_contract.verification_requirements.extend(patch.added_verification_requirements)
     if patch.terminal_intent:
         updated.terminal_intent = patch.terminal_intent

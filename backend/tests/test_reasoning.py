@@ -11,7 +11,6 @@ from app.runner.reasoning import (
     apply_reflection_patch,
     apply_validation_outcomes,
     build_default_contract,
-    build_plan_graph,
     failure_fingerprint,
     normalize_contract,
     validate_contract,
@@ -133,19 +132,9 @@ def test_policy_rejects_custom_tool_call_limit_outside_effort_range(effort, limi
         RequestedReasoningPolicy(reasoning_effort=effort, max_tool_calls=limit)
 
 
-def test_contract_and_plan_are_verifiable():
+def test_contract_is_verifiable():
     contract = build_default_contract("总结证据")
     validate_contract(contract)
-    graph = build_plan_graph(
-        contract,
-        PlanningStrategy.adaptive,
-        [
-            {"title": "搜索", "intent": "查找", "required_tools": ["web_search"]},
-            {"title": "总结", "intent": "回答"},
-        ],
-    )
-    assert graph.steps[1].depends_on == ["step-1"]
-    assert graph.ready_steps()[0].id == "step-1"
 
 
 def test_contract_normalization_supports_simple_conversation():
@@ -172,10 +161,7 @@ def test_reflection_policy_patch_and_versioning():
         .effective
     )
     assert ReflectionGate().should_reflect(policy, "expectation_mismatch", 0)
-    state = AgentState(
-        task_contract=build_default_contract("goal"),
-        plan=build_plan_graph(build_default_contract("goal"), PlanningStrategy.direct),
-    )
+    state = AgentState(task_contract=build_default_contract("goal"))
     patch = ReflectionPatch(
         level="goal", criterion_updates={"criterion-result": CriterionStatus.satisfied}
     )
@@ -192,9 +178,7 @@ def test_failure_fingerprints_are_stable():
 
 def test_completion_gate_requires_criteria():
     contract = build_default_contract("goal")
-    state = AgentState(
-        task_contract=contract, plan=build_plan_graph(contract, PlanningStrategy.direct)
-    )
+    state = AgentState(task_contract=contract)
     failed = ValidationOutcome(
         validator="task_adapter",
         passed=False,
@@ -231,9 +215,7 @@ def test_basic_completion_ignores_full_contract_but_preserves_warnings_and_block
 
 def test_completion_gate_distinguishes_waiting_failure_and_warning():
     contract = build_default_contract("goal")
-    state = AgentState(
-        task_contract=contract, plan=build_plan_graph(contract, PlanningStrategy.direct)
-    )
+    state = AgentState(task_contract=contract)
     gate = CompletionGate()
     failed = ValidationOutcome(validator="task_adapter", passed=False, blocking=True)
     assert (
@@ -261,9 +243,7 @@ def test_completion_gate_distinguishes_waiting_failure_and_warning():
 
 def test_completion_gate_blocks_when_mandatory_validator_is_missing():
     contract = build_default_contract("goal")
-    state = AgentState(
-        task_contract=contract, plan=build_plan_graph(contract, PlanningStrategy.direct)
-    )
+    state = AgentState(task_contract=contract)
     unrelated = ValidationOutcome(validator="artifact_reference", passed=True, blocking=False)
 
     decision = CompletionGate().evaluate(state, validation_outcomes=[unrelated])
@@ -279,9 +259,7 @@ def test_validation_outcomes_update_only_matching_success_criteria():
             update={"id": "criterion-security", "verification_method": "security_validator"}
         )
     )
-    state = AgentState(
-        task_contract=contract, plan=build_plan_graph(contract, PlanningStrategy.direct)
-    )
+    state = AgentState(task_contract=contract)
 
     updated = apply_validation_outcomes(
         state, [ValidationOutcome(validator="task_adapter", passed=True)]
@@ -337,10 +315,7 @@ def test_reflection_gate_modes_and_exhaustion():
 
 
 def test_non_actionable_reflection_is_rejected():
-    state = AgentState(
-        task_contract=build_default_contract("goal"),
-        plan=build_plan_graph(build_default_contract("goal"), PlanningStrategy.direct),
-    )
+    state = AgentState(task_contract=build_default_contract("goal"))
     with pytest.raises(ValueError, match="not actionable"):
         apply_reflection_patch(state, ReflectionPatch(level="local"), expected_version=1)
 

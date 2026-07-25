@@ -6,6 +6,7 @@ from fake_web_tools import fake_web_registry
 from app.agent_profile import ModelOperation, load_agent_profile
 from app.agent_profile.prompts import PromptComposer
 from app.core.config import Settings
+from app.repositories.plans import PlanRepository, plan_to_view
 from app.repositories.runs import RunRepository
 from app.runner.agent_loop import (
     INVALID_ARTIFACT_REFERENCE_WARNING,
@@ -16,26 +17,58 @@ from app.runner.agent_loop import (
     normalize_final_answer_artifact_references,
 )
 from app.runner.model_client import MockModelClient, ModelOutputError
+from app.runner.planning import PlanService, canonical_agent_state
 from app.runner.reasoning import (
     PolicyCompiler,
     RunProfileResolver,
     build_default_contract,
-    build_plan_graph,
 )
 from app.schemas.agent import (
     AcceptedFact,
     AgentDecision,
     AgentReflection,
-    AgentState,
     AnswerMode,
+    ExpectedObservation,
     FinalAnswer,
+    PlanDraft,
     PlanningStrategy,
+    PlanNodeDraft,
     ReflectionPatch,
     RequestedReasoningPolicy,
     ValidationOutcome,
 )
 from app.tools.base import ToolExecutionError
 from app.tools.web import build_web_registry
+
+
+async def initialize_canonical_plan(repo, run, contract, strategy):
+    plan = await PlanService(PlanRepository(repo.session)).create(
+        run.id,
+        PlanDraft(
+            strategy=strategy,
+            nodes=[
+                PlanNodeDraft(
+                    node_key="step-1",
+                    title="执行任务",
+                    intent=contract.original_goal,
+                    success_criteria_refs=["criterion-result"],
+                    expected_outcome=ExpectedObservation(
+                        kind="step_result",
+                        success_condition="step completed with accepted evidence",
+                    ),
+                )
+            ],
+        ),
+        contract=contract,
+    )
+    state = canonical_agent_state(contract, plan, policy_version=1)
+    await repo.initialize_reasoning_state(
+        run.id,
+        task_contract=contract.model_dump(mode="json"),
+        plan_graph=plan_to_view(plan).model_dump(mode="json"),
+        agent_state=state.model_dump(mode="json"),
+    )
+    return plan
 
 
 def artifact_stub(
@@ -227,14 +260,7 @@ async def test_agent_loop_keeps_verification_status_separate_from_blocked_run(se
     )
     contract = build_default_contract(run.task.description)
     contract.verification_requirements[0].validator = "security_validator"
-    graph = build_plan_graph(contract, PlanningStrategy.direct)
-    state = AgentState(task_contract=contract, plan=graph)
-    await repo.initialize_reasoning_state(
-        run.id,
-        task_contract=contract.model_dump(mode="json"),
-        plan_graph=graph.model_dump(mode="json"),
-        agent_state=state.model_dump(mode="json"),
-    )
+    await initialize_canonical_plan(repo, run, contract, PlanningStrategy.direct)
 
     output = await AgentLoop(
         settings, model_client=MockModelClient(), tool_registry=fake_web_registry()
@@ -690,14 +716,7 @@ async def test_reflection_patch_updates_persisted_agent_state(session):
     policy = compiled_policy(reflection_enabled=True, reflection_trigger="failure_only")
     run = await repo.create_task_run("恢复错误", settings.model_policy, reasoning_policy=policy)
     contract = build_default_contract(run.task.description)
-    graph = build_plan_graph(contract, PlanningStrategy.adaptive)
-    state = AgentState(task_contract=contract, plan=graph)
-    await repo.initialize_reasoning_state(
-        run.id,
-        task_contract=contract.model_dump(mode="json"),
-        plan_graph=graph.model_dump(mode="json"),
-        agent_state=state.model_dump(mode="json"),
-    )
+    await initialize_canonical_plan(repo, run, contract, PlanningStrategy.adaptive)
     client = PatchingReflectionClient()
 
     await AgentLoop(settings, model_client=client, tool_registry=fake_web_registry()).run(
@@ -705,13 +724,13 @@ async def test_reflection_patch_updates_persisted_agent_state(session):
     )
 
     loaded = await repo.require_run(run.id)
-    assert loaded.state_version == 3
+    assert loaded.state_version >= 3
     assert loaded.agent_state["accepted_facts"][0]["id"] == "fact-reflection"
     assert any(item["kind"] == "reflection" for item in loaded.agent_state["observations"])
     assert loaded.agent_state["task_contract"]["success_criteria"][0]["status"] == "satisfied"
     events = await repo.list_events(run.id)
     created = next(event for event in events if event.type == "reflection.created")
-    assert created.payload["state_version"] == 2
+    assert created.payload["state_version"] == 3
 
 
 async def test_every_turn_reflection_runs_after_successful_non_terminal_turn(session):

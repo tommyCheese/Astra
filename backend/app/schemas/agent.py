@@ -236,33 +236,6 @@ class ExpectedObservation(BaseModel):
     required_fields: list[str] = Field(default_factory=list)
 
 
-class PlanGraphStep(BaseModel):
-    id: str
-    title: str
-    intent: str
-    depends_on: list[str] = Field(default_factory=list)
-    required_capabilities: list[str] = Field(default_factory=list)
-    success_criteria_refs: list[str] = Field(default_factory=list)
-    expected_outcome: ExpectedObservation | None = None
-    risk_level: str = "low"
-    status: str = "pending"
-    evidence_refs: list[str] = Field(default_factory=list)
-
-
-class PlanGraph(BaseModel):
-    version: int = 1
-    strategy: PlanningStrategy = PlanningStrategy.adaptive
-    steps: list[PlanGraphStep] = Field(default_factory=list)
-
-    def ready_steps(self) -> list[PlanGraphStep]:
-        completed = {step.id for step in self.steps if step.status == "completed"}
-        return [
-            step
-            for step in self.steps
-            if step.status == "pending" and set(step.depends_on) <= completed
-        ]
-
-
 class PlanNodeDraft(BaseModel):
     node_key: str = Field(min_length=1, max_length=120)
     title: str = Field(min_length=1, max_length=240)
@@ -348,8 +321,6 @@ class AgentState(BaseModel):
     active_plan_id: str | None = None
     active_plan_version: int = 0
     active_node_id: str | None = None
-    # Read-only compatibility for Runs created before canonical Plan persistence.
-    plan: PlanGraph | None = None
     accepted_facts: list[AcceptedFact] = Field(default_factory=list)
     open_questions: list[str] = Field(default_factory=list)
     observations: list[dict[str, Any]] = Field(default_factory=list)
@@ -375,7 +346,6 @@ class ReflectionPatch(BaseModel):
     invalidated_assumption_ids: list[str] = Field(default_factory=list)
     fact_updates: list[AcceptedFact] = Field(default_factory=list)
     criterion_updates: dict[str, CriterionStatus] = Field(default_factory=dict)
-    replacement_plan: PlanGraph | None = None
     plan_patch: PlanPatch | None = None
     added_verification_requirements: list[VerificationRequirement] = Field(default_factory=list)
     terminal_intent: str | None = None
@@ -387,7 +357,6 @@ class ReflectionPatch(BaseModel):
                 self.invalidated_assumption_ids,
                 self.fact_updates,
                 self.criterion_updates,
-                self.replacement_plan,
                 self.plan_patch,
                 self.added_verification_requirements,
                 self.terminal_intent,

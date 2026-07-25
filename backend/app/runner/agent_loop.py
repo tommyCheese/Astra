@@ -711,9 +711,7 @@ class AgentLoop:
                     agent_state=state.model_dump(mode="json"),
                     plan_graph=plan_to_view(canonical_plan).model_dump(mode="json")
                     if canonical_plan is not None
-                    else state.plan.model_dump(mode="json")
-                    if state.plan
-                    else {},
+                    else current.plan_graph,
                     waiting_state=current.waiting_state,
                 )
                 state_version = updated.state_version
@@ -2041,9 +2039,7 @@ class AgentLoop:
                     mode="json"
                 )
                 if canonical_plan is not None
-                else state.plan.model_dump(mode="json")
-                if state.plan
-                else {},
+                else run_record.plan_graph,
                 waiting_state=run_record.waiting_state,
             )
             required_user_action = (
