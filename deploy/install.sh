@@ -32,14 +32,28 @@ DATA_DIR="$SCRIPT_DIR/data"
 mkdir -p "$DATA_DIR"
 chmod 0700 "$DATA_DIR"
 
+SOCKET=${DOCKER_HOST:-}
+if [ -z "$SOCKET" ]; then
+  SOCKET=$(docker context inspect --format '{{.Endpoints.docker.Host}}' 2>/dev/null || true)
+fi
+case "$SOCKET" in
+  unix://*) SOCKET=${SOCKET#unix://} ;;
+  "") SOCKET=/var/run/docker.sock ;;
+  *)
+    echo "Astra requires a local Unix Docker socket; found: $SOCKET" >&2
+    exit 1
+    ;;
+esac
+
 if [ ! -f .env ]; then
   cp .env.example .env
 fi
 
 TMP_ENV=".env.tmp.$$"
-awk -v data_dir="$DATA_DIR" -v version="$VERSION" '
-  BEGIN { saw_data = 0; saw_version = 0 }
+awk -v data_dir="$DATA_DIR" -v socket="$SOCKET" -v version="$VERSION" '
+  BEGIN { saw_data = 0; saw_socket = 0; saw_version = 0 }
   /^ASTRA_DATA_DIR=/ { print "ASTRA_DATA_DIR=" data_dir; saw_data = 1; next }
+  /^DOCKER_SOCKET=/ { print "DOCKER_SOCKET=" socket; saw_socket = 1; next }
   /^ASTRA_VERSION=/ {
     if (version != "") print "ASTRA_VERSION=" version
     else print
@@ -49,6 +63,7 @@ awk -v data_dir="$DATA_DIR" -v version="$VERSION" '
   { print }
   END {
     if (!saw_data) print "ASTRA_DATA_DIR=" data_dir
+    if (!saw_socket) print "DOCKER_SOCKET=" socket
     if (!saw_version && version != "") print "ASTRA_VERSION=" version
   }
 ' .env > "$TMP_ENV"

@@ -47,6 +47,8 @@
 - [x] 5.9 Move the trusted “计划生成后直接执行” control into the model/strategy menu, remove the flat Composer control, and cover trusted/quick visibility
 - [x] 5.10 Group trusted strategy controls by function and add separators between plan execution, reasoning resources, and reflection strategy
 - [x] 5.11 Replace the single trusted-strategy help button with contextual help buttons beside each corresponding control and focused help content
+- [x] 5.12 Make focused strategy help dialogs compact and readable with a full-width single-column grid, non-duplicated heading, scan-friendly item rows, and responsive stacking
+- [x] 5.13 Consolidate trusted strategy help into one footer entry and grouped readable documentation, removing per-control help buttons
 
 ## 6. API, Documentation, and Dead-Code Removal
 

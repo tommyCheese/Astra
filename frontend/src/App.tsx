@@ -36,8 +36,6 @@ const TOOL_CALL_LIMITS: Record<'fast' | 'balanced', { min: number; max: number; 
   balanced: { min: 6, max: 15, defaultValue: 8 },
 };
 
-type StrategyHelpTopic = 'plan_execution' | 'reasoning_effort' | 'tool_call_limit' | 'reflection' | 'reflection_trigger';
-
 function reasoningEffortValue(label: string): ConversationStrategyPreferences['reasoning_effort'] {
   return label === '快速' ? 'fast' : label === '深入' ? 'deep' : 'balanced';
 }
@@ -85,7 +83,7 @@ function AppContent() {
   const [sidebarWidth, setSidebarWidth] = useState(loadSidebarWidth);
   const [usageOpen, setUsageOpen] = useState(false);
   const [controlCenterOpen, setControlCenterOpen] = useState(false);
-  const [strategyHelpTopic, setStrategyHelpTopic] = useState<StrategyHelpTopic | null>(null);
+  const [strategyHelpOpen, setStrategyHelpOpen] = useState(false);
   const [conversationAction, setConversationAction] = useState<{ kind: 'rename' | 'share' | 'delete'; conversation: ConversationEntry } | null>(null);
   const [modelOpen, setModelOpen] = useState(false);
   const [attachOpen, setAttachOpen] = useState(false);
@@ -941,9 +939,9 @@ function AppContent() {
                   onReflectionTriggerChange={(value) => persistConversationStrategy({ reflection_trigger: value === '失败时' ? 'failure_only' : value === '每轮' ? 'every_turn' : 'adaptive' })}
                   planExecution={planExecution}
                   onPlanExecutionChange={(value) => setPlanExecution(value ? 'auto' : 'confirm')}
-                  onOpenStrategyHelp={(topic) => {
+                  onOpenStrategyHelp={() => {
                     setModelOpen(false);
-                    setStrategyHelpTopic(topic);
+                    setStrategyHelpOpen(true);
                   }}
                 />
               )}
@@ -964,7 +962,7 @@ function AppContent() {
       </section>
       {usageOpen && <UsageDashboard taskId={run?.task_id} runId={run?.id} onClose={() => setUsageOpen(false)} />}
       {controlCenterOpen && run && <ControlCenterDialog run={run} onClose={() => setControlCenterOpen(false)} />}
-      {strategyHelpTopic && <StrategyHelpDialog topic={strategyHelpTopic} onClose={() => setStrategyHelpTopic(null)} />}
+      {strategyHelpOpen && <StrategyHelpDialog onClose={() => setStrategyHelpOpen(false)} />}
       {bypassConfirmOpen && <BypassConfirmation onCancel={() => setBypassConfirmOpen(false)} onConfirm={() => {
         setExecutionMode('bypass');
         setExecutionMenuOpen(false);
@@ -2238,7 +2236,7 @@ function ModelMenu({ selectedModelKey, onModelChange, modelOptions, trusted, rea
   onReflectionTriggerChange: (trigger: string) => void;
   planExecution: 'auto' | 'confirm';
   onPlanExecutionChange: (auto: boolean) => void;
-  onOpenStrategyHelp: (topic: StrategyHelpTopic) => void;
+  onOpenStrategyHelp: () => void;
 }) {
   const { t } = useI18n();
   const groups = modelOptions.reduce<Array<{ providerId: ModelProviderId; providerName: string; models: Array<{ key: string; model: string }> }>>((result, option) => {
@@ -2259,73 +2257,70 @@ function ModelMenu({ selectedModelKey, onModelChange, modelOptions, trusted, rea
     {trusted ? <>
       <div className="menu-heading">{t('可信对话策略')}</div>
       <section className="trusted-strategy-section" aria-label={t('计划执行')}>
-        <div className="menu-toggle plan-execution-menu-row"><div><span className="menu-label-with-help"><strong>{t('计划生成后直接执行')}</strong><StrategyHelpButton label="计划执行" onClick={() => onOpenStrategyHelp('plan_execution')} /></span><small>{t(planExecution === 'auto' ? '完整计划生成并持久化后立即开始执行。' : '先展示完整计划，由你确认这个版本后开始执行。')}</small></div><Toggle checked={planExecution === 'auto'} onChange={onPlanExecutionChange} label={t('计划生成后直接执行')} /></div>
+        <div className="menu-toggle plan-execution-menu-row"><div><strong>{t('计划生成后直接执行')}</strong><small>{t(planExecution === 'auto' ? '完整计划生成并持久化后立即开始执行。' : '先展示完整计划，由你确认这个版本后开始执行。')}</small></div><Toggle checked={planExecution === 'auto'} onChange={onPlanExecutionChange} label={t('计划生成后直接执行')} /></div>
       </section>
       <section className="trusted-strategy-section" aria-label={t('推理强度')}>
-        <MenuChoice label="推理强度" value={reasoningEffort} options={['快速', '均衡', '深入']} onChange={onReasoningEffortChange} onHelp={() => onOpenStrategyHelp('reasoning_effort')} />
-        {limitRange ? <ToolCallLimitControl value={toolCallLimit ?? limitRange.defaultValue} min={limitRange.min} max={limitRange.max} onChange={onToolCallLimitChange} onHelp={() => onOpenStrategyHelp('tool_call_limit')} /> : <UnlimitedToolCallLimitControl onHelp={() => onOpenStrategyHelp('tool_call_limit')} />}
+        <MenuChoice label="推理强度" value={reasoningEffort} options={['快速', '均衡', '深入']} onChange={onReasoningEffortChange} />
+        {limitRange ? <ToolCallLimitControl value={toolCallLimit ?? limitRange.defaultValue} min={limitRange.min} max={limitRange.max} onChange={onToolCallLimitChange} /> : <UnlimitedToolCallLimitControl />}
       </section>
       <section className="trusted-strategy-section" aria-label={t('反思循环')}>
-        <div className="menu-toggle"><div><span className="menu-label-with-help"><strong>{t('反思循环')}</strong><StrategyHelpButton label="反思循环" onClick={() => onOpenStrategyHelp('reflection')} /></span><small>{t('检查结果并修订下一步策略')}</small></div><Toggle checked={reflectionEnabled} onChange={onReflectionChange} label={t('反思循环')} /></div>
-        {reflectionEnabled && <MenuChoice label="触发方式" value={reflectionTrigger} options={['失败时', '按需', '每轮']} onChange={onReflectionTriggerChange} onHelp={() => onOpenStrategyHelp('reflection_trigger')} />}
+        <div className="menu-toggle"><div><strong>{t('反思循环')}</strong><small>{t('检查结果并修订下一步策略')}</small></div><Toggle checked={reflectionEnabled} onChange={onReflectionChange} label={t('反思循环')} /></div>
+        {reflectionEnabled && <MenuChoice label="触发方式" value={reflectionTrigger} options={['失败时', '按需', '每轮']} onChange={onReflectionTriggerChange} />}
       </section>
+      <div className="trusted-strategy-help-footer">
+        <button className="trusted-strategy-help-link" type="button" onClick={onOpenStrategyHelp}>
+          <Icon name="info" />
+          <span><strong>{t('了解可信策略')}</strong><small>{t('查看计划执行、推理资源与反思策略说明')}</small></span>
+          <b aria-hidden="true">›</b>
+        </button>
+      </div>
     </> : <div className="standard-mode-note"><Icon name="requestApprove" /><div><strong>{t('快速响应')}</strong><small>{t('开启可信执行后会先生成完整计划并进行结果校验。')}</small></div></div>}
   </div>;
 }
 
-function StrategyHelpButton({ label, onClick }: { label: string; onClick: () => void }) {
-  const { t } = useI18n();
-  return <button className="strategy-help-button" type="button" aria-label={t('了解{setting}').replace('{setting}', t(label))} onClick={onClick}><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M7.6 7.3a2.6 2.6 0 1 1 3.15 2.54c-.75.23-1.25.72-1.25 1.46v.3" /><circle cx="9.5" cy="14.35" r=".72" fill="currentColor" stroke="none" /></svg></button>;
-}
-
-function StrategyHelpDialog({ topic, onClose }: { topic: StrategyHelpTopic; onClose: () => void }) {
+function StrategyHelpDialog({ onClose }: { onClose: () => void }) {
   const { t } = useI18n();
   useEffect(() => {
     const closeOnEscape = (event: KeyboardEvent) => { if (event.key === 'Escape') onClose(); };
     document.addEventListener('keydown', closeOnEscape);
     return () => document.removeEventListener('keydown', closeOnEscape);
   }, [onClose]);
-  const topics: Record<StrategyHelpTopic, { title: string; items: string[][] }> = {
-    reasoning_effort: { title: '推理强度', items: [
-      ['快速', '允许 0–5 次工具调用，简单任务更快；启用反思时，提供轻量反思能力。'],
-      ['均衡', '允许 6–15 次工具调用，兼顾速度与检查深度；启用反思时，提供基本的反思能力。'],
-      ['深入', '工具调用次数不限，为复杂任务提供充分执行空间；启用反思时，允许更深层的反思能力。'],
-    ] },
-    plan_execution: { title: '计划执行', items: [
+  const groups = [
+    { title: '计划执行', items: [
       ['确认后执行', '先展示完整计划，由你确认这个版本后开始执行。'],
       ['直接执行', '完整计划生成并持久化后立即开始执行。'],
     ] },
-    tool_call_limit: { title: '工具调用上限', items: [
+    { title: '推理资源', items: [
+      ['快速', '允许 0–5 次工具调用，简单任务更快；启用反思时，提供轻量反思能力。'],
+      ['均衡', '允许 6–15 次工具调用，兼顾速度与检查深度；启用反思时，提供基本的反思能力。'],
+      ['深入', '工具调用次数不限，为复杂任务提供充分执行空间；启用反思时，允许更深层的反思能力。'],
       ['调用次数', '限制一次运行可发起的外部工具调用数量；失败与重试也会计入。'],
       ['深入模式', '没有独立工具次数上限，但仍受 Agent 轮次、安全策略与系统限制。'],
     ] },
-    reflection: { title: '反思循环', items: [
+    { title: '反思策略', items: [
       ['开启', '允许 Agent 检查结果，并在预算内修订下一步策略。'],
       ['关闭', '不调用额外反思；安全与完成检查仍保留。'],
-    ] },
-    reflection_trigger: { title: '触发方式', items: [
       ['失败时', '只在工具、模型输出或完成检查失败时反思。'],
       ['按需', '失败、低置信度、冲突或无进展时反思。'],
       ['每轮', '每轮结束都反思，更审慎但更慢、更耗用量。'],
     ] },
-  };
-  const help = topics[topic];
-  return <div className="modal-backdrop" role="presentation" onMouseDown={onClose}><section className="usage-modal strategy-guide-modal strategy-guide-modal-focused" role="dialog" aria-modal="true" aria-labelledby="strategy-guide-title" onMouseDown={(event) => event.stopPropagation()}><header><div><span>{t('策略说明')}</span><h2 id="strategy-guide-title">{t(help.title)}</h2></div><button className="close-button" type="button" aria-label={t('关闭策略说明')} onClick={onClose}>×</button></header><div className="strategy-guide-grid"><section className="strategy-guide-group"><h3>{t(help.title)}</h3>{help.items.map(([label, detail]) => <div className="strategy-guide-item" key={label}><strong>{t(label)}</strong><p>{t(detail)}</p></div>)}</section></div></section></div>;
+  ];
+  return <div className="modal-backdrop" role="presentation" onMouseDown={onClose}><section className="usage-modal strategy-guide-modal strategy-guide-modal-overview" role="dialog" aria-modal="true" aria-labelledby="strategy-guide-title" onMouseDown={(event) => event.stopPropagation()}><header><div><span>{t('可信执行')}</span><h2 id="strategy-guide-title">{t('可信策略说明')}</h2></div><button className="close-button" type="button" aria-label={t('关闭策略说明')} onClick={onClose}>×</button></header><div className="strategy-guide-grid">{groups.map((group) => <section className="strategy-guide-group" aria-labelledby={`strategy-guide-${group.title}`} key={group.title}><h3 id={`strategy-guide-${group.title}`}>{t(group.title)}</h3>{group.items.map(([label, detail]) => <div className="strategy-guide-item" key={label}><strong>{t(label)}</strong><p>{t(detail)}</p></div>)}</section>)}</div></section></div>;
 }
 
-function MenuChoice({ label, value, options, onChange, onHelp, disabled = false, disabledOptionHints }: { label: string; value: string; options: string[]; onChange: (value: string) => void; onHelp?: () => void; disabled?: boolean; disabledOptionHints?: Record<string, string> }) {
+function MenuChoice({ label, value, options, onChange, disabled = false, disabledOptionHints }: { label: string; value: string; options: string[]; onChange: (value: string) => void; disabled?: boolean; disabledOptionHints?: Record<string, string> }) {
   const { t } = useI18n();
-  return <div className="menu-choice"><span className="menu-label-with-help"><span>{t(label)}</span>{onHelp && <StrategyHelpButton label={label} onClick={onHelp} />}</span><div className={`segmented-control segments-${options.length}`}>{options.map((option) => <button className={value === option ? 'active' : ''} type="button" key={option} disabled={disabled} title={disabled && disabledOptionHints?.[option] ? t(disabledOptionHints[option]) : undefined} onClick={() => onChange(option)}>{t(option)}</button>)}</div></div>;
+  return <div className="menu-choice"><span>{t(label)}</span><div className={`segmented-control segments-${options.length}`}>{options.map((option) => <button className={value === option ? 'active' : ''} type="button" key={option} disabled={disabled} title={disabled && disabledOptionHints?.[option] ? t(disabledOptionHints[option]) : undefined} onClick={() => onChange(option)}>{t(option)}</button>)}</div></div>;
 }
 
-function ToolCallLimitControl({ value, min, max, onChange, onHelp }: { value: number; min: number; max: number; onChange: (value: number) => void; onHelp: () => void }) {
+function ToolCallLimitControl({ value, min, max, onChange }: { value: number; min: number; max: number; onChange: (value: number) => void }) {
   const { t } = useI18n();
-  return <div className="tool-limit-control"><div><span className="menu-label-with-help"><span>{t('工具调用上限')}</span><StrategyHelpButton label="工具调用上限" onClick={onHelp} /></span><output>{t('{count} 次').replace('{count}', String(value))}</output></div><input type="range" aria-label={t('工具调用上限')} min={min} max={max} value={value} onChange={(event) => onChange(Number(event.currentTarget.value))} /><small>{t('当前强度可调整范围：{min}–{max} 次').replace('{min}', String(min)).replace('{max}', String(max))}</small></div>;
+  return <div className="tool-limit-control"><div><span>{t('工具调用上限')}</span><output>{t('{count} 次').replace('{count}', String(value))}</output></div><input type="range" aria-label={t('工具调用上限')} min={min} max={max} value={value} onChange={(event) => onChange(Number(event.currentTarget.value))} /><small>{t('当前强度可调整范围：{min}–{max} 次').replace('{min}', String(min)).replace('{max}', String(max))}</small></div>;
 }
 
-function UnlimitedToolCallLimitControl({ onHelp }: { onHelp: () => void }) {
+function UnlimitedToolCallLimitControl() {
   const { t } = useI18n();
-  return <div className="tool-limit-control"><div><span className="menu-label-with-help"><span>{t('工具调用上限')}</span><StrategyHelpButton label="工具调用上限" onClick={onHelp} /></span><output>{t('不限')}</output></div><small>{t('深入推理不限制工具调用次数')}</small></div>;
+  return <div className="tool-limit-control"><div><span>{t('工具调用上限')}</span><output>{t('不限')}</output></div><small>{t('深入推理不限制工具调用次数')}</small></div>;
 }
 
 function ErrorDialog({ error, onClose, onRetry }: { error: ApiErrorPayload; onClose: () => void; onRetry?: () => void }) {

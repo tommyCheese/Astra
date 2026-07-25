@@ -4,11 +4,11 @@
 from __future__ import annotations
 
 import argparse
+import gzip
 import hashlib
 import io
 import json
 import re
-import shutil
 import tarfile
 from pathlib import Path
 
@@ -121,25 +121,31 @@ def build_bundle(value: str, output_dir: Path) -> Path:
     destination = output_dir / f"{bundle_name}.tar.gz"
     deploy_files = ("compose.yaml", ".env.example", "install.sh", "README.md")
 
-    with tarfile.open(destination, "w:gz", format=tarfile.PAX_FORMAT) as archive:
-        for name in deploy_files:
-            source = ROOT / "deploy" / name
-            if name == ".env.example":
-                content = re.sub(
-                    rb"(?m)^ASTRA_VERSION=.*$",
-                    f"ASTRA_VERSION={value}".encode(),
-                    source.read_bytes(),
-                )
-                temporary = output_dir / ".env.example.tmp"
-                temporary.write_bytes(content)
-                try:
-                    add_tar_entry(archive, temporary, f"{bundle_name}/.env.example")
-                finally:
-                    temporary.unlink(missing_ok=True)
-            else:
-                add_tar_entry(archive, source, f"{bundle_name}/{name}")
-        for name in ("LICENSE", "CHANGELOG.md"):
-            add_tar_entry(archive, ROOT / name, f"{bundle_name}/{name}")
+    with destination.open("wb") as compressed:
+        with gzip.GzipFile(filename="", mode="wb", fileobj=compressed, mtime=0) as gzip_file:
+            with tarfile.open(
+                fileobj=gzip_file, mode="w", format=tarfile.PAX_FORMAT
+            ) as archive:
+                for name in deploy_files:
+                    source = ROOT / "deploy" / name
+                    if name == ".env.example":
+                        content = re.sub(
+                            rb"(?m)^ASTRA_VERSION=.*$",
+                            f"ASTRA_VERSION={value}".encode(),
+                            source.read_bytes(),
+                        )
+                        temporary = output_dir / ".env.example.tmp"
+                        temporary.write_bytes(content)
+                        try:
+                            add_tar_entry(
+                                archive, temporary, f"{bundle_name}/.env.example"
+                            )
+                        finally:
+                            temporary.unlink(missing_ok=True)
+                    else:
+                        add_tar_entry(archive, source, f"{bundle_name}/{name}")
+                for name in ("LICENSE", "CHANGELOG.md"):
+                    add_tar_entry(archive, ROOT / name, f"{bundle_name}/{name}")
 
     digest = hashlib.sha256(destination.read_bytes()).hexdigest()
     (output_dir / "SHA256SUMS").write_text(f"{digest}  {destination.name}\n")

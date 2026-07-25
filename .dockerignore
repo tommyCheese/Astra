@@ -13,4 +13,15 @@
 **/*.db
 **/*.sqlite*
 **/astra-artifacts
+**/astra-workspaces
+**/.test-workspaces
+**/runtime-profile.json
 **/.codex
+**/.agents
+videos
+openspec
+docs
+backend/tests
+frontend/tests
+frontend/dist
+dist

@@ -9,6 +9,21 @@ Astra 是一个 AI 原生的通用 Agent 平台。
 - [Astra 文档中心](docs/README.md)
 - [完整软件开发生命周期](docs/software-development-lifecycle/README.md)
 - [跟着一次请求读懂 Astra Agent](docs/agent-implementation-execution-walkthrough.md)
+- [维护者发布指南](docs/releasing.md)
+
+## 使用 Release 安装
+
+每个稳定版 GitHub Release 都提供 Compose 安装包、SHA-256 校验和、SPDX
+SBOM，以及带构建来源证明的 `linux/amd64` / `linux/arm64` 容器镜像。
+
+```bash
+tar -xzf astra-v0.1.0.tar.gz
+cd astra-v0.1.0
+./install.sh
+```
+
+默认只监听 `127.0.0.1:8080`，并使用无需密钥的 mock 模型。配置真实模型或向
+网络开放服务前，请先阅读安装包中的安全说明。
 
 ## 第一条纵向切片
 

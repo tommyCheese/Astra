@@ -1222,28 +1222,27 @@ describe('App', () => {
     expect(input).toHaveFocus();
   });
 
-  it('explains each conversation strategy from the model menu', async () => {
+  it('groups trusted strategy documentation behind one menu entry', async () => {
     render(<App />);
 
     await userEvent.click(screen.getByRole('switch', { name: '快速响应' }));
     await userEvent.click(screen.getByRole('button', { name: '当前模型：gpt-5' }));
-    expect(screen.queryByRole('button', { name: '了解对话策略' })).not.toBeInTheDocument();
     for (const name of ['了解计划执行', '了解推理强度', '了解工具调用上限', '了解反思循环', '了解触发方式']) {
-      expect(screen.getByRole('button', { name })).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name })).not.toBeInTheDocument();
     }
 
-    await userEvent.click(screen.getByRole('button', { name: '了解推理强度' }));
-    expect(screen.getByRole('dialog', { name: '推理强度' })).toBeInTheDocument();
-    expect(screen.getByText('允许 0–5 次工具调用，简单任务更快；启用反思时，提供轻量反思能力。')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: /了解可信策略/ }));
+    expect(screen.getByRole('dialog', { name: '可信策略说明' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: '计划执行' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: '推理资源' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: '反思策略' })).toBeInTheDocument();
+    expect(screen.getByText('先展示完整计划，由你确认这个版本后开始执行。')).toBeInTheDocument();
     expect(screen.getByText('允许 6–15 次工具调用，兼顾速度与检查深度；启用反思时，提供基本的反思能力。')).toBeInTheDocument();
-    expect(screen.getByText('工具调用次数不限，为复杂任务提供充分执行空间；启用反思时，允许更深层的反思能力。')).toBeInTheDocument();
-    expect(screen.queryByText('先展示完整计划，由你确认这个版本后开始执行。')).not.toBeInTheDocument();
+    expect(screen.getByText('限制一次运行可发起的外部工具调用数量；失败与重试也会计入。')).toBeInTheDocument();
+    expect(screen.getByText('失败、低置信度、冲突或无进展时反思。')).toBeInTheDocument();
 
     await userEvent.click(screen.getByRole('button', { name: '关闭策略说明' }));
-    await userEvent.click(screen.getByRole('button', { name: '当前模型：gpt-5' }));
-    await userEvent.click(screen.getByRole('button', { name: '了解工具调用上限' }));
-    expect(screen.getByRole('dialog', { name: '工具调用上限' })).toBeInTheDocument();
-    expect(screen.getByText('限制一次运行可发起的外部工具调用数量；失败与重试也会计入。')).toBeInTheDocument();
+    expect(screen.queryByRole('dialog', { name: '可信策略说明' })).not.toBeInTheDocument();
   });
 
   it('switches execution modes and confirms before enabling bypass', async () => {
