@@ -1,7 +1,7 @@
 import pytest
 
 from app.agent_profile import load_agent_profile
-from app.db.models import ConversationStrategyPreferenceRecord, ModelInvocationRecord
+from app.db.models import ModelInvocationRecord
 from app.repositories.conversation_strategy import ConversationStrategyRepository
 from app.repositories.runs import RunRepository, run_to_view
 from app.repositories.tool_settings import ToolSettingsRepository
@@ -29,7 +29,6 @@ async def test_conversation_strategy_is_created_and_persisted(session):
         "preferred_answer_mode": "standard",
         "reasoning_effort": "balanced",
         "max_tool_calls": 8,
-        "planning_strategy": "adaptive",
         "reflection_enabled": True,
         "reflection_trigger": "adaptive",
     }
@@ -39,7 +38,6 @@ async def test_conversation_strategy_is_created_and_persisted(session):
         "preferred_answer_mode": "trusted",
         "reasoning_effort": "deep",
         "max_tool_calls": None,
-        "planning_strategy": "plan_first",
         "reflection_enabled": False,
         "reflection_trigger": "failure_only",
     }
@@ -48,28 +46,6 @@ async def test_conversation_strategy_is_created_and_persisted(session):
 
     reloaded = ConversationStrategyRepository(session)
     assert await reloaded.get_or_create() == updated
-
-
-async def test_legacy_direct_conversation_strategy_is_migrated_to_adaptive(session):
-    session.add(
-        ConversationStrategyPreferenceRecord(
-            id="default",
-            preferred_answer_mode="trusted",
-            reasoning_effort="balanced",
-            max_tool_calls=8,
-            planning_strategy="direct",
-            reflection_enabled=True,
-            reflection_trigger="adaptive",
-        )
-    )
-    await session.flush()
-
-    loaded = await ConversationStrategyRepository(session).get_or_create()
-
-    assert loaded["planning_strategy"] == "adaptive"
-    record = await session.get(ConversationStrategyPreferenceRecord, "default")
-    assert record is not None
-    assert record.planning_strategy == "adaptive"
 
 
 async def test_run_lifecycle_persistence(session):
@@ -298,9 +274,7 @@ async def test_persistent_memory_requires_provenance(session):
 
 async def test_reasoning_state_is_versioned_and_waiting_run_resumes(session):
     repo = RunRepository(session)
-    run = await repo.create_task_run(
-        "需要选择", {"provider": "mock"}, reasoning_policy={"version": 1}
-    )
+    run = await repo.create_task_run("需要选择", {"provider": "mock"})
     contract = build_default_contract("需要选择")
     state = AgentState(task_contract=contract)
     await repo.initialize_reasoning_state(

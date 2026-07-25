@@ -23,7 +23,15 @@ from app.db.models import (
     ToolCallRecord,
     utc_now,
 )
-from app.schemas.agent import RunResult
+from app.schemas.agent import (
+    AnswerMode,
+    AssuranceLevel,
+    ContractMode,
+    PlanExecution,
+    ReasoningPolicySnapshot,
+    RunExecutionProfile,
+    RunResult,
+)
 
 
 class RunRepository:
@@ -53,6 +61,18 @@ class RunRepository:
         agent_profile_snapshot: dict[str, Any] | None = None,
     ) -> RunRecord:
         now = utc_now()
+        if execution_profile is None and reasoning_policy:
+            snapshot = ReasoningPolicySnapshot.model_validate(reasoning_policy)
+            generated_profile = RunExecutionProfile(
+                answer_mode=AnswerMode.trusted,
+                contract_mode=ContractMode.model,
+                assurance_level=AssuranceLevel.full,
+                reasoning_policy=snapshot,
+                plan_execution=PlanExecution.auto,
+                validators=["task_adapter", "artifact_reference"],
+            )
+            answer_mode = AnswerMode.trusted.value
+            execution_profile = generated_profile.model_dump(mode="json")
         task = await self.session.get(TaskRecord, task_id) if task_id else None
         if task_id and task is None:
             raise ValueError(f"Task not found: {task_id}")
@@ -217,6 +237,67 @@ class RunRepository:
         await self.session.commit()
         return run
 
+    async def confirm_waiting_plan(
+        self,
+        run_id: str,
+        *,
+        continuation_token: str,
+        plan_id: str,
+        expected_plan_version: int,
+        expected_state_version: int,
+    ) -> RunRecord:
+        from app.repositories.plans import PlanRepository, plan_to_view
+        from app.schemas.agent import AgentState
+
+        run = await self.require_run(run_id)
+        waiting = run.waiting_state or {}
+        if run.status != "waiting_user" or waiting.get("kind") != "plan_confirmation":
+            raise ValueError("Run is not waiting for plan confirmation")
+        bindings = {
+            "continuation_token": continuation_token,
+            "plan_id": plan_id,
+            "plan_version": expected_plan_version,
+            "state_version": expected_state_version,
+        }
+        if any(waiting.get(key) != value for key, value in bindings.items()):
+            raise ValueError("Invalid or stale plan confirmation")
+        if run.state_version != expected_state_version:
+            raise ValueError("Invalid or stale plan confirmation")
+        plan_repository = PlanRepository(self.session)
+        plan = await plan_repository.require(plan_id)
+        if (
+            plan.run_id != run_id
+            or plan.version != expected_plan_version
+            or plan.status != "planned"
+        ):
+            raise ValueError("Invalid or stale plan confirmation")
+        plan = await plan_repository.activate(
+            plan_id, expected_version=expected_plan_version
+        )
+        state = AgentState.model_validate(run.agent_state)
+        state.active_plan_id = plan.id
+        state.active_plan_version = plan.version
+        state.active_node_id = None
+        state.version = expected_state_version + 1
+        run.agent_state = state.model_dump(mode="json")
+        run.state_version = state.version
+        run.plan_graph = plan_to_view(plan).model_dump(mode="json")
+        run.waiting_state = None
+        run.status = "executing"
+        run.completed_at = None
+        run.updated_at = utc_now()
+        await self.add_event(
+            run_id,
+            "plan.confirmed",
+            {
+                "plan_id": plan.id,
+                "plan_version": plan.version,
+                "state_version": state.version,
+            },
+        )
+        await self.session.commit()
+        return run
+
     async def get_run(self, run_id: str) -> RunRecord | None:
         result = await self.session.execute(
             select(RunRecord)
@@ -303,7 +384,7 @@ class RunRepository:
 
     async def cancel_run(self, run_id: str) -> RunRecord:
         run = await self.require_run(run_id)
-        if run.status in self.TERMINAL_STATUSES:
+        if run.status in self.TERMINAL_STATUSES and run.status != "waiting_user":
             return run
 
         now = utc_now()

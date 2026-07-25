@@ -21,7 +21,6 @@ from app.schemas.agent import (
     Finding,
     MemoryRecord,
     PlanDraft,
-    PlanningStrategy,
     PlanNodeDraft,
     ReasoningEffort,
     SourceReference,
@@ -60,7 +59,6 @@ class ModelClient(ABC):
         goal: str,
         *,
         contract: TaskContract,
-        strategy: PlanningStrategy,
     ) -> PlanDraft:
         raise NotImplementedError
 
@@ -122,7 +120,6 @@ class MockModelClient(ModelClient):
         goal: str,
         *,
         contract: TaskContract,
-        strategy: PlanningStrategy,
     ) -> PlanDraft:
         criterion_ids = [item.id for item in contract.success_criteria]
         definitions = [
@@ -164,7 +161,6 @@ class MockModelClient(ModelClient):
             },
         ]
         return PlanDraft(
-            strategy=strategy,
             nodes=[
                 PlanNodeDraft(
                     node_key=f"step-{index}",
@@ -398,7 +394,6 @@ class OpenAICompatibleModelClient(ModelClient):
         goal: str,
         *,
         contract: TaskContract,
-        strategy: PlanningStrategy,
     ) -> PlanDraft:
         operation = ModelOperation.PLAN
         payload = await self._chat_json(
@@ -407,12 +402,12 @@ class OpenAICompatibleModelClient(ModelClient):
                     "role": "system",
                     "content": self.prompt_composer.compose(
                         operation,
-                        "You are the planner. Return one executable PlanDraft JSON object with "
-                        "keys: strategy and nodes. Each node must contain node_key, title, intent, "
+                        "You are the planner. Return one complete executable PlanDraft JSON object "
+                        "with the key nodes. Each node must contain node_key, title, intent, "
                         "depends_on, required_capabilities, success_criteria_refs, expected_outcome, "
                         "risk_level, and optional. expected_outcome must contain kind, "
-                        "success_condition, and required_fields. Dependencies must form a DAG. "
-                        f"The effective strategy is {strategy.value}. Reference only criterion IDs "
+                        "success_condition, and required_fields. Dependencies must form a complete "
+                        "DAG covering the contract before execution. Reference only criterion IDs "
                         f"from this task contract: {contract.model_dump_json()}.",
                     ),
                 },
@@ -422,7 +417,7 @@ class OpenAICompatibleModelClient(ModelClient):
         )
         try:
             return PlanDraft.model_validate(
-                normalize_plan_payload(payload, contract=contract, strategy=strategy)
+                normalize_plan_payload(payload, contract=contract)
             )
         except Exception as exc:
             raise ModelOutputError(f"Invalid plan output: {exc}") from exc
@@ -1209,7 +1204,6 @@ def normalize_plan_payload(
     payload: dict[str, Any],
     *,
     contract: TaskContract,
-    strategy: PlanningStrategy,
 ) -> dict[str, Any]:
     criterion_ids = [item.id for item in contract.success_criteria]
     raw_nodes = payload.get("nodes") or []
@@ -1267,7 +1261,7 @@ def normalize_plan_payload(
                 "optional": bool(node.get("optional", False)),
             }
         )
-    return {"strategy": strategy.value, "nodes": normalized_nodes}
+    return {"nodes": normalized_nodes}
 
 
 def normalize_final_answer_payload(payload: dict[str, Any]) -> dict[str, Any]:

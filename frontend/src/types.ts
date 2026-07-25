@@ -229,7 +229,17 @@ export type RunView = {
   status: string;
   mode: string;
   answer_mode?: 'standard' | 'trusted';
-  execution_profile?: Record<string, unknown>;
+  execution_profile?: {
+    version: 2;
+    answer_mode: 'standard' | 'trusted';
+    plan_execution: 'auto' | 'confirm' | null;
+    contract_mode: 'system_minimal' | 'model';
+    assurance_level: 'basic' | 'full';
+    reasoning_policy: Record<string, unknown>;
+    validators: string[];
+    interactive: boolean;
+    permission_bundle: Record<string, unknown> | null;
+  };
   summary?: string | null;
   result: RunResult | null;
   steps: StepView[];
@@ -242,11 +252,32 @@ export type RunView = {
   chat_messages?: ChatMessage[];
   reasoning_policy?: Record<string, unknown>;
   task_contract?: Record<string, unknown>;
-  plan_graph?: Record<string, unknown>;
+  plan_graph?: {
+    id?: string;
+    run_id?: string;
+    version?: number;
+    status?: 'planned' | 'active' | 'superseded' | 'completed';
+    nodes?: Array<{
+      id: string;
+      node_key: string;
+      index: number;
+      title: string;
+      intent: string;
+      status: string;
+      depends_on: string[];
+    }>;
+  };
   agent_state?: Record<string, unknown>;
   state_version?: number;
   terminal_reason?: Record<string, unknown> | null;
-  waiting_state?: Record<string, unknown> | null;
+  waiting_state?: ({
+    kind: 'plan_confirmation';
+    continuation_token: string;
+    plan_id: string;
+    plan_version: number;
+    state_version: number;
+    request: string;
+  } | Record<string, unknown>) | null;
   pending_approval?: PendingApproval | null;
   task_adapter?: string;
 };

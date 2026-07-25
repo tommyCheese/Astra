@@ -85,12 +85,6 @@ export function buildAuditLog(events: NonNullable<PermissionCenterView['policy_e
           actor: translate('当前用户'), tone: rejected ? 'danger' as const : 'success' as const, createdAt: event.created_at,
         };
       }
-      if (event.type === 'tool_call.effect_blocked_by_mode') return {
-        id: event.id, code: event.type, title: translate('{tool} 未执行').replace('{tool}', tool),
-        detail: stringValue(payload.summary) || translate('当前执行模式阻止了这项操作。'),
-        actor: translate('Astra 执行策略'), tone: 'danger' as const, createdAt: event.created_at,
-      };
-
       const denied = decision === 'deny';
       const asked = decision === 'ask';
       return {

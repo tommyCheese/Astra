@@ -86,7 +86,6 @@ async def permission_center(
                         "approval.requested",
                         "approval.decided",
                         "permission.decided",
-                        "tool_call.effect_blocked_by_mode",
                     ]
                 ),
             ).order_by(RunEventRecord.created_at.desc()).limit(50)

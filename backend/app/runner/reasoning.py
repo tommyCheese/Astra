@@ -16,13 +16,12 @@ from app.schemas.agent import (
     EvaluationOutcome,
     ExecutionMode,
     ExpectedObservation,
-    PlanningStrategy,
+    PlanExecution,
     PolicyAdjustment,
     ReasoningEffort,
     ReasoningPolicySnapshot,
     ReflectionPatch,
     ReflectionTrigger,
-    RequestedPlanningStrategy,
     RequestedReasoningPolicy,
     RunBudgets,
     RunExecutionProfile,
@@ -74,14 +73,6 @@ class PolicyCompiler:
         data = requested.model_dump()
         adjustments: list[PolicyAdjustment] = []
         if risk_level in {"high", "critical"}:
-            self._raise(
-                data,
-                adjustments,
-                "planning_strategy",
-                PlanningStrategy.plan_first,
-                "high_risk_minimum_planning",
-                "高风险任务必须先完成完整规划。",
-            )
             self._raise(
                 data,
                 adjustments,
@@ -139,6 +130,7 @@ class RunProfileResolver:
         answer_mode: AnswerMode,
         requested: RequestedReasoningPolicy,
         *,
+        plan_execution: PlanExecution | None = None,
         risk_level: str = "low",
         complexity: str = "normal",
     ) -> RunExecutionProfile:
@@ -147,7 +139,6 @@ class RunProfileResolver:
                 update={
                     "reasoning_effort": ReasoningEffort.fast,
                     "max_tool_calls": None,
-                    "planning_strategy": RequestedPlanningStrategy.adaptive,
                     "reflection_enabled": False,
                     "reflection_trigger": ReflectionTrigger.failure_only,
                     "verification_level": VerificationLevel.basic,
@@ -156,6 +147,7 @@ class RunProfileResolver:
             contract_mode = ContractMode.system_minimal
             assurance_level = AssuranceLevel.basic
             validators = self.STANDARD_VALIDATORS
+            resolved_plan_execution = None
         else:
             effective_request = requested.model_copy(
                 update={"verification_level": VerificationLevel.strict}
@@ -163,6 +155,7 @@ class RunProfileResolver:
             contract_mode = ContractMode.model
             assurance_level = AssuranceLevel.full
             validators = self.TRUSTED_VALIDATORS
+            resolved_plan_execution = plan_execution or PlanExecution.confirm
         policy = PolicyCompiler().compile(
             effective_request, risk_level=risk_level, complexity=complexity
         )
@@ -180,6 +173,7 @@ class RunProfileResolver:
             contract_mode=contract_mode,
             assurance_level=assurance_level,
             reasoning_policy=policy,
+            plan_execution=resolved_plan_execution,
             validators=list(validators),
         )
 

@@ -24,7 +24,6 @@ from app.schemas.agent import (
     FinalAnswer,
     MemoryRecord,
     PlanDraft,
-    PlanningStrategy,
     TaskContract,
 )
 
@@ -35,7 +34,6 @@ async def test_mock_model_client_returns_structured_outputs():
     plan = await client.plan(
         "查询 Astra",
         contract=contract,
-        strategy=PlanningStrategy.plan_first,
     )
     answer = await client.synthesize(
         "查询 Astra",
@@ -244,7 +242,6 @@ def test_model_payload_normalization_accepts_shorthand_contract_and_plan():
                 ]
             },
             contract=contract,
-            strategy=PlanningStrategy.plan_first,
         )
     )
 
@@ -414,7 +411,6 @@ async def test_real_model_operations_use_explicit_profile_composition():
     await client.plan(
         "目标",
         contract=build_default_contract("目标"),
-        strategy=PlanningStrategy.plan_first,
     )
     await client.synthesize("目标", [])
     await client.decide("目标", {"memory_reads": []})

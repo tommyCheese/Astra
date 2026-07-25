@@ -76,7 +76,6 @@ class PlanRepository:
         plan = PlanRecord(
             run_id=run_id,
             version=next_version,
-            strategy=draft.strategy.value,
             status=status.value,
             supersedes_plan_id=supersedes_plan_id,
             activated_at=utc_now() if status == PlanStatus.active else None,
@@ -134,7 +133,6 @@ class PlanRepository:
             {
                 "plan_id": plan.id,
                 "version": plan.version,
-                "strategy": plan.strategy,
                 "status": plan.status,
                 "node_count": len(draft.nodes),
                 "supersedes_plan_id": supersedes_plan_id,
@@ -159,19 +157,6 @@ class PlanRepository:
         if run is None or not run.active_plan_id:
             return None
         return await self.require(run.active_plan_id)
-
-    async def latest_planned_for_run(self, run_id: str) -> PlanRecord | None:
-        result = await self.session.execute(
-            select(PlanRecord.id)
-            .where(
-                PlanRecord.run_id == run_id,
-                PlanRecord.status == PlanStatus.planned.value,
-            )
-            .order_by(PlanRecord.version.desc())
-            .limit(1)
-        )
-        plan_id = result.scalar_one_or_none()
-        return await self.require(plan_id) if plan_id else None
 
     async def require_node(self, node_id: str) -> PlanNodeRecord:
         node = await self.session.get(PlanNodeRecord, node_id)
@@ -237,6 +222,8 @@ class PlanRepository:
             raise PlanStateError(
                 f"Plan version conflict: expected {expected_version}, got {plan.version}"
             )
+        if plan.status != PlanStatus.planned.value:
+            raise PlanStateError(f"Plan is not awaiting activation: {plan.status}")
         run = await self.session.get(RunRecord, plan.run_id)
         if run is None:
             raise ValueError(f"Run not found: {plan.run_id}")
@@ -267,7 +254,6 @@ def plan_to_view(plan: PlanRecord) -> PlanView:
         id=plan.id,
         run_id=plan.run_id,
         version=plan.version,
-        strategy=plan.strategy,
         status=plan.status,
         supersedes_plan_id=plan.supersedes_plan_id,
         nodes=[

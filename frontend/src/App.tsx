@@ -1,7 +1,7 @@
 import { CSSProperties, FormEvent, KeyboardEvent as ReactKeyboardEvent, MouseEvent, PointerEvent as ReactPointerEvent, ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { AstraApiError, ApiErrorPayload, buildRuntime, cancelRun, cancelRuntimeBuild, createConversationShare, createRun, decideToolApproval, deleteConversation, getConversation, getConversationStrategy, getPermissionCenter, getRun, getRuntimeProfile, getToolSettings, listConversationShares, listConversations, listLibraryFiles, listRuns, resumeRun, revokeConversationShare, revokePermissionGrant, streamRunEvents, updateConversation, updateConversationStrategy, updateToolSettings, type ConversationStrategyPreferences, type LibraryFile, type PermissionCenterView, type RunModelConfig, type ToolSetting } from './api';
+import { AstraApiError, ApiErrorPayload, buildRuntime, cancelRun, cancelRuntimeBuild, confirmPlanExecution, createConversationShare, createRun, decideToolApproval, deleteConversation, getConversation, getConversationStrategy, getPermissionCenter, getRun, getRuntimeProfile, getToolSettings, listConversationShares, listConversations, listLibraryFiles, listRuns, resumeRun, revokeConversationShare, revokePermissionGrant, streamRunEvents, updateConversation, updateConversationStrategy, updateToolSettings, type ConversationStrategyPreferences, type LibraryFile, type PermissionCenterView, type RunModelConfig, type ToolSetting } from './api';
 import { buildAuditLog, buildIdentityPresentation, type IdentityGroup } from './auditPresentation';
 import { I18nProvider, useI18n } from './i18n';
 import { ThemeProvider, useTheme } from './theme';
@@ -27,7 +27,6 @@ const DEFAULT_CONVERSATION_STRATEGY: ConversationStrategyPreferences = {
   preferred_answer_mode: 'standard',
   reasoning_effort: 'balanced',
   max_tool_calls: 8,
-  planning_strategy: 'adaptive',
   reflection_enabled: true,
   reflection_trigger: 'adaptive',
 };
@@ -51,10 +50,6 @@ function reasoningEffortLabel(value: ConversationStrategyPreferences['reasoning_
   return value === 'fast' ? '快速' : value === 'deep' ? '深入' : '均衡';
 }
 
-function planningStrategyLabel(value: ConversationStrategyPreferences['planning_strategy']): string {
-  return value === 'plan_first' ? '先规划' : '自适应';
-}
-
 function reflectionTriggerLabel(value: ConversationStrategyPreferences['reflection_trigger']): string {
   return value === 'failure_only' ? '失败时' : value === 'every_turn' ? '每轮' : '按需';
 }
@@ -73,6 +68,7 @@ function AppContent() {
   const [loading, setLoading] = useState(false);
   const [stopping, setStopping] = useState(false);
   const [approvalSubmitting, setApprovalSubmitting] = useState(false);
+  const [planConfirmationSubmitting, setPlanConfirmationSubmitting] = useState(false);
   const [streamingAnswer, setStreamingAnswer] = useState('');
   const [answerComplete, setAnswerComplete] = useState(false);
   const [answerSettling, setAnswerSettling] = useState(false);
@@ -92,7 +88,7 @@ function AppContent() {
   const [modelOpen, setModelOpen] = useState(false);
   const [attachOpen, setAttachOpen] = useState(false);
   const [executionMenuOpen, setExecutionMenuOpen] = useState(false);
-  const [executionMode, setExecutionMode] = useState<'plan' | 'default' | 'bypass'>('default');
+  const [executionMode, setExecutionMode] = useState<'default' | 'bypass'>('default');
   const [bypassConfirmOpen, setBypassConfirmOpen] = useState(false);
   const [providerConfigs, setProviderConfigs] = useState<ModelProviderConfig[]>(loadProviderConfigs);
   const [selectedModelKey, setSelectedModelKey] = useState(() => readLocalString(STORAGE_KEYS.selectedModel) || 'openai:gpt-5');
@@ -100,7 +96,7 @@ function AppContent() {
   const [answerMode, setAnswerMode] = useState<'standard' | 'trusted'>('standard');
   const [reasoningEffort, setReasoningEffort] = useState('均衡');
   const [toolCallLimit, setToolCallLimit] = useState<number | null>(8);
-  const [planningStrategy, setPlanningStrategy] = useState('自适应');
+  const [planExecution, setPlanExecution] = useState<'auto' | 'confirm'>('confirm');
   const [reflectionTrigger, setReflectionTrigger] = useState('按需');
   const [conversationStrategyReady, setConversationStrategyReady] = useState(false);
   const [trustedTransitionActive, setTrustedTransitionActive] = useState(false);
@@ -132,6 +128,15 @@ function AppContent() {
     .filter((provider) => provider.enabled)
     .flatMap((provider) => parseModelIds(provider.models).map((model) => ({ key: `${provider.id}:${model}`, model, providerId: provider.id, providerName: provider.name }))), [providerConfigs]);
   const selectedModel = availableModels.find((item) => item.key === selectedModelKey)?.model ?? '';
+  const planConfirmation = run?.waiting_state?.kind === 'plan_confirmation'
+    ? run.waiting_state as {
+      kind: 'plan_confirmation';
+      continuation_token: string;
+      plan_id: string;
+      plan_version: number;
+      state_version: number;
+    }
+    : null;
 
   useEffect(() => writeLocalJson(STORAGE_KEYS.conversations, conversationHistory.slice(0, HISTORY_LIMIT)), [conversationHistory]);
   useEffect(() => writeLocalJson(STORAGE_KEYS.processPanelDefaultOpen, processPanelDefaultOpen), [processPanelDefaultOpen]);
@@ -157,7 +162,6 @@ function AppContent() {
       setAnswerMode(strategy.preferred_answer_mode ?? 'standard');
       setReasoningEffort(reasoningEffortLabel(strategy.reasoning_effort));
       setToolCallLimit(strategy.max_tool_calls);
-      setPlanningStrategy(planningStrategyLabel(strategy.planning_strategy));
       setReflectionEnabled(strategy.reflection_enabled);
       setReflectionTrigger(reflectionTriggerLabel(strategy.reflection_trigger));
     }).catch(() => { /* Retain documented defaults while the backend is unavailable. */ }).finally(() => {
@@ -307,7 +311,6 @@ function AppContent() {
     setAnswerMode(next.preferred_answer_mode);
     setReasoningEffort(reasoningEffortLabel(next.reasoning_effort));
     setToolCallLimit(next.max_tool_calls);
-    setPlanningStrategy(planningStrategyLabel(next.planning_strategy));
     setReflectionEnabled(next.reflection_enabled);
     setReflectionTrigger(reflectionTriggerLabel(next.reflection_trigger));
     conversationStrategySaveRef.current = conversationStrategySaveRef.current
@@ -408,12 +411,11 @@ function AppContent() {
         : await createRun(trimmedGoal, run?.task_id, answerMode, {
         reasoning_effort: conversationStrategyRef.current.reasoning_effort,
         max_tool_calls: conversationStrategyRef.current.max_tool_calls,
-        planning_strategy: executionMode === 'plan' ? 'plan_first' : conversationStrategyRef.current.planning_strategy,
         reflection_enabled: conversationStrategyRef.current.reflection_enabled,
         reflection_trigger: conversationStrategyRef.current.reflection_trigger,
-        execution_mode: executionMode === 'plan' ? 'plan_only' : executionMode === 'bypass' ? 'auto_approval' : 'request_approval',
+        execution_mode: executionMode === 'bypass' ? 'auto_approval' : 'request_approval',
         verification_level: 'standard',
-        }, modelConfig);
+        }, modelConfig, answerMode === 'trusted' ? planExecution : undefined);
       const createdAnswerMode = (created as { answer_mode?: 'standard' | 'trusted' }).answer_mode;
       const current = normalizeRunView({
         id: created.run_id,
@@ -421,7 +423,6 @@ function AppContent() {
         status: created.status,
         mode: 'general-agent',
         answer_mode: createdAnswerMode ?? answerMode,
-        execution_profile: {},
         result: null,
         steps: [], tool_calls: [], artifacts: [], events: [], turns: [], memories: [],
         chat_messages: [{ id: `optimistic-${created.run_id}`, role: 'user', content: trimmedGoal, status: 'completed', metadata: {} }],
@@ -491,6 +492,37 @@ function AppContent() {
       setError(err instanceof AstraApiError ? err.payload : { type: 'runtime.internal_error', code: 'APPROVAL_FAILED', message: t('提交批准决定失败，请刷新后重试。'), retryable: true, trace_id: 'unavailable' });
     } finally {
       setApprovalSubmitting(false);
+    }
+  }
+
+  async function executeConfirmedPlan() {
+    if (!run || !planConfirmation || planConfirmationSubmitting) return;
+    setPlanConfirmationSubmitting(true);
+    setError(null);
+    try {
+      const resumed = await confirmPlanExecution(run.id, {
+        continuationToken: planConfirmation.continuation_token,
+        planId: planConfirmation.plan_id,
+        planVersion: planConfirmation.plan_version,
+        stateVersion: planConfirmation.state_version,
+      }, selectedRunModel());
+      const optimistic = { ...run, status: resumed.status, waiting_state: null };
+      setRun(optimistic);
+      rememberConversation(optimistic);
+      const snapshot = normalizeRunView(await getRun(run.id));
+      setRun(snapshot);
+      setProcessState((state) => reconcileProcessSnapshot(state, snapshot));
+      rememberConversation(snapshot);
+    } catch (err) {
+      setError(err instanceof AstraApiError ? err.payload : {
+        type: 'runtime.state_conflict',
+        code: 'PLAN_CONFIRMATION_REJECTED',
+        message: t('计划确认已失效，请刷新后核对最新计划。'),
+        retryable: false,
+        trace_id: 'unavailable',
+      });
+    } finally {
+      setPlanConfirmationSubmitting(false);
     }
   }
 
@@ -794,6 +826,14 @@ function AppContent() {
 
           {showJumpToLatest && <button className="jump-latest-button" type="button" onClick={jumpToLatest}><span aria-hidden="true">↓</span>{t('回到最新')}</button>}
           <div className={`composer-dock ${run?.pending_approval ? 'has-approval' : ''}`}>
+            {run && planConfirmation && (
+              <PlanConfirmationCard
+                run={run}
+                submitting={planConfirmationSubmitting}
+                onExecute={() => { void executeConfirmedPlan(); }}
+                onCancel={() => { void cancelRunById(run.id); }}
+              />
+            )}
             {run?.pending_approval && (
               <ApprovalCard
                 approval={run.pending_approval}
@@ -812,13 +852,26 @@ function AppContent() {
               type="button"
               role="switch"
               aria-checked={answerMode === 'trusted'}
-              aria-label={t('可信模式')}
+              aria-label={t(answerMode === 'trusted' ? '可信执行' : '快速响应')}
               onClick={toggleTrustedMode}
             >
               <Icon name="requestApprove" />
-              <span>{t('可信模式')}</span>
+              <span>{t(answerMode === 'trusted' ? '可信执行' : '快速响应')}</span>
               <i aria-hidden="true"><b /></i>
             </button>
+            {answerMode === 'trusted' && (
+              <button
+                className={`plan-execution-toggle ${planExecution === 'auto' ? 'active' : ''}`}
+                type="button"
+                role="switch"
+                aria-checked={planExecution === 'auto'}
+                aria-label={t('计划生成后直接执行')}
+                onClick={() => setPlanExecution((value) => value === 'auto' ? 'confirm' : 'auto')}
+              >
+                <span>{t('计划生成后直接执行')}</span>
+                <i aria-hidden="true"><b /></i>
+              </button>
+            )}
             <div className="composer-menu-wrap" ref={attachMenuRef}>
               <button
                 className="composer-icon-button"
@@ -847,16 +900,13 @@ function AppContent() {
                 setAttachOpen(false);
                 setModelOpen(false);
               }}>
-                <Icon name={executionMode === 'plan' ? 'route' : executionMode === 'bypass' ? 'autoApprove' : 'requestApprove'} />
-                <span>{executionMode === 'plan' ? t('仅规划') : executionMode === 'bypass' ? t('自动批准') : t('请求批准')}</span>
+                <Icon name={executionMode === 'bypass' ? 'autoApprove' : 'requestApprove'} />
+                <span>{executionMode === 'bypass' ? t('自动批准') : t('请求批准')}</span>
                 <i className="execution-mode-chevron" aria-hidden="true" />
               </button>
               {executionMenuOpen && <ExecutionModeMenu value={executionMode} onChange={(mode) => {
                 if (mode === 'bypass') setBypassConfirmOpen(true);
                 else {
-                  if (mode === 'plan' && conversationStrategyRef.current.planning_strategy !== 'plan_first') {
-                    persistConversationStrategy({ planning_strategy: 'plan_first' });
-                  }
                   setExecutionMode(mode);
                   setExecutionMenuOpen(false);
                 }
@@ -865,7 +915,7 @@ function AppContent() {
             <textarea
               ref={goalInputRef}
               value={goal}
-              disabled={Boolean(run?.pending_approval)}
+              disabled={Boolean(run?.pending_approval || planConfirmation)}
               onChange={(event) => setGoal(event.target.value)}
               onKeyDown={(event) => {
                 if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
@@ -896,9 +946,6 @@ function AppContent() {
                   }}
                   toolCallLimit={toolCallLimit}
                   onToolCallLimitChange={(value) => persistConversationStrategy({ max_tool_calls: value })}
-                  planningStrategy={planningStrategy}
-                  planningStrategyDisabled={executionMode === 'plan'}
-                  onPlanningStrategyChange={(value) => persistConversationStrategy({ planning_strategy: value === '先规划' ? 'plan_first' : 'adaptive' })}
                   reflectionEnabled={reflectionEnabled}
                   onReflectionChange={(enabled) => persistConversationStrategy({ reflection_enabled: enabled })}
                   reflectionTrigger={reflectionTrigger}
@@ -915,7 +962,7 @@ function AppContent() {
                 <span aria-hidden="true" />
               </button>
             ) : (
-              <button className="send-button" type="submit" aria-label={t('发送')} disabled={!conversationStrategyReady || Boolean(run?.pending_approval)}>↑</button>
+              <button className="send-button" type="submit" aria-label={t('发送')} disabled={!conversationStrategyReady || Boolean(run?.pending_approval || planConfirmation)}>↑</button>
             )}
             </form>
           </div>
@@ -1888,14 +1935,44 @@ function Toggle({ checked = false, onChange, disabled = false, label }: { checke
   return <button className={`toggle ${value ? 'on' : ''}`} type="button" role="switch" aria-checked={value} aria-label={label} disabled={disabled} onClick={() => onChange ? onChange(!value) : setLocalChecked(!value)}><span /></button>;
 }
 
-function ExecutionModeMenu({ value, onChange }: { value: 'plan' | 'default' | 'bypass'; onChange: (mode: 'plan' | 'default' | 'bypass') => void }) {
+function ExecutionModeMenu({ value, onChange }: { value: 'default' | 'bypass'; onChange: (mode: 'default' | 'bypass') => void }) {
   const { t } = useI18n();
   const modes = [
-    { id: 'plan' as const, title: '仅规划', detail: '可执行查询与临时计算，不执行持久化或外部副作用', icon: 'route' as const },
     { id: 'default' as const, title: '请求批准', detail: '无副作用行为自动执行，危险行为按影响范围确认', icon: 'requestApprove' as const },
     { id: 'bypass' as const, title: '自动批准', detail: '跳过可批准行为的确认，平台禁止项仍不可执行', icon: 'autoApprove' as const },
   ];
-  return <div className="floating-menu execution-menu"><div className="menu-heading">{t('执行模式')}</div>{modes.map((mode) => <button className={value === mode.id ? 'selected' : ''} type="button" key={mode.id} onClick={() => onChange(mode.id)}><Icon name={mode.icon} /><div><strong>{t(mode.title)}</strong><small>{t(mode.detail)}</small></div><span className="mode-selected-mark">{value === mode.id ? '✓' : ''}</span></button>)}</div>;
+  return <div className="floating-menu execution-menu"><div className="menu-heading">{t('工具批准')}</div>{modes.map((mode) => <button className={value === mode.id ? 'selected' : ''} type="button" key={mode.id} onClick={() => onChange(mode.id)}><Icon name={mode.icon} /><div><strong>{t(mode.title)}</strong><small>{t(mode.detail)}</small></div><span className="mode-selected-mark">{value === mode.id ? '✓' : ''}</span></button>)}</div>;
+}
+
+function PlanConfirmationCard({ run, submitting, onExecute, onCancel }: {
+  run: RunView;
+  submitting: boolean;
+  onExecute: () => void;
+  onCancel: () => void;
+}) {
+  const { t } = useI18n();
+  const nodes = run.plan_graph?.nodes ?? [];
+  return <section className="plan-confirmation-card" aria-labelledby="plan-confirmation-title">
+    <header>
+      <Icon name="route" />
+      <div>
+        <strong id="plan-confirmation-title">{t('计划已生成，等待执行确认')}</strong>
+        <span>{t('确认只会启动这个版本的计划，不会批准后续工具影响。')}</span>
+      </div>
+      <small>v{run.plan_graph?.version ?? '?'}</small>
+    </header>
+    <ol className="plan-confirmation-dag">
+      {nodes.map((node) => <li key={node.id}>
+        <span>{node.index}</span>
+        <div><strong>{node.title}</strong><small>{node.intent}</small>{node.depends_on.length > 0 && <em>{t('依赖')}：{node.depends_on.join(', ')}</em>}</div>
+      </li>)}
+    </ol>
+    <div className="plan-confirmation-actions">
+      <button className="secondary-button" type="button" disabled={submitting}>{t('暂不执行')}</button>
+      <button className="secondary-button" type="button" disabled={submitting} onClick={onCancel}>{t('取消任务')}</button>
+      <button className="primary-button" type="button" disabled={submitting} onClick={onExecute}>{submitting ? t('正在确认…') : t('执行计划')}</button>
+    </div>
+  </section>;
 }
 
 function approvalResourceLabel(resource: string) {
@@ -2155,7 +2232,7 @@ function BypassConfirmation({ onCancel, onConfirm }: { onCancel: () => void; onC
   return <div className="modal-backdrop" role="presentation" onMouseDown={onCancel}><section className="confirmation-modal" role="alertdialog" aria-modal="true" aria-labelledby="bypass-title" onMouseDown={(event) => event.stopPropagation()}><div className="warning-mark">!</div><h2 id="bypass-title">{t('启用自动批准模式？')}</h2><p>{t('自动批准模式会跳过可批准行为的交互确认，但仍受平台禁止项、权限边界、预算和沙箱限制。')}</p><div className="confirmation-note"><strong>{t('仅在你信任当前任务和运行环境时启用。')}</strong></div><div className="confirmation-actions"><button className="secondary-button" type="button" onClick={onCancel}>{t('取消')}</button><button className="danger-confirm-button" type="button" onClick={onConfirm}>{t('确认启用自动批准')}</button></div></section></div>;
 }
 
-function ModelMenu({ selectedModelKey, onModelChange, modelOptions, trusted, reasoningEffort, onReasoningEffortChange, toolCallLimit, onToolCallLimitChange, planningStrategy, planningStrategyDisabled, onPlanningStrategyChange, reflectionEnabled, onReflectionChange, reflectionTrigger, onReflectionTriggerChange, onOpenStrategyHelp }: {
+function ModelMenu({ selectedModelKey, onModelChange, modelOptions, trusted, reasoningEffort, onReasoningEffortChange, toolCallLimit, onToolCallLimitChange, reflectionEnabled, onReflectionChange, reflectionTrigger, onReflectionTriggerChange, onOpenStrategyHelp }: {
   selectedModelKey: string;
   onModelChange: (modelKey: string) => void;
   modelOptions: Array<{ key: string; model: string; providerId: ModelProviderId; providerName: string }>;
@@ -2164,9 +2241,6 @@ function ModelMenu({ selectedModelKey, onModelChange, modelOptions, trusted, rea
   onReasoningEffortChange: (effort: string) => void;
   toolCallLimit: number | null;
   onToolCallLimitChange: (limit: number) => void;
-  planningStrategy: string;
-  planningStrategyDisabled: boolean;
-  onPlanningStrategyChange: (strategy: string) => void;
   reflectionEnabled: boolean;
   onReflectionChange: (enabled: boolean) => void;
   reflectionTrigger: string;
@@ -2182,7 +2256,7 @@ function ModelMenu({ selectedModelKey, onModelChange, modelOptions, trusted, rea
   }, []);
   const effort = reasoningEffortValue(reasoningEffort);
   const limitRange = effort === 'deep' ? null : TOOL_CALL_LIMITS[effort];
-  return <div className="floating-menu model-menu"><div className="menu-heading">{t('模型')}</div>{groups.length ? groups.map((group) => <div className="model-provider-group" key={group.providerId}><div className="model-provider-heading"><span className={`provider-mark provider-${group.providerId}`}>{modelProviders.find((provider) => provider.id === group.providerId)?.mark}</span><span>{group.providerName}</span></div>{group.models.map((item) => <button className={`model-option ${selectedModelKey === item.key ? 'selected' : ''}`} type="button" key={item.key} onClick={() => onModelChange(item.key)}><div><strong>{item.model}</strong><small>{group.providerName}</small></div><span>{selectedModelKey === item.key ? '✓' : ''}</span></button>)}</div>) : <div className="model-menu-empty">{t('请先在模型管理中启用供应商并配置模型')}</div>}<div className="menu-divider" />{trusted ? <><div className="menu-heading menu-heading-with-help"><span>{t('可信对话策略')}</span><button className="strategy-help-button" type="button" aria-label={t('了解对话策略')} onClick={onOpenStrategyHelp}><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M7.6 7.3a2.6 2.6 0 1 1 3.15 2.54c-.75.23-1.25.72-1.25 1.46v.3" /><circle cx="9.5" cy="14.35" r=".72" fill="currentColor" stroke="none" /></svg></button></div><MenuChoice label="推理强度" value={reasoningEffort} options={['快速', '均衡', '深入']} onChange={onReasoningEffortChange} />{limitRange ? <ToolCallLimitControl value={toolCallLimit ?? limitRange.defaultValue} min={limitRange.min} max={limitRange.max} onChange={onToolCallLimitChange} /> : <UnlimitedToolCallLimitControl />}<MenuChoice label="规划策略" value={planningStrategy} options={['自适应', '先规划']} onChange={onPlanningStrategyChange} disabled={planningStrategyDisabled} disabledOptionHints={{ 自适应: '当前处于仅规划模式，无法使用自适应规划策略。' }} /><div className="menu-toggle"><div><strong>{t('反思循环')}</strong><small>{t('检查结果并修订下一步策略')}</small></div><Toggle checked={reflectionEnabled} onChange={onReflectionChange} label={t('反思循环')} /></div>{reflectionEnabled && <MenuChoice label="触发方式" value={reflectionTrigger} options={['失败时', '按需', '每轮']} onChange={onReflectionTriggerChange} />}</> : <div className="standard-mode-note"><Icon name="requestApprove" /><div><strong>{t('快速回答')}</strong><small>{t('开启可信模式后可配置完整对话策略与结果校验。')}</small></div></div>}</div>;
+  return <div className="floating-menu model-menu"><div className="menu-heading">{t('模型')}</div>{groups.length ? groups.map((group) => <div className="model-provider-group" key={group.providerId}><div className="model-provider-heading"><span className={`provider-mark provider-${group.providerId}`}>{modelProviders.find((provider) => provider.id === group.providerId)?.mark}</span><span>{group.providerName}</span></div>{group.models.map((item) => <button className={`model-option ${selectedModelKey === item.key ? 'selected' : ''}`} type="button" key={item.key} onClick={() => onModelChange(item.key)}><div><strong>{item.model}</strong><small>{group.providerName}</small></div><span>{selectedModelKey === item.key ? '✓' : ''}</span></button>)}</div>) : <div className="model-menu-empty">{t('请先在模型管理中启用供应商并配置模型')}</div>}<div className="menu-divider" />{trusted ? <><div className="menu-heading menu-heading-with-help"><span>{t('可信对话策略')}</span><button className="strategy-help-button" type="button" aria-label={t('了解对话策略')} onClick={onOpenStrategyHelp}><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M7.6 7.3a2.6 2.6 0 1 1 3.15 2.54c-.75.23-1.25.72-1.25 1.46v.3" /><circle cx="9.5" cy="14.35" r=".72" fill="currentColor" stroke="none" /></svg></button></div><MenuChoice label="推理强度" value={reasoningEffort} options={['快速', '均衡', '深入']} onChange={onReasoningEffortChange} />{limitRange ? <ToolCallLimitControl value={toolCallLimit ?? limitRange.defaultValue} min={limitRange.min} max={limitRange.max} onChange={onToolCallLimitChange} /> : <UnlimitedToolCallLimitControl />}<div className="menu-toggle"><div><strong>{t('反思循环')}</strong><small>{t('检查结果并修订下一步策略')}</small></div><Toggle checked={reflectionEnabled} onChange={onReflectionChange} label={t('反思循环')} /></div>{reflectionEnabled && <MenuChoice label="触发方式" value={reflectionTrigger} options={['失败时', '按需', '每轮']} onChange={onReflectionTriggerChange} />}</> : <div className="standard-mode-note"><Icon name="requestApprove" /><div><strong>{t('快速响应')}</strong><small>{t('开启可信执行后会先生成完整计划并进行结果校验。')}</small></div></div>}</div>;
 }
 
 function StrategyHelpDialog({ onClose }: { onClose: () => void }) {
@@ -2198,9 +2272,9 @@ function StrategyHelpDialog({ onClose }: { onClose: () => void }) {
       ['均衡', '允许 6–15 次工具调用，兼顾速度与检查深度；启用反思时，提供基本的反思能力。'],
       ['深入', '工具调用次数不限，为复杂任务提供充分执行空间；启用反思时，允许更深层的反思能力。'],
     ] },
-    { title: '规划策略', items: [
-      ['自适应', '轻量启动，按结果决定是否调整计划。'],
-      ['先规划', '执行前生成完整计划，适合多步骤任务。'],
+    { title: '计划执行', items: [
+      ['确认后执行', '先展示完整计划，由你确认这个版本后开始执行。'],
+      ['直接执行', '完整计划生成并持久化后立即开始执行。'],
     ] },
     { title: '反思循环', items: [
       ['关闭', '不调用额外反思；安全与完成检查仍保留。'],
@@ -2288,7 +2362,7 @@ function MessageBubble({ message, run, processState, processPanelDefaultOpen, pr
 
   if (presentation === 'answer' && snapshot?.result) {
     const trustedStatus = trustedResultStatus(snapshot);
-    return <article className="bubble assistant answer-message" id={`message-${message.id}`}><div className="answer-identity-row"><span className="bubble-label">Astra</span>{trustedStatus && <span className={`trusted-result-status status-${snapshot.status}`}><Icon name="requestApprove" /><span>{t('可信模式')} · {t(trustedStatus)}</span></span>}</div><FinalAnswer run={snapshot} fallback={message.content} /></article>;
+    return <article className="bubble assistant answer-message" id={`message-${message.id}`}><div className="answer-identity-row"><span className="bubble-label">Astra</span>{trustedStatus && <span className={`trusted-result-status status-${snapshot.status}`}><Icon name="requestApprove" /><span>{t('可信执行')} · {t(trustedStatus)}</span></span>}</div><FinalAnswer run={snapshot} fallback={message.content} /></article>;
   }
 
   if (!presentation) {
@@ -2469,8 +2543,9 @@ function ReasoningAuditSummary({ run }: { run: RunView }) {
   const criteria = Array.isArray(run.task_contract?.success_criteria) ? run.task_contract.success_criteria as Array<Record<string, unknown>> : [];
   if (!policy?.effective && !criteria.length && !run.terminal_reason) return null;
   return <div className="reasoning-audit-grid">
-    {policy?.effective && <div><strong>{t('生效策略')}</strong><span>{String(policy.effective.reasoning_effort ?? 'balanced')} · {String(policy.effective.planning_strategy ?? 'adaptive')} · {String(policy.effective.execution_mode ?? 'request_approval')}</span></div>}
-    <div><strong>{t('状态版本')}</strong><span>State {run.state_version ?? 0} · Plan {String(run.plan_graph?.version ?? 1)}</span></div>
+    {policy?.effective && <div><strong>{t('生效策略')}</strong><span>{String(policy.effective.reasoning_effort ?? 'balanced')} · {String(policy.effective.execution_mode ?? 'request_approval')}</span></div>}
+    {(run.state_version ?? 0) > 0 && <div><strong>{t('状态版本')}</strong><span>State {run.state_version}</span></div>}
+    {run.plan_graph?.id && <div><strong>{t('计划版本')}</strong><span>Plan {String(run.plan_graph.version)}</span></div>}
     {(run.steps ?? []).map((step) => <div className="plan-node-audit" key={step.id}><strong>{step.index}. {step.title}</strong><span>{t(planNodeStatusLabel(step.status))}{step.depends_on?.length ? ` · ${t('依赖')} ${step.depends_on.join(', ')}` : ''}{step.plan_version ? ` · v${step.plan_version}` : ''}</span>{step.failure && <small>{String(step.failure.category ?? t('节点执行失败'))}</small>}</div>)}
     {criteria.map((criterion) => <div key={String(criterion.id)}><strong>{String(criterion.description)}</strong><span>{String(criterion.status ?? 'pending')}</span></div>)}
     {policy?.adjustments?.map((adjustment, index) => <div key={`adjust-${index}`}><strong>{t('策略调整')}</strong><span>{String(adjustment.reason ?? adjustment.rule)}</span></div>)}

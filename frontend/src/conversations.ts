@@ -29,7 +29,7 @@ export function normalizeRunView(run: RunView): RunView {
   return {
     ...run,
     answer_mode: run.answer_mode ?? 'trusted',
-    execution_profile: run.execution_profile ?? {},
+    execution_profile: run.execution_profile,
     result,
     steps: Array.isArray(run.steps) ? run.steps : [],
     tool_calls: Array.isArray(run.tool_calls) ? run.tool_calls : [],

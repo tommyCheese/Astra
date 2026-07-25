@@ -162,7 +162,6 @@ class PlanService:
             for operation in patch.operations:
                 self._apply_operation(nodes, operation.model_dump(exclude_none=True))
             draft = PlanDraft(
-                strategy=view.strategy,
                 nodes=[
                     PlanNodeDraft.model_validate(
                         {key: value for key, value in node.items() if key not in {"status", "id"}}

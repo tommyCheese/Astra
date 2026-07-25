@@ -184,14 +184,13 @@ _schedule_run(run.id, run_settings)
 
 ### 6.2 RunEngine 选择执行路径
 
-`RunEngine._run_with_repo()` 根据 Profile 和已有状态选择路径：
+`RunEngine._run_with_repo()` 根据不可变 Profile 选择两条固定路径：
 
-- `standard` 且非 `plan_only`：直接进入 AgentLoop 的快速路径；
-- 已有 `agent_state`：按持久化检查点恢复；
-- 其他情况：先构建 TaskContract 和 Plan；
-- `plan_only`：保存计划并终结，不执行持久副作用；
-- 合同存在歧义：进入 `waiting_user`；
-- 合同清晰：激活 Plan 并进入 AgentLoop。
+- `standard`：直接进入 AgentLoop 快速路径，不创建 TaskContract、AgentState 或 Plan；
+- `trusted`：在首次外部行动前构建、验证并持久化完整 DAG；
+- `trusted + auto`：DAG 持久化后立即激活；
+- `trusted + confirm`：进入 `waiting_user`，确认绑定的 Plan 版本后再激活；
+- 已有可信 `agent_state`：按持久化检查点恢复。
 
 ### 6.3 AgentLoop 固定节点
 
@@ -341,15 +340,15 @@ main_agent
 
 `PermissionSubject.delegation_chain` 将三者写入权限请求。权限中心据此展示执行者、provider 和 reviewer，而不是把所有行为都归到模糊的“AI”。
 
-### 8.3 执行模式
+### 8.3 工具批准模式
 
-| Effect | `plan_only` | `request_approval` | `auto_approval` |
-|---|---|---|---|
-| 允许的只读行为 | 执行 | 执行 | 执行 |
-| 临时计算 | 执行 | 执行 | 执行 |
-| Workspace / Artifact 持久写入 | 生成 blocked observation | Grant 或审批 | 在平台边界内执行 |
-| 外部写入、删除等副作用 | 不执行 | Grant 或审批 | 在平台边界内执行 |
-| 平台 deny | 拒绝 | 拒绝 | 拒绝 |
+| Effect | `request_approval` | `auto_approval` |
+|---|---|---|
+| 允许的只读行为 | 执行 | 执行 |
+| 临时计算 | 执行 | 执行 |
+| Workspace / Artifact 持久写入 | Grant 或审批 | 在平台边界内执行 |
+| 外部写入、删除等副作用 | Grant 或审批 | 在平台边界内执行 |
+| 平台 deny | 拒绝 | 拒绝 |
 
 `auto_approval` 只跳过交互，不等于 full host access。
 
@@ -513,9 +512,8 @@ Run snapshot 是权威状态，SSE 是低延迟增量。`reconcileProcessSnapsho
 | `GET /api/runs/{id}` | 获取权威 Run snapshot |
 | `GET /api/runs/{id}/events` | SSE 增量事件 |
 | `POST /api/runs/{id}/cancel` | 幂等取消运行 |
-| `POST /api/runs/{id}/resume` | 使用 continuation token 恢复澄清状态 |
+| `POST /api/runs/{id}/resume` | 使用 continuation token 恢复澄清或确认绑定的 Plan |
 | `POST /api/runs/{id}/approvals/{approval}/decision` | 提交结构化审批决定并恢复 |
-| `POST /api/runs/{id}/activate-plan` | 激活仅规划结果 |
 | `/api/conversations/*` | Conversation 列表、详情、标题、置顶、删除和分享 |
 | `/api/permissions/*` | 权限中心、策略模拟、Grant 撤销和 Workspace 视图 |
 | `/api/runtime/*` | Runtime profile 与依赖构建 |

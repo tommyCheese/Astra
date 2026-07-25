@@ -31,10 +31,9 @@ async function responseError(response: Response): Promise<AstraApiError> {
 export type ReasoningPolicyRequest = {
   reasoning_effort: 'fast' | 'balanced' | 'deep';
   max_tool_calls: number | null;
-  planning_strategy: 'adaptive' | 'plan_first';
   reflection_enabled: boolean;
   reflection_trigger: 'failure_only' | 'adaptive' | 'every_turn';
-  execution_mode: 'plan_only' | 'request_approval' | 'auto_approval';
+  execution_mode: 'request_approval' | 'auto_approval';
   verification_level: 'basic' | 'standard' | 'strict';
 };
 
@@ -75,7 +74,6 @@ export type ConversationStrategyPreferences = {
   preferred_answer_mode: 'standard' | 'trusted';
   reasoning_effort: 'fast' | 'balanced' | 'deep';
   max_tool_calls: number | null;
-  planning_strategy: 'adaptive' | 'plan_first';
   reflection_enabled: boolean;
   reflection_trigger: 'failure_only' | 'adaptive' | 'every_turn';
 };
@@ -158,11 +156,11 @@ export async function cancelRuntimeBuild(buildId: string): Promise<RuntimeProfil
   return response.json();
 }
 
-export async function createRun(goal: string, taskId: string | undefined, answerMode: 'standard' | 'trusted', reasoningPolicy?: ReasoningPolicyRequest, model?: RunModelConfig): Promise<{ run_id: string; task_id: string; status: string; answer_mode?: 'standard' | 'trusted' }> {
+export async function createRun(goal: string, taskId: string | undefined, answerMode: 'standard' | 'trusted', reasoningPolicy?: ReasoningPolicyRequest, model?: RunModelConfig, planExecution?: 'auto' | 'confirm'): Promise<{ run_id: string; task_id: string; status: string; answer_mode?: 'standard' | 'trusted' }> {
   const response = await fetchWithTimeout('/api/runs', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ goal, task_id: taskId, answer_mode: answerMode, reasoning_policy: reasoningPolicy, model }),
+    body: JSON.stringify({ goal, task_id: taskId, answer_mode: answerMode, reasoning_policy: reasoningPolicy, model, ...(answerMode === 'trusted' ? { plan_execution: planExecution ?? 'confirm' } : {}) }),
   });
   if (!response.ok) {
     throw await responseError(response);
@@ -317,6 +315,27 @@ export async function resumeRun(runId: string, content: string, continuationToke
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ content, continuation_token: continuationToken, model }),
+  });
+  if (!response.ok) throw await responseError(response);
+  return response.json();
+}
+
+export async function confirmPlanExecution(
+  runId: string,
+  confirmation: { continuationToken: string; planId: string; planVersion: number; stateVersion: number },
+  model?: RunModelConfig,
+): Promise<{ run_id: string; task_id: string; status: string }> {
+  const response = await fetchWithTimeout(`/api/runs/${runId}/resume`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      action: 'execute_plan',
+      continuation_token: confirmation.continuationToken,
+      plan_id: confirmation.planId,
+      expected_plan_version: confirmation.planVersion,
+      expected_state_version: confirmation.stateVersion,
+      model,
+    }),
   });
   if (!response.ok) throw await responseError(response);
   return response.json();

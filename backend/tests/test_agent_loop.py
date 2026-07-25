@@ -31,7 +31,6 @@ from app.schemas.agent import (
     ExpectedObservation,
     FinalAnswer,
     PlanDraft,
-    PlanningStrategy,
     PlanNodeDraft,
     ReflectionPatch,
     RequestedReasoningPolicy,
@@ -41,11 +40,10 @@ from app.tools.base import ToolExecutionError
 from app.tools.web import build_web_registry
 
 
-async def initialize_canonical_plan(repo, run, contract, strategy):
+async def initialize_canonical_plan(repo, run, contract):
     plan = await PlanService(PlanRepository(repo.session)).create(
         run.id,
         PlanDraft(
-            strategy=strategy,
             nodes=[
                 PlanNodeDraft(
                     node_key="step-1",
@@ -260,7 +258,7 @@ async def test_agent_loop_keeps_verification_status_separate_from_blocked_run(se
     )
     contract = build_default_contract(run.task.description)
     contract.verification_requirements[0].validator = "security_validator"
-    await initialize_canonical_plan(repo, run, contract, PlanningStrategy.direct)
+    await initialize_canonical_plan(repo, run, contract)
 
     output = await AgentLoop(
         settings, model_client=MockModelClient(), tool_registry=fake_web_registry()
@@ -716,7 +714,7 @@ async def test_reflection_patch_updates_persisted_agent_state(session):
     policy = compiled_policy(reflection_enabled=True, reflection_trigger="failure_only")
     run = await repo.create_task_run("恢复错误", settings.model_policy, reasoning_policy=policy)
     contract = build_default_contract(run.task.description)
-    await initialize_canonical_plan(repo, run, contract, PlanningStrategy.adaptive)
+    await initialize_canonical_plan(repo, run, contract)
     client = PatchingReflectionClient()
 
     await AgentLoop(settings, model_client=client, tool_registry=fake_web_registry()).run(

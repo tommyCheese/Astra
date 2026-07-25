@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import Enum
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -36,21 +36,6 @@ def validate_tool_call_limit(effort: ReasoningEffort, value: int) -> int:
     return value
 
 
-class PlanningStrategy(str, Enum):
-    """Runtime strategy values, including legacy persisted Run snapshots."""
-
-    direct = "direct"
-    adaptive = "adaptive"
-    plan_first = "plan_first"
-
-
-class RequestedPlanningStrategy(str, Enum):
-    """Planning strategies accepted for preferences and newly created Runs."""
-
-    adaptive = "adaptive"
-    plan_first = "plan_first"
-
-
 class PlanStatus(str, Enum):
     planned = "planned"
     active = "active"
@@ -74,9 +59,17 @@ class ReflectionTrigger(str, Enum):
 
 
 class ExecutionMode(str, Enum):
-    plan_only = "plan_only"
     request_approval = "request_approval"
     auto_approval = "auto_approval"
+
+
+class PlanExecution(str, Enum):
+    auto = "auto"
+    confirm = "confirm"
+
+
+class ContinuationAction(str, Enum):
+    execute_plan = "execute_plan"
 
 
 class VerificationLevel(str, Enum):
@@ -136,9 +129,10 @@ class RunBudgets(BaseModel):
 
 
 class RequestedReasoningPolicy(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     reasoning_effort: ReasoningEffort = ReasoningEffort.balanced
     max_tool_calls: int | None = Field(default=None, ge=0)
-    planning_strategy: RequestedPlanningStrategy = RequestedPlanningStrategy.adaptive
     reflection_enabled: bool = True
     reflection_trigger: ReflectionTrigger = ReflectionTrigger.adaptive
     execution_mode: ExecutionMode = ExecutionMode.request_approval
@@ -152,7 +146,6 @@ class RequestedReasoningPolicy(BaseModel):
 
 
 class EffectiveReasoningPolicy(RequestedReasoningPolicy):
-    planning_strategy: PlanningStrategy = PlanningStrategy.adaptive
     budgets: RunBudgets = Field(default_factory=RunBudgets)
 
 
@@ -165,32 +158,34 @@ class PolicyAdjustment(BaseModel):
 
 
 class ReasoningPolicySnapshot(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     requested: RequestedReasoningPolicy = Field(default_factory=RequestedReasoningPolicy)
     effective: EffectiveReasoningPolicy = Field(default_factory=EffectiveReasoningPolicy)
     adjustments: list[PolicyAdjustment] = Field(default_factory=list)
-    version: int = 1
-
-    @model_validator(mode="before")
-    @classmethod
-    def normalize_legacy_requested_strategy(cls, value: Any) -> Any:
-        """Keep historical direct snapshots readable without accepting new direct requests."""
-        if not isinstance(value, dict):
-            return value
-        requested = value.get("requested")
-        if not isinstance(requested, dict) or requested.get("planning_strategy") != "direct":
-            return value
-        normalized = dict(value)
-        normalized["requested"] = {**requested, "planning_strategy": "adaptive"}
-        return normalized
+    version: Literal[2] = 2
 
 
 class RunExecutionProfile(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     answer_mode: AnswerMode
     contract_mode: ContractMode
     assurance_level: AssuranceLevel
     reasoning_policy: ReasoningPolicySnapshot
+    plan_execution: PlanExecution | None = None
     validators: list[str] = Field(default_factory=list)
-    version: int = 1
+    interactive: bool = True
+    permission_bundle: dict[str, Any] | None = None
+    version: Literal[2] = 2
+
+    @model_validator(mode="after")
+    def validate_mode_shape(self) -> RunExecutionProfile:
+        if self.answer_mode == AnswerMode.standard and self.plan_execution is not None:
+            raise ValueError("plan_execution is only valid for trusted runs")
+        if self.answer_mode == AnswerMode.trusted and self.plan_execution is None:
+            raise ValueError("trusted runs require plan_execution")
+        return self
 
 
 class SuccessCriterion(BaseModel):
@@ -249,7 +244,8 @@ class PlanNodeDraft(BaseModel):
 
 
 class PlanDraft(BaseModel):
-    strategy: PlanningStrategy = PlanningStrategy.adaptive
+    model_config = ConfigDict(extra="forbid")
+
     nodes: list[PlanNodeDraft] = Field(min_length=1)
 
 
@@ -276,7 +272,6 @@ class PlanView(BaseModel):
     id: str
     run_id: str
     version: int
-    strategy: PlanningStrategy
     status: PlanStatus
     supersedes_plan_id: str | None = None
     nodes: list[PlanNodeView] = Field(default_factory=list)
@@ -380,13 +375,22 @@ class NodeResult(BaseModel):
 
 
 class CreateRunRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     goal: str = Field(min_length=1, max_length=4000)
     task_id: str | None = None
     answer_mode: AnswerMode = AnswerMode.standard
+    plan_execution: PlanExecution | None = None
     reasoning_policy: RequestedReasoningPolicy = Field(default_factory=RequestedReasoningPolicy)
     model: dict[str, str] | None = None
     interactive: bool = True
     permission_bundle: dict[str, Any] | None = None
+
+    @model_validator(mode="after")
+    def validate_plan_execution(self) -> CreateRunRequest:
+        if self.answer_mode == AnswerMode.standard and self.plan_execution is not None:
+            raise ValueError("plan_execution is only valid for trusted runs")
+        return self
 
 
 class CreateRunResponse(BaseModel):
@@ -397,10 +401,32 @@ class CreateRunResponse(BaseModel):
 
 
 class ContinueRunRequest(BaseModel):
-    content: str = Field(min_length=1, max_length=4000)
+    model_config = ConfigDict(extra="forbid")
+
+    content: str | None = Field(default=None, max_length=4000)
     approved: bool | None = None
+    action: ContinuationAction | None = None
     continuation_token: str | None = None
+    plan_id: str | None = None
+    expected_plan_version: int | None = Field(default=None, ge=1)
+    expected_state_version: int | None = Field(default=None, ge=1)
     model: dict[str, str] | None = None
+
+    @model_validator(mode="after")
+    def validate_continuation(self) -> ContinueRunRequest:
+        if self.action == ContinuationAction.execute_plan:
+            required = (
+                self.continuation_token,
+                self.plan_id,
+                self.expected_plan_version,
+                self.expected_state_version,
+            )
+            if any(value is None for value in required):
+                raise ValueError("plan confirmation requires bound continuation fields")
+            return self
+        if not self.content or not self.content.strip():
+            raise ValueError("content is required for user response")
+        return self
 
 
 class ApprovalDecision(str, Enum):

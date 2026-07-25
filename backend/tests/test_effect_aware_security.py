@@ -115,13 +115,6 @@ def test_bash_analysis_fails_closed_for_ambiguous_and_multi_target_commands():
 @pytest.mark.parametrize(
     ("mode", "command", "expected", "reason"),
     [
-        (ExecutionMode.plan_only, "ls", PermissionDecisionKind.allow, "safe_action"),
-        (
-            ExecutionMode.plan_only,
-            "touch report.txt",
-            PermissionDecisionKind.deny,
-            "effect_blocked_by_mode",
-        ),
         (
             ExecutionMode.request_approval,
             "touch report.txt",
@@ -160,7 +153,6 @@ def test_unified_invocation_authorization_entry(mode, command, expected, reason)
 
     assert result.decision.decision == expected
     assert result.decision.explanation.reason_code == reason
-    assert result.blocked_by_mode is (reason == "effect_blocked_by_mode")
 
 
 def test_unified_authorization_uses_task_lease_across_runs_and_data_flow_rules():

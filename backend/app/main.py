@@ -24,6 +24,7 @@ from app.core.errors import (
     ValidationError,
     run_error_from_exception,
 )
+from app.db.mode_upgrade import validate_mode_upgrade
 from app.db.session import SessionLocal
 from app.repositories.usage import UsageRepository
 from app.runtime_profiles import RuntimeProfileService
@@ -39,6 +40,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         try:
             await app.state.runtime_profile_service.startup()
             async with SessionLocal() as session:
+                await validate_mode_upgrade(session)
                 interrupted = await UsageRepository(session).reconcile_interrupted()
                 if interrupted:
                     logger.warning("usage.reconciled_interrupted count=%s", interrupted)

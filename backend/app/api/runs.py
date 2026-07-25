@@ -16,7 +16,6 @@ from app.db.session import SessionLocal, get_session
 from app.model_providers import API_KEY_OPTIONAL_MODEL_PROVIDERS, SUPPORTED_MODEL_PROVIDERS
 from app.permissions.governance import verify_permission_bundle
 from app.repositories.permissions import PermissionRepository
-from app.repositories.plans import PlanRepository, plan_to_view
 from app.repositories.runs import RunRepository, run_to_view
 from app.repositories.tool_settings import (
     ToolSettingsRepository,
@@ -26,8 +25,8 @@ from app.repositories.tool_settings import (
 from app.runner.engine import start_run_in_process
 from app.runner.reasoning import RunProfileResolver
 from app.schemas.agent import (
-    AgentState,
     ApprovalDecisionRequest,
+    ContinuationAction,
     ContinueRunRequest,
     CreateRunRequest,
     CreateRunResponse,
@@ -162,7 +161,11 @@ async def create_run(
         # Keep the database-backed tool configuration active at creation time.
         run_settings = apply_tool_states(settings, tool_states)
         run_settings = _apply_model_config(run_settings, payload.model)
-        profile = RunProfileResolver().resolve(payload.answer_mode, payload.reasoning_policy)
+        profile = RunProfileResolver().resolve(
+            payload.answer_mode,
+            payload.reasoning_policy,
+            plan_execution=payload.plan_execution,
+        )
         if not payload.interactive and payload.permission_bundle is None:
             raise ValidationError(
                 "PERMISSION_BUNDLE_REQUIRED",
@@ -185,11 +188,15 @@ async def create_run(
                     "PERMISSION_BUNDLE_INVALID", "权限包签名无效或签名密钥未配置。"
                 )
         policy = profile.reasoning_policy
-        execution_profile = profile.model_dump(mode="json")
-        execution_profile["interactive"] = payload.interactive
-        execution_profile["permission_bundle"] = (
-            permission_bundle.model_dump(mode="json") if permission_bundle else None
+        profile = profile.model_copy(
+            update={
+                "interactive": payload.interactive,
+                "permission_bundle": (
+                    permission_bundle.model_dump(mode="json") if permission_bundle else None
+                ),
+            }
         )
+        execution_profile = profile.model_dump(mode="json")
         run = await repo.create_task_run(
             goal,
             run_settings.model_policy,
@@ -246,7 +253,7 @@ async def cancel_run(
     run = await repo.get_run(run_id)
     if run is None:
         raise ResourceError("RUN_NOT_FOUND", "找不到指定运行记录。")
-    if run.status in RunRepository.TERMINAL_STATUSES:
+    if run.status in RunRepository.TERMINAL_STATUSES and run.status != "waiting_user":
         return RunView.model_validate(run_to_view(run))
 
     await _cancel_background_run(run_id)
@@ -254,57 +261,9 @@ async def cancel_run(
     run = await repo.get_run(run_id)
     if run is None:
         raise ResourceError("RUN_NOT_FOUND", "找不到指定运行记录。")
-    if run.status not in RunRepository.TERMINAL_STATUSES:
+    if run.status not in RunRepository.TERMINAL_STATUSES or run.status == "waiting_user":
         run = await repo.cancel_run(run_id)
     return RunView.model_validate(run_to_view(run))
-
-
-@router.post("/runs/{run_id}/activate-plan", response_model=CreateRunResponse)
-async def activate_planned_run(
-    run_id: str,
-    session: AsyncSession = Depends(get_session),
-    settings: Settings = Depends(get_settings),
-) -> CreateRunResponse:
-    repo = RunRepository(session)
-    run = await repo.get_run(run_id)
-    if run is None:
-        raise ResourceError("RUN_NOT_FOUND", "找不到指定运行记录。")
-    plan_repository = PlanRepository(session)
-    plan = await plan_repository.latest_planned_for_run(run_id)
-    if plan is None:
-        raise StateError("PLAN_NOT_ACTIVATABLE", "该任务没有可激活的仅规划结果。")
-    plan = await plan_repository.activate(plan.id, expected_version=plan.version)
-    state = AgentState.model_validate(run.agent_state or {})
-    state.active_plan_id = plan.id
-    state.active_plan_version = plan.version
-    state.active_node_id = None
-    state.version = run.state_version + 1
-    await repo.update_reasoning_state(
-        run_id,
-        expected_version=run.state_version,
-        agent_state=state.model_dump(mode="json"),
-        plan_graph=plan_to_view(plan).model_dump(mode="json"),
-        waiting_state=None,
-    )
-    run = await repo.require_run(run_id)
-    run.status = "executing"
-    run.completed_at = None
-    run.summary = None
-    run.result = None
-    await repo.add_event(
-        run_id,
-        "plan.activated",
-        {"plan_id": plan.id, "plan_version": plan.version},
-    )
-    await session.commit()
-    tool_states = await ToolSettingsRepository(session).get_or_create(default_tool_states(settings))
-    _schedule_run(run_id, apply_tool_states(settings, tool_states))
-    return CreateRunResponse(
-        task_id=run.task_id,
-        run_id=run.id,
-        status=run.status,
-        answer_mode=run.answer_mode,
-    )
 
 
 @router.post("/runs/{run_id}/resume", response_model=CreateRunResponse)
@@ -318,22 +277,36 @@ async def resume_run(
     tool_states = await ToolSettingsRepository(session).get_or_create(default_tool_states(settings))
     run_settings = _apply_model_config(apply_tool_states(settings, tool_states), payload.model)
     try:
-        run = await repo.resume_waiting_run(
-            run_id,
-            {
-                "kind": "approval_result" if payload.approved is not None else "user_response",
-                "status": "approved"
-                if payload.approved
-                else "rejected"
-                if payload.approved is False
-                else "received",
-                "summary": payload.content,
-                "data": {"approved": payload.approved},
-            },
-            continuation_token=payload.continuation_token,
-        )
+        if payload.action == ContinuationAction.execute_plan:
+            run = await repo.confirm_waiting_plan(
+                run_id,
+                continuation_token=payload.continuation_token or "",
+                plan_id=payload.plan_id or "",
+                expected_plan_version=payload.expected_plan_version or 0,
+                expected_state_version=payload.expected_state_version or 0,
+            )
+        else:
+            run = await repo.resume_waiting_run(
+                run_id,
+                {
+                    "kind": "approval_result" if payload.approved is not None else "user_response",
+                    "status": "approved"
+                    if payload.approved
+                    else "rejected"
+                    if payload.approved is False
+                    else "received",
+                    "summary": payload.content,
+                    "data": {"approved": payload.approved},
+                },
+                continuation_token=payload.continuation_token,
+            )
     except ValueError as exc:
         message = str(exc)
+        if "plan confirmation" in message:
+            raise StateError(
+                "PLAN_CONFIRMATION_INVALID",
+                "计划确认已失效，请刷新后核对最新计划。",
+            ) from exc
         if "not waiting" in message:
             raise StateError("RUN_NOT_WAITING", "该任务当前不需要补充信息。") from exc
         if "continuation token" in message:

@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel, ConfigDict, model_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_session
@@ -9,7 +9,6 @@ from app.schemas.agent import (
     AnswerMode,
     ReasoningEffort,
     ReflectionTrigger,
-    RequestedPlanningStrategy,
     validate_tool_call_limit,
 )
 
@@ -17,10 +16,11 @@ router = APIRouter(prefix="/api/preferences", tags=["preferences"])
 
 
 class ConversationStrategyPreferences(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     preferred_answer_mode: AnswerMode = AnswerMode.standard
     reasoning_effort: ReasoningEffort = ReasoningEffort.balanced
     max_tool_calls: int | None = 8
-    planning_strategy: RequestedPlanningStrategy = RequestedPlanningStrategy.adaptive
     reflection_enabled: bool = True
     reflection_trigger: ReflectionTrigger = ReflectionTrigger.adaptive
 

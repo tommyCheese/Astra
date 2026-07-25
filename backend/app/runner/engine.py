@@ -26,11 +26,10 @@ from app.runner.reasoning import (
 )
 from app.schemas.agent import (
     AnswerMode,
-    ContractMode,
     ExpectedObservation,
     FinalAnswer,
     PlanDraft,
-    PlanningStrategy,
+    PlanExecution,
     PlanNodeDraft,
     ReasoningPolicySnapshot,
     RunExecutionProfile,
@@ -124,12 +123,9 @@ class RunEngine:
             if run.execution_profile
             else None
         )
-        policy_snapshot = ReasoningPolicySnapshot.model_validate(run.reasoning_policy or {})
-        if (
-            execution_profile is not None
-            and execution_profile.answer_mode == AnswerMode.standard
-            and policy_snapshot.effective.execution_mode.value != "plan_only"
-        ):
+        if execution_profile is None:
+            raise ValueError("Run execution profile is required")
+        if execution_profile.answer_mode == AnswerMode.standard:
             await self._execute_agent_loop(repo, run_id, goal)
             return
 
@@ -174,24 +170,12 @@ class RunEngine:
             contract=contract,
             capabilities=capabilities,
             budgets=snapshot.effective.budgets,
-            activate=snapshot.effective.execution_mode.value != "plan_only",
+            activate=execution_profile.plan_execution == PlanExecution.auto,
         )
         await repo.session.commit()
-        if snapshot.effective.execution_mode.value == "plan_only":
-            planned_state = canonical_agent_state(
-                contract, canonical_plan, policy_version=snapshot.version
-            ).model_copy(update={"active_plan_id": None, "active_node_id": None})
-            if not run.state_version:
-                await repo.initialize_reasoning_state(
-                    run_id,
-                    task_contract=contract.model_dump(mode="json"),
-                    plan_graph=plan_to_view(canonical_plan).model_dump(mode="json"),
-                    agent_state=planned_state.model_dump(mode="json"),
-                )
-            await self._complete_plan_only(repo, run_id, plan)
-            return
-
         state = canonical_agent_state(contract, canonical_plan, policy_version=snapshot.version)
+        if execution_profile.plan_execution == PlanExecution.confirm:
+            state = state.model_copy(update={"active_plan_id": None, "active_node_id": None})
         if not run.state_version:
             await repo.initialize_reasoning_state(
                 run_id,
@@ -199,6 +183,18 @@ class RunEngine:
                 plan_graph=plan_to_view(canonical_plan).model_dump(mode="json"),
                 agent_state=state.model_dump(mode="json"),
             )
+        if execution_profile.plan_execution == PlanExecution.confirm:
+            await repo.set_waiting_state(
+                run_id,
+                {
+                    "kind": "plan_confirmation",
+                    "plan_id": canonical_plan.id,
+                    "plan_version": canonical_plan.version,
+                    "state_version": state.version,
+                    "request": "计划已生成，确认后执行。",
+                },
+            )
+            return
         if contract.ambiguity_status != "clear":
             await repo.set_waiting_state(
                 run_id,
@@ -235,52 +231,9 @@ class RunEngine:
         reasoning_policy: dict[str, Any],
         execution_profile: dict[str, Any] | None = None,
     ) -> tuple[TaskContract, PlanDraft]:
-        snapshot = ReasoningPolicySnapshot.model_validate(reasoning_policy)
-        profile = (
-            RunExecutionProfile.model_validate(execution_profile)
-            if execution_profile
-            else None
-        )
-        planning_strategy = snapshot.effective.planning_strategy
-        plan_only = snapshot.effective.execution_mode.value == "plan_only"
-        use_model_contract = (
-            profile.contract_mode == ContractMode.model
-            if profile
-            else planning_strategy != PlanningStrategy.direct or plan_only
-        )
-        if planning_strategy == PlanningStrategy.direct and not plan_only:
-            contract_result = (
-                await self.model_client.contract(goal)
-                if use_model_contract and self.settings.agent_use_general_runtime
-                else build_default_contract(goal)
-            )
-            contract = self._resolve_contract(run_id, goal, contract_result)
-            plan = self._default_plan(
-                "处理请求",
-                "根据任务需要直接回答或选择工具",
-                contract=contract,
-                strategy=planning_strategy,
-            )
-            logger.info("run.plan.direct_start run_id=%s", run_id)
-            return contract, plan
-        if planning_strategy == PlanningStrategy.adaptive and not plan_only:
-            if use_model_contract and self.settings.agent_use_general_runtime:
-                try:
-                    contract_result = await self.model_client.contract(goal)
-                except ModelOutputError as exc:
-                    contract_result = exc
-            else:
-                contract_result = build_default_contract(goal)
-            contract = self._resolve_contract(run_id, goal, contract_result)
-            plan = self._default_plan(
-                "自适应处理",
-                "根据观察决定直接回答、调用工具、反思或重新规划",
-                contract=contract,
-                strategy=planning_strategy,
-            )
-            logger.info("run.plan.adaptive_start run_id=%s", run_id)
-            return contract, plan
-        if use_model_contract and self.settings.agent_use_general_runtime:
+        ReasoningPolicySnapshot.model_validate(reasoning_policy)
+        RunExecutionProfile.model_validate(execution_profile or {})
+        if self.settings.agent_use_general_runtime:
             try:
                 contract_result = await self.model_client.contract(goal)
             except ModelOutputError as exc:
@@ -292,7 +245,6 @@ class RunEngine:
             plan_result = await self.model_client.plan(
                 goal,
                 contract=contract,
-                strategy=planning_strategy,
             )
         except ModelOutputError as exc:
             plan_result = exc
@@ -300,7 +252,6 @@ class RunEngine:
             run_id,
             plan_result,
             contract=contract,
-            strategy=planning_strategy,
         )
         return contract, plan
 
@@ -327,17 +278,15 @@ class RunEngine:
         result: PlanDraft | Exception,
         *,
         contract: TaskContract,
-        strategy: PlanningStrategy,
     ) -> PlanDraft:
         if not isinstance(result, Exception):
             if result.nodes:
-                return result.model_copy(update={"strategy": strategy})
+                return result
             logger.warning("run.plan.fallback run_id=%s reason=empty plan nodes", run_id)
             return self._default_plan(
                 "生成回复",
                 "直接回应用户当前请求",
                 contract=contract,
-                strategy=strategy,
             )
         if not isinstance(result, ModelOutputError):
             raise result
@@ -346,7 +295,6 @@ class RunEngine:
             "生成回复",
             "直接回应用户当前请求",
             contract=contract,
-            strategy=strategy,
         )
 
     @staticmethod
@@ -355,10 +303,8 @@ class RunEngine:
         intent: str,
         *,
         contract: TaskContract,
-        strategy: PlanningStrategy,
     ) -> PlanDraft:
         return PlanDraft(
-            strategy=strategy,
             nodes=[
                 PlanNodeDraft(
                     node_key="step-1",
@@ -372,32 +318,6 @@ class RunEngine:
                     risk_level=contract.risk_level,
                 )
             ],
-        )
-
-    async def _complete_plan_only(self, repo: RunRepository, run_id: str, plan: PlanDraft) -> None:
-        summary = "规划已生成，未执行工具或外部操作。"
-        result = {
-            "summary": summary,
-            "findings": [
-                {
-                    "text": self._public_plan_text(f"{node.title}：{node.intent}"),
-                    "source_urls": [],
-                }
-                for node in plan.nodes
-            ],
-            "sources": [],
-            "failed_sources": [],
-            "source_quality": [],
-            "conflicts": [],
-            "caveats": ["当前运行使用仅规划模式。"],
-            "verification_notes": ["已在执行前停止。"],
-        }
-        await self._emit_answer_stream(repo, run_id, summary)
-        await repo.update_run_status(run_id, "completed", summary=summary, result=result)
-        logger.info(
-            "run.complete run_id=%s status=completed mode=plan_only nodes=%s",
-            run_id,
-            len(plan.nodes),
         )
 
     @staticmethod

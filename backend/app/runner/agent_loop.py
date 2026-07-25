@@ -41,7 +41,6 @@ from app.schemas.agent import (
     AnswerMode,
     AssuranceLevel,
     CompletionDecision,
-    ContractMode,
     EvaluationOutcome,
     ExpectedObservation,
     FailureFingerprint,
@@ -457,17 +456,7 @@ class AgentLoop:
         orchestrator = LoopOrchestrator()
         no_progress = NoProgressDetector()
         policy_snapshot = ReasoningPolicySnapshot.model_validate(initial_run.reasoning_policy or {})
-        profile = (
-            RunExecutionProfile.model_validate(initial_run.execution_profile)
-            if initial_run.execution_profile
-            else RunExecutionProfile(
-                answer_mode=AnswerMode.trusted,
-                contract_mode=ContractMode.model,
-                assurance_level=AssuranceLevel.full,
-                reasoning_policy=policy_snapshot,
-                validators=["task_adapter", "artifact_reference"],
-            )
-        )
+        profile = RunExecutionProfile.model_validate(initial_run.execution_profile)
         quick_mode = profile.answer_mode == AnswerMode.standard
         policy = policy_snapshot.effective
         max_turns = (
@@ -814,10 +803,9 @@ class AgentLoop:
             return observation, evaluation, evaluation.outcome == EvaluationOutcome.matched
 
         logger.info(
-            "agent.policy run_id=%s effort=%s planning=%s reflection=%s/%s limits=turns:%s tools:%s reflections:%s replans:%s",
+            "agent.policy run_id=%s effort=%s reflection=%s/%s limits=turns:%s tools:%s reflections:%s replans:%s",
             run_id,
             policy.reasoning_effort.value,
-            policy.planning_strategy.value,
             policy.reflection_enabled,
             policy.reflection_trigger.value,
             max_turns,
@@ -831,7 +819,6 @@ class AgentLoop:
                 "reasoning.runtime_limits",
                 {
                     "reasoning_effort": policy.reasoning_effort.value,
-                    "planning_strategy": policy.planning_strategy.value,
                     "max_turns": max_turns,
                     "max_tool_calls": max_tool_calls,
                     "max_reflections": max_reflections,
@@ -1537,38 +1524,6 @@ class AgentLoop:
                         ],
                     },
                 )
-                if authorization.blocked_by_mode:
-                    if forced_action:
-                        await repo.finish_tool_call(
-                            call.id,
-                            error={
-                                "category": "effect_blocked_by_mode",
-                                "message": authorization.decision.explanation.summary,
-                            },
-                        )
-                    observation = AgentObservation(
-                        kind="effect_blocked_by_mode",
-                        status="blocked",
-                        summary=f"仅规划模式未执行：{effect_plan.summary}",
-                        data={
-                            "tool_name": tool.spec.name,
-                            "effect_plan": effect_plan.model_dump(mode="json"),
-                        },
-                    )
-                    observations.append(observation.model_dump(mode="json"))
-                    await repo.update_agent_turn(
-                        turn.id,
-                        status="completed",
-                        phase="committed",
-                        observation=observation.model_dump(mode="json"),
-                    )
-                    await repo.add_event(
-                        run_id,
-                        "tool_call.effect_blocked_by_mode",
-                        observation.model_dump(mode="json"),
-                    )
-                    await repo.session.commit()
-                    continue
                 if authorization.decision.decision == PermissionDecisionKind.deny:
                     if forced_action:
                         await repo.finish_tool_call(

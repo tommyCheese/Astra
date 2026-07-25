@@ -13,8 +13,15 @@ from app.main import create_app
 from app.repositories.plans import PlanRepository, plan_to_view
 from app.repositories.runs import RunRepository
 from app.runner.planning import PlanService, canonical_agent_state
-from app.runner.reasoning import build_default_contract
-from app.schemas.agent import ExpectedObservation, PlanDraft, PlanningStrategy, PlanNodeDraft
+from app.runner.reasoning import RunProfileResolver, build_default_contract
+from app.schemas.agent import (
+    AnswerMode,
+    ExpectedObservation,
+    PlanDraft,
+    PlanExecution,
+    PlanNodeDraft,
+    RequestedReasoningPolicy,
+)
 
 
 @pytest.fixture
@@ -188,24 +195,48 @@ async def test_library_lists_present_files_with_conversation_context(app_client)
     assert item["content_url"]
 
 
-async def test_create_run_rejects_removed_direct_planning_strategy(app_client):
+@pytest.mark.parametrize("strategy", ["direct", "adaptive", "plan_first"])
+async def test_create_run_rejects_removed_planning_strategy(app_client, strategy):
     response = await app_client.post(
         "/api/runs",
-        json={"goal": "测试旧策略", "reasoning_policy": {"planning_strategy": "direct"}},
+        json={"goal": "测试旧策略", "reasoning_policy": {"planning_strategy": strategy}},
     )
 
     assert response.status_code == 422
 
 
-async def test_activate_plan_starts_a_planned_run(app_client):
+async def test_create_run_rejects_removed_plan_only_mode(app_client):
+    response = await app_client.post(
+        "/api/runs",
+        json={"goal": "测试旧模式", "reasoning_policy": {"execution_mode": "plan_only"}},
+    )
+    assert response.status_code == 422
+
+
+async def test_removed_plan_activation_route_is_absent(app_client):
+    response = await app_client.post("/api/runs/legacy/activate-plan")
+    assert response.status_code == 404
+
+
+async def test_plan_confirmation_resume_consumes_bound_token_once(app_client):
     async with app_client._astra_session() as session:
         repo = RunRepository(session)
-        run = await repo.create_task_run("批准后执行", {"provider": "mock"})
-        contract = build_default_contract("批准后执行")
+        profile = RunProfileResolver().resolve(
+            AnswerMode.trusted,
+            RequestedReasoningPolicy(),
+            plan_execution=PlanExecution.confirm,
+        )
+        run = await repo.create_task_run(
+            "确认计划",
+            {"provider": "mock"},
+            reasoning_policy=profile.reasoning_policy.model_dump(mode="json"),
+            answer_mode="trusted",
+            execution_profile=profile.model_dump(mode="json"),
+        )
+        contract = build_default_contract("确认计划")
         plan = await PlanService(PlanRepository(session)).create(
             run.id,
             PlanDraft(
-                strategy=PlanningStrategy.direct,
                 nodes=[
                     PlanNodeDraft(
                         node_key="respond",
@@ -221,7 +252,7 @@ async def test_activate_plan_starts_a_planned_run(app_client):
             contract=contract,
             activate=False,
         )
-        state = canonical_agent_state(contract, plan, policy_version=1).model_copy(
+        state = canonical_agent_state(contract, plan, policy_version=2).model_copy(
             update={"active_plan_id": None}
         )
         await repo.initialize_reasoning_state(
@@ -230,17 +261,32 @@ async def test_activate_plan_starts_a_planned_run(app_client):
             plan_graph=plan_to_view(plan).model_dump(mode="json"),
             agent_state=state.model_dump(mode="json"),
         )
-        await repo.update_run_status(run.id, "completed")
+        waiting = await repo.set_waiting_state(
+            run.id,
+            {
+                "kind": "plan_confirmation",
+                "plan_id": plan.id,
+                "plan_version": plan.version,
+                "state_version": state.version,
+                "request": "确认执行",
+            },
+        )
+        token = waiting.waiting_state["continuation_token"]
         run_id = run.id
+        payload = {
+            "action": "execute_plan",
+            "continuation_token": token,
+            "plan_id": plan.id,
+            "expected_plan_version": plan.version,
+            "expected_state_version": state.version,
+        }
 
-    response = await app_client.post(f"/api/runs/{run_id}/activate-plan")
-    assert response.status_code == 200
-    assert response.json()["status"] == "executing"
-    async with app_client._astra_session() as session:
-        loaded = await RunRepository(session).require_run(run_id)
-        assert loaded.active_plan_id
-        assert loaded.agent_state["active_plan_id"] == loaded.active_plan_id
-        assert loaded.completed_at is None
+    confirmed = await app_client.post(f"/api/runs/{run_id}/resume", json=payload)
+    replay = await app_client.post(f"/api/runs/{run_id}/resume", json=payload)
+    assert confirmed.status_code == 200
+    assert confirmed.json()["status"] == "executing"
+    assert replay.status_code == 409
+    assert replay.json()["error"]["code"] == "PLAN_CONFIRMATION_INVALID"
 
 
 async def test_conversation_detail_eager_loads_canonical_plan(app_client):
@@ -251,7 +297,6 @@ async def test_conversation_detail_eager_loads_canonical_plan(app_client):
         plan = await PlanService(PlanRepository(session)).create(
             run.id,
             PlanDraft(
-                strategy=PlanningStrategy.direct,
                 nodes=[
                     PlanNodeDraft(
                         node_key="respond",
@@ -337,7 +382,6 @@ async def test_conversation_strategy_can_be_restored_and_updated(app_client):
         "preferred_answer_mode": "standard",
         "reasoning_effort": "balanced",
         "max_tool_calls": 8,
-        "planning_strategy": "adaptive",
         "reflection_enabled": True,
         "reflection_trigger": "adaptive",
     }
@@ -346,7 +390,6 @@ async def test_conversation_strategy_can_be_restored_and_updated(app_client):
         "preferred_answer_mode": "trusted",
         "reasoning_effort": "deep",
         "max_tool_calls": None,
-        "planning_strategy": "plan_first",
         "reflection_enabled": False,
         "reflection_trigger": "failure_only",
     }
@@ -363,7 +406,6 @@ async def test_conversation_strategy_rejects_unknown_values(app_client):
         "/api/preferences/conversation-strategy",
         json={
             "reasoning_effort": "unbounded",
-            "planning_strategy": "adaptive",
             "reflection_enabled": True,
             "reflection_trigger": "adaptive",
         },
@@ -376,7 +418,6 @@ async def test_conversation_strategy_uses_effort_default_when_legacy_client_omit
         "/api/preferences/conversation-strategy",
         json={
             "reasoning_effort": "deep",
-            "planning_strategy": "adaptive",
             "reflection_enabled": True,
             "reflection_trigger": "adaptive",
         },
@@ -395,7 +436,6 @@ async def test_conversation_strategy_accepts_tool_limits_for_each_effort(app_cli
         json={
             "reasoning_effort": effort,
             "max_tool_calls": limit,
-            "planning_strategy": "adaptive",
             "reflection_enabled": True,
             "reflection_trigger": "adaptive",
         },
@@ -416,7 +456,6 @@ async def test_conversation_strategy_rejects_tool_limits_outside_effort_range(
         json={
             "reasoning_effort": effort,
             "max_tool_calls": limit,
-            "planning_strategy": "adaptive",
             "reflection_enabled": True,
             "reflection_trigger": "adaptive",
         },
@@ -710,7 +749,6 @@ async def test_create_run_compiles_reasoning_policy(app_client):
             "reasoning_policy": {
                 "reasoning_effort": "deep",
                 "max_tool_calls": None,
-                "planning_strategy": "plan_first",
                 "reflection_enabled": False,
                 "reflection_trigger": "adaptive",
                 "execution_mode": "request_approval",
@@ -723,6 +761,8 @@ async def test_create_run_compiles_reasoning_policy(app_client):
     assert created.json()["answer_mode"] == "trusted"
     assert body["answer_mode"] == "trusted"
     assert body["execution_profile"]["assurance_level"] == "full"
+    assert body["execution_profile"]["version"] == 2
+    assert body["execution_profile"]["plan_execution"] == "confirm"
     assert body["reasoning_policy"]["requested"]["reasoning_effort"] == "deep"
     assert body["reasoning_policy"]["effective"]["budgets"]["max_tool_calls"] is None
     assert body["reasoning_policy"]["effective"]["budgets"]["max_reflections"] == 6
@@ -736,7 +776,6 @@ async def test_create_run_defaults_to_standard_profile(app_client):
             "reasoning_policy": {
                 "reasoning_effort": "deep",
                 "max_tool_calls": None,
-                "planning_strategy": "plan_first",
                 "reflection_enabled": True,
                 "execution_mode": "request_approval",
             },
@@ -746,8 +785,10 @@ async def test_create_run_defaults_to_standard_profile(app_client):
     assert created.json()["answer_mode"] == "standard"
     assert body["answer_mode"] == "standard"
     assert body["execution_profile"]["assurance_level"] == "basic"
+    assert body["execution_profile"]["version"] == 2
+    assert body["execution_profile"]["plan_execution"] is None
     assert body["reasoning_policy"]["effective"]["reasoning_effort"] == "fast"
-    assert body["reasoning_policy"]["effective"]["planning_strategy"] == "adaptive"
+    assert "planning_strategy" not in body["reasoning_policy"]["effective"]
     assert body["reasoning_policy"]["effective"]["reflection_enabled"] is False
     assert body["reasoning_policy"]["effective"]["budgets"]["max_tool_calls"] is None
     assert body["reasoning_policy"]["effective"]["budgets"]["max_turns"] is None

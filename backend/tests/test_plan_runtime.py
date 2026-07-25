@@ -15,7 +15,6 @@ from app.runner.reasoning import build_default_contract
 from app.schemas.agent import (
     ExpectedObservation,
     PlanDraft,
-    PlanningStrategy,
     PlanNodeDraft,
     PlanNodeStatus,
     PlanPatch,
@@ -25,7 +24,6 @@ from app.schemas.agent import (
 
 def weather_plan() -> PlanDraft:
     return PlanDraft(
-        strategy=PlanningStrategy.plan_first,
         nodes=[
             PlanNodeDraft(
                 node_key="resolve-location",
@@ -163,7 +161,6 @@ async def test_scheduler_selects_branch_nodes_deterministically(session):
     run = await RunRepository(session).create_task_run("并行候选", {"provider": "mock"})
     contract = build_default_contract("并行候选")
     draft = PlanDraft(
-        strategy=PlanningStrategy.adaptive,
         nodes=[
             PlanNodeDraft(
                 node_key="a",

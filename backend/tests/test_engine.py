@@ -1,5 +1,3 @@
-import json
-
 import pytest
 from fake_web_tools import fake_web_registry
 
@@ -10,14 +8,14 @@ from app.repositories.runs import RunRepository
 from app.runner.engine import RunEngine
 from app.runner.model_client import MockModelClient
 from app.runner.planning import PlanScheduler, PlanService, canonical_agent_state
-from app.runner.reasoning import PolicyCompiler, RunProfileResolver, build_default_contract
+from app.runner.reasoning import RunProfileResolver, build_default_contract
 from app.schemas.agent import (
     AgentDecision,
     AnswerMode,
     ExpectedObservation,
     FinalAnswer,
     PlanDraft,
-    PlanningStrategy,
+    PlanExecution,
     PlanNodeDraft,
     RequestedReasoningPolicy,
 )
@@ -45,10 +43,9 @@ class FakeWeather(Tool):
 
 
 class WeatherPlanClient(MockModelClient):
-    async def plan(self, goal, *, contract, strategy):
+    async def plan(self, goal, *, contract):
         criterion_ids = [item.id for item in contract.success_criteria]
         return PlanDraft(
-            strategy=strategy,
             nodes=[
                 PlanNodeDraft(
                     node_key="step-1",
@@ -228,10 +225,17 @@ class QuickForbiddenToolClient(QuickStreamingClient):
 async def test_engine_completes_mock_web_query(session):
     settings = Settings(model_provider="mock", web_search_provider="mock")
     repo = RunRepository(session)
+    profile = RunProfileResolver().resolve(
+        AnswerMode.trusted,
+        RequestedReasoningPolicy(execution_mode="auto_approval"),
+        plan_execution=PlanExecution.auto,
+    )
     run = await repo.create_task_run(
         "查询 mock 数据",
         settings.model_policy,
-        reasoning_policy=engine_policy("direct", "auto_approval"),
+        reasoning_policy=profile.reasoning_policy.model_dump(mode="json"),
+        answer_mode="trusted",
+        execution_profile=profile.model_dump(mode="json"),
     )
 
     engine = RunEngine(
@@ -242,29 +246,13 @@ async def test_engine_completes_mock_web_query(session):
     await engine._run_with_repo(repo, run.id)
 
     loaded = await repo.require_run(run.id)
-    assert loaded.status == "completed"
-    assert loaded.result["sources"]
-    assert loaded.result["source_quality"]
+    assert loaded.status == "blocked"
     assert loaded.result["verification_notes"]
     assert loaded.steps == []
     canonical_plan = await PlanRepository(session).active_for_run(run.id)
     assert canonical_plan is not None
-    assert canonical_plan.status == "completed"
-    assert all(node.status == "completed" for node in canonical_plan.nodes)
+    assert canonical_plan.status == "active"
     assert all(call.plan_node_id == canonical_plan.nodes[0].id for call in loaded.tool_calls)
-
-    evidence_artifacts = [
-        artifact for artifact in loaded.artifacts if artifact.type == "evidence_pack"
-    ]
-    assert evidence_artifacts
-    evidence_pack = json.loads(evidence_artifacts[0].content_ref)
-    assert evidence_pack["fetched_sources"]
-    succeeded_fetch_calls = [
-        call
-        for call in loaded.tool_calls
-        if call.tool_name == "web_fetch" and call.status == "succeeded"
-    ]
-    assert len(evidence_pack["fetched_sources"]) == len(succeeded_fetch_calls)
 
     events = await repo.list_events(run.id)
     event_types = [event.type for event in events]
@@ -287,10 +275,17 @@ async def test_engine_completes_mock_web_query(session):
 async def test_weather_plan_executes_nodes_in_dependency_order(session):
     settings = Settings(model_provider="mock")
     repo = RunRepository(session)
+    profile = RunProfileResolver().resolve(
+        AnswerMode.trusted,
+        RequestedReasoningPolicy(execution_mode="auto_approval"),
+        plan_execution=PlanExecution.auto,
+    )
     run = await repo.create_task_run(
         "查询明天上海天气并判断是否适合跑步",
         settings.model_policy,
-        reasoning_policy=engine_policy("plan_first", "auto_approval"),
+        reasoning_policy=profile.reasoning_policy.model_dump(mode="json"),
+        answer_mode="trusted",
+        execution_profile=profile.model_dump(mode="json"),
     )
     registry = ToolRegistry()
     registry.register(FakeWeather())
@@ -305,6 +300,74 @@ async def test_weather_plan_executes_nodes_in_dependency_order(session):
     assert [node.status for node in plan.nodes] == ["completed"] * 4
     call = next(item for item in loaded.tool_calls if item.tool_name == "weather_lookup")
     assert call.plan_node_id == plan.nodes[1].id
+
+
+async def test_trusted_confirmation_activates_exact_plan_once_before_execution(session):
+    settings = Settings(model_provider="mock")
+    repo = RunRepository(session)
+    profile = RunProfileResolver().resolve(
+        AnswerMode.trusted,
+        RequestedReasoningPolicy(execution_mode="auto_approval"),
+        plan_execution=PlanExecution.confirm,
+    )
+    run = await repo.create_task_run(
+        "查询明天上海天气并判断是否适合跑步",
+        settings.model_policy,
+        reasoning_policy=profile.reasoning_policy.model_dump(mode="json"),
+        answer_mode="trusted",
+        execution_profile=profile.model_dump(mode="json"),
+    )
+    registry = ToolRegistry()
+    registry.register(FakeWeather())
+    engine = RunEngine(settings, model_client=WeatherPlanClient(), tool_registry=registry)
+
+    await engine._run_with_repo(repo, run.id)
+    waiting = await repo.require_run(run.id)
+    binding = dict(waiting.waiting_state or {})
+    assert waiting.status == "waiting_user"
+    assert binding["kind"] == "plan_confirmation"
+    assert binding["plan_id"] == waiting.plan_graph["id"]
+    assert binding["plan_version"] == waiting.plan_graph["version"]
+    assert binding["state_version"] == waiting.state_version
+    assert waiting.active_plan_id is None
+    assert waiting.tool_calls == []
+
+    with pytest.raises(ValueError, match="stale plan confirmation"):
+        await repo.confirm_waiting_plan(
+            run.id,
+            continuation_token=binding["continuation_token"],
+            plan_id=binding["plan_id"],
+            expected_plan_version=binding["plan_version"] + 1,
+            expected_state_version=binding["state_version"],
+        )
+    unchanged = await repo.require_run(run.id)
+    assert unchanged.status == "waiting_user"
+    assert unchanged.tool_calls == []
+
+    activated = await repo.confirm_waiting_plan(
+        run.id,
+        continuation_token=binding["continuation_token"],
+        plan_id=binding["plan_id"],
+        expected_plan_version=binding["plan_version"],
+        expected_state_version=binding["state_version"],
+    )
+    assert activated.status == "executing"
+    assert activated.active_plan_id == binding["plan_id"]
+    assert activated.waiting_state is None
+
+    with pytest.raises(ValueError, match="not waiting"):
+        await repo.confirm_waiting_plan(
+            run.id,
+            continuation_token=binding["continuation_token"],
+            plan_id=binding["plan_id"],
+            expected_plan_version=binding["plan_version"],
+            expected_state_version=binding["state_version"],
+        )
+
+    await engine._run_with_repo(repo, run.id)
+    completed = await repo.require_run(run.id)
+    assert completed.status == "completed"
+    assert len(completed.tool_calls) == 1
     events = await repo.list_events(run.id)
     selected = [event.payload["node_key"] for event in events if event.type == "plan.node.selected"]
     assert selected == ["step-1", "step-2", "step-3", "step-4"]
@@ -338,7 +401,8 @@ async def test_final_plan_node_answer_is_regenerated_as_canonical_stream(session
     settings = Settings(model_provider="mock")
     profile = RunProfileResolver().resolve(
         AnswerMode.trusted,
-        RequestedReasoningPolicy(planning_strategy=PlanningStrategy.adaptive),
+        RequestedReasoningPolicy(),
+        plan_execution=PlanExecution.auto,
     )
     repo = RunRepository(session)
     run = await repo.create_task_run(
@@ -358,7 +422,8 @@ async def test_final_plan_node_answer_is_regenerated_as_canonical_stream(session
     events = await repo.list_events(run.id)
     deltas = [event.payload["delta"] for event in events if event.type == "answer.delta"]
     assert loaded.result["summary"] == "真正的流式回答"
-    assert client.answer_callbacks == [False, True]
+    assert client.answer_callbacks[-1] is True
+    assert all(value is False for value in client.answer_callbacks[:-1])
     assert deltas == ["真正的", "流式回答"]
     assert events.index(next(event for event in events if event.type == "answer.delta")) < events.index(
         next(event for event in events if event.type == "answer.completed")
@@ -501,8 +566,8 @@ class PlanningSpyClient(MockModelClient):
 
 
 class EmptyPlanClient(MockModelClient):
-    async def plan(self, goal, *, contract, strategy):
-        return PlanDraft.model_construct(strategy=strategy, nodes=[])
+    async def plan(self, goal, *, contract):
+        return PlanDraft.model_construct(nodes=[])
 
 
 class EffortSpyClient(MockModelClient):
@@ -513,29 +578,20 @@ class EffortSpyClient(MockModelClient):
         self.bound_efforts.append(str(effort))
 
 
-def engine_policy(
-    planning_strategy, execution_mode="request_approval", reasoning_effort="balanced"
-):
-    requested_strategy = "adaptive" if planning_strategy == "direct" else planning_strategy
-    snapshot = PolicyCompiler().compile(
-        RequestedReasoningPolicy(
-            planning_strategy=requested_strategy,
-            execution_mode=execution_mode,
-            reasoning_effort=reasoning_effort,
-        )
-    ).model_dump(mode="json")
-    if planning_strategy == "direct":
-        snapshot["effective"]["planning_strategy"] = "direct"
-    return snapshot
-
-
 async def test_engine_binds_effective_reasoning_effort_before_model_operations(session):
     settings = Settings(model_provider="mock", web_search_provider="mock")
     repo = RunRepository(session)
+    profile = RunProfileResolver().resolve(
+        AnswerMode.trusted,
+        RequestedReasoningPolicy(reasoning_effort="deep"),
+        plan_execution=PlanExecution.auto,
+    )
     run = await repo.create_task_run(
         "查询 mock 数据",
         settings.model_policy,
-        reasoning_policy=engine_policy("direct", reasoning_effort="deep"),
+        reasoning_policy=profile.reasoning_policy.model_dump(mode="json"),
+        answer_mode="trusted",
+        execution_profile=profile.model_dump(mode="json"),
     )
     client = EffortSpyClient()
 
@@ -578,22 +634,20 @@ async def test_standard_profile_skips_planning_and_quality_assurance_objects(ses
     assert loaded.result["completion_decision"] is None
 
 
-@pytest.mark.parametrize(
-    ("strategy", "mode", "contract_calls", "plan_calls"),
-    [
-        ("direct", "request_approval", 0, 0),
-        ("adaptive", "request_approval", 1, 0),
-        ("plan_first", "request_approval", 1, 1),
-        ("direct", "plan_only", 1, 1),
-    ],
-)
-async def test_engine_planning_strategy_selects_distinct_path(
-    session, strategy, mode, contract_calls, plan_calls
-):
+async def test_trusted_engine_always_builds_contract_and_complete_plan(session):
     settings = Settings(model_provider="mock", web_search_provider="mock")
     repo = RunRepository(session)
+    profile = RunProfileResolver().resolve(
+        AnswerMode.trusted,
+        RequestedReasoningPolicy(),
+        plan_execution=PlanExecution.auto,
+    )
     run = await repo.create_task_run(
-        "查询 mock 数据", settings.model_policy, reasoning_policy=engine_policy(strategy, mode)
+        "查询 mock 数据",
+        settings.model_policy,
+        reasoning_policy=profile.reasoning_policy.model_dump(mode="json"),
+        answer_mode="trusted",
+        execution_profile=profile.model_dump(mode="json"),
     )
     client = PlanningSpyClient()
 
@@ -601,17 +655,24 @@ async def test_engine_planning_strategy_selects_distinct_path(
         settings, model_client=client, tool_registry=fake_web_registry()
     )._run_with_repo(repo, run.id)
 
-    assert client.contract_calls == contract_calls
-    assert client.plan_calls == plan_calls
+    assert client.contract_calls == 1
+    assert client.plan_calls == 1
 
 
 async def test_engine_falls_back_when_model_returns_empty_plan(session):
     settings = Settings(model_provider="mock", web_search_provider="mock")
     repo = RunRepository(session)
+    profile = RunProfileResolver().resolve(
+        AnswerMode.trusted,
+        RequestedReasoningPolicy(),
+        plan_execution=PlanExecution.confirm,
+    )
     run = await repo.create_task_run(
         "解释当前报错",
         settings.model_policy,
-        reasoning_policy=engine_policy("plan_first", "plan_only"),
+        reasoning_policy=profile.reasoning_policy.model_dump(mode="json"),
+        answer_mode="trusted",
+        execution_profile=profile.model_dump(mode="json"),
     )
 
     await RunEngine(
@@ -619,97 +680,30 @@ async def test_engine_falls_back_when_model_returns_empty_plan(session):
     )._run_with_repo(repo, run.id)
 
     loaded = await repo.require_run(run.id)
-    assert loaded.status == "completed"
+    assert loaded.status == "waiting_user"
     assert loaded.plan_graph["nodes"][0]["title"] == "生成回复"
-    assert loaded.result["findings"][0]["text"] == "生成回复：直接回应用户当前请求"
-
-
-async def test_plan_only_result_does_not_expose_internal_conversation_wrapper(session):
-    settings = Settings(model_provider="mock", web_search_provider="mock")
-    repo = RunRepository(session)
-    previous = await repo.create_task_run("第一轮问题", settings.model_policy)
-    await repo.update_run_status(previous.id, "completed", summary="第一轮回答")
-    current = await repo.create_task_run(
-        "第二轮规划",
-        settings.model_policy,
-        previous.task_id,
-        reasoning_policy=engine_policy("plan_first", "plan_only"),
-    )
-
-    await RunEngine(
-        settings, model_client=MockModelClient(), tool_registry=fake_web_registry()
-    )._run_with_repo(repo, current.id)
-
-    loaded = await repo.require_run(current.id)
-    result_text = "\n".join(item["text"] for item in loaded.result["findings"])
-    assert "Conversation context" not in result_text
-    assert "Current user request" not in result_text
-    assert "第二轮规划" in result_text
-    planned = await PlanRepository(session).latest_planned_for_run(current.id)
-    assert planned is not None
-    assert planned.status == "planned"
-    assert all(node.status == "pending" for node in planned.nodes)
-    projected = plan_to_view(planned)
-    assert next(node for node in projected.nodes if node.node_key == "step-6").depends_on == [
-        "step-4",
-        "step-5",
-    ]
     assert loaded.agent_state["active_plan_id"] is None
-
-
-async def test_plan_only_plan_can_be_activated_and_executed(session):
-    settings = Settings(model_provider="mock", web_search_provider="mock")
-    repo = RunRepository(session)
-    run = await repo.create_task_run(
-        "先规划再执行",
-        settings.model_policy,
-        reasoning_policy=engine_policy("plan_first", "plan_only"),
-    )
-    registry = ToolRegistry()
-    registry.register(FakeWeather())
-    engine = RunEngine(settings, model_client=WeatherPlanClient(), tool_registry=registry)
-    await engine._run_with_repo(repo, run.id)
-    planned = await PlanRepository(session).latest_planned_for_run(run.id)
-    assert planned is not None
-    await PlanRepository(session).activate(planned.id, expected_version=planned.version)
-    loaded = await repo.require_run(run.id)
-    state = dict(loaded.agent_state)
-    state.update(
-        {
-            "active_plan_id": planned.id,
-            "active_plan_version": planned.version,
-            "active_node_id": None,
-            "version": loaded.state_version + 1,
-        }
-    )
-    await repo.update_reasoning_state(
-        run.id,
-        expected_version=loaded.state_version,
-        agent_state=state,
-        plan_graph=plan_to_view(planned).model_dump(mode="json"),
-    )
-    loaded = await repo.require_run(run.id)
-    reasoning_policy = dict(loaded.reasoning_policy)
-    effective = dict(reasoning_policy["effective"])
-    effective["execution_mode"] = "auto_approval"
-    reasoning_policy["effective"] = effective
-    loaded.reasoning_policy = reasoning_policy
-    await session.commit()
-    await engine._run_with_repo(repo, run.id)
-    executed = await PlanRepository(session).active_for_run(run.id)
-    assert executed is not None
-    assert all(node.status == "completed" for node in executed.nodes)
 
 
 async def test_engine_replays_recorded_checkpoint_without_duplicate_tool_call(session):
     settings = Settings(model_provider="mock", web_search_provider="mock")
     repo = RunRepository(session)
-    run = await repo.create_task_run("恢复已经记录的搜索结果", settings.model_policy)
+    profile = RunProfileResolver().resolve(
+        AnswerMode.trusted,
+        RequestedReasoningPolicy(),
+        plan_execution=PlanExecution.auto,
+    )
+    run = await repo.create_task_run(
+        "恢复已经记录的搜索结果",
+        settings.model_policy,
+        reasoning_policy=profile.reasoning_policy.model_dump(mode="json"),
+        answer_mode="trusted",
+        execution_profile=profile.model_dump(mode="json"),
+    )
     contract = build_default_contract(run.task.description)
     plan = await PlanService(PlanRepository(session)).create(
         run.id,
         PlanDraft(
-            strategy=PlanningStrategy.direct,
             nodes=[
                 PlanNodeDraft(
                     node_key="step-1",

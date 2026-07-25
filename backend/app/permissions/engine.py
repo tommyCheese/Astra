@@ -88,11 +88,6 @@ class InvocationAuthorizationResult:
         """Backward-compatible single-lease view for audit consumers."""
         return self.grant_ids[0] if len(self.grant_ids) == 1 else None
 
-    @property
-    def blocked_by_mode(self) -> bool:
-        return self.decision.explanation.reason_code == "effect_blocked_by_mode"
-
-
 class LeaseValidator:
     def matches(
         self,
@@ -379,17 +374,7 @@ class PermissionEngine:
             ))
 
         side_effecting = is_side_effecting(effect_plan)
-        if execution_mode == ExecutionMode.plan_only and side_effecting:
-            rules.append(PermissionRule(
-                id="run.mode.plan-only",
-                source="run.execution_mode",
-                tier=PolicyTier.run,
-                decision=PermissionDecisionKind.deny,
-                actions=["*"],
-                resources=["*"],
-                reason_code="effect_blocked_by_mode",
-            ))
-        elif once_approved:
+        if once_approved:
             rules.append(PermissionRule(
                 id="once.user-approved",
                 source="user.approval",

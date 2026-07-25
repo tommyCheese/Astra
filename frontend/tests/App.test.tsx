@@ -2,10 +2,18 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { App } from '../src/App';
-import { buildRuntime, cancelRun, cancelRuntimeBuild, createConversationShare, createRun, decideToolApproval, deleteConversation, getConversation, getConversationStrategy, getRun, getRuntimeProfile, listConversationShares, listConversations, listLibraryFiles, listRuns, revokeConversationShare, streamRunEvents, updateConversation, updateConversationStrategy, updateToolSettings, type RunStreamEvent } from '../src/api';
+import { buildRuntime, cancelRun, cancelRuntimeBuild, confirmPlanExecution, createConversationShare, createRun, decideToolApproval, deleteConversation, getConversation, getConversationStrategy, getRun, getRuntimeProfile, listConversationShares, listConversations, listLibraryFiles, listRuns, revokeConversationShare, streamRunEvents, updateConversation, updateConversationStrategy, updateToolSettings, type RunStreamEvent } from '../src/api';
 
 vi.mock('../src/api', () => ({
-  getConversationStrategy: vi.fn(async () => ({ preferred_answer_mode: 'standard', reasoning_effort: 'balanced', max_tool_calls: 8, planning_strategy: 'adaptive', reflection_enabled: true, reflection_trigger: 'adaptive' })),
+  AstraApiError: class AstraApiError extends Error {
+    payload: unknown;
+
+    constructor(payload: unknown) {
+      super('Astra API error');
+      this.payload = payload;
+    }
+  },
+  getConversationStrategy: vi.fn(async () => ({ preferred_answer_mode: 'standard', reasoning_effort: 'balanced', max_tool_calls: 8, reflection_enabled: true, reflection_trigger: 'adaptive' })),
   updateConversationStrategy: vi.fn(async (strategy) => strategy),
   getToolSettings: vi.fn(async () => ({ tools: [
     { name: 'web_search', label: 'Web Search', description: '搜索公开网页并生成候选来源', enabled: true, available: true },
@@ -19,6 +27,7 @@ vi.mock('../src/api', () => ({
   cancelRuntimeBuild: vi.fn(async () => ({ dependencies: [{ name: 'polars', version: '' }], core_dependencies: [], active_image: 'astra-data-viz:0.1.0', dependency_digest: 'base', build: { id: 'build-1', status: 'cancelled', phase: '已取消', progress: 12, log: '构建已由用户取消' } })),
   streamRunEvents: vi.fn(() => () => undefined),
   createRun: vi.fn(async () => ({ run_id: 'run-1', task_id: 'task-1', status: 'created', answer_mode: 'standard' })),
+  confirmPlanExecution: vi.fn(async () => ({ run_id: 'run-1', task_id: 'task-1', status: 'executing' })),
   cancelRun: vi.fn(async () => ({
     id: 'run-1', task_id: 'task-1', status: 'cancelled', mode: 'general-agent', summary: '已终止本次运行。', result: { summary: '已终止本次运行。', findings: [], sources: [], failed_sources: [], source_quality: [], conflicts: [], caveats: ['运行已由用户终止，未继续执行后续步骤。'], verification_notes: [] },
     steps: [], tool_calls: [], artifacts: [], events: [{ id: 1, type: 'run.cancelled', payload: { category: 'user_cancelled' }, created_at: '2026-07-14T00:00:00Z' }], turns: [], memories: [], chat_messages: [{ id: 'run-1-terminal', role: 'assistant', content: '已终止本次运行。', status: 'completed', metadata: { terminal_status: 'cancelled' } }],
@@ -168,9 +177,9 @@ vi.mock('../src/api', () => ({
     ],
     artifacts: [{ id: 'a-chart', type: 'sandbox_output', metadata: { filename: 'chart.png' }, created_at: 'now', mime_type: 'image/png', size_bytes: 128, checksum: 'sha256', security_status: 'verified', content_url: '/api/artifacts/a-chart/content' }, { id: 'a-html', type: 'sandbox_output', metadata: { filename: 'chart.html' }, created_at: 'now', mime_type: 'text/html', size_bytes: 256, checksum: 'sha256-html', security_status: 'verified', content_url: '/api/artifacts/a-html/content' }],
     events: [{ id: 1, type: 'run.created', payload: { status: 'created' }, created_at: 'now' }],
-    reasoning_policy: { effective: { reasoning_effort: 'balanced', planning_strategy: 'adaptive', execution_mode: 'request_approval' }, adjustments: [] },
+    reasoning_policy: { effective: { reasoning_effort: 'balanced', execution_mode: 'request_approval' }, adjustments: [] },
     task_contract: { success_criteria: [{ id: 'criterion-result', description: '完成查询', status: 'satisfied' }] },
-    plan_graph: { version: 1 },
+    plan_graph: { id: 'plan-1', version: 1, nodes: [] },
     state_version: 2,
   })),
 }));
@@ -326,7 +335,7 @@ describe('App', () => {
     await waitFor(() => expect(cancelRun).toHaveBeenCalledWith('run-pending'));
     await userEvent.type(screen.getByRole('textbox'), '继续追问');
     await userEvent.click(screen.getByRole('button', { name: '发送' }));
-    await waitFor(() => expect(createRun).toHaveBeenLastCalledWith('继续追问', 'task-1', 'standard', expect.anything(), expect.anything()));
+    await waitFor(() => expect(createRun).toHaveBeenLastCalledWith('继续追问', 'task-1', 'standard', expect.anything(), expect.anything(), undefined));
   });
 
   it('promotes the primary referenced output and keeps remaining evidence supplementary', async () => {
@@ -590,21 +599,21 @@ describe('App', () => {
 
   it('sends selected reasoning policy with a run', async () => {
     render(<App />);
-    await userEvent.click(screen.getByRole('switch', { name: '可信模式' }));
+    await userEvent.click(screen.getByRole('switch', { name: '快速响应' }));
     await userEvent.type(screen.getByRole('textbox'), '分析复杂问题');
     await userEvent.click(screen.getByRole('button', { name: '当前模型：gpt-5' }));
     await userEvent.click(screen.getByRole('button', { name: '深入' }));
     expect(screen.queryByRole('slider', { name: '工具调用上限' })).not.toBeInTheDocument();
     expect(screen.getByText('不限')).toBeInTheDocument();
     expect(screen.getByText('深入推理不限制工具调用次数')).toBeInTheDocument();
-    await userEvent.click(screen.getByRole('button', { name: '先规划' }));
     await userEvent.click(screen.getByRole('button', { name: '发送' }));
     expect(vi.mocked(createRun)).toHaveBeenLastCalledWith(
       expect.any(String),
       undefined,
       'trusted',
-      expect.objectContaining({ reasoning_effort: 'deep', max_tool_calls: null, planning_strategy: 'plan_first' }),
+      expect.objectContaining({ reasoning_effort: 'deep', max_tool_calls: null }),
       expect.objectContaining({ provider: 'openai', name: 'gpt-5' }),
+      'confirm',
     );
   });
 
@@ -613,7 +622,6 @@ describe('App', () => {
       preferred_answer_mode: 'trusted',
       reasoning_effort: 'deep',
       max_tool_calls: null,
-      planning_strategy: 'plan_first',
       reflection_enabled: true,
       reflection_trigger: 'every_turn',
     });
@@ -623,16 +631,13 @@ describe('App', () => {
     await waitFor(() => expect(screen.getByRole('button', { name: '当前模型：gpt-5' })).toHaveTextContent('深入 · 工具不限 · 每轮 反思'));
     await userEvent.click(screen.getByRole('button', { name: '当前模型：gpt-5' }));
     expect(screen.getByRole('button', { name: '深入' })).toHaveClass('active');
-    expect(screen.getByRole('button', { name: '先规划' })).toHaveClass('active');
     expect(screen.getByRole('button', { name: '每轮' })).toHaveClass('active');
 
     await userEvent.click(screen.getByRole('button', { name: '快速' }));
-    await userEvent.click(screen.getByRole('button', { name: '自适应' }));
     await waitFor(() => expect(updateConversationStrategy).toHaveBeenLastCalledWith({
       preferred_answer_mode: 'trusted',
       reasoning_effort: 'fast',
       max_tool_calls: 5,
-      planning_strategy: 'adaptive',
       reflection_enabled: true,
       reflection_trigger: 'every_turn',
     }));
@@ -646,11 +651,11 @@ describe('App', () => {
       expect.objectContaining({
         reasoning_effort: 'fast',
         max_tool_calls: 5,
-        planning_strategy: 'adaptive',
         reflection_enabled: true,
         reflection_trigger: 'every_turn',
       }),
       expect.any(Object),
+      'confirm',
     );
   });
 
@@ -824,10 +829,9 @@ describe('App', () => {
     expect(vi.mocked(createRun)).toHaveBeenLastCalledWith('继续追问', 'task-1', 'standard', expect.objectContaining({
       reasoning_effort: 'balanced',
       max_tool_calls: 8,
-      planning_strategy: 'adaptive',
       reflection_enabled: true,
       execution_mode: 'request_approval',
-    }), expect.objectContaining({ provider: 'openai', name: 'gpt-5' }));
+    }), expect.objectContaining({ provider: 'openai', name: 'gpt-5' }), undefined);
     expect(screen.getAllByRole('button', { name: '查询 Astra' })).toHaveLength(1);
     expect(screen.getAllByRole('button', { name: /跳转到问题/ })).toHaveLength(2);
     const firstQuestion = screen.getByRole('button', { name: '跳转到问题 1' });
@@ -1093,7 +1097,7 @@ describe('App', () => {
     expect(screen.getByText('Choose the interface language')).toBeInTheDocument();
     expect(document.documentElement.lang).toBe('en');
     await userEvent.click(screen.getByRole('button', { name: 'Close settings' }));
-    await userEvent.click(screen.getByRole('switch', { name: 'Trusted mode' }));
+    await userEvent.click(screen.getByRole('switch', { name: 'Quick response' }));
     const modelSelector = screen.getByRole('button', { name: 'Current model: gpt-5' });
     expect(modelSelector).toHaveTextContent('Balanced · 8 tool calls · Adaptive reflection');
     await userEvent.click(modelSelector);
@@ -1125,10 +1129,10 @@ describe('App', () => {
   it('keeps conversation reasoning controls in the model menu', async () => {
     render(<App />);
 
-    await userEvent.click(screen.getByRole('switch', { name: '可信模式' }));
+    await userEvent.click(screen.getByRole('switch', { name: '快速响应' }));
     await userEvent.click(screen.getByRole('button', { name: '当前模型：gpt-5' }));
 
-    expect(screen.getByText('规划策略')).toBeInTheDocument();
+    expect(screen.queryByText('规划策略')).not.toBeInTheDocument();
     expect(screen.getByText('触发方式')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '深入' })).toBeInTheDocument();
     expect(screen.queryByText('最大 Agent 轮次')).not.toBeInTheDocument();
@@ -1139,13 +1143,11 @@ describe('App', () => {
   it('defaults to quick answers and persists the prominent trusted mode switch', async () => {
     render(<App />);
 
-    const trustedSwitch = screen.getByRole('switch', { name: '可信模式' });
+    const trustedSwitch = screen.getByRole('switch', { name: '快速响应' });
     expect(trustedSwitch).toHaveAttribute('aria-checked', 'false');
-    expect(trustedSwitch).toHaveTextContent('可信模式');
-    expect(trustedSwitch).not.toHaveTextContent('快速回答');
+    expect(trustedSwitch).toHaveTextContent('快速响应');
     await userEvent.click(screen.getByRole('button', { name: '当前模型：gpt-5' }));
-    expect(screen.getByText('开启可信模式后可配置完整对话策略与结果校验。')).toBeInTheDocument();
-    expect(screen.queryByText('规划策略')).not.toBeInTheDocument();
+    expect(screen.getByText('开启可信执行后会先生成完整计划并进行结果校验。')).toBeInTheDocument();
 
     await userEvent.click(trustedSwitch);
     expect(trustedSwitch).toHaveAttribute('aria-checked', 'true');
@@ -1157,7 +1159,7 @@ describe('App', () => {
   it('shows a non-blocking full-screen transition when trusted mode is enabled', async () => {
     render(<App />);
 
-    const trustedSwitch = screen.getByRole('switch', { name: '可信模式' });
+    const trustedSwitch = screen.getByRole('switch', { name: '快速响应' });
     await userEvent.click(trustedSwitch);
 
     expect(screen.getByTestId('trusted-mode-transition')).toHaveAttribute('aria-hidden', 'true');
@@ -1169,7 +1171,7 @@ describe('App', () => {
   it('reveals the Astra brand easter egg after five rapid trusted-mode toggles', async () => {
     render(<App />);
 
-    const trustedSwitch = screen.getByRole('switch', { name: '可信模式' });
+    const trustedSwitch = screen.getByRole('switch', { name: '快速响应' });
     for (let index = 0; index < 4; index += 1) await userEvent.click(trustedSwitch);
     expect(screen.queryByTestId('trusted-easter-egg')).not.toBeInTheDocument();
 
@@ -1193,11 +1195,11 @@ describe('App', () => {
     });
     render(<App />);
 
-    await userEvent.click(screen.getByRole('switch', { name: '可信模式' }));
+    await userEvent.click(screen.getByRole('switch', { name: '快速响应' }));
     await userEvent.type(screen.getByRole('textbox'), '执行可信回答');
     await userEvent.click(screen.getByRole('button', { name: '发送' }));
 
-    const verificationStatus = await screen.findByText('可信模式 · 校验带警告');
+    const verificationStatus = await screen.findByText('可信执行 · 校验带警告');
     expect(verificationStatus).toBeInTheDocument();
     const identityRow = verificationStatus.closest('.answer-identity-row');
     expect(identityRow).toHaveTextContent('Astra');
@@ -1210,7 +1212,7 @@ describe('App', () => {
     const input = screen.getByRole('textbox');
 
     expect(composer).not.toBeNull();
-    await userEvent.click(screen.getByRole('switch', { name: '可信模式' }));
+    await userEvent.click(screen.getByRole('switch', { name: '快速响应' }));
     await userEvent.click(composer!);
     expect(input).toHaveFocus();
 
@@ -1223,7 +1225,7 @@ describe('App', () => {
   it('explains each conversation strategy from the model menu', async () => {
     render(<App />);
 
-    await userEvent.click(screen.getByRole('switch', { name: '可信模式' }));
+    await userEvent.click(screen.getByRole('switch', { name: '快速响应' }));
     await userEvent.click(screen.getByRole('button', { name: '当前模型：gpt-5' }));
     const helpButton = screen.getByRole('button', { name: '了解对话策略' });
     expect(helpButton.querySelector('svg')).toBeInTheDocument();
@@ -1234,8 +1236,8 @@ describe('App', () => {
     expect(screen.getByText('允许 0–5 次工具调用，简单任务更快；启用反思时，提供轻量反思能力。')).toBeInTheDocument();
     expect(screen.getByText('允许 6–15 次工具调用，兼顾速度与检查深度；启用反思时，提供基本的反思能力。')).toBeInTheDocument();
     expect(screen.getByText('工具调用次数不限，为复杂任务提供充分执行空间；启用反思时，允许更深层的反思能力。')).toBeInTheDocument();
-    expect(screen.getByText('轻量启动，按结果决定是否调整计划。')).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: '直接' })).not.toBeInTheDocument();
+    expect(screen.getByText('先展示完整计划，由你确认这个版本后开始执行。')).toBeInTheDocument();
+    expect(screen.getByText('完整计划生成并持久化后立即开始执行。')).toBeInTheDocument();
     expect(screen.getByText('失败、低置信度、冲突或无进展时反思。')).toBeInTheDocument();
     expect(screen.getByText('每轮结束都反思，更审慎但更慢、更耗用量。')).toBeInTheDocument();
 
@@ -1247,60 +1249,149 @@ describe('App', () => {
     render(<App />);
 
     await userEvent.click(screen.getByRole('button', { name: /请求批准/ }));
-    await userEvent.click(screen.getByRole('button', { name: /仅规划/ }));
-    expect(screen.getByRole('button', { name: /仅规划/ })).toBeInTheDocument();
-
-    await userEvent.click(screen.getByRole('button', { name: /仅规划/ }));
     await userEvent.click(screen.getByRole('button', { name: /自动批准/ }));
     expect(screen.getByRole('alertdialog')).toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: '取消' }));
     expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
 
-    await userEvent.click(screen.getByRole('button', { name: /仅规划/ }));
+    await userEvent.click(screen.getByRole('button', { name: /请求批准/ }));
     await userEvent.click(screen.getByRole('button', { name: /自动批准/ }));
     await userEvent.click(screen.getByRole('button', { name: '确认启用自动批准' }));
     expect(screen.getByRole('button', { name: /自动批准/ })).toHaveClass('mode-bypass');
   });
 
-  it('locks plan-only mode to the plan-first two-position planning strategy', async () => {
+  it('offers trusted plan auto-execution independently from tool approval', async () => {
     vi.mocked(getConversationStrategy).mockResolvedValueOnce({
       preferred_answer_mode: 'trusted',
       reasoning_effort: 'balanced',
       max_tool_calls: 8,
-      planning_strategy: 'adaptive',
       reflection_enabled: true,
       reflection_trigger: 'adaptive',
     });
     render(<App />);
 
-    await userEvent.click(screen.getByRole('button', { name: '当前模型：gpt-5' }));
-    await waitFor(() => expect(screen.getByRole('button', { name: '自适应' })).toHaveClass('active'));
-    await userEvent.click(screen.getByRole('button', { name: '当前模型：gpt-5' }));
-
-    await userEvent.click(screen.getByRole('button', { name: /请求批准/ }));
-    await userEvent.click(screen.getByRole('button', { name: /仅规划/ }));
-    await waitFor(() => expect(updateConversationStrategy).toHaveBeenLastCalledWith(expect.objectContaining({ planning_strategy: 'plan_first' })));
-
-    await userEvent.click(screen.getByRole('button', { name: '当前模型：gpt-5' }));
-    const adaptive = screen.getByRole('button', { name: '自适应' });
-    const planFirst = screen.getByRole('button', { name: '先规划' });
-    expect(planFirst).toHaveClass('active');
-    expect(adaptive).toBeDisabled();
-    expect(adaptive).toHaveAttribute('title', '当前处于仅规划模式，无法使用自适应规划策略。');
-    expect(planFirst).toBeDisabled();
-    expect(planFirst).not.toHaveAttribute('title');
-    expect(adaptive.closest('.segmented-control')).toHaveClass('segments-2');
-    expect(adaptive.closest('.segmented-control')?.querySelectorAll('button')).toHaveLength(2);
-
-    await userEvent.type(screen.getByRole('textbox'), '只生成计划');
+    const directExecution = await screen.findByRole('switch', { name: '计划生成后直接执行' });
+    expect(directExecution).toHaveAttribute('aria-checked', 'false');
+    await userEvent.click(directExecution);
+    expect(directExecution).toHaveAttribute('aria-checked', 'true');
+    await userEvent.type(screen.getByRole('textbox'), '生成并执行计划');
     await userEvent.click(screen.getByRole('button', { name: '发送' }));
     expect(vi.mocked(createRun)).toHaveBeenLastCalledWith(
-      '只生成计划',
+      '生成并执行计划',
       undefined,
       'trusted',
-      expect.objectContaining({ planning_strategy: 'plan_first', execution_mode: 'plan_only' }),
+      expect.objectContaining({ execution_mode: 'request_approval' }),
       expect.objectContaining({ provider: 'openai', name: 'gpt-5' }),
+      'auto',
     );
+    expect(confirmPlanExecution).not.toHaveBeenCalled();
+  });
+
+  it('renders the waiting DAG and confirms its bound plan version', async () => {
+    const completed = await vi.mocked(getRun)('fixture');
+    const waiting = {
+      ...completed,
+      id: 'run-plan',
+      task_id: 'task-plan',
+      answer_mode: 'trusted' as const,
+      status: 'waiting_user',
+      result: null,
+      pending_approval: null,
+      state_version: 3,
+      plan_graph: {
+        id: 'plan-7',
+        version: 7,
+        status: 'planned' as const,
+        nodes: [
+          { id: 'node-1', node_key: 'inspect', index: 1, title: '检查输入', intent: '确认范围', status: 'pending', depends_on: [] },
+          { id: 'node-2', node_key: 'execute', index: 2, title: '执行任务', intent: '完成目标', status: 'pending', depends_on: ['inspect'] },
+        ],
+      },
+      waiting_state: {
+        kind: 'plan_confirmation' as const,
+        continuation_token: 'plan-token',
+        plan_id: 'plan-7',
+        plan_version: 7,
+        state_version: 3,
+        request: '计划已生成，确认后执行。',
+      },
+      chat_messages: [{ id: 'user-plan', role: 'user' as const, content: '执行复杂任务', status: 'completed', metadata: {} }],
+    };
+    vi.mocked(createRun).mockResolvedValueOnce({ run_id: 'run-plan', task_id: 'task-plan', status: 'waiting_user', answer_mode: 'trusted' });
+    vi.mocked(getRun).mockReset();
+    vi.mocked(getRun).mockResolvedValueOnce(waiting).mockResolvedValue({
+      ...waiting,
+      status: 'executing',
+      waiting_state: null,
+      plan_graph: { ...waiting.plan_graph, status: 'active' },
+    });
+
+    render(<App />);
+    await userEvent.click(screen.getByRole('switch', { name: '快速响应' }));
+    await userEvent.type(screen.getByRole('textbox'), '执行复杂任务');
+    await userEvent.click(screen.getByRole('button', { name: '发送' }));
+
+    expect(await screen.findByText('计划已生成，等待执行确认')).toBeInTheDocument();
+    expect(screen.getByText('检查输入')).toBeInTheDocument();
+    expect(screen.getByText('执行任务')).toBeInTheDocument();
+    expect(screen.getByText('依赖：inspect')).toBeInTheDocument();
+    expect(screen.getByRole('textbox')).toBeDisabled();
+    await userEvent.click(screen.getByRole('button', { name: '执行计划' }));
+
+    expect(confirmPlanExecution).toHaveBeenCalledWith(
+      'run-plan',
+      {
+        continuationToken: 'plan-token',
+        planId: 'plan-7',
+        planVersion: 7,
+        stateVersion: 3,
+      },
+      undefined,
+    );
+    await waitFor(() => expect(screen.queryByText('计划已生成，等待执行确认')).not.toBeInTheDocument());
+    vi.mocked(getRun).mockResolvedValue(completed);
+  });
+
+  it('keeps the waiting plan visible when confirmation is rejected as stale', async () => {
+    const completed = await vi.mocked(getRun)('fixture');
+    const waiting = {
+      ...completed,
+      id: 'run-stale',
+      task_id: 'task-stale',
+      answer_mode: 'trusted' as const,
+      status: 'waiting_user',
+      result: null,
+      state_version: 2,
+      plan_graph: {
+        id: 'plan-stale',
+        version: 2,
+        status: 'planned' as const,
+        nodes: [{ id: 'node-stale', node_key: 'work', index: 1, title: '执行任务', intent: '完成目标', status: 'pending', depends_on: [] }],
+      },
+      waiting_state: {
+        kind: 'plan_confirmation' as const,
+        continuation_token: 'stale-token',
+        plan_id: 'plan-stale',
+        plan_version: 2,
+        state_version: 2,
+        request: '确认执行',
+      },
+    };
+    vi.mocked(createRun).mockResolvedValueOnce({ run_id: 'run-stale', task_id: 'task-stale', status: 'waiting_user', answer_mode: 'trusted' });
+    vi.mocked(getRun).mockReset();
+    vi.mocked(getRun).mockResolvedValue(waiting);
+    vi.mocked(confirmPlanExecution).mockRejectedValueOnce(new Error('stale'));
+
+    render(<App />);
+    await userEvent.click(screen.getByRole('switch', { name: '快速响应' }));
+    await userEvent.type(screen.getByRole('textbox'), '执行过期计划');
+    await userEvent.click(screen.getByRole('button', { name: '发送' }));
+    await userEvent.click(await screen.findByRole('button', { name: '执行计划' }));
+
+    expect(await screen.findByText('计划确认已失效，请刷新后核对最新计划。')).toBeInTheDocument();
+    expect(screen.getByText('计划已生成，等待执行确认')).toBeInTheDocument();
+    vi.mocked(confirmPlanExecution).mockResolvedValue({ run_id: 'run-1', task_id: 'task-1', status: 'executing' });
+    vi.mocked(getRun).mockResolvedValue(completed);
   });
 
   it('restores a pending approval above the composer and submits allow similar', async () => {
@@ -1379,7 +1470,6 @@ describe('App', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Close settings' }));
     await userEvent.click(screen.getByRole('button', { name: /Request approval/ }));
 
-    expect(screen.getByRole('button', { name: /Plan/ })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Auto approve/ })).toBeInTheDocument();
     expect(screen.queryByText('仅规划')).not.toBeInTheDocument();
     expect(screen.queryByText('自动批准')).not.toBeInTheDocument();
@@ -1388,7 +1478,7 @@ describe('App', () => {
   it('hides reflection trigger choices when reflection is disabled', async () => {
     render(<App />);
 
-    await userEvent.click(screen.getByRole('switch', { name: '可信模式' }));
+    await userEvent.click(screen.getByRole('switch', { name: '快速响应' }));
     await userEvent.click(screen.getByRole('button', { name: '当前模型：gpt-5' }));
     expect(screen.getByText('触发方式')).toBeInTheDocument();
     await userEvent.click(screen.getByRole('switch', { name: '反思循环' }));
@@ -1416,7 +1506,7 @@ describe('App', () => {
     await userEvent.click(document.body);
     expect(screen.queryByText('上传文件')).not.toBeInTheDocument();
 
-    await userEvent.click(screen.getByRole('switch', { name: '可信模式' }));
+    await userEvent.click(screen.getByRole('switch', { name: '快速响应' }));
     await userEvent.click(screen.getByRole('button', { name: '当前模型：gpt-5' }));
     expect(screen.getByText('可信对话策略')).toBeInTheDocument();
     await userEvent.keyboard('{Escape}');

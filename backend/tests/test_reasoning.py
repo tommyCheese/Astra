@@ -24,7 +24,7 @@ from app.schemas.agent import (
     ExecutionMode,
     ExpectedObservation,
     NodeResult,
-    PlanningStrategy,
+    PlanExecution,
     ReasoningEffort,
     ReasoningPolicySnapshot,
     ReflectionPatch,
@@ -40,16 +40,14 @@ from app.schemas.agent import (
 def test_policy_defaults_and_safety_floor():
     snapshot = PolicyCompiler().compile(RequestedReasoningPolicy())
     assert snapshot.effective.reasoning_effort == ReasoningEffort.balanced
-    assert snapshot.effective.planning_strategy == PlanningStrategy.adaptive
     high = PolicyCompiler().compile(
         RequestedReasoningPolicy(
-            reasoning_effort="fast", planning_strategy="adaptive", execution_mode="auto_approval"
+            reasoning_effort="fast", execution_mode="auto_approval"
         ),
         risk_level="high",
     )
-    assert high.effective.planning_strategy == PlanningStrategy.plan_first
     assert high.effective.execution_mode == ExecutionMode.request_approval
-    assert len(high.adjustments) == 3
+    assert len(high.adjustments) == 2
 
 
 def test_standard_profile_is_fixed_and_preserves_execution_approval():
@@ -58,7 +56,6 @@ def test_standard_profile_is_fixed_and_preserves_execution_approval():
         RequestedReasoningPolicy(
             reasoning_effort="deep",
             max_tool_calls=None,
-            planning_strategy="plan_first",
             reflection_enabled=True,
             execution_mode="auto_approval",
         ),
@@ -68,7 +65,7 @@ def test_standard_profile_is_fixed_and_preserves_execution_approval():
     assert profile.assurance_level.value == "basic"
     assert profile.contract_mode.value == "system_minimal"
     assert policy.reasoning_effort == ReasoningEffort.fast
-    assert policy.planning_strategy == PlanningStrategy.adaptive
+    assert profile.plan_execution is None
     assert policy.reflection_enabled is False
     assert policy.budgets.max_tool_calls is None
     assert policy.budgets.max_turns is None
@@ -76,13 +73,12 @@ def test_standard_profile_is_fixed_and_preserves_execution_approval():
     assert policy.verification_level.value == "basic"
 
 
-def test_trusted_profile_uses_requested_strategy_and_full_assurance():
+def test_trusted_profile_uses_complete_plan_and_full_assurance():
     profile = RunProfileResolver().resolve(
         AnswerMode.trusted,
         RequestedReasoningPolicy(
             reasoning_effort="deep",
             max_tool_calls=None,
-            planning_strategy="plan_first",
             reflection_enabled=False,
         ),
     )
@@ -91,23 +87,20 @@ def test_trusted_profile_uses_requested_strategy_and_full_assurance():
     assert profile.assurance_level.value == "full"
     assert profile.contract_mode.value == "model"
     assert policy.reasoning_effort == ReasoningEffort.deep
-    assert policy.planning_strategy == PlanningStrategy.plan_first
+    assert profile.plan_execution == PlanExecution.confirm
     assert policy.budgets.max_tool_calls is None
     assert policy.verification_level.value == "strict"
 
 
-def test_new_requested_policy_rejects_direct_but_legacy_snapshot_remains_readable():
+def test_removed_planning_fields_are_strictly_rejected():
     with pytest.raises(ValueError):
         RequestedReasoningPolicy(planning_strategy="direct")
-
+    with pytest.raises(ValueError):
+        RequestedReasoningPolicy(planning_strategy="adaptive")
     snapshot = PolicyCompiler().compile(RequestedReasoningPolicy()).model_dump(mode="json")
-    snapshot["requested"]["planning_strategy"] = "direct"
-    snapshot["effective"]["planning_strategy"] = "direct"
-
-    loaded = ReasoningPolicySnapshot.model_validate(snapshot)
-
-    assert loaded.requested.planning_strategy.value == "adaptive"
-    assert loaded.effective.planning_strategy == PlanningStrategy.direct
+    snapshot["requested"]["planning_strategy"] = "adaptive"
+    with pytest.raises(ValueError):
+        ReasoningPolicySnapshot.model_validate(snapshot)
 
 
 @pytest.mark.parametrize(
