@@ -44,6 +44,9 @@
 - [x] 5.6 Keep the Plan execution control hidden in quick mode and visually distinct from request/auto tool approval controls
 - [x] 5.7 Suppress fake Plan version and empty DAG audit rows for standard Runs while preserving real trusted node/dependency audit data
 - [x] 5.8 Update responsive and accessible states for the trusted control, Plan confirmation card, keyboard operation, loading, waiting, and cancellation
+- [x] 5.9 Move the trusted “计划生成后直接执行” control into the model/strategy menu, remove the flat Composer control, and cover trusted/quick visibility
+- [x] 5.10 Group trusted strategy controls by function and add separators between plan execution, reasoning resources, and reflection strategy
+- [x] 5.11 Replace the single trusted-strategy help button with contextual help buttons beside each corresponding control and focused help content
 
 ## 6. API, Documentation, and Dead-Code Removal
 

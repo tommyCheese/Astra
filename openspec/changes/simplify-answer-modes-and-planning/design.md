@@ -82,7 +82,7 @@ Trusted Run creation accepts a separate strict value, `plan_execution=auto | con
 - `auto`: create, validate, persist, and activate the complete DAG, then execute the first ready node.
 - `confirm`: create, validate, and persist the complete DAG without activating a node; persist a version-bound continuation request and enter `waiting_user`.
 
-The frontend exposes this as a trusted-only control labelled “计划生成后直接执行”. The default is `confirm`, so a new trusted workflow shows the generated Plan and requires an explicit “执行计划” action. Choosing “暂不执行” leaves the Run waiting and side-effect free; ordinary Run cancellation remains available.
+The frontend exposes this inside the trusted model/strategy menu as a trusted-only control labelled “计划生成后直接执行”; it is not laid out as a standalone control beside the Composer input. The default is `confirm`, so a new trusted workflow shows the generated Plan and requires an explicit “执行计划” action. Choosing “暂不执行” leaves the Run waiting and side-effect free; ordinary Run cancellation remains available.
 
 The confirmation submits the Run continuation token and expected Plan version through the shared continuation protocol. The backend activates only that exact Plan version and rejects stale, reused, or mismatched confirmation. This checkpoint does not approve any tool effect: subsequent tools still follow `request_approval` or `auto_approval`.
 
@@ -122,7 +122,7 @@ The composer continues to show the trusted toggle:
 - Off: “快速响应” — low latency, no plan graph, basic safeguards.
 - On: “可信执行” — plan first, execute the DAG, and fully verify.
 
-When trusted mode is on, the composer also exposes “计划生成后直接执行”. The trusted menu may still expose reasoning effort, tool budget, and reflection policy. It MUST NOT expose planning strategy. The approval menu contains only request approval and auto approval.
+When trusted mode is on, its model/strategy menu exposes “计划生成后直接执行” together with reasoning effort, tool budget, and reflection policy. The control is not displayed flat beside the Composer input. The trusted menu MUST NOT expose planning strategy. The approval menu contains only request approval and auto approval.
 
 Audit UI renders canonical Plan nodes and dependencies only when a trusted Run actually has them. Quick Runs do not show a fake Plan version or empty DAG placeholder.
 

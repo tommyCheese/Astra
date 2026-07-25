@@ -1227,22 +1227,23 @@ describe('App', () => {
 
     await userEvent.click(screen.getByRole('switch', { name: '快速响应' }));
     await userEvent.click(screen.getByRole('button', { name: '当前模型：gpt-5' }));
-    const helpButton = screen.getByRole('button', { name: '了解对话策略' });
-    expect(helpButton.querySelector('svg')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '了解对话策略' })).not.toBeInTheDocument();
+    for (const name of ['了解计划执行', '了解推理强度', '了解工具调用上限', '了解反思循环', '了解触发方式']) {
+      expect(screen.getByRole('button', { name })).toBeInTheDocument();
+    }
 
-    await userEvent.click(helpButton);
-    expect(screen.getByRole('dialog', { name: '策略说明' })).toBeInTheDocument();
-    expect(screen.queryByText('触发方式')).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: '了解推理强度' }));
+    expect(screen.getByRole('dialog', { name: '推理强度' })).toBeInTheDocument();
     expect(screen.getByText('允许 0–5 次工具调用，简单任务更快；启用反思时，提供轻量反思能力。')).toBeInTheDocument();
     expect(screen.getByText('允许 6–15 次工具调用，兼顾速度与检查深度；启用反思时，提供基本的反思能力。')).toBeInTheDocument();
     expect(screen.getByText('工具调用次数不限，为复杂任务提供充分执行空间；启用反思时，允许更深层的反思能力。')).toBeInTheDocument();
-    expect(screen.getByText('先展示完整计划，由你确认这个版本后开始执行。')).toBeInTheDocument();
-    expect(screen.getByText('完整计划生成并持久化后立即开始执行。')).toBeInTheDocument();
-    expect(screen.getByText('失败、低置信度、冲突或无进展时反思。')).toBeInTheDocument();
-    expect(screen.getByText('每轮结束都反思，更审慎但更慢、更耗用量。')).toBeInTheDocument();
+    expect(screen.queryByText('先展示完整计划，由你确认这个版本后开始执行。')).not.toBeInTheDocument();
 
     await userEvent.click(screen.getByRole('button', { name: '关闭策略说明' }));
-    expect(screen.queryByRole('dialog', { name: '策略说明' })).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: '当前模型：gpt-5' }));
+    await userEvent.click(screen.getByRole('button', { name: '了解工具调用上限' }));
+    expect(screen.getByRole('dialog', { name: '工具调用上限' })).toBeInTheDocument();
+    expect(screen.getByText('限制一次运行可发起的外部工具调用数量；失败与重试也会计入。')).toBeInTheDocument();
   });
 
   it('switches execution modes and confirms before enabling bypass', async () => {
@@ -1270,7 +1271,13 @@ describe('App', () => {
     });
     render(<App />);
 
-    const directExecution = await screen.findByRole('switch', { name: '计划生成后直接执行' });
+    expect(screen.queryByRole('switch', { name: '计划生成后直接执行' })).not.toBeInTheDocument();
+    await userEvent.click(await screen.findByRole('button', { name: '当前模型：gpt-5' }));
+    expect(screen.getByRole('region', { name: '计划执行' })).toBeInTheDocument();
+    expect(screen.getByRole('region', { name: '推理强度' })).toBeInTheDocument();
+    expect(screen.getByRole('region', { name: '反思循环' })).toBeInTheDocument();
+    expect(document.querySelectorAll('.trusted-strategy-section')).toHaveLength(3);
+    const directExecution = screen.getByRole('switch', { name: '计划生成后直接执行' });
     expect(directExecution).toHaveAttribute('aria-checked', 'false');
     await userEvent.click(directExecution);
     expect(directExecution).toHaveAttribute('aria-checked', 'true');
@@ -1285,6 +1292,13 @@ describe('App', () => {
       'auto',
     );
     expect(confirmPlanExecution).not.toHaveBeenCalled();
+  });
+
+  it('keeps plan auto-execution out of the quick-mode model menu', async () => {
+    render(<App />);
+
+    await userEvent.click(screen.getByRole('button', { name: '当前模型：gpt-5' }));
+    expect(screen.queryByRole('switch', { name: '计划生成后直接执行' })).not.toBeInTheDocument();
   });
 
   it('renders the waiting DAG and confirms its bound plan version', async () => {

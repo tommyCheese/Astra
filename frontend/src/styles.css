@@ -1534,39 +1534,6 @@ html[data-theme="dark"] .process-decision-children .process-step.status-running 
 .trusted-mode-toggle.active > i > b { box-shadow: 0 1px 4px rgba(15, 74, 57, .28), 0 0 0 1px rgba(255, 255, 255, .55); transform: translateX(12px); }
 .trusted-mode-toggle:hover { background: rgba(47, 143, 115, .12); }
 
-.plan-execution-toggle {
-  align-items: center;
-  background: rgba(37, 99, 235, .06);
-  border: 1px solid rgba(37, 99, 235, .18);
-  border-radius: 10px;
-  color: var(--text-muted);
-  display: inline-flex;
-  font-size: 11px;
-  font-weight: 650;
-  gap: 7px;
-  min-height: 32px;
-  padding: 5px 8px;
-}
-.plan-execution-toggle > i {
-  background: rgba(100, 116, 139, .24);
-  border-radius: 999px;
-  display: block;
-  height: 16px;
-  padding: 2px;
-  width: 28px;
-}
-.plan-execution-toggle > i > b {
-  background: #fff;
-  border-radius: 50%;
-  display: block;
-  height: 12px;
-  transition: transform 180ms ease;
-  width: 12px;
-}
-.plan-execution-toggle.active { color: #245fc0; }
-.plan-execution-toggle.active > i { background: #3974d6; }
-.plan-execution-toggle.active > i > b { transform: translateX(12px); }
-
 .plan-confirmation-card {
   background: color-mix(in srgb, var(--panel) 96%, #3974d6 4%);
   border: 1px solid rgba(57, 116, 214, .24);
@@ -1964,12 +1931,6 @@ html[data-theme="dark"] .process-decision-children .process-step.status-running 
   text-transform: uppercase;
 }
 
-.menu-heading-with-help {
-  align-items: center;
-  display: flex;
-  gap: 6px;
-}
-
 .floating-menu .strategy-help-button {
   align-items: center;
   border: 1px solid #cbd5df;
@@ -2002,11 +1963,23 @@ html[data-theme="dark"] .process-decision-children .process-step.status-running 
   color: #344054;
 }
 
+.menu-label-with-help,
+.menu-choice > .menu-label-with-help {
+  align-items: center;
+  display: inline-flex;
+  gap: 6px;
+  width: fit-content;
+}
+
 .usage-modal.strategy-guide-modal {
   max-height: min(720px, calc(100vh - 48px));
   max-width: 760px;
   overflow-y: auto;
   padding: 26px;
+}
+
+.usage-modal.strategy-guide-modal-focused {
+  max-width: 520px;
 }
 
 .strategy-guide-modal header {
@@ -2067,11 +2040,43 @@ html[data-theme="dark"] .process-decision-children .process-step.status-running 
   margin: 5px 4px;
 }
 
+.trusted-strategy-section + .trusted-strategy-section::before {
+  border-top: 1px solid #e3e8ef;
+  content: '';
+  display: block;
+  margin: 5px 4px 6px;
+}
+
 .menu-toggle {
   align-items: center;
   display: flex;
+  gap: 16px;
   justify-content: space-between;
   padding: 8px 10px;
+}
+
+.menu-toggle > div {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.menu-toggle strong {
+  color: #52606d;
+  font-size: 11px;
+}
+
+.menu-toggle small {
+  color: #7b8797;
+  font-size: 10px;
+  line-height: 1.35;
+}
+
+.plan-execution-menu-row {
+  background: rgba(37, 99, 235, .05);
+  border: 1px solid rgba(37, 99, 235, .14);
+  border-radius: 10px;
+  margin: 2px 6px 5px;
 }
 
 .menu-choice {

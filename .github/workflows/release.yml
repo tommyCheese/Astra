@@ -1,0 +1,203 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Semantic version, with or without a leading v
+        required: true
+        type: string
+      ref:
+        description: Commit or branch to release
+        required: false
+        default: main
+        type: string
+      prerelease:
+        description: Publish as a prerelease
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    name: Validate release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      version: ${{ steps.release.outputs.version }}
+      tag: ${{ steps.release.outputs.tag }}
+      prerelease: ${{ steps.release.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.ref || github.sha }}
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - id: release
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_VERSION: ${{ inputs.version }}
+          INPUT_PRERELEASE: ${{ inputs.prerelease }}
+        run: |
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            version="${INPUT_VERSION#v}"
+            prerelease="$INPUT_PRERELEASE"
+          else
+            version="${GITHUB_REF_NAME#v}"
+            case "$version" in
+              *-*) prerelease=true ;;
+              *) prerelease=false ;;
+            esac
+          fi
+          python scripts/release.py verify "$version"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=v$version" >> "$GITHUB_OUTPUT"
+          echo "prerelease=$prerelease" >> "$GITHUB_OUTPUT"
+      - name: Create tag for a manual release
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          TAG: ${{ steps.release.outputs.tag }}
+        run: |
+          if git rev-parse "$TAG" >/dev/null 2>&1; then
+            test "$(git rev-list -n 1 "$TAG")" = "$GITHUB_SHA" || {
+              echo "$TAG already points to a different commit" >&2
+              exit 1
+            }
+          else
+            git config user.name github-actions[bot]
+            git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+            git tag -a "$TAG" -m "Astra $TAG"
+            git push origin "$TAG"
+          fi
+
+  test:
+    name: Release tests
+    needs: prepare
+    uses: ./.github/workflows/ci.yml
+
+  images:
+    name: Publish ${{ matrix.image }}
+    needs:
+      - prepare
+      - test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: astra-backend
+            context: .
+            file: backend/Dockerfile
+          - image: astra-frontend
+            context: .
+            file: frontend/Dockerfile
+          - image: astra-data-viz
+            context: runtimes/data-viz
+            file: runtimes/data-viz/Dockerfile
+          - image: astra-web-tools
+            context: .
+            file: runtimes/web-tools/Dockerfile
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: image
+        env:
+          IMAGE_NAME: ${{ matrix.image }}
+        run: echo "name=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/$IMAGE_NAME" >> "$GITHUB_OUTPUT"
+      - id: metadata
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ steps.image.outputs.name }}
+          tags: |
+            type=raw,value=${{ needs.prepare.outputs.version }}
+            type=raw,value=latest,enable=${{ needs.prepare.outputs.prerelease == 'false' }}
+      - id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.file }}
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.metadata.outputs.tags }}
+          labels: ${{ steps.metadata.outputs.labels }}
+          cache-from: type=gha,scope=${{ matrix.image }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image }}
+      - uses: actions/attest-build-provenance@v2
+        with:
+          subject-name: ${{ steps.image.outputs.name }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true
+
+  release:
+    name: Publish GitHub Release
+    needs:
+      - prepare
+      - images
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.tag }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build release bundle
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: python scripts/release.py bundle "$VERSION" dist
+      - name: Generate source SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          path: .
+          format: spdx-json
+          output-file: dist/astra-${{ needs.prepare.outputs.version }}.spdx.json
+      - uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: |
+            dist/astra-v${{ needs.prepare.outputs.version }}.tar.gz
+            dist/SHA256SUMS
+            dist/astra-${{ needs.prepare.outputs.version }}.spdx.json
+      - name: Create draft and upload assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+          PRERELEASE: ${{ needs.prepare.outputs.prerelease }}
+        run: |
+          flags="--draft --generate-notes --verify-tag --title Astra\ $TAG"
+          if [ "$PRERELEASE" = "true" ]; then
+            flags="$flags --prerelease"
+          fi
+          gh release create "$TAG" dist/* $flags
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+        run: gh release edit "$TAG" --draft=false

@@ -1,0 +1,48 @@
+name: astra
+
+services:
+  backend:
+    image: ${ASTRA_REGISTRY:-ghcr.io/tommycheese}/${ASTRA_BACKEND_IMAGE:-astra-backend}:${ASTRA_VERSION:-latest}
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: sqlite+aiosqlite:///${ASTRA_DATA_DIR}/astra.db
+      MODEL_PROVIDER: ${MODEL_PROVIDER:-mock}
+      MODEL_NAME: ${MODEL_NAME:-mock-web-query}
+      MODEL_API_KEY: ${MODEL_API_KEY:-}
+      MODEL_BASE_URL: ${MODEL_BASE_URL:-https://api.openai.com/v1}
+      API_ALLOW_REMOTE: "true"
+      CORS_ORIGINS: http://127.0.0.1:${ASTRA_PORT:-8080},http://localhost:${ASTRA_PORT:-8080}
+      ARTIFACT_STORE_PATH: ${ASTRA_DATA_DIR}/artifacts
+      TASK_WORKSPACE_STORE_PATH: ${ASTRA_DATA_DIR}/workspaces
+      RUNTIME_PROFILE_PATH: ${ASTRA_DATA_DIR}/runtime-profile.json
+      SANDBOX_RUNTIME_IMAGE: ${ASTRA_REGISTRY:-ghcr.io/tommycheese}/${ASTRA_DATA_VIZ_IMAGE:-astra-data-viz}:${ASTRA_VERSION:-latest}
+      SANDBOX_WEB_RUNTIME_IMAGE: ${ASTRA_REGISTRY:-ghcr.io/tommycheese}/${ASTRA_WEB_TOOLS_IMAGE:-astra-web-tools}:${ASTRA_VERSION:-latest}
+      TOOL_BASH_EXECUTE_ENABLED: ${TOOL_BASH_EXECUTE_ENABLED:-false}
+      PERMISSION_BUNDLE_SIGNING_SECRET: ${PERMISSION_BUNDLE_SIGNING_SECRET:-}
+    volumes:
+      - type: bind
+        source: ${ASTRA_DATA_DIR}
+        target: ${ASTRA_DATA_DIR}
+      - type: bind
+        source: ${DOCKER_SOCKET:-/var/run/docker.sock}
+        target: /var/run/docker.sock
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=2)
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 20s
+
+  frontend:
+    image: ${ASTRA_REGISTRY:-ghcr.io/tommycheese}/${ASTRA_FRONTEND_IMAGE:-astra-frontend}:${ASTRA_VERSION:-latest}
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - 127.0.0.1:${ASTRA_PORT:-8080}:80
+
