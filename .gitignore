@@ -13,6 +13,7 @@ venv/
 backend/*.egg-info/
 backend/build/
 backend/*.db
+/*.db
 backend/runtime-profile.json
 backend/astra-workspaces/
 backend/astra-artifacts/

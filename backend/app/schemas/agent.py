@@ -518,25 +518,6 @@ class MemoryRecord(BaseModel):
     expires_at: datetime | None = None
 
 
-class AgentTurn(BaseModel):
-    id: str | None = None
-    run_id: str | None = None
-    turn_index: int
-    decision_type: str
-    reasoning_summary: str
-    selected_tool: str | None = None
-    decision: dict[str, Any] = Field(default_factory=dict)
-    observation: dict[str, Any] | None = None
-    reflection: dict[str, Any] | None = None
-    tool_call_id: str | None = None
-    artifact_id: str | None = None
-    memory_reads: list[dict[str, Any]] = Field(default_factory=list)
-    memory_writes: list[dict[str, Any]] = Field(default_factory=list)
-    status: str = "created"
-    created_at: datetime | None = None
-    updated_at: datetime | None = None
-
-
 class ValidationIssue(BaseModel):
     code: str
     message: str
@@ -721,48 +702,6 @@ def _validated_value(
         return model.model_validate(value)
     except (TypeError, ValueError):
         return default
-
-
-class CandidateSource(BaseModel):
-    url: str
-    title: str
-    snippet: str
-    provider: str = "mock"
-    rank: int | None = None
-    display_link: str | None = None
-    metadata: dict[str, Any] = Field(default_factory=dict)
-    retrieved_at: str
-
-
-class CrawlerPlan(BaseModel):
-    strategy: str = "trafilatura"
-    selectors: list[str] = Field(default_factory=list)
-    exclude_selectors: list[str] = Field(default_factory=list)
-    target: str = "main_content"
-
-
-class ExtractedSource(BaseModel):
-    url: str
-    status_code: int
-    title: str | None = None
-    description: str | None = None
-    content: str
-    metadata: dict[str, Any] = Field(default_factory=dict)
-    extraction_strategy: str
-    quality_score: float
-    content_length: int
-    source_type: str = "web_page"
-    warnings: list[str] = Field(default_factory=list)
-    retrieved_at: str
-
-
-class EvidencePack(BaseModel):
-    query: str
-    candidates: list[CandidateSource] = Field(default_factory=list)
-    fetched_sources: list[ExtractedSource] = Field(default_factory=list)
-    failed_sources: list[dict[str, Any]] = Field(default_factory=list)
-    dedupe: dict[str, Any] = Field(default_factory=dict)
-    warnings: list[str] = Field(default_factory=list)
 
 
 class StepView(BaseModel):

@@ -229,10 +229,6 @@ class ArtifactService:
             refs.append(artifact_ref(record))
         return refs
 
-    def prune(self, records: list, retention_days: int) -> int:
-        return prune_store(self.store, records, retention_days)
-
-
 def prune_store(store: LocalArtifactStore, records: list, retention_days: int) -> int:
     cutoff = datetime.now(timezone.utc) - timedelta(days=retention_days)
     removed = 0

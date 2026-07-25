@@ -113,12 +113,6 @@ export async function updateToolSettings(tools: ToolSetting[]): Promise<ToolSett
   return response.json();
 }
 
-export async function activatePlan(runId: string): Promise<{ task_id: string; run_id: string; status: string }> {
-  const response = await fetch(`/api/runs/${runId}/activate-plan`, { method: 'POST' });
-  if (!response.ok) throw await responseError(response);
-  return response.json();
-}
-
 export type TokenTotals = { input: number; cached_input: number; output: number; reasoning: number; total: number };
 export type UsageSummary = {
   scope: 'all' | 'task' | 'run';
@@ -216,16 +210,6 @@ export type PermissionCenterView = {
   policy_explanations?: Array<{ id: number; type: string; payload: Record<string, unknown>; created_at: string }>;
 };
 
-export type WorkspaceView = {
-  id: string;
-  task_id: string;
-  status: string;
-  quotas: Record<string, number>;
-  files: Array<{ id: string; path: string; status: string; mime_type?: string | null; size_bytes: number; deliverable_candidate: boolean; content_url?: string | null; deleted_at?: string | null }>;
-  changes: Array<{ id: string; run_id: string; path: string; kind: string; created_at: string }>;
-  checkpoints: Array<{ id: string; run_id: string; manifest_hash: string; file_count: number; created_at: string }>;
-};
-
 export type LibraryFile = {
   id: string;
   task_id: string;
@@ -249,12 +233,6 @@ export async function getPermissionCenter(runId: string): Promise<PermissionCent
 export async function revokePermissionGrant(grantId: string): Promise<void> {
   const response = await fetch(`/api/permission-grants/${grantId}`, { method: 'DELETE' });
   if (!response.ok) throw await responseError(response);
-}
-
-export async function getTaskWorkspace(taskId: string): Promise<WorkspaceView> {
-  const response = await fetch(`/api/tasks/${taskId}/workspace`);
-  if (!response.ok) throw await responseError(response);
-  return response.json();
 }
 
 export async function listLibraryFiles(): Promise<LibraryFile[]> {

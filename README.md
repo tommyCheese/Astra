@@ -135,15 +135,13 @@ CRAWLER_MIN_QUALITY_CHARS=240
 
 ### Agent loop 配置
 
-Agent loop 默认开启：
+Agent loop 默认使用通用 Runtime：
 
 ```text
-AGENT_USE_LOOP=true
 AGENT_MAX_TURNS=12
 AGENT_MAX_TOOL_CALLS=8
 AGENT_MEMORY_WRITE_ENABLED=true
 AGENT_USE_GENERAL_RUNTIME=true
-AGENT_REASONING_SHADOW_MODE=false
 ```
 
 ### 通用推理与反思内核

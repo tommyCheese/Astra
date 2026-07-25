@@ -35,8 +35,6 @@ class Settings(BaseSettings):
     agent_max_reflections: int = 6
     agent_max_replans: int = 4
     agent_memory_write_enabled: bool = True
-    agent_use_loop: bool = True
-    agent_reasoning_shadow_mode: bool = False
     agent_use_general_runtime: bool = True
     allow_network_read: bool = True
     cors_origins: str = "http://localhost:5173"
@@ -48,7 +46,6 @@ class Settings(BaseSettings):
     task_workspace_max_file_bytes: int = 100 * 1024 * 1024
     artifact_max_files: int = 16
     artifact_max_bytes: int = 20 * 1024 * 1024
-    artifact_retention_days: int = 30
     sandbox_enabled: bool = True
     sandbox_skip_availability_check: bool = False
     sandbox_provider: str = "docker"

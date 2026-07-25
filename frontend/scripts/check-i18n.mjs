@@ -5,7 +5,6 @@ const sourceFiles = [
   'src/App.tsx',
   'src/UsageDashboard.tsx',
   'src/SharedConversationPage.tsx',
-  'src/plugins/floating-ad/FloatingAd.tsx',
 ];
 const source = sourceFiles.map((file) => readFileSync(resolve(file), 'utf8')).join('\n');
 const dictionary = readFileSync(resolve('src/i18n.tsx'), 'utf8');

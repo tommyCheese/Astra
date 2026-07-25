@@ -894,9 +894,6 @@ class RunRepository:
         await self.session.commit()
         return artifact
 
-    async def get_artifact(self, artifact_id: str) -> ArtifactRecord | None:
-        return await self.session.get(ArtifactRecord, artifact_id)
-
     async def get_artifact_with_workspace(self, artifact_id: str):
         result = await self.session.execute(
             select(ArtifactRecord, TaskRecord.workspace_id)

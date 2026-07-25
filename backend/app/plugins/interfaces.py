@@ -87,13 +87,6 @@ class ApprovalPresenter(ABC):
     ) -> dict[str, Any] | None: ...
 
 
-class RuntimeBackend(ToolExecutor):
-    backend_id: str
-
-    @abstractmethod
-    async def available(self) -> bool: ...
-
-
 class HealthProbe(ABC):
     @abstractmethod
     async def check(self) -> HealthReport: ...

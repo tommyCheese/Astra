@@ -107,15 +107,6 @@ class PermissionDecision(BaseModel):
     decided_at: datetime | None = None
 
 
-class PermissionAuditEvent(BaseModel):
-    id: str | None = None
-    request: PermissionRequest
-    decision: PermissionDecision
-    reviewer_identity: PermissionSubject | None = None
-    occurred_at: datetime | None = None
-    metadata: dict[str, Any] = Field(default_factory=dict)
-
-
 class EffectKind(str, Enum):
     workspace_read = "workspace_read"
     workspace_write = "workspace_write"
@@ -172,98 +163,6 @@ class GrantProposal(BaseModel):
     invocation_constraints: dict[str, Any] = Field(default_factory=dict)
     expires_at: datetime | None = None
     max_uses: int | None = Field(default=None, ge=1)
-
-
-class WorkspaceChangeKind(str, Enum):
-    created = "created"
-    modified = "modified"
-    deleted = "deleted"
-
-
-class WorkspaceChange(BaseModel):
-    id: str | None = None
-    workspace_id: str
-    run_id: str
-    tool_call_id: str | None = None
-    checkpoint_id: str | None = None
-    relative_path: str
-    kind: WorkspaceChangeKind
-    before_checksum: str | None = None
-    after_checksum: str | None = None
-    mime_type: str | None = None
-    size_bytes: int | None = Field(default=None, ge=0)
-    security_status: str = "pending"
-    deliverable_candidate: bool = False
-    created_at: datetime | None = None
-
-
-class WorkspaceCheckpoint(BaseModel):
-    id: str | None = None
-    workspace_id: str
-    run_id: str
-    manifest: dict[str, Any] = Field(default_factory=dict)
-    manifest_hash: str
-    status: str = "valid"
-    created_at: datetime | None = None
-
-
-class AgentIdentity(BaseModel):
-    id: str | None = None
-    identity_type: str
-    principal: str
-    task_id: str | None = None
-    run_id: str | None = None
-    parent_identity_id: str | None = None
-    trust_level: str = "internal"
-    attributes: dict[str, Any] = Field(default_factory=dict)
-    created_at: datetime | None = None
-    revoked_at: datetime | None = None
-
-
-class DelegationRecord(BaseModel):
-    id: str | None = None
-    parent_identity_id: str
-    child_identity_id: str
-    delegated_scope: dict[str, Any] = Field(default_factory=dict)
-    created_at: datetime | None = None
-    expires_at: datetime | None = None
-    revoked_at: datetime | None = None
-
-
-class ToolCatalogSnapshot(BaseModel):
-    id: str | None = None
-    run_id: str
-    catalog: list[dict[str, Any]] = Field(default_factory=list)
-    digest: str
-    created_at: datetime | None = None
-
-
-class CredentialGrant(BaseModel):
-    id: str | None = None
-    task_id: str
-    run_id: str
-    agent_identity_id: str
-    service: str
-    tenant: str | None = None
-    scopes: list[str] = Field(default_factory=list)
-    resources: list[str] = Field(default_factory=list)
-    actions: list[str] = Field(default_factory=list)
-    expires_at: datetime
-    created_at: datetime | None = None
-    revoked_at: datetime | None = None
-    metadata: dict[str, Any] = Field(default_factory=dict)
-
-
-class DataFlowState(BaseModel):
-    id: str | None = None
-    run_id: str
-    trust_sources: list[str] = Field(default_factory=list)
-    data_labels: list[str] = Field(default_factory=list)
-    allowed_destinations: list[str] = Field(default_factory=list)
-    prohibited_destinations: list[str] = Field(default_factory=list)
-    retention: dict[str, Any] = Field(default_factory=dict)
-    state_version: int = Field(default=1, ge=1)
-    updated_at: datetime | None = None
 
 
 class PermissionBundle(BaseModel):
