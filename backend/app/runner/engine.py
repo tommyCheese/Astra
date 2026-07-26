@@ -4,6 +4,7 @@ import time
 from typing import Any
 
 import httpx
+from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.agent_profile import (
     AgentProfile,
@@ -17,13 +18,16 @@ from app.db.session import SessionLocal
 from app.repositories.plans import PlanRepository, plan_to_view
 from app.repositories.runs import RunRepository
 from app.runner.agent_loop import AgentLoop
+from app.runner.coordinator import RunCoordinator
 from app.runner.model_client import ModelConfigurationError, ModelOutputError, build_model_client
+from app.runner.node_worker import ReadOnlyAgentNodeExecutor
 from app.runner.planning import PlanService, canonical_agent_state
 from app.runner.reasoning import (
     build_default_contract,
     normalize_contract,
     validate_contract,
 )
+from app.runner.recovery import ExecutionRecovery
 from app.schemas.agent import (
     AnswerMode,
     ExpectedObservation,
@@ -131,7 +135,7 @@ class RunEngine:
             return
 
         if run.state_version and run.agent_state:
-            await self._execute_agent_loop(repo, run_id, goal)
+            await self._execute_trusted_runtime(repo, run_id, goal)
             return
 
         logger.info("run.phase run_id=%s phase=planning", run_id)
@@ -176,7 +180,7 @@ class RunEngine:
         await repo.session.commit()
         state = canonical_agent_state(contract, canonical_plan, policy_version=snapshot.version)
         if execution_profile.plan_execution == PlanExecution.confirm:
-            state = state.model_copy(update={"active_plan_id": None, "active_node_id": None})
+            state = state.model_copy(update={"active_plan_id": None, "active_executions": []})
         if not run.state_version:
             await repo.initialize_reasoning_state(
                 run_id,
@@ -218,6 +222,66 @@ class RunEngine:
             )
             return
 
+        await self._execute_trusted_runtime(repo, run_id, goal)
+
+    async def _execute_trusted_runtime(
+        self,
+        repo: RunRepository,
+        run_id: str,
+        goal: str,
+    ) -> None:
+        if self.settings.agent_parallel_execution_enabled:
+            executor = ReadOnlyAgentNodeExecutor(
+                self.settings,
+                model_client=self.model_client,
+                tool_registry=self.tool_registry,
+            )
+            session_factory = async_sessionmaker(
+                repo.session.bind,
+                expire_on_commit=False,
+            )
+            recovery = await ExecutionRecovery(
+                session_factory,
+                stale_seconds=self.settings.agent_execution_stale_seconds,
+            ).scan(run_id)
+            coordinator = RunCoordinator(
+                session_factory,
+                server_max_parallel_nodes=self.settings.agent_max_parallel_nodes,
+                parallel_execution_enabled=True,
+                heartbeat_seconds=self.settings.agent_execution_heartbeat_seconds,
+                provider_concurrency_limit=self.settings.agent_provider_concurrency_limit,
+                capability_concurrency_limit=self.settings.agent_capability_concurrency_limit,
+                parallel_safe_capabilities=executor.safe_capabilities,
+                attempt_timeout_seconds=self.settings.agent_node_attempt_timeout_seconds,
+                max_safe_retries=self.settings.agent_node_max_safe_retries,
+            )
+            started = time.monotonic()
+            result = await coordinator.run(run_id, executor)
+            elapsed_ms = int((time.monotonic() - started) * 1000)
+            parallel_run = await repo.require_run(run_id)
+            resource_conflict_count = sum(
+                execution.wait_reason == "resource_conflict"
+                for execution in parallel_run.node_executions
+            )
+            await repo.add_event(
+                run_id,
+                "plan.parallel_execution.completed",
+                {
+                    "requested_concurrency": self.settings.agent_max_parallel_nodes,
+                    "achieved_concurrency": result.peak_concurrency,
+                    "completed_execution_count": len(result.completed_execution_ids),
+                    "failed_execution_count": len(result.failed_execution_ids),
+                    "recovered_execution_count": (
+                        len(recovery.resumable_execution_ids)
+                        + len(recovery.replayable_execution_ids)
+                        + len(recovery.unknown_execution_ids)
+                    ),
+                    "elapsed_ms": elapsed_ms,
+                    "queue_wait_ms": 0,
+                    "resource_conflict_count": resource_conflict_count,
+                },
+            )
+            await repo.session.commit()
         await self._execute_agent_loop(repo, run_id, goal)
 
     def _bind_reasoning_effort(self, run: RunRecord) -> None:

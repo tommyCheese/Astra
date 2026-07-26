@@ -11,10 +11,13 @@ from app.db.models import (
     ApprovalGrantRecord,
     ApprovalRequestRecord,
     ArtifactRecord,
+    BudgetReservationRecord,
     MemoryRecord,
     ModelInvocationRecord,
+    NodeExecutionRecord,
     PlanNodeRecord,
     PlanRecord,
+    ResourceLeaseRecord,
     RunEventRecord,
     RunRecord,
     SandboxJobRecord,
@@ -280,7 +283,7 @@ class RunRepository:
         state = AgentState.model_validate(run.agent_state)
         state.active_plan_id = plan.id
         state.active_plan_version = plan.version
-        state.active_node_id = None
+        state.active_executions = []
         state.version = expected_state_version + 1
         run.agent_state = state.model_dump(mode="json")
         run.state_version = state.version
@@ -415,7 +418,7 @@ class RunRepository:
         previous_plan.status = "superseded"
         state.active_plan_id = None
         state.active_plan_version = revised_plan.version
-        state.active_node_id = None
+        state.active_executions = []
         state.version = run.state_version + 1
         graph = plan_to_view(revised_plan)
         waiting_state = {
@@ -472,6 +475,12 @@ class RunRepository:
                 selectinload(RunRecord.sandbox_jobs),
                 selectinload(RunRecord.approval_requests),
                 selectinload(RunRecord.approval_grants),
+                selectinload(RunRecord.node_executions).selectinload(
+                    NodeExecutionRecord.resource_leases
+                ),
+                selectinload(RunRecord.node_executions).selectinload(
+                    NodeExecutionRecord.budget_reservations
+                ),
                 selectinload(RunRecord.plans).selectinload(PlanRecord.nodes),
                 selectinload(RunRecord.plans).selectinload(PlanRecord.edges),
             )
@@ -498,6 +507,12 @@ class RunRepository:
                 selectinload(RunRecord.sandbox_jobs),
                 selectinload(RunRecord.approval_requests),
                 selectinload(RunRecord.approval_grants),
+                selectinload(RunRecord.node_executions).selectinload(
+                    NodeExecutionRecord.resource_leases
+                ),
+                selectinload(RunRecord.node_executions).selectinload(
+                    NodeExecutionRecord.budget_reservations
+                ),
                 selectinload(RunRecord.plans).selectinload(PlanRecord.nodes),
                 selectinload(RunRecord.plans).selectinload(PlanRecord.edges),
             )
@@ -557,6 +572,11 @@ class RunRepository:
             "reason": "用户主动终止当前运行。",
             "partial_answer": bool(partial_answer),
         }
+        cancelled_executions = [
+            execution
+            for execution in run.node_executions
+            if execution.status in {"active", "waiting"}
+        ]
 
         await self.session.execute(
             update(StepRecord)
@@ -614,6 +634,41 @@ class RunRepository:
             )
             .values(status="interrupted", completed_at=now, error_type="CancelledError")
         )
+        await self.session.execute(
+            update(NodeExecutionRecord)
+            .where(
+                NodeExecutionRecord.run_id == run_id,
+                NodeExecutionRecord.status.in_(["active", "waiting"]),
+            )
+            .values(
+                status="cancelled",
+                phase="cancelled",
+                current_slot=None,
+                slot_index=None,
+                wait_reason=None,
+                failure={"category": "user_cancelled"},
+                finished_at=now,
+                heartbeat_at=now,
+                updated_at=now,
+                state_version=NodeExecutionRecord.state_version + 1,
+            )
+        )
+        await self.session.execute(
+            update(ResourceLeaseRecord)
+            .where(
+                ResourceLeaseRecord.run_id == run_id,
+                ResourceLeaseRecord.released_at.is_(None),
+            )
+            .values(released_at=now, release_reason="user_cancelled")
+        )
+        await self.session.execute(
+            update(BudgetReservationRecord)
+            .where(
+                BudgetReservationRecord.run_id == run_id,
+                BudgetReservationRecord.status == "reserved",
+            )
+            .values(status="cancelled", settled_at=now)
+        )
 
         run.status = "cancelled"
         run.summary = summary
@@ -629,8 +684,37 @@ class RunRepository:
         }
         run.terminal_reason = terminal_reason
         run.waiting_state = None
+        agent_state = dict(run.agent_state or {})
+        agent_state["active_executions"] = []
+        agent_state.pop("active_node_id", None)
+        agent_state["version"] = int(
+            agent_state.get("version", run.state_version or 0)
+        ) + 1
+        run.agent_state = agent_state
+        run.state_version = agent_state["version"]
         run.completed_at = now
         run.updated_at = now
+        for execution in cancelled_executions:
+            await self.add_event(
+                run_id,
+                "plan.node.execution_cancelled",
+                {
+                    "node_execution_id": execution.id,
+                    "plan_id": execution.plan_id,
+                    "plan_version": execution.plan_version,
+                    "plan_node_id": execution.plan_node_id,
+                    "attempt": execution.attempt,
+                    "dispatch_batch_id": execution.dispatch_batch_id,
+                    "slot_index": None,
+                    "phase": "cancelled",
+                    "status": "cancelled",
+                    "state_version": execution.state_version + 1,
+                    "wait_reason": None,
+                    "started_at": execution.started_at.isoformat(),
+                    "heartbeat_at": now.isoformat(),
+                    "finished_at": now.isoformat(),
+                },
+            )
         await self.add_event(run_id, "run.cancelled", terminal_reason)
         await self.session.commit()
         return await self.require_run(run_id)
@@ -699,12 +783,14 @@ class RunRepository:
         side_effect_level: str,
         *,
         plan_node_id: str | None = None,
+        node_execution_id: str | None = None,
         status: str = "running",
     ) -> ToolCallRecord:
         call = ToolCallRecord(
             run_id=run_id,
             step_id=step_id,
             plan_node_id=plan_node_id,
+            node_execution_id=node_execution_id,
             tool_name=tool_name,
             tool_version=tool_version,
             input=tool_input,
@@ -722,6 +808,7 @@ class RunRepository:
                 "tool_call_id": call.id,
                 "step_id": step_id,
                 "plan_node_id": plan_node_id,
+                "node_execution_id": node_execution_id,
                 "tool_name": tool_name,
                 "status": status,
             },
@@ -761,11 +848,17 @@ class RunRepository:
         analyzer_version: str | None = None,
         analyzer_digest: str | None = None,
         reviewer_identity: dict[str, Any] | None = None,
+        node_execution_id: str | None = None,
+        execution_attempt: int | None = None,
+        expected_execution_state_version: int | None = None,
     ) -> ApprovalRequestRecord:
         request = ApprovalRequestRecord(
             run_id=run_id,
             turn_id=turn_id,
             tool_call_id=tool_call_id,
+            node_execution_id=node_execution_id,
+            execution_attempt=execution_attempt,
+            expected_execution_state_version=expected_execution_state_version,
             tool_name=tool_name,
             tool_version=tool_version,
             frozen_input=deepcopy(frozen_input),
@@ -789,6 +882,9 @@ class RunRepository:
             {
                 "approval_id": request.id,
                 "tool_call_id": tool_call_id,
+                "node_execution_id": node_execution_id,
+                "execution_attempt": execution_attempt,
+                "expected_execution_state_version": expected_execution_state_version,
                 "tool_name": tool_name,
                 "preview": preview,
                 "permission": permission,
@@ -831,6 +927,18 @@ class RunRepository:
         request = await self.session.get(ApprovalRequestRecord, approval_id)
         if request is None or request.run_id != run_id or request.status != "pending":
             raise ValueError("Approval has already been decided")
+        if request.node_execution_id:
+            execution = await self.session.get(
+                NodeExecutionRecord,
+                request.node_execution_id,
+            )
+            if (
+                execution is None
+                or execution.attempt != request.execution_attempt
+                or execution.state_version != request.expected_execution_state_version
+                or execution.current_slot != "current"
+            ):
+                raise ValueError("Approval is bound to a stale NodeExecution attempt")
         if decision in {"allow_similar", "allow_task"} and request.similar_matcher is None:
             raise ValueError("Similar approval is not available")
         if reviewer_identity and reviewer_identity.get("identity_type") in {
@@ -1217,11 +1325,13 @@ class RunRepository:
         phase: str = "created",
         idempotency_key: str | None = None,
         plan_node_id: str | None = None,
+        node_execution_id: str | None = None,
     ) -> AgentTurnRecord:
         now = utc_now()
         turn = AgentTurnRecord(
             run_id=run_id,
             plan_node_id=plan_node_id,
+            node_execution_id=node_execution_id,
             turn_index=turn_index,
             decision_type=decision_type,
             reasoning_summary=reasoning_summary,
@@ -1245,6 +1355,7 @@ class RunRepository:
             {
                 "turn_id": turn.id,
                 "turn_index": turn.turn_index,
+                "node_execution_id": node_execution_id,
                 "decision_type": decision_type,
                 "selected_tool": selected_tool,
                 "reasoning_summary": reasoning_summary,
@@ -1474,6 +1585,21 @@ def run_to_view(run: RunRecord) -> dict[str, Any]:
     pending = next(
         (item for item in reversed(run.approval_requests) if item.status == "pending"), None
     )
+    execution_payloads = [
+        _node_execution_payload(execution) for execution in run.node_executions
+    ]
+    parallelism = _parallelism_summary(run)
+    plan_payload = plan_view.model_dump(mode="json") if plan_view else run.plan_graph or {}
+    if trusted and plan_view:
+        plan_payload = {
+            **plan_payload,
+            "active_executions": [
+                item
+                for item in execution_payloads
+                if item["status"] in {"active", "waiting"}
+            ],
+            "parallelism": parallelism,
+        }
     return {
         "id": run.id,
         "task_id": run.task_id,
@@ -1503,6 +1629,7 @@ def run_to_view(run: RunRecord) -> dict[str, Any]:
                 "id": call.id,
                 "step_id": call.step_id,
                 "plan_node_id": call.plan_node_id,
+                "node_execution_id": call.node_execution_id,
                 "tool_name": call.tool_name,
                 "tool_version": call.tool_version,
                 "input": call.input,
@@ -1574,6 +1701,7 @@ def run_to_view(run: RunRecord) -> dict[str, Any]:
                 "id": turn.id,
                 "run_id": turn.run_id,
                 "plan_node_id": turn.plan_node_id,
+                "node_execution_id": turn.node_execution_id,
                 "turn_index": turn.turn_index,
                 "decision_type": turn.decision_type,
                 "reasoning_summary": turn.reasoning_summary,
@@ -1618,11 +1746,7 @@ def run_to_view(run: RunRecord) -> dict[str, Any]:
         "chat_messages": build_chat_messages(run),
         "reasoning_policy": run.reasoning_policy or {},
         "task_contract": run.task_contract or {},
-        "plan_graph": (
-            plan_view.model_dump(mode="json") if plan_view else run.plan_graph or {}
-        )
-        if trusted
-        else {},
+        "plan_graph": plan_payload if trusted else {},
         "plan_versions": [
             plan_to_summary(plan).model_dump(mode="json")
             for plan in sorted(getattr(run, "plans", []), key=lambda item: item.version)
@@ -1636,6 +1760,9 @@ def run_to_view(run: RunRecord) -> dict[str, Any]:
         "pending_approval": {
             "id": pending.id,
             "tool_call_id": pending.tool_call_id,
+            "node_execution_id": pending.node_execution_id,
+            "execution_attempt": pending.execution_attempt,
+            "expected_execution_state_version": pending.expected_execution_state_version,
             "tool_name": pending.tool_name,
             "preview": pending.preview,
             "permission": pending.permission,
@@ -1674,6 +1801,8 @@ def run_to_view(run: RunRecord) -> dict[str, Any]:
         }
         if pending
         else None,
+        "node_executions": execution_payloads,
+        "parallelism": parallelism,
         "task_adapter": run.task_adapter or "web",
         "agent_profile": safe_agent_profile_manifest(run.agent_profile_snapshot or {}),
     }
@@ -1694,6 +1823,71 @@ def _approval_risk_reason(effect_plan: dict[str, Any]) -> str | None:
         return None
     labels = ", ".join(str(effect.get("kind", "unknown")) for effect in risky)
     return f"该操作包含持久化或不可逆影响：{labels}"
+
+
+def _node_execution_payload(execution: NodeExecutionRecord) -> dict[str, Any]:
+    return {
+        "execution_id": execution.id,
+        "run_id": execution.run_id,
+        "plan_id": execution.plan_id,
+        "plan_node_id": execution.plan_node_id,
+        "plan_version": execution.plan_version,
+        "attempt": execution.attempt,
+        "dispatch_batch_id": execution.dispatch_batch_id,
+        "slot_index": execution.slot_index,
+        "worker_id": execution.worker_id,
+        "phase": execution.phase,
+        "status": execution.status,
+        "state_version": execution.state_version,
+        "checkpoint": execution.checkpoint,
+        "wait_reason": execution.wait_reason,
+        "started_at": execution.started_at,
+        "heartbeat_at": execution.heartbeat_at,
+        "finished_at": execution.finished_at,
+        "resource_leases": [
+            {
+                "id": lease.id,
+                "node_execution_id": lease.node_execution_id,
+                "resource_summary": lease.resource_summary,
+                "mode": lease.mode,
+                "fencing_token": lease.fencing_token,
+                "acquired_at": lease.acquired_at,
+                "expires_at": lease.expires_at,
+                "released_at": lease.released_at,
+                "release_reason": lease.release_reason,
+            }
+            for lease in execution.resource_leases
+        ],
+        "budget_reservations": [
+            {
+                "id": reservation.id,
+                "node_execution_id": reservation.node_execution_id,
+                "budget_kind": reservation.budget_kind,
+                "reserved": reservation.reserved,
+                "consumed": reservation.consumed,
+                "status": reservation.status,
+                "created_at": reservation.created_at,
+                "settled_at": reservation.settled_at,
+            }
+            for reservation in execution.budget_reservations
+        ],
+    }
+
+
+def _parallelism_summary(run: RunRecord) -> dict[str, int]:
+    executions = list(getattr(run, "node_executions", []))
+    active = [item for item in executions if item.status == "active"]
+    waiting = [item for item in executions if item.status == "waiting"]
+    budgets = ((run.reasoning_policy or {}).get("effective") or {}).get("budgets") or {}
+    total = max(1, int(budgets.get("max_parallel_nodes", 3)))
+    used = sum(item.slot_index is not None for item in [*active, *waiting])
+    return {
+        "requested_slots": total,
+        "total_slots": total,
+        "used_slots": min(used, total),
+        "active_count": len(active),
+        "waiting_count": len(waiting),
+    }
 
 
 def safe_agent_profile_manifest(snapshot: dict[str, Any]) -> dict[str, Any]:

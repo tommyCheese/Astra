@@ -12,7 +12,7 @@ Standard（快速响应）运行不创建占位 Plan、节点或边；以下协�
 
 ## 快照与版本 API
 
-`GET /api/runs/{run_id}` 的 `plan_graph` 是当前规范快照，`plan_versions` 是轻量版本索引。快照 schema version 为 `1`，包含稳定节点 ID、显式边、依赖类型、版本 lineage、时间戳、预期结果、证据与安全故障信息。`nodes[].depends_on` 只作为兼容投影保留，规范拓扑来源是 `edges`。
+`GET /api/runs/{run_id}` 的 `plan_graph` 是当前规范快照，`plan_versions` 是轻量版本索引。当前快照 schema version 为 `2`（读取端仍能迁移 version 1），包含稳定节点 ID、显式边、依赖类型、版本 lineage、时间戳、预期结果、证据、安全故障信息、活动 NodeExecution 与并发槽摘要。`nodes[].depends_on` 只作为兼容投影保留，规范拓扑来源是 `edges`。
 
 | API | 用途 |
 |---|---|
@@ -30,11 +30,28 @@ Standard（快速响应）运行不创建占位 Plan、节点或边；以下协�
 - `plan.version.created`
 - `plan.version.activated`
 - `plan.node.updated`
+- `plan.nodes.claimed`
+- `plan.node.execution_started`
+- `plan.node.waiting_resource`
+- `plan.node.waiting_approval`
+- `plan.node.execution_result_recorded`
+- `plan.node.execution_completed`
+- `plan.node.execution_failed`
+- `plan.node.execution_cancelled`
+- `plan.parallelism.changed`
 - `plan.revision.started`
 - `plan.revision.completed`
 - `plan.revision.rejected`
 
-客户端只把节点增量应用到同一 Plan 版本；版本缺口、未知节点或不一致 payload 会触发权威快照刷新。事件不包含用户修订原文、模型隐藏推理、凭据、原始敏感工具输入或宿主机路径。
+每个 execution 事件携带 Plan version、PlanNode、attempt、dispatch batch 与 execution ID。客户端只把节点增量应用到同一 Plan 版本和当前 attempt，并在一个动画帧内合并可见更新；版本缺口、未知节点或不一致 payload 会触发权威快照刷新。事件不包含用户修订原文、模型隐藏推理、凭据、原始敏感工具输入或宿主机路径。
+
+## 并行执行与恢复
+
+Coordinator 按依赖层级、节点 index 和稳定 ID 确定性认领 ready 节点。默认上限为 3；Run 策略、服务端硬上限、provider/capability 配额和预算共同决定实际槽位。Worker 只执行一个 NodeExecution attempt，使用不可变节点上下文与独立数据库 session，结果由 Coordinator 通过 Plan version、attempt 和状态版本校验后合并。
+
+只读租约可共享；同一或祖先/子路径写冲突、未知资源与非幂等外部写会串行化。对外快照只返回哈希化资源类别摘要。分支失败仅阻断必要后继；等待审批释放普通槽位；取消会终止全部活动 execution、释放租约并结算预留。
+
+进程恢复依赖持久化 heartbeat、checkpoint、结果、租约和预算，而非原协程。已记录结果的 attempt 从 committing 阶段重放提交；安全幂等 attempt 可继续；非幂等未知结果进入 `result_unknown`。将 `AGENT_PARALLEL_EXECUTION_ENABLED=false` 可把新调度降到单槽，作为无需迁移数据的回滚方式。
 
 ## 执行前调整计划
 

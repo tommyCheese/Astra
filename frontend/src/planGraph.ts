@@ -1,6 +1,6 @@
 import dagre from '@dagrejs/dagre';
 import type { RunStreamEvent } from './api';
-import type { PlanGraphDiff, PlanGraphEdge, PlanGraphNode, PlanGraphSnapshot, PlanNodeStatus, PlanVersionSummary, RunView } from './types';
+import type { NodeExecution, PlanGraphDiff, PlanGraphEdge, PlanGraphNode, PlanGraphSnapshot, PlanNodeStatus, PlanVersionSummary, RunView } from './types';
 
 export type PlanGraphStreamState = {
   current: PlanGraphSnapshot | null;
@@ -61,7 +61,7 @@ export function reducePlanGraphEvent(
     : state.seenEventIds;
   if (event.type === 'plan.graph.snapshot') {
     const graph = event.payload.graph as PlanGraphSnapshot | undefined;
-    if (!graph?.id || graph.schema_version !== 1) {
+    if (!graph?.id || ![1, 2].includes(graph.schema_version)) {
       return { ...state, seenEventIds, needsRefresh: true };
     }
     if (state.current && graph.version < state.current.version) {
@@ -92,6 +92,126 @@ export function reducePlanGraphEvent(
     } : node);
     return { ...state, current: { ...state.current, nodes }, seenEventIds };
   }
+  if (event.type === 'plan.nodes.dispatched' || event.type === 'plan.nodes.claimed') {
+    return {
+      ...state,
+      seenEventIds,
+      needsRefresh: true,
+    };
+  }
+  if (
+    event.type.startsWith('plan.node.execution_')
+    || event.type === 'plan.node.waiting_resource'
+    || event.type === 'plan.node.waiting_approval'
+    || event.type === 'plan.node.result_unknown'
+  ) {
+    const version = Number(event.payload.plan_version);
+    if (!state.current || version !== state.current.version) {
+      return {
+        ...state,
+        seenEventIds,
+        needsRefresh: version > (state.current?.version ?? 0),
+      };
+    }
+    const executionId = String(event.payload.node_execution_id ?? '');
+    const nodeId = String(event.payload.plan_node_id ?? '');
+    const attempt = Number(event.payload.attempt ?? 0);
+    if (!executionId || !nodeId || attempt < 1) {
+      return { ...state, seenEventIds, needsRefresh: true };
+    }
+    const existing = (state.current.active_executions ?? []).find(
+      (item) => item.plan_node_id === nodeId,
+    );
+    if (existing && existing.attempt > attempt) return { ...state, seenEventIds };
+    const incoming: NodeExecution = {
+      execution_id: executionId,
+      plan_id: String(event.payload.plan_id ?? state.current.id),
+      plan_node_id: nodeId,
+      plan_version: version,
+      attempt,
+      dispatch_batch_id: event.payload.dispatch_batch_id
+        ? String(event.payload.dispatch_batch_id)
+        : null,
+      slot_index: typeof event.payload.slot_index === 'number'
+        ? event.payload.slot_index
+        : null,
+      phase: String(event.payload.phase ?? 'running') as NodeExecution['phase'],
+      status: String(event.payload.status ?? 'active') as NodeExecution['status'],
+      state_version: Number(event.payload.state_version ?? 1),
+      wait_reason: event.payload.wait_reason ? String(event.payload.wait_reason) : null,
+      started_at: event.payload.started_at ? String(event.payload.started_at) : null,
+      heartbeat_at: event.payload.heartbeat_at ? String(event.payload.heartbeat_at) : null,
+      finished_at: event.payload.finished_at ? String(event.payload.finished_at) : null,
+    };
+    const isTerminal = ['completed', 'failed', 'cancelled', 'blocked'].includes(incoming.status);
+    const activeExecutions = isTerminal
+      ? (state.current.active_executions ?? []).filter(
+        (item) => item.execution_id !== executionId,
+      )
+      : [
+        ...(state.current.active_executions ?? []).filter(
+          (item) => item.plan_node_id !== nodeId,
+        ),
+        incoming,
+      ];
+    const nodeStatus: PlanGraphNode['status'] = incoming.status === 'completed'
+      ? 'completed'
+      : incoming.status === 'failed'
+        ? 'failed'
+        : incoming.status === 'cancelled' || incoming.status === 'blocked'
+          ? 'blocked'
+          : 'running';
+    const nodes = state.current.nodes.map((node) => node.id === nodeId
+      ? { ...node, status: nodeStatus }
+      : node);
+    const totalSlots = state.current.parallelism?.total_slots ?? 1;
+    const usedSlots = activeExecutions.filter((item) => item.slot_index != null).length;
+    const parallelism = {
+      requested_slots: state.current.parallelism?.requested_slots ?? totalSlots,
+      total_slots: totalSlots,
+      used_slots: usedSlots,
+      active_count: activeExecutions.filter((item) => item.status === 'active').length,
+      waiting_count: activeExecutions.filter((item) => item.status === 'waiting').length,
+    };
+    return {
+      ...state,
+      current: { ...state.current, nodes, active_executions: activeExecutions, parallelism },
+      seenEventIds,
+    };
+  }
+  if (event.type === 'plan.parallelism.changed') {
+    const version = Number(event.payload.plan_version);
+    if (!state.current || version !== state.current.version) {
+      return {
+        ...state,
+        seenEventIds,
+        needsRefresh: version > (state.current?.version ?? 0),
+      };
+    }
+    return {
+      ...state,
+      current: {
+        ...state.current,
+        parallelism: {
+          requested_slots: Number(
+            event.payload.requested_slots
+            ?? state.current.parallelism?.requested_slots
+            ?? event.payload.total_slots
+            ?? 1,
+          ),
+          total_slots: Number(event.payload.total_slots ?? 1),
+          used_slots: Number(event.payload.used_slots ?? 0),
+          active_count: Number(event.payload.active_count ?? 0),
+          waiting_count: Number(
+            event.payload.waiting_count
+            ?? state.current.parallelism?.waiting_count
+            ?? 0,
+          ),
+        },
+      },
+      seenEventIds,
+    };
+  }
   if (event.type === 'plan.version.created' || event.type === 'plan.version.activated') {
     const version = Number(event.payload.plan_version);
     return {
@@ -113,12 +233,22 @@ export function derivedNodeStatuses(graph: PlanGraphSnapshot): Map<string, PlanN
     ]);
   }
   const statuses = new Map<string, PlanNodeStatus>();
+  const executions = new Map(
+    (graph.active_executions ?? []).map((execution) => [
+      execution.plan_node_id,
+      execution,
+    ]),
+  );
   const visiting = new Set<string>();
   const resolve = (nodeId: string): PlanNodeStatus => {
     const cached = statuses.get(nodeId);
     if (cached) return cached;
     const node = byId.get(nodeId);
     if (!node) return 'pending';
+    if (executions.has(nodeId)) {
+      statuses.set(nodeId, 'running');
+      return 'running';
+    }
     if (node.status !== 'pending') {
       statuses.set(nodeId, node.status);
       return node.status;
@@ -153,8 +283,11 @@ export function unmetDependencies(graph: PlanGraphSnapshot, nodeId: string): Pla
 }
 
 export function activePath(graph: PlanGraphSnapshot): Set<string> {
-  const active = graph.nodes.find((node) => node.status === 'running');
-  if (!active) return new Set();
+  const activeIds = new Set([
+    ...graph.nodes.filter((node) => node.status === 'running').map((node) => node.id),
+    ...(graph.active_executions ?? []).map((execution) => execution.plan_node_id),
+  ]);
+  if (!activeIds.size) return new Set();
   const predecessors = new Map<string, string[]>();
   for (const edge of graph.edges) {
     predecessors.set(edge.successor_node_id, [
@@ -162,7 +295,7 @@ export function activePath(graph: PlanGraphSnapshot): Set<string> {
       edge.predecessor_node_id,
     ]);
   }
-  const path = new Set([active.id]);
+  const path = new Set(activeIds);
   const visit = (id: string) => {
     for (const predecessor of predecessors.get(id) ?? []) {
       if (!path.has(predecessor)) {
@@ -171,7 +304,7 @@ export function activePath(graph: PlanGraphSnapshot): Set<string> {
       }
     }
   };
-  visit(active.id);
+  for (const activeId of activeIds) visit(activeId);
   return path;
 }
 

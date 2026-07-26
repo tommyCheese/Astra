@@ -30,7 +30,7 @@ export function normalizeRunView(run: RunView): RunView {
     ? run.plan_graph
     : null;
   const planGraph: PlanGraphSnapshot | Record<string, never> = rawGraph ? {
-    schema_version: 1,
+    schema_version: 'schema_version' in rawGraph && rawGraph.schema_version === 2 ? 2 : 1,
     id: rawGraph.id,
     run_id: rawGraph.run_id ?? run.id,
     version: rawGraph.version ?? 1,
@@ -50,6 +50,10 @@ export function normalizeRunView(run: RunView): RunView {
       evidence_refs: 'evidence_refs' in node && Array.isArray(node.evidence_refs) ? node.evidence_refs : [],
     })),
     edges: rawGraph.edges ?? [],
+    active_executions: 'active_executions' in rawGraph && Array.isArray(rawGraph.active_executions)
+      ? rawGraph.active_executions
+      : run.node_executions?.filter((execution) => ['active', 'waiting'].includes(execution.status)) ?? [],
+    parallelism: 'parallelism' in rawGraph ? rawGraph.parallelism : run.parallelism ?? null,
   } : {};
   return {
     ...run,
@@ -69,6 +73,7 @@ export function normalizeRunView(run: RunView): RunView {
     plan_versions: run.answer_mode === 'trusted' && Array.isArray(run.plan_versions)
       ? run.plan_versions
       : [],
+    node_executions: Array.isArray(run.node_executions) ? run.node_executions : [],
   };
 }
 

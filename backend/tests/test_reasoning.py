@@ -191,6 +191,30 @@ def test_completion_gate_requires_criteria():
     )
 
 
+def test_completion_gate_waits_for_parallel_execution_approval_and_budget_barriers():
+    contract = build_default_contract("goal")
+    state = AgentState(task_contract=contract)
+    passed = ValidationOutcome(validator="task_adapter", passed=True, blocking=True)
+    state = apply_validation_outcomes(state, [passed])
+
+    decision = CompletionGate().evaluate(
+        state,
+        validation_outcomes=[passed],
+        active_executions=[
+            {"execution_id": "execution-1", "status": "active"}
+        ],
+        unresolved_approvals=1,
+        unmerged_budgets=1,
+    )
+
+    assert decision.state == TerminalState.continue_run
+    assert decision.unmet_criteria == [
+        "node-execution:execution-1",
+        "approval:pending",
+        "budget:unmerged",
+    ]
+
+
 def test_basic_completion_ignores_full_contract_but_preserves_warnings_and_blockers():
     gate = CompletionGate()
     warning = ValidationOutcome(

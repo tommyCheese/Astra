@@ -17,6 +17,10 @@ describe('TrustedExecutionGraph complex DAG', () => {
     expect(container.querySelectorAll('.trusted-plan-node.status-failed')).toHaveLength(1);
     expect(container.querySelectorAll('.plan-edge.status-blocked').length).toBeGreaterThan(0);
     expect(container.querySelectorAll('.plan-edge.status-running').length).toBeGreaterThan(0);
+    expect(container.querySelectorAll('.trusted-plan-node.status-running')).toHaveLength(3);
+    expect(screen.getByText(/2 个活动节点 · 槽位 2\/3/)).toBeInTheDocument();
+    expect(screen.getByText('等待资源释放')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '定位活动节点 (3)' })).toBeInTheDocument();
     expect(screen.queryByText('结构化节点列表')).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: '缩小图谱' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '放大图谱' })).toBeInTheDocument();

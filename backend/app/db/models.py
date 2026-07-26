@@ -159,6 +159,13 @@ class RunRecord(Base):
     plans: Mapped[list["PlanRecord"]] = relationship(
         back_populates="run", foreign_keys="PlanRecord.run_id", order_by="PlanRecord.version"
     )
+    node_executions: Mapped[list["NodeExecutionRecord"]] = relationship(
+        back_populates="run", order_by="NodeExecutionRecord.started_at"
+    )
+    resource_leases: Mapped[list["ResourceLeaseRecord"]] = relationship(back_populates="run")
+    budget_reservations: Mapped[list["BudgetReservationRecord"]] = relationship(
+        back_populates="run"
+    )
 
 
 class PlanRecord(Base):
@@ -184,6 +191,7 @@ class PlanRecord(Base):
     edges: Mapped[list["PlanEdgeRecord"]] = relationship(
         back_populates="plan", cascade="all, delete-orphan"
     )
+    executions: Mapped[list["NodeExecutionRecord"]] = relationship(back_populates="plan")
 
 
 class PlanNodeRecord(Base):
@@ -220,6 +228,7 @@ class PlanNodeRecord(Base):
         back_populates="successor", foreign_keys="PlanEdgeRecord.successor_id"
     )
     tool_calls: Mapped[list["ToolCallRecord"]] = relationship(back_populates="plan_node")
+    executions: Mapped[list["NodeExecutionRecord"]] = relationship(back_populates="plan_node")
 
 
 class PlanEdgeRecord(Base):
@@ -241,6 +250,131 @@ class PlanEdgeRecord(Base):
     )
     successor: Mapped[PlanNodeRecord] = relationship(
         back_populates="incoming_edges", foreign_keys=[successor_id]
+    )
+
+
+class NodeExecutionRecord(Base):
+    __tablename__ = "node_executions"
+    __table_args__ = (
+        UniqueConstraint(
+            "plan_node_id",
+            "attempt",
+            name="uq_node_executions_node_attempt",
+        ),
+        UniqueConstraint(
+            "plan_node_id",
+            "current_slot",
+            name="uq_node_executions_current_slot",
+        ),
+        UniqueConstraint(
+            "run_id",
+            "slot_index",
+            name="uq_node_executions_run_slot",
+        ),
+        Index("ix_node_executions_run_status", "run_id", "status"),
+        Index("ix_node_executions_plan_status", "plan_id", "status"),
+        Index("ix_node_executions_heartbeat", "status", "heartbeat_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_str)
+    run_id: Mapped[str] = mapped_column(ForeignKey("runs.id"))
+    plan_id: Mapped[str] = mapped_column(ForeignKey("plans.id"))
+    plan_version: Mapped[int] = mapped_column(Integer)
+    plan_node_id: Mapped[str] = mapped_column(ForeignKey("plan_nodes.id"))
+    attempt: Mapped[int] = mapped_column(Integer, default=1)
+    dispatch_batch_id: Mapped[str] = mapped_column(String(36))
+    worker_id: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    phase: Mapped[str] = mapped_column(String(40), default="claimed")
+    status: Mapped[str] = mapped_column(String(40), default="active")
+    current_slot: Mapped[str | None] = mapped_column(
+        String(16), nullable=True, default="current"
+    )
+    slot_index: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    state_version: Mapped[int] = mapped_column(Integer, default=1)
+    wait_reason: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    checkpoint: Mapped[dict] = mapped_column(JsonType, default=dict)
+    result: Mapped[dict | None] = mapped_column(JsonType, nullable=True)
+    failure: Mapped[dict | None] = mapped_column(JsonType, nullable=True)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    heartbeat_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+    run: Mapped[RunRecord] = relationship(back_populates="node_executions")
+    plan: Mapped[PlanRecord] = relationship(back_populates="executions")
+    plan_node: Mapped[PlanNodeRecord] = relationship(back_populates="executions")
+    tool_calls: Mapped[list["ToolCallRecord"]] = relationship(
+        back_populates="node_execution"
+    )
+    turns: Mapped[list["AgentTurnRecord"]] = relationship(back_populates="node_execution")
+    approval_requests: Mapped[list["ApprovalRequestRecord"]] = relationship(
+        back_populates="node_execution"
+    )
+    resource_leases: Mapped[list["ResourceLeaseRecord"]] = relationship(
+        back_populates="node_execution", cascade="all, delete-orphan"
+    )
+    budget_reservations: Mapped[list["BudgetReservationRecord"]] = relationship(
+        back_populates="node_execution", cascade="all, delete-orphan"
+    )
+
+
+class ResourceLeaseRecord(Base):
+    __tablename__ = "resource_leases"
+    __table_args__ = (
+        UniqueConstraint(
+            "node_execution_id",
+            "resource_key",
+            "mode",
+            name="uq_resource_leases_execution_resource_mode",
+        ),
+        Index("ix_resource_leases_run_active", "run_id", "released_at", "expires_at"),
+        Index("ix_resource_leases_resource_active", "resource_key", "released_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_str)
+    run_id: Mapped[str] = mapped_column(ForeignKey("runs.id"))
+    node_execution_id: Mapped[str] = mapped_column(ForeignKey("node_executions.id"))
+    resource_key: Mapped[str] = mapped_column(String(240))
+    resource_summary: Mapped[str] = mapped_column(String(160))
+    mode: Mapped[str] = mapped_column(String(20))
+    fencing_token: Mapped[int] = mapped_column(Integer)
+    acquired_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    heartbeat_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    released_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    release_reason: Mapped[str | None] = mapped_column(String(80), nullable=True)
+
+    run: Mapped[RunRecord] = relationship(back_populates="resource_leases")
+    node_execution: Mapped[NodeExecutionRecord] = relationship(
+        back_populates="resource_leases"
+    )
+
+
+class BudgetReservationRecord(Base):
+    __tablename__ = "budget_reservations"
+    __table_args__ = (
+        UniqueConstraint(
+            "node_execution_id",
+            "budget_kind",
+            name="uq_budget_reservations_execution_kind",
+        ),
+        Index("ix_budget_reservations_run_status", "run_id", "status"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_str)
+    run_id: Mapped[str] = mapped_column(ForeignKey("runs.id"))
+    node_execution_id: Mapped[str] = mapped_column(ForeignKey("node_executions.id"))
+    budget_kind: Mapped[str] = mapped_column(String(40))
+    reserved: Mapped[int] = mapped_column(Integer)
+    consumed: Mapped[int] = mapped_column(Integer, default=0)
+    status: Mapped[str] = mapped_column(String(40), default="reserved")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    settled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    run: Mapped[RunRecord] = relationship(back_populates="budget_reservations")
+    node_execution: Mapped[NodeExecutionRecord] = relationship(
+        back_populates="budget_reservations"
     )
 
 
@@ -304,6 +438,9 @@ class ToolCallRecord(Base):
     run_id: Mapped[str] = mapped_column(ForeignKey("runs.id"))
     step_id: Mapped[str | None] = mapped_column(ForeignKey("steps.id"), nullable=True)
     plan_node_id: Mapped[str | None] = mapped_column(ForeignKey("plan_nodes.id"), nullable=True)
+    node_execution_id: Mapped[str | None] = mapped_column(
+        ForeignKey("node_executions.id"), nullable=True
+    )
     tool_name: Mapped[str] = mapped_column(String(120))
     tool_version: Mapped[str] = mapped_column(String(40))
     input: Mapped[dict] = mapped_column(JsonType)
@@ -318,6 +455,9 @@ class ToolCallRecord(Base):
     run: Mapped[RunRecord] = relationship(back_populates="tool_calls")
     step: Mapped[StepRecord | None] = relationship(back_populates="tool_calls")
     plan_node: Mapped[PlanNodeRecord | None] = relationship(back_populates="tool_calls")
+    node_execution: Mapped[NodeExecutionRecord | None] = relationship(
+        back_populates="tool_calls"
+    )
     approval_request: Mapped["ApprovalRequestRecord | None"] = relationship(
         back_populates="tool_call", uselist=False
     )
@@ -334,6 +474,13 @@ class ApprovalRequestRecord(Base):
     run_id: Mapped[str] = mapped_column(ForeignKey("runs.id"))
     turn_id: Mapped[str] = mapped_column(ForeignKey("agent_turns.id"))
     tool_call_id: Mapped[str] = mapped_column(ForeignKey("tool_calls.id"))
+    node_execution_id: Mapped[str | None] = mapped_column(
+        ForeignKey("node_executions.id"), nullable=True
+    )
+    execution_attempt: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    expected_execution_state_version: Mapped[int | None] = mapped_column(
+        Integer, nullable=True
+    )
     tool_name: Mapped[str] = mapped_column(String(120))
     tool_version: Mapped[str] = mapped_column(String(40))
     frozen_input: Mapped[dict] = mapped_column(JsonType)
@@ -354,6 +501,9 @@ class ApprovalRequestRecord(Base):
 
     run: Mapped[RunRecord] = relationship(back_populates="approval_requests")
     tool_call: Mapped[ToolCallRecord] = relationship(back_populates="approval_request")
+    node_execution: Mapped[NodeExecutionRecord | None] = relationship(
+        back_populates="approval_requests"
+    )
 
 
 class ApprovalGrantRecord(Base):
@@ -641,6 +791,9 @@ class AgentTurnRecord(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_str)
     run_id: Mapped[str] = mapped_column(ForeignKey("runs.id"))
     plan_node_id: Mapped[str | None] = mapped_column(ForeignKey("plan_nodes.id"), nullable=True)
+    node_execution_id: Mapped[str | None] = mapped_column(
+        ForeignKey("node_executions.id"), nullable=True
+    )
     turn_index: Mapped[int] = mapped_column(Integer)
     decision_type: Mapped[str] = mapped_column(String(40))
     reasoning_summary: Mapped[str] = mapped_column(Text)
@@ -665,6 +818,9 @@ class AgentTurnRecord(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
     run: Mapped[RunRecord] = relationship(back_populates="turns")
+    node_execution: Mapped[NodeExecutionRecord | None] = relationship(
+        back_populates="turns"
+    )
 
 
 class MemoryRecord(Base):

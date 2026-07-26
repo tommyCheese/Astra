@@ -416,6 +416,9 @@ class CompletionGate:
         warnings: list[str] | None = None,
         required_user_action: str | None = None,
         runtime_error: str | None = None,
+        active_executions: list[Any] | None = None,
+        unresolved_approvals: int = 0,
+        unmerged_budgets: int = 0,
     ) -> CompletionDecision:
         combined_warnings = list(warnings or [])
         for outcome in validation_outcomes:
@@ -426,6 +429,28 @@ class CompletionGate:
         combined_warnings = list(dict.fromkeys(combined_warnings))
         if runtime_error:
             return CompletionDecision(state=TerminalState.failed, reason=runtime_error)
+        execution_barriers = [
+            execution
+            for execution in (active_executions or [])
+            if getattr(execution, "status", None) in {"active", "waiting"}
+            or (
+                isinstance(execution, dict)
+                and execution.get("status") in {"active", "waiting"}
+            )
+        ]
+        if execution_barriers or unresolved_approvals or unmerged_budgets:
+            return CompletionDecision(
+                state=TerminalState.continue_run,
+                reason="并行执行屏障尚未清空。",
+                unmet_criteria=[
+                    *(
+                        f"node-execution:{getattr(item, 'id', None) or item.get('execution_id')}"
+                        for item in execution_barriers
+                    ),
+                    *(["approval:pending"] if unresolved_approvals else []),
+                    *(["budget:unmerged"] if unmerged_budgets else []),
+                ],
+            )
         if required_user_action or state.task_contract.ambiguity_status != "clear":
             return CompletionDecision(
                 state=TerminalState.waiting_user,

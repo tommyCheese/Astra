@@ -60,8 +60,81 @@ export type PlanGraphEdge = {
   dependency_type: string;
 };
 
+export type NodeExecutionPhase =
+  | 'claimed'
+  | 'running'
+  | 'waiting_resource'
+  | 'waiting_approval'
+  | 'committing'
+  | 'cancelling'
+  | 'completed'
+  | 'failed'
+  | 'cancelled'
+  | 'result_unknown';
+
+export type NodeExecutionStatus =
+  | 'active'
+  | 'waiting'
+  | 'completed'
+  | 'failed'
+  | 'cancelled'
+  | 'blocked';
+
+export type ResourceLease = {
+  id: string;
+  node_execution_id: string;
+  resource_summary: string;
+  mode: 'read' | 'write' | 'exclusive';
+  fencing_token: number;
+  acquired_at: string;
+  expires_at: string;
+  released_at?: string | null;
+  release_reason?: string | null;
+};
+
+export type BudgetReservation = {
+  id: string;
+  node_execution_id: string;
+  budget_kind: string;
+  reserved: number;
+  consumed: number;
+  status: string;
+  created_at: string;
+  settled_at?: string | null;
+};
+
+export type NodeExecution = {
+  execution_id: string;
+  run_id?: string;
+  plan_id?: string;
+  plan_node_id: string;
+  plan_version: number;
+  attempt: number;
+  dispatch_batch_id?: string | null;
+  slot_index?: number | null;
+  worker_id?: string | null;
+  phase: NodeExecutionPhase;
+  status: NodeExecutionStatus;
+  state_version: number;
+  wait_reason?: string | null;
+  checkpoint?: Record<string, unknown>;
+  started_at?: string | null;
+  heartbeat_at?: string | null;
+  finished_at?: string | null;
+  resource_leases?: ResourceLease[];
+  budget_reservations?: BudgetReservation[];
+};
+
+export type ParallelismSummary = {
+  requested_slots: number;
+  total_slots: number;
+  used_slots: number;
+  active_count: number;
+  waiting_count: number;
+};
+
 export type PlanGraphSnapshot = {
-  schema_version: 1;
+  schema_version: 1 | 2;
   id: string;
   run_id: string;
   version: number;
@@ -72,6 +145,8 @@ export type PlanGraphSnapshot = {
   created_at?: string | null;
   activated_at?: string | null;
   completed_at?: string | null;
+  active_executions?: NodeExecution[];
+  parallelism?: ParallelismSummary | null;
 };
 
 export type LegacyPlanGraph = {
@@ -125,6 +200,7 @@ export type ToolCallView = {
   id: string;
   step_id?: string | null;
   plan_node_id?: string | null;
+  node_execution_id?: string | null;
   tool_name: string;
   status: string;
   input: Record<string, unknown>;
@@ -135,6 +211,9 @@ export type ToolCallView = {
 export type PendingApproval = {
   id: string;
   tool_call_id: string;
+  node_execution_id?: string | null;
+  execution_attempt?: number | null;
+  expected_execution_state_version?: number | null;
   tool_name: string;
   preview: string;
   permission: string;
@@ -173,6 +252,7 @@ export type AgentTurnView = {
   id: string;
   run_id: string;
   plan_node_id?: string | null;
+  node_execution_id?: string | null;
   turn_index: number;
   decision_type: string;
   reasoning_summary: string;
@@ -362,6 +442,8 @@ export type RunView = {
     request: string;
   } | Record<string, unknown>) | null;
   pending_approval?: PendingApproval | null;
+  node_executions?: NodeExecution[];
+  parallelism?: ParallelismSummary | null;
   task_adapter?: string;
 };
 

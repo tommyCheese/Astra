@@ -155,9 +155,17 @@ Agent loop 默认使用通用 Runtime：
 ```text
 AGENT_MAX_TURNS=12
 AGENT_MAX_TOOL_CALLS=8
+AGENT_PARALLEL_EXECUTION_ENABLED=true
+AGENT_MAX_PARALLEL_NODES=3
 AGENT_MEMORY_WRITE_ENABLED=true
 AGENT_USE_GENERAL_RUNTIME=true
 ```
+
+可信 DAG 默认最多并行执行 3 个无依赖、无资源冲突的只读幂等节点。每个节点使用独立数据库 session 和持久化 `NodeExecution` attempt；并发槽、provider/capability 上限、预算预留、资源租约、审批与 CompletionGate 共同形成背压。未知资源和非幂等副作用保持串行，超时也只自动重试已证明安全且幂等的行动。
+
+紧急回滚时设置 `AGENT_PARALLEL_EXECUTION_ENABLED=false`，运行时会退回单槽顺序，已持久化 execution、审批、租约和历史图谱仍可读取。恢复器通过 heartbeat 查找过期 attempt：有已记录结果的幂等行动直接提交，未启动行动的 attempt 可恢复，结果未知的非幂等行动进入等待/阻塞而不会盲目重放。
+
+可观测事件 `plan.parallel_execution.completed` 记录请求/实际并发度、完成/失败/恢复数量和耗时；图谱快照同时公开已清洗的活动数、槽位、等待阶段与租约摘要，不公开原始资源路径或工具输入。
 
 ### 通用推理与反思内核
 

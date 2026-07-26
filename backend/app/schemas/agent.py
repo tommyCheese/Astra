@@ -52,6 +52,28 @@ class PlanNodeStatus(str, Enum):
     skipped = "skipped"
 
 
+class NodeExecutionPhase(str, Enum):
+    claimed = "claimed"
+    running = "running"
+    waiting_resource = "waiting_resource"
+    waiting_approval = "waiting_approval"
+    committing = "committing"
+    cancelling = "cancelling"
+    completed = "completed"
+    failed = "failed"
+    cancelled = "cancelled"
+    result_unknown = "result_unknown"
+
+
+class NodeExecutionStatus(str, Enum):
+    active = "active"
+    waiting = "waiting"
+    completed = "completed"
+    failed = "failed"
+    cancelled = "cancelled"
+    blocked = "blocked"
+
+
 class ReflectionTrigger(str, Enum):
     failure_only = "failure_only"
     adaptive = "adaptive"
@@ -127,6 +149,7 @@ class RunBudgets(BaseModel):
     max_turns: int | None = 12
     max_tool_calls: int | None = 8
     verification_coverage: int = 2
+    max_parallel_nodes: int = Field(default=3, ge=1)
 
 
 class RequestedReasoningPolicy(BaseModel):
@@ -281,7 +304,7 @@ class PlanEdgeView(BaseModel):
 
 
 class PlanView(BaseModel):
-    schema_version: Literal[1] = 1
+    schema_version: Literal[1, 2] = 2
     id: str
     run_id: str
     version: int
@@ -292,6 +315,65 @@ class PlanView(BaseModel):
     created_at: datetime | None = None
     activated_at: datetime | None = None
     completed_at: datetime | None = None
+    active_executions: list[NodeExecutionView] = Field(default_factory=list)
+    parallelism: ParallelismSummary | None = None
+
+
+class ActiveExecutionSummary(BaseModel):
+    execution_id: str | None = None
+    plan_node_id: str
+    plan_version: int = 0
+    attempt: int = 1
+    dispatch_batch_id: str | None = None
+    slot_index: int | None = None
+    phase: NodeExecutionPhase = NodeExecutionPhase.running
+    status: NodeExecutionStatus = NodeExecutionStatus.active
+    state_version: int = 1
+    wait_reason: str | None = None
+    started_at: datetime | None = None
+    heartbeat_at: datetime | None = None
+
+
+class ResourceLeaseView(BaseModel):
+    id: str
+    node_execution_id: str
+    resource_summary: str
+    mode: Literal["read", "write", "exclusive"]
+    fencing_token: int
+    acquired_at: datetime
+    expires_at: datetime
+    released_at: datetime | None = None
+    release_reason: str | None = None
+
+
+class BudgetReservationView(BaseModel):
+    id: str
+    node_execution_id: str
+    budget_kind: str
+    reserved: int
+    consumed: int = 0
+    status: str
+    created_at: datetime
+    settled_at: datetime | None = None
+
+
+class NodeExecutionView(ActiveExecutionSummary):
+    execution_id: str
+    run_id: str
+    plan_id: str
+    worker_id: str | None = None
+    checkpoint: dict[str, Any] = Field(default_factory=dict)
+    finished_at: datetime | None = None
+    resource_leases: list[ResourceLeaseView] = Field(default_factory=list)
+    budget_reservations: list[BudgetReservationView] = Field(default_factory=list)
+
+
+class ParallelismSummary(BaseModel):
+    requested_slots: int = Field(default=1, ge=1)
+    total_slots: int = Field(default=1, ge=1)
+    used_slots: int = Field(default=0, ge=0)
+    active_count: int = Field(default=0, ge=0)
+    waiting_count: int = Field(default=0, ge=0)
 
 
 class PlanVersionSummary(BaseModel):
@@ -400,12 +482,14 @@ class FailureFingerprint(BaseModel):
 
 
 class AgentState(BaseModel):
+    schema_version: Literal[2] = 2
     version: int = 1
     task_contract: TaskContract
     policy_version: int = 1
     active_plan_id: str | None = None
     active_plan_version: int = 0
-    active_node_id: str | None = None
+    active_executions: list[ActiveExecutionSummary] = Field(default_factory=list)
+    active_node_id: str | None = Field(default=None, exclude=True)
     accepted_facts: list[AcceptedFact] = Field(default_factory=list)
     open_questions: list[str] = Field(default_factory=list)
     observations: list[dict[str, Any]] = Field(default_factory=list)
@@ -413,6 +497,18 @@ class AgentState(BaseModel):
     failures: list[FailureFingerprint] = Field(default_factory=list)
     budget_usage: dict[str, int] = Field(default_factory=dict)
     terminal_intent: str | None = None
+
+    @model_validator(mode="after")
+    def migrate_legacy_active_node(self) -> AgentState:
+        if self.active_node_id and not self.active_executions:
+            self.active_executions = [
+                ActiveExecutionSummary(
+                    plan_node_id=self.active_node_id,
+                    plan_version=self.active_plan_version,
+                )
+            ]
+        self.active_node_id = None
+        return self
 
 
 class Evaluation(BaseModel):
@@ -540,6 +636,9 @@ class ApprovalDecisionRequest(BaseModel):
 class PendingApprovalView(BaseModel):
     id: str
     tool_call_id: str
+    node_execution_id: str | None = None
+    execution_attempt: int | None = None
+    expected_execution_state_version: int | None = None
     tool_name: str
     preview: str
     permission: str
@@ -850,6 +949,7 @@ class ToolCallView(BaseModel):
     id: str
     step_id: str | None
     plan_node_id: str | None = None
+    node_execution_id: str | None = None
     tool_name: str
     tool_version: str
     input: dict[str, Any]
@@ -891,6 +991,7 @@ class AgentTurnView(BaseModel):
     id: str
     run_id: str
     plan_node_id: str | None = None
+    node_execution_id: str | None = None
     turn_index: int
     decision_type: str
     reasoning_summary: str
@@ -983,5 +1084,7 @@ class RunView(BaseModel):
     terminal_reason: dict[str, Any] | None = None
     waiting_state: dict[str, Any] | None = None
     pending_approval: PendingApprovalView | None = None
+    node_executions: list[NodeExecutionView] = Field(default_factory=list)
+    parallelism: ParallelismSummary | None = None
     task_adapter: str = "web"
     agent_profile: dict[str, Any] = Field(default_factory=dict)

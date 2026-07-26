@@ -14,12 +14,14 @@ import {
 import '@xyflow/react/dist/style.css';
 import { getPlanVersion, getPlanVersionDiff } from './api';
 import { layoutPlanGraph, nodeTraceAssociations, planProgress, unmetDependencies, type PlanGraphLayout, type PositionedPlanNode } from './planGraph';
-import type { PlanGraphDiff, PlanGraphNode, PlanGraphSnapshot, PlanNodeStatus, RunView } from './types';
+import type { NodeExecution, PlanGraphDiff, PlanGraphNode, PlanGraphSnapshot, PlanNodeStatus, RunView } from './types';
 
 type GraphNodeData = {
   node: PlanGraphNode;
   status: PlanNodeStatus;
   diff?: PlanGraphDiff['nodes'][number]['change'];
+  execution?: NodeExecution;
+  dependencyProgress?: { satisfied: number; total: number };
   ariaLabel: string;
   onSelect: (id: string) => void;
 };
@@ -39,6 +41,19 @@ const statusLabels: Record<PlanNodeStatus, string> = {
   blocked: '受阻',
   skipped: '已跳过',
   superseded: '历史节点',
+};
+
+const executionPhaseLabels: Record<NodeExecution['phase'], string> = {
+  claimed: '已认领',
+  running: '正在执行',
+  waiting_resource: '等待资源',
+  waiting_approval: '等待批准',
+  committing: '正在提交',
+  cancelling: '正在取消',
+  completed: '已完成',
+  failed: '失败',
+  cancelled: '已取消',
+  result_unknown: '结果待确认',
 };
 
 export default function TrustedExecutionGraph(props: TrustedExecutionGraphProps) {
@@ -119,10 +134,27 @@ function GraphWorkbench({ run, compact = false, title = '执行图谱' }: Truste
     `${item.predecessor_node_id}>${item.successor_node_id}`,
     item.change,
   ]) ?? []);
+  const executionsByNode = new Map(
+    (graph.active_executions ?? []).map((execution) => [
+      execution.plan_node_id,
+      execution,
+    ]),
+  );
+  const activeNodeIds = new Set(executionsByNode.keys());
   const nodes: Node<GraphNodeData>[] = layout.nodes.map((node) => {
+    const dependencies = graph.edges.filter((edge) => edge.successor_node_id === node.id);
+    const dependencyProgress = {
+      satisfied: dependencies.filter(
+        (edge) => ['completed', 'skipped'].includes(
+          graph.nodes.find((item) => item.id === edge.predecessor_node_id)?.status ?? '',
+        ),
+      ).length,
+      total: dependencies.length,
+    };
+    const execution = executionsByNode.get(node.id);
     const ariaLabel = [
       `节点 ${node.index}：${node.title}`,
-      statusLabels[node.derivedStatus],
+      execution ? executionPhaseLabels[execution.phase] : statusLabels[node.derivedStatus],
       node.depends_on.length ? `依赖 ${node.depends_on.join('、')}` : '无前置依赖',
     ].join('，');
     return {
@@ -141,6 +173,8 @@ function GraphWorkbench({ run, compact = false, title = '执行图谱' }: Truste
         node,
         status: node.derivedStatus,
         diff: nodeDiff.get(node.id),
+        execution,
+        dependencyProgress,
         ariaLabel,
         onSelect: setSelectedNodeId,
       },
@@ -156,7 +190,7 @@ function GraphWorkbench({ run, compact = false, title = '执行图谱' }: Truste
     target: edge.successor_node_id,
     type: 'smoothstep',
     markerEnd: { type: MarkerType.ArrowClosed, color: graphEdgeColor(nodeStatus.get(edge.successor_node_id)) },
-    className: `plan-edge status-${nodeStatus.get(edge.successor_node_id) ?? 'pending'} diff-${edgeDiff.get(`${edge.predecessor_node_id}>${edge.successor_node_id}`) ?? 'none'}`,
+    className: `plan-edge status-${nodeStatus.get(edge.successor_node_id) ?? 'pending'} ${activeNodeIds.has(edge.predecessor_node_id) || activeNodeIds.has(edge.successor_node_id) ? 'active-branch' : ''} diff-${edgeDiff.get(`${edge.predecessor_node_id}>${edge.successor_node_id}`) ?? 'none'}`,
     animated: false,
   }));
   const historicalMode = graph.id !== liveGraph?.id;
@@ -179,6 +213,7 @@ function GraphWorkbench({ run, compact = false, title = '执行图谱' }: Truste
         <span>
           Plan v{graph.version} · {progress.completed}/{progress.total} 已完成
           {historicalMode ? ' · 历史版本' : ` · ${planStatusLabel(graph.status)}`}
+          {!historicalMode && graph.parallelism && ` · ${graph.parallelism.active_count} 个活动节点 · 槽位 ${graph.parallelism.used_slots}/${graph.parallelism.total_slots}`}
         </span>
       </div>
       <div className="trusted-graph-header-actions">
@@ -199,11 +234,13 @@ function GraphWorkbench({ run, compact = false, title = '执行图谱' }: Truste
         <div className="trusted-graph-zoom-actions" role="group" aria-label="图谱缩放">
           <button type="button" aria-label="缩小图谱" title="缩小图谱" onClick={() => { void flow.zoomOut({ duration: 160 }); }}>−</button>
           <button type="button" aria-label="放大图谱" title="放大图谱" onClick={() => { void flow.zoomIn({ duration: 160 }); }}>+</button>
-          <button type="button" aria-label="定位中心" title="定位中心（保持缩放）" onClick={centerGraph}>定位中心</button>
+          <button className="trusted-graph-center-button" type="button" aria-label="定位中心" title="定位中心（保持缩放）" onClick={centerGraph}>
+            <span aria-hidden="true">◎</span>定位中心
+          </button>
         </div>
       </div>
     </header>
-    <div className="trusted-graph-progress" role="status" aria-live="polite" aria-label={`已完成 ${progress.completed}，共 ${progress.total}`}>
+    <div className="trusted-graph-progress" role="status" aria-live="polite" aria-label={`已完成 ${progress.completed}，共 ${progress.total}；${graph.parallelism?.active_count ?? 0} 个节点活动中`}>
       <span style={{ width: `${progress.ratio * 100}%` }} />
     </div>
     {historicalMode && <p className="trusted-graph-history-notice" role="status">
@@ -226,7 +263,7 @@ function GraphWorkbench({ run, compact = false, title = '执行图谱' }: Truste
           onNodeClick={(_event, node) => setSelectedNodeId(node.id)}
           proOptions={{ hideAttribution: true }}
         >
-          <Background gap={20} size={1} />
+          <Background gap={24} size={1} />
           <FocusCurrentButton graph={graph} onSelect={setSelectedNodeId} />
         </ReactFlow>
       </div>
@@ -236,7 +273,7 @@ function GraphWorkbench({ run, compact = false, title = '执行图谱' }: Truste
 }
 
 function PlanNodeCard({ data, selected }: NodeProps<Node<GraphNodeData>>) {
-  const { node, status, diff, ariaLabel, onSelect } = data;
+  const { node, status, diff, execution, dependencyProgress, ariaLabel, onSelect } = data;
   return <article
     className={`trusted-plan-node status-${status} ${selected ? 'selected' : ''} ${diff ? `diff-${diff}` : ''}`}
     aria-label={ariaLabel}
@@ -254,10 +291,14 @@ function PlanNodeCard({ data, selected }: NodeProps<Node<GraphNodeData>>) {
     <div className="trusted-plan-node-heading">
       <span>{node.index}</span>
       <em>{statusIcon(status)}</em>
-      <small>{statusLabels[status]}</small>
+      <small>{execution ? executionPhaseLabels[execution.phase] : statusLabels[status]}</small>
     </div>
     <strong>{node.title}</strong>
     <p>{node.intent}</p>
+    {execution?.wait_reason && <span className="trusted-plan-node-wait">{safeWaitReason(execution.wait_reason)}</span>}
+    {dependencyProgress && dependencyProgress.total > 1 && status !== 'completed' && <span className="trusted-plan-node-join">
+      汇合 {dependencyProgress.satisfied}/{dependencyProgress.total}
+    </span>}
     {diff && !['unchanged'].includes(diff) && <mark>{diffLabel(diff)}</mark>}
     <Handle type="source" position={Position.Bottom} isConnectable={false} />
   </article>;
@@ -265,13 +306,25 @@ function PlanNodeCard({ data, selected }: NodeProps<Node<GraphNodeData>>) {
 
 function FocusCurrentButton({ graph, onSelect }: { graph: PlanGraphSnapshot; onSelect: (id: string) => void }) {
   const flow = useReactFlow();
-  const current = graph.nodes.find((node) => node.status === 'running')
-    ?? graph.nodes.find((node) => node.status === 'pending');
+  const indexRef = useRef(0);
+  const activeIds = [
+    ...[...(graph.active_executions ?? [])]
+      .sort((left, right) => (left.slot_index ?? 10_000) - (right.slot_index ?? 10_000)
+        || left.plan_node_id.localeCompare(right.plan_node_id))
+      .map((execution) => execution.plan_node_id),
+    ...graph.nodes.filter((node) => node.status === 'running').map((node) => node.id),
+  ].filter((id, index, values) => values.indexOf(id) === index);
+  const fallback = graph.nodes.find((node) => node.status === 'pending')?.id;
+  const currentId = activeIds[0] ?? fallback;
+  const current = graph.nodes.find((node) => node.id === currentId);
   if (!current) return null;
   return <button className="trusted-graph-focus" type="button" onClick={() => {
-    onSelect(current.id);
-    void flow.fitView({ nodes: [{ id: current.id }], duration: 250, padding: 1.5 });
-  }}>定位当前节点</button>;
+    const targetId = activeIds.length
+      ? activeIds[indexRef.current++ % activeIds.length]
+      : current.id;
+    onSelect(targetId);
+    void flow.fitView({ nodes: [{ id: targetId }], duration: 250, padding: 1.5 });
+  }}>定位活动节点{activeIds.length > 1 ? ` (${activeIds.length})` : ''}</button>;
 }
 
 function NodeInspector({ run, graph, node }: { run: RunView; graph: PlanGraphSnapshot; node: PositionedPlanNode }) {
@@ -282,6 +335,9 @@ function NodeInspector({ run, graph, node }: { run: RunView; graph: PlanGraphSna
     artifacts,
     pendingApproval: approval,
   } = nodeTraceAssociations(run, node.id);
+  const executions = (run.node_executions ?? [])
+    .filter((execution) => execution.plan_node_id === node.id)
+    .sort((left, right) => right.attempt - left.attempt);
   return <aside className="trusted-node-inspector" aria-label={`${node.title} 节点详情`}>
     <header><span>节点 {node.index}</span><strong>{node.title}</strong><small>{statusLabels[node.derivedStatus]}</small></header>
     <section>
@@ -309,6 +365,11 @@ function NodeInspector({ run, graph, node }: { run: RunView; graph: PlanGraphSna
         <strong>{call.tool_name}</strong><span>{call.status}</span>
       </div>)}
       {approval && <div className="trusted-trace-item approval"><strong>等待工具影响批准</strong><span>{approval.action_summary ?? approval.preview}</span></div>}
+      {executions.map((execution) => <div className="trusted-trace-item execution" key={execution.execution_id}>
+        <strong>Attempt {execution.attempt} · {executionPhaseLabels[execution.phase]}</strong>
+        <span>批次 {execution.dispatch_batch_id?.slice(0, 8) ?? '—'} · 槽位 {execution.slot_index != null ? execution.slot_index + 1 : '已释放'}</span>
+        {execution.started_at && <small>{formatExecutionTiming(execution)}</small>}
+      </div>)}
     </section>
     <section>
       <h4>证据与产物</h4>
@@ -353,4 +414,22 @@ function diffLabel(change: PlanGraphDiff['nodes'][number]['change']) {
       : change === 'modified' ? '已修改'
         : change === 'inherited_completed' ? '继承成果'
           : '未变化';
+}
+
+function safeWaitReason(reason: string) {
+  return reason === 'resource_conflict' ? '等待资源释放'
+    : reason === 'approval_required' ? '等待用户批准'
+      : reason === 'provider_limit' ? '等待服务槽位'
+        : reason === 'budget_exhausted' ? '预算不足'
+          : '暂时等待';
+}
+
+function formatExecutionTiming(execution: NodeExecution) {
+  const started = execution.started_at ? new Date(execution.started_at) : null;
+  const finished = execution.finished_at ? new Date(execution.finished_at) : null;
+  if (!started || Number.isNaN(started.getTime())) return '时间未记录';
+  if (!finished || Number.isNaN(finished.getTime())) {
+    return `开始于 ${started.toLocaleTimeString()}`;
+  }
+  return `${started.toLocaleTimeString()} · ${Math.max(0, finished.getTime() - started.getTime())} ms`;
 }

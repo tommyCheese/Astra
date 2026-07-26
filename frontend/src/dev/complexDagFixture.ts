@@ -51,8 +51,8 @@ const nodes = [
   node('data', 3, '数据分析分支', ['scope'], 'completed'),
   node('stakeholders', 4, '利益相关方分支', ['scope'], 'completed'),
   node('primary_sources', 5, '检索一手权威来源', ['research'], 'running'),
-  node('comparative_sources', 6, '收集横向比较资料', ['research']),
-  node('quality_check', 7, '清洗并校验数据质量', ['data']),
+  node('comparative_sources', 6, '收集横向比较资料', ['research'], 'running'),
+  node('quality_check', 7, '清洗并校验数据质量', ['data'], 'running'),
   node('interviews', 8, '汇总访谈与用户反馈', ['stakeholders']),
   node('policy_constraints', 9, '识别政策和执行约束', ['stakeholders'], 'failed'),
   node('evidence_merge', 10, '汇合来源与数据证据', ['primary_sources', 'quality_check']),
@@ -90,7 +90,7 @@ const edges = [
 ];
 
 export const complexDagFixture: PlanGraphSnapshot = {
-  schema_version: 1,
+  schema_version: 2,
   id: PLAN_ID,
   run_id: 'verification-complex-dag-run',
   version: 1,
@@ -99,6 +99,29 @@ export const complexDagFixture: PlanGraphSnapshot = {
   edges,
   created_at: '2026-07-26T00:00:00Z',
   activated_at: '2026-07-26T00:01:00Z',
+  active_executions: ['primary_sources', 'comparative_sources', 'quality_check'].map((planNodeId, index) => ({
+    execution_id: `execution-${planNodeId}`,
+    run_id: 'verification-complex-dag-run',
+    plan_id: PLAN_ID,
+    plan_node_id: planNodeId,
+    plan_version: 1,
+    attempt: 1,
+    dispatch_batch_id: 'verification-batch-1',
+    slot_index: index === 1 ? null : index,
+    phase: index === 1 ? 'waiting_resource' : 'running',
+    status: index === 1 ? 'waiting' : 'active',
+    state_version: 2,
+    wait_reason: index === 1 ? 'resource_conflict' : null,
+    started_at: `2026-07-26T00:03:0${index}Z`,
+    heartbeat_at: `2026-07-26T00:03:1${index}Z`,
+  })),
+  parallelism: {
+    requested_slots: 3,
+    total_slots: 3,
+    used_slots: 2,
+    active_count: 2,
+    waiting_count: 1,
+  },
 };
 
 export const complexDagRunFixture: RunView = {
@@ -139,6 +162,8 @@ export const complexDagRunFixture: RunView = {
     updated_at: '2026-07-26T00:03:00Z',
   }],
   plan_graph: complexDagFixture,
+  node_executions: complexDagFixture.active_executions,
+  parallelism: complexDagFixture.parallelism,
   plan_versions: [{
     id: PLAN_ID,
     run_id: complexDagFixture.run_id,

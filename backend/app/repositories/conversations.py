@@ -18,6 +18,7 @@ from app.db.models import (
     DataFlowStateRecord,
     MemoryRecord,
     ModelInvocationRecord,
+    NodeExecutionRecord,
     PlanRecord,
     RunEventRecord,
     RunRecord,
@@ -74,6 +75,12 @@ class ConversationRepository:
                 selectinload(RunRecord.memories), selectinload(RunRecord.sandbox_jobs),
                 selectinload(RunRecord.approval_requests),
                 selectinload(RunRecord.approval_grants),
+                selectinload(RunRecord.node_executions).selectinload(
+                    NodeExecutionRecord.resource_leases
+                ),
+                selectinload(RunRecord.node_executions).selectinload(
+                    NodeExecutionRecord.budget_reservations
+                ),
                 selectinload(RunRecord.plans).selectinload(PlanRecord.nodes),
                 selectinload(RunRecord.plans).selectinload(PlanRecord.edges),
             )

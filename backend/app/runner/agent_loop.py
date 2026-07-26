@@ -15,6 +15,7 @@ from app.permissions.effects import (
 )
 from app.permissions.engine import PermissionEngine
 from app.permissions.governance import ExtensionTrustPolicy
+from app.repositories.executions import NodeExecutionRepository
 from app.repositories.permissions import PermissionRepository
 from app.repositories.plans import PlanRepository, plan_to_view
 from app.repositories.runs import RunRepository
@@ -45,6 +46,7 @@ from app.schemas.agent import (
     ExpectedObservation,
     FailureFingerprint,
     FinalAnswer,
+    NodeExecutionPhase,
     NodeResult,
     PlanNodeStatus,
     ReasoningEffort,
@@ -74,6 +76,43 @@ logger = logging.getLogger("astra.agent_loop")
 
 
 INVALID_ARTIFACT_REFERENCE_WARNING = "已移除无效或不可访问的工具输出引用。"
+
+
+def active_plan_node_id(state: dict[str, Any]) -> str | None:
+    executions = [
+        item
+        for item in state.get("active_executions", [])
+        if isinstance(item, dict) and item.get("status") in {None, "active", "waiting"}
+    ]
+    if executions:
+        selected = min(
+            executions,
+            key=lambda item: (
+                item.get("slot_index") is None,
+                item.get("slot_index") if item.get("slot_index") is not None else 10_000,
+                str(item.get("plan_node_id") or ""),
+            ),
+        )
+        return selected.get("plan_node_id")
+    legacy = state.get("active_node_id")
+    return str(legacy) if legacy else None
+
+
+def active_node_execution_id(
+    state: dict[str, Any],
+    plan_node_id: str | None,
+) -> str | None:
+    if plan_node_id is None:
+        return None
+    for item in state.get("active_executions", []):
+        if (
+            isinstance(item, dict)
+            and item.get("plan_node_id") == plan_node_id
+            and item.get("status") in {None, "active", "waiting"}
+        ):
+            value = item.get("execution_id")
+            return str(value) if value else None
+    return None
 
 
 def normalize_final_answer_artifact_references(
@@ -174,7 +213,7 @@ class ContextAssembler:
         run = await self.repo.require_run(run_id)
         plan = await PlanRepository(self.repo.session).active_for_run(run_id)
         plan_view = plan_to_view(plan).model_dump(mode="json") if plan else run.plan_graph or {}
-        active_node_id = (run.agent_state or {}).get("active_node_id")
+        active_node_id = active_plan_node_id(run.agent_state or {})
         active_node = next(
             (item for item in plan_view.get("nodes", []) if item.get("id") == active_node_id),
             None,
@@ -451,7 +490,13 @@ class AgentLoop:
             workspace_service,
         )
         plan_repository = PlanRepository(repo.session)
-        scheduler = PlanScheduler(plan_repository)
+        scheduler = PlanScheduler(
+            plan_repository,
+            server_max_parallel_nodes=self.settings.agent_max_parallel_nodes,
+            parallel_execution_enabled=self.settings.agent_parallel_execution_enabled,
+            provider_concurrency_limit=self.settings.agent_provider_concurrency_limit,
+            capability_concurrency_limit=self.settings.agent_capability_concurrency_limit,
+        )
         canonical_plan = await plan_repository.active_for_run(run_id)
         orchestrator = LoopOrchestrator()
         no_progress = NoProgressDetector()
@@ -672,7 +717,7 @@ class AgentLoop:
                             )
                             state.active_plan_id = canonical_plan.id
                             state.active_plan_version = canonical_plan.version
-                            state.active_node_id = None
+                            state.active_executions = []
                         state = apply_reflection_patch(
                             state, patch, expected_version=current.state_version
                         )
@@ -752,7 +797,6 @@ class AgentLoop:
                 if active:
                     state.active_plan_id = active.id
                     state.active_plan_version = active.version
-                    state.active_node_id = (current.agent_state or {}).get("active_node_id")
             state.version = current.state_version + 1
             await repo.update_reasoning_state(
                 run_id,
@@ -833,10 +877,15 @@ class AgentLoop:
         for turn_index in range(start_turn_index, max_turns + 1):
             if terminal_override == "waiting_user":
                 break
+            active_execution_id = None
             if canonical_plan is not None:
                 canonical_plan = await plan_repository.active_for_run(run_id)
                 current = await repo.require_run(run_id)
-                active_node_id = (current.agent_state or {}).get("active_node_id")
+                active_node_id = active_plan_node_id(current.agent_state or {})
+                active_execution_id = active_node_execution_id(
+                    current.agent_state or {},
+                    active_node_id,
+                )
                 active_node = next(
                     (
                         node
@@ -851,6 +900,11 @@ class AgentLoop:
                     active_node = await scheduler.select_next(run_id)
                     await repo.session.commit()
                     canonical_plan = await plan_repository.active_for_run(run_id)
+                    current = await repo.require_run(run_id)
+                    active_execution_id = active_node_execution_id(
+                        current.agent_state or {},
+                        active_node.id if active_node else None,
+                    )
                 if active_node is None and any(
                     node.status
                     in {
@@ -976,6 +1030,8 @@ class AgentLoop:
                     reflection.summary if reflection else observation.summary,
                     decision={"decision_type": "reflect" if reflection else "model_error"},
                     memory_reads=context["memory_reads"],
+                    plan_node_id=active_node.id if active_node is not None else None,
+                    node_execution_id=active_execution_id,
                 )
                 await repo.update_agent_turn(
                     turn.id,
@@ -1093,6 +1149,7 @@ class AgentLoop:
                     phase="prepared" if decision.decision_type == "call_tool" else "created",
                     idempotency_key=idempotency_key,
                     plan_node_id=active_node.id if active_node is not None else None,
+                    node_execution_id=active_execution_id,
                 )
             if disallowed_tool_observation is not None:
                 observations.append(disallowed_tool_observation.model_dump(mode="json"))
@@ -1559,8 +1616,21 @@ class AgentLoop:
                         tool.spec.permission,
                         tool.spec.side_effect_level,
                         plan_node_id=step.id if canonical_plan is not None else None,
+                        node_execution_id=active_execution_id,
                         status="awaiting_approval",
                     )
+                    bound_execution = None
+                    if active_execution_id:
+                        execution_repository = NodeExecutionRepository(repo.session)
+                        bound_execution = await execution_repository.require(
+                            active_execution_id
+                        )
+                        bound_execution = await execution_repository.transition(
+                            bound_execution.id,
+                            expected_version=bound_execution.state_version,
+                            phase=NodeExecutionPhase.waiting_approval,
+                            wait_reason="approval_required",
+                        )
                     request = await repo.create_approval_request(
                         run_id=run_id,
                         turn_id=turn.id,
@@ -1584,6 +1654,13 @@ class AgentLoop:
                         effect_plan_hash=effect_hash,
                         analyzer_version=effect_plan.analyzer_version,
                         analyzer_digest=effect_plan.analyzer_digest,
+                        node_execution_id=active_execution_id,
+                        execution_attempt=bound_execution.attempt
+                        if bound_execution
+                        else None,
+                        expected_execution_state_version=bound_execution.state_version
+                        if bound_execution
+                        else None,
                     )
                     await repo.update_agent_turn(
                         turn.id,
@@ -1594,12 +1671,41 @@ class AgentLoop:
                     )
                     terminal_override = "waiting_user"
                     terminal_summary = f"等待批准工具调用：{tool.spec.name}"
+                    if bound_execution is not None:
+                        await repo.add_event(
+                            run_id,
+                            "plan.node.waiting_approval",
+                            {
+                                "node_execution_id": bound_execution.id,
+                                "plan_id": bound_execution.plan_id,
+                                "plan_version": bound_execution.plan_version,
+                                "plan_node_id": bound_execution.plan_node_id,
+                                "attempt": bound_execution.attempt,
+                                "dispatch_batch_id": bound_execution.dispatch_batch_id,
+                                "slot_index": bound_execution.slot_index,
+                                "phase": bound_execution.phase,
+                                "status": bound_execution.status,
+                                "state_version": bound_execution.state_version,
+                                "wait_reason": bound_execution.wait_reason,
+                                "started_at": bound_execution.started_at.isoformat(),
+                                "heartbeat_at": bound_execution.heartbeat_at.isoformat(),
+                            },
+                        )
                     await repo.set_waiting_state(
                         run_id,
                         {
                             "kind": "tool_approval",
                             "approval_id": request.id,
                             "tool_call_id": call.id,
+                            "node_execution_id": active_execution_id,
+                            "execution_attempt": bound_execution.attempt
+                            if bound_execution
+                            else None,
+                            "expected_execution_state_version": (
+                                bound_execution.state_version
+                                if bound_execution
+                                else None
+                            ),
                             "paused_node": "policy_gate",
                             "request": terminal_summary,
                         },
@@ -1609,6 +1715,17 @@ class AgentLoop:
                     await repo.consume_approval_grants(authorization.grant_ids)
                 if forced_action:
                     await repo.transition_tool_call(call.id, "running")
+                    if call.node_execution_id:
+                        execution_repository = NodeExecutionRepository(repo.session)
+                        execution = await execution_repository.require(
+                            call.node_execution_id
+                        )
+                        if execution.phase == NodeExecutionPhase.waiting_approval.value:
+                            await execution_repository.acquire_slot(
+                                execution.id,
+                                expected_version=execution.state_version,
+                                total_slots=self.settings.agent_max_parallel_nodes,
+                            )
                     approved_call = None
                     approved_turn = None
                     approved_request_snapshot = None
@@ -1623,6 +1740,7 @@ class AgentLoop:
                         tool.spec.permission,
                         tool.spec.side_effect_level,
                         plan_node_id=step.id if canonical_plan is not None else None,
+                        node_execution_id=active_execution_id,
                     )
                     tool_call_count += 1
                 await repo.update_agent_turn(turn.id, phase="executing", tool_call_id=call.id)
@@ -2010,6 +2128,16 @@ class AgentLoop:
                     if canonical_plan is not None
                     else None,
                     required_user_action=required_user_action,
+                    active_executions=list(run_record.node_executions),
+                    unresolved_approvals=sum(
+                        item.status == "pending"
+                        for item in run_record.approval_requests
+                    ),
+                    unmerged_budgets=sum(
+                        reservation.status == "reserved"
+                        for execution in run_record.node_executions
+                        for reservation in execution.budget_reservations
+                    ),
                 )
                 if profile.assurance_level == AssuranceLevel.full
                 else self.completion_gate.evaluate_basic(

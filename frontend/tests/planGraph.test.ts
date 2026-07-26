@@ -110,6 +110,110 @@ describe('plan graph stream state', () => {
     });
     expect(stale.current?.id).toBe('plan-2');
   });
+
+  it('tracks simultaneous executions and ignores stale attempts', () => {
+    let state = createPlanGraphStreamState(run({ ...graph(), schema_version: 2 }));
+    for (const [id, nodeId, slot] of [['exec-a', 'a', 0], ['exec-b', 'b', 1]] as const) {
+      state = reducePlanGraphEvent(state, {
+        id: slot + 20,
+        type: 'plan.node.execution_started',
+        payload: {
+          node_execution_id: id,
+          plan_id: 'plan-1',
+          plan_version: 1,
+          plan_node_id: nodeId,
+          attempt: 2,
+          dispatch_batch_id: 'batch-1',
+          slot_index: slot,
+          phase: 'running',
+          status: 'active',
+          state_version: 2,
+        },
+      });
+    }
+    expect(state.current?.active_executions).toHaveLength(2);
+    expect(state.current?.parallelism?.used_slots).toBe(2);
+    expect(derivedNodeStatuses(state.current!).get('a')).toBe('running');
+    expect(derivedNodeStatuses(state.current!).get('b')).toBe('running');
+
+    const stale = reducePlanGraphEvent(state, {
+      id: 30,
+      type: 'plan.node.execution_failed',
+      payload: {
+        node_execution_id: 'exec-a-old',
+        plan_id: 'plan-1',
+        plan_version: 1,
+        plan_node_id: 'a',
+        attempt: 1,
+        phase: 'failed',
+        status: 'failed',
+        state_version: 4,
+      },
+    });
+    expect(stale.current?.active_executions?.find((item) => item.plan_node_id === 'a')?.attempt).toBe(2);
+
+    const completed = reducePlanGraphEvent(stale, {
+      id: 31,
+      type: 'plan.node.execution_completed',
+      payload: {
+        node_execution_id: 'exec-b',
+        plan_id: 'plan-1',
+        plan_version: 1,
+        plan_node_id: 'b',
+        attempt: 2,
+        phase: 'completed',
+        status: 'completed',
+        state_version: 4,
+      },
+    });
+    expect(completed.current?.active_executions).toHaveLength(1);
+    expect(completed.current?.nodes.find((item) => item.id === 'b')?.status).toBe('completed');
+  });
+
+  it('applies resource waits and authoritative slot summaries without a snapshot', () => {
+    let state = createPlanGraphStreamState(run({ ...graph(), schema_version: 2 }));
+    state = reducePlanGraphEvent(state, {
+      id: 40,
+      type: 'plan.node.waiting_resource',
+      payload: {
+        node_execution_id: 'exec-a',
+        plan_id: 'plan-1',
+        plan_version: 1,
+        plan_node_id: 'a',
+        attempt: 1,
+        dispatch_batch_id: 'batch-wait',
+        phase: 'waiting_resource',
+        status: 'waiting',
+        wait_reason: 'resource_conflict',
+      },
+    });
+    expect(state.current?.active_executions?.[0]).toMatchObject({
+      phase: 'waiting_resource',
+      status: 'waiting',
+      wait_reason: 'resource_conflict',
+    });
+    expect(state.current?.parallelism?.waiting_count).toBe(1);
+
+    state = reducePlanGraphEvent(state, {
+      id: 41,
+      type: 'plan.parallelism.changed',
+      payload: {
+        plan_version: 1,
+        requested_slots: 3,
+        total_slots: 3,
+        used_slots: 2,
+        active_count: 2,
+        waiting_count: 1,
+      },
+    });
+    expect(state.current?.parallelism).toEqual({
+      requested_slots: 3,
+      total_slots: 3,
+      used_slots: 2,
+      active_count: 2,
+      waiting_count: 1,
+    });
+  });
 });
 
 describe('plan graph selectors and layout', () => {

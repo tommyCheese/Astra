@@ -34,6 +34,14 @@ class Settings(BaseSettings):
     agent_max_tool_calls: int = 50
     agent_max_reflections: int = 6
     agent_max_replans: int = 4
+    agent_parallel_execution_enabled: bool = True
+    agent_max_parallel_nodes: int = 3
+    agent_provider_concurrency_limit: int = 8
+    agent_capability_concurrency_limit: int = 4
+    agent_execution_heartbeat_seconds: int = 10
+    agent_execution_stale_seconds: int = 45
+    agent_node_attempt_timeout_seconds: int = 120
+    agent_node_max_safe_retries: int = 1
     agent_memory_write_enabled: bool = True
     agent_use_general_runtime: bool = True
     allow_network_read: bool = True

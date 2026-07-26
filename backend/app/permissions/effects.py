@@ -168,6 +168,16 @@ class DefaultEffectAnalyzer(ToolEffectAnalyzer):
                     resource=_workspace_resource(task_id, path),
                 )
             )
+        if "network_read" in declared:
+            mapped.append(
+                EffectItem(
+                    kind=EffectKind.network_read,
+                    resource=str(
+                        tool_input.get("url")
+                        or f"provider://{spec.provider_id}/{spec.name}"
+                    ),
+                )
+            )
         mappings = {
             "artifact_write": (
                 EffectKind.artifact_write,
