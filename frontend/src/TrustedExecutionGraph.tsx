@@ -1,9 +1,8 @@
-import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   Background,
   Handle,
   MarkerType,
-  MiniMap,
   Position,
   ReactFlow,
   ReactFlowProvider,
@@ -21,6 +20,8 @@ type GraphNodeData = {
   node: PlanGraphNode;
   status: PlanNodeStatus;
   diff?: PlanGraphDiff['nodes'][number]['change'];
+  ariaLabel: string;
+  onSelect: (id: string) => void;
 };
 
 export type TrustedExecutionGraphProps = {
@@ -51,12 +52,10 @@ function GraphWorkbench({ run, compact = false, title = '执行图谱' }: Truste
   const [historical, setHistorical] = useState<PlanGraphSnapshot | null>(null);
   const [diff, setDiff] = useState<PlanGraphDiff | null>(null);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
-  const [fullscreen, setFullscreen] = useState(false);
   const [layout, setLayout] = useState<PlanGraphLayout | undefined>(
     () => liveGraph ? layoutPlanGraph(liveGraph) : undefined,
   );
   const [historyLoading, setHistoryLoading] = useState(false);
-  const expandButtonRef = useRef<HTMLButtonElement>(null);
   const historyCache = useRef(new Map<number, PlanGraphSnapshot>());
   const isCurrent = selectedVersion === null || selectedVersion === liveGraph?.version;
   const graph = isCurrent ? liveGraph : historical;
@@ -84,16 +83,12 @@ function GraphWorkbench({ run, compact = false, title = '执行图谱' }: Truste
   }, [graph, selectedNodeId]);
 
   useEffect(() => {
-    if (!fullscreen) expandButtonRef.current?.focus();
-  }, [fullscreen]);
-
-  useEffect(() => {
     if (!layout?.nodes.length) return;
     const frame = window.requestAnimationFrame(() => {
       void flow.fitView({ padding: 0.18, duration: 0 });
     });
     return () => window.cancelAnimationFrame(frame);
-  }, [compact, flow, fullscreen, layout?.planId, layout?.topologyKey]);
+  }, [compact, flow, layout?.planId, layout?.topologyKey]);
 
   async function selectVersion(version: number) {
     if (!liveGraph || version === selectedVersion) return;
@@ -115,55 +110,68 @@ function GraphWorkbench({ run, compact = false, title = '执行图谱' }: Truste
     }
   }
 
-  function navigateNodeList(event: KeyboardEvent<HTMLButtonElement>, index: number) {
-    const targetIndex = event.key === 'ArrowDown' || event.key === 'ArrowRight'
-      ? Math.min(layout!.nodes.length - 1, index + 1)
-      : event.key === 'ArrowUp' || event.key === 'ArrowLeft'
-        ? Math.max(0, index - 1)
-        : event.key === 'Home' ? 0
-          : event.key === 'End' ? layout!.nodes.length - 1
-            : null;
-    if (targetIndex === null) return;
-    event.preventDefault();
-    const target = layout!.nodes[targetIndex];
-    setSelectedNodeId(target.id);
-    event.currentTarget.closest('ol')
-      ?.querySelectorAll<HTMLButtonElement>('[data-plan-node-id]')
-      .item(targetIndex)
-      .focus();
-  }
-
   if (!graph || !layout) return null;
   const progress = planProgress(graph);
   const selected = layout.nodes.find((node) => node.id === selectedNodeId) ?? null;
   const nodeDiff = new Map(diff?.nodes.map((item) => [item.node_id, item.change]) ?? []);
+  const nodeStatus = new Map(layout.nodes.map((node) => [node.id, node.derivedStatus]));
   const edgeDiff = new Map(diff?.edges.map((item) => [
     `${item.predecessor_node_id}>${item.successor_node_id}`,
     item.change,
   ]) ?? []);
-  const nodes: Node<GraphNodeData>[] = layout.nodes.map((node) => ({
-    id: node.id,
-    type: 'planNode',
-    position: node.position,
-    initialWidth: 236,
-    initialHeight: 112,
-    data: { node, status: node.derivedStatus, diff: nodeDiff.get(node.id) },
-    selected: node.id === selectedNodeId,
-    draggable: false,
-  }));
+  const nodes: Node<GraphNodeData>[] = layout.nodes.map((node) => {
+    const ariaLabel = [
+      `节点 ${node.index}：${node.title}`,
+      statusLabels[node.derivedStatus],
+      node.depends_on.length ? `依赖 ${node.depends_on.join('、')}` : '无前置依赖',
+    ].join('，');
+    return {
+      id: node.id,
+      type: 'planNode',
+      position: node.position,
+      width: 236,
+      height: 112,
+      initialWidth: 236,
+      initialHeight: 112,
+      handles: [
+        { type: 'target', position: Position.Top, x: 116, y: -4, width: 8, height: 8 },
+        { type: 'source', position: Position.Bottom, x: 116, y: 108, width: 8, height: 8 },
+      ],
+      data: {
+        node,
+        status: node.derivedStatus,
+        diff: nodeDiff.get(node.id),
+        ariaLabel,
+        onSelect: setSelectedNodeId,
+      },
+      ariaLabel,
+      focusable: false,
+      selected: node.id === selectedNodeId,
+      draggable: false,
+    };
+  });
   const edges: Edge[] = graph.edges.map((edge) => ({
     id: edge.id,
     source: edge.predecessor_node_id,
     target: edge.successor_node_id,
     type: 'smoothstep',
-    markerEnd: { type: MarkerType.ArrowClosed },
-    className: `plan-edge diff-${edgeDiff.get(`${edge.predecessor_node_id}>${edge.successor_node_id}`) ?? 'none'}`,
+    markerEnd: { type: MarkerType.ArrowClosed, color: graphEdgeColor(nodeStatus.get(edge.successor_node_id)) },
+    className: `plan-edge status-${nodeStatus.get(edge.successor_node_id) ?? 'pending'} diff-${edgeDiff.get(`${edge.predecessor_node_id}>${edge.successor_node_id}`) ?? 'none'}`,
     animated: false,
   }));
   const historicalMode = graph.id !== liveGraph?.id;
+  const centerGraph = () => {
+    const bounds = flow.getNodesBounds(nodes);
+    void flow.setCenter(
+      bounds.x + bounds.width / 2,
+      bounds.y + bounds.height / 2,
+      { zoom: flow.getZoom(), duration: 160 },
+    );
+  };
   return <section
-    className={`trusted-graph-workbench ${compact ? 'compact' : ''} ${fullscreen ? 'fullscreen' : ''}`}
+    className={`trusted-graph-workbench ${compact ? 'compact' : ''}`}
     aria-label={title}
+    data-plan-status={graph.status}
   >
     <header className="trusted-graph-header">
       <div>
@@ -191,11 +199,8 @@ function GraphWorkbench({ run, compact = false, title = '执行图谱' }: Truste
         <div className="trusted-graph-zoom-actions" role="group" aria-label="图谱缩放">
           <button type="button" aria-label="缩小图谱" title="缩小图谱" onClick={() => { void flow.zoomOut({ duration: 160 }); }}>−</button>
           <button type="button" aria-label="放大图谱" title="放大图谱" onClick={() => { void flow.zoomIn({ duration: 160 }); }}>+</button>
-          <button type="button" aria-label="适应视图" title="适应视图" onClick={() => { void flow.fitView({ padding: 0.18, duration: 160 }); }}>适应</button>
+          <button type="button" aria-label="定位中心" title="定位中心（保持缩放）" onClick={centerGraph}>定位中心</button>
         </div>
-        <button ref={expandButtonRef} type="button" onClick={() => setFullscreen((value) => !value)}>
-          {fullscreen ? '退出全屏' : '展开图谱'}
-        </button>
       </div>
     </header>
     <div className="trusted-graph-progress" role="status" aria-live="polite" aria-label={`已完成 ${progress.completed}，共 ${progress.total}`}>
@@ -212,48 +217,38 @@ function GraphWorkbench({ run, compact = false, title = '执行图谱' }: Truste
           nodeTypes={{ planNode: PlanNodeCard }}
           nodesDraggable={false}
           nodesConnectable={false}
+          edgesFocusable={false}
           elementsSelectable
           fitView
           fitViewOptions={{ padding: 0.18 }}
           minZoom={0.28}
           maxZoom={1.6}
           onNodeClick={(_event, node) => setSelectedNodeId(node.id)}
-          onNodeDoubleClick={() => setFullscreen(true)}
           proOptions={{ hideAttribution: true }}
         >
           <Background gap={20} size={1} />
-          {!compact && <MiniMap pannable zoomable nodeStrokeWidth={3} />}
           <FocusCurrentButton graph={graph} onSelect={setSelectedNodeId} />
         </ReactFlow>
       </div>
       {selected && <NodeInspector run={run} graph={graph} node={selected} />}
     </div>
-    <details className="trusted-graph-accessible-list">
-      <summary>结构化节点列表</summary>
-      <ol>
-        {layout.nodes.map((node, index) => <li key={node.id}>
-          <button
-            type="button"
-            data-plan-node-id={node.id}
-            aria-current={node.id === selectedNodeId ? 'true' : undefined}
-            onClick={() => setSelectedNodeId(node.id)}
-            onKeyDown={(event) => navigateNodeList(event, index)}
-          >
-            <strong>{node.index}. {node.title}</strong>
-            <span>{statusLabels[node.derivedStatus]}</span>
-            <small>{node.depends_on.length ? `依赖：${node.depends_on.join('、')}` : '无前置依赖'}</small>
-          </button>
-        </li>)}
-      </ol>
-    </details>
   </section>;
 }
 
 function PlanNodeCard({ data, selected }: NodeProps<Node<GraphNodeData>>) {
-  const { node, status, diff } = data;
+  const { node, status, diff, ariaLabel, onSelect } = data;
   return <article
     className={`trusted-plan-node status-${status} ${selected ? 'selected' : ''} ${diff ? `diff-${diff}` : ''}`}
-    aria-label={`${node.title}，${statusLabels[status]}`}
+    aria-label={ariaLabel}
+    aria-pressed={selected}
+    role="button"
+    tabIndex={0}
+    onClick={() => onSelect(node.id)}
+    onKeyDown={(event) => {
+      if (event.key !== 'Enter' && event.key !== ' ') return;
+      event.preventDefault();
+      onSelect(node.id);
+    }}
   >
     <Handle type="target" position={Position.Top} isConnectable={false} />
     <div className="trusted-plan-node-heading">
@@ -342,6 +337,14 @@ function statusIcon(status: PlanNodeStatus) {
           : status === 'blocked' ? '×'
             : status === 'skipped' ? '–'
               : '·';
+}
+
+function graphEdgeColor(status: PlanNodeStatus | undefined) {
+  return status === 'completed' ? '#2f8f73'
+    : status === 'running' ? '#16866a'
+      : status === 'ready' ? '#4f8fc8'
+        : status === 'failed' || status === 'blocked' ? '#bd5360'
+          : '#8797a6';
 }
 
 function diffLabel(change: PlanGraphDiff['nodes'][number]['change']) {

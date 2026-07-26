@@ -49,7 +49,7 @@
 
 - [x] 6.1 Build the shared `TrustedExecutionGraph` shell for planning, confirming, executing, waiting, terminal and historical states
 - [x] 6.2 Build accessible Plan node cards and directed dependency edges for pending, ready, running, completed, failed, blocked, skipped and superseded states
-- [x] 6.3 Add fit-view, zoom, pan, focus-current-node, reset and full-screen workbench controls without enabling semantic node dragging
+- [x] 6.3 Add zoom, pan, center-graph and focus-current-node controls without enabling semantic node dragging
 - [x] 6.4 Add progress and Plan version headers that distinguish current, planned, active, completed and superseded versions
 - [x] 6.5 Build the node inspector for plan intent, dependencies, expected outcome, success criteria, capabilities, risk, optionality and blocking reason
 - [x] 6.6 Project selected-node AgentTurns, ToolCalls, Reflections, Evaluations, approvals, Artifacts, evidence and failures into layered Trace and Evidence sections
@@ -71,14 +71,17 @@
 
 ## 8. Responsive, Accessible, and Visual Quality
 
-- [x] 8.1 Implement compact inline graph sizing and a wider modal workbench for dense Plans without clipping nodes or actions
-- [x] 8.2 Add an equivalent structured node list with dependencies, status and version for screen readers and non-canvas interaction
+- [x] 8.1 Implement compact pane sizing and a wider half-screen workbench for dense Plans without clipping nodes or actions
+- [x] 8.2 Provide graph-native focusable nodes with accessible title, dependency, status and version context without a duplicate structured list
 - [x] 8.3 Add keyboard node navigation, focus restoration, inspector labelling and polite live status announcements
 - [x] 8.4 Add light, dark and high-contrast graph tokens that do not rely on color alone
 - [x] 8.5 Disable continuous graph motion under reduced-motion while preserving a static current-node indication
 - [x] 8.6 Validate fan-out/fan-in, long labels, large Plans, mobile widths and browser zoom through visual regression fixtures
 - [x] 8.7 Add lazy loading and rendering guards so the graph library does not delay standard chat startup or high-frequency answer streaming
-- [x] 8.8 Add explicit zoom-in, zoom-out, fit-view and full-screen controls plus a collapsible narrow-screen fallback and placement tests
+- [x] 8.8 Add explicit zoom-in, zoom-out and center-graph controls plus a collapsible narrow-screen fallback and placement tests
+- [x] 8.9 Redraw the graph workbench, canvas, nodes, controls and dependency edges with theme-preserving layered glass, modern lighting and accessible state styling
+- [x] 8.10 Add an independent half-screen graph pane toggle that balances the desktop conversation and graph columns and restores the default pane without changing graph state
+- [x] 8.11 Remove the redundant internal full-screen path and minimap, and implement center-graph without changing the current zoom
 
 ## 9. Documentation and Verification
 
@@ -86,4 +89,4 @@
 - [x] 9.2 Document the distinction between Plan Graph, Runtime Trace and Evidence, including the hidden-chain-of-thought boundary
 - [x] 9.3 Remove the obsolete trusted linear Plan confirmation and audit rendering paths after the shared workbench is fully integrated
 - [x] 9.4 Run backend Ruff and full pytest, frontend typecheck/tests/production build, migration checks and strict OpenSpec validation
-- [ ] 9.5 Complete browser verification for live SSE updates, disconnect recovery, revision diff, full-screen navigation, mobile, dark mode, keyboard and reduced-motion
+- [ ] 9.5 Complete browser verification for live SSE updates, disconnect recovery, revision diff, half-screen pane navigation, mobile, dark mode, keyboard and reduced-motion

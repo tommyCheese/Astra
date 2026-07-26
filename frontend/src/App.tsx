@@ -7,6 +7,7 @@ import { I18nProvider, useI18n } from './i18n';
 import { ThemeProvider, useTheme } from './theme';
 import type { ArtifactView, ChatMessage, ConversationShare, ConversationShareSummary, ConversationSummary, PendingApproval, RunView } from './types';
 import { UsageDashboard } from './UsageDashboard';
+import { GraphPaneWindowActions } from './GraphPaneWindowActions';
 import { buildPresentation, HISTORY_LIMIT, normalizeRunView, type ConversationEntry } from './conversations';
 import { createOptimisticProcessState, isDecisionGroup, reconcileProcessSnapshot, reduceProcessEvent, type ProcessStreamItem, type ProcessStreamState } from './processStream';
 import { createPlanGraphStreamState, reconcilePlanGraphSnapshot, reducePlanGraphEvent, type PlanGraphStreamState } from './planGraph';
@@ -93,6 +94,7 @@ function AppContent() {
   const [processPanelDefaultOpen, setProcessPanelDefaultOpen] = useState(loadProcessPanelDefaultOpen);
   const [processPanelOpenByRun, setProcessPanelOpenByRun] = useState<Record<string, boolean>>({});
   const [graphPaneOpen, setGraphPaneOpen] = useState(true);
+  const [graphPaneExpanded, setGraphPaneExpanded] = useState(false);
   const [showJumpToLatest, setShowJumpToLatest] = useState(false);
   const [error, setError] = useState<ApiErrorPayload | null>(null);
   const [view, setView] = useState<'chat' | 'settings' | 'shares' | 'library'>('chat');
@@ -919,7 +921,7 @@ function AppContent() {
           {run && <div className="topbar-run-controls"><button type="button" onClick={() => setControlCenterOpen(true)}>{t('任务安全')}</button><span className={`status status-${run.status}`}>{t(statusLabel(run.status))}</span></div>}
         </section>
 
-        <section className={`chat-surface ${trustedGraphRun ? 'has-trusted-graph-pane' : ''}`}>
+        <section className={`chat-surface ${trustedGraphRun && graphPaneOpen ? 'has-trusted-graph-pane' : ''} ${graphPaneExpanded ? 'trusted-graph-pane-expanded' : ''}`}>
           <QuestionRail messages={messages} />
           <div className="conversation" ref={conversationRef} onScroll={handleConversationScroll}>
             {!messages.length && (
@@ -941,11 +943,18 @@ function AppContent() {
             )}
           </div>
 
-          {trustedGraphRun && graphPaneOpen && <aside className="trusted-graph-floating-pane" aria-label={t('执行图谱窗格')}>
-            <button className="trusted-graph-pane-collapse" type="button" aria-label={t('收起图谱')} title={t('收起图谱')} onClick={() => setGraphPaneOpen(false)}>×</button>
+          {trustedGraphRun && graphPaneOpen && <aside className={`trusted-graph-floating-pane ${graphPaneExpanded ? 'expanded' : ''}`} aria-label={t('执行图谱窗格')}>
+            <GraphPaneWindowActions
+              expanded={graphPaneExpanded}
+              expandLabel={t('扩大图谱窗格')}
+              restoreLabel={t('恢复图谱窗格')}
+              closeLabel={t('收起图谱')}
+              onExpandedChange={setGraphPaneExpanded}
+              onClose={() => setGraphPaneOpen(false)}
+            />
             <GraphErrorBoundary key={`${trustedGraphRun.id}-${trustedGraphRun.plan_graph && 'version' in trustedGraphRun.plan_graph ? trustedGraphRun.plan_graph.version : 0}`} fallback={<div className="trusted-graph-loading">{t('图谱暂时无法显示，执行记录仍可在思考面板中查看。')}</div>}>
               <Suspense fallback={<PlanGraphLoadingFallback run={trustedGraphRun} label={t('正在载入执行图谱…')} />}>
-                <TrustedExecutionGraph run={trustedGraphRun} compact title={t('可信执行图谱')} />
+                <TrustedExecutionGraph run={trustedGraphRun} compact={!graphPaneExpanded} title={t('可信执行图谱')} />
               </Suspense>
             </GraphErrorBoundary>
           </aside>}

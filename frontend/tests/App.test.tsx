@@ -1354,9 +1354,22 @@ describe('App', () => {
     expect(screen.getByText('计划已生成，等待执行确认').closest('.plan-confirmation-card')?.querySelector('.trusted-graph-workbench')).toBeNull();
     expect(screen.getByRole('button', { name: '放大图谱' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '缩小图谱' })).toBeInTheDocument();
+    const expandPane = screen.getByRole('button', { name: '扩大图谱窗格' });
+    expect(expandPane).toHaveAttribute('aria-pressed', 'false');
+    await userEvent.click(expandPane);
+    expect(graphPane).toHaveClass('expanded');
+    expect(graphPane.closest('.chat-surface')).toHaveClass('trusted-graph-pane-expanded');
+    expect(graphPane.querySelector('.trusted-graph-workbench')).not.toHaveClass('compact');
+    const restorePane = screen.getByRole('button', { name: '恢复图谱窗格' });
+    expect(restorePane).toHaveAttribute('aria-pressed', 'true');
+    await userEvent.click(restorePane);
+    expect(graphPane).not.toHaveClass('expanded');
+    expect(graphPane.querySelector('.trusted-graph-workbench')).toHaveClass('compact');
     expect(screen.getAllByText('检查输入').length).toBeGreaterThan(0);
     expect(screen.getAllByText('执行任务').length).toBeGreaterThan(0);
-    expect(screen.getAllByText('依赖：inspect').length).toBeGreaterThan(0);
+    expect(screen.getByRole('button', {
+      name: '节点 2：执行任务，可执行，依赖 inspect',
+    })).toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: '收起图谱' }));
     expect(screen.queryByRole('complementary', { name: '执行图谱窗格' })).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: '打开执行图谱' }));
