@@ -555,13 +555,17 @@ class PlanningSpyClient(MockModelClient):
     def __init__(self):
         self.contract_calls = 0
         self.plan_calls = 0
+        self.contract_goals = []
+        self.plan_goals = []
 
     async def contract(self, goal):
         self.contract_calls += 1
+        self.contract_goals.append(goal)
         return await super().contract(goal)
 
     async def plan(self, goal, **kwargs):
         self.plan_calls += 1
+        self.plan_goals.append(goal)
         return await super().plan(goal, **kwargs)
 
 
@@ -657,6 +661,43 @@ async def test_trusted_engine_always_builds_contract_and_complete_plan(session):
 
     assert client.contract_calls == 1
     assert client.plan_calls == 1
+
+
+async def test_follow_up_contract_excludes_private_conversation_transcript(session):
+    settings = Settings(model_provider="mock", web_search_provider="mock")
+    repo = RunRepository(session)
+    profile = RunProfileResolver().resolve(
+        AnswerMode.trusted,
+        RequestedReasoningPolicy(),
+        plan_execution=PlanExecution.confirm,
+    )
+    previous = await repo.create_task_run(
+        "上一轮问题",
+        settings.model_policy,
+        reasoning_policy=profile.reasoning_policy.model_dump(mode="json"),
+        answer_mode="trusted",
+        execution_profile=profile.model_dump(mode="json"),
+    )
+    previous.summary = "上一轮回答"
+    current = await repo.create_task_run(
+        "当前问题",
+        settings.model_policy,
+        previous.task_id,
+        reasoning_policy=profile.reasoning_policy.model_dump(mode="json"),
+        answer_mode="trusted",
+        execution_profile=profile.model_dump(mode="json"),
+    )
+    client = PlanningSpyClient()
+
+    await RunEngine(
+        settings, model_client=client, tool_registry=fake_web_registry()
+    )._run_with_repo(repo, current.id)
+
+    loaded = await repo.require_run(current.id)
+    assert client.contract_goals == ["当前问题"]
+    assert client.plan_goals[0].startswith("Conversation context:\n")
+    assert loaded.task_contract["original_goal"] == "当前问题"
+    assert "Conversation context:" not in loaded.task_contract["success_criteria"][0]["description"]
 
 
 async def test_engine_falls_back_when_model_returns_empty_plan(session):

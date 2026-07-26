@@ -18,6 +18,10 @@ describe('TrustedExecutionGraph complex DAG', () => {
     expect(container.querySelectorAll('.plan-edge.status-blocked').length).toBeGreaterThan(0);
     expect(container.querySelectorAll('.plan-edge.status-running').length).toBeGreaterThan(0);
     expect(container.querySelectorAll('.trusted-plan-node.status-running')).toHaveLength(3);
+    expect(container.querySelector('.trusted-plan-node.status-running')).toHaveAttribute('data-node-status', 'running');
+    expect(container.querySelector('.trusted-plan-node.status-running')).toHaveAttribute('aria-current', 'step');
+    expect(container.querySelector('.trusted-plan-node.status-completed')).toHaveAttribute('data-node-status', 'completed');
+    expect(container.querySelector('.trusted-plan-node.status-completed')).not.toHaveAttribute('aria-current');
     expect(screen.getByText(/2 个活动节点 · 槽位 2\/3/)).toBeInTheDocument();
     expect(screen.getByText('等待资源释放')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '定位活动节点 (3)' })).toBeInTheDocument();

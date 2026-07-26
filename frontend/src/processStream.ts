@@ -16,6 +16,7 @@ export type ProcessStreamItem = {
 
 export type ProcessStreamState = {
   runId: string;
+  answerMode: 'standard' | 'trusted';
   items: ProcessStreamItem[];
   seenEventIds: number[];
   active: boolean;
@@ -32,27 +33,43 @@ const phaseTitles: Record<string, string> = {
   verifying: '正在验证结果',
 };
 
-export function createOptimisticProcessState(runId: string): ProcessStreamState {
+export function createOptimisticProcessState(
+  runId: string,
+  answerMode: 'standard' | 'trusted' = 'trusted',
+): ProcessStreamState {
   return {
     runId,
+    answerMode,
     active: true,
     seenEventIds: [],
-    items: [{ id: 'phase-planning-0', kind: 'phase', title: phaseTitles.planning, status: 'running' }],
+    items: answerMode === 'standard'
+      ? [{ id: 'reasoning-0', kind: 'reasoning', title: '思考', status: 'running' }]
+      : [{ id: 'phase-planning-0', kind: 'phase', title: phaseTitles.planning, status: 'running' }],
   };
 }
 
 export function reconcileProcessSnapshot(state: ProcessStreamState | null, run: RunView): ProcessStreamState {
-  let next = state?.runId === run.id ? state : createOptimisticProcessState(run.id);
+  const answerMode: ProcessStreamState['answerMode'] = run.answer_mode === 'standard' ? 'standard' : 'trusted';
+  let next: ProcessStreamState = state?.runId === run.id
+    ? { ...state, answerMode }
+    : createOptimisticProcessState(run.id, answerMode);
   for (const event of [...(run.events ?? [])].sort((a, b) => a.id - b.id)) {
     next = reduceProcessEvent(next, event);
   }
   const active = !terminalStatuses.has(run.status);
   const snapshotItems: ProcessStreamItem[] = [...next.items];
   const toolGroupById = new Map<string, string>();
+  const linkedToolCallIds = new Set(
+    (run.turns ?? []).flatMap((turn) => turn.tool_call_id ? [turn.tool_call_id] : []),
+  );
+  if (answerMode === 'standard' && (run.turns ?? []).length > 0) {
+    const placeholderIndex = snapshotItems.findIndex((item) => item.id === 'reasoning-0' && !item.detail);
+    if (placeholderIndex >= 0) snapshotItems.splice(placeholderIndex, 1);
+  }
   for (const turn of [...(run.turns ?? [])].sort((a, b) => a.turn_index - b.turn_index)) {
-    const groupId = decisionGroupId(turn.turn_index);
-    if (turn.tool_call_id) toolGroupById.set(turn.tool_call_id, groupId);
-    if (!snapshotItems.some((item) => item.id === groupId)) {
+    const groupId = answerMode === 'trusted' ? decisionGroupId(turn.turn_index) : undefined;
+    if (turn.tool_call_id && groupId) toolGroupById.set(turn.tool_call_id, groupId);
+    if (groupId && !snapshotItems.some((item) => item.id === groupId)) {
       snapshotItems.push({
         id: groupId,
         kind: 'phase',
@@ -81,7 +98,12 @@ export function reconcileProcessSnapshot(state: ProcessStreamState | null, run: 
     const existing = snapshotItems.findIndex((item) => item.id === id);
     const existingItem = existing >= 0 ? snapshotItems[existing] : undefined;
     const groupId = toolGroupById.get(call.id) ?? existingItem?.groupId ?? (active ? activeDecisionGroupId(snapshotItems) : undefined);
-    if (!groupId && !active && existing < 0) continue;
+    if (!active && existing < 0) {
+      const hasTimelineContext = answerMode === 'standard'
+        ? linkedToolCallIds.has(call.id)
+        : Boolean(groupId);
+      if (!hasTimelineContext) continue;
+    }
     const item: ProcessStreamItem = {
       id,
       kind: 'tool',
@@ -108,8 +130,10 @@ export function reduceProcessEvent(state: ProcessStreamState, event: RunStreamEv
   const turnIndex = numeric(payload.turn_index);
   let items = [...state.items];
   let active = state.active;
+  const quickMode = state.answerMode === 'standard';
 
   if (event.type === 'reasoning.phase.started') {
+    if (quickMode) return { ...state, active, seenEventIds };
     items = items
       .filter((item) => !isProcessingResultHandoff(item))
       .map((item) => item.kind === 'phase' && item.status === 'running' ? { ...item, status: 'completed' } : item);
@@ -124,8 +148,11 @@ export function reduceProcessEvent(state: ProcessStreamState, event: RunStreamEv
     });
   } else if (event.type === 'reasoning.summary.delta') {
     const id = `reasoning-${turnIndex ?? 0}`;
+    if (quickMode && id !== 'reasoning-0') {
+      items = items.filter((item) => item.id !== 'reasoning-0' || Boolean(item.detail));
+    }
     const existing = items.find((item) => item.id === id);
-    if (turnIndex !== undefined) items = ensureDecisionGroup(items, turnIndex);
+    if (!quickMode && turnIndex !== undefined) items = ensureDecisionGroup(items, turnIndex);
     items = upsert(items, {
       id,
       kind: 'reasoning',
@@ -133,12 +160,15 @@ export function reduceProcessEvent(state: ProcessStreamState, event: RunStreamEv
       detail: `${existing?.detail ?? ''}${safeString(payload.delta)}`.slice(0, 4000),
       status: 'running',
       turnIndex,
-      groupId: turnIndex === undefined ? undefined : decisionGroupId(turnIndex),
+      groupId: quickMode || turnIndex === undefined ? undefined : decisionGroupId(turnIndex),
     });
   } else if (event.type === 'reasoning.summary.completed' || event.type === 'agent_turn.created') {
     const id = `reasoning-${turnIndex ?? 0}`;
+    if (quickMode && id !== 'reasoning-0') {
+      items = items.filter((item) => item.id !== 'reasoning-0' || Boolean(item.detail));
+    }
     const existing = items.find((item) => item.id === id);
-    if (turnIndex !== undefined) items = ensureDecisionGroup(items, turnIndex);
+    if (!quickMode && turnIndex !== undefined) items = ensureDecisionGroup(items, turnIndex);
     items = upsert(items, {
       id,
       kind: safeString(payload.decision_type) === 'reflect' ? 'reflection' : 'reasoning',
@@ -147,12 +177,16 @@ export function reduceProcessEvent(state: ProcessStreamState, event: RunStreamEv
       status: 'completed',
       turnIndex,
       toolCallId: safeString(payload.tool_call_id) || existing?.toolCallId,
-      groupId: turnIndex === undefined ? existing?.groupId : decisionGroupId(turnIndex),
+      groupId: quickMode
+        ? undefined
+        : turnIndex === undefined ? existing?.groupId : decisionGroupId(turnIndex),
     });
   } else if (event.type === 'tool_call.started') {
     const toolCallId = safeString(payload.tool_call_id);
-    if (turnIndex !== undefined) items = ensureDecisionGroup(items, turnIndex);
-    const groupId = turnIndex === undefined ? activeDecisionGroupId(items) : decisionGroupId(turnIndex);
+    if (!quickMode && turnIndex !== undefined) items = ensureDecisionGroup(items, turnIndex);
+    const groupId = quickMode
+      ? undefined
+      : turnIndex === undefined ? activeDecisionGroupId(items) : decisionGroupId(turnIndex);
     if (toolCallId) items = upsert(items, {
       id: `tool-${toolCallId}`,
       kind: 'tool',
@@ -164,8 +198,10 @@ export function reduceProcessEvent(state: ProcessStreamState, event: RunStreamEv
   } else if (event.type === 'tool_call.completed') {
     const toolCallId = safeString(payload.tool_call_id);
     const existing = items.find((item) => item.id === `tool-${toolCallId}`);
-    if (turnIndex !== undefined) items = ensureDecisionGroup(items, turnIndex);
-    const groupId = existing?.groupId ?? (turnIndex === undefined ? activeDecisionGroupId(items) : decisionGroupId(turnIndex));
+    if (!quickMode && turnIndex !== undefined) items = ensureDecisionGroup(items, turnIndex);
+    const groupId = quickMode
+      ? undefined
+      : existing?.groupId ?? (turnIndex === undefined ? activeDecisionGroupId(items) : decisionGroupId(turnIndex));
     if (toolCallId) items = upsert(items, {
       id: `tool-${toolCallId}`,
       kind: 'tool',
@@ -175,7 +211,7 @@ export function reduceProcessEvent(state: ProcessStreamState, event: RunStreamEv
       toolCallId,
       groupId,
     });
-    if (toolCallId && groupId) {
+    if (!quickMode && toolCallId && groupId) {
       items = items.map((item) => (item.id === groupId || item.groupId === groupId) && item.status === 'running' ? { ...item, status: 'completed' } : item);
       items = upsert(items, {
         id: `phase-processing_result-${toolCallId}`,
@@ -188,7 +224,7 @@ export function reduceProcessEvent(state: ProcessStreamState, event: RunStreamEv
     }
   } else if (event.type === 'reflection.created') {
     const summary = safeString(payload.summary);
-    if (turnIndex !== undefined) items = ensureDecisionGroup(items, turnIndex);
+    if (!quickMode && turnIndex !== undefined) items = ensureDecisionGroup(items, turnIndex);
     items = upsert(items, {
       id: `reflection-${turnIndex ?? items.length}`,
       kind: 'reflection',
@@ -196,7 +232,9 @@ export function reduceProcessEvent(state: ProcessStreamState, event: RunStreamEv
       detail: summary,
       status: 'completed',
       turnIndex,
-      groupId: turnIndex === undefined ? activeDecisionGroupId(items) : decisionGroupId(turnIndex),
+      groupId: quickMode
+        ? undefined
+        : turnIndex === undefined ? activeDecisionGroupId(items) : decisionGroupId(turnIndex),
     });
   } else if (event.type === 'verification.created') {
     const notes = Array.isArray(payload.notes) ? payload.notes.filter((note): note is string => typeof note === 'string') : [];

@@ -3,6 +3,34 @@ import { createOptimisticProcessState, reconcileProcessSnapshot, reduceProcessEv
 import type { RunView } from '../src/types';
 
 describe('process stream reducer', () => {
+  it('shows only real reasoning content in standard mode without plan phases', () => {
+    let state = createOptimisticProcessState('run-quick', 'standard');
+    state = reduceProcessEvent(state, {
+      id: 1,
+      type: 'reasoning.phase.started',
+      payload: { phase: 'executing' },
+    });
+    state = reduceProcessEvent(state, {
+      id: 2,
+      type: 'reasoning.phase.started',
+      payload: { phase: 'selecting_action', turn_index: 1 },
+    });
+    state = reduceProcessEvent(state, {
+      id: 3,
+      type: 'reasoning.summary.completed',
+      payload: { turn_index: 1, summary: '直接判断用户请求能否完成' },
+    });
+
+    expect(state.items.map((item) => item.title)).not.toContain('正在理解任务并制定计划');
+    expect(state.items.map((item) => item.title)).not.toContain('正在执行计划');
+    expect(state.items.map((item) => item.title)).not.toContain('正在分析下一步');
+    expect(state.items.find((item) => item.id === 'reasoning-1')).toMatchObject({
+      title: '思考',
+      detail: '直接判断用户请求能否完成',
+      groupId: undefined,
+    });
+  });
+
   it('merges reasoning deltas and ignores duplicate event ids', () => {
     let state = createOptimisticProcessState('run-1');
     state = reduceProcessEvent(state, { id: 1, type: 'reasoning.phase.started', payload: { phase: 'selecting_action', turn_index: 1 } });

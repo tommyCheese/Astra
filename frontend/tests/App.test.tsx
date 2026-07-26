@@ -258,8 +258,9 @@ describe('App', () => {
     expect(screen.getByRole('img', { name: 'chart.png' })).toHaveAttribute('src', '/api/artifacts/a-chart/content');
     expect(screen.getByTitle('chart.html')).toHaveAttribute('sandbox', 'allow-scripts');
     expect(document.querySelectorAll('.process-panel')).toHaveLength(1);
-    expect(document.querySelectorAll('.process-decision-group')).toHaveLength(2);
-    expect(document.querySelector('[data-process-group="phase-selecting_action-1"] .process-decision-children')).toBeInTheDocument();
+    expect(document.querySelectorAll('.process-decision-group')).toHaveLength(0);
+    expect(screen.queryByText('正在执行计划')).not.toBeInTheDocument();
+    expect(screen.queryByText('正在分析下一步')).not.toBeInTheDocument();
   });
 
   it('turns the send button into a stop button and restores it after cancellation', async () => {
@@ -517,9 +518,8 @@ describe('App', () => {
     });
     expect(await screen.findByText('正在选择可靠来源')).toBeInTheDocument();
     const decisionGroup = panel?.querySelector('[data-process-group="phase-selecting_action-1"]');
-    expect(decisionGroup).toBeInTheDocument();
-    expect(decisionGroup?.querySelector('.process-decision-children')).toContainElement(screen.getByText('正在选择可靠来源').closest('.process-step'));
-    expect(panel?.querySelector('.process-step.status-completed')).toBeInTheDocument();
+    expect(decisionGroup).not.toBeInTheDocument();
+    expect(screen.getByText('正在选择可靠来源').closest('.process-step')).toHaveClass('process-reasoning');
     expect(panel?.querySelector('.process-step.status-running')).toBeInTheDocument();
     await new Promise((resolve) => window.setTimeout(resolve, 150));
     expect(vi.mocked(getRun)).toHaveBeenCalledTimes(snapshotCalls);
@@ -528,13 +528,12 @@ describe('App', () => {
       emit?.({ id: 12, type: 'tool_call.started', payload: { tool_call_id: 'call-live', tool_name: 'web_search' } });
       emit?.({ id: 13, type: 'tool_call.completed', payload: { tool_call_id: 'call-live', tool_name: 'web_search', status: 'succeeded' } });
     });
-    const handoff = await screen.findByText('正在评估执行结果');
-    expect(handoff.closest('.process-handoff')).toHaveClass('status-running');
-    expect(decisionGroup?.querySelector('.process-decision-children')).toContainElement(handoff.closest('.process-step'));
+    expect(screen.queryByText('正在评估执行结果')).not.toBeInTheDocument();
+    expect(await screen.findByText('web_search')).toBeInTheDocument();
     expect(panel?.querySelectorAll('.process-step.status-running')).toHaveLength(1);
 
     act(() => emit?.({ id: 14, type: 'reasoning.phase.started', payload: { phase: 'selecting_action', turn_index: 2 } }));
-    await waitFor(() => expect(panel?.querySelector('[data-process-group="phase-selecting_action-2"]')).toHaveClass('status-running'));
+    expect(panel?.querySelector('[data-process-group="phase-selecting_action-2"]')).not.toBeInTheDocument();
     expect(screen.queryByText('正在评估执行结果')).not.toBeInTheDocument();
     expect(panel?.querySelectorAll('.process-step.status-running')).toHaveLength(1);
 
@@ -1315,6 +1314,13 @@ describe('App', () => {
       result: null,
       pending_approval: null,
       state_version: 3,
+      task_contract: {
+        success_criteria: [{
+          id: 'criterion-result',
+          description: '正确回应用户请求：Conversation context: 不应展示的内部上下文',
+          status: 'pending',
+        }],
+      },
       plan_graph: {
         id: 'plan-7',
         version: 7,
@@ -1349,8 +1355,9 @@ describe('App', () => {
     await userEvent.click(screen.getByRole('button', { name: '发送' }));
 
     expect(await screen.findByText('计划已生成，等待执行确认')).toBeInTheDocument();
+    expect(screen.queryByText(/不应展示的内部上下文/)).not.toBeInTheDocument();
     const graphPane = await screen.findByRole('complementary', { name: '执行图谱窗格' });
-    expect(graphPane).toContainElement(screen.getByRole('region', { name: '可信执行图谱' }));
+    expect(graphPane).toContainElement(await screen.findByRole('region', { name: '可信执行图谱' }));
     expect(screen.getByText('计划已生成，等待执行确认').closest('.plan-confirmation-card')?.querySelector('.trusted-graph-workbench')).toBeNull();
     expect(screen.getByRole('button', { name: '放大图谱' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '缩小图谱' })).toBeInTheDocument();

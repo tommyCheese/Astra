@@ -308,14 +308,15 @@ class RunEngine:
     ) -> tuple[TaskContract, PlanDraft]:
         ReasoningPolicySnapshot.model_validate(reasoning_policy)
         RunExecutionProfile.model_validate(execution_profile or {})
+        public_goal = self._public_plan_text(goal)
         if self.settings.agent_use_general_runtime:
             try:
-                contract_result = await self.model_client.contract(goal)
+                contract_result = await self.model_client.contract(public_goal)
             except ModelOutputError as exc:
                 contract_result = exc
         else:
-            contract_result = build_default_contract(goal)
-        contract = self._resolve_contract(run_id, goal, contract_result)
+            contract_result = build_default_contract(public_goal)
+        contract = self._resolve_contract(run_id, public_goal, contract_result)
         try:
             plan_result = await self.model_client.plan(
                 goal,

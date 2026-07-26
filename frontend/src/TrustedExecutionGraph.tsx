@@ -276,8 +276,10 @@ function PlanNodeCard({ data, selected }: NodeProps<Node<GraphNodeData>>) {
   const { node, status, diff, execution, dependencyProgress, ariaLabel, onSelect } = data;
   return <article
     className={`trusted-plan-node status-${status} ${selected ? 'selected' : ''} ${diff ? `diff-${diff}` : ''}`}
+    data-node-status={status}
     aria-label={ariaLabel}
     aria-pressed={selected}
+    aria-current={status === 'running' ? 'step' : undefined}
     role="button"
     tabIndex={0}
     onClick={() => onSelect(node.id)}
@@ -290,8 +292,8 @@ function PlanNodeCard({ data, selected }: NodeProps<Node<GraphNodeData>>) {
     <Handle type="target" position={Position.Top} isConnectable={false} />
     <div className="trusted-plan-node-heading">
       <span>{node.index}</span>
-      <em>{statusIcon(status)}</em>
-      <small>{execution ? executionPhaseLabels[execution.phase] : statusLabels[status]}</small>
+      <em aria-hidden="true">{statusIcon(status)}</em>
+      <small className="trusted-plan-node-status">{execution ? executionPhaseLabels[execution.phase] : statusLabels[status]}</small>
     </div>
     <strong>{node.title}</strong>
     <p>{node.intent}</p>

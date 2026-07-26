@@ -127,6 +127,7 @@ function AppContent() {
   const modelMenuRef = useRef<HTMLDivElement>(null);
   const goalInputRef = useRef<HTMLTextAreaElement>(null);
   const conversationRef = useRef<HTMLDivElement>(null);
+  const composerDockRef = useRef<HTMLDivElement>(null);
   const followLatestRef = useRef(true);
   const jumpingToLatestRef = useRef(false);
   const jumpResetTimerRef = useRef<number>();
@@ -459,7 +460,7 @@ function AppContent() {
       } as RunView);
       setPriorMessages(previousMessages);
       setRun(current);
-      setProcessState(createOptimisticProcessState(created.run_id));
+      setProcessState(createOptimisticProcessState(created.run_id, createdAnswerMode ?? answerMode));
       rememberConversation(current, previousMessages);
       setGoal('');
       if (cancelRequestedRef.current) {
@@ -631,7 +632,9 @@ function AppContent() {
       processEventBufferRef.current = [];
       if (!events.length) return;
       setProcessState((state) => {
-        let next = state?.runId === run.id ? state : createOptimisticProcessState(run.id);
+        let next = state?.runId === run.id
+          ? state
+          : createOptimisticProcessState(run.id, run.answer_mode === 'standard' ? 'standard' : 'trusted');
         for (const event of events) next = reduceProcessEvent(next, event);
         return next;
       });
@@ -754,6 +757,21 @@ function AppContent() {
     && 'id' in effectiveRun.plan_graph
     ? effectiveRun
     : null;
+  useEffect(() => {
+    const dock = composerDockRef.current;
+    const surface = dock?.closest<HTMLElement>('.chat-surface');
+    if (!dock || !surface) return;
+    const updateDockHeight = () => {
+      surface.style.setProperty('--composer-dock-height', `${Math.ceil(dock.getBoundingClientRect().height)}px`);
+    };
+    updateDockHeight();
+    const observer = new ResizeObserver(updateDockHeight);
+    observer.observe(dock);
+    return () => {
+      observer.disconnect();
+      surface.style.removeProperty('--composer-dock-height');
+    };
+  }, [view]);
   useEffect(() => {
     if (trustedGraphRun?.id) setGraphPaneOpen(true);
   }, [trustedGraphRun?.id]);
@@ -963,7 +981,7 @@ function AppContent() {
             <span>{t('打开执行图谱')}</span>
           </button>}
           {showJumpToLatest && <button className="jump-latest-button" type="button" onClick={jumpToLatest}><span aria-hidden="true">↓</span>{t('回到最新')}</button>}
-          <div className={`composer-dock ${run?.pending_approval ? 'has-approval' : ''}`}>
+          <div ref={composerDockRef} className={`composer-dock ${run?.pending_approval ? 'has-approval' : ''}`}>
             {run && planConfirmation && (
               <PlanConfirmationCard
                 run={effectiveRun ?? run}
@@ -2585,7 +2603,7 @@ function ProcessPanel({ run, messageId, liveState, open, isLatestRun, onInitiali
   return <article className={`process-entry ${live ? 'live' : ''} ${hasHistoricalGraph ? 'has-historical-graph' : ''}`} id={`message-${messageId}`}><details className="process-panel" open={open}><summary onClick={toggle} aria-expanded={open}><Icon name="brain" /><span className="process-title">{processTitle}{live && <span className="process-thinking-dots" aria-hidden="true"><i /><i /><i /></span>}</span></summary><div className="process-timeline" aria-live={live ? 'polite' : undefined}>
     <ProcessTimeline items={processItems} run={run} />
     {!live && remainingNotes.map((note, index) => <div className="process-step verification" key={`verification-${index}`}><span className="process-dot"><Icon name="check" /></span><div><strong>{t('验证')}</strong><p>{note}</p></div></div>)}
-    {!live && <ReasoningAuditSummary run={run} />}
+    {!live && run.result && <ReasoningAuditSummary run={run} />}
   </div></details>
     {hasHistoricalGraph && <button
       className="historical-graph-toggle"
