@@ -15,7 +15,7 @@ import {
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import { getPlanVersion, getPlanVersionDiff } from './api';
-import { layoutPlanGraph, nodeTraceAssociations, planProgress, unmetDependencies, type PlanGraphLayout } from './planGraph';
+import { layoutPlanGraph, nodeTraceAssociations, planProgress, unmetDependencies, type PlanGraphLayout, type PositionedPlanNode } from './planGraph';
 import type { PlanGraphDiff, PlanGraphNode, PlanGraphSnapshot, PlanNodeStatus, RunView } from './types';
 
 type GraphNodeData = {
@@ -136,7 +136,7 @@ function GraphWorkbench({ run, compact = false, title = '执行图谱' }: Truste
 
   if (!graph || !layout) return null;
   const progress = planProgress(graph);
-  const selected = graph.nodes.find((node) => node.id === selectedNodeId) ?? null;
+  const selected = layout.nodes.find((node) => node.id === selectedNodeId) ?? null;
   const nodeDiff = new Map(diff?.nodes.map((item) => [item.node_id, item.change]) ?? []);
   const edgeDiff = new Map(diff?.edges.map((item) => [
     `${item.predecessor_node_id}>${item.successor_node_id}`,
@@ -146,6 +146,8 @@ function GraphWorkbench({ run, compact = false, title = '执行图谱' }: Truste
     id: node.id,
     type: 'planNode',
     position: node.position,
+    initialWidth: 236,
+    initialHeight: 112,
     data: { node, status: node.derivedStatus, diff: nodeDiff.get(node.id) },
     selected: node.id === selectedNodeId,
     draggable: false,
@@ -274,7 +276,7 @@ function FocusCurrentButton({ graph, onSelect }: { graph: PlanGraphSnapshot; onS
   }}>定位当前节点</button>;
 }
 
-function NodeInspector({ run, graph, node }: { run: RunView; graph: PlanGraphSnapshot; node: PlanGraphNode }) {
+function NodeInspector({ run, graph, node }: { run: RunView; graph: PlanGraphSnapshot; node: PositionedPlanNode }) {
   const unmet = unmetDependencies(graph, node.id);
   const {
     turns,
@@ -283,7 +285,7 @@ function NodeInspector({ run, graph, node }: { run: RunView; graph: PlanGraphSna
     pendingApproval: approval,
   } = nodeTraceAssociations(run, node.id);
   return <aside className="trusted-node-inspector" aria-label={`${node.title} 节点详情`}>
-    <header><span>节点 {node.index}</span><strong>{node.title}</strong><small>{statusLabels[node.status]}</small></header>
+    <header><span>节点 {node.index}</span><strong>{node.title}</strong><small>{statusLabels[node.derivedStatus]}</small></header>
     <section>
       <h4>计划</h4>
       <p>{node.intent}</p>

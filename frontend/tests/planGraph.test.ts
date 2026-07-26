@@ -10,7 +10,7 @@ import {
   unmetDependencies,
 } from '../src/planGraph';
 import type { PlanGraphNode, PlanGraphSnapshot, RunView } from '../src/types';
-import { planGraphVisualFixtures } from './fixtures/planGraphs';
+import { complexDagFixture } from '../src/dev/complexDagFixture';
 
 function node(id: string, index: number, depends_on: string[] = []): PlanGraphNode {
   return {
@@ -134,17 +134,19 @@ describe('plan graph selectors and layout', () => {
     expect(new Set(first.nodes.map((item) => item.position.x)).size).toBeGreaterThan(1);
   });
 
-  it('keeps dense visual regression fixtures finite and deterministic', () => {
-    for (const fixture of Object.values(planGraphVisualFixtures)) {
-      const first = layoutPlanGraph(fixture);
-      const second = layoutPlanGraph(fixture);
-      expect(first.nodes).toHaveLength(fixture.nodes.length);
-      expect(first.edges).toHaveLength(fixture.edges.length);
-      expect(first.width).toBeGreaterThan(0);
-      expect(first.height).toBeGreaterThan(0);
-      expect(first.nodes.every((item) => Number.isFinite(item.position.x) && Number.isFinite(item.position.y))).toBe(true);
-      expect(second.nodes.map((item) => item.position)).toEqual(first.nodes.map((item) => item.position));
-    }
+  it('keeps the complex multi-route visual fixture finite and deterministic', () => {
+    const first = layoutPlanGraph(complexDagFixture);
+    const second = layoutPlanGraph(complexDagFixture);
+    expect(first.nodes).toHaveLength(16);
+    expect(first.edges).toHaveLength(22);
+    expect(first.width).toBeGreaterThan(900);
+    expect(first.height).toBeGreaterThan(700);
+    expect(first.nodes.every((item) => Number.isFinite(item.position.x) && Number.isFinite(item.position.y))).toBe(true);
+    expect(second.nodes.map((item) => item.position)).toEqual(first.nodes.map((item) => item.position));
+    expect(derivedNodeStatuses(complexDagFixture).get('context_merge')).toBe('blocked');
+    expect(derivedNodeStatuses(complexDagFixture).get('risk_review')).toBe('blocked');
+    expect(derivedNodeStatuses(complexDagFixture).get('draft')).toBe('blocked');
+    expect(derivedNodeStatuses(complexDagFixture).get('finalize')).toBe('blocked');
   });
 
   it('associates runtime trace and evidence by stable node id', () => {

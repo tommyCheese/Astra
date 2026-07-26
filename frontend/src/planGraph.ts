@@ -112,17 +112,31 @@ export function derivedNodeStatuses(graph: PlanGraphSnapshot): Map<string, PlanN
       edge.predecessor_node_id,
     ]);
   }
-  return new Map(graph.nodes.map((node) => {
-    if (node.status !== 'pending') return [node.id, node.status];
-    const dependencies = (predecessors.get(node.id) ?? []).flatMap((id) => byId.get(id) ?? []);
-    if (dependencies.some((dependency) => failedDependencyStatuses.has(dependency.status))) {
-      return [node.id, 'blocked'];
+  const statuses = new Map<string, PlanNodeStatus>();
+  const visiting = new Set<string>();
+  const resolve = (nodeId: string): PlanNodeStatus => {
+    const cached = statuses.get(nodeId);
+    if (cached) return cached;
+    const node = byId.get(nodeId);
+    if (!node) return 'pending';
+    if (node.status !== 'pending') {
+      statuses.set(nodeId, node.status);
+      return node.status;
     }
-    if (dependencies.every((dependency) => terminalDependencyStatuses.has(dependency.status))) {
-      return [node.id, 'ready'];
-    }
-    return [node.id, 'pending'];
-  }));
+    if (visiting.has(nodeId)) return 'pending';
+    visiting.add(nodeId);
+    const dependencyStatuses = (predecessors.get(nodeId) ?? []).map(resolve);
+    visiting.delete(nodeId);
+    const status = dependencyStatuses.some((dependency) => failedDependencyStatuses.has(dependency))
+      ? 'blocked'
+      : dependencyStatuses.every((dependency) => terminalDependencyStatuses.has(dependency))
+        ? 'ready'
+        : 'pending';
+    statuses.set(nodeId, status);
+    return status;
+  };
+  for (const node of graph.nodes) resolve(node.id);
+  return statuses;
 }
 
 export function planProgress(graph: PlanGraphSnapshot) {
