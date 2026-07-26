@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "Astra web data query task runner backend"
 requires-python = ">=3.10"
 dependencies = [
+  "aiosqlite>=0.19.0",
   "alembic>=1.13.0",
   "asyncpg>=0.29.0",
   "charset-normalizer>=3.3.0",
@@ -29,7 +30,6 @@ include = ["app*"]
 
 [project.optional-dependencies]
 dev = [
-  "aiosqlite>=0.19.0",
   "pytest>=8.0.0",
   "pytest-asyncio>=0.23.0",
   "ruff>=0.4.0"
