@@ -17,9 +17,16 @@ from app.db.models import (
 from app.schemas.agent import (
     ExpectedObservation,
     PlanDraft,
+    PlanEdgeDiff,
+    PlanEdgeView,
+    PlanGraphDiff,
+    PlanNodeDiff,
     PlanNodeStatus,
+    PlanNodeTransitionEvent,
     PlanNodeView,
     PlanStatus,
+    PlanVersionEvent,
+    PlanVersionSummary,
     PlanView,
 )
 
@@ -62,6 +69,25 @@ class PlanRepository:
         run = await self.session.get(RunRecord, run_id)
         if run is None:
             raise ValueError(f"Run not found: {run_id}")
+        lineage = lineage or {}
+        draft_keys = {item.node_key for item in draft.nodes}
+        if unknown_lineage_keys := set(lineage) - draft_keys:
+            raise PlanStateError(
+                f"Lineage references unknown new nodes: {sorted(unknown_lineage_keys)}"
+            )
+        if lineage:
+            lineage_ids = set(lineage.values())
+            result = await self.session.execute(
+                select(PlanNodeRecord.id)
+                .join(PlanRecord, PlanRecord.id == PlanNodeRecord.plan_id)
+                .where(
+                    PlanNodeRecord.id.in_(lineage_ids),
+                    PlanRecord.run_id == run_id,
+                )
+            )
+            valid_lineage_ids = set(result.scalars().all())
+            if valid_lineage_ids != lineage_ids:
+                raise PlanStateError("Lineage must reference nodes from an earlier Plan in the Run")
         next_version = (
             int(
                 (
@@ -83,7 +109,6 @@ class PlanRepository:
         self.session.add(plan)
         await self.session.flush()
         nodes_by_key: dict[str, PlanNodeRecord] = {}
-        lineage = lineage or {}
         node_state = node_state or {}
         for index, item in enumerate(draft.nodes, start=1):
             preserved = node_state.get(item.node_key, {})
@@ -138,6 +163,29 @@ class PlanRepository:
                 "supersedes_plan_id": supersedes_plan_id,
             },
         )
+        await self._event(
+            run_id,
+            "plan.version.created",
+            PlanVersionEvent(
+                plan_id=plan.id,
+                plan_version=plan.version,
+                status=plan.status,
+                supersedes_plan_id=supersedes_plan_id,
+                node_count=len(draft.nodes),
+                lineage_count=len(lineage),
+            ).model_dump(mode="json"),
+        )
+        if status == PlanStatus.active:
+            await self._event(
+                run_id,
+                "plan.version.activated",
+                PlanVersionEvent(
+                    plan_id=plan.id,
+                    plan_version=plan.version,
+                    supersedes_plan_id=supersedes_plan_id,
+                    lineage_count=len(lineage),
+                ).model_dump(mode="json"),
+            )
         return loaded
 
     async def require(self, plan_id: str) -> PlanRecord:
@@ -158,6 +206,23 @@ class PlanRepository:
             return None
         return await self.require(run.active_plan_id)
 
+    async def list_for_run(self, run_id: str) -> list[PlanRecord]:
+        result = await self.session.execute(
+            select(PlanRecord)
+            .where(PlanRecord.run_id == run_id)
+            .order_by(PlanRecord.version)
+            .options(selectinload(PlanRecord.nodes), selectinload(PlanRecord.edges))
+        )
+        return list(result.scalars().all())
+
+    async def by_version(self, run_id: str, version: int) -> PlanRecord | None:
+        result = await self.session.execute(
+            select(PlanRecord)
+            .where(PlanRecord.run_id == run_id, PlanRecord.version == version)
+            .options(selectinload(PlanRecord.nodes), selectinload(PlanRecord.edges))
+        )
+        return result.scalar_one_or_none()
+
     async def require_node(self, node_id: str) -> PlanNodeRecord:
         node = await self.session.get(PlanNodeRecord, node_id)
         if node is None:
@@ -175,6 +240,7 @@ class PlanRepository:
         node = await self.require_node(node_id)
         if target.value not in NODE_TRANSITIONS.get(node.status, set()):
             raise PlanStateError(f"Invalid plan node transition: {node.status} -> {target.value}")
+        previous_status = node.status
         node.status = target.value
         if target == PlanNodeStatus.running and node.started_at is None:
             node.started_at = utc_now()
@@ -203,15 +269,16 @@ class PlanRepository:
         await self._event(
             plan.run_id,
             "plan.node.updated",
-            {
-                "plan_id": plan.id,
-                "plan_version": plan.version,
-                "plan_node_id": node.id,
-                "node_key": node.node_key,
-                "status": node.status,
-                "evidence_refs": node.evidence_refs,
-                "failure": node.failure,
-            },
+            PlanNodeTransitionEvent(
+                plan_id=plan.id,
+                plan_version=plan.version,
+                plan_node_id=node.id,
+                node_key=node.node_key,
+                previous_status=previous_status,
+                status=node.status,
+                evidence_refs=node.evidence_refs,
+                failure=_safe_graph_failure(node.failure),
+            ).model_dump(mode="json"),
         )
         await self.session.flush()
         return node
@@ -234,6 +301,15 @@ class PlanRepository:
         plan.status = PlanStatus.active.value
         plan.activated_at = plan.activated_at or utc_now()
         run.active_plan_id = plan.id
+        await self._event(
+            plan.run_id,
+            "plan.version.activated",
+            PlanVersionEvent(
+                plan_id=plan.id,
+                plan_version=plan.version,
+                supersedes_plan_id=plan.supersedes_plan_id,
+            ).model_dump(mode="json"),
+        )
         await self.session.flush()
         return plan
 
@@ -256,6 +332,9 @@ def plan_to_view(plan: PlanRecord) -> PlanView:
         version=plan.version,
         status=plan.status,
         supersedes_plan_id=plan.supersedes_plan_id,
+        created_at=plan.created_at,
+        activated_at=plan.activated_at,
+        completed_at=plan.completed_at,
         nodes=[
             PlanNodeView(
                 id=node.id,
@@ -276,7 +355,129 @@ def plan_to_view(plan: PlanRecord) -> PlanView:
                 optional=node.optional,
                 evidence_refs=node.evidence_refs or [],
                 failure=node.failure,
+                lineage_node_id=node.lineage_node_id,
+                started_at=node.started_at,
+                completed_at=node.completed_at,
             )
             for node in nodes
         ],
+        edges=[
+            PlanEdgeView(
+                id=edge.id,
+                plan_id=edge.plan_id,
+                predecessor_node_id=edge.predecessor_id,
+                successor_node_id=edge.successor_id,
+                dependency_type=edge.dependency_type,
+            )
+            for edge in sorted(
+                plan.edges,
+                key=lambda item: (item.predecessor_id, item.successor_id, item.id),
+            )
+        ],
     )
+
+
+def plan_to_summary(plan: PlanRecord) -> PlanVersionSummary:
+    return PlanVersionSummary(
+        id=plan.id,
+        run_id=plan.run_id,
+        version=plan.version,
+        status=plan.status,
+        supersedes_plan_id=plan.supersedes_plan_id,
+        node_count=len(plan.nodes),
+        created_at=plan.created_at,
+        activated_at=plan.activated_at,
+        completed_at=plan.completed_at,
+    )
+
+
+def diff_plans(before: PlanRecord, after: PlanRecord) -> PlanGraphDiff:
+    before_by_id = {node.id: node for node in before.nodes}
+    after_by_lineage = {
+        node.lineage_node_id: node for node in after.nodes if node.lineage_node_id
+    }
+    node_diffs: list[PlanNodeDiff] = []
+    compared_fields = (
+        "node_key",
+        "title",
+        "intent",
+        "required_capabilities",
+        "success_criteria_refs",
+        "expected_outcome",
+        "risk_level",
+        "optional",
+    )
+    for node in sorted(after.nodes, key=lambda item: item.index):
+        previous = before_by_id.get(node.lineage_node_id or "")
+        if previous is None:
+            change = "added"
+        elif previous.status == PlanNodeStatus.completed.value and node.status == previous.status:
+            change = "inherited_completed"
+        elif all(getattr(previous, field) == getattr(node, field) for field in compared_fields):
+            change = "unchanged"
+        else:
+            change = "modified"
+        node_diffs.append(
+            PlanNodeDiff(
+                node_id=node.id,
+                node_key=node.node_key,
+                previous_node_id=previous.id if previous else None,
+                change=change,
+            )
+        )
+    for node in sorted(before.nodes, key=lambda item: item.index):
+        if node.id not in after_by_lineage:
+            node_diffs.append(
+                PlanNodeDiff(
+                    node_id=node.id,
+                    node_key=node.node_key,
+                    previous_node_id=node.id,
+                    change="removed",
+                )
+            )
+
+    before_edges = {(edge.predecessor_id, edge.successor_id) for edge in before.edges}
+    after_edges_by_previous: dict[tuple[str, str], tuple[str, str]] = {}
+    edge_diffs: list[PlanEdgeDiff] = []
+    after_nodes = {node.id: node for node in after.nodes}
+    for edge in sorted(after.edges, key=lambda item: (item.predecessor_id, item.successor_id)):
+        predecessor = after_nodes[edge.predecessor_id]
+        successor = after_nodes[edge.successor_id]
+        previous_pair = (predecessor.lineage_node_id or "", successor.lineage_node_id or "")
+        change = "unchanged" if previous_pair in before_edges else "added"
+        if previous_pair[0] and previous_pair[1]:
+            after_edges_by_previous[previous_pair] = (
+                edge.predecessor_id,
+                edge.successor_id,
+            )
+        edge_diffs.append(
+            PlanEdgeDiff(
+                predecessor_node_id=edge.predecessor_id,
+                successor_node_id=edge.successor_id,
+                change=change,
+            )
+        )
+    for predecessor_id, successor_id in sorted(before_edges):
+        if (predecessor_id, successor_id) not in after_edges_by_previous:
+            edge_diffs.append(
+                PlanEdgeDiff(
+                    predecessor_node_id=predecessor_id,
+                    successor_node_id=successor_id,
+                    change="removed",
+                )
+            )
+    return PlanGraphDiff(
+        from_plan_id=before.id,
+        to_plan_id=after.id,
+        from_version=before.version,
+        to_version=after.version,
+        nodes=node_diffs,
+        edges=edge_diffs,
+    )
+
+
+def _safe_graph_failure(failure: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not failure:
+        return None
+    allowed = ("category", "code", "retryable")
+    return {key: failure[key] for key in allowed if key in failure}

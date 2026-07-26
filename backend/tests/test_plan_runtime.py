@@ -2,7 +2,7 @@ import pytest
 from sqlalchemy.exc import IntegrityError
 
 from app.db.models import PlanNodeRecord
-from app.repositories.plans import PlanRepository, PlanStateError, plan_to_view
+from app.repositories.plans import PlanRepository, PlanStateError, diff_plans, plan_to_view
 from app.repositories.runs import RunRepository, run_to_view
 from app.runner.planning import (
     PlanScheduler,
@@ -95,7 +95,9 @@ def test_validator_rejects_unknown_references_and_capabilities():
 
 
 async def test_plan_repository_persists_graph_and_projects_run_view(session):
-    run = await RunRepository(session).create_task_run("查询天气", {"provider": "mock"})
+    run = await RunRepository(session).create_task_run(
+        "查询天气", {"provider": "mock"}, answer_mode="trusted"
+    )
     contract = build_default_contract("查询天气")
     repository = PlanRepository(session)
     plan = await PlanService(repository).create(
@@ -125,6 +127,35 @@ async def test_plan_repository_persists_graph_and_projects_run_view(session):
     assert loaded.agent_state.get("plan") is None
 
 
+async def test_standard_run_never_projects_a_plan_graph(session):
+    run = await RunRepository(session).create_task_run("快速回答", {"provider": "mock"})
+    plan = await PlanRepository(session).create(run.id, weather_plan())
+    run.plan_graph = plan_to_view(plan).model_dump(mode="json")
+    await session.commit()
+
+    view = run_to_view(await RunRepository(session).require_run(run.id))
+    assert view["plan_graph"] == {}
+    assert view["plan_versions"] == []
+    assert view["steps"] == []
+
+
+async def test_plan_projection_uses_explicit_edges_and_keeps_depends_on(session):
+    run = await RunRepository(session).create_task_run(
+        "图投影", {"provider": "mock"}, answer_mode="trusted"
+    )
+    plan = await PlanRepository(session).create(run.id, weather_plan())
+
+    view = plan_to_view(plan)
+    node_ids = {node.node_key: node.id for node in view.nodes}
+    assert view.nodes[1].depends_on == ["resolve-location"]
+    assert {
+        (edge.predecessor_node_id, edge.successor_node_id) for edge in view.edges
+    } == {
+        (node_ids["resolve-location"], node_ids["fetch-weather"]),
+        (node_ids["fetch-weather"], node_ids["answer"]),
+    }
+
+
 async def test_plan_version_and_node_key_constraints(session):
     run = await RunRepository(session).create_task_run("约束测试", {"provider": "mock"})
     repository = PlanRepository(session)
@@ -141,6 +172,18 @@ async def test_plan_version_and_node_key_constraints(session):
     with pytest.raises(IntegrityError):
         await session.flush()
     await session.rollback()
+
+
+async def test_plan_lineage_must_reference_the_same_run(session):
+    first_run = await RunRepository(session).create_task_run("原运行", {"provider": "mock"})
+    second_run = await RunRepository(session).create_task_run("其他运行", {"provider": "mock"})
+    foreign = await PlanRepository(session).create(first_run.id, weather_plan())
+    with pytest.raises(PlanStateError, match="earlier Plan"):
+        await PlanRepository(session).create(
+            second_run.id,
+            weather_plan(),
+            lineage={"resolve-location": foreign.nodes[0].id},
+        )
 
 
 async def test_scheduler_blocks_dependencies_and_releases_successors(session):
@@ -307,6 +350,12 @@ async def test_plan_patch_preserves_completed_nodes_and_evidence(session):
     assert preserved.status == "completed"
     assert preserved.evidence_refs == ["evidence-1"]
     assert preserved.lineage_node_id == first.id
+
+    graph_diff = diff_plans(plan, revised)
+    assert next(
+        item for item in graph_diff.nodes if item.node_key == "resolve-location"
+    ).change == "inherited_completed"
+    assert next(item for item in graph_diff.nodes if item.node_key == "answer").change == "modified"
 
 
 async def test_plan_patch_rejects_running_node_and_cyclic_update(session):

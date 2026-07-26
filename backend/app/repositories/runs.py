@@ -24,10 +24,13 @@ from app.db.models import (
     utc_now,
 )
 from app.schemas.agent import (
+    AgentState,
     AnswerMode,
     AssuranceLevel,
     ContractMode,
     PlanExecution,
+    PlanGraphSnapshotEvent,
+    PlanRevisionEvent,
     ReasoningPolicySnapshot,
     RunExecutionProfile,
     RunResult,
@@ -295,6 +298,161 @@ class RunRepository:
                 "state_version": state.version,
             },
         )
+        await self.session.commit()
+        return run
+
+    async def claim_plan_revision(
+        self,
+        run_id: str,
+        *,
+        continuation_token: str,
+        plan_id: str,
+        expected_plan_version: int,
+        expected_state_version: int,
+    ) -> tuple[RunRecord, PlanRecord]:
+        from app.repositories.plans import PlanRepository
+
+        run = await self.require_run(run_id)
+        waiting = run.waiting_state or {}
+        bindings = {
+            "continuation_token": continuation_token,
+            "plan_id": plan_id,
+            "plan_version": expected_plan_version,
+            "state_version": expected_state_version,
+        }
+        if (
+            run.status != "waiting_user"
+            or waiting.get("kind") != "plan_confirmation"
+            or any(waiting.get(key) != value for key, value in bindings.items())
+            or run.state_version != expected_state_version
+        ):
+            raise ValueError("Invalid or stale plan revision")
+        plan = await PlanRepository(self.session).require(plan_id)
+        if (
+            plan.run_id != run_id
+            or plan.version != expected_plan_version
+            or plan.status != "planned"
+        ):
+            raise ValueError("Invalid or stale plan revision")
+        claimed = await self.session.execute(
+            update(RunRecord)
+            .where(
+                RunRecord.id == run_id,
+                RunRecord.status == "waiting_user",
+                RunRecord.state_version == expected_state_version,
+            )
+            .values(status="planning", waiting_state=None, updated_at=utc_now())
+        )
+        if claimed.rowcount != 1:
+            await self.session.rollback()
+            raise ValueError("Invalid or stale plan revision")
+        await self.add_event(
+            run_id,
+            "plan.revision.started",
+            PlanRevisionEvent(
+                plan_id=plan.id,
+                plan_version=plan.version,
+                state_version=run.state_version,
+            ).model_dump(mode="json"),
+        )
+        await self.session.commit()
+        return await self.require_run(run_id), plan
+
+    async def reject_plan_revision(
+        self,
+        run_id: str,
+        *,
+        plan_id: str,
+        plan_version: int,
+        state_version: int,
+        error_code: str,
+    ) -> RunRecord:
+        run = await self.require_run(run_id)
+        if run.status != "planning" or run.state_version != state_version:
+            raise ValueError("Plan revision state changed")
+        waiting_state = {
+            "kind": "plan_confirmation",
+            "plan_id": plan_id,
+            "plan_version": plan_version,
+            "state_version": state_version,
+            "request": "计划调整失败，可修改要求后重试或执行当前版本。",
+            "continuation_token": str(uuid.uuid4()),
+        }
+        run.status = "waiting_user"
+        run.waiting_state = waiting_state
+        run.updated_at = utc_now()
+        await self.add_event(
+            run_id,
+            "plan.revision.rejected",
+            PlanRevisionEvent(
+                plan_id=plan_id,
+                plan_version=plan_version,
+                state_version=state_version,
+                error_code=error_code,
+            ).model_dump(mode="json"),
+        )
+        await self.add_event(run_id, "run.waiting_user", waiting_state)
+        await self.session.commit()
+        return run
+
+    async def complete_plan_revision(
+        self,
+        run_id: str,
+        *,
+        previous_plan: PlanRecord,
+        revised_plan: PlanRecord,
+    ) -> RunRecord:
+        from app.repositories.plans import plan_to_view
+
+        run = await self.require_run(run_id)
+        state = AgentState.model_validate(run.agent_state)
+        if (
+            run.status != "planning"
+            or state.active_plan_version != previous_plan.version
+            or revised_plan.supersedes_plan_id != previous_plan.id
+        ):
+            raise ValueError("Plan revision state changed")
+        previous_plan.status = "superseded"
+        state.active_plan_id = None
+        state.active_plan_version = revised_plan.version
+        state.active_node_id = None
+        state.version = run.state_version + 1
+        graph = plan_to_view(revised_plan)
+        waiting_state = {
+            "kind": "plan_confirmation",
+            "plan_id": revised_plan.id,
+            "plan_version": revised_plan.version,
+            "state_version": state.version,
+            "request": "调整后的计划已生成，确认后执行。",
+            "continuation_token": str(uuid.uuid4()),
+        }
+        run.agent_state = state.model_dump(mode="json")
+        run.state_version = state.version
+        run.plan_graph = graph.model_dump(mode="json")
+        run.status = "waiting_user"
+        run.waiting_state = waiting_state
+        run.updated_at = utc_now()
+        await self.add_event(
+            run_id,
+            "plan.revision.completed",
+            PlanRevisionEvent(
+                plan_id=previous_plan.id,
+                plan_version=previous_plan.version,
+                state_version=state.version,
+                revised_plan_id=revised_plan.id,
+                revised_plan_version=revised_plan.version,
+            ).model_dump(mode="json"),
+        )
+        await self.add_event(
+            run_id,
+            "plan.graph.snapshot",
+            PlanGraphSnapshotEvent(
+                plan_id=revised_plan.id,
+                plan_version=revised_plan.version,
+                graph=graph,
+            ).model_dump(mode="json"),
+        )
+        await self.add_event(run_id, "run.waiting_user", waiting_state)
         await self.session.commit()
         return run
 
@@ -1267,8 +1425,9 @@ class RunRepository:
 
 
 def run_to_view(run: RunRecord) -> dict[str, Any]:
-    from app.repositories.plans import plan_to_view
+    from app.repositories.plans import plan_to_summary, plan_to_view
 
+    trusted = (run.answer_mode or "trusted") == "trusted"
     result_payload = None
     if run.result is not None:
         raw_result = dict(run.result) if isinstance(run.result, dict) else {}
@@ -1276,7 +1435,7 @@ def run_to_view(run: RunRecord) -> dict[str, Any]:
         result_payload = RunResult.model_validate(raw_result).model_dump(mode="json")
     active_plan = next(
         (plan for plan in getattr(run, "plans", []) if plan.id == run.active_plan_id), None
-    )
+    ) if trusted else None
     plan_view = plan_to_view(active_plan) if active_plan is not None else None
     canonical_steps = (
         [
@@ -1459,7 +1618,17 @@ def run_to_view(run: RunRecord) -> dict[str, Any]:
         "chat_messages": build_chat_messages(run),
         "reasoning_policy": run.reasoning_policy or {},
         "task_contract": run.task_contract or {},
-        "plan_graph": plan_view.model_dump(mode="json") if plan_view else run.plan_graph or {},
+        "plan_graph": (
+            plan_view.model_dump(mode="json") if plan_view else run.plan_graph or {}
+        )
+        if trusted
+        else {},
+        "plan_versions": [
+            plan_to_summary(plan).model_dump(mode="json")
+            for plan in sorted(getattr(run, "plans", []), key=lambda item: item.version)
+        ]
+        if trusted
+        else [],
         "agent_state": run.agent_state or {},
         "state_version": run.state_version or 0,
         "terminal_reason": run.terminal_reason,

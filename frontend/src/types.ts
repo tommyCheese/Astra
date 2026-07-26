@@ -23,6 +23,102 @@ export type StepView = {
   evidence_refs?: string[];
   failure?: Record<string, unknown> | null;
   evidence?: Record<string, unknown> | null;
+  lineage_node_id?: string | null;
+  started_at?: string | null;
+  completed_at?: string | null;
+};
+
+export type PlanNodeStatus = 'pending' | 'ready' | 'running' | 'completed' | 'failed' | 'blocked' | 'skipped' | 'superseded';
+
+export type PlanGraphNode = {
+  id: string;
+  plan_id: string;
+  plan_version: number;
+  node_key: string;
+  index: number;
+  title: string;
+  intent: string;
+  status: Exclude<PlanNodeStatus, 'ready' | 'superseded'>;
+  depends_on: string[];
+  required_capabilities: string[];
+  success_criteria_refs: string[];
+  expected_outcome?: { kind: string; success_condition: string; required_fields?: string[] } | null;
+  risk_level: string;
+  optional: boolean;
+  evidence_refs: string[];
+  failure?: Record<string, unknown> | null;
+  lineage_node_id?: string | null;
+  started_at?: string | null;
+  completed_at?: string | null;
+};
+
+export type PlanGraphEdge = {
+  id: string;
+  plan_id: string;
+  predecessor_node_id: string;
+  successor_node_id: string;
+  dependency_type: string;
+};
+
+export type PlanGraphSnapshot = {
+  schema_version: 1;
+  id: string;
+  run_id: string;
+  version: number;
+  status: 'planned' | 'active' | 'superseded' | 'completed';
+  supersedes_plan_id?: string | null;
+  nodes: PlanGraphNode[];
+  edges: PlanGraphEdge[];
+  created_at?: string | null;
+  activated_at?: string | null;
+  completed_at?: string | null;
+};
+
+export type LegacyPlanGraph = {
+  id: string;
+  run_id?: string;
+  version?: number;
+  status?: PlanGraphSnapshot['status'];
+  nodes?: Array<{
+    id: string;
+    node_key: string;
+    index: number;
+    title: string;
+    intent: string;
+    status: string;
+    depends_on: string[];
+  }>;
+  edges?: PlanGraphEdge[];
+};
+
+export type PlanVersionSummary = {
+  id: string;
+  run_id: string;
+  version: number;
+  status: PlanGraphSnapshot['status'];
+  supersedes_plan_id?: string | null;
+  node_count: number;
+  created_at: string;
+  activated_at?: string | null;
+  completed_at?: string | null;
+};
+
+export type PlanGraphDiff = {
+  from_plan_id: string;
+  to_plan_id: string;
+  from_version: number;
+  to_version: number;
+  nodes: Array<{
+    node_id: string;
+    node_key: string;
+    change: 'added' | 'removed' | 'unchanged' | 'modified' | 'inherited_completed';
+    previous_node_id?: string | null;
+  }>;
+  edges: Array<{
+    predecessor_node_id: string;
+    successor_node_id: string;
+    change: 'added' | 'removed' | 'unchanged';
+  }>;
 };
 
 export type ToolCallView = {
@@ -252,21 +348,8 @@ export type RunView = {
   chat_messages?: ChatMessage[];
   reasoning_policy?: Record<string, unknown>;
   task_contract?: Record<string, unknown>;
-  plan_graph?: {
-    id?: string;
-    run_id?: string;
-    version?: number;
-    status?: 'planned' | 'active' | 'superseded' | 'completed';
-    nodes?: Array<{
-      id: string;
-      node_key: string;
-      index: number;
-      title: string;
-      intent: string;
-      status: string;
-      depends_on: string[];
-    }>;
-  };
+  plan_graph?: PlanGraphSnapshot | LegacyPlanGraph | Record<string, never>;
+  plan_versions?: PlanVersionSummary[];
   agent_state?: Record<string, unknown>;
   state_version?: number;
   terminal_reason?: Record<string, unknown> | null;

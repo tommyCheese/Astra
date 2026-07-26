@@ -1,7 +1,7 @@
-import { CSSProperties, FormEvent, KeyboardEvent as ReactKeyboardEvent, MouseEvent, PointerEvent as ReactPointerEvent, ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Component, CSSProperties, FormEvent, KeyboardEvent as ReactKeyboardEvent, lazy, MouseEvent, PointerEvent as ReactPointerEvent, ReactNode, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { AstraApiError, ApiErrorPayload, buildRuntime, cancelRun, cancelRuntimeBuild, confirmPlanExecution, createConversationShare, createRun, decideToolApproval, deleteConversation, getConversation, getConversationStrategy, getPermissionCenter, getRun, getRuntimeProfile, getToolSettings, listConversationShares, listConversations, listLibraryFiles, listRuns, resumeRun, revokeConversationShare, revokePermissionGrant, streamRunEvents, updateConversation, updateConversationStrategy, updateToolSettings, type ConversationStrategyPreferences, type LibraryFile, type PermissionCenterView, type RunModelConfig, type ToolSetting } from './api';
+import { AstraApiError, ApiErrorPayload, buildRuntime, cancelRun, cancelRuntimeBuild, confirmPlanExecution, createConversationShare, createRun, decideToolApproval, deleteConversation, getConversation, getConversationStrategy, getPermissionCenter, getRun, getRuntimeProfile, getToolSettings, listConversationShares, listConversations, listLibraryFiles, listRuns, resumeRun, revisePlan, revokeConversationShare, revokePermissionGrant, streamRunEvents, updateConversation, updateConversationStrategy, updateToolSettings, type ConversationStrategyPreferences, type LibraryFile, type PermissionCenterView, type RunModelConfig, type ToolSetting } from './api';
 import { buildAuditLog, buildIdentityPresentation, type IdentityGroup } from './auditPresentation';
 import { I18nProvider, useI18n } from './i18n';
 import { ThemeProvider, useTheme } from './theme';
@@ -9,7 +9,22 @@ import type { ArtifactView, ChatMessage, ConversationShare, ConversationShareSum
 import { UsageDashboard } from './UsageDashboard';
 import { buildPresentation, HISTORY_LIMIT, normalizeRunView, type ConversationEntry } from './conversations';
 import { createOptimisticProcessState, isDecisionGroup, reconcileProcessSnapshot, reduceProcessEvent, type ProcessStreamItem, type ProcessStreamState } from './processStream';
+import { createPlanGraphStreamState, reconcilePlanGraphSnapshot, reducePlanGraphEvent, type PlanGraphStreamState } from './planGraph';
 import type { RunStreamEvent } from './api';
+
+const TrustedExecutionGraph = lazy(() => import('./TrustedExecutionGraph'));
+
+class GraphErrorBoundary extends Component<{ children: ReactNode; fallback: ReactNode }, { failed: boolean }> {
+  state = { failed: false };
+
+  static getDerivedStateFromError() {
+    return { failed: true };
+  }
+
+  render() {
+    return this.state.failed ? this.props.fallback : this.props.children;
+  }
+}
 
 const terminalStatuses = new Set(['completed', 'completed_with_warnings', 'failed', 'blocked', 'waiting_user', 'cancelled']);
 const STORAGE_KEYS = {
@@ -69,10 +84,12 @@ function AppContent() {
   const [stopping, setStopping] = useState(false);
   const [approvalSubmitting, setApprovalSubmitting] = useState(false);
   const [planConfirmationSubmitting, setPlanConfirmationSubmitting] = useState(false);
+  const [planRevisionSubmitting, setPlanRevisionSubmitting] = useState(false);
   const [streamingAnswer, setStreamingAnswer] = useState('');
   const [answerComplete, setAnswerComplete] = useState(false);
   const [answerSettling, setAnswerSettling] = useState(false);
   const [processState, setProcessState] = useState<ProcessStreamState | null>(null);
+  const [planGraphState, setPlanGraphState] = useState<PlanGraphStreamState | null>(null);
   const [processPanelDefaultOpen, setProcessPanelDefaultOpen] = useState(loadProcessPanelDefaultOpen);
   const [processPanelOpenByRun, setProcessPanelOpenByRun] = useState<Record<string, boolean>>({});
   const [showJumpToLatest, setShowJumpToLatest] = useState(false);
@@ -114,6 +131,9 @@ function AppContent() {
   const deltaFrameRef = useRef<number>();
   const processEventBufferRef = useRef<RunStreamEvent[]>([]);
   const processFrameRef = useRef<number>();
+  const planGraphEventBufferRef = useRef<RunStreamEvent[]>([]);
+  const planGraphFrameRef = useRef<number>();
+  const planGraphStateRef = useRef<PlanGraphStreamState | null>(null);
   const refreshTimerRef = useRef<number>();
   const conversationStrategyRef = useRef<ConversationStrategyPreferences>(DEFAULT_CONVERSATION_STRATEGY);
   const conversationStrategyTouchedRef = useRef(false);
@@ -177,10 +197,17 @@ function AppContent() {
     if (jumpResetTimerRef.current !== undefined) window.clearTimeout(jumpResetTimerRef.current);
     if (deltaFrameRef.current !== undefined) window.cancelAnimationFrame(deltaFrameRef.current);
     if (processFrameRef.current !== undefined) window.cancelAnimationFrame(processFrameRef.current);
+    if (planGraphFrameRef.current !== undefined) window.cancelAnimationFrame(planGraphFrameRef.current);
     if (refreshTimerRef.current !== undefined) window.clearTimeout(refreshTimerRef.current);
     initialSnapshotControllerRef.current?.abort();
     conversationControllerRef.current?.abort();
   }, []);
+
+  useEffect(() => {
+    const next = run ? createPlanGraphStreamState(run) : null;
+    planGraphStateRef.current = next;
+    setPlanGraphState(next);
+  }, [run?.id]);
 
   useEffect(() => {
     let active = true;
@@ -445,6 +472,11 @@ function AppContent() {
         const next = normalizeRunView(snapshot);
         setRun(next);
         setProcessState((state) => reconcileProcessSnapshot(state, next));
+        setPlanGraphState((state) => {
+          const graph = reconcilePlanGraphSnapshot(state, next);
+          planGraphStateRef.current = graph;
+          return graph;
+        });
         rememberConversation(next, previousMessages);
       }).catch(() => { /* SSE and fallback polling will recover the snapshot. */ });
     } catch (err) {
@@ -526,6 +558,51 @@ function AppContent() {
     }
   }
 
+  async function reviseConfirmedPlan(request: string) {
+    if (!run || !planConfirmation || planRevisionSubmitting || !request.trim()) return;
+    setPlanRevisionSubmitting(true);
+    setError(null);
+    try {
+      const revised = await revisePlan(run.id, request.trim(), {
+        continuationToken: planConfirmation.continuation_token,
+        planId: planConfirmation.plan_id,
+        planVersion: planConfirmation.plan_version,
+        stateVersion: planConfirmation.state_version,
+      }, selectedRunModel());
+      const snapshot = normalizeRunView(await getRun(revised.run_id));
+      setRun(snapshot);
+      setProcessState((state) => reconcileProcessSnapshot(state, snapshot));
+      setPlanGraphState((state) => {
+        const graph = reconcilePlanGraphSnapshot(state, snapshot);
+        planGraphStateRef.current = graph;
+        return graph;
+      });
+      rememberConversation(snapshot);
+    } catch (err) {
+      setError(err instanceof AstraApiError ? err.payload : {
+        type: 'runtime.state_conflict',
+        code: 'PLAN_REVISION_FAILED',
+        message: t('计划调整失败，原计划仍可继续使用。'),
+        retryable: true,
+        trace_id: 'unavailable',
+      });
+      try {
+        const snapshot = normalizeRunView(await getRun(run.id));
+        setRun(snapshot);
+        setPlanGraphState((state) => {
+          const graph = reconcilePlanGraphSnapshot(state, snapshot);
+          planGraphStateRef.current = graph;
+          return graph;
+        });
+        rememberConversation(snapshot);
+      } catch {
+        // Keep the visible original graph when refresh is temporarily unavailable.
+      }
+    } finally {
+      setPlanRevisionSubmitting(false);
+    }
+  }
+
   useEffect(() => {
     if (!run || terminalStatuses.has(run.status)) {
       return;
@@ -559,6 +636,23 @@ function AppContent() {
     const queueProcessEvent = (event: RunStreamEvent) => {
       processEventBufferRef.current.push(event);
       if (processFrameRef.current === undefined) processFrameRef.current = window.requestAnimationFrame(flushProcessEvents);
+    };
+    const flushPlanGraphEvents = () => {
+      planGraphFrameRef.current = undefined;
+      const events = planGraphEventBufferRef.current;
+      planGraphEventBufferRef.current = [];
+      if (!events.length) return;
+      let next = planGraphStateRef.current ?? createPlanGraphStreamState(run);
+      for (const event of events) next = reducePlanGraphEvent(next, event);
+      planGraphStateRef.current = next;
+      setPlanGraphState(next);
+      if (next.needsRefresh) scheduleRefresh();
+    };
+    const queuePlanGraphEvent = (event: RunStreamEvent) => {
+      planGraphEventBufferRef.current.push(event);
+      if (planGraphFrameRef.current === undefined) {
+        planGraphFrameRef.current = window.requestAnimationFrame(flushPlanGraphEvents);
+      }
     };
     const refreshRun = async () => {
       if (refreshing || !active) return;
@@ -618,6 +712,11 @@ function AppContent() {
         return;
       }
       const isProcessEvent = event.type.startsWith('reasoning.') || ['agent_turn.created', 'tool_call.started', 'tool_call.completed', 'reflection.created', 'verification.created'].includes(event.type);
+      if (event.type.startsWith('plan.')) {
+        queuePlanGraphEvent(event);
+        if (event.type !== 'plan.node.updated' && event.type !== 'plan.graph.snapshot') scheduleRefresh();
+        return;
+      }
       if (isProcessEvent) {
         queueProcessEvent(event);
         if (!['reasoning.phase.started', 'reasoning.summary.delta', 'reasoning.summary.completed'].includes(event.type)) scheduleRefresh();
@@ -632,19 +731,28 @@ function AppContent() {
       closeStream();
       if (deltaFrameRef.current !== undefined) window.cancelAnimationFrame(deltaFrameRef.current);
       if (processFrameRef.current !== undefined) window.cancelAnimationFrame(processFrameRef.current);
+      if (planGraphFrameRef.current !== undefined) window.cancelAnimationFrame(planGraphFrameRef.current);
       processEventBufferRef.current = [];
+      planGraphEventBufferRef.current = [];
       if (refreshTimerRef.current !== undefined) window.clearTimeout(refreshTimerRef.current);
       if (fallback !== undefined) window.clearInterval(fallback);
     };
   }, [run?.id, run?.status === 'waiting_user']);
 
+  const effectiveRun = useMemo(() => run && planGraphState?.current?.run_id === run.id
+    ? {
+      ...run,
+      plan_graph: planGraphState.current,
+      plan_versions: planGraphState.versions.length ? planGraphState.versions : run.plan_versions,
+    }
+    : run, [run, planGraphState]);
   const messages = useMemo(() => {
-    const currentMessages = buildPresentation(run)
+    const currentMessages = buildPresentation(effectiveRun)
       .filter((message) => !streamingAnswer || message.metadata.presentation !== 'answer')
       .map((message) => ({ ...message, id: `${run?.id ?? 'idle'}:${priorMessages.length}:${message.id}` }));
     const streamed = streamingAnswer ? [{ id: `${run?.id ?? 'idle'}-stream`, role: 'assistant', content: streamingAnswer, status: answerComplete ? 'completed' : 'streaming', metadata: {} }] : [];
     return [...priorMessages, ...currentMessages, ...streamed];
-  }, [priorMessages, run, streamingAnswer, answerComplete]);
+  }, [priorMessages, effectiveRun, streamingAnswer, answerComplete]);
   const activeProcessItemId = [...(processState?.items ?? [])].reverse().find((item) => item.status === 'running')?.id;
   const initializeProcessPanel = useCallback((runId: string) => {
     setProcessPanelOpenByRun((states) => Object.prototype.hasOwnProperty.call(states, runId)
@@ -812,7 +920,7 @@ function AppContent() {
               </div>
             )}
             {messages.map((message) => (
-              <MessageBubble key={message.id} message={message} run={run} processState={processState} processPanelDefaultOpen={processPanelDefaultOpen} processPanelOpenByRun={processPanelOpenByRun} onProcessPanelInitialize={initializeProcessPanel} onProcessPanelOpenChange={changeProcessPanelOpen} />
+              <MessageBubble key={message.id} message={message} run={effectiveRun} processState={processState} processPanelDefaultOpen={processPanelDefaultOpen} processPanelOpenByRun={processPanelOpenByRun} onProcessPanelInitialize={initializeProcessPanel} onProcessPanelOpenChange={changeProcessPanelOpen} />
             ))}
             {answerSettling && streamingAnswer && <div className="answer-settling" role="status" aria-live="polite"><span className="settling-spinner" aria-hidden="true" />{t('正在整理并验证结果…')}</div>}
             {run && !terminalStatuses.has(run.status) && !streamingAnswer && !processState && (
@@ -828,9 +936,11 @@ function AppContent() {
           <div className={`composer-dock ${run?.pending_approval ? 'has-approval' : ''}`}>
             {run && planConfirmation && (
               <PlanConfirmationCard
-                run={run}
+                run={effectiveRun ?? run}
                 submitting={planConfirmationSubmitting}
+                revisionSubmitting={planRevisionSubmitting}
                 onExecute={() => { void executeConfirmedPlan(); }}
+                onRevise={(request) => { void reviseConfirmedPlan(request); }}
                 onCancel={() => { void cancelRunById(run.id); }}
               />
             )}
@@ -1933,14 +2043,18 @@ function ExecutionModeMenu({ value, onChange }: { value: 'default' | 'bypass'; o
   return <div className="floating-menu execution-menu"><div className="menu-heading">{t('工具批准')}</div>{modes.map((mode) => <button className={value === mode.id ? 'selected' : ''} type="button" key={mode.id} onClick={() => onChange(mode.id)}><Icon name={mode.icon} /><div><strong>{t(mode.title)}</strong><small>{t(mode.detail)}</small></div><span className="mode-selected-mark">{value === mode.id ? '✓' : ''}</span></button>)}</div>;
 }
 
-function PlanConfirmationCard({ run, submitting, onExecute, onCancel }: {
+function PlanConfirmationCard({ run, submitting, revisionSubmitting, onExecute, onRevise, onCancel }: {
   run: RunView;
   submitting: boolean;
+  revisionSubmitting: boolean;
   onExecute: () => void;
+  onRevise: (request: string) => void;
   onCancel: () => void;
 }) {
   const { t } = useI18n();
-  const nodes = run.plan_graph?.nodes ?? [];
+  const [revisionOpen, setRevisionOpen] = useState(false);
+  const [revision, setRevision] = useState('');
+  const graphVersion = run.plan_graph && 'version' in run.plan_graph ? run.plan_graph.version : '?';
   return <section className="plan-confirmation-card" aria-labelledby="plan-confirmation-title">
     <header>
       <Icon name="route" />
@@ -1948,20 +2062,52 @@ function PlanConfirmationCard({ run, submitting, onExecute, onCancel }: {
         <strong id="plan-confirmation-title">{t('计划已生成，等待执行确认')}</strong>
         <span>{t('确认只会启动这个版本的计划，不会批准后续工具影响。')}</span>
       </div>
-      <small>v{run.plan_graph?.version ?? '?'}</small>
+      <small>v{graphVersion}</small>
     </header>
-    <ol className="plan-confirmation-dag">
-      {nodes.map((node) => <li key={node.id}>
-        <span>{node.index}</span>
-        <div><strong>{node.title}</strong><small>{node.intent}</small>{node.depends_on.length > 0 && <em>{t('依赖')}：{node.depends_on.join(', ')}</em>}</div>
-      </li>)}
-    </ol>
+    <GraphErrorBoundary key={run.id} fallback={<div className="trusted-graph-loading">{t('图谱暂时无法显示，计划仍可通过下方操作处理。')}</div>}>
+      <Suspense fallback={<PlanGraphLoadingFallback run={run} label={t('正在载入计划图谱…')} />}>
+        <TrustedExecutionGraph run={run} compact title={t('待确认计划')} />
+      </Suspense>
+    </GraphErrorBoundary>
+    {revisionOpen && <form className="plan-revision-form" onSubmit={(event) => {
+      event.preventDefault();
+      if (revision.trim()) onRevise(revision);
+    }}>
+      <label htmlFor="plan-revision-request">{t('如何调整这个计划？')}</label>
+      <textarea
+        id="plan-revision-request"
+        value={revision}
+        maxLength={4000}
+        disabled={revisionSubmitting}
+        placeholder={t('例如：将资料搜索拆成两个并行分支，并在汇总前增加来源核验。')}
+        onChange={(event) => setRevision(event.target.value)}
+      />
+      <div>
+        <button type="button" disabled={revisionSubmitting} onClick={() => setRevisionOpen(false)}>{t('返回')}</button>
+        <button className="primary-button" type="submit" disabled={revisionSubmitting || !revision.trim()}>
+          {revisionSubmitting ? t('正在生成新版本…') : t('生成调整后的计划')}
+        </button>
+      </div>
+    </form>}
     <div className="plan-confirmation-actions">
-      <button className="secondary-button" type="button" disabled={submitting}>{t('暂不执行')}</button>
-      <button className="secondary-button" type="button" disabled={submitting} onClick={onCancel}>{t('取消任务')}</button>
-      <button className="primary-button" type="button" disabled={submitting} onClick={onExecute}>{submitting ? t('正在确认…') : t('执行计划')}</button>
+      <button className="secondary-button" type="button" disabled={submitting || revisionSubmitting} onClick={() => setRevisionOpen((value) => !value)}>{t('调整计划')}</button>
+      <button className="secondary-button" type="button" disabled={submitting || revisionSubmitting} onClick={onCancel}>{t('取消任务')}</button>
+      <button className="primary-button" type="button" disabled={submitting || revisionSubmitting} onClick={onExecute}>{submitting ? t('正在确认…') : t('执行计划')}</button>
     </div>
   </section>;
+}
+
+function PlanGraphLoadingFallback({ run, label }: { run: RunView; label: string }) {
+  const graph = run.plan_graph && 'nodes' in run.plan_graph ? run.plan_graph : null;
+  return <div className="trusted-graph-loading" aria-label={label}>
+    <span>{label}</span>
+    <ol className="sr-only">
+      {(graph?.nodes ?? []).map((node) => <li key={node.id}>
+        <span>{node.title}</span>
+        {node.depends_on.length > 0 && <small>依赖：{node.depends_on.join(', ')}</small>}
+      </li>)}
+    </ol>
+  </div>;
 }
 
 function approvalResourceLabel(resource: string) {
@@ -2410,6 +2556,7 @@ function ProcessPanel({ run, messageId, liveState, open, onInitialize, onOpenCha
     onOpenChange(run.id, !open);
   };
   return <article className={`process-entry ${live ? 'live' : ''}`} id={`message-${messageId}`}><details className="process-panel" open={open}><summary onClick={toggle} aria-expanded={open}><Icon name="brain" /><span className="process-title">{processTitle}{live && <span className="process-thinking-dots" aria-hidden="true"><i /><i /><i /></span>}</span></summary><div className="process-timeline" aria-live={live ? 'polite' : undefined}>
+    {run.answer_mode === 'trusted' && run.plan_graph && 'id' in run.plan_graph && <GraphErrorBoundary key={`${run.id}-${run.plan_graph.version}`} fallback={<div className="trusted-graph-loading">{t('图谱暂时无法显示，执行记录仍可在下方查看。')}</div>}><Suspense fallback={<div className="trusted-graph-loading">{t('正在载入执行图谱…')}</div>}><TrustedExecutionGraph run={run} title={t('可信执行图谱')} /></Suspense></GraphErrorBoundary>}
     <ProcessTimeline items={processItems} run={run} />
     {!live && remainingNotes.map((note, index) => <div className="process-step verification" key={`verification-${index}`}><span className="process-dot"><Icon name="check" /></span><div><strong>{t('验证')}</strong><p>{note}</p></div></div>)}
     {!live && <ReasoningAuditSummary run={run} />}
@@ -2567,25 +2714,11 @@ function ReasoningAuditSummary({ run }: { run: RunView }) {
   return <div className="reasoning-audit-grid">
     {policy?.effective && <div><strong>{t('生效策略')}</strong><span>{String(policy.effective.reasoning_effort ?? 'balanced')} · {String(policy.effective.execution_mode ?? 'request_approval')}</span></div>}
     {(run.state_version ?? 0) > 0 && <div><strong>{t('状态版本')}</strong><span>State {run.state_version}</span></div>}
-    {run.plan_graph?.id && <div><strong>{t('计划版本')}</strong><span>Plan {String(run.plan_graph.version)}</span></div>}
-    {(run.steps ?? []).map((step) => <div className="plan-node-audit" key={step.id}><strong>{step.index}. {step.title}</strong><span>{t(planNodeStatusLabel(step.status))}{step.depends_on?.length ? ` · ${t('依赖')} ${step.depends_on.join(', ')}` : ''}{step.plan_version ? ` · v${step.plan_version}` : ''}</span>{step.failure && <small>{String(step.failure.category ?? t('节点执行失败'))}</small>}</div>)}
     {criteria.map((criterion) => <div key={String(criterion.id)}><strong>{String(criterion.description)}</strong><span>{String(criterion.status ?? 'pending')}</span></div>)}
     {policy?.adjustments?.map((adjustment, index) => <div key={`adjust-${index}`}><strong>{t('策略调整')}</strong><span>{String(adjustment.reason ?? adjustment.rule)}</span></div>)}
     {run.terminal_reason && <div><strong>{t('终态原因')}</strong><span>{String(run.terminal_reason.reason ?? run.status)}</span></div>}
     {(run.sandbox_jobs ?? []).map((job) => <div key={job.id}><strong>Sandbox · {job.status}</strong><span>{job.runtime_name ?? job.executor} · {job.image_digest ?? String(job.runtime_profile.image ?? t('未记录镜像'))} · {job.output_artifact_ids.length} artifacts{job.exit_reason ? ` · ${job.exit_reason}` : ''}</span>{(job.stdout_summary || job.stderr_summary) && <details><summary>{t('截断日志')}</summary><pre>{job.stderr_summary || job.stdout_summary}</pre></details>}</div>)}
   </div>;
-}
-
-function planNodeStatusLabel(status: string) {
-  const labels: Record<string, string> = {
-    pending: '等待执行',
-    running: '正在执行',
-    completed: '已完成',
-    failed: '失败',
-    blocked: '已阻塞',
-    skipped: '已跳过',
-  };
-  return labels[status] ?? status;
 }
 
 function activeState(run: RunView) {

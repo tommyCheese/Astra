@@ -492,7 +492,8 @@ const source = new EventSource(`/api/runs/${runId}/events`);
 前端将事件分成：
 
 1. **答案流**：`answer.delta` 进入字符缓冲，并按 animation frame 刷新，降低高频 React render；
-2. **过程流**：reasoning、tool、approval、workspace、verification 等事件由 `reduceProcessEvent()` 聚合为时间线。
+2. **过程流**：reasoning、tool、approval、workspace、verification 等事件由 `reduceProcessEvent()` 聚合为时间线；
+3. **可信图谱流**：Plan 快照和同版本节点增量由 `reducePlanGraphEvent()` 在 animation frame 中批处理；版本缺口或未知节点回退到权威 Run snapshot。
 
 Run snapshot 是权威状态，SSE 是低延迟增量。`reconcileProcessSnapshot()` 负责消除两者暂时不一致。
 
@@ -513,6 +514,9 @@ Run snapshot 是权威状态，SSE 是低延迟增量。`reconcileProcessSnapsho
 | `GET /api/runs/{id}/events` | SSE 增量事件 |
 | `POST /api/runs/{id}/cancel` | 幂等取消运行 |
 | `POST /api/runs/{id}/resume` | 使用 continuation token 恢复澄清或确认绑定的 Plan |
+| `GET /api/runs/{id}/plans` | 获取可信 Plan 版本摘要 |
+| `GET /api/runs/{id}/plans/{version}` | 获取不可变历史 Plan 图快照 |
+| `GET /api/runs/{id}/plans/{version}/diff` | 获取基于 lineage 的版本差异 |
 | `POST /api/runs/{id}/approvals/{approval}/decision` | 提交结构化审批决定并恢复 |
 | `/api/conversations/*` | Conversation 列表、详情、标题、置顶、删除和分享 |
 | `/api/permissions/*` | 权限中心、策略模拟、Grant 撤销和 Workspace 视图 |

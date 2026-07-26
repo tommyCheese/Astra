@@ -70,6 +70,7 @@ class PlanExecution(str, Enum):
 
 class ContinuationAction(str, Enum):
     execute_plan = "execute_plan"
+    revise_plan = "revise_plan"
 
 
 class VerificationLevel(str, Enum):
@@ -266,15 +267,104 @@ class PlanNodeView(BaseModel):
     optional: bool = False
     evidence_refs: list[str] = Field(default_factory=list)
     failure: dict[str, Any] | None = None
+    lineage_node_id: str | None = None
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+
+
+class PlanEdgeView(BaseModel):
+    id: str
+    plan_id: str
+    predecessor_node_id: str
+    successor_node_id: str
+    dependency_type: str = "hard"
 
 
 class PlanView(BaseModel):
+    schema_version: Literal[1] = 1
     id: str
     run_id: str
     version: int
     status: PlanStatus
     supersedes_plan_id: str | None = None
     nodes: list[PlanNodeView] = Field(default_factory=list)
+    edges: list[PlanEdgeView] = Field(default_factory=list)
+    created_at: datetime | None = None
+    activated_at: datetime | None = None
+    completed_at: datetime | None = None
+
+
+class PlanVersionSummary(BaseModel):
+    id: str
+    run_id: str
+    version: int
+    status: PlanStatus
+    supersedes_plan_id: str | None = None
+    node_count: int = 0
+    created_at: datetime
+    activated_at: datetime | None = None
+    completed_at: datetime | None = None
+
+
+class PlanNodeDiff(BaseModel):
+    node_id: str
+    node_key: str
+    change: Literal["added", "removed", "unchanged", "modified", "inherited_completed"]
+    previous_node_id: str | None = None
+
+
+class PlanEdgeDiff(BaseModel):
+    predecessor_node_id: str
+    successor_node_id: str
+    change: Literal["added", "removed", "unchanged"]
+
+
+class PlanGraphDiff(BaseModel):
+    from_plan_id: str
+    to_plan_id: str
+    from_version: int
+    to_version: int
+    nodes: list[PlanNodeDiff] = Field(default_factory=list)
+    edges: list[PlanEdgeDiff] = Field(default_factory=list)
+
+
+class PlanGraphSnapshotEvent(BaseModel):
+    schema_version: Literal[1] = 1
+    plan_id: str
+    plan_version: int
+    graph: PlanView
+
+
+class PlanVersionEvent(BaseModel):
+    schema_version: Literal[1] = 1
+    plan_id: str
+    plan_version: int
+    supersedes_plan_id: str | None = None
+    status: PlanStatus | None = None
+    node_count: int | None = None
+    lineage_count: int = 0
+
+
+class PlanNodeTransitionEvent(BaseModel):
+    schema_version: Literal[1] = 1
+    plan_id: str
+    plan_version: int
+    plan_node_id: str
+    node_key: str
+    previous_status: PlanNodeStatus
+    status: PlanNodeStatus
+    evidence_refs: list[str] = Field(default_factory=list)
+    failure: dict[str, Any] | None = None
+
+
+class PlanRevisionEvent(BaseModel):
+    schema_version: Literal[1] = 1
+    plan_id: str
+    plan_version: int
+    state_version: int
+    revised_plan_id: str | None = None
+    revised_plan_version: int | None = None
+    error_code: str | None = None
 
 
 class PlanPatchOperation(BaseModel):
@@ -414,7 +504,7 @@ class ContinueRunRequest(BaseModel):
 
     @model_validator(mode="after")
     def validate_continuation(self) -> ContinueRunRequest:
-        if self.action == ContinuationAction.execute_plan:
+        if self.action in {ContinuationAction.execute_plan, ContinuationAction.revise_plan}:
             required = (
                 self.continuation_token,
                 self.plan_id,
@@ -422,7 +512,11 @@ class ContinueRunRequest(BaseModel):
                 self.expected_state_version,
             )
             if any(value is None for value in required):
-                raise ValueError("plan confirmation requires bound continuation fields")
+                raise ValueError("plan continuation requires bound continuation fields")
+            if self.action == ContinuationAction.revise_plan and (
+                not self.content or not self.content.strip()
+            ):
+                raise ValueError("content is required for plan revision")
             return self
         if not self.content or not self.content.strip():
             raise ValueError("content is required for user response")
@@ -882,7 +976,8 @@ class RunView(BaseModel):
     chat_messages: list[ChatMessageView] = Field(default_factory=list)
     reasoning_policy: dict[str, Any] = Field(default_factory=dict)
     task_contract: dict[str, Any] = Field(default_factory=dict)
-    plan_graph: dict[str, Any] = Field(default_factory=dict)
+    plan_graph: PlanView | dict[str, Any] = Field(default_factory=dict)
+    plan_versions: list[PlanVersionSummary] = Field(default_factory=list)
     agent_state: dict[str, Any] = Field(default_factory=dict)
     state_version: int = 0
     terminal_reason: dict[str, Any] | None = None

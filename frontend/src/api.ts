@@ -1,4 +1,4 @@
-import type { ConversationShare, ConversationShareSummary, ConversationSummary, ConversationView, RunView, SharedConversation } from './types';
+import type { ConversationShare, ConversationShareSummary, ConversationSummary, ConversationView, PlanGraphDiff, PlanGraphSnapshot, PlanVersionSummary, RunView, SharedConversation } from './types';
 
 export type ApiErrorPayload = { type: string; code: string; message: string; retryable: boolean; trace_id: string; details?: Record<string, unknown> };
 
@@ -337,6 +337,47 @@ export async function confirmPlanExecution(
       model,
     }),
   });
+  if (!response.ok) throw await responseError(response);
+  return response.json();
+}
+
+export async function revisePlan(
+  runId: string,
+  request: string,
+  confirmation: { continuationToken: string; planId: string; planVersion: number; stateVersion: number },
+  model?: RunModelConfig,
+): Promise<{ run_id: string; task_id: string; status: string }> {
+  const response = await fetchWithTimeout(`/api/runs/${runId}/resume`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      action: 'revise_plan',
+      content: request,
+      continuation_token: confirmation.continuationToken,
+      plan_id: confirmation.planId,
+      expected_plan_version: confirmation.planVersion,
+      expected_state_version: confirmation.stateVersion,
+      model,
+    }),
+  }, 60000);
+  if (!response.ok) throw await responseError(response);
+  return response.json();
+}
+
+export async function listPlanVersions(runId: string, signal?: AbortSignal): Promise<PlanVersionSummary[]> {
+  const response = await fetch(`/api/runs/${runId}/plans`, { signal });
+  if (!response.ok) throw await responseError(response);
+  return response.json();
+}
+
+export async function getPlanVersion(runId: string, version: number, signal?: AbortSignal): Promise<PlanGraphSnapshot> {
+  const response = await fetch(`/api/runs/${runId}/plans/${version}`, { signal });
+  if (!response.ok) throw await responseError(response);
+  return response.json();
+}
+
+export async function getPlanVersionDiff(runId: string, version: number, fromVersion: number, signal?: AbortSignal): Promise<PlanGraphDiff> {
+  const response = await fetch(`/api/runs/${runId}/plans/${version}/diff?from_version=${fromVersion}`, { signal });
   if (!response.ok) throw await responseError(response);
   return response.json();
 }

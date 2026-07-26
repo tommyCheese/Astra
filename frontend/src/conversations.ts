@@ -1,4 +1,4 @@
-import type { ChatMessage, RunView } from './types';
+import type { ChatMessage, PlanGraphSnapshot, RunView } from './types';
 
 export const HISTORY_LIMIT = 100;
 
@@ -26,6 +26,31 @@ export function normalizeRunView(run: RunView): RunView {
     caveats: run.result.caveats ?? [],
     verification_notes: run.result.verification_notes ?? [],
   } : run.result;
+  const rawGraph = run.answer_mode === 'trusted' && run.plan_graph && 'id' in run.plan_graph
+    ? run.plan_graph
+    : null;
+  const planGraph: PlanGraphSnapshot | Record<string, never> = rawGraph ? {
+    schema_version: 1,
+    id: rawGraph.id,
+    run_id: rawGraph.run_id ?? run.id,
+    version: rawGraph.version ?? 1,
+    status: rawGraph.status ?? 'planned',
+    supersedes_plan_id: 'supersedes_plan_id' in rawGraph ? rawGraph.supersedes_plan_id : null,
+    nodes: (rawGraph.nodes ?? []).map((node) => ({
+      ...node,
+      plan_id: 'plan_id' in node ? String(node.plan_id) : rawGraph.id,
+      plan_version: 'plan_version' in node ? Number(node.plan_version) : rawGraph.version ?? 1,
+      status: ['pending', 'running', 'completed', 'failed', 'blocked', 'skipped'].includes(node.status)
+        ? node.status as 'pending' | 'running' | 'completed' | 'failed' | 'blocked' | 'skipped'
+        : 'pending',
+      required_capabilities: 'required_capabilities' in node && Array.isArray(node.required_capabilities) ? node.required_capabilities : [],
+      success_criteria_refs: 'success_criteria_refs' in node && Array.isArray(node.success_criteria_refs) ? node.success_criteria_refs : [],
+      risk_level: 'risk_level' in node ? String(node.risk_level) : 'low',
+      optional: 'optional' in node ? Boolean(node.optional) : false,
+      evidence_refs: 'evidence_refs' in node && Array.isArray(node.evidence_refs) ? node.evidence_refs : [],
+    })),
+    edges: rawGraph.edges ?? [],
+  } : {};
   return {
     ...run,
     answer_mode: run.answer_mode ?? 'trusted',
@@ -39,6 +64,10 @@ export function normalizeRunView(run: RunView): RunView {
     memories: Array.isArray(run.memories) ? run.memories : [],
     chat_messages: Array.isArray(run.chat_messages)
       ? run.chat_messages.map((message) => ({ ...message, metadata: message.metadata ?? {} }))
+      : [],
+    plan_graph: planGraph,
+    plan_versions: run.answer_mode === 'trusted' && Array.isArray(run.plan_versions)
+      ? run.plan_versions
       : [],
   };
 }

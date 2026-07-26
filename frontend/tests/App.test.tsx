@@ -2,7 +2,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { App } from '../src/App';
-import { buildRuntime, cancelRun, cancelRuntimeBuild, confirmPlanExecution, createConversationShare, createRun, decideToolApproval, deleteConversation, getConversation, getConversationStrategy, getRun, getRuntimeProfile, listConversationShares, listConversations, listLibraryFiles, listRuns, revokeConversationShare, streamRunEvents, updateConversation, updateConversationStrategy, updateToolSettings, type RunStreamEvent } from '../src/api';
+import { buildRuntime, cancelRun, cancelRuntimeBuild, confirmPlanExecution, createConversationShare, createRun, decideToolApproval, deleteConversation, getConversation, getConversationStrategy, getRun, getRuntimeProfile, listConversationShares, listConversations, listLibraryFiles, listRuns, revisePlan, revokeConversationShare, streamRunEvents, updateConversation, updateConversationStrategy, updateToolSettings, type RunStreamEvent } from '../src/api';
 
 vi.mock('../src/api', () => ({
   AstraApiError: class AstraApiError extends Error {
@@ -28,6 +28,10 @@ vi.mock('../src/api', () => ({
   streamRunEvents: vi.fn(() => () => undefined),
   createRun: vi.fn(async () => ({ run_id: 'run-1', task_id: 'task-1', status: 'created', answer_mode: 'standard' })),
   confirmPlanExecution: vi.fn(async () => ({ run_id: 'run-1', task_id: 'task-1', status: 'executing' })),
+  revisePlan: vi.fn(async () => ({ run_id: 'run-1', task_id: 'task-1', status: 'waiting_user' })),
+  listPlanVersions: vi.fn(async () => []),
+  getPlanVersion: vi.fn(),
+  getPlanVersionDiff: vi.fn(),
   cancelRun: vi.fn(async () => ({
     id: 'run-1', task_id: 'task-1', status: 'cancelled', mode: 'general-agent', summary: '已终止本次运行。', result: { summary: '已终止本次运行。', findings: [], sources: [], failed_sources: [], source_quality: [], conflicts: [], caveats: ['运行已由用户终止，未继续执行后续步骤。'], verification_notes: [] },
     steps: [], tool_calls: [], artifacts: [], events: [{ id: 1, type: 'run.cancelled', payload: { category: 'user_cancelled' }, created_at: '2026-07-14T00:00:00Z' }], turns: [], memories: [], chat_messages: [{ id: 'run-1-terminal', role: 'assistant', content: '已终止本次运行。', status: 'completed', metadata: { terminal_status: 'cancelled' } }],
@@ -1345,9 +1349,9 @@ describe('App', () => {
     await userEvent.click(screen.getByRole('button', { name: '发送' }));
 
     expect(await screen.findByText('计划已生成，等待执行确认')).toBeInTheDocument();
-    expect(screen.getByText('检查输入')).toBeInTheDocument();
-    expect(screen.getByText('执行任务')).toBeInTheDocument();
-    expect(screen.getByText('依赖：inspect')).toBeInTheDocument();
+    expect(screen.getAllByText('检查输入').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('执行任务').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('依赖：inspect').length).toBeGreaterThan(0);
     expect(screen.getByRole('textbox')).toBeDisabled();
     await userEvent.click(screen.getByRole('button', { name: '执行计划' }));
 
@@ -1362,6 +1366,71 @@ describe('App', () => {
       undefined,
     );
     await waitFor(() => expect(screen.queryByText('计划已生成，等待执行确认')).not.toBeInTheDocument());
+    vi.mocked(getRun).mockResolvedValue(completed);
+  });
+
+  it('submits a natural-language revision bound to the waiting plan version', async () => {
+    const completed = await vi.mocked(getRun)('fixture');
+    const waiting = {
+      ...completed,
+      id: 'run-revision',
+      task_id: 'task-revision',
+      answer_mode: 'trusted' as const,
+      status: 'waiting_user',
+      result: null,
+      state_version: 4,
+      plan_graph: {
+        id: 'plan-4',
+        version: 4,
+        status: 'planned' as const,
+        nodes: [{ id: 'node-4', node_key: 'work', index: 1, title: '执行任务', intent: '完成目标', status: 'pending', depends_on: [] }],
+      },
+      waiting_state: {
+        kind: 'plan_confirmation' as const,
+        continuation_token: 'revision-token',
+        plan_id: 'plan-4',
+        plan_version: 4,
+        state_version: 4,
+        request: '确认执行',
+      },
+    };
+    const revised = {
+      ...waiting,
+      state_version: 5,
+      plan_graph: { ...waiting.plan_graph, id: 'plan-5', version: 5 },
+      waiting_state: {
+        ...waiting.waiting_state,
+        continuation_token: 'revision-token-2',
+        plan_id: 'plan-5',
+        plan_version: 5,
+        state_version: 5,
+      },
+    };
+    vi.mocked(createRun).mockResolvedValueOnce({ run_id: 'run-revision', task_id: 'task-revision', status: 'waiting_user', answer_mode: 'trusted' });
+    vi.mocked(getRun).mockReset();
+    vi.mocked(getRun).mockResolvedValueOnce(waiting).mockResolvedValue(revised);
+
+    render(<App />);
+    await userEvent.click(screen.getByRole('switch', { name: '快速响应' }));
+    await userEvent.type(screen.getByRole('textbox'), '执行复杂任务');
+    await userEvent.click(screen.getByRole('button', { name: '发送' }));
+    await userEvent.click(await screen.findByRole('button', { name: '调整计划' }));
+    const request = screen.getByLabelText('如何调整这个计划？');
+    await userEvent.type(request, '拆成两个并行分支');
+    await userEvent.click(screen.getByRole('button', { name: '生成调整后的计划' }));
+
+    await waitFor(() => expect(revisePlan).toHaveBeenCalledWith(
+      'run-revision',
+      '拆成两个并行分支',
+      {
+        continuationToken: 'revision-token',
+        planId: 'plan-4',
+        planVersion: 4,
+        stateVersion: 4,
+      },
+      undefined,
+    ));
+    await waitFor(() => expect(screen.getByText('v5')).toBeInTheDocument());
     vi.mocked(getRun).mockResolvedValue(completed);
   });
 

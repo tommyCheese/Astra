@@ -3,6 +3,12 @@ import react from '@vitejs/plugin-react';
 
 export default defineConfig({
   plugins: [react()],
+  resolve: {
+    dedupe: ['react', 'react-dom'],
+  },
+  optimizeDeps: {
+    include: ['@xyflow/react', '@dagrejs/dagre'],
+  },
   server: {
     port: 5173,
     proxy: {

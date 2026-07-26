@@ -12,6 +12,7 @@ from app.db.session import get_session
 from app.main import create_app
 from app.repositories.plans import PlanRepository, plan_to_view
 from app.repositories.runs import RunRepository
+from app.runner import plan_revision as plan_revision_module
 from app.runner.planning import PlanService, canonical_agent_state
 from app.runner.reasoning import RunProfileResolver, build_default_contract
 from app.schemas.agent import (
@@ -20,6 +21,7 @@ from app.schemas.agent import (
     PlanDraft,
     PlanExecution,
     PlanNodeDraft,
+    PlanNodeStatus,
     RequestedReasoningPolicy,
 )
 
@@ -289,10 +291,155 @@ async def test_plan_confirmation_resume_consumes_bound_token_once(app_client):
     assert replay.json()["error"]["code"] == "PLAN_CONFIRMATION_INVALID"
 
 
+async def _create_waiting_confirmation(app_client, goal: str = "调整计划"):
+    async with app_client._astra_session() as session:
+        repo = RunRepository(session)
+        profile = RunProfileResolver().resolve(
+            AnswerMode.trusted,
+            RequestedReasoningPolicy(),
+            plan_execution=PlanExecution.confirm,
+        )
+        run = await repo.create_task_run(
+            goal,
+            {"provider": "mock"},
+            reasoning_policy=profile.reasoning_policy.model_dump(mode="json"),
+            answer_mode="trusted",
+            execution_profile=profile.model_dump(mode="json"),
+        )
+        contract = build_default_contract(goal)
+        plan = await PlanService(PlanRepository(session)).create(
+            run.id,
+            PlanDraft(
+                nodes=[
+                    PlanNodeDraft(
+                        node_key="respond",
+                        title="生成回复",
+                        intent="回应用户",
+                        success_criteria_refs=["criterion-result"],
+                        expected_outcome=ExpectedObservation(
+                            kind="final_answer", success_condition="answer exists"
+                        ),
+                    )
+                ],
+            ),
+            contract=contract,
+            activate=False,
+        )
+        state = canonical_agent_state(contract, plan, policy_version=2).model_copy(
+            update={"active_plan_id": None}
+        )
+        await repo.initialize_reasoning_state(
+            run.id,
+            task_contract=contract.model_dump(mode="json"),
+            plan_graph=plan_to_view(plan).model_dump(mode="json"),
+            agent_state=state.model_dump(mode="json"),
+        )
+        waiting = await repo.set_waiting_state(
+            run.id,
+            {
+                "kind": "plan_confirmation",
+                "plan_id": plan.id,
+                "plan_version": plan.version,
+                "state_version": state.version,
+                "request": "确认执行",
+            },
+        )
+        payload = {
+            "action": "revise_plan",
+            "content": "增加资料核验并允许并行搜索。",
+            "continuation_token": waiting.waiting_state["continuation_token"],
+            "plan_id": plan.id,
+            "expected_plan_version": plan.version,
+            "expected_state_version": state.version,
+        }
+        return run.id, plan.id, payload
+
+
+async def test_plan_revision_creates_new_waiting_version_and_rejects_replay(app_client):
+    run_id, original_plan_id, payload = await _create_waiting_confirmation(app_client)
+
+    revised = await app_client.post(f"/api/runs/{run_id}/resume", json=payload)
+    replay = await app_client.post(f"/api/runs/{run_id}/resume", json=payload)
+    current = await app_client.get(f"/api/runs/{run_id}")
+    versions = await app_client.get(f"/api/runs/{run_id}/plans")
+
+    assert revised.status_code == 200
+    assert revised.json()["status"] == "waiting_user"
+    assert replay.status_code == 409
+    assert replay.json()["error"]["code"] == "PLAN_REVISION_STALE"
+    run = current.json()
+    assert run["plan_graph"]["version"] == 2
+    assert run["plan_graph"]["supersedes_plan_id"] == original_plan_id
+    assert run["waiting_state"]["plan_id"] == run["plan_graph"]["id"]
+    assert run["waiting_state"]["continuation_token"] != payload["continuation_token"]
+    assert [item["status"] for item in versions.json()] == ["superseded", "planned"]
+
+    confirmed = await app_client.post(
+        f"/api/runs/{run_id}/resume",
+        json={
+            "action": "execute_plan",
+            "continuation_token": run["waiting_state"]["continuation_token"],
+            "plan_id": run["waiting_state"]["plan_id"],
+            "expected_plan_version": run["waiting_state"]["plan_version"],
+            "expected_state_version": run["waiting_state"]["state_version"],
+        },
+    )
+    assert confirmed.status_code == 200
+    assert confirmed.json()["status"] == "executing"
+
+
+async def test_invalid_plan_revision_restores_original_with_fresh_token(
+    app_client, monkeypatch
+):
+    run_id, original_plan_id, payload = await _create_waiting_confirmation(app_client)
+
+    class InvalidRevisionClient:
+        def bind_agent_profile(self, profile):
+            return None
+
+        def bind_reasoning_effort(self, effort):
+            return None
+
+        async def plan(self, goal, *, contract):
+            return PlanDraft(
+                nodes=[
+                    PlanNodeDraft(
+                        node_key="cycle",
+                        title="非法循环",
+                        intent="触发验证",
+                        depends_on=["cycle"],
+                        success_criteria_refs=["criterion-result"],
+                        expected_outcome=ExpectedObservation(
+                            kind="invalid", success_condition="never"
+                        ),
+                    )
+                ]
+            )
+
+    monkeypatch.setattr(
+        plan_revision_module,
+        "build_model_client",
+        lambda settings: InvalidRevisionClient(),
+    )
+    rejected = await app_client.post(f"/api/runs/{run_id}/resume", json=payload)
+    current = (await app_client.get(f"/api/runs/{run_id}")).json()
+
+    assert rejected.status_code == 422
+    assert rejected.json()["error"]["code"] == "PLAN_REVISION_INVALID"
+    assert current["plan_graph"]["id"] == original_plan_id
+    assert current["waiting_state"]["plan_id"] == original_plan_id
+    assert current["waiting_state"]["continuation_token"] != payload["continuation_token"]
+    assert len(current["plan_versions"]) == 1
+    serialized_events = json.dumps(current["events"], ensure_ascii=False)
+    assert payload["content"] not in serialized_events
+
+
 async def test_conversation_detail_eager_loads_canonical_plan(app_client):
     async with app_client._astra_session() as session:
         repo = RunRepository(session)
-        run = await repo.create_task_run("读取规范计划对话", {"provider": "mock"})
+        run = await repo.create_task_run(
+            "读取规范计划对话", {"provider": "mock"}, answer_mode="trusted"
+        )
         contract = build_default_contract("读取规范计划对话")
         plan = await PlanService(PlanRepository(session)).create(
             run.id,
@@ -677,6 +824,67 @@ async def test_run_event_stream_resumes_after_event_id(app_client, monkeypatch):
         if line.startswith("data: ")
     ]
     assert any(item.get("payload", {}).get("summary") == "恢复后的摘要" for item in streamed)
+
+
+async def test_plan_graph_events_replay_in_order_without_sensitive_failure_data(
+    app_client, monkeypatch
+):
+    monkeypatch.setattr(runs_api, "SessionLocal", app_client._astra_session)
+    async with app_client._astra_session() as session:
+        repo = RunRepository(session)
+        run = await repo.create_task_run(
+            "图事件回放", {"provider": "mock"}, answer_mode="trusted"
+        )
+        plan = await PlanRepository(session).create(
+            run.id,
+            PlanDraft(
+                nodes=[
+                    PlanNodeDraft(
+                        node_key="work",
+                        title="执行",
+                        intent="执行安全步骤",
+                        success_criteria_refs=[],
+                        expected_outcome=ExpectedObservation(
+                            kind="result", success_condition="done"
+                        ),
+                    )
+                ]
+            ),
+        )
+        events = await repo.list_events(run.id)
+        cursor = events[-1].id
+        node = plan.nodes[0]
+        await PlanRepository(session).transition_node(node.id, PlanNodeStatus.running)
+        await PlanRepository(session).transition_node(
+            node.id,
+            PlanNodeStatus.failed,
+            failure={
+                "category": "tool_error",
+                "code": "FAILED",
+                "message": "secret=abc /Users/private/host.txt",
+                "credential": "abc",
+            },
+        )
+        await repo.update_run_status(run.id, "failed", summary="失败")
+        await session.commit()
+        run_id = run.id
+
+    response = await app_client.get(f"/api/runs/{run_id}/events?after_id={cursor}")
+    streamed = [
+        json.loads(line.removeprefix("data: "))
+        for line in response.text.splitlines()
+        if line.startswith("data: ")
+    ]
+    transitions = [item for item in streamed if item.get("type") == "plan.node.updated"]
+
+    assert [item["payload"]["status"] for item in transitions] == ["running", "failed"]
+    assert transitions[1]["payload"]["previous_status"] == "running"
+    assert transitions[1]["payload"]["failure"] == {
+        "category": "tool_error",
+        "code": "FAILED",
+    }
+    assert "secret=abc" not in response.text
+    assert "/Users/private" not in response.text
 
 
 async def test_run_task_is_retained_until_background_execution_finishes(app_client, monkeypatch):

@@ -16,6 +16,7 @@ from app.db.session import SessionLocal, get_session
 from app.model_providers import API_KEY_OPTIONAL_MODEL_PROVIDERS, SUPPORTED_MODEL_PROVIDERS
 from app.permissions.governance import verify_permission_bundle
 from app.repositories.permissions import PermissionRepository
+from app.repositories.plans import PlanRepository, diff_plans, plan_to_summary, plan_to_view
 from app.repositories.runs import RunRepository, run_to_view
 from app.repositories.tool_settings import (
     ToolSettingsRepository,
@@ -23,6 +24,7 @@ from app.repositories.tool_settings import (
     default_tool_states,
 )
 from app.runner.engine import start_run_in_process
+from app.runner.plan_revision import PlanRevisionError, revise_waiting_plan
 from app.runner.reasoning import RunProfileResolver
 from app.schemas.agent import (
     ApprovalDecisionRequest,
@@ -30,6 +32,9 @@ from app.schemas.agent import (
     ContinueRunRequest,
     CreateRunRequest,
     CreateRunResponse,
+    PlanGraphDiff,
+    PlanVersionSummary,
+    PlanView,
     RunView,
 )
 from app.schemas.permissions import PermissionBundle
@@ -244,6 +249,49 @@ async def get_run(
     return RunView.model_validate(run_to_view(run))
 
 
+@router.get("/runs/{run_id}/plans", response_model=list[PlanVersionSummary])
+async def list_run_plans(
+    run_id: str,
+    session: AsyncSession = Depends(get_session),
+) -> list[PlanVersionSummary]:
+    run = await RunRepository(session).get_run(run_id)
+    if run is None:
+        raise ResourceError("RUN_NOT_FOUND", "找不到指定运行记录。")
+    if run.answer_mode != "trusted":
+        return []
+    plans = await PlanRepository(session).list_for_run(run_id)
+    return [plan_to_summary(plan) for plan in plans]
+
+
+@router.get("/runs/{run_id}/plans/{version}", response_model=PlanView)
+async def get_run_plan(
+    run_id: str,
+    version: int,
+    session: AsyncSession = Depends(get_session),
+) -> PlanView:
+    plan = await PlanRepository(session).by_version(run_id, version)
+    if plan is None:
+        raise ResourceError("PLAN_NOT_FOUND", "找不到指定计划版本。")
+    return plan_to_view(plan)
+
+
+@router.get("/runs/{run_id}/plans/{version}/diff", response_model=PlanGraphDiff)
+async def get_run_plan_diff(
+    run_id: str,
+    version: int,
+    from_version: int = Query(ge=1),
+    session: AsyncSession = Depends(get_session),
+) -> PlanGraphDiff:
+    repository = PlanRepository(session)
+    before = await repository.by_version(run_id, from_version)
+    after = await repository.by_version(run_id, version)
+    if before is None or after is None:
+        raise ResourceError("PLAN_NOT_FOUND", "找不到指定计划版本。")
+    if before.version >= after.version:
+        raise ValidationError("PLAN_DIFF_INVALID", "只能比较较早计划与较新计划。")
+    return diff_plans(before, after)
+
+
 @router.post("/runs/{run_id}/cancel", response_model=RunView)
 async def cancel_run(
     run_id: str,
@@ -285,6 +333,17 @@ async def resume_run(
                 expected_plan_version=payload.expected_plan_version or 0,
                 expected_state_version=payload.expected_state_version or 0,
             )
+        elif payload.action == ContinuationAction.revise_plan:
+            run = await revise_waiting_plan(
+                repo,
+                run_settings,
+                run_id=run_id,
+                request=payload.content or "",
+                continuation_token=payload.continuation_token or "",
+                plan_id=payload.plan_id or "",
+                expected_plan_version=payload.expected_plan_version or 0,
+                expected_state_version=payload.expected_state_version or 0,
+            )
         else:
             run = await repo.resume_waiting_run(
                 run_id,
@@ -302,6 +361,16 @@ async def resume_run(
             )
     except ValueError as exc:
         message = str(exc)
+        if isinstance(exc, PlanRevisionError):
+            raise ValidationError(
+                exc.code,
+                "计划调整未通过校验，原计划仍可继续使用。",
+            ) from exc
+        if "plan revision" in message:
+            raise StateError(
+                "PLAN_REVISION_STALE",
+                "计划已变化，请刷新后基于最新版本调整。",
+            ) from exc
         if "plan confirmation" in message:
             raise StateError(
                 "PLAN_CONFIRMATION_INVALID",
@@ -312,7 +381,8 @@ async def resume_run(
         if "continuation token" in message:
             raise StateError("CONTINUATION_INVALID", "任务恢复凭据已失效，请刷新后重试。") from exc
         raise StateError("RUN_RESUME_CONFLICT", "当前任务无法恢复。") from exc
-    _schedule_run(run.id, run_settings)
+    if payload.action != ContinuationAction.revise_plan:
+        _schedule_run(run.id, run_settings)
     return CreateRunResponse(
         task_id=run.task_id,
         run_id=run.id,

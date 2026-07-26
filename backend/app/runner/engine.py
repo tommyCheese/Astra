@@ -30,6 +30,7 @@ from app.schemas.agent import (
     FinalAnswer,
     PlanDraft,
     PlanExecution,
+    PlanGraphSnapshotEvent,
     PlanNodeDraft,
     ReasoningPolicySnapshot,
     RunExecutionProfile,
@@ -183,6 +184,16 @@ class RunEngine:
                 plan_graph=plan_to_view(canonical_plan).model_dump(mode="json"),
                 agent_state=state.model_dump(mode="json"),
             )
+            await repo.add_event(
+                run_id,
+                "plan.graph.snapshot",
+                PlanGraphSnapshotEvent(
+                    plan_id=canonical_plan.id,
+                    plan_version=canonical_plan.version,
+                    graph=plan_to_view(canonical_plan),
+                ).model_dump(mode="json"),
+            )
+            await repo.session.commit()
         if execution_profile.plan_execution == PlanExecution.confirm:
             await repo.set_waiting_state(
                 run_id,
