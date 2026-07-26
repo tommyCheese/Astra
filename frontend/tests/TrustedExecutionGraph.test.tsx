@@ -15,6 +15,12 @@ describe('TrustedExecutionGraph complex DAG', () => {
     });
     expect(container.querySelectorAll('.status-blocked')).toHaveLength(6);
     expect(container.querySelectorAll('.status-failed')).toHaveLength(1);
+    expect(screen.getByRole('button', { name: '缩小图谱' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '放大图谱' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '适应视图' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '放大图谱' }));
+    fireEvent.click(screen.getByRole('button', { name: '缩小图谱' }));
+    fireEvent.click(screen.getByRole('button', { name: '适应视图' }));
 
     const finalNode = screen.getByRole('article', { name: '双重验证汇合并形成最终交付，受阻' });
     expect(finalNode).toBeVisible();

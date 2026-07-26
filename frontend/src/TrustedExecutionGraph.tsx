@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
 import {
   Background,
-  Controls,
   Handle,
   MarkerType,
   MiniMap,
@@ -189,6 +188,11 @@ function GraphWorkbench({ run, compact = false, title = '执行图谱' }: Truste
             ))}
           </select>
         </label>}
+        <div className="trusted-graph-zoom-actions" role="group" aria-label="图谱缩放">
+          <button type="button" aria-label="缩小图谱" title="缩小图谱" onClick={() => { void flow.zoomOut({ duration: 160 }); }}>−</button>
+          <button type="button" aria-label="放大图谱" title="放大图谱" onClick={() => { void flow.zoomIn({ duration: 160 }); }}>+</button>
+          <button type="button" aria-label="适应视图" title="适应视图" onClick={() => { void flow.fitView({ padding: 0.18, duration: 160 }); }}>适应</button>
+        </div>
         <button ref={expandButtonRef} type="button" onClick={() => setFullscreen((value) => !value)}>
           {fullscreen ? '退出全屏' : '展开图谱'}
         </button>
@@ -218,7 +222,6 @@ function GraphWorkbench({ run, compact = false, title = '执行图谱' }: Truste
           proOptions={{ hideAttribution: true }}
         >
           <Background gap={20} size={1} />
-          <Controls showInteractive={false} />
           {!compact && <MiniMap pannable zoomable nodeStrokeWidth={3} />}
           <FocusCurrentButton graph={graph} onSelect={setSelectedNodeId} />
         </ReactFlow>

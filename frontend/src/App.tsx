@@ -92,6 +92,7 @@ function AppContent() {
   const [planGraphState, setPlanGraphState] = useState<PlanGraphStreamState | null>(null);
   const [processPanelDefaultOpen, setProcessPanelDefaultOpen] = useState(loadProcessPanelDefaultOpen);
   const [processPanelOpenByRun, setProcessPanelOpenByRun] = useState<Record<string, boolean>>({});
+  const [graphPaneOpen, setGraphPaneOpen] = useState(true);
   const [showJumpToLatest, setShowJumpToLatest] = useState(false);
   const [error, setError] = useState<ApiErrorPayload | null>(null);
   const [view, setView] = useState<'chat' | 'settings' | 'shares' | 'library'>('chat');
@@ -746,6 +747,14 @@ function AppContent() {
       plan_versions: planGraphState.versions.length ? planGraphState.versions : run.plan_versions,
     }
     : run, [run, planGraphState]);
+  const trustedGraphRun = effectiveRun?.answer_mode === 'trusted'
+    && effectiveRun.plan_graph
+    && 'id' in effectiveRun.plan_graph
+    ? effectiveRun
+    : null;
+  useEffect(() => {
+    if (trustedGraphRun?.id) setGraphPaneOpen(true);
+  }, [trustedGraphRun?.id]);
   const messages = useMemo(() => {
     const currentMessages = buildPresentation(effectiveRun)
       .filter((message) => !streamingAnswer || message.metadata.presentation !== 'answer')
@@ -910,7 +919,7 @@ function AppContent() {
           {run && <div className="topbar-run-controls"><button type="button" onClick={() => setControlCenterOpen(true)}>{t('任务安全')}</button><span className={`status status-${run.status}`}>{t(statusLabel(run.status))}</span></div>}
         </section>
 
-        <section className="chat-surface">
+        <section className={`chat-surface ${trustedGraphRun ? 'has-trusted-graph-pane' : ''}`}>
           <QuestionRail messages={messages} />
           <div className="conversation" ref={conversationRef} onScroll={handleConversationScroll}>
             {!messages.length && (
@@ -932,6 +941,18 @@ function AppContent() {
             )}
           </div>
 
+          {trustedGraphRun && graphPaneOpen && <aside className="trusted-graph-floating-pane" aria-label={t('执行图谱窗格')}>
+            <button className="trusted-graph-pane-collapse" type="button" aria-label={t('收起图谱')} title={t('收起图谱')} onClick={() => setGraphPaneOpen(false)}>×</button>
+            <GraphErrorBoundary key={`${trustedGraphRun.id}-${trustedGraphRun.plan_graph && 'version' in trustedGraphRun.plan_graph ? trustedGraphRun.plan_graph.version : 0}`} fallback={<div className="trusted-graph-loading">{t('图谱暂时无法显示，执行记录仍可在思考面板中查看。')}</div>}>
+              <Suspense fallback={<PlanGraphLoadingFallback run={trustedGraphRun} label={t('正在载入执行图谱…')} />}>
+                <TrustedExecutionGraph run={trustedGraphRun} compact title={t('可信执行图谱')} />
+              </Suspense>
+            </GraphErrorBoundary>
+          </aside>}
+          {trustedGraphRun && !graphPaneOpen && <button className="trusted-graph-pane-restore" type="button" onClick={() => setGraphPaneOpen(true)}>
+            <Icon name="route" />
+            <span>{t('打开执行图谱')}</span>
+          </button>}
           {showJumpToLatest && <button className="jump-latest-button" type="button" onClick={jumpToLatest}><span aria-hidden="true">↓</span>{t('回到最新')}</button>}
           <div className={`composer-dock ${run?.pending_approval ? 'has-approval' : ''}`}>
             {run && planConfirmation && (
@@ -2064,11 +2085,6 @@ function PlanConfirmationCard({ run, submitting, revisionSubmitting, onExecute, 
       </div>
       <small>v{graphVersion}</small>
     </header>
-    <GraphErrorBoundary key={run.id} fallback={<div className="trusted-graph-loading">{t('图谱暂时无法显示，计划仍可通过下方操作处理。')}</div>}>
-      <Suspense fallback={<PlanGraphLoadingFallback run={run} label={t('正在载入计划图谱…')} />}>
-        <TrustedExecutionGraph run={run} compact title={t('待确认计划')} />
-      </Suspense>
-    </GraphErrorBoundary>
     {revisionOpen && <form className="plan-revision-form" onSubmit={(event) => {
       event.preventDefault();
       if (revision.trim()) onRevise(revision);
@@ -2525,7 +2541,7 @@ function MessageBubble({ message, run, processState, processPanelDefaultOpen, pr
 
   if (presentation === 'process' && snapshot) {
     const open = processPanelOpenByRun[snapshot.id] ?? processPanelDefaultOpen;
-    return <ProcessPanel run={snapshot} messageId={message.id} liveState={processState?.runId === snapshot.id ? processState : null} open={open} onInitialize={onProcessPanelInitialize} onOpenChange={onProcessPanelOpenChange} />;
+    return <ProcessPanel run={snapshot} messageId={message.id} liveState={processState?.runId === snapshot.id ? processState : null} open={open} isLatestRun={run?.id === snapshot.id} onInitialize={onProcessPanelInitialize} onOpenChange={onProcessPanelOpenChange} />;
   }
 
   if (presentation === 'answer' && snapshot?.result) {
@@ -2541,8 +2557,9 @@ function MessageBubble({ message, run, processState, processPanelDefaultOpen, pr
   return null;
 }
 
-function ProcessPanel({ run, messageId, liveState, open, onInitialize, onOpenChange }: { run: RunView; messageId: string; liveState: ProcessStreamState | null; open: boolean; onInitialize: (runId: string) => void; onOpenChange: (runId: string, open: boolean) => void }) {
+function ProcessPanel({ run, messageId, liveState, open, isLatestRun, onInitialize, onOpenChange }: { run: RunView; messageId: string; liveState: ProcessStreamState | null; open: boolean; isLatestRun: boolean; onInitialize: (runId: string) => void; onOpenChange: (runId: string, open: boolean) => void }) {
   const { t } = useI18n();
+  const [historicalGraphOpen, setHistoricalGraphOpen] = useState(false);
   const live = Boolean(liveState?.active);
   const processTitle = live ? t('思考中') : t('思考完成');
   const report = run.result?.verification_report;
@@ -2550,17 +2567,34 @@ function ProcessPanel({ run, messageId, liveState, open, onInitialize, onOpenCha
   const processItems = liveState?.items ?? reconcileProcessSnapshot(null, run).items;
   const streamedVerificationText = processItems.filter((item) => item.kind === 'verification').map((item) => item.detail ?? '').join('；');
   const remainingNotes = notes.filter((note) => !streamedVerificationText.includes(note));
+  const hasHistoricalGraph = !isLatestRun && run.answer_mode === 'trusted' && run.plan_graph && 'id' in run.plan_graph;
   useEffect(() => onInitialize(run.id), [onInitialize, run.id]);
   const toggle = (event: MouseEvent<HTMLElement>) => {
     event.preventDefault();
     onOpenChange(run.id, !open);
   };
-  return <article className={`process-entry ${live ? 'live' : ''}`} id={`message-${messageId}`}><details className="process-panel" open={open}><summary onClick={toggle} aria-expanded={open}><Icon name="brain" /><span className="process-title">{processTitle}{live && <span className="process-thinking-dots" aria-hidden="true"><i /><i /><i /></span>}</span></summary><div className="process-timeline" aria-live={live ? 'polite' : undefined}>
-    {run.answer_mode === 'trusted' && run.plan_graph && 'id' in run.plan_graph && <GraphErrorBoundary key={`${run.id}-${run.plan_graph.version}`} fallback={<div className="trusted-graph-loading">{t('图谱暂时无法显示，执行记录仍可在下方查看。')}</div>}><Suspense fallback={<div className="trusted-graph-loading">{t('正在载入执行图谱…')}</div>}><TrustedExecutionGraph run={run} title={t('可信执行图谱')} /></Suspense></GraphErrorBoundary>}
+  return <article className={`process-entry ${live ? 'live' : ''} ${hasHistoricalGraph ? 'has-historical-graph' : ''}`} id={`message-${messageId}`}><details className="process-panel" open={open}><summary onClick={toggle} aria-expanded={open}><Icon name="brain" /><span className="process-title">{processTitle}{live && <span className="process-thinking-dots" aria-hidden="true"><i /><i /><i /></span>}</span></summary><div className="process-timeline" aria-live={live ? 'polite' : undefined}>
     <ProcessTimeline items={processItems} run={run} />
     {!live && remainingNotes.map((note, index) => <div className="process-step verification" key={`verification-${index}`}><span className="process-dot"><Icon name="check" /></span><div><strong>{t('验证')}</strong><p>{note}</p></div></div>)}
     {!live && <ReasoningAuditSummary run={run} />}
-  </div></details></article>;
+  </div></details>
+    {hasHistoricalGraph && <button
+      className="historical-graph-toggle"
+      type="button"
+      aria-label={t(historicalGraphOpen ? '收起此对话图谱' : '打开此对话图谱')}
+      aria-expanded={historicalGraphOpen}
+      aria-controls={`historical-graph-${run.id}`}
+      title={t(historicalGraphOpen ? '收起此对话图谱' : '打开此对话图谱')}
+      onClick={() => setHistoricalGraphOpen((value) => !value)}
+    ><Icon name="route" /></button>}
+    {hasHistoricalGraph && historicalGraphOpen && <section className="historical-conversation-graph" id={`historical-graph-${run.id}`}>
+      <GraphErrorBoundary key={`${run.id}-history`} fallback={<div className="trusted-graph-loading">{t('历史图谱暂时无法显示。')}</div>}>
+        <Suspense fallback={<PlanGraphLoadingFallback run={run} label={t('正在载入执行图谱…')} />}>
+          <TrustedExecutionGraph run={run} compact title={t('历史执行图谱')} />
+        </Suspense>
+      </GraphErrorBoundary>
+    </section>}
+  </article>;
 }
 
 function ProcessTimeline({ items, run }: { items: ProcessStreamItem[]; run: RunView }) {

@@ -66,6 +66,8 @@
 - [x] 7.6 Ensure tool effect approvals appear at the associated node while remaining semantically independent from Plan confirmation
 - [x] 7.7 Update conversation snapshots and history restoration so trusted graphs, selections and version summaries reload deterministically
 - [x] 7.8 Add integration tests for confirm, revise, execute, approval, failure, replan, completion, history reload and standard/trusted separation
+- [x] 7.9 Move the trusted graph out of Plan confirmation and ProcessTimeline into one conversation-level right floating pane while preserving confirmation and revision actions
+- [x] 7.10 Retain each superseded Run graph behind a compact expandable icon on its corresponding conversation process entry while the floating pane follows only the latest Run
 
 ## 8. Responsive, Accessible, and Visual Quality
 
@@ -76,6 +78,7 @@
 - [x] 8.5 Disable continuous graph motion under reduced-motion while preserving a static current-node indication
 - [x] 8.6 Validate fan-out/fan-in, long labels, large Plans, mobile widths and browser zoom through visual regression fixtures
 - [x] 8.7 Add lazy loading and rendering guards so the graph library does not delay standard chat startup or high-frequency answer streaming
+- [x] 8.8 Add explicit zoom-in, zoom-out, fit-view and full-screen controls plus a collapsible narrow-screen fallback and placement tests
 
 ## 9. Documentation and Verification
 

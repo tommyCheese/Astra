@@ -1014,6 +1014,53 @@ h1 {
   max-width: 900px;
 }
 
+.process-entry.has-historical-graph {
+  position: relative;
+}
+
+.historical-graph-toggle {
+  align-items: center;
+  background: transparent;
+  border: 1px solid var(--app-line);
+  border-radius: 8px;
+  color: var(--app-muted);
+  display: flex;
+  height: 28px;
+  justify-content: center;
+  padding: 0;
+  position: absolute;
+  right: 2px;
+  top: -4px;
+  width: 30px;
+  z-index: 2;
+}
+
+.historical-graph-toggle:hover,
+.historical-graph-toggle[aria-expanded="true"] {
+  background: rgba(47, 143, 115, .09);
+  border-color: rgba(47, 143, 115, .28);
+  color: var(--astra-mint);
+}
+
+.historical-graph-toggle .ui-icon {
+  height: 15px;
+  width: 15px;
+}
+
+.historical-conversation-graph {
+  height: min(480px, 62vh);
+  margin: 10px 0 18px;
+}
+
+.historical-conversation-graph .trusted-graph-workbench {
+  height: 100%;
+}
+
+.historical-conversation-graph .trusted-graph-body,
+.historical-conversation-graph .trusted-graph-canvas {
+  min-height: 0;
+}
+
 .process-panel {
   color: #697586;
   margin: 2px 0 10px 2px;
@@ -4184,6 +4231,90 @@ html[data-theme="dark"] .question-preview p {
 .chat-topbar-leading { align-items: center; display: flex; gap: 8px; min-width: 0; }
 .chat-topbar h1 { font-size: 16px; font-weight: 650; max-width: min(60vw, 620px); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .chat-surface { max-width: none; }
+.chat-surface.has-trusted-graph-pane {
+  --trusted-graph-pane-width: clamp(350px, 30vw, 440px);
+  column-gap: 18px;
+  grid-template-columns: minmax(0, 1fr) var(--trusted-graph-pane-width);
+}
+.chat-surface.has-trusted-graph-pane .conversation {
+  grid-column: 1;
+  grid-row: 1;
+}
+.chat-surface.has-trusted-graph-pane .composer-dock {
+  right: calc(var(--trusted-graph-pane-width) + 18px);
+  width: auto;
+}
+.trusted-graph-floating-pane {
+  align-self: stretch;
+  background: var(--app-elevated);
+  border: 1px solid var(--app-line);
+  border-radius: 19px;
+  box-shadow: 0 18px 52px rgba(19, 33, 48, .14);
+  grid-column: 2;
+  grid-row: 1;
+  margin: 20px 0 132px;
+  min-height: 0;
+  position: relative;
+  z-index: 10;
+}
+.trusted-graph-floating-pane .trusted-graph-workbench:not(.fullscreen) {
+  display: grid;
+  grid-template-rows: auto auto auto minmax(0, 1fr) auto;
+  height: 100%;
+}
+.trusted-graph-floating-pane .trusted-graph-body,
+.trusted-graph-floating-pane .trusted-graph-canvas {
+  min-height: 0;
+}
+.trusted-graph-floating-pane .trusted-graph-canvas { height: 100%; }
+.trusted-graph-floating-pane .trusted-graph-header {
+  align-items: flex-start;
+  flex-direction: column;
+}
+.trusted-graph-floating-pane .trusted-graph-header-actions {
+  flex-wrap: wrap;
+  width: 100%;
+}
+.trusted-graph-floating-pane .trusted-graph-accessible-list {
+  max-height: 34%;
+  overflow: auto;
+}
+.trusted-graph-pane-collapse {
+  align-items: center;
+  background: var(--app-elevated);
+  border: 1px solid var(--app-line);
+  border-radius: 999px;
+  box-shadow: 0 5px 16px rgba(19, 33, 48, .15);
+  color: var(--app-muted);
+  display: flex;
+  font-size: 17px;
+  height: 28px;
+  justify-content: center;
+  padding: 0;
+  position: absolute;
+  right: -9px;
+  top: -9px;
+  width: 28px;
+  z-index: 4;
+}
+.trusted-graph-pane-restore {
+  align-items: center;
+  background: var(--app-elevated);
+  border: 1px solid var(--app-line);
+  border-radius: 999px;
+  box-shadow: 0 10px 28px rgba(19, 33, 48, .14);
+  color: var(--astra-mint);
+  display: inline-flex;
+  font-size: 12px;
+  font-weight: 700;
+  gap: 7px;
+  padding: 8px 12px;
+  position: absolute;
+  right: 10px;
+  top: 18px;
+  z-index: 11;
+}
+.trusted-graph-pane-restore .ui-icon { height: 15px; width: 15px; }
 .conversation {
   margin: 0 auto;
   max-width: var(--workspace-content-width);
@@ -4550,6 +4681,15 @@ html[data-theme="dark"] .trusted-graph-workbench .react-flow__minimap {
   gap: 8px;
 }
 
+.trusted-graph-zoom-actions {
+  display: inline-flex;
+  gap: 4px;
+}
+
+.trusted-graph-zoom-actions button {
+  min-width: 34px;
+}
+
 .trusted-graph-header-actions button,
 .trusted-graph-header-actions select,
 .trusted-graph-focus {
@@ -4591,7 +4731,7 @@ html[data-theme="dark"] .trusted-graph-workbench .react-flow__minimap {
   min-height: 330px;
 }
 
-.trusted-graph-workbench.compact .trusted-node-inspector {
+.trusted-graph-workbench.compact:not(.fullscreen) .trusted-node-inspector {
   display: none;
 }
 
@@ -4814,9 +4954,50 @@ html[data-theme="dark"] .trusted-graph-workbench .react-flow__minimap {
   .trusted-graph-workbench.fullscreen { inset: 0; border-radius: 0; }
   .trusted-graph-header { align-items: flex-start; }
   .trusted-graph-header-actions { align-items: stretch; flex-direction: column; }
+  .trusted-graph-zoom-actions { align-self: stretch; }
+  .trusted-graph-zoom-actions button { flex: 1 1 auto; }
   .trusted-graph-body,
   .trusted-graph-workbench.fullscreen .trusted-graph-body { grid-template-columns: 1fr; }
   .trusted-node-inspector { max-height: 320px; border-left: 0; border-top: 1px solid var(--graph-line); }
+}
+
+@media (max-width: 1280px) {
+  .chat-surface.has-trusted-graph-pane {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .chat-surface.has-trusted-graph-pane .composer-dock {
+    right: 0;
+  }
+
+  .trusted-graph-floating-pane {
+    grid-column: 1;
+    height: min(620px, calc(100% - 164px));
+    margin: 12px 8px 0 auto;
+    position: absolute;
+    right: 0;
+    top: 0;
+    width: min(430px, calc(100% - 16px));
+  }
+}
+
+@media (max-width: 860px) {
+  .trusted-graph-floating-pane {
+    height: min(68dvh, 620px);
+    margin-right: 4px;
+    position: fixed;
+    right: 8px;
+    top: 58px;
+    width: min(430px, calc(100vw - 24px));
+    z-index: 30;
+  }
+
+  .trusted-graph-pane-restore {
+    position: fixed;
+    right: 14px;
+    top: 64px;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {

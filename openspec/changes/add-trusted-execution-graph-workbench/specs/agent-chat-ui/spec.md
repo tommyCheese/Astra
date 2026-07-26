@@ -25,7 +25,8 @@ The system SHALL preserve access to the Plan graph, version history, run timelin
 
 #### Scenario: User expands trusted audit details
 - **WHEN** the user opens the audit details of a trusted Run
-- **THEN** the UI presents the canonical Plan graph and version lineage before the chronological Trace
+- **THEN** the UI keeps the canonical Plan graph and version lineage in the independent conversation-level graph pane
+- **THEN** the expanded audit details present the chronological Trace without duplicating the graph
 - **THEN** selecting a Plan node scopes related turns, tools, artifacts, evaluations and evidence
 
 #### Scenario: User expands standard audit details

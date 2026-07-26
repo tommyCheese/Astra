@@ -1349,9 +1349,18 @@ describe('App', () => {
     await userEvent.click(screen.getByRole('button', { name: '发送' }));
 
     expect(await screen.findByText('计划已生成，等待执行确认')).toBeInTheDocument();
+    const graphPane = await screen.findByRole('complementary', { name: '执行图谱窗格' });
+    expect(graphPane).toContainElement(screen.getByRole('region', { name: '可信执行图谱' }));
+    expect(screen.getByText('计划已生成，等待执行确认').closest('.plan-confirmation-card')?.querySelector('.trusted-graph-workbench')).toBeNull();
+    expect(screen.getByRole('button', { name: '放大图谱' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '缩小图谱' })).toBeInTheDocument();
     expect(screen.getAllByText('检查输入').length).toBeGreaterThan(0);
     expect(screen.getAllByText('执行任务').length).toBeGreaterThan(0);
     expect(screen.getAllByText('依赖：inspect').length).toBeGreaterThan(0);
+    await userEvent.click(screen.getByRole('button', { name: '收起图谱' }));
+    expect(screen.queryByRole('complementary', { name: '执行图谱窗格' })).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: '打开执行图谱' }));
+    expect(await screen.findByRole('complementary', { name: '执行图谱窗格' })).toBeInTheDocument();
     expect(screen.getByRole('textbox')).toBeDisabled();
     await userEvent.click(screen.getByRole('button', { name: '执行计划' }));
 
@@ -1366,6 +1375,52 @@ describe('App', () => {
       undefined,
     );
     await waitFor(() => expect(screen.queryByText('计划已生成，等待执行确认')).not.toBeInTheDocument());
+    vi.mocked(getRun).mockResolvedValue(completed);
+  });
+
+  it('keeps prior trusted graphs on their turns while the floating pane follows the latest run', async () => {
+    const completed = await vi.mocked(getRun)('fixture');
+    const trustedRun = (id: string, nodeTitle: string) => ({
+      ...completed,
+      id,
+      task_id: 'task-graph-history',
+      answer_mode: 'trusted' as const,
+      summary: nodeTitle,
+      plan_graph: {
+        id: `plan-${id}`,
+        version: 1,
+        status: 'completed' as const,
+        nodes: [{ id: `node-${id}`, node_key: `node-${id}`, index: 1, title: nodeTitle, intent: nodeTitle, status: 'completed', depends_on: [] }],
+      },
+      chat_messages: [{ id: `user-${id}`, role: 'user' as const, content: nodeTitle, status: 'completed', metadata: {} }],
+    });
+    const first = trustedRun('run-graph-1', '第一轮图谱节点');
+    const second = trustedRun('run-graph-2', '第二轮图谱节点');
+    vi.mocked(createRun)
+      .mockResolvedValueOnce({ run_id: first.id, task_id: first.task_id, status: 'created', answer_mode: 'trusted' })
+      .mockResolvedValueOnce({ run_id: second.id, task_id: second.task_id, status: 'created', answer_mode: 'trusted' });
+    vi.mocked(getRun).mockReset();
+    vi.mocked(getRun).mockResolvedValueOnce(first).mockResolvedValueOnce(second).mockResolvedValue(second);
+
+    render(<App />);
+    await userEvent.click(screen.getByRole('switch', { name: '快速响应' }));
+    await userEvent.type(screen.getByRole('textbox'), '第一轮图谱节点');
+    await userEvent.click(screen.getByRole('button', { name: '发送' }));
+    expect((await screen.findAllByText('第一轮图谱节点')).length).toBeGreaterThan(0);
+
+    await userEvent.type(screen.getByRole('textbox'), '第二轮图谱节点');
+    await userEvent.click(screen.getByRole('button', { name: '发送' }));
+    const pane = await screen.findByRole('complementary', { name: '执行图谱窗格' });
+    expect(pane).toHaveTextContent('第二轮图谱节点');
+    expect(pane).not.toHaveTextContent('第一轮图谱节点');
+
+    const historicalToggle = screen.getByRole('button', { name: '打开此对话图谱' });
+    expect(historicalToggle).toHaveAttribute('aria-expanded', 'false');
+    await userEvent.click(historicalToggle);
+    expect(await screen.findByRole('region', { name: '历史执行图谱' })).toHaveTextContent('第一轮图谱节点');
+    expect(historicalToggle).toHaveAttribute('aria-expanded', 'true');
+    await userEvent.click(historicalToggle);
+    expect(screen.queryByRole('region', { name: '历史执行图谱' })).not.toBeInTheDocument();
     vi.mocked(getRun).mockResolvedValue(completed);
   });
 
