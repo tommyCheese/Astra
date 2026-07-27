@@ -937,7 +937,6 @@ describe('App', () => {
       .mockResolvedValueOnce([share])
       .mockResolvedValueOnce([{ ...share, updated_at: new Date(Date.now() + 1000).toISOString() }])
       .mockResolvedValueOnce([]);
-    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
     render(<App />);
 
     await userEvent.click(screen.getByRole('button', { name: /已分享对话/ }));
@@ -947,9 +946,10 @@ describe('App', () => {
     expect(await screen.findByText('已更新 1 个分享快照。')).toBeInTheDocument();
 
     await userEvent.click(screen.getByRole('button', { name: '取消分享' }));
+    expect(screen.getByRole('alertdialog', { name: '取消分享链接？' })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: '确认取消分享' }));
     await waitFor(() => expect(revokeConversationShare).toHaveBeenCalledWith('shared-1'));
     expect(await screen.findByText('暂无已分享对话')).toBeInTheDocument();
-    confirm.mockRestore();
   });
 
   it('reveals the local star burst after five quick logo clicks', async () => {

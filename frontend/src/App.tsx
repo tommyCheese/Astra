@@ -1756,6 +1756,7 @@ function SharedConversationsView({ onClose, onOpenConversation, onShareChanged }
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<'refresh' | 'revoke' | null>(null);
   const [message, setMessage] = useState('');
+  const [confirmRevoke, setConfirmRevoke] = useState(false);
 
   const loadShares = useCallback(async () => {
     const items = await listConversationShares();
@@ -1785,7 +1786,7 @@ function SharedConversationsView({ onClose, onOpenConversation, onShareChanged }
 
   async function runBatch(action: 'refresh' | 'revoke') {
     if (!selectedIds.length || busy) return;
-    if (action === 'revoke' && !window.confirm(t(`确定取消选中的 ${selectedIds.length} 个分享链接吗？获得链接的人将无法继续访问。`))) return;
+    setConfirmRevoke(false);
     setBusy(action);
     setMessage('');
     const results = await Promise.allSettled(selectedIds.map((id) => action === 'refresh' ? createConversationShare(id, true) : revokeConversationShare(id)));
@@ -1812,7 +1813,7 @@ function SharedConversationsView({ onClose, onOpenConversation, onShareChanged }
       <span>{t(`已选择 ${selected.size} 项`)}</span>
       <div>
         <button type="button" disabled={!selected.size || busy !== null} onClick={() => { void runBatch('refresh'); }}><Icon name="refresh" />{busy === 'refresh' ? t('更新中…') : t('更新快照')}</button>
-        <button className="danger" type="button" disabled={!selected.size || busy !== null} onClick={() => { void runBatch('revoke'); }}>{busy === 'revoke' ? t('取消中…') : t('取消分享')}</button>
+        <button className="danger" type="button" disabled={!selected.size || busy !== null} onClick={() => setConfirmRevoke(true)}>{busy === 'revoke' ? t('取消中…') : t('取消分享')}</button>
       </div>
     </div>
     {message && <p className="shares-message" role="status">{message}</p>}
@@ -1825,6 +1826,16 @@ function SharedConversationsView({ onClose, onOpenConversation, onShareChanged }
       {!loading && !shares.length && <div className="shares-empty"><Icon name="link" /><h2>{t('暂无已分享对话')}</h2><p>{t('从对话的更多操作中创建分享链接后，会显示在这里。')}</p></div>}
       {loading && <div className="shares-empty"><p>{t('正在读取已分享对话…')}</p></div>}
     </div>
+    {confirmRevoke && <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setConfirmRevoke(false); }}>
+      <section className="conversation-action-dialog" role="alertdialog" aria-modal="true" aria-labelledby="revoke-shares-title" onKeyDown={(event) => { if (event.key === 'Escape') setConfirmRevoke(false); }}>
+        <h2 id="revoke-shares-title">{t('取消分享链接？')}</h2>
+        <p>{t('确定取消选中的 {count} 个分享链接吗？获得链接的人将无法继续访问。').replace('{count}', String(selectedIds.length))}</p>
+        <div className="dialog-actions">
+          <button type="button" onClick={() => setConfirmRevoke(false)}>{t('返回')}</button>
+          <button className="danger" type="button" onClick={() => { void runBatch('revoke'); }}>{t('确认取消分享')}</button>
+        </div>
+      </section>
+    </div>}
   </section>;
 }
 

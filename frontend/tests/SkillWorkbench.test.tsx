@@ -173,12 +173,19 @@ describe('SkillWorkbench', () => {
     };
     vi.mocked(api.listSkills).mockResolvedValue([builtin]);
     vi.mocked(api.getSkill).mockResolvedValue(builtin);
+    vi.mocked(api.cloneSkill).mockResolvedValue({
+      ...custom,
+      id: 'clone-1',
+      name: 'skill-authoring-copy',
+      qualified_identity: 'custom:skill-authoring-copy',
+    });
     renderWorkbench();
     fireEvent.click(await screen.findByRole('button', { name: /astra-skill-authoring/ }));
     await screen.findByText('Astra 内建 Skill');
     expect(screen.queryByRole('button', { name: '发布' })).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '克隆' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '查看文件' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '克隆' }));
+    await waitFor(() => expect(api.cloneSkill).toHaveBeenCalledWith('builtin-1', 'skill-authoring-copy'));
   });
 
   it('creates a Skill from the themed drawer and opens its editor', async () => {
@@ -208,6 +215,43 @@ describe('SkillWorkbench', () => {
     await waitFor(() => expect(api.createSkill).toHaveBeenCalledWith('daily-research', 'Collect a daily research digest'));
     expect(await screen.findByRole('button', { name: '发布' })).toBeInTheDocument();
     expect(screen.queryByRole('dialog', { name: '新建 Skill' })).not.toBeInTheDocument();
+  });
+
+  it('uses themed editor dialogs for file operations instead of native prompts', async () => {
+    renderWorkbench();
+    await openCustomEditor();
+
+    fireEvent.click(screen.getByRole('button', { name: '新建文件' }));
+    const dialog = screen.getByRole('dialog', { name: '新建文件' });
+    expect(dialog).toBeInTheDocument();
+    fireEvent.change(screen.getByRole('textbox', { name: /文件路径/ }), { target: { value: 'references/guide.md' } });
+    fireEvent.click(screen.getByRole('button', { name: '创建' }));
+
+    await waitFor(() => expect(api.updateSkillFiles).toHaveBeenCalledWith(
+      custom.id,
+      'token-1',
+      [{ action: 'write', path: 'references/guide.md', content: '' }],
+    ));
+    expect(screen.queryByRole('dialog', { name: '新建文件' })).not.toBeInTheDocument();
+  });
+
+  it('configures a Draft test in-app with an explicit execution mode', async () => {
+    vi.mocked(api.testSkillDraft).mockResolvedValue({
+      run_id: 'run-1',
+      task_id: 'task-1',
+      status: 'queued',
+      answer_mode: 'trusted',
+    });
+    renderWorkbench();
+    await openCustomEditor();
+
+    fireEvent.click(screen.getByRole('button', { name: '测试 Draft' }));
+    expect(screen.getByRole('dialog', { name: '测试 Draft' })).toBeInTheDocument();
+    fireEvent.change(screen.getByRole('textbox', { name: /测试目标/ }), { target: { value: 'Collect sources' } });
+    fireEvent.click(screen.getByRole('button', { name: /可信模式/ }));
+    fireEvent.click(screen.getByRole('button', { name: '开始测试' }));
+
+    await waitFor(() => expect(api.testSkillDraft).toHaveBeenCalledWith(custom.id, 'token-1', 'Collect sources', 'trusted'));
   });
 
   it('renders the complete workbench chrome in English', async () => {

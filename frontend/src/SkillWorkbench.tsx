@@ -43,6 +43,10 @@ type OriginFilter = 'all' | 'builtin' | 'custom';
 type StateFilter = 'all' | 'enabled' | 'disabled';
 type TreeNode = { name: string; path: string; kind: 'folder'; children: TreeItem[] } | { name: string; path: string; kind: 'file'; file: SkillFile };
 type TreeItem = TreeNode;
+type SkillActionDialog =
+  | { kind: 'new-file' | 'new-folder' | 'rename-file'; value: string }
+  | { kind: 'delete-file' | 'delete-skill' }
+  | { kind: 'test-draft'; value: string; mode: 'standard' | 'trusted' };
 
 const languageByExtension: Record<string, string> = {
   md: 'markdown', yaml: 'yaml', yml: 'yaml', json: 'json', py: 'python',
@@ -222,6 +226,7 @@ export function SkillWorkbench({
   const [createDescription, setCreateDescription] = useState('');
   const [createError, setCreateError] = useState('');
   const [createSubmitting, setCreateSubmitting] = useState(false);
+  const [actionDialog, setActionDialog] = useState<SkillActionDialog | null>(null);
   const [darkTheme, setDarkTheme] = useState(() => document.documentElement.dataset.theme === 'dark');
   const saveTimer = useRef<number>();
   const tokenRef = useRef('');
@@ -252,13 +257,14 @@ export function SkillWorkbench({
   }, []);
 
   useEffect(() => {
-    if (!createOpen) return;
+    if (!createOpen && !actionDialog) return;
     const closeOnEscape = (event: KeyboardEvent) => {
       if (event.key === 'Escape' && !createSubmitting) setCreateOpen(false);
+      if (event.key === 'Escape' && !busy) setActionDialog(null);
     };
     window.addEventListener('keydown', closeOnEscape);
     return () => window.removeEventListener('keydown', closeOnEscape);
-  }, [createOpen, createSubmitting]);
+  }, [actionDialog, busy, createOpen, createSubmitting]);
 
   const resetEditor = () => {
     if (saveTimer.current) window.clearTimeout(saveTimer.current);
@@ -422,17 +428,28 @@ export function SkillWorkbench({
   const createFolder = () => {
     if (!selected || selected.readonly) return;
     const initial = selectedFolder ? `${selectedFolder}/` : '';
-    const path = window.prompt(t('新文件夹路径'), initial)?.trim().replace(/^\/+|\/+$/g, '');
+    setActionDialog({ kind: 'new-folder', value: initial });
+  };
+
+  const confirmCreateFolder = (pathValue: string) => {
+    const path = pathValue.trim().replace(/^\/+|\/+$/g, '');
     if (!path) return;
     setVirtualFolders((items) => items.includes(path) ? items : [...items, path]);
     setSelectedFolder(path);
+    setActionDialog(null);
   };
 
   const createFile = () => {
     if (!selected || selected.readonly) return;
     const initial = selectedFolder ? `${selectedFolder}/` : '';
-    const path = window.prompt(t('新文件路径，例如 references/guide.md'), initial);
+    setActionDialog({ kind: 'new-file', value: initial });
+  };
+
+  const confirmCreateFile = (pathValue: string) => {
+    if (!selected) return;
+    const path = pathValue.trim().replace(/^\/+/, '');
     if (!path) return;
+    setActionDialog(null);
     void applyOperations([{ action: 'write', path, content: '' }]).then(async () => {
       await refreshDetail();
       const detail = await getSkill(selected.id);
@@ -443,9 +460,15 @@ export function SkillWorkbench({
 
   const renameFile = () => {
     if (!selected || selected.readonly || !activePath || activePath === 'SKILL.md') return;
-    const target = window.prompt(t('新路径'), activePath);
+    setActionDialog({ kind: 'rename-file', value: activePath });
+  };
+
+  const confirmRenameFile = (targetValue: string) => {
+    if (!selected || !activePath) return;
+    const target = targetValue.trim().replace(/^\/+/, '');
     if (!target || target === activePath) return;
     const previous = activePath;
+    setActionDialog(null);
     void applyOperations([{ action: 'move', path: previous, target }]).then(async () => {
       setTabs((items) => items.map((item) => item === previous ? target : item));
       setBuffers((items) => {
@@ -460,12 +483,60 @@ export function SkillWorkbench({
 
   const deleteFile = () => {
     if (!selected || selected.readonly || !activePath || activePath === 'SKILL.md') return;
-    if (!window.confirm(t('删除 {path}？').replace('{path}', activePath))) return;
+    setActionDialog({ kind: 'delete-file' });
+  };
+
+  const confirmDeleteFile = () => {
+    if (!activePath) return;
     const path = activePath;
+    setActionDialog(null);
     void applyOperations([{ action: 'delete', path }]).then(async () => {
       setTabs((items) => items.filter((item) => item !== path));
       setActivePath(null);
       await refreshDetail();
+    });
+  };
+
+  const nextCloneName = (sourceName: string) => {
+    const base = sourceName.replace(/^astra-/, '');
+    const used = new Set(skills.map((item) => item.name));
+    let candidate = `${base}-copy`;
+    let suffix = 2;
+    while (used.has(candidate)) {
+      candidate = `${base}-copy-${suffix}`;
+      suffix += 1;
+    }
+    return candidate;
+  };
+
+  const cloneSelected = () => {
+    if (!selected) return;
+    const name = nextCloneName(selected.name);
+    void perform(async () => {
+      const clone = await cloneSkill(selected.id, name);
+      await refreshList();
+      await selectSkill(clone.id, true);
+    });
+  };
+
+  const confirmDeleteSkill = () => {
+    if (!selected) return;
+    const skillId = selected.id;
+    setActionDialog(null);
+    void perform(async () => {
+      await removeSkill(skillId);
+      closeDetail();
+      await refreshList();
+    });
+  };
+
+  const runDraftTest = (goal: string, mode: 'standard' | 'trusted') => {
+    if (!selected || !goal.trim()) return;
+    setActionDialog(null);
+    void perform(async () => {
+      const run = await testSkillDraft(selected.id, tokenRef.current, goal.trim(), mode);
+      setMessage(t('Draft 测试已创建：{id}').replace('{id}', run.run_id));
+      onTestRun?.(run.run_id);
     });
   };
 
@@ -674,23 +745,13 @@ export function SkillWorkbench({
           <div className="skill-detail-lead"><p>{selected.description}</p><span className={`skill-state-pill ${selected.enabled ? 'enabled' : 'disabled'}`}>{selected.enabled ? t('已启用') : t('已停用')}</span></div>
           <div className="skill-detail-actions">
             <button className="skill-button primary" type="button" onClick={() => setEditorOpen(true)}>{selected.readonly ? t('查看文件') : t('编辑')}</button>
-            {selected.origin === 'builtin' && <button className="skill-button" type="button" onClick={() => {
-              const name = window.prompt(t('克隆为自定义 Skill'), `${selected.name.replace(/^astra-/, '')}-custom`);
-              if (name) void perform(async () => {
-                const clone = await cloneSkill(selected.id, name);
-                await refreshList();
-                await selectSkill(clone.id, true);
-              });
-            }}>{t('克隆')}</button>}
+            {selected.origin === 'builtin' && <button className="skill-button" type="button" disabled={busy} title={t('将创建 {name}').replace('{name}', nextCloneName(selected.name))} onClick={cloneSelected}>{t('克隆')}</button>}
             <button className="skill-button" type="button" onClick={() => void perform(async () => {
               await setSkillEnabled(selected.id, !selected.enabled);
               await refreshDetail();
             })}>{t(selected.enabled ? '停用' : '启用')}</button>
             <a className="skill-button" href={`/api/skills/${selected.id}/export`}>{t('导出')}</a>
-            {!selected.readonly && <button className="skill-button danger" type="button" onClick={() => {
-              if (!window.confirm(t('移除 {name}？历史 Revision 仍可审计。').replace('{name}', selected.name))) return;
-              void perform(async () => { await removeSkill(selected.id); closeDetail(); await refreshList(); });
-            }}>{t('删除')}</button>}
+            {!selected.readonly && <button className="skill-button danger" type="button" onClick={() => setActionDialog({ kind: 'delete-skill' })}>{t('删除')}</button>}
           </div>
           <section className="skill-detail-section">
             <h4>{t('基本信息')}</h4>
@@ -757,16 +818,7 @@ export function SkillWorkbench({
                 await refreshDetail();
               })}>{t(selected.enabled ? '停用' : '启用')}</button>
               <a href={`/api/skills/${selected.id}/export`}>{t('导出')}</a>
-              {!selected.readonly && <button type="button" onClick={() => {
-                const goal = window.prompt(t('Draft 测试目标'));
-                if (!goal) return;
-                const trusted = window.confirm(t('使用可信模式测试？取消则使用快速模式。'));
-                void perform(async () => {
-                  const run = await testSkillDraft(selected.id, tokenRef.current, goal, trusted ? 'trusted' : 'standard');
-                  setMessage(t('Draft 测试已创建：{id}').replace('{id}', run.run_id));
-                  onTestRun?.(run.run_id);
-                });
-              }}>{t('测试 Draft')}</button>}
+              {!selected.readonly && <button type="button" onClick={() => setActionDialog({ kind: 'test-draft', value: '', mode: 'standard' })}>{t('测试 Draft')}</button>}
               <span className={`skill-save-state state-${saveState}`}>{saveStateLabel[saveState]}</span>
             </div>
             <div className="skill-tabs">
@@ -893,6 +945,87 @@ export function SkillWorkbench({
           </main>}
         </div>
       </section>
+    </div>}
+    {selected && actionDialog && <div className="skill-action-layer" role="presentation" onMouseDown={(event) => {
+      if (event.target === event.currentTarget && !busy) setActionDialog(null);
+    }}>
+      <form
+        className={`skill-action-dialog ${actionDialog.kind.startsWith('delete-') ? 'danger' : ''}`}
+        role={actionDialog.kind.startsWith('delete-') ? 'alertdialog' : 'dialog'}
+        aria-modal="true"
+        aria-labelledby="skill-action-title"
+        onSubmit={(event) => {
+          event.preventDefault();
+          if (actionDialog.kind === 'new-folder') confirmCreateFolder(actionDialog.value);
+          if (actionDialog.kind === 'new-file') confirmCreateFile(actionDialog.value);
+          if (actionDialog.kind === 'rename-file') confirmRenameFile(actionDialog.value);
+          if (actionDialog.kind === 'delete-file') confirmDeleteFile();
+          if (actionDialog.kind === 'delete-skill') confirmDeleteSkill();
+          if (actionDialog.kind === 'test-draft') runDraftTest(actionDialog.value, actionDialog.mode);
+        }}
+      >
+        <header>
+          <span className="skill-action-icon">{actionDialog.kind.startsWith('delete-') ? '!' : actionDialog.kind === 'test-draft' ? '▷' : '›_'}</span>
+          <div>
+            <small>{t(actionDialog.kind === 'test-draft' ? 'Draft 工具' : actionDialog.kind.startsWith('delete-') ? '谨慎操作' : '资源管理器')}</small>
+            <h3 id="skill-action-title">{t(
+              actionDialog.kind === 'new-file' ? '新建文件'
+                : actionDialog.kind === 'new-folder' ? '新建文件夹'
+                  : actionDialog.kind === 'rename-file' ? '重命名'
+                    : actionDialog.kind === 'delete-file' ? '删除文件？'
+                      : actionDialog.kind === 'delete-skill' ? '删除 Skill？'
+                        : '测试 Draft',
+            )}</h3>
+          </div>
+          <CloseButton label={t('关闭')} onClick={() => { if (!busy) setActionDialog(null); }} />
+        </header>
+        <div className="skill-action-body">
+          {(actionDialog.kind === 'new-file' || actionDialog.kind === 'new-folder' || actionDialog.kind === 'rename-file') && <label>
+            <span>{t(actionDialog.kind === 'new-folder' ? '文件夹路径' : '文件路径')}</span>
+            <input
+              autoFocus
+              spellCheck={false}
+              value={actionDialog.value}
+              placeholder={actionDialog.kind === 'new-folder' ? 'references' : 'references/guide.md'}
+              onChange={(event) => setActionDialog({ ...actionDialog, value: event.currentTarget.value })}
+            />
+            <small>{t('使用相对于 Skill 根目录的路径')}</small>
+          </label>}
+          {actionDialog.kind === 'delete-file' && <>
+            <p>{t('即将删除文件 {path}。此修改会写入当前 Draft。').replace('{path}', activePath ?? '')}</p>
+            <code>{activePath}</code>
+          </>}
+          {actionDialog.kind === 'delete-skill' && <>
+            <p>{t('将移除自定义 Skill {name}。历史 Revision 仍保留用于审计。').replace('{name}', selected.name)}</p>
+            <code>{selected.qualified_identity}</code>
+          </>}
+          {actionDialog.kind === 'test-draft' && <>
+            <label>
+              <span>{t('测试目标')}</span>
+              <textarea autoFocus rows={4} value={actionDialog.value} placeholder={t('描述希望这个 Skill 完成的任务')} onChange={(event) => setActionDialog({ ...actionDialog, value: event.currentTarget.value })} />
+            </label>
+            <fieldset>
+              <legend>{t('执行模式')}</legend>
+              <button type="button" aria-pressed={actionDialog.mode === 'standard'} onClick={() => setActionDialog({ ...actionDialog, mode: 'standard' })}><strong>{t('快速模式')}</strong><small>{t('使用标准隔离与审批策略')}</small></button>
+              <button type="button" aria-pressed={actionDialog.mode === 'trusted'} onClick={() => setActionDialog({ ...actionDialog, mode: 'trusted' })}><strong>{t('可信模式')}</strong><small>{t('使用可信执行策略进行完整验证')}</small></button>
+            </fieldset>
+          </>}
+        </div>
+        <footer>
+          <button className="skill-button" type="button" disabled={busy} onClick={() => setActionDialog(null)}>{t('取消')}</button>
+          <button
+            className={`skill-button ${actionDialog.kind.startsWith('delete-') ? 'danger-solid' : 'primary'}`}
+            type="submit"
+            disabled={busy || ('value' in actionDialog && !actionDialog.value.trim())}
+          >
+            {t(actionDialog.kind === 'delete-file' ? '确认删除文件'
+              : actionDialog.kind === 'delete-skill' ? '确认删除 Skill'
+                : actionDialog.kind === 'test-draft' ? '开始测试'
+                  : actionDialog.kind === 'rename-file' ? '保存路径'
+                    : '创建')}
+          </button>
+        </footer>
+      </form>
     </div>}
     {message && !editorOpen && <div className="skill-toast library-toast" role="status">{message}</div>}
   </section>;

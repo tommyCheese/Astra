@@ -6008,6 +6008,134 @@ html[data-theme="dark"] .trusted-plan-node.status-blocked {
   padding-top: 18px;
 }
 
+.skill-action-layer {
+  position: fixed;
+  z-index: 110;
+  inset: 0;
+  display: grid;
+  place-items: start center;
+  padding: min(18vh, 150px) 18px 18px;
+  background: rgba(0, 0, 0, .4);
+  backdrop-filter: blur(2px);
+  animation: library-overlay-enter 140ms ease both;
+}
+.skill-action-dialog {
+  width: min(460px, 100%);
+  overflow: hidden;
+  border: 1px solid var(--app-line);
+  border-radius: 6px;
+  color: inherit;
+  background: var(--app-canvas);
+  box-shadow: 0 22px 70px rgba(0, 0, 0, .42);
+  animation: library-dialog-enter 180ms cubic-bezier(.2, .82, .2, 1) both;
+}
+.skill-action-dialog > header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 48px;
+  border-bottom: 1px solid var(--app-line);
+  padding: 8px 10px;
+  background: color-mix(in srgb, var(--app-sidebar) 72%, var(--app-canvas));
+}
+.skill-action-dialog > header > div { min-width: 0; }
+.skill-action-dialog > header small { color: var(--app-muted); font-size: 9px; }
+.skill-action-dialog > header h3 { margin: 1px 0 0; font-size: 13px; }
+.skill-action-dialog > header > button { margin-left: auto; }
+.skill-action-icon {
+  display: grid;
+  place-content: center;
+  width: 28px;
+  height: 28px;
+  flex: none;
+  border: 1px solid color-mix(in srgb, var(--astra-mint) 42%, var(--app-line));
+  border-radius: 4px;
+  color: var(--astra-mint);
+  background: color-mix(in srgb, var(--astra-mint) 9%, transparent);
+  font-family: var(--app-mono, ui-monospace, monospace);
+  font-size: 11px;
+  font-weight: 700;
+}
+.skill-action-dialog.danger .skill-action-icon {
+  border-color: color-mix(in srgb, #e06c75 50%, var(--app-line));
+  color: #e06c75;
+  background: color-mix(in srgb, #e06c75 9%, transparent);
+}
+.skill-action-body { padding: 18px; }
+.skill-action-body > label { display: flex; flex-direction: column; gap: 7px; }
+.skill-action-body > label > span,
+.skill-action-body legend { color: var(--app-muted); font-size: 10px; font-weight: 600; }
+.skill-action-body :is(input, textarea) {
+  box-sizing: border-box;
+  width: 100%;
+  border: 1px solid var(--app-line);
+  border-radius: 4px;
+  outline: none;
+  padding: 8px 9px;
+  color: inherit;
+  background: var(--app-elevated);
+  font: inherit;
+  font-size: 12px;
+}
+.skill-action-body :is(input, textarea):focus {
+  border-color: var(--astra-mint);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--astra-mint) 45%, transparent);
+}
+.skill-action-body textarea { resize: vertical; line-height: 1.5; }
+.skill-action-body label > small { color: var(--app-muted); font-size: 9px; }
+.skill-action-body > p { margin: 0 0 12px; color: var(--app-muted); font-size: 12px; line-height: 1.55; }
+.skill-action-body > code {
+  display: block;
+  overflow: hidden;
+  border: 1px solid var(--app-line);
+  border-radius: 4px;
+  padding: 8px 9px;
+  color: #e06c75;
+  background: var(--app-elevated);
+  font-family: var(--app-mono, ui-monospace, monospace);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.skill-action-body fieldset {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin: 17px 0 0;
+  border: 0;
+  padding: 0;
+}
+.skill-action-body legend { margin-bottom: 7px; }
+.skill-action-body fieldset button {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  border: 1px solid var(--app-line);
+  border-radius: 5px;
+  padding: 10px;
+  color: inherit;
+  text-align: left;
+  background: var(--app-elevated);
+  cursor: pointer;
+}
+.skill-action-body fieldset button[aria-pressed="true"] {
+  border-color: var(--astra-mint);
+  background: color-mix(in srgb, var(--astra-mint) 10%, var(--app-elevated));
+}
+.skill-action-body fieldset button strong { font-size: 11px; }
+.skill-action-body fieldset button small { color: var(--app-muted); font-size: 9px; line-height: 1.35; }
+.skill-action-dialog > footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 7px;
+  border-top: 1px solid var(--app-line);
+  padding: 10px 12px;
+  background: color-mix(in srgb, var(--app-sidebar) 45%, var(--app-canvas));
+}
+.skill-button.danger-solid { border-color: #c64d57; color: #fff; background: #c64d57; }
+.skill-button.danger-solid:hover { background: #b6424c; }
+
 .skill-modal-layer {
   position: fixed;
   z-index: 80;
@@ -6285,7 +6413,8 @@ html[data-theme="dark"] .trusted-plan-node.status-blocked {
 
 .skill-library-page :is(button, a, input, select):focus-visible,
 .skill-modal-layer :is(button, a, input):focus-visible,
-.skill-create-layer :is(button, input, textarea):focus-visible {
+.skill-create-layer :is(button, input, textarea):focus-visible,
+.skill-action-layer :is(button, input, textarea):focus-visible {
   outline: 1px solid var(--astra-mint);
   outline-offset: 1px;
 }
@@ -6295,6 +6424,8 @@ html[data-theme="dark"] .trusted-plan-node.status-blocked {
   .skill-library-item,
   .skill-create-layer,
   .skill-create-drawer,
+  .skill-action-layer,
+  .skill-action-dialog,
   .skill-modal-layer,
   .skill-detail-dialog,
   .skill-editor-dialog,
