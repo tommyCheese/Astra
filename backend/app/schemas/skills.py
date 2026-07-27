@@ -101,6 +101,10 @@ class SkillRevisionView(BaseModel):
     diagnostics: list[SkillDiagnosticView] = Field(default_factory=list)
 
 
+class SkillRevisionDetailView(SkillRevisionView):
+    files: list[SkillFileView] = Field(default_factory=list)
+
+
 class SkillSummaryView(BaseModel):
     id: str
     name: str
@@ -153,6 +157,16 @@ class SkillDiffView(BaseModel):
     skill_id: str
     draft_revision_token: str | None = None
     active_revision_id: str | None = None
+    files: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class SkillRevisionDiffView(BaseModel):
+    skill_id: str
+    base_revision_id: str
+    target_revision_id: str
+    base_version: int
+    target_version: int
+    patch: str
     files: list[dict[str, Any]] = Field(default_factory=list)
 
 

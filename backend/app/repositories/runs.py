@@ -88,6 +88,7 @@ class RunRepository:
         answer_mode: str = "standard",
         execution_profile: dict[str, Any] | None = None,
         agent_profile_snapshot: dict[str, Any] | None = None,
+        commit: bool = True,
     ) -> RunRecord:
         now = utc_now()
         if execution_profile is None and reasoning_policy:
@@ -142,7 +143,10 @@ class RunRepository:
                 "agent_profile.frozen",
                 {"profile": safe_agent_profile_manifest(agent_profile_snapshot)},
             )
-        await self.session.commit()
+        if commit:
+            await self.session.commit()
+        else:
+            await self.session.flush()
         return run
 
     async def freeze_agent_profile_snapshot(

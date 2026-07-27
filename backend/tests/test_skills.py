@@ -12,9 +12,15 @@ from app.core.config import Settings, get_settings
 from app.db.models import Base, RunSkillSnapshotRecord, SkillBlobRecord
 from app.db.session import get_session
 from app.main import create_app
+from app.repositories.runs import RunRepository
+from app.runner.engine import RunEngine
+from app.runner.model_client import MockModelClient
+from app.runner.reasoning import RunProfileResolver
+from app.schemas.agent import AgentDecision, AnswerMode, FinalAnswer, RequestedReasoningPolicy
 from app.skills.catalog import SkillActivationService, SkillCatalogBuilder
 from app.skills.packages import SkillPackageError, normalize_skill_path, parse_skill_package
 from app.skills.storage import SkillService, SkillStorageError, ensure_builtin_skills
+from app.tools.base import ToolRegistry
 
 
 def skill_md(name: str = "research-notes", body: str = "Follow the workflow.") -> str:
@@ -29,6 +35,20 @@ def skill_md(name: str = "research-notes", body: str = "Follow the workflow.") -
         "---\n\n"
         f"{body}\n"
     )
+
+
+class DirectFinalizeSkillClient(MockModelClient):
+    def __init__(self):
+        self.blocks_seen_at_first_decision: list[dict] = []
+
+    async def decide_with_answer(
+        self, goal, context, *, on_delta=None, on_reasoning_delta=None
+    ):
+        self.blocks_seen_at_first_decision = list(self.skill_blocks)
+        return AgentDecision(
+            decision_type="finalize",
+            reasoning_summary="Skill 已绑定，直接完成。",
+        ), FinalAnswer(summary="已按 Skill 完成。")
 
 
 def test_skill_package_validation_and_digest_drift():
@@ -377,6 +397,53 @@ async def test_activation_quota_deactivation_and_revocation(session):
     assert snapshot.activations == []
 
 
+async def test_explicit_skill_is_bound_before_a_direct_finalize(session):
+    settings = Settings(model_provider="mock")
+    service = SkillService(session, settings)
+    skill = await service.create_custom(
+        "direct-finalize",
+        "Bind before a direct final answer.",
+        files={"SKILL.md": skill_md("direct-finalize", "Always introduce Astra first.")},
+    )
+    revision = await service.publish(skill.id, skill.draft.revision_token)
+    profile = RunProfileResolver().resolve(
+        AnswerMode.standard,
+        RequestedReasoningPolicy(execution_mode="auto_approval"),
+    )
+    repo = RunRepository(session)
+    run = await repo.create_task_run(
+        "介绍 Astra",
+        settings.model_policy,
+        reasoning_policy=profile.reasoning_policy.model_dump(mode="json"),
+        answer_mode=profile.answer_mode.value,
+        execution_profile=profile.model_dump(mode="json"),
+    )
+    builder = SkillCatalogBuilder(session)
+    catalog = await builder.build(explicit_identities=["custom:direct-finalize"])
+    await builder.freeze(run.id, profile.answer_mode.value, catalog)
+    activation = await SkillActivationService(session).activate(
+        run.id,
+        "custom:direct-finalize",
+        initiator="explicit",
+        reason="explicit run selection",
+    )
+    client = DirectFinalizeSkillClient()
+
+    await RunEngine(
+        settings, model_client=client, tool_registry=ToolRegistry()
+    )._run_with_repo(repo, run.id)
+
+    assert len(client.blocks_seen_at_first_decision) == 1
+    bound = client.blocks_seen_at_first_decision[0]
+    assert bound["qualified_identity"] == "custom:direct-finalize"
+    assert bound["revision_id"] == revision.id == activation["activation"]["revision_id"]
+    assert bound["digest"] == revision.digest == activation["activation"]["digest"]
+    events = await repo.list_events(run.id)
+    event_types = [event.type for event in events]
+    assert event_types.index("skill.activated") < event_types.index("skill.prompt_bound")
+    assert event_types.index("skill.prompt_bound") < event_types.index("answer.started")
+
+
 @pytest.fixture
 async def skill_client(monkeypatch, tmp_path):
     engine = create_async_engine("sqlite+aiosqlite:///:memory:", future=True)
@@ -388,10 +455,12 @@ async def skill_client(monkeypatch, tmp_path):
         async with session_factory() as session:
             yield session
 
-    async def noop_runner(run_id, settings):
-        return None
+    scheduled_runs: list[str] = []
 
-    monkeypatch.setattr(runs_api, "start_run_in_process", noop_runner)
+    def record_schedule(run_id, settings):
+        scheduled_runs.append(run_id)
+
+    monkeypatch.setattr(runs_api, "_schedule_run", record_schedule)
     settings = Settings(
         model_provider="mock",
         artifact_store_path=str(tmp_path / "artifacts"),
@@ -406,6 +475,7 @@ async def skill_client(monkeypatch, tmp_path):
     async with AsyncClient(
         transport=ASGITransport(app=app), base_url="http://test"
     ) as client:
+        client.schedule_calls = scheduled_runs
         yield client
     await engine.dispose()
 
@@ -542,6 +612,65 @@ async def test_skill_api_authoring_publish_and_run_selection(skill_client):
     assert "catalog_to_first_model_ms" in metrics.json()
 
 
+async def test_run_skill_selection_validation_and_atomic_activation(skill_client):
+    async def publish(name: str) -> str:
+        created = (
+            await skill_client.post(
+                "/api/skills",
+                json={"name": name, "description": f"{name} test Skill"},
+            )
+        ).json()
+        response = await skill_client.post(
+            f"/api/skills/{created['id']}/publish",
+            json={"revision_token": created["draft_revision_token"]},
+        )
+        assert response.status_code == 200, response.text
+        return f"custom:{name}"
+
+    identities = [await publish("atomic-one"), await publish("atomic-two")]
+
+    duplicate = await skill_client.post(
+        "/api/runs",
+        json={"goal": "Duplicate", "skill_ids": [identities[0], identities[0]]},
+    )
+    assert duplicate.status_code == 422
+    assert duplicate.json()["error"]["code"] == "REQUEST_INVALID"
+
+    malformed = await skill_client.post(
+        "/api/runs",
+        json={"goal": "Malformed", "skill_ids": ["custom:Hello Astra"]},
+    )
+    assert malformed.status_code == 422
+    assert malformed.json()["error"]["code"] == "REQUEST_INVALID"
+
+    unavailable = await skill_client.post(
+        "/api/runs",
+        json={
+            "goal": "Atomic failure",
+            "skill_ids": [identities[0], "custom:no-longer-available"],
+        },
+    )
+    assert unavailable.status_code == 422
+    assert unavailable.json()["error"]["code"] == "SKILL_SELECTION_INVALID"
+    assert unavailable.json()["error"]["details"]["qualified_identity"] == (
+        "custom:no-longer-available"
+    )
+    assert (await skill_client.get("/api/runs")).json() == []
+    assert skill_client.schedule_calls == []
+
+    created = await skill_client.post(
+        "/api/runs",
+        json={"goal": "Atomic success", "skill_ids": identities[:2]},
+    )
+    assert created.status_code == 200, created.text
+    audit = await skill_client.get(f"/api/runs/{created.json()['run_id']}/skills")
+    assert {
+        item["qualified_identity"] for item in audit.json()["activations"]
+    } == set(identities[:2])
+    assert all(item["initiator"] == "explicit" for item in audit.json()["activations"])
+    assert skill_client.schedule_calls == [created.json()["run_id"]]
+
+
 async def test_zip_import_is_draft_only_and_rejects_escape(skill_client):
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w") as archive:
@@ -639,3 +768,45 @@ async def test_skill_api_stale_write_preview_and_history(skill_client):
     history = await skill_client.get(f"/api/skills/{created['id']}/revisions")
     assert history.status_code == 200
     assert history.json()[0]["digest"] == publish.json()["digest"]
+    revision_id = history.json()[0]["id"]
+    revision_detail = await skill_client.get(
+        f"/api/skills/{created['id']}/revisions/{revision_id}"
+    )
+    assert revision_detail.status_code == 200
+    assert revision_detail.json()["files"][0]["readonly"] is True
+    historical_file = await skill_client.get(
+        f"/api/skills/{created['id']}/revisions/{revision_id}/file",
+        params={"path": "SKILL.md"},
+    )
+    assert historical_file.status_code == 200
+    assert historical_file.json()["readonly"] is True
+    assert "editor-check" in historical_file.json()["content"]
+
+    current_detail = await skill_client.get(f"/api/skills/{created['id']}")
+    next_draft = await skill_client.put(
+        f"/api/skills/{created['id']}/draft/files",
+        json={
+            "revision_token": current_detail.json()["draft_revision_token"],
+            "operations": [
+                    {
+                        "action": "write",
+                        "path": "SKILL.md",
+                        "content": skill_md("editor-check", "second revision"),
+                }
+            ],
+        },
+    )
+    assert next_draft.status_code == 200
+    second_publish = await skill_client.post(
+        f"/api/skills/{created['id']}/publish",
+        json={"revision_token": next_draft.json()["revision_token"]},
+    )
+    assert second_publish.status_code == 200
+    historical_diff = await skill_client.get(
+        f"/api/skills/{created['id']}/revisions/{revision_id}/diff"
+    )
+    assert historical_diff.status_code == 200
+    assert historical_diff.json()["base_version"] == 1
+    assert historical_diff.json()["target_version"] == 2
+    assert "diff --git a/SKILL.md b/SKILL.md" in historical_diff.json()["patch"]
+    assert "+second revision" in historical_diff.json()["patch"]

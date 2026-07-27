@@ -40,6 +40,8 @@ from app.schemas.skills import (
     SkillFileView,
     SkillImportRequest,
     SkillPublishRequest,
+    SkillRevisionDetailView,
+    SkillRevisionDiffView,
     SkillRevisionView,
     SkillRevokeRequest,
     SkillStateRequest,
@@ -138,6 +140,52 @@ def _file_view(skill: SkillRecord, item: dict[str, Any]) -> SkillFileView:
         text=item["text"],
         readonly=skill.origin == "builtin",
     )
+
+
+def _revision_file_view(
+    skill: SkillRecord, revision: SkillRevisionRecord, item: dict[str, Any]
+) -> SkillFileView:
+    return SkillFileView(
+        path=item["path"],
+        uri=f"skill-revision://{skill.id}/{revision.id}/{item['path']}",
+        digest=item["digest"],
+        size_bytes=item["size_bytes"],
+        media_type=item["media_type"],
+        kind=item["kind"],
+        text=item["text"],
+        readonly=True,
+    )
+
+
+def _git_diff(
+    before_files: dict[str, bytes],
+    after_files: dict[str, bytes],
+) -> tuple[str, list[dict[str, Any]]]:
+    patches: list[str] = []
+    changes: list[dict[str, Any]] = []
+    for path in sorted(set(before_files) | set(after_files)):
+        before = before_files.get(path)
+        after = after_files.get(path)
+        if before == after:
+            continue
+        status = "added" if before is None else "removed" if after is None else "modified"
+        header = [f"diff --git a/{path} b/{path}\n"]
+        if status == "added":
+            header.append("new file mode 100644\n")
+        elif status == "removed":
+            header.append("deleted file mode 100644\n")
+        try:
+            patch = "".join(header + list(difflib.unified_diff(
+                [] if before is None else before.decode("utf-8").splitlines(keepends=True),
+                [] if after is None else after.decode("utf-8").splitlines(keepends=True),
+                fromfile="/dev/null" if before is None else f"a/{path}",
+                tofile="/dev/null" if after is None else f"b/{path}",
+            )))
+        except UnicodeDecodeError:
+            patch = "".join(header) + f"Binary files a/{path} and b/{path} differ\n"
+        patches.append(patch)
+        changes.append({"path": path, "status": status, "patch": patch})
+    return "\n".join(patches), changes
 
 
 @router.get("/skills", response_model=list[SkillSummaryView])
@@ -378,6 +426,106 @@ async def list_skill_revisions(
         _raise_skill_error(exc)
 
 
+@router.get(
+    "/skills/{skill_id}/revisions/{revision_id}",
+    response_model=SkillRevisionDetailView,
+)
+async def get_skill_revision(
+    skill_id: str,
+    revision_id: str,
+    session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+) -> SkillRevisionDetailView:
+    try:
+        service = SkillService(session, settings)
+        skill = await service.require_skill(skill_id)
+        revision = await service.require_revision(skill_id, revision_id)
+        files = revision.manifest.get("files", {}) or {}
+        return SkillRevisionDetailView(
+            id=revision.id,
+            version=revision.version,
+            digest=revision.digest,
+            published_at=revision.published_at.isoformat() if revision.published_at else None,
+            revoked_at=revision.revoked_at.isoformat() if revision.revoked_at else None,
+            test_only=revision.test_only,
+            diagnostics=_diagnostics(revision.validation_report),
+            files=[
+                _revision_file_view(skill, revision, item)
+                for _, item in sorted(files.items())
+            ],
+        )
+    except SkillStorageError as exc:
+        _raise_skill_error(exc)
+
+
+@router.get(
+    "/skills/{skill_id}/revisions/{revision_id}/file",
+    response_model=SkillFileContentView,
+)
+async def read_skill_revision_file(
+    skill_id: str,
+    revision_id: str,
+    path: Annotated[str, Query(min_length=1)],
+    session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+) -> SkillFileContentView:
+    try:
+        service = SkillService(session, settings)
+        skill = await service.require_skill(skill_id)
+        revision = await service.require_revision(skill_id, revision_id)
+        normalized = normalize_skill_path(path)
+        item = (revision.manifest.get("files", {}) or {}).get(normalized)
+        if item is None:
+            raise SkillStorageError("SKILL_FILE_NOT_FOUND", "找不到 Skill 历史文件。")
+        content = (await service.materialize_manifest({
+            "files": {normalized: item},
+        }))[normalized]
+        view = _revision_file_view(skill, revision, item)
+        return SkillFileContentView(
+            path=normalized,
+            uri=view.uri,
+            media_type=item["media_type"],
+            digest=item["digest"],
+            text=item["text"],
+            content=content.decode("utf-8") if item["text"] else None,
+            content_base64=None if item["text"] else base64.b64encode(content).decode(),
+            readonly=True,
+        )
+    except SkillStorageError as exc:
+        _raise_skill_error(exc)
+
+
+@router.get(
+    "/skills/{skill_id}/revisions/{revision_id}/diff",
+    response_model=SkillRevisionDiffView,
+)
+async def diff_skill_revision(
+    skill_id: str,
+    revision_id: str,
+    session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+) -> SkillRevisionDiffView:
+    try:
+        service = SkillService(session, settings)
+        skill = await service.require_skill(skill_id)
+        base_revision = await service.require_revision(skill_id, revision_id)
+        target_revision = await service.require_active_revision(skill)
+        before_files = await service.materialize_manifest(base_revision.manifest)
+        after_files = await service.materialize_manifest(target_revision.manifest)
+        patch, files = _git_diff(before_files, after_files)
+        return SkillRevisionDiffView(
+            skill_id=skill.id,
+            base_revision_id=base_revision.id,
+            target_revision_id=target_revision.id,
+            base_version=base_revision.version,
+            target_version=target_revision.version,
+            patch=patch,
+            files=files,
+        )
+    except SkillStorageError as exc:
+        _raise_skill_error(exc)
+
+
 @router.post(
     "/skills/{skill_id}/revisions/{revision_id}/revoke",
     response_model=SkillRevisionView,
@@ -594,6 +742,7 @@ async def create_skill_test_run(
             answer_mode=profile.answer_mode.value,
             execution_profile=profile.model_dump(mode="json"),
             agent_profile_snapshot=load_agent_profile().snapshot(),
+            commit=False,
         )
         catalog_builder = SkillCatalogBuilder(
             session, metadata_chars=settings.skills_catalog_metadata_chars

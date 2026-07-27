@@ -88,6 +88,18 @@ export type SkillRevision = {
   test_only: boolean;
   diagnostics: SkillDiagnostic[];
 };
+export type SkillRevisionDetail = SkillRevision & {
+  files: SkillFile[];
+};
+export type SkillRevisionDiff = {
+  skill_id: string;
+  base_revision_id: string;
+  target_revision_id: string;
+  base_version: number;
+  target_version: number;
+  patch: string;
+  files: Array<{ path: string; status: string; patch: string }>;
+};
 export type SkillFile = {
   path: string;
   uri: string;
@@ -171,6 +183,14 @@ export const publishSkill = (skillId: string, revisionToken: string) =>
   });
 export const listSkillRevisions = (skillId: string) =>
   skillJson<SkillRevision[]>(`/api/skills/${skillId}/revisions`);
+export const getSkillRevision = (skillId: string, revisionId: string) =>
+  skillJson<SkillRevisionDetail>(`/api/skills/${skillId}/revisions/${revisionId}`);
+export const getSkillRevisionFile = (skillId: string, revisionId: string, path: string) =>
+  skillJson<SkillFileContent>(
+    `/api/skills/${skillId}/revisions/${revisionId}/file?path=${encodeURIComponent(path)}`,
+  );
+export const getSkillRevisionDiff = (skillId: string, revisionId: string) =>
+  skillJson<SkillRevisionDiff>(`/api/skills/${skillId}/revisions/${revisionId}/diff`);
 export const restoreSkillRevision = (skillId: string, revisionId: string) =>
   skillJson<SkillFiles>(`/api/skills/${skillId}/revisions/${revisionId}/restore`, { method: 'POST' });
 export const getSkillDiff = (skillId: string) =>

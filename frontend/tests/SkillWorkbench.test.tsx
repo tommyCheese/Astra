@@ -23,6 +23,9 @@ vi.mock('../src/api', async (importOriginal) => {
     publishSkill: vi.fn(),
     listSkillRevisions: vi.fn(async () => []),
     getSkillDiff: vi.fn(async () => ({ files: [] })),
+    getSkillRevision: vi.fn(),
+    getSkillRevisionFile: vi.fn(),
+    getSkillRevisionDiff: vi.fn(),
     setSkillEnabled: vi.fn(),
     createSkill: vi.fn(),
     importSkill: vi.fn(),
@@ -58,6 +61,11 @@ const custom = {
 
 function renderWorkbench() {
   return render(<I18nProvider><SkillWorkbench onClose={() => undefined} /></I18nProvider>);
+}
+
+async function openCustomEditor() {
+  fireEvent.click(await screen.findByRole('button', { name: /research-notes/ }));
+  fireEvent.click(await screen.findByRole('button', { name: '编辑' }));
 }
 
 describe('SkillWorkbench', () => {
@@ -98,7 +106,7 @@ describe('SkillWorkbench', () => {
 
   it('lists shared Skills and autosaves a virtual Monaco model', async () => {
     renderWorkbench();
-    await screen.findAllByText('research-notes');
+    await openCustomEditor();
     fireEvent.click(await screen.findByRole('treeitem', { name: /SKILL\.md/ }));
     const editor = await screen.findByLabelText('Monaco Skill editor');
     fireEvent.change(editor, { target: { value: '# Updated workflow' } });
@@ -112,7 +120,7 @@ describe('SkillWorkbench', () => {
 
   it('validates and publishes the current immutable revision', async () => {
     renderWorkbench();
-    await screen.findByText('research-notes');
+    await openCustomEditor();
     fireEvent.click(screen.getByRole('button', { name: '校验' }));
     expect(await screen.findByText('校验通过，可以发布')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: '发布' }));
@@ -121,7 +129,7 @@ describe('SkillWorkbench', () => {
 
   it('shows a three-way comparison and retries against the latest Draft token', async () => {
     renderWorkbench();
-    await screen.findByText('research-notes');
+    await openCustomEditor();
     fireEvent.click(await screen.findByRole('treeitem', { name: /SKILL\.md/ }));
     const editor = await screen.findByLabelText('Monaco Skill editor');
     vi.mocked(api.updateSkillFiles).mockRejectedValueOnce(new api.AstraApiError({
@@ -166,9 +174,40 @@ describe('SkillWorkbench', () => {
     vi.mocked(api.listSkills).mockResolvedValue([builtin]);
     vi.mocked(api.getSkill).mockResolvedValue(builtin);
     renderWorkbench();
-    await screen.findByText('Astra 内建');
+    fireEvent.click(await screen.findByRole('button', { name: /astra-skill-authoring/ }));
+    await screen.findByText('Astra 内建 Skill');
     expect(screen.queryByRole('button', { name: '发布' })).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: '克隆' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '查看文件' })).toBeInTheDocument();
+  });
+
+  it('creates a Skill from the themed drawer and opens its editor', async () => {
+    const created = {
+      ...custom,
+      id: 'skill-new',
+      name: 'daily-research',
+      qualified_identity: 'custom:daily-research',
+      description: 'Collect a daily research digest',
+    };
+    vi.mocked(api.createSkill).mockResolvedValue(created);
+    vi.mocked(api.getSkill).mockResolvedValueOnce(created);
+    renderWorkbench();
+
+    fireEvent.click(await screen.findByRole('button', { name: '＋ 新建 Skill' }));
+    const dialog = screen.getByRole('dialog', { name: '新建 Skill' });
+    expect(dialog).toBeInTheDocument();
+
+    const submit = screen.getByRole('button', { name: '创建并编辑' });
+    expect(submit).toBeDisabled();
+    fireEvent.change(screen.getByRole('textbox', { name: /Skill 名称/ }), { target: { value: 'Daily Research' } });
+    expect(screen.getByText('名称须为 1–64 位小写字母、数字或单连字符')).toBeInTheDocument();
+    fireEvent.change(screen.getByRole('textbox', { name: /Skill 名称/ }), { target: { value: 'daily-research' } });
+    fireEvent.change(screen.getByRole('textbox', { name: /Skill 描述/ }), { target: { value: 'Collect a daily research digest' } });
+    fireEvent.click(submit);
+
+    await waitFor(() => expect(api.createSkill).toHaveBeenCalledWith('daily-research', 'Collect a daily research digest'));
+    expect(await screen.findByRole('button', { name: '发布' })).toBeInTheDocument();
+    expect(screen.queryByRole('dialog', { name: '新建 Skill' })).not.toBeInTheDocument();
   });
 
   it('renders the complete workbench chrome in English', async () => {
@@ -176,9 +215,52 @@ describe('SkillWorkbench', () => {
     renderWorkbench();
     expect(await screen.findByRole('heading', { name: 'Skill Library' })).toBeInTheDocument();
     expect(screen.getByLabelText('Search skills')).toBeInTheDocument();
+    expect(screen.getByLabelText('Grid view')).toHaveAttribute('aria-pressed', 'true');
+    fireEvent.click(screen.getByLabelText('List view'));
+    expect(screen.getByLabelText('List view')).toHaveAttribute('aria-pressed', 'true');
+    fireEvent.click(await screen.findByRole('button', { name: /research-notes/ }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Edit' }));
     expect(screen.getByRole('button', { name: 'Validate' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Publish' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '0 issues' })).toBeInTheDocument();
     expect(screen.queryByText('选择或创建一个 Skill')).not.toBeInTheDocument();
+  });
+
+  it('opens a published revision as a read-only historical file tree', async () => {
+    const revision = {
+      id: 'revision-1',
+      version: 1,
+      digest: 'sha256:one',
+      published_at: '2026-01-01T00:00:00Z',
+      revoked_at: null,
+      test_only: false,
+      diagnostics: [],
+    };
+    vi.mocked(api.listSkillRevisions).mockResolvedValue([revision]);
+    vi.mocked(api.getSkillRevision).mockResolvedValue({ ...revision, files: custom.files.map((file) => ({ ...file, readonly: true })) });
+    vi.mocked(api.getSkillRevisionFile).mockResolvedValue({
+      ...custom.files[0],
+      readonly: true,
+      content: '# Historical workflow',
+    });
+    vi.mocked(api.getSkillRevisionDiff).mockResolvedValue({
+      skill_id: custom.id,
+      base_revision_id: revision.id,
+      target_revision_id: 'revision-2',
+      base_version: 1,
+      target_version: 2,
+      patch: 'diff --git a/SKILL.md b/SKILL.md\n--- a/SKILL.md\n+++ b/SKILL.md\n@@ -1 +1 @@\n-Old\n+New\n',
+      files: [{ path: 'SKILL.md', status: 'modified', patch: '@@ -1 +1 @@\n-Old\n+New\n' }],
+    });
+    renderWorkbench();
+    await openCustomEditor();
+    fireEvent.click(screen.getByRole('button', { name: '历史' }));
+    fireEvent.click(await screen.findByRole('button', { name: '查看' }));
+    expect(await screen.findByRole('heading', { name: /历史 Revision v1/ })).toBeInTheDocument();
+    const historicalFiles = screen.getAllByRole('treeitem', { name: /SKILL\.md/ });
+    fireEvent.click(historicalFiles[historicalFiles.length - 1]);
+    expect(await screen.findByDisplayValue('# Historical workflow')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '与当前版本对比' }));
+    expect(await screen.findByLabelText('Git 差异')).toHaveTextContent('diff --git a/SKILL.md b/SKILL.md');
   });
 });

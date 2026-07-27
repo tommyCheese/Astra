@@ -1,10 +1,15 @@
 from __future__ import annotations
 
+import re
 from datetime import datetime
 from enum import Enum
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+SKILL_QUALIFIED_IDENTITY_RE = re.compile(
+    r"^(?:builtin|custom):[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$"
+)
 
 
 class ReasoningEffort(str, Enum):
@@ -576,6 +581,18 @@ class CreateRunRequest(BaseModel):
     interactive: bool = True
     permission_bundle: dict[str, Any] | None = None
     skill_ids: list[str] = Field(default_factory=list, max_length=8)
+
+    @field_validator("skill_ids")
+    @classmethod
+    def validate_skill_ids(cls, identities: list[str]) -> list[str]:
+        if len(identities) != len(set(identities)):
+            raise ValueError("skill_ids must contain unique qualified identities")
+        if any(
+            not SKILL_QUALIFIED_IDENTITY_RE.fullmatch(identity) or "--" in identity
+            for identity in identities
+        ):
+            raise ValueError("skill_ids must contain valid qualified identities")
+        return identities
 
     @model_validator(mode="after")
     def validate_plan_execution(self) -> CreateRunRequest:

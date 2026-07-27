@@ -2,7 +2,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { App } from '../src/App';
-import { buildRuntime, cancelRun, cancelRuntimeBuild, confirmPlanExecution, createConversationShare, createRun, decideToolApproval, deleteConversation, getConversation, getConversationStrategy, getRun, getRuntimeProfile, listConversationShares, listConversations, listLibraryFiles, listRuns, revisePlan, revokeConversationShare, streamRunEvents, updateConversation, updateConversationStrategy, updateToolSettings, type RunStreamEvent } from '../src/api';
+import { buildRuntime, cancelRun, cancelRuntimeBuild, confirmPlanExecution, createConversationShare, createRun, decideToolApproval, deleteConversation, getConversation, getConversationStrategy, getRun, getRuntimeProfile, listConversationShares, listConversations, listLibraryFiles, listRuns, listSkills, revisePlan, revokeConversationShare, streamRunEvents, updateConversation, updateConversationStrategy, updateToolSettings, type RunStreamEvent, type SkillSummary } from '../src/api';
 
 vi.mock('../src/api', () => ({
   AstraApiError: class AstraApiError extends Error {
@@ -208,6 +208,29 @@ Object.defineProperty(window, 'EventSource', {
   value: MockEventSource,
 });
 
+const helloSkill: SkillSummary = {
+  id: 'skill-hello',
+  name: 'hello-astra',
+  qualified_identity: 'custom:hello-astra',
+  origin: 'custom',
+  description: '用于打招呼和介绍自己',
+  enabled: true,
+  readonly: false,
+  lifecycle_state: 'published',
+  active_revision: {
+    id: 'revision-hello',
+    version: 1,
+    digest: 'sha256:hello',
+    published_at: '2026-07-27T00:00:00Z',
+    revoked_at: null,
+    test_only: false,
+    diagnostics: [],
+  },
+  diagnostics: [],
+  created_at: '2026-07-27T00:00:00Z',
+  updated_at: '2026-07-27T00:00:00Z',
+};
+
 describe('App', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -228,6 +251,9 @@ describe('App', () => {
   afterEach(() => {
     cleanup();
     globalThis.localStorage?.clear();
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1024 });
+    delete document.documentElement.dataset.theme;
+    document.documentElement.style.colorScheme = '';
   });
 
   it('submits a goal and renders the result', async () => {
@@ -271,6 +297,105 @@ describe('App', () => {
     expect(document.querySelectorAll('.process-decision-group')).toHaveLength(0);
     expect(screen.queryByText('正在执行计划')).not.toBeInTheDocument();
     expect(screen.queryByText('正在分析下一步')).not.toBeInTheDocument();
+  });
+
+  it('selects a Skill through slash commands, highlights it, and submits a clean explicit binding', async () => {
+    vi.mocked(listSkills).mockResolvedValueOnce([helloSkill]);
+    render(<App />);
+    const textbox = screen.getByRole('textbox');
+
+    await waitFor(() => expect(listSkills).toHaveBeenCalled());
+    await userEvent.type(textbox, '/hel');
+    const listbox = screen.getByRole('listbox', { name: 'Skill 命令' });
+    expect(listbox).toBeInTheDocument();
+    const option = screen.getByRole('option', { name: /hello-astra/ });
+    expect(option).toHaveAttribute('aria-selected', 'false');
+    await userEvent.click(option);
+
+    expect(textbox).toHaveValue('');
+    expect(screen.getByLabelText('已选择 Skill')).toHaveTextContent('hello-astra');
+    expect(screen.getByRole('button', { name: '移除 Skill hello-astra' })).toBeInTheDocument();
+
+    await userEvent.type(textbox, '介绍一下你自己');
+    await userEvent.click(screen.getByRole('button', { name: '发送' }));
+    expect(createRun).toHaveBeenLastCalledWith(
+      '介绍一下你自己',
+      undefined,
+      'standard',
+      expect.any(Object),
+      expect.any(Object),
+      undefined,
+      ['custom:hello-astra'],
+    );
+    expect(screen.queryByLabelText('已选择 Skill')).not.toBeInTheDocument();
+  });
+
+  it('keeps the Skill command and highlighted token usable in dark and narrow layouts', async () => {
+    globalThis.localStorage?.setItem('astra.theme', 'dark');
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 520 });
+    vi.mocked(listSkills).mockResolvedValueOnce([helloSkill]);
+    render(<App />);
+
+    const textbox = screen.getByRole('textbox');
+    await userEvent.type(textbox, '/hello');
+    expect(document.documentElement.dataset.theme).toBe('dark');
+    expect(screen.getByRole('listbox', { name: 'Skill 命令' })).toHaveClass('skill-command-menu');
+    await userEvent.click(screen.getByRole('option', { name: /hello-astra/ }));
+
+    expect(document.querySelector('.chat-composer')).toHaveClass('has-skill-tokens');
+    expect(screen.getByLabelText('已选择 Skill')).toHaveClass('selected-skill-tokens');
+    expect(screen.getByRole('button', { name: '移除 Skill hello-astra' })).toBeVisible();
+  });
+
+  it('supports slash keyboard navigation, cancellation, no-results, and Backspace token removal', async () => {
+    const authoringSkill: SkillSummary = {
+      ...helloSkill,
+      id: 'skill-authoring',
+      name: 'astra-authoring',
+      qualified_identity: 'builtin:astra-authoring',
+      origin: 'builtin',
+      description: '创建和发布 Skill',
+    };
+    vi.mocked(listSkills).mockResolvedValueOnce([helloSkill, authoringSkill]);
+    render(<App />);
+    const textbox = screen.getByRole('textbox');
+
+    await userEvent.type(textbox, '/');
+    expect(screen.getAllByRole('option')).toHaveLength(2);
+    await userEvent.keyboard('{ArrowDown}{Enter}');
+    expect(screen.getByLabelText('已选择 Skill')).toHaveTextContent('hello-astra');
+    expect(textbox).toHaveValue('');
+
+    await userEvent.type(textbox, '/missing');
+    expect(screen.getByText('没有匹配的 Skill')).toBeInTheDocument();
+    await userEvent.keyboard('{Escape}');
+    expect(screen.queryByRole('listbox')).not.toBeInTheDocument();
+    expect(textbox).toHaveValue('/missing');
+
+    await userEvent.clear(textbox);
+    await userEvent.keyboard('{Backspace}');
+    expect(screen.queryByLabelText('已选择 Skill')).not.toBeInTheDocument();
+  });
+
+  it('shares highlighted Skill state with the attachment menu and retains the draft after submission failure', async () => {
+    vi.mocked(listSkills).mockResolvedValueOnce([helloSkill]);
+    vi.mocked(createRun).mockRejectedValueOnce(new Error('network unavailable'));
+    render(<App />);
+
+    await waitFor(() => expect(listSkills).toHaveBeenCalled());
+    await userEvent.click(screen.getByRole('button', { name: '添加内容' }));
+    await userEvent.click(screen.getByRole('button', { name: /hello-astra/ }));
+    expect(screen.getByLabelText('已选择 Skill')).toHaveTextContent('hello-astra');
+
+    const textbox = screen.getByRole('textbox');
+    await userEvent.type(textbox, '失败后保留');
+    await userEvent.click(screen.getByRole('button', { name: '发送' }));
+    expect(await screen.findByText('服务暂时出现异常，请稍后重试。')).toBeInTheDocument();
+    expect(textbox).toHaveValue('失败后保留');
+    expect(screen.getByLabelText('已选择 Skill')).toHaveTextContent('hello-astra');
+
+    await userEvent.click(screen.getByRole('button', { name: '新对话' }));
+    expect(screen.queryByLabelText('已选择 Skill')).not.toBeInTheDocument();
   });
 
   it('turns the send button into a stop button and restores it after cancellation', async () => {
@@ -775,13 +900,17 @@ describe('App', () => {
     expect(screen.getByText('summary.pdf')).toBeInTheDocument();
     expect(document.querySelector('a[href="/api/files/chart"]')).toHaveTextContent('打开');
     expect(document.querySelector('.library-groups')).toHaveClass('view-gallery');
+    expect(screen.getByRole('button', { name: '时间' })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByRole('button', { name: '画廊视图' })).toHaveAttribute('aria-pressed', 'true');
 
     await userEvent.click(screen.getByRole('button', { name: '列表视图' }));
     expect(document.querySelector('.library-groups')).toHaveClass('view-list');
+    expect(screen.getByRole('button', { name: '列表视图' })).toHaveAttribute('aria-pressed', 'true');
     await userEvent.click(screen.getByRole('button', { name: '画廊视图' }));
     expect(document.querySelector('.library-groups')).toHaveClass('view-gallery');
 
     await userEvent.click(screen.getByRole('button', { name: '类型' }));
+    expect(screen.getByRole('button', { name: '类型' })).toHaveAttribute('aria-pressed', 'true');
     expect(screen.getByRole('heading', { name: '图片' })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: '文档' })).toBeInTheDocument();
     await userEvent.selectOptions(screen.getByRole('combobox', { name: '资料库排序' }), 'size_desc');

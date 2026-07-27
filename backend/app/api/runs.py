@@ -225,6 +225,7 @@ async def create_run(
             answer_mode=profile.answer_mode.value,
             execution_profile=execution_profile,
             agent_profile_snapshot=load_agent_profile().snapshot(),
+            commit=False,
         )
         if run_settings.skills_enabled:
             catalog_builder = SkillCatalogBuilder(
@@ -240,6 +241,15 @@ async def create_run(
                 profile.answer_mode.value,
                 catalog,
             )
+            for identity in payload.skill_ids:
+                try:
+                    catalog.require(identity)
+                except ValueError as exc:
+                    raise ValidationError(
+                        "SKILL_SELECTION_INVALID",
+                        f"无法激活 Skill：{identity}",
+                        {"qualified_identity": identity, "reason": "absent_from_catalog"},
+                    ) from exc
             activator = SkillActivationService(
                 session,
                 max_active=run_settings.skills_max_active,

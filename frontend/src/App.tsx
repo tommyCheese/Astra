@@ -13,6 +13,7 @@ import { buildPresentation, HISTORY_LIMIT, normalizeRunView, type ConversationEn
 import { createOptimisticProcessState, isDecisionGroup, reconcileProcessSnapshot, reduceProcessEvent, type ProcessStreamItem, type ProcessStreamState } from './processStream';
 import { createPlanGraphStreamState, reconcilePlanGraphSnapshot, reducePlanGraphEvent, type PlanGraphStreamState } from './planGraph';
 import type { RunStreamEvent } from './api';
+import { detectSlashSkillCommand, filterSkillCommandOptions, normalizeSelectedSkillIds, type SlashSkillCommand } from './composerSkills';
 
 const TrustedExecutionGraph = lazy(() => import('./TrustedExecutionGraph'));
 const SkillWorkbench = lazy(() => import('./SkillWorkbench').then((module) => ({
@@ -186,6 +187,8 @@ function AppContent() {
   const [attachOpen, setAttachOpen] = useState(false);
   const [availableSkills, setAvailableSkills] = useState<SkillSummary[]>([]);
   const [selectedSkillIds, setSelectedSkillIds] = useState<string[]>([]);
+  const [slashCommand, setSlashCommand] = useState<SlashSkillCommand | null>(null);
+  const [slashActiveIndex, setSlashActiveIndex] = useState(0);
   const [executionMenuOpen, setExecutionMenuOpen] = useState(false);
   const [executionMode, setExecutionMode] = useState<'default' | 'bypass'>('default');
   const [bypassConfirmOpen, setBypassConfirmOpen] = useState(false);
@@ -228,11 +231,23 @@ function AppContent() {
   const trustedTransitionTimerRef = useRef<number>();
   const trustedToggleClickTimesRef = useRef<number[]>([]);
   const trustedEasterEggTimerRef = useRef<number>();
+  const slashSuppressedStartRef = useRef<number>();
+  const composerIsComposingRef = useRef(false);
   streamingAnswerRef.current = streamingAnswer;
   const availableModels = useMemo(() => providerConfigs
     .filter((provider) => provider.enabled)
     .flatMap((provider) => parseModelIds(provider.models).map((model) => ({ key: `${provider.id}:${model}`, model, providerId: provider.id, providerName: provider.name }))), [providerConfigs]);
   const selectedModel = availableModels.find((item) => item.key === selectedModelKey)?.model ?? '';
+  const slashSkillOptions = useMemo(
+    () => slashCommand
+      ? filterSkillCommandOptions(availableSkills, slashCommand.query, selectedSkillIds)
+      : [],
+    [availableSkills, selectedSkillIds, slashCommand],
+  );
+  const selectedSkillTokens = useMemo(() => selectedSkillIds.map((identity) => ({
+    identity,
+    skill: availableSkills.find((item) => item.qualified_identity === identity),
+  })), [availableSkills, selectedSkillIds]);
   const planConfirmation = run?.waiting_state?.kind === 'plan_confirmation'
     ? run.waiting_state as {
       kind: 'plan_confirmation';
@@ -279,6 +294,12 @@ function AppContent() {
       controller.abort();
     };
   }, []);
+
+  useEffect(() => {
+    setSlashActiveIndex((index) => slashSkillOptions.length
+      ? Math.min(index, slashSkillOptions.length - 1)
+      : 0);
+  }, [slashSkillOptions.length, slashCommand?.query]);
 
   useEffect(() => {
     let active = true;
@@ -390,6 +411,61 @@ function AppContent() {
     setAnswerMode(mode);
   }
 
+  function setSkillSelected(identity: string, selected: boolean) {
+    setSelectedSkillIds((items) => selected
+      ? normalizeSelectedSkillIds([...items, identity])
+      : items.filter((item) => item !== identity));
+  }
+
+  function syncSlashCommand(
+    value: string,
+    selectionStart: number | null,
+    selectionEnd: number | null,
+    isComposing = composerIsComposingRef.current,
+  ) {
+    const next = detectSlashSkillCommand(value, selectionStart, selectionEnd, isComposing);
+    if (!next) {
+      slashSuppressedStartRef.current = undefined;
+      setSlashCommand(null);
+      return;
+    }
+    if (slashSuppressedStartRef.current === next.start) {
+      setSlashCommand(null);
+      return;
+    }
+    setAttachOpen(false);
+    setModelOpen(false);
+    setExecutionMenuOpen(false);
+    setSlashCommand((current) => {
+      if (!current || current.start !== next.start || current.query !== next.query) {
+        setSlashActiveIndex(0);
+      }
+      return next;
+    });
+  }
+
+  function selectSlashSkill(skill: SkillSummary) {
+    if (!slashCommand) return;
+    const caret = slashCommand.start;
+    const nextGoal = goal.slice(0, slashCommand.start) + goal.slice(slashCommand.end);
+    setSkillSelected(skill.qualified_identity, true);
+    slashSuppressedStartRef.current = undefined;
+    setSlashCommand(null);
+    setSlashActiveIndex(0);
+    setGoal(nextGoal);
+    queueMicrotask(() => {
+      goalInputRef.current?.focus();
+      goalInputRef.current?.setSelectionRange(caret, caret);
+    });
+  }
+
+  function clearSlashDraft() {
+    slashSuppressedStartRef.current = undefined;
+    setSlashCommand(null);
+    setSlashActiveIndex(0);
+    setSelectedSkillIds([]);
+  }
+
   async function openConversation(conversation: ConversationEntry) {
     const previousConversationId = activeConversationId;
     initialSnapshotControllerRef.current?.abort();
@@ -398,6 +474,7 @@ function AppContent() {
     const controller = new AbortController();
     conversationControllerRef.current = controller;
     setActiveConversationId(conversation.id);
+    clearSlashDraft();
     setStreamingAnswer('');
     setAnswerComplete(false);
     setAnswerSettling(false);
@@ -556,6 +633,7 @@ function AppContent() {
     setLoading(true);
     try {
       const previousMessages = run ? messages : [];
+      const explicitSkillIds = normalizeSelectedSkillIds(selectedSkillIds);
       const selectedOption = availableModels.find((item) => item.key === selectedModelKey);
       const selectedProvider = providerConfigs.find((item) => item.id === selectedOption?.providerId);
       const modelConfig = selectedOption && selectedProvider ? {
@@ -574,7 +652,7 @@ function AppContent() {
         execution_mode: executionMode === 'bypass' ? 'auto_approval' : 'request_approval',
         verification_level: 'standard',
         }, modelConfig, answerMode === 'trusted' ? planExecution : undefined,
-        ...(selectedSkillIds.length ? [selectedSkillIds] : []));
+        ...(explicitSkillIds.length ? [explicitSkillIds] : []));
       const createdAnswerMode = (created as { answer_mode?: 'standard' | 'trusted' }).answer_mode;
       const current = normalizeRunView({
         id: created.run_id,
@@ -591,6 +669,7 @@ function AppContent() {
       setProcessState(createOptimisticProcessState(created.run_id, createdAnswerMode ?? answerMode));
       rememberConversation(current, previousMessages);
       setGoal('');
+      clearSlashDraft();
       if (cancelRequestedRef.current) {
         await cancelRunById(created.run_id, previousMessages);
         return;
@@ -988,6 +1067,7 @@ function AppContent() {
     followLatestRef.current = true;
     setShowJumpToLatest(false);
     setGoal('');
+    clearSlashDraft();
     changeView('chat');
     setSidebarOpen(false);
   }
@@ -1151,12 +1231,52 @@ function AppContent() {
                 onDecision={(decision) => { void decideApproval(decision); }}
               />
             )}
-            <form className={`chat-composer ${run?.pending_approval ? 'approval-pending' : ''}`} onSubmit={submit} onClick={(event) => {
+            <form className={`chat-composer ${run?.pending_approval ? 'approval-pending' : ''} ${selectedSkillTokens.length ? 'has-skill-tokens' : ''}`} onSubmit={submit} onClick={(event) => {
             const target = event.target as HTMLElement;
             if (!target.closest('button, textarea, input, select, a, [role="button"]')) {
               goalInputRef.current?.focus({ preventScroll: true });
             }
           }}>
+            {slashCommand && (
+              <div className="skill-command-menu" role="listbox" id="skill-command-options" aria-label={t('Skill 命令')}>
+                <header><Icon name="sparkle" /><span>{t('使用 / 选择 Skill')}</span><kbd>esc</kbd></header>
+                <div className="skill-command-options">
+                  {slashSkillOptions.map(({ skill, selected }, index) => (
+                    <button
+                      className={index === slashActiveIndex ? 'active' : ''}
+                      id={`skill-command-option-${index}`}
+                      key={skill.qualified_identity}
+                      type="button"
+                      role="option"
+                      aria-selected={selected}
+                      onMouseDown={(event) => event.preventDefault()}
+                      onMouseEnter={() => setSlashActiveIndex(index)}
+                      onClick={() => selectSlashSkill(skill)}
+                    >
+                      <span className="skill-command-icon" aria-hidden="true">✦</span>
+                      <span className="skill-command-copy"><strong>{skill.name}</strong><small>{skill.description}</small></span>
+                      <span className="skill-command-meta">{skill.origin === 'builtin' ? t('Astra 内建') : t('自定义 Skill')}{selected ? ` · ${t('已选择 Skill')}` : ''}</span>
+                    </button>
+                  ))}
+                  {!slashSkillOptions.length && <div className="skill-command-empty" role="status"><strong>{t('没有匹配的 Skill')}</strong><span>{t('继续输入其他名称，或按 Esc 保留文本')}</span></div>}
+                </div>
+              </div>
+            )}
+            {selectedSkillTokens.length > 0 && (
+              <div className="selected-skill-tokens" aria-label={t('已选择 Skill')}>
+                {selectedSkillTokens.map(({ identity, skill }) => (
+                  <span className={`selected-skill-token ${skill ? '' : 'unavailable'}`} key={identity}>
+                    <span aria-hidden="true">✦</span>
+                    <strong>{skill?.name ?? identity}</strong>
+                    {!skill && <small>{t('当前不可用')}</small>}
+                    <CloseButton
+                      label={t('移除 Skill {name}').replace('{name}', skill?.name ?? identity)}
+                      onClick={() => setSkillSelected(identity, false)}
+                    />
+                  </span>
+                ))}
+              </div>
+            )}
             <button
               className={`trusted-mode-toggle ${answerMode === 'trusted' ? 'active' : ''}`}
               type="button"
@@ -1188,7 +1308,7 @@ function AppContent() {
                   <button type="button" disabled><span>↥</span><div><strong>{t('上传文件')}</strong><small>{t('即将支持')}</small></div></button>
                   <button type="button" disabled><span>▧</span><div><strong>{t('添加图片')}</strong><small>{t('即将支持')}</small></div></button>
                   <button type="button" disabled><span>⌁</span><div><strong>{t('连接来源')}</strong><small>{t('即将支持')}</small></div></button>
-                  {availableSkills.map((skill) => <button type="button" key={skill.id} aria-pressed={selectedSkillIds.includes(skill.qualified_identity)} onClick={() => setSelectedSkillIds((items) => items.includes(skill.qualified_identity) ? items.filter((item) => item !== skill.qualified_identity) : [...items, skill.qualified_identity])}>
+                  {availableSkills.map((skill) => <button type="button" key={skill.id} className={selectedSkillIds.includes(skill.qualified_identity) ? 'selected' : ''} aria-pressed={selectedSkillIds.includes(skill.qualified_identity)} onClick={() => setSkillSelected(skill.qualified_identity, !selectedSkillIds.includes(skill.qualified_identity))}>
                     <span>✦</span><div><strong>{skill.name}</strong><small>{selectedSkillIds.includes(skill.qualified_identity) ? t('已选择 Skill') : skill.description}</small></div>
                   </button>)}
                 </div>
@@ -1216,9 +1336,54 @@ function AppContent() {
               ref={goalInputRef}
               value={goal}
               disabled={Boolean(run?.pending_approval || planConfirmation)}
-              onChange={(event) => setGoal(event.target.value)}
+              aria-autocomplete="list"
+              aria-controls={slashCommand ? 'skill-command-options' : undefined}
+              aria-expanded={Boolean(slashCommand)}
+              aria-activedescendant={slashCommand && slashSkillOptions.length ? `skill-command-option-${slashActiveIndex}` : undefined}
+              onChange={(event) => {
+                setGoal(event.target.value);
+                syncSlashCommand(event.target.value, event.target.selectionStart, event.target.selectionEnd);
+              }}
+              onSelect={(event) => syncSlashCommand(event.currentTarget.value, event.currentTarget.selectionStart, event.currentTarget.selectionEnd)}
+              onClick={(event) => syncSlashCommand(event.currentTarget.value, event.currentTarget.selectionStart, event.currentTarget.selectionEnd)}
+              onCompositionStart={() => {
+                composerIsComposingRef.current = true;
+                setSlashCommand(null);
+              }}
+              onCompositionEnd={(event) => {
+                composerIsComposingRef.current = false;
+                syncSlashCommand(event.currentTarget.value, event.currentTarget.selectionStart, event.currentTarget.selectionEnd, false);
+              }}
               onKeyDown={(event) => {
-                if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
+                if (event.nativeEvent.isComposing || composerIsComposingRef.current) return;
+                if (slashCommand && ['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) {
+                  event.preventDefault();
+                  if (!slashSkillOptions.length) return;
+                  if (event.key === 'Home') setSlashActiveIndex(0);
+                  else if (event.key === 'End') setSlashActiveIndex(slashSkillOptions.length - 1);
+                  else setSlashActiveIndex((index) => event.key === 'ArrowDown'
+                    ? (index + 1) % slashSkillOptions.length
+                    : (index - 1 + slashSkillOptions.length) % slashSkillOptions.length);
+                  return;
+                }
+                if (slashCommand && event.key === 'Escape') {
+                  event.preventDefault();
+                  slashSuppressedStartRef.current = slashCommand.start;
+                  setSlashCommand(null);
+                  return;
+                }
+                if (slashCommand && event.key === 'Enter') {
+                  event.preventDefault();
+                  const option = slashSkillOptions[slashActiveIndex];
+                  if (option) selectSlashSkill(option.skill);
+                  return;
+                }
+                if (event.key === 'Backspace' && !goal && event.currentTarget.selectionStart === 0 && event.currentTarget.selectionEnd === 0 && selectedSkillIds.length) {
+                  event.preventDefault();
+                  setSkillSelected(selectedSkillIds[selectedSkillIds.length - 1], false);
+                  return;
+                }
+                if (event.key === 'Enter' && !event.shiftKey) {
                   event.preventDefault();
                   event.currentTarget.form?.requestSubmit();
                 }
