@@ -11,7 +11,13 @@ from app.core.config import Settings
 from app.repositories.workspaces import validate_workspace_path
 from app.runtime_profiles import RuntimeProfileService
 from app.sandbox.runtime import SandboxError, SandboxRequest
-from app.tools.base import Tool, ToolExecutionError, ToolResultEnvelope, ToolSpec
+from app.tools.base import (
+    Tool,
+    ToolExecutionError,
+    ToolResultEnvelope,
+    ToolSpec,
+    materialize_skill_inputs,
+)
 
 
 class ChartData(BaseModel):
@@ -229,6 +235,14 @@ class ChartRenderTool(Tool):
             json.dumps({**request.model_dump(mode="json"), "backend": backend}, ensure_ascii=False),
             encoding="utf-8",
         )
+        try:
+            skill_inputs = await materialize_skill_inputs(context, input_dir)
+        except ValueError as exc:
+            shutil.rmtree(root, ignore_errors=True)
+            raise ToolExecutionError(
+                "sandbox_policy_violation",
+                "Skill sandbox inputs failed immutable binding validation",
+            ) from exc
         profile = RuntimeProfileService(self.settings).read()
         template = profile.get("active_image", self.settings.sandbox_runtime_image)
         sandbox_request = SandboxRequest(
@@ -240,7 +254,11 @@ class ChartRenderTool(Tool):
             secure=True,
             allow_internet_access=False,
             environment={"TZ": "UTC", "PYTHONHASHSEED": "0"},
-            metadata={"tool": "chart.render", "backend": backend},
+            metadata={
+                "tool": "chart.render",
+                "backend": backend,
+                "skill_input_count": str(len(skill_inputs)),
+            },
             workspace_dir=context.workspace_path if workspace_mode != "none" else None,
             workspace_mode=workspace_mode,
         )

@@ -38,6 +38,7 @@ from app.schemas.agent import (
     RunView,
 )
 from app.schemas.permissions import PermissionBundle
+from app.skills.catalog import SkillActivationService, SkillCatalogBuilder
 
 router = APIRouter(prefix="/api", tags=["runs"])
 logger = logging.getLogger("astra.runs")
@@ -68,6 +69,20 @@ def _apply_model_config(settings: Settings, model: dict[str, str] | None) -> Set
             "MODEL_CONFIGURATION_REQUIRED", "请先配置模型名称、API 地址和 API Key。"
         )
     return configured
+
+
+def _configured_skill_capabilities(settings: Settings) -> set[str]:
+    return {
+        name
+        for name, enabled in {
+            "web_search": settings.tool_web_search_enabled,
+            "web_fetch": settings.tool_web_fetch_enabled,
+            "chart_render": settings.tool_chart_render_enabled,
+            "bash_execute": settings.tool_bash_execute_enabled,
+            "sandbox": settings.sandbox_enabled,
+        }.items()
+        if enabled
+    }
 
 
 def _schedule_run(run_id: str, settings: Settings) -> None:
@@ -211,6 +226,39 @@ async def create_run(
             execution_profile=execution_profile,
             agent_profile_snapshot=load_agent_profile().snapshot(),
         )
+        if run_settings.skills_enabled:
+            catalog_builder = SkillCatalogBuilder(
+                session, metadata_chars=run_settings.skills_catalog_metadata_chars
+            )
+            catalog = await catalog_builder.build(
+                goal=goal,
+                explicit_identities=payload.skill_ids,
+                runtime_capabilities=_configured_skill_capabilities(run_settings),
+            )
+            await catalog_builder.freeze(
+                run.id,
+                profile.answer_mode.value,
+                catalog,
+            )
+            activator = SkillActivationService(
+                session,
+                max_active=run_settings.skills_max_active,
+                max_resource_bytes=run_settings.skills_max_resource_bytes_per_run,
+            )
+            for identity in payload.skill_ids:
+                try:
+                    await activator.activate(
+                        run.id,
+                        identity,
+                        initiator="explicit",
+                        reason="explicit run selection",
+                    )
+                except ValueError as exc:
+                    raise ValidationError(
+                        "SKILL_SELECTION_INVALID",
+                        f"无法激活 Skill：{identity}",
+                        {"qualified_identity": identity, "reason": str(exc)},
+                    ) from exc
         for adjustment in policy.adjustments:
             await repo.add_event(
                 run.id, "reasoning.policy_adjusted", adjustment.model_dump(mode="json")

@@ -272,6 +272,41 @@ async def test_engine_completes_mock_web_query(session):
     assert all("tool_input" not in event.payload for event in process_events)
 
 
+async def test_trusted_skill_checks_become_provenanced_completion_criteria():
+    settings = Settings(model_provider="mock")
+    profile = RunProfileResolver().resolve(
+        AnswerMode.trusted,
+        RequestedReasoningPolicy(execution_mode="auto_approval"),
+        plan_execution=PlanExecution.auto,
+    )
+    engine = RunEngine(settings, model_client=MockModelClient())
+    engine._active_skill_blocks = [
+        {
+            "qualified_identity": "custom:verified-workflow",
+            "revision_id": "revision-1",
+            "digest": "sha256:abc",
+            "instructions": "Verify the result.",
+            "metadata": {"mandatory_checks": ["Confirm the generated artifact exists."]},
+        }
+    ]
+    contract, plan = await engine._prepare_plan(
+        "run-skill-check",
+        "create an artifact",
+        profile.reasoning_policy.model_dump(mode="json"),
+        profile.model_dump(mode="json"),
+    )
+    criterion = next(
+        item for item in contract.success_criteria if item.id.startswith("skill-check-")
+    )
+    assert criterion.mandatory is True
+    assert criterion.verification_method == "task_adapter"
+    assert criterion.provenance["qualified_identity"] == "custom:verified-workflow"
+    assert contract.skill_revisions[0]["digest"] == "sha256:abc"
+    assert all(
+        "custom:verified-workflow" in node.required_skill_ids for node in plan.nodes
+    )
+
+
 async def test_weather_plan_executes_nodes_in_dependency_order(session):
     settings = Settings(model_provider="mock")
     repo = RunRepository(session)
@@ -574,6 +609,25 @@ class EmptyPlanClient(MockModelClient):
         return PlanDraft.model_construct(nodes=[])
 
 
+class UnavailableCapabilityPlanClient(MockModelClient):
+    async def plan(self, goal, *, contract):
+        return PlanDraft(
+            nodes=[
+                PlanNodeDraft(
+                    node_key="unsupported-step",
+                    title="调用不可用能力",
+                    intent="测试模型生成的无效能力不会终止可信运行",
+                    required_capabilities=["package_install"],
+                    success_criteria_refs=[item.id for item in contract.success_criteria],
+                    expected_outcome=ExpectedObservation(
+                        kind="step_result",
+                        success_condition="任务已完成",
+                    ),
+                )
+            ],
+        )
+
+
 class EffortSpyClient(MockModelClient):
     def __init__(self):
         self.bound_efforts = []
@@ -724,6 +778,35 @@ async def test_engine_falls_back_when_model_returns_empty_plan(session):
     assert loaded.status == "waiting_user"
     assert loaded.plan_graph["nodes"][0]["title"] == "生成回复"
     assert loaded.agent_state["active_plan_id"] is None
+
+
+async def test_trusted_engine_falls_back_when_plan_requests_unavailable_capability(session):
+    settings = Settings(model_provider="mock", web_search_provider="mock")
+    repo = RunRepository(session)
+    profile = RunProfileResolver().resolve(
+        AnswerMode.trusted,
+        RequestedReasoningPolicy(),
+        plan_execution=PlanExecution.confirm,
+    )
+    run = await repo.create_task_run(
+        "可信计划能力校验",
+        settings.model_policy,
+        reasoning_policy=profile.reasoning_policy.model_dump(mode="json"),
+        answer_mode="trusted",
+        execution_profile=profile.model_dump(mode="json"),
+    )
+
+    await RunEngine(
+        settings,
+        model_client=UnavailableCapabilityPlanClient(),
+        tool_registry=fake_web_registry(),
+    )._run_with_repo(repo, run.id)
+
+    loaded = await repo.require_run(run.id)
+    assert loaded.status == "waiting_user"
+    assert loaded.waiting_state["kind"] == "plan_confirmation"
+    assert loaded.plan_graph["nodes"][0]["title"] == "生成回复"
+    assert loaded.plan_graph["nodes"][0]["required_capabilities"] == []
 
 
 async def test_engine_replays_recorded_checkpoint_without_duplicate_tool_call(session):

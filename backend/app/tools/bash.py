@@ -9,7 +9,13 @@ from pydantic import BaseModel, Field
 from app.core.config import Settings
 from app.sandbox.runtime import SandboxError, SandboxRequest, sanitize_log
 from app.schemas.agent import BashExecuteResult
-from app.tools.base import Tool, ToolExecutionError, ToolResultEnvelope, ToolSpec
+from app.tools.base import (
+    Tool,
+    ToolExecutionError,
+    ToolResultEnvelope,
+    ToolSpec,
+    materialize_skill_inputs,
+)
 
 RUNNER = r'''import json
 import subprocess
@@ -113,6 +119,14 @@ class BashExecuteTool(Tool):
             encoding="utf-8",
         )
         (input_dir / "runner.py").write_text(RUNNER, encoding="utf-8")
+        try:
+            skill_inputs = await materialize_skill_inputs(context, input_dir)
+        except ValueError as exc:
+            shutil.rmtree(root, ignore_errors=True)
+            raise ToolExecutionError(
+                "sandbox_policy_violation",
+                "Skill sandbox inputs failed immutable binding validation",
+            ) from exc
         workspace_mode = (
             context.workspace_mode if context.effect_plan is not None else "read_write"
         )
@@ -131,7 +145,11 @@ class BashExecuteTool(Tool):
                 if isinstance(effect, dict)
             ),
             environment={"TZ": "UTC", "PYTHONHASHSEED": "0", "HOME": "/tmp"},
-            metadata={"tool": "bash_execute", "protocol": "1"},
+            metadata={
+                "tool": "bash_execute",
+                "protocol": "1",
+                "skill_input_count": str(len(skill_inputs)),
+            },
             workspace_dir=context.workspace_path if workspace_mode != "none" else None,
             workspace_mode=workspace_mode,
         )

@@ -51,6 +51,11 @@ class PlanValidator:
             raise PlanValidationError("Plan node keys must be unique")
         known = set(keys)
         criteria = {item.id for item in task_contract.success_criteria}
+        contract_skills = {
+            item.get("qualified_identity")
+            for item in task_contract.skill_revisions
+            if item.get("qualified_identity")
+        }
         available_capabilities = available_capabilities or set()
         for node in draft.nodes:
             unknown_dependencies = set(node.depends_on) - known
@@ -72,6 +77,11 @@ class PlanValidator:
                         f"Unavailable capabilities for {node.node_key}: "
                         f"{sorted(unknown_capabilities)}"
                     )
+            unknown_skills = set(node.required_skill_ids) - contract_skills
+            if unknown_skills:
+                raise PlanValidationError(
+                    f"Unbound Skills for {node.node_key}: {sorted(unknown_skills)}"
+                )
         depth = self._validate_acyclic(draft)
         roots = [node.node_key for node in draft.nodes if not node.depends_on]
         if not roots:
@@ -177,6 +187,7 @@ class PlanService:
                 "intent": node.intent,
                 "depends_on": list(node.depends_on),
                 "required_capabilities": list(node.required_capabilities),
+                "required_skill_ids": list(node.required_skill_ids),
                 "success_criteria_refs": list(node.success_criteria_refs),
                 "expected_outcome": node.expected_outcome.model_dump(mode="json")
                 if node.expected_outcome
@@ -406,6 +417,7 @@ class PlanService:
                 "title",
                 "intent",
                 "required_capabilities",
+                "required_skill_ids",
                 "success_criteria_refs",
                 "expected_outcome",
                 "risk_level",

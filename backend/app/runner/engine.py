@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import logging
 import time
 from typing import Any
@@ -21,7 +22,7 @@ from app.runner.agent_loop import AgentLoop
 from app.runner.coordinator import RunCoordinator
 from app.runner.model_client import ModelConfigurationError, ModelOutputError, build_model_client
 from app.runner.node_worker import ReadOnlyAgentNodeExecutor
-from app.runner.planning import PlanService, canonical_agent_state
+from app.runner.planning import PlanService, PlanValidationError, canonical_agent_state
 from app.runner.reasoning import (
     build_default_contract,
     normalize_contract,
@@ -38,8 +39,10 @@ from app.schemas.agent import (
     PlanNodeDraft,
     ReasoningPolicySnapshot,
     RunExecutionProfile,
+    SuccessCriterion,
     TaskContract,
 )
+from app.skills.catalog import SkillActivationService
 from app.tools.base import ToolRegistry
 from app.tools.registry import build_tool_registry
 from app.usage_metering import DatabaseUsageRecorder
@@ -122,6 +125,47 @@ class RunEngine:
         profile = await self._profile_for_run(repo, run_id, run.agent_profile_snapshot or {})
         self.model_client.bind_agent_profile(profile)
         self._bind_reasoning_effort(run)
+        skill_service = SkillActivationService(
+            repo.session,
+            max_active=self.settings.skills_max_active,
+            max_resource_bytes=self.settings.skills_max_resource_bytes_per_run,
+        )
+        if self.settings.skills_enabled:
+            try:
+                skill_blocks = await skill_service.prompt_blocks(run_id)
+            except ValueError as exc:
+                if "snapshot is unavailable" not in str(exc):
+                    raise
+                skill_blocks = []
+            self.model_client.bind_skills(skill_blocks)
+            if skill_blocks:
+                await repo.add_event(
+                    run_id,
+                    "skill.prompt_bound",
+                    {
+                        "skills": [
+                            {
+                                "qualified_identity": item["qualified_identity"],
+                                "revision_id": item["revision_id"],
+                                "digest": item["digest"],
+                            }
+                            for item in skill_blocks
+                        ]
+                    },
+                )
+            execution = RunExecutionProfile.model_validate(run.execution_profile or {})
+            if execution.answer_mode == AnswerMode.trusted:
+                await repo.add_event(
+                    run_id,
+                    "skill.resolution.completed",
+                    {
+                        "selected": [
+                            item["qualified_identity"] for item in skill_blocks
+                        ],
+                        "phase": "before_task_contract",
+                    },
+                )
+            self._active_skill_blocks = skill_blocks
         goal = await self._conversation_goal(repo, run)
         execution_profile = (
             RunExecutionProfile.model_validate(run.execution_profile)
@@ -169,15 +213,55 @@ class RunEngine:
         capabilities = set(self.tool_registry.specs())
         for spec in self.tool_registry.specs().values():
             capabilities.update(spec.capabilities)
-        canonical_plan = await PlanService(PlanRepository(repo.session)).create(
-            run_id,
-            plan,
-            contract=contract,
-            capabilities=capabilities,
-            budgets=snapshot.effective.budgets,
-            activate=execution_profile.plan_execution == PlanExecution.auto,
-        )
+        plan_service = PlanService(PlanRepository(repo.session))
+        try:
+            canonical_plan = await plan_service.create(
+                run_id,
+                plan,
+                contract=contract,
+                capabilities=capabilities,
+                budgets=snapshot.effective.budgets,
+                activate=execution_profile.plan_execution == PlanExecution.auto,
+            )
+        except PlanValidationError as exc:
+            logger.warning(
+                "run.plan.validation_fallback run_id=%s reason=%s",
+                run_id,
+                str(exc),
+            )
+            plan = self._default_plan(
+                "生成回复",
+                "在当前可用能力范围内回应用户请求",
+                contract=contract,
+            )
+            canonical_plan = await plan_service.create(
+                run_id,
+                plan,
+                contract=contract,
+                capabilities=capabilities,
+                budgets=snapshot.effective.budgets,
+                activate=execution_profile.plan_execution == PlanExecution.auto,
+            )
         await repo.session.commit()
+        skill_bound_nodes = [
+            {
+                "plan_node_id": node.id,
+                "node_key": node.node_key,
+                "required_skill_ids": list(node.required_skill_ids or []),
+            }
+            for node in canonical_plan.nodes
+            if node.required_skill_ids
+        ]
+        if skill_bound_nodes:
+            await repo.add_event(
+                run_id,
+                "skill.plan_bound",
+                {
+                    "plan_id": canonical_plan.id,
+                    "plan_version": canonical_plan.version,
+                    "nodes": skill_bound_nodes,
+                },
+            )
         state = canonical_agent_state(contract, canonical_plan, policy_version=snapshot.version)
         if execution_profile.plan_execution == PlanExecution.confirm:
             state = state.model_copy(update={"active_plan_id": None, "active_executions": []})
@@ -317,6 +401,64 @@ class RunEngine:
         else:
             contract_result = build_default_contract(public_goal)
         contract = self._resolve_contract(run_id, public_goal, contract_result)
+        skill_revisions = [
+            {
+                "qualified_identity": item["qualified_identity"],
+                "revision_id": item["revision_id"],
+                "digest": item["digest"],
+            }
+            for item in getattr(self, "_active_skill_blocks", [])
+        ]
+        if skill_revisions:
+            criteria = [
+                criterion.model_copy(
+                    update={
+                        "provenance": {
+                            **criterion.provenance,
+                            "skill_revisions": skill_revisions,
+                        }
+                    }
+                )
+                for criterion in contract.success_criteria
+            ]
+            known_checks: set[str] = set()
+            for block in getattr(self, "_active_skill_blocks", []):
+                metadata = block.get("metadata", {})
+                checks = (
+                    metadata.get("mandatory_checks", [])
+                    if isinstance(metadata, dict)
+                    else []
+                )
+                if not isinstance(checks, list):
+                    continue
+                for raw_check in checks:
+                    check = str(raw_check).strip()
+                    if not check or check in known_checks:
+                        continue
+                    known_checks.add(check)
+                    identity = block["qualified_identity"]
+                    stable_id = hashlib.sha256(
+                        f"{identity}\0{check}".encode()
+                    ).hexdigest()[:12]
+                    criteria.append(
+                        SuccessCriterion(
+                            id=f"skill-check-{stable_id}",
+                            description=check,
+                            verification_method="task_adapter",
+                            provenance={
+                                "kind": "skill_mandatory_check",
+                                "qualified_identity": identity,
+                                "revision_id": block["revision_id"],
+                                "digest": block["digest"],
+                            },
+                        )
+                    )
+            contract = contract.model_copy(
+                update={
+                    "skill_revisions": skill_revisions,
+                    "success_criteria": criteria,
+                }
+            )
         try:
             plan_result = await self.model_client.plan(
                 goal,
@@ -329,6 +471,20 @@ class RunEngine:
             plan_result,
             contract=contract,
         )
+        active_identities = [item["qualified_identity"] for item in skill_revisions]
+        if active_identities:
+            plan = plan.model_copy(
+                update={
+                    "nodes": [
+                        node
+                        if node.required_skill_ids
+                        else node.model_copy(
+                            update={"required_skill_ids": active_identities}
+                        )
+                        for node in plan.nodes
+                    ]
+                }
+            )
         return contract, plan
 
     def _resolve_contract(

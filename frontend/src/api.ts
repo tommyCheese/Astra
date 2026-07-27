@@ -1,4 +1,4 @@
-import type { ConversationShare, ConversationShareSummary, ConversationSummary, ConversationView, PlanGraphDiff, PlanGraphSnapshot, PlanVersionSummary, RunView, SharedConversation } from './types';
+import type { ConversationShare, ConversationShareSummary, ConversationSummary, ConversationView, PlanGraphDiff, PlanGraphSnapshot, RunView, SharedConversation } from './types';
 
 export type ApiErrorPayload = { type: string; code: string; message: string; retryable: boolean; trace_id: string; details?: Record<string, unknown> };
 
@@ -39,9 +39,9 @@ export type ReasoningPolicyRequest = {
 
 export type RunModelConfig = { provider: string; name: string; api_key: string; base_url: string };
 export type RuntimeDependency = { name: string; version: string };
-export type RuntimeImage = { image: string; dependency_digest: string; dependencies: RuntimeDependency[]; activated_at: string | null };
-export type RuntimeBuildStatus = 'queued' | 'building' | 'succeeded' | 'failed' | 'cancelled';
-export type RuntimeBuild = {
+type RuntimeImage = { image: string; dependency_digest: string; dependencies: RuntimeDependency[]; activated_at: string | null };
+type RuntimeBuildStatus = 'queued' | 'building' | 'succeeded' | 'failed' | 'cancelled';
+type RuntimeBuild = {
   id: string;
   status: RuntimeBuildStatus;
   phase?: string;
@@ -69,6 +69,139 @@ export type ToolSetting = {
 };
 
 export type ToolSettings = { tools: ToolSetting[] };
+
+export type SkillDiagnostic = {
+  code: string;
+  message: string;
+  severity: 'info' | 'warning' | 'error' | 'critical' | string;
+  path?: string | null;
+  line?: number | null;
+  column?: number | null;
+  details?: Record<string, unknown>;
+};
+export type SkillRevision = {
+  id: string;
+  version: number;
+  digest: string;
+  published_at?: string | null;
+  revoked_at?: string | null;
+  test_only: boolean;
+  diagnostics: SkillDiagnostic[];
+};
+export type SkillFile = {
+  path: string;
+  uri: string;
+  digest: string;
+  size_bytes: number;
+  media_type: string;
+  kind: string;
+  text: boolean;
+  readonly: boolean;
+};
+export type SkillSummary = {
+  id: string;
+  name: string;
+  qualified_identity: string;
+  origin: 'builtin' | 'custom';
+  description: string;
+  enabled: boolean;
+  readonly: boolean;
+  lifecycle_state: string;
+  active_revision?: SkillRevision | null;
+  draft_revision_token?: string | null;
+  diagnostics: SkillDiagnostic[];
+  created_at: string;
+  updated_at: string;
+};
+export type SkillDetail = SkillSummary & {
+  files: SkillFile[];
+  requested_tool_patterns: string[];
+  compatibility?: string | null;
+};
+export type SkillFiles = {
+  skill_id: string;
+  revision_token: string;
+  readonly: boolean;
+  files: SkillFile[];
+  diagnostics: SkillDiagnostic[];
+};
+export type SkillFileContent = SkillFile & {
+  content?: string | null;
+  content_base64?: string | null;
+};
+
+async function skillJson<T>(input: RequestInfo | URL, init?: RequestInit): Promise<T> {
+  const response = await fetch(input, init);
+  if (!response.ok) throw await responseError(response);
+  return response.json() as Promise<T>;
+}
+
+export const listSkills = (signal?: AbortSignal) =>
+  skillJson<SkillSummary[]>('/api/skills', { signal });
+export const getSkill = (skillId: string, signal?: AbortSignal) =>
+  skillJson<SkillDetail>(`/api/skills/${skillId}`, { signal });
+export const getSkillFile = (skillId: string, path: string, signal?: AbortSignal) =>
+  skillJson<SkillFileContent>(`/api/skills/${skillId}/draft/file?path=${encodeURIComponent(path)}`, { signal });
+export const createSkill = (name: string, description: string) =>
+  skillJson<SkillDetail>('/api/skills', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, description }),
+  });
+export const importSkill = (filename: string, contentBase64: string) =>
+  skillJson<SkillDetail>('/api/skills/import', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ filename, content_base64: contentBase64 }),
+  });
+export const cloneSkill = (skillId: string, name: string) =>
+  skillJson<SkillDetail>(`/api/skills/${skillId}/clone`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }),
+  });
+export const updateSkillFiles = (
+  skillId: string,
+  revisionToken: string,
+  operations: Array<{ action: 'write' | 'delete' | 'move'; path: string; target?: string; content?: string; content_base64?: string }>,
+) => skillJson<SkillFiles>(`/api/skills/${skillId}/draft/files`, {
+  method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ revision_token: revisionToken, operations }),
+});
+export const validateSkill = (skillId: string) =>
+  skillJson<{ valid: boolean; publishable: boolean; digest?: string | null; diagnostics: SkillDiagnostic[] }>(
+    `/api/skills/${skillId}/validate`, { method: 'POST' },
+  );
+export const publishSkill = (skillId: string, revisionToken: string) =>
+  skillJson<SkillRevision>(`/api/skills/${skillId}/publish`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ revision_token: revisionToken }),
+  });
+export const listSkillRevisions = (skillId: string) =>
+  skillJson<SkillRevision[]>(`/api/skills/${skillId}/revisions`);
+export const restoreSkillRevision = (skillId: string, revisionId: string) =>
+  skillJson<SkillFiles>(`/api/skills/${skillId}/revisions/${revisionId}/restore`, { method: 'POST' });
+export const getSkillDiff = (skillId: string) =>
+  skillJson<{ files: Array<{ path: string; status: string; patch?: string | null }> }>(`/api/skills/${skillId}/diff`);
+export const setSkillEnabled = (skillId: string, enabled: boolean) =>
+  skillJson<SkillSummary>(`/api/skills/${skillId}/state`, {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enabled }),
+  });
+export async function removeSkill(skillId: string): Promise<void> {
+  const response = await fetch(`/api/skills/${skillId}`, { method: 'DELETE' });
+  if (!response.ok) throw await responseError(response);
+}
+export const testSkillDraft = (
+  skillId: string, revisionToken: string, goal: string, answerMode: 'standard' | 'trusted',
+) => skillJson<{ run_id: string; task_id: string; status: string; answer_mode: string }>(
+  `/api/skills/${skillId}/test-runs`,
+  { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ revision_token: revisionToken, goal, answer_mode: answerMode }) },
+);
+export type RunSkillsAudit = {
+  run_id: string;
+  catalog_digest: string;
+  answer_mode: string;
+  draft_test: boolean;
+  catalog: Array<Record<string, unknown>>;
+  activations: Array<Record<string, unknown>>;
+  resource_reads: Array<Record<string, unknown>>;
+  attributed_actions: Array<Record<string, unknown>>;
+  plan_bindings: Array<Record<string, unknown>>;
+};
+export const getRunSkills = (runId: string) =>
+  skillJson<RunSkillsAudit>(`/api/runs/${runId}/skills`);
 
 export type ConversationStrategyPreferences = {
   preferred_answer_mode: 'standard' | 'trusted';
@@ -111,7 +244,7 @@ export async function updateToolSettings(tools: ToolSetting[]): Promise<ToolSett
   return response.json();
 }
 
-export type TokenTotals = { input: number; cached_input: number; output: number; reasoning: number; total: number };
+type TokenTotals = { input: number; cached_input: number; output: number; reasoning: number; total: number };
 export type UsageSummary = {
   scope: 'all' | 'task' | 'run';
   from?: string | null;
@@ -156,11 +289,11 @@ export async function cancelRuntimeBuild(buildId: string): Promise<RuntimeProfil
   return response.json();
 }
 
-export async function createRun(goal: string, taskId: string | undefined, answerMode: 'standard' | 'trusted', reasoningPolicy?: ReasoningPolicyRequest, model?: RunModelConfig, planExecution?: 'auto' | 'confirm'): Promise<{ run_id: string; task_id: string; status: string; answer_mode?: 'standard' | 'trusted' }> {
+export async function createRun(goal: string, taskId: string | undefined, answerMode: 'standard' | 'trusted', reasoningPolicy?: ReasoningPolicyRequest, model?: RunModelConfig, planExecution?: 'auto' | 'confirm', skillIds: string[] = []): Promise<{ run_id: string; task_id: string; status: string; answer_mode?: 'standard' | 'trusted' }> {
   const response = await fetchWithTimeout('/api/runs', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ goal, task_id: taskId, answer_mode: answerMode, reasoning_policy: reasoningPolicy, model, ...(answerMode === 'trusted' ? { plan_execution: planExecution ?? 'confirm' } : {}) }),
+    body: JSON.stringify({ goal, task_id: taskId, answer_mode: answerMode, reasoning_policy: reasoningPolicy, model, skill_ids: skillIds, ...(answerMode === 'trusted' ? { plan_execution: planExecution ?? 'confirm' } : {}) }),
   });
   if (!response.ok) {
     throw await responseError(response);
@@ -257,7 +390,7 @@ export async function getConversation(id: string, signal?: AbortSignal): Promise
   return response.json();
 }
 
-export async function updateConversation(id: string, patch: { title?: string; pinned?: boolean }): Promise<ConversationSummary> {
+export async function updateConversation(id: string, patch: { title?: string; pinned?: boolean; preferred_answer_mode?: 'standard' | 'trusted' }): Promise<ConversationSummary> {
   const response = await fetch(`/api/conversations/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch) });
   if (!response.ok) throw await responseError(response);
   return response.json();
@@ -311,11 +444,17 @@ export function streamRunEvents(runId: string, onEvent: (event: RunStreamEvent) 
 }
 
 export async function resumeRun(runId: string, content: string, continuationToken?: string, model?: RunModelConfig): Promise<{ run_id: string; task_id: string; status: string }> {
+  return postRunResume(runId, { content, continuation_token: continuationToken, model });
+}
+
+type RunResumeResult = { run_id: string; task_id: string; status: string };
+
+async function postRunResume(runId: string, body: object, timeout?: number): Promise<RunResumeResult> {
   const response = await fetchWithTimeout(`/api/runs/${runId}/resume`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ content, continuation_token: continuationToken, model }),
-  });
+    body: JSON.stringify(body),
+  }, timeout);
   if (!response.ok) throw await responseError(response);
   return response.json();
 }
@@ -325,20 +464,14 @@ export async function confirmPlanExecution(
   confirmation: { continuationToken: string; planId: string; planVersion: number; stateVersion: number },
   model?: RunModelConfig,
 ): Promise<{ run_id: string; task_id: string; status: string }> {
-  const response = await fetchWithTimeout(`/api/runs/${runId}/resume`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      action: 'execute_plan',
-      continuation_token: confirmation.continuationToken,
-      plan_id: confirmation.planId,
-      expected_plan_version: confirmation.planVersion,
-      expected_state_version: confirmation.stateVersion,
-      model,
-    }),
+  return postRunResume(runId, {
+    action: 'execute_plan',
+    continuation_token: confirmation.continuationToken,
+    plan_id: confirmation.planId,
+    expected_plan_version: confirmation.planVersion,
+    expected_state_version: confirmation.stateVersion,
+    model,
   });
-  if (!response.ok) throw await responseError(response);
-  return response.json();
 }
 
 export async function revisePlan(
@@ -347,27 +480,15 @@ export async function revisePlan(
   confirmation: { continuationToken: string; planId: string; planVersion: number; stateVersion: number },
   model?: RunModelConfig,
 ): Promise<{ run_id: string; task_id: string; status: string }> {
-  const response = await fetchWithTimeout(`/api/runs/${runId}/resume`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      action: 'revise_plan',
-      content: request,
-      continuation_token: confirmation.continuationToken,
-      plan_id: confirmation.planId,
-      expected_plan_version: confirmation.planVersion,
-      expected_state_version: confirmation.stateVersion,
-      model,
-    }),
+  return postRunResume(runId, {
+    action: 'revise_plan',
+    content: request,
+    continuation_token: confirmation.continuationToken,
+    plan_id: confirmation.planId,
+    expected_plan_version: confirmation.planVersion,
+    expected_state_version: confirmation.stateVersion,
+    model,
   }, 60000);
-  if (!response.ok) throw await responseError(response);
-  return response.json();
-}
-
-export async function listPlanVersions(runId: string, signal?: AbortSignal): Promise<PlanVersionSummary[]> {
-  const response = await fetch(`/api/runs/${runId}/plans`, { signal });
-  if (!response.ok) throw await responseError(response);
-  return response.json();
 }
 
 export async function getPlanVersion(runId: string, version: number, signal?: AbortSignal): Promise<PlanGraphSnapshot> {

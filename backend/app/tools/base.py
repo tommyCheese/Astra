@@ -193,6 +193,26 @@ class ToolExecutionContext:
     workspace_mode: str = "none"
     effect_plan: dict[str, Any] | None = None
     runtime_identity_id: str | None = None
+    skill_bindings: tuple[dict[str, str], ...] = ()
+    skill_draft_test: bool = False
+    skill_input_provider: Any = None
+
+
+async def materialize_skill_inputs(
+    context: ToolExecutionContext | None,
+    input_dir: Path,
+) -> list[dict[str, str]]:
+    if (
+        context is None
+        or not context.skill_bindings
+        or context.skill_input_provider is None
+    ):
+        return []
+    return await context.skill_input_provider.materialize_inputs(
+        context.run_id,
+        list(context.skill_bindings),
+        input_dir,
+    )
 
 
 class Tool(ABC):

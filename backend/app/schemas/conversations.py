@@ -10,6 +10,7 @@ class ConversationSummary(BaseModel):
     id: str
     title: str
     title_source: str = "auto"
+    preferred_answer_mode: Literal["standard", "trusted"] = "standard"
     pinned_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
@@ -25,6 +26,7 @@ class ConversationView(ConversationSummary):
 class ConversationUpdateRequest(BaseModel):
     title: str | None = Field(default=None, max_length=240)
     pinned: bool | None = None
+    preferred_answer_mode: Literal["standard", "trusted"] | None = None
 
 
 class PublicProcessItem(BaseModel):

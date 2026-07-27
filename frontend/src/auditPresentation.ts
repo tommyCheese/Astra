@@ -2,7 +2,7 @@ import type { PermissionCenterView } from './api';
 
 export type IdentityView = PermissionCenterView['identities'][number];
 export type IdentityGroup = IdentityView & { count: number };
-export type AuditTone = 'info' | 'success' | 'warning' | 'danger';
+type AuditTone = 'info' | 'success' | 'warning' | 'danger';
 
 export type AuditLogEntry = {
   id: number;

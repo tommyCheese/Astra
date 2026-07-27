@@ -13,6 +13,7 @@ import {
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import { getPlanVersion, getPlanVersionDiff } from './api';
+import { useI18n } from './i18n';
 import { layoutPlanGraph, nodeTraceAssociations, planProgress, unmetDependencies, type PlanGraphLayout, type PositionedPlanNode } from './planGraph';
 import type { NodeExecution, PlanGraphDiff, PlanGraphNode, PlanGraphSnapshot, PlanNodeStatus, RunView } from './types';
 
@@ -61,7 +62,9 @@ export default function TrustedExecutionGraph(props: TrustedExecutionGraphProps)
 }
 
 function GraphWorkbench({ run, compact = false, title = '执行图谱' }: TrustedExecutionGraphProps) {
+  const { language, t } = useI18n();
   const flow = useReactFlow();
+  const displayTitle = title ? t(title) : t('执行图谱');
   const liveGraph = run.plan_graph && 'id' in run.plan_graph ? run.plan_graph as PlanGraphSnapshot : null;
   const [selectedVersion, setSelectedVersion] = useState<number | null>(liveGraph?.version ?? null);
   const [historical, setHistorical] = useState<PlanGraphSnapshot | null>(null);
@@ -153,10 +156,12 @@ function GraphWorkbench({ run, compact = false, title = '执行图谱' }: Truste
     };
     const execution = executionsByNode.get(node.id);
     const ariaLabel = [
-      `节点 ${node.index}：${node.title}`,
-      execution ? executionPhaseLabels[execution.phase] : statusLabels[node.derivedStatus],
-      node.depends_on.length ? `依赖 ${node.depends_on.join('、')}` : '无前置依赖',
-    ].join('，');
+      t('节点 {index}：{title}').replace('{index}', String(node.index)).replace('{title}', node.title),
+      t(execution ? executionPhaseLabels[execution.phase] : statusLabels[node.derivedStatus]),
+      node.depends_on.length
+        ? t('依赖 {dependencies}').replace('{dependencies}', node.depends_on.join(language === 'en' ? ', ' : '、'))
+        : t('无前置依赖'),
+    ].join(language === 'en' ? ', ' : '，');
     return {
       id: node.id,
       type: 'planNode',
@@ -204,21 +209,21 @@ function GraphWorkbench({ run, compact = false, title = '执行图谱' }: Truste
   };
   return <section
     className={`trusted-graph-workbench ${compact ? 'compact' : ''}`}
-    aria-label={title}
+    aria-label={displayTitle}
     data-plan-status={graph.status}
   >
     <header className="trusted-graph-header">
       <div>
-        <strong>{title}</strong>
+        <strong>{displayTitle}</strong>
         <span>
-          Plan v{graph.version} · {progress.completed}/{progress.total} 已完成
-          {historicalMode ? ' · 历史版本' : ` · ${planStatusLabel(graph.status)}`}
-          {!historicalMode && graph.parallelism && ` · ${graph.parallelism.active_count} 个活动节点 · 槽位 ${graph.parallelism.used_slots}/${graph.parallelism.total_slots}`}
+          {t('计划 v{version} · 已完成 {completed}/{total}').replace('{version}', String(graph.version)).replace('{completed}', String(progress.completed)).replace('{total}', String(progress.total))}
+          {historicalMode ? ` · ${t('历史版本')}` : ` · ${t(planStatusLabel(graph.status))}`}
+          {!historicalMode && graph.parallelism && ` · ${t('{count} 个活动节点').replace('{count}', String(graph.parallelism.active_count))} · ${t('并行 {used}/{total}').replace('{used}', String(graph.parallelism.used_slots)).replace('{total}', String(graph.parallelism.total_slots))}`}
         </span>
       </div>
       <div className="trusted-graph-header-actions">
         {(run.plan_versions?.length ?? 0) > 1 && <label>
-          <span className="sr-only">计划版本</span>
+          <span className="sr-only">{t('计划版本')}</span>
           <select
             value={selectedVersion ?? graph.version}
             disabled={historyLoading}
@@ -226,28 +231,28 @@ function GraphWorkbench({ run, compact = false, title = '执行图谱' }: Truste
           >
             {[...(run.plan_versions ?? [])].sort((a, b) => b.version - a.version).map((version) => (
               <option value={version.version} key={version.id}>
-                v{version.version} · {planStatusLabel(version.status)}
+                v{version.version} · {t(planStatusLabel(version.status))}
               </option>
             ))}
           </select>
         </label>}
-        <div className="trusted-graph-zoom-actions" role="group" aria-label="图谱缩放">
-          <button type="button" aria-label="缩小图谱" title="缩小图谱" onClick={() => { void flow.zoomOut({ duration: 160 }); }}>−</button>
-          <button type="button" aria-label="放大图谱" title="放大图谱" onClick={() => { void flow.zoomIn({ duration: 160 }); }}>+</button>
-          <button className="trusted-graph-center-button" type="button" aria-label="定位中心" title="定位中心（保持缩放）" onClick={centerGraph}>
-            <span aria-hidden="true">◎</span>定位中心
+        <div className="trusted-graph-zoom-actions" role="group" aria-label={t('图谱缩放')}>
+          <button type="button" aria-label={t('缩小图谱')} title={t('缩小图谱')} onClick={() => { void flow.zoomOut({ duration: 160 }); }}>−</button>
+          <button type="button" aria-label={t('放大图谱')} title={t('放大图谱')} onClick={() => { void flow.zoomIn({ duration: 160 }); }}>+</button>
+          <button className="trusted-graph-center-button" type="button" aria-label={t('定位中心')} title={t('定位中心（保持缩放）')} onClick={centerGraph}>
+            <span aria-hidden="true">◎</span>{t('定位中心')}
           </button>
         </div>
       </div>
     </header>
-    <div className="trusted-graph-progress" role="status" aria-live="polite" aria-label={`已完成 ${progress.completed}，共 ${progress.total}；${graph.parallelism?.active_count ?? 0} 个节点活动中`}>
+    <div className="trusted-graph-progress" role="status" aria-live="polite" aria-label={t('已完成 {completed}，共 {total}；{active} 个节点活动中').replace('{completed}', String(progress.completed)).replace('{total}', String(progress.total)).replace('{active}', String(graph.parallelism?.active_count ?? 0))}>
       <span style={{ width: `${progress.ratio * 100}%` }} />
     </div>
     {historicalMode && <p className="trusted-graph-history-notice" role="status">
-      正在查看不可执行的历史版本；实时状态仍以 v{liveGraph?.version} 为准。
+      {t('正在查看历史版本；当前状态请以 v{version} 为准。').replace('{version}', String(liveGraph?.version))}
     </p>}
     <div className="trusted-graph-body">
-      <div className="trusted-graph-canvas" role="application" aria-label={`Plan v${graph.version} 有向无环图`}>
+      <div className="trusted-graph-canvas" role="application" aria-label={t('计划 v{version} 执行图').replace('{version}', String(graph.version))}>
         <ReactFlow
           nodes={nodes}
           edges={edges}
@@ -273,6 +278,7 @@ function GraphWorkbench({ run, compact = false, title = '执行图谱' }: Truste
 }
 
 function PlanNodeCard({ data, selected }: NodeProps<Node<GraphNodeData>>) {
+  const { t } = useI18n();
   const { node, status, diff, execution, dependencyProgress, ariaLabel, onSelect } = data;
   return <article
     className={`trusted-plan-node status-${status} ${selected ? 'selected' : ''} ${diff ? `diff-${diff}` : ''}`}
@@ -293,20 +299,21 @@ function PlanNodeCard({ data, selected }: NodeProps<Node<GraphNodeData>>) {
     <div className="trusted-plan-node-heading">
       <span>{node.index}</span>
       <em aria-hidden="true">{statusIcon(status)}</em>
-      <small className="trusted-plan-node-status">{execution ? executionPhaseLabels[execution.phase] : statusLabels[status]}</small>
+      <small className="trusted-plan-node-status">{t(execution ? executionPhaseLabels[execution.phase] : statusLabels[status])}</small>
     </div>
     <strong>{node.title}</strong>
     <p>{node.intent}</p>
-    {execution?.wait_reason && <span className="trusted-plan-node-wait">{safeWaitReason(execution.wait_reason)}</span>}
+    {execution?.wait_reason && <span className="trusted-plan-node-wait">{t(safeWaitReason(execution.wait_reason))}</span>}
     {dependencyProgress && dependencyProgress.total > 1 && status !== 'completed' && <span className="trusted-plan-node-join">
-      汇合 {dependencyProgress.satisfied}/{dependencyProgress.total}
+      {t('汇合 {satisfied}/{total}').replace('{satisfied}', String(dependencyProgress.satisfied)).replace('{total}', String(dependencyProgress.total))}
     </span>}
-    {diff && !['unchanged'].includes(diff) && <mark>{diffLabel(diff)}</mark>}
+    {diff && !['unchanged'].includes(diff) && <mark>{t(diffLabel(diff))}</mark>}
     <Handle type="source" position={Position.Bottom} isConnectable={false} />
   </article>;
 }
 
 function FocusCurrentButton({ graph, onSelect }: { graph: PlanGraphSnapshot; onSelect: (id: string) => void }) {
+  const { t } = useI18n();
   const flow = useReactFlow();
   const indexRef = useRef(0);
   const activeIds = [
@@ -326,10 +333,11 @@ function FocusCurrentButton({ graph, onSelect }: { graph: PlanGraphSnapshot; onS
       : current.id;
     onSelect(targetId);
     void flow.fitView({ nodes: [{ id: targetId }], duration: 250, padding: 1.5 });
-  }}>定位活动节点{activeIds.length > 1 ? ` (${activeIds.length})` : ''}</button>;
+  }}>{t('定位活动节点')}{activeIds.length > 1 ? ` (${activeIds.length})` : ''}</button>;
 }
 
 function NodeInspector({ run, graph, node }: { run: RunView; graph: PlanGraphSnapshot; node: PositionedPlanNode }) {
+  const { language, t } = useI18n();
   const unmet = unmetDependencies(graph, node.id);
   const {
     turns,
@@ -340,47 +348,47 @@ function NodeInspector({ run, graph, node }: { run: RunView; graph: PlanGraphSna
   const executions = (run.node_executions ?? [])
     .filter((execution) => execution.plan_node_id === node.id)
     .sort((left, right) => right.attempt - left.attempt);
-  return <aside className="trusted-node-inspector" aria-label={`${node.title} 节点详情`}>
-    <header><span>节点 {node.index}</span><strong>{node.title}</strong><small>{statusLabels[node.derivedStatus]}</small></header>
+  return <aside className="trusted-node-inspector" aria-label={t('{title} 节点详情').replace('{title}', node.title)}>
+    <header><span>{t('节点 {index}').replace('{index}', String(node.index))}</span><strong>{node.title}</strong><small>{t(statusLabels[node.derivedStatus])}</small></header>
     <section>
-      <h4>计划</h4>
+      <h4>{t('计划')}</h4>
       <p>{node.intent}</p>
       <dl>
-        <div><dt>依赖</dt><dd>{node.depends_on.join('、') || '无'}</dd></div>
-        <div><dt>预期结果</dt><dd>{node.expected_outcome?.success_condition ?? '未指定'}</dd></div>
-        <div><dt>成功准则</dt><dd>{node.success_criteria_refs.join('、') || '无'}</dd></div>
-        <div><dt>所需能力</dt><dd>{node.required_capabilities.join('、') || '无'}</dd></div>
-        <div><dt>风险</dt><dd>{node.risk_level}{node.optional ? ' · 可选' : ''}</dd></div>
+        <div><dt>{t('依赖')}</dt><dd>{node.depends_on.join(language === 'en' ? ', ' : '、') || t('无')}</dd></div>
+        <div><dt>{t('预期结果')}</dt><dd>{node.expected_outcome?.success_condition ?? t('未指定')}</dd></div>
+        <div><dt>{t('成功准则')}</dt><dd>{node.success_criteria_refs.join(language === 'en' ? ', ' : '、') || t('无')}</dd></div>
+        <div><dt>{t('所需能力')}</dt><dd>{node.required_capabilities.join(language === 'en' ? ', ' : '、') || t('无')}</dd></div>
+        <div><dt>{t('风险')}</dt><dd>{t(riskLabel(node.risk_level))}{node.optional ? ` · ${t('可选')}` : ''}</dd></div>
       </dl>
-      {unmet.length > 0 && <p className="trusted-node-blocking">尚未满足：{unmet.map((item) => item.title).join('、')}</p>}
+      {unmet.length > 0 && <p className="trusted-node-blocking">{t('尚未满足：{items}').replace('{items}', unmet.map((item) => item.title).join(language === 'en' ? ', ' : '、'))}</p>}
     </section>
     <section>
-      <h4>运行轨迹</h4>
-      {!turns.length && !calls.length && !approval && <p className="muted">此节点尚未执行。</p>}
+      <h4>{t('运行轨迹')}</h4>
+      {!turns.length && !calls.length && !approval && <p className="muted">{t('此节点尚未执行。')}</p>}
       {turns.map((turn) => <div className="trusted-trace-item" key={turn.id}>
-        <strong>第 {turn.turn_index} 轮 · {turn.decision_type}</strong>
+        <strong>{t('第 {index} 轮').replace('{index}', String(turn.turn_index))} · {t(decisionLabel(turn.decision_type))}</strong>
         <span>{turn.reasoning_summary}</span>
-        {turn.reflection && <small>反思：{String(turn.reflection.summary ?? '已调整策略')}</small>}
-        {turn.evaluation && <small>验证：{String(turn.evaluation.summary ?? turn.evaluation.outcome ?? '已记录')}</small>}
+        {turn.reflection && <small>{t('反思：')}{String(turn.reflection.summary ?? t('已调整策略'))}</small>}
+        {turn.evaluation && <small>{t('验证：')}{String(turn.evaluation.summary ?? turn.evaluation.outcome ?? t('已记录'))}</small>}
       </div>)}
       {calls.map((call) => <div className="trusted-trace-item" key={call.id}>
-        <strong>{call.tool_name}</strong><span>{call.status}</span>
+        <strong>{call.tool_name}</strong><span>{t(toolStatusLabel(call.status))}</span>
       </div>)}
-      {approval && <div className="trusted-trace-item approval"><strong>等待工具影响批准</strong><span>{approval.action_summary ?? approval.preview}</span></div>}
+      {approval && <div className="trusted-trace-item approval"><strong>{t('等待工具影响批准')}</strong><span>{approval.action_summary ?? approval.preview}</span></div>}
       {executions.map((execution) => <div className="trusted-trace-item execution" key={execution.execution_id}>
-        <strong>Attempt {execution.attempt} · {executionPhaseLabels[execution.phase]}</strong>
-        <span>批次 {execution.dispatch_batch_id?.slice(0, 8) ?? '—'} · 槽位 {execution.slot_index != null ? execution.slot_index + 1 : '已释放'}</span>
-        {execution.started_at && <small>{formatExecutionTiming(execution)}</small>}
+        <strong>{t('第 {attempt} 次尝试').replace('{attempt}', String(execution.attempt))} · {t(executionPhaseLabels[execution.phase])}</strong>
+        <span>{execution.slot_index != null ? t('并行位置 {slot}').replace('{slot}', String(execution.slot_index + 1)) : t('已结束')}</span>
+        {execution.started_at && <small>{formatExecutionTiming(execution, language, t)}</small>}
       </div>)}
     </section>
     <section>
-      <h4>证据与产物</h4>
-      {!node.evidence_refs.length && !artifacts.length && !node.failure && <p className="muted">暂无已验证证据。</p>}
+      <h4>{t('证据与产物')}</h4>
+      {!node.evidence_refs.length && !artifacts.length && !node.failure && <p className="muted">{t('暂无已验证证据。')}</p>}
       {node.evidence_refs.map((reference) => <code key={reference}>{reference}</code>)}
       {artifacts.map((artifact) => artifact.content_url
         ? <a href={artifact.content_url} target="_blank" rel="noreferrer" key={artifact.id}>{String(artifact.metadata.filename ?? artifact.type)}</a>
         : <span key={artifact.id}>{String(artifact.metadata.filename ?? artifact.type)}</span>)}
-      {node.failure && <p className="trusted-node-failure">{String(node.failure.message ?? node.failure.category ?? '节点执行失败')}</p>}
+      {node.failure && <p className="trusted-node-failure">{String(node.failure.message ?? node.failure.category ?? t('节点执行失败'))}</p>}
     </section>
   </aside>;
 }
@@ -426,12 +434,29 @@ function safeWaitReason(reason: string) {
           : '暂时等待';
 }
 
-function formatExecutionTiming(execution: NodeExecution) {
+function riskLabel(risk: string) {
+  return risk === 'low' ? '低风险' : risk === 'medium' ? '中风险' : risk === 'high' ? '高风险' : risk;
+}
+
+function decisionLabel(decision: string) {
+  return decision === 'act' ? '执行' : decision === 'reflect' ? '反思' : decision === 'answer' ? '回答' : decision;
+}
+
+function toolStatusLabel(status: string) {
+  return status === 'pending' ? '等待执行'
+    : status === 'running' ? '正在执行'
+      : status === 'completed' || status === 'succeeded' ? '已完成'
+        : status === 'failed' ? '失败'
+          : status === 'cancelled' ? '已取消'
+            : status;
+}
+
+function formatExecutionTiming(execution: NodeExecution, language: string, t: (key: string) => string) {
   const started = execution.started_at ? new Date(execution.started_at) : null;
   const finished = execution.finished_at ? new Date(execution.finished_at) : null;
-  if (!started || Number.isNaN(started.getTime())) return '时间未记录';
+  if (!started || Number.isNaN(started.getTime())) return t('时间未记录');
   if (!finished || Number.isNaN(finished.getTime())) {
-    return `开始于 ${started.toLocaleTimeString()}`;
+    return t('开始于 {time}').replace('{time}', started.toLocaleTimeString(language));
   }
-  return `${started.toLocaleTimeString()} · ${Math.max(0, finished.getTime() - started.getTime())} ms`;
+  return t('{time} · {duration} 毫秒').replace('{time}', started.toLocaleTimeString(language)).replace('{duration}', String(Math.max(0, finished.getTime() - started.getTime())));
 }

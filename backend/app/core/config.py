@@ -70,6 +70,21 @@ class Settings(BaseSettings):
     runtime_build_timeout_seconds: int = 600
     runtime_image_keep_recent: int = 3
     runtime_image_retention_days: int = 30
+    skills_enabled: bool = True
+    skills_custom_authoring_enabled: bool = True
+    skills_max_files: int = 256
+    skills_max_file_bytes: int = 2 * 1024 * 1024
+    skills_max_package_bytes: int = 20 * 1024 * 1024
+    skills_max_instruction_chars: int = 40_000
+    skills_catalog_metadata_chars: int = 24_000
+    skills_max_active: int = 8
+    skills_max_resource_bytes_per_run: int = 8 * 1024 * 1024
+    skills_max_draft_tests_per_hour: int = 30
+    skills_max_script_bytes: int = 2 * 1024 * 1024
+    skills_max_execution_seconds: int = 300
+    skills_max_artifacts_per_run: int = 16
+    skills_max_artifact_bytes_per_run: int = 20 * 1024 * 1024
+    skills_safety_scanner_required: bool = True
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 

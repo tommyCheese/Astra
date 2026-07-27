@@ -219,6 +219,7 @@ class SuccessCriterion(BaseModel):
     verification_method: str
     status: CriterionStatus = CriterionStatus.pending
     evidence_refs: list[str] = Field(default_factory=list)
+    provenance: dict[str, Any] = Field(default_factory=dict)
 
 
 class TaskAssumption(BaseModel):
@@ -244,6 +245,7 @@ class TaskContract(BaseModel):
     assumptions: list[TaskAssumption] = Field(default_factory=list)
     success_criteria: list[SuccessCriterion] = Field(default_factory=list)
     verification_requirements: list[VerificationRequirement] = Field(default_factory=list)
+    skill_revisions: list[dict[str, str]] = Field(default_factory=list)
     risk_level: str = "low"
     ambiguity_status: str = "clear"
     clarification_question: str | None = None
@@ -261,6 +263,7 @@ class PlanNodeDraft(BaseModel):
     intent: str = Field(min_length=1)
     depends_on: list[str] = Field(default_factory=list)
     required_capabilities: list[str] = Field(default_factory=list)
+    required_skill_ids: list[str] = Field(default_factory=list)
     success_criteria_refs: list[str] = Field(default_factory=list)
     expected_outcome: ExpectedObservation
     risk_level: str = "low"
@@ -284,6 +287,7 @@ class PlanNodeView(BaseModel):
     status: PlanNodeStatus
     depends_on: list[str] = Field(default_factory=list)
     required_capabilities: list[str] = Field(default_factory=list)
+    required_skill_ids: list[str] = Field(default_factory=list)
     success_criteria_refs: list[str] = Field(default_factory=list)
     expected_outcome: ExpectedObservation | None = None
     risk_level: str = "low"
@@ -571,6 +575,7 @@ class CreateRunRequest(BaseModel):
     model: dict[str, str] | None = None
     interactive: bool = True
     permission_bundle: dict[str, Any] | None = None
+    skill_ids: list[str] = Field(default_factory=list, max_length=8)
 
     @model_validator(mode="after")
     def validate_plan_execution(self) -> CreateRunRequest:
@@ -690,6 +695,8 @@ class AgentDecision(BaseModel):
     decision_type: str
     reasoning_summary: str
     tool_name: str | None = None
+    skill_identity: str | None = None
+    skill_resource_path: str | None = None
     tool_input: dict[str, Any] = Field(default_factory=dict)
     expected_observation: str | None = None
     stop_condition: str | None = None

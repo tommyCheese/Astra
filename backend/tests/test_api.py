@@ -434,6 +434,57 @@ async def test_invalid_plan_revision_restores_original_with_fresh_token(
     assert payload["content"] not in serialized_events
 
 
+async def test_plan_revision_repairs_one_invalid_model_draft(app_client, monkeypatch):
+    run_id, _original_plan_id, payload = await _create_waiting_confirmation(app_client)
+
+    class RepairingRevisionClient:
+        def __init__(self):
+            self.goals = []
+
+        def bind_agent_profile(self, profile):
+            return None
+
+        def bind_reasoning_effort(self, effort):
+            return None
+
+        async def plan(self, goal, *, contract):
+            self.goals.append(json.loads(goal))
+            depends_on = ["revised"] if len(self.goals) == 1 else []
+            return PlanDraft(
+                nodes=[
+                    PlanNodeDraft(
+                        node_key="revised",
+                        title="修正后的计划",
+                        intent="按调整要求完成目标",
+                        depends_on=depends_on,
+                        required_capabilities=["invented_capability"],
+                        success_criteria_refs=["invented-criterion"],
+                        expected_outcome=ExpectedObservation(
+                            kind="step_result", success_condition="目标完成"
+                        ),
+                    )
+                ]
+            )
+
+    client = RepairingRevisionClient()
+    monkeypatch.setattr(
+        plan_revision_module,
+        "build_model_client",
+        lambda settings: client,
+    )
+
+    revised = await app_client.post(f"/api/runs/{run_id}/resume", json=payload)
+    current = (await app_client.get(f"/api/runs/{run_id}")).json()
+
+    assert revised.status_code == 200
+    assert len(client.goals) == 2
+    assert "validation_feedback" in client.goals[1]
+    assert current["plan_graph"]["version"] == 2
+    node = current["plan_graph"]["nodes"][0]
+    assert node["required_capabilities"] == []
+    assert node["success_criteria_refs"] == ["criterion-result"]
+
+
 async def test_conversation_detail_eager_loads_canonical_plan(app_client):
     async with app_client._astra_session() as session:
         repo = RunRepository(session)
@@ -470,6 +521,7 @@ async def test_conversation_detail_eager_loads_canonical_plan(app_client):
     response = await app_client.get(f"/api/conversations/{conversation_id}")
 
     assert response.status_code == 200
+    assert response.json()["preferred_answer_mode"] == "trusted"
     assert response.json()["runs"][0]["plan_graph"]["id"] == plan.id
     assert response.json()["runs"][0]["steps"][0]["node_key"] == "respond"
 
@@ -734,16 +786,23 @@ async def test_conversation_management_and_share_lifecycle(app_client):
         await session.commit()
 
     renamed = await app_client.patch(
-        f"/api/conversations/{conversation_id}", json={"title": "用户标题", "pinned": True}
+        f"/api/conversations/{conversation_id}",
+        json={
+            "title": "用户标题",
+            "pinned": True,
+            "preferred_answer_mode": "trusted",
+        },
     )
     assert renamed.status_code == 200
     assert renamed.json()["title"] == "用户标题"
     assert renamed.json()["title_source"] == "user"
     assert renamed.json()["pinned_at"] is not None
+    assert renamed.json()["preferred_answer_mode"] == "trusted"
 
     listed = await app_client.get("/api/conversations")
     assert listed.json()[0]["id"] == conversation_id
     assert listed.json()[0]["title"] == "用户标题"
+    assert listed.json()[0]["preferred_answer_mode"] == "trusted"
 
     shared = await app_client.post(f"/api/conversations/{conversation_id}/share")
     assert shared.status_code == 200

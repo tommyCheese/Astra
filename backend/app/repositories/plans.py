@@ -120,6 +120,7 @@ class PlanRepository:
                 intent=item.intent,
                 status=preserved.get("status", PlanNodeStatus.pending.value),
                 required_capabilities=list(item.required_capabilities),
+                required_skill_ids=list(item.required_skill_ids),
                 success_criteria_refs=list(item.success_criteria_refs),
                 expected_outcome=item.expected_outcome.model_dump(mode="json"),
                 risk_level=item.risk_level,
@@ -347,6 +348,7 @@ def plan_to_view(plan: PlanRecord) -> PlanView:
                 status=node.status,
                 depends_on=dependencies[node.id],
                 required_capabilities=node.required_capabilities or [],
+                required_skill_ids=node.required_skill_ids or [],
                 success_criteria_refs=node.success_criteria_refs or [],
                 expected_outcome=ExpectedObservation.model_validate(node.expected_outcome)
                 if node.expected_outcome
@@ -402,6 +404,7 @@ def diff_plans(before: PlanRecord, after: PlanRecord) -> PlanGraphDiff:
         "title",
         "intent",
         "required_capabilities",
+        "required_skill_ids",
         "success_criteria_refs",
         "expected_outcome",
         "risk_level",

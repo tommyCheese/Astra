@@ -40,6 +40,29 @@ from app.schemas.agent import (
 )
 
 
+def run_detail_options():
+    return (
+        selectinload(RunRecord.steps),
+        selectinload(RunRecord.task),
+        selectinload(RunRecord.tool_calls),
+        selectinload(RunRecord.artifacts),
+        selectinload(RunRecord.events),
+        selectinload(RunRecord.turns),
+        selectinload(RunRecord.memories),
+        selectinload(RunRecord.sandbox_jobs),
+        selectinload(RunRecord.approval_requests),
+        selectinload(RunRecord.approval_grants),
+        selectinload(RunRecord.node_executions).selectinload(
+            NodeExecutionRecord.resource_leases
+        ),
+        selectinload(RunRecord.node_executions).selectinload(
+            NodeExecutionRecord.budget_reservations
+        ),
+        selectinload(RunRecord.plans).selectinload(PlanRecord.nodes),
+        selectinload(RunRecord.plans).selectinload(PlanRecord.edges),
+    )
+
+
 class RunRepository:
     TERMINAL_STATUSES = frozenset(
         {
@@ -88,10 +111,12 @@ class RunRepository:
                 description=goal,
                 status="created",
                 risk_level="low",
+                preferred_answer_mode=answer_mode,
                 created_at=now,
                 updated_at=now,
             )
         else:
+            task.preferred_answer_mode = answer_mode
             task.updated_at = now
         run_policy = {**model_policy, "conversation_goal": goal}
         run = RunRecord(
@@ -464,26 +489,7 @@ class RunRepository:
             select(RunRecord)
             .where(RunRecord.id == run_id)
             .execution_options(populate_existing=True)
-            .options(
-                selectinload(RunRecord.steps),
-                selectinload(RunRecord.task),
-                selectinload(RunRecord.tool_calls),
-                selectinload(RunRecord.artifacts),
-                selectinload(RunRecord.events),
-                selectinload(RunRecord.turns),
-                selectinload(RunRecord.memories),
-                selectinload(RunRecord.sandbox_jobs),
-                selectinload(RunRecord.approval_requests),
-                selectinload(RunRecord.approval_grants),
-                selectinload(RunRecord.node_executions).selectinload(
-                    NodeExecutionRecord.resource_leases
-                ),
-                selectinload(RunRecord.node_executions).selectinload(
-                    NodeExecutionRecord.budget_reservations
-                ),
-                selectinload(RunRecord.plans).selectinload(PlanRecord.nodes),
-                selectinload(RunRecord.plans).selectinload(PlanRecord.edges),
-            )
+            .options(*run_detail_options())
         )
         return result.scalar_one_or_none()
 
@@ -496,26 +502,7 @@ class RunRepository:
             select(RunRecord)
             .order_by(RunRecord.created_at.desc())
             .limit(limit)
-            .options(
-                selectinload(RunRecord.steps),
-                selectinload(RunRecord.task),
-                selectinload(RunRecord.tool_calls),
-                selectinload(RunRecord.artifacts),
-                selectinload(RunRecord.events),
-                selectinload(RunRecord.turns),
-                selectinload(RunRecord.memories),
-                selectinload(RunRecord.sandbox_jobs),
-                selectinload(RunRecord.approval_requests),
-                selectinload(RunRecord.approval_grants),
-                selectinload(RunRecord.node_executions).selectinload(
-                    NodeExecutionRecord.resource_leases
-                ),
-                selectinload(RunRecord.node_executions).selectinload(
-                    NodeExecutionRecord.budget_reservations
-                ),
-                selectinload(RunRecord.plans).selectinload(PlanRecord.nodes),
-                selectinload(RunRecord.plans).selectinload(PlanRecord.edges),
-            )
+            .options(*run_detail_options())
         )
         return list(result.scalars().all())
 
@@ -1561,6 +1548,7 @@ def run_to_view(run: RunRecord) -> dict[str, Any]:
                 "status": node.status.value,
                 "depends_on": node.depends_on,
                 "required_capabilities": node.required_capabilities,
+                "required_skill_ids": node.required_skill_ids,
                 "success_criteria_refs": node.success_criteria_refs,
                 "expected_outcome": node.expected_outcome.model_dump(mode="json")
                 if node.expected_outcome

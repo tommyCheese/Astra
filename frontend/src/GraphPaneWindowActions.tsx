@@ -1,3 +1,5 @@
+import { CloseButton } from './CloseButton';
+
 type GraphPaneWindowActionsProps = {
   expanded: boolean;
   expandLabel: string;
@@ -31,6 +33,6 @@ export function GraphPaneWindowActions({
           : <><path d="M7 3H3v4M13 17h4v-4" /><path d="m3.5 6.5 4-4M16.5 13.5l-4 4" /></>}
       </svg>
     </button>
-    <button className="trusted-graph-pane-collapse" type="button" aria-label={closeLabel} title={closeLabel} onClick={onClose}>×</button>
+    <CloseButton className="trusted-graph-pane-collapse" label={closeLabel} title={closeLabel} onClick={onClose} />
   </div>;
 }

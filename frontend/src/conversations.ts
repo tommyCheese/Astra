@@ -7,6 +7,7 @@ export type ConversationEntry = {
   run?: RunView;
   priorMessages: ChatMessage[];
   title?: string;
+  preferred_answer_mode?: 'standard' | 'trusted';
   pinned_at?: string | null;
   updated_at?: string;
   has_active_share?: boolean;
@@ -77,7 +78,7 @@ export function normalizeRunView(run: RunView): RunView {
   };
 }
 
-export function buildConversation(run: RunView | null): ChatMessage[] {
+function buildConversation(run: RunView | null): ChatMessage[] {
   if (!run) return [];
   if (run.chat_messages?.length) return run.chat_messages;
 

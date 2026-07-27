@@ -58,7 +58,14 @@ async def update_conversation(
     title = payload.title.strip() if payload.title is not None else None
     if payload.title is not None and not title:
         raise ValidationError("CONVERSATION_TITLE_REQUIRED", "对话标题不能为空。")
-    return conversation_summary(await repo.update(task, title=title, pinned=payload.pinned))
+    return conversation_summary(
+        await repo.update(
+            task,
+            title=title,
+            pinned=payload.pinned,
+            preferred_answer_mode=payload.preferred_answer_mode,
+        )
+    )
 
 
 @router.delete("/conversations/{conversation_id}", status_code=204)

@@ -5,8 +5,11 @@ import time
 from collections.abc import Awaitable, Callable
 from typing import Any
 
+from sqlalchemy import select
+
 from app.artifacts import ArtifactService, LocalArtifactStore
 from app.core.config import Settings
+from app.db.models import RunSkillSnapshotRecord
 from app.permissions.effects import (
     DefaultEffectAnalyzer,
     effect_plan_hash,
@@ -64,6 +67,7 @@ from app.schemas.permissions import (
     PermissionPolicySet,
     PermissionSubject,
 )
+from app.skills.catalog import SkillActivationService
 from app.tools.base import (
     ToolExecutionContext,
     ToolExecutionError,
@@ -236,6 +240,34 @@ class ContextAssembler:
                     }
                 )
             }
+        skill_snapshot = await self.repo.session.scalar(
+            select(RunSkillSnapshotRecord).where(
+                RunSkillSnapshotRecord.run_id == run_id
+            )
+        )
+        skill_catalog = []
+        active_skills = []
+        if skill_snapshot is not None:
+            active_identities = {
+                item["qualified_identity"]
+                for item in skill_snapshot.activations or []
+            }
+            skill_catalog = [
+                {
+                    "qualified_identity": item["qualified_identity"],
+                    "name": item["name"],
+                    "description": item["description"],
+                    "origin": item["origin"],
+                    "revision_id": item["revision_id"],
+                    "digest": item["digest"],
+                }
+                for item in skill_snapshot.catalog
+            ]
+            active_skills = [
+                item
+                for item in skill_catalog
+                if item["qualified_identity"] in active_identities
+            ]
         return {
             "run_id": run_id,
             "goal": goal,
@@ -261,6 +293,9 @@ class ContextAssembler:
             "plan_graph": plan_view,
             "active_node": active_node,
             "agent_state": run.agent_state or {},
+            "skill_catalog": skill_catalog,
+            "active_skills": active_skills,
+            "skill_draft_test": bool(skill_snapshot and skill_snapshot.draft_test),
         }
 
 
@@ -503,6 +538,11 @@ class AgentLoop:
         policy_snapshot = ReasoningPolicySnapshot.model_validate(initial_run.reasoning_policy or {})
         profile = RunExecutionProfile.model_validate(initial_run.execution_profile)
         quick_mode = profile.answer_mode == AnswerMode.standard
+        activation_service = SkillActivationService(
+            repo.session,
+            max_active=self.settings.skills_max_active,
+            max_resource_bytes=self.settings.skills_max_resource_bytes_per_run,
+        )
         policy = policy_snapshot.effective
         max_turns = (
             self.settings.agent_max_turns
@@ -846,6 +886,29 @@ class AgentLoop:
             )
             return observation, evaluation, evaluation.outcome == EvaluationOutcome.matched
 
+        async def persist_completion_mismatch(turn, observation, evaluation, context):
+            if observation is not None:
+                observations.append(observation.model_dump(mode="json"))
+            if evaluation is not None:
+                await persist_progress(evaluation)
+            await repo.update_agent_turn(
+                turn.id,
+                status="failed",
+                observation=observation.model_dump(mode="json") if observation else None,
+                evaluation=evaluation.model_dump(mode="json") if evaluation else None,
+                phase="failed",
+            )
+            await maybe_reflect(
+                "expectation_mismatch",
+                {
+                    "last_observation": observation.model_dump(mode="json")
+                    if observation
+                    else {},
+                    "runtime_context": context,
+                    "retry_count": 0,
+                },
+            )
+
         logger.info(
             "agent.policy run_id=%s effort=%s reflection=%s/%s limits=turns:%s tools:%s reflections:%s replans:%s",
             run_id,
@@ -996,6 +1059,19 @@ class AgentLoop:
                     )
                     candidate_answer = None
                 else:
+                    if context.get("active_skills"):
+                        await repo.add_event(
+                            run_id,
+                            "skill.operation_bound",
+                            {
+                                "operation": "decision_with_answer",
+                                "turn_index": turn_index,
+                                "plan_node_id": active_node.id
+                                if active_node is not None
+                                else None,
+                                "skills": list(context["active_skills"]),
+                            },
+                        )
                     decision, candidate_answer = await self.model_client.decide_with_answer(
                         goal,
                         context,
@@ -1165,6 +1241,110 @@ class AgentLoop:
                 )
                 await repo.session.commit()
                 continue
+            if decision.decision_type == "activate_skill":
+                identity = decision.skill_identity or ""
+                current_run = await repo.require_run(run_id)
+                contract_skills = {
+                    item.get("qualified_identity")
+                    for item in (current_run.task_contract or {}).get(
+                        "skill_revisions", []
+                    )
+                    if isinstance(item, dict)
+                }
+                if not quick_mode and identity not in contract_skills:
+                    observation = AgentObservation(
+                        kind="skill_replan_required",
+                        status="failed",
+                        summary="可信模式需要通过 PlanPatch 绑定此前未选择的 Skill。",
+                        data={"qualified_identity": identity},
+                    )
+                    await repo.add_event(
+                        run_id,
+                        "skill.replan_required",
+                        observation.model_dump(mode="json"),
+                    )
+                else:
+                    activation_service = SkillActivationService(
+                        repo.session,
+                        max_active=self.settings.skills_max_active,
+                        max_resource_bytes=self.settings.skills_max_resource_bytes_per_run,
+                    )
+                    try:
+                        activated = await activation_service.activate(
+                            run_id,
+                            identity,
+                            initiator="model",
+                            reason=decision.reasoning_summary,
+                        )
+                        self.model_client.bind_skills(
+                            await activation_service.prompt_blocks(run_id)
+                        )
+                        observation = AgentObservation(
+                            kind="skill_activation",
+                            status="completed",
+                            summary=f"已激活 {identity}",
+                            data={
+                                "activation": activated["activation"],
+                                "resources": activated["resources"],
+                                "mode_recommendation": activated.get(
+                                    "mode_recommendation"
+                                ),
+                            },
+                        )
+                    except ValueError as exc:
+                        observation = AgentObservation(
+                            kind="skill_activation",
+                            status="failed",
+                            summary="Skill 激活被拒绝。",
+                            data={"qualified_identity": identity},
+                            error={"category": "skill_activation", "message": str(exc)},
+                        )
+                observations.append(observation.model_dump(mode="json"))
+                await repo.update_agent_turn(
+                    turn.id,
+                    status="completed" if observation.status == "completed" else "failed",
+                    observation=observation.model_dump(mode="json"),
+                )
+                await repo.session.commit()
+                continue
+            if decision.decision_type == "read_skill_resource":
+                identity = decision.skill_identity or ""
+                path = decision.skill_resource_path or ""
+                activation_service = SkillActivationService(
+                    repo.session,
+                    max_active=self.settings.skills_max_active,
+                    max_resource_bytes=self.settings.skills_max_resource_bytes_per_run,
+                )
+                try:
+                    content = await activation_service.read_resource(
+                        run_id, identity, path
+                    )
+                    observation = AgentObservation(
+                        kind="skill_resource",
+                        status="completed",
+                        summary=f"已读取 {identity} 的 {path}",
+                        data={
+                            "qualified_identity": identity,
+                            "path": path,
+                            "content": content.decode("utf-8"),
+                        },
+                    )
+                except (UnicodeDecodeError, ValueError) as exc:
+                    observation = AgentObservation(
+                        kind="skill_resource",
+                        status="failed",
+                        summary="Skill 资源读取被拒绝。",
+                        data={"qualified_identity": identity, "path": path},
+                        error={"category": "skill_resource", "message": str(exc)},
+                    )
+                observations.append(observation.model_dump(mode="json"))
+                await repo.update_agent_turn(
+                    turn.id,
+                    status="completed" if observation.status == "completed" else "failed",
+                    observation=observation.model_dump(mode="json"),
+                )
+                await repo.session.commit()
+                continue
             if not quick_mode:
                 await repo.add_event(
                     run_id,
@@ -1190,34 +1370,14 @@ class AgentLoop:
                         matched,
                     ) = await evaluate_node_completion(active_node, decision, candidate_answer)
                     if not matched:
-                        if completion_observation is not None:
-                            observations.append(completion_observation.model_dump(mode="json"))
-                        if completion_evaluation is not None:
-                            await persist_progress(completion_evaluation)
-                        await repo.update_agent_turn(
-                            turn.id,
-                            status="failed",
-                            observation=completion_observation.model_dump(mode="json")
-                            if completion_observation
-                            else None,
-                            evaluation=completion_evaluation.model_dump(mode="json")
-                            if completion_evaluation
-                            else None,
-                            phase="failed",
-                        )
-                        await maybe_reflect(
-                            "expectation_mismatch",
-                            {
-                                "last_observation": completion_observation.model_dump(mode="json")
-                                if completion_observation
-                                else {},
-                                "runtime_context": context,
-                                "retry_count": 0,
-                            },
+                        await persist_completion_mismatch(
+                            turn, completion_observation, completion_evaluation, context
                         )
                         continue
                     if completion_observation is not None:
                         observations.append(completion_observation.model_dump(mode="json"))
+                    if completion_evaluation is not None:
+                        await persist_progress(completion_evaluation)
                     await PlanService(plan_repository).complete_node(
                         run_id,
                         active_node.id,
@@ -1260,34 +1420,14 @@ class AgentLoop:
                     matched,
                 ) = await evaluate_node_completion(active_node, decision)
                 if not matched:
-                    if completion_observation is not None:
-                        observations.append(completion_observation.model_dump(mode="json"))
-                    if completion_evaluation is not None:
-                        await persist_progress(completion_evaluation)
-                    await repo.update_agent_turn(
-                        turn.id,
-                        status="failed",
-                        observation=completion_observation.model_dump(mode="json")
-                        if completion_observation
-                        else None,
-                        evaluation=completion_evaluation.model_dump(mode="json")
-                        if completion_evaluation
-                        else None,
-                        phase="failed",
-                    )
-                    await maybe_reflect(
-                        "expectation_mismatch",
-                        {
-                            "last_observation": completion_observation.model_dump(mode="json")
-                            if completion_observation
-                            else {},
-                            "runtime_context": context,
-                            "retry_count": 0,
-                        },
+                    await persist_completion_mismatch(
+                        turn, completion_observation, completion_evaluation, context
                     )
                     continue
                 if completion_observation is not None:
                     observations.append(completion_observation.model_dump(mode="json"))
+                if completion_evaluation is not None:
+                    await persist_progress(completion_evaluation)
                 await PlanService(plan_repository).complete_node(
                     run_id,
                     active_node.id,
@@ -1757,7 +1897,23 @@ class AgentLoop:
                         workspace_mode=workspace_mount_mode(effect_plan),
                         effect_plan=effect_plan.model_dump(mode="json"),
                         runtime_identity_id=runtime_identity.id,
+                        skill_bindings=tuple(context.get("active_skills", [])),
+                        skill_draft_test=bool(context.get("skill_draft_test")),
+                        skill_input_provider=activation_service,
                     )
+                    if execution_context.skill_bindings:
+                        await repo.add_event(
+                            run_id,
+                            "skill.attributed_action",
+                            {
+                                "tool_call_id": call.id,
+                                "plan_node_id": active_node.id
+                                if active_node is not None
+                                else None,
+                                "skills": list(execution_context.skill_bindings),
+                                "effect_plan": execution_context.effect_plan,
+                            },
+                        )
                     output = await tool.run(decision.tool_input, context=execution_context)
                 except ToolExecutionError as exc:
                     await repo.finish_tool_call(call.id, error=exc.to_payload())

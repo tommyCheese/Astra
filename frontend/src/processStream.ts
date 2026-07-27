@@ -1,7 +1,7 @@
 import type { RunStreamEvent } from './api';
 import type { RunView } from './types';
 
-export type ProcessItemStatus = 'running' | 'completed' | 'failed' | 'cancelled';
+type ProcessItemStatus = 'running' | 'completed' | 'failed' | 'cancelled';
 
 export type ProcessStreamItem = {
   id: string;
@@ -146,40 +146,34 @@ export function reduceProcessEvent(state: ProcessStreamState, event: RunStreamEv
       status: 'running',
       turnIndex,
     });
-  } else if (event.type === 'reasoning.summary.delta') {
+  } else if (
+    event.type === 'reasoning.summary.delta'
+    || event.type === 'reasoning.summary.completed'
+    || event.type === 'agent_turn.created'
+  ) {
+    const completed = event.type !== 'reasoning.summary.delta';
     const id = `reasoning-${turnIndex ?? 0}`;
     if (quickMode && id !== 'reasoning-0') {
       items = items.filter((item) => item.id !== 'reasoning-0' || Boolean(item.detail));
     }
     const existing = items.find((item) => item.id === id);
     if (!quickMode && turnIndex !== undefined) items = ensureDecisionGroup(items, turnIndex);
+    const reflected = completed && safeString(payload.decision_type) === 'reflect';
     items = upsert(items, {
       id,
-      kind: 'reasoning',
-      title: '思考',
-      detail: `${existing?.detail ?? ''}${safeString(payload.delta)}`.slice(0, 4000),
-      status: 'running',
+      kind: reflected ? 'reflection' : 'reasoning',
+      title: reflected ? '反思' : '思考',
+      detail: completed
+        ? safeString(payload.summary) || safeString(payload.reasoning_summary) || existing?.detail
+        : `${existing?.detail ?? ''}${safeString(payload.delta)}`.slice(0, 4000),
+      status: completed ? 'completed' : 'running',
       turnIndex,
-      groupId: quickMode || turnIndex === undefined ? undefined : decisionGroupId(turnIndex),
-    });
-  } else if (event.type === 'reasoning.summary.completed' || event.type === 'agent_turn.created') {
-    const id = `reasoning-${turnIndex ?? 0}`;
-    if (quickMode && id !== 'reasoning-0') {
-      items = items.filter((item) => item.id !== 'reasoning-0' || Boolean(item.detail));
-    }
-    const existing = items.find((item) => item.id === id);
-    if (!quickMode && turnIndex !== undefined) items = ensureDecisionGroup(items, turnIndex);
-    items = upsert(items, {
-      id,
-      kind: safeString(payload.decision_type) === 'reflect' ? 'reflection' : 'reasoning',
-      title: safeString(payload.decision_type) === 'reflect' ? '反思' : '思考',
-      detail: safeString(payload.summary) || safeString(payload.reasoning_summary) || existing?.detail,
-      status: 'completed',
-      turnIndex,
-      toolCallId: safeString(payload.tool_call_id) || existing?.toolCallId,
       groupId: quickMode
         ? undefined
-        : turnIndex === undefined ? existing?.groupId : decisionGroupId(turnIndex),
+        : turnIndex === undefined
+          ? completed ? existing?.groupId : undefined
+          : decisionGroupId(turnIndex),
+      ...(completed && { toolCallId: safeString(payload.tool_call_id) || existing?.toolCallId }),
     });
   } else if (event.type === 'tool_call.started') {
     const toolCallId = safeString(payload.tool_call_id);

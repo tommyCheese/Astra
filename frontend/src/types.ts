@@ -1,11 +1,11 @@
-export type RunEvent = {
+type RunEvent = {
   id: number;
   type: string;
   payload: Record<string, unknown>;
   created_at: string;
 };
 
-export type StepView = {
+type StepView = {
   id: string;
   plan_id?: string | null;
   plan_version?: number | null;
@@ -60,7 +60,7 @@ export type PlanGraphEdge = {
   dependency_type: string;
 };
 
-export type NodeExecutionPhase =
+type NodeExecutionPhase =
   | 'claimed'
   | 'running'
   | 'waiting_resource'
@@ -72,7 +72,7 @@ export type NodeExecutionPhase =
   | 'cancelled'
   | 'result_unknown';
 
-export type NodeExecutionStatus =
+type NodeExecutionStatus =
   | 'active'
   | 'waiting'
   | 'completed'
@@ -80,7 +80,7 @@ export type NodeExecutionStatus =
   | 'cancelled'
   | 'blocked';
 
-export type ResourceLease = {
+type ResourceLease = {
   id: string;
   node_execution_id: string;
   resource_summary: string;
@@ -92,7 +92,7 @@ export type ResourceLease = {
   release_reason?: string | null;
 };
 
-export type BudgetReservation = {
+type BudgetReservation = {
   id: string;
   node_execution_id: string;
   budget_kind: string;
@@ -125,7 +125,7 @@ export type NodeExecution = {
   budget_reservations?: BudgetReservation[];
 };
 
-export type ParallelismSummary = {
+type ParallelismSummary = {
   requested_slots: number;
   total_slots: number;
   used_slots: number;
@@ -149,7 +149,7 @@ export type PlanGraphSnapshot = {
   parallelism?: ParallelismSummary | null;
 };
 
-export type LegacyPlanGraph = {
+type LegacyPlanGraph = {
   id: string;
   run_id?: string;
   version?: number;
@@ -196,7 +196,7 @@ export type PlanGraphDiff = {
   }>;
 };
 
-export type ToolCallView = {
+type ToolCallView = {
   id: string;
   step_id?: string | null;
   plan_node_id?: string | null;
@@ -248,7 +248,7 @@ export type ArtifactView = {
   content_url?: string | null;
 };
 
-export type AgentTurnView = {
+type AgentTurnView = {
   id: string;
   run_id: string;
   plan_node_id?: string | null;
@@ -277,7 +277,7 @@ export type AgentTurnView = {
   updated_at: string;
 };
 
-export type MemoryView = {
+type MemoryView = {
   id: string;
   run_id?: string | null;
   scope: string;
@@ -299,7 +299,7 @@ export type ChatMessage = {
   metadata: Record<string, unknown>;
 };
 
-export type VerificationReport = {
+type VerificationReport = {
   status: string;
   assurance_level?: 'basic' | 'full';
   source_count: number;
@@ -311,7 +311,7 @@ export type VerificationReport = {
   notes: string[];
 };
 
-export type SandboxJobView = {
+type SandboxJobView = {
   id: string;
   tool_call_id?: string | null;
   status: string;
@@ -328,7 +328,7 @@ export type SandboxJobView = {
   output_artifact_ids: string[];
 };
 
-export type FailedSource = {
+type FailedSource = {
   url?: string | null;
   title?: string | null;
   type?: string | null;
@@ -340,7 +340,7 @@ export type FailedSource = {
   details: Record<string, unknown>;
 };
 
-export type SourceQuality = {
+type SourceQuality = {
   url: string;
   title?: string | null;
   quality_score?: number | null;
@@ -348,7 +348,7 @@ export type SourceQuality = {
   warnings: string[];
 };
 
-export type CompletionDecision = {
+type CompletionDecision = {
   state: 'continue' | 'completed' | 'completed_with_warnings' | 'waiting_user' | 'blocked' | 'failed';
   reason: string;
   unmet_criteria: string[];
@@ -356,7 +356,7 @@ export type CompletionDecision = {
   required_user_action?: string | null;
 };
 
-export type RunError = {
+type RunError = {
   type: string;
   code: string;
   message: string;
@@ -365,7 +365,7 @@ export type RunError = {
   details: Record<string, unknown>;
 };
 
-export type RunResult = {
+type RunResult = {
   summary: string;
   answer_mode?: 'standard' | 'trusted';
   assurance_level?: 'basic' | 'full';
@@ -451,6 +451,7 @@ export type ConversationSummary = {
   id: string;
   title: string;
   title_source: string;
+  preferred_answer_mode?: 'standard' | 'trusted';
   pinned_at: string | null;
   created_at: string;
   updated_at: string;
@@ -462,5 +463,5 @@ export type ConversationSummary = {
 export type ConversationView = ConversationSummary & { runs: RunView[] };
 export type ConversationShare = { url: string; created_at: string; updated_at: string };
 export type ConversationShareSummary = ConversationShare & { conversation_id: string; title: string; message_count: number };
-export type SharedProcessItem = { kind: 'reasoning' | 'tool' | 'reflection' | 'verification'; title: string; detail: string; status: 'completed' | 'failed' | 'cancelled' };
+type SharedProcessItem = { kind: 'reasoning' | 'tool' | 'reflection' | 'verification'; title: string; detail: string; status: 'completed' | 'failed' | 'cancelled' };
 export type SharedConversation = { title: string; messages: Array<{ role: 'user' | 'assistant' | 'process'; content: string; items: SharedProcessItem[] }>; shared_at: string; updated_at: string };

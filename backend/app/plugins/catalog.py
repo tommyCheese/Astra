@@ -82,11 +82,8 @@ class PluginCatalogBuilder:
             {provider_id: frozenset(digests) for provider_id, digests in allowed_providers.items()}
         )
 
-    async def build(self) -> PluginCatalog:
-        candidates = discover_candidates(self.sources)
-        providers: dict[str, ProviderStatus] = {}
-        contributions: list[PluginContribution] = []
-        for candidate in candidates:
+    def _load_candidates(self, providers: dict[str, ProviderStatus]):
+        for candidate in discover_candidates(self.sources):
             descriptor = candidate.descriptor
             self._reject_duplicate_provider(providers, descriptor)
             providers[descriptor.provider_id] = ProviderStatus(
@@ -100,6 +97,12 @@ class PluginCatalogBuilder:
             providers[descriptor.provider_id] = ProviderStatus(
                 descriptor, PluginLifecycleState.loaded
             )
+            yield descriptor, contribution, health_target
+
+    async def build(self) -> PluginCatalog:
+        providers: dict[str, ProviderStatus] = {}
+        contributions: list[PluginContribution] = []
+        for descriptor, contribution, health_target in self._load_candidates(providers):
             healthy, reason = await self._health(health_target)
             if not healthy:
                 providers[descriptor.provider_id] = ProviderStatus(
@@ -122,27 +125,13 @@ class PluginCatalogBuilder:
 
     def build_static(self) -> PluginCatalog:
         """Assemble configured built-ins during synchronous application construction."""
-        candidates = discover_candidates(self.sources)
         providers: dict[str, ProviderStatus] = {}
         contributions: list[PluginContribution] = []
-        for candidate in candidates:
-            descriptor = candidate.descriptor
-            self._reject_duplicate_provider(providers, descriptor)
-            providers[descriptor.provider_id] = ProviderStatus(
-                descriptor, PluginLifecycleState.discovered
-            )
-            self._verify(candidate)
-            providers[descriptor.provider_id] = ProviderStatus(
-                descriptor, PluginLifecycleState.verified
-            )
-            contribution, health_target = self._load(candidate)
+        for descriptor, contribution, health_target in self._load_candidates(providers):
             if isinstance(health_target, HealthProbe):
                 raise PluginCatalogError(
                     "health_check_required", "Provider requires asynchronous health verification"
                 )
-            providers[descriptor.provider_id] = ProviderStatus(
-                descriptor, PluginLifecycleState.loaded
-            )
             if not descriptor.enabled:
                 providers[descriptor.provider_id] = ProviderStatus(
                     descriptor, PluginLifecycleState.disabled

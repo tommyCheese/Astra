@@ -18,7 +18,6 @@ from app.db.models import (
     DataFlowStateRecord,
     MemoryRecord,
     ModelInvocationRecord,
-    NodeExecutionRecord,
     PlanRecord,
     RunEventRecord,
     RunRecord,
@@ -33,7 +32,7 @@ from app.db.models import (
     WorkspaceFileRecord,
     utc_now,
 )
-from app.repositories.runs import build_chat_messages, run_to_view
+from app.repositories.runs import build_chat_messages, run_detail_options, run_to_view
 
 TERMINAL_STATUSES = {"completed", "completed_with_warnings", "blocked", "failed", "cancelled"}
 
@@ -68,31 +67,25 @@ class ConversationRepository:
 
     async def _load_run(self, run_id: str) -> RunRecord | None:
         result = await self.session.execute(
-            select(RunRecord).where(RunRecord.id == run_id).options(
-                selectinload(RunRecord.task), selectinload(RunRecord.steps),
-                selectinload(RunRecord.tool_calls), selectinload(RunRecord.artifacts),
-                selectinload(RunRecord.events), selectinload(RunRecord.turns),
-                selectinload(RunRecord.memories), selectinload(RunRecord.sandbox_jobs),
-                selectinload(RunRecord.approval_requests),
-                selectinload(RunRecord.approval_grants),
-                selectinload(RunRecord.node_executions).selectinload(
-                    NodeExecutionRecord.resource_leases
-                ),
-                selectinload(RunRecord.node_executions).selectinload(
-                    NodeExecutionRecord.budget_reservations
-                ),
-                selectinload(RunRecord.plans).selectinload(PlanRecord.nodes),
-                selectinload(RunRecord.plans).selectinload(PlanRecord.edges),
-            )
+            select(RunRecord).where(RunRecord.id == run_id).options(*run_detail_options())
         )
         return result.scalar_one_or_none()
 
-    async def update(self, task: TaskRecord, *, title: str | None = None, pinned: bool | None = None) -> TaskRecord:
+    async def update(
+        self,
+        task: TaskRecord,
+        *,
+        title: str | None = None,
+        pinned: bool | None = None,
+        preferred_answer_mode: str | None = None,
+    ) -> TaskRecord:
         if title is not None:
             task.title = title
             task.title_source = "user"
         if pinned is not None:
             task.pinned_at = utc_now() if pinned else None
+        if preferred_answer_mode is not None:
+            task.preferred_answer_mode = preferred_answer_mode
         task.updated_at = utc_now()
         await self.session.commit()
         await self.session.refresh(task)
@@ -261,6 +254,7 @@ def conversation_summary(task: TaskRecord) -> dict:
     latest = runs[-1] if runs else None
     return {
         "id": task.id, "title": task.title, "title_source": task.title_source or "auto",
+        "preferred_answer_mode": task.preferred_answer_mode or "standard",
         "pinned_at": task.pinned_at, "created_at": task.created_at, "updated_at": task.updated_at,
         "last_run_status": latest.status if latest else None,
         "last_message_preview": (latest.summary or latest.model_policy.get("conversation_goal", "")) if latest else "",

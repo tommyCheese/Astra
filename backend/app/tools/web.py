@@ -292,7 +292,7 @@ class WebSearchTool(Tool):
             "warnings": warnings,
         }
 
-    async def _bing_search(self, query: str, tool_input: dict[str, Any]) -> dict[str, Any]:
+    def _search_parameters(self, tool_input: dict[str, Any]) -> tuple[int, str, str]:
         try:
             num_results = int(
                 tool_input.get("num_results") or self.settings.google_search_result_count
@@ -302,6 +302,10 @@ class WebSearchTool(Tool):
         num_results = max(1, min(num_results, 10))
         language = str(tool_input.get("language") or self.settings.google_search_language or "")
         region = str(tool_input.get("region") or self.settings.google_search_region or "")
+        return num_results, language, region
+
+    async def _bing_search(self, query: str, tool_input: dict[str, Any]) -> dict[str, Any]:
+        num_results, language, region = self._search_parameters(tool_input)
         try:
             async with httpx.AsyncClient(
                 timeout=self.spec.timeout_seconds,
@@ -334,15 +338,7 @@ class WebSearchTool(Tool):
         }
 
     async def _duckduckgo_search(self, query: str, tool_input: dict[str, Any]) -> dict[str, Any]:
-        try:
-            num_results = int(
-                tool_input.get("num_results") or self.settings.google_search_result_count
-            )
-        except (TypeError, ValueError) as exc:
-            raise ToolExecutionError("invalid_input", "num_results must be an integer") from exc
-        num_results = max(1, min(num_results, 10))
-        language = str(tool_input.get("language") or self.settings.google_search_language or "")
-        region = str(tool_input.get("region") or self.settings.google_search_region or "")
+        num_results, language, region = self._search_parameters(tool_input)
         params = {"q": query}
         if region:
             params["kl"] = region

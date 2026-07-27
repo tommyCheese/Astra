@@ -6,9 +6,10 @@ from app.agent_profile import AgentProfile, load_agent_profile
 from app.core.config import Settings
 from app.repositories.plans import PlanRepository
 from app.repositories.runs import RunRepository
-from app.runner.model_client import build_model_client
-from app.runner.planning import PlanValidator
+from app.runner.model_client import ModelOutputError, build_model_client
+from app.runner.planning import PlanValidationError, PlanValidator
 from app.schemas.agent import (
+    PlanDraft,
     PlanNodeStatus,
     PlanStatus,
     ReasoningPolicySnapshot,
@@ -55,6 +56,11 @@ async def revise_waiting_plan(
         )
         client.bind_agent_profile(profile)
         client.bind_reasoning_effort(policy.effective.reasoning_effort)
+        registry = build_tool_registry(settings)
+        capabilities = set(registry.specs())
+        for spec in registry.specs().values():
+            capabilities.update(spec.capabilities)
+        criterion_ids = [item.id for item in contract.success_criteria]
         revision_context = {
             "original_goal": contract.original_goal,
             "revision_request": request.strip(),
@@ -70,23 +76,50 @@ async def revise_waiting_plan(
             ],
             "instruction": (
                 "Generate a complete replacement plan. Preserve a node_key only when the "
-                "revised node represents the same logical work."
+                "revised node represents the same logical work. Use only the supplied success "
+                "criterion IDs and available capabilities. Keep the dependency graph acyclic "
+                "and within the supplied maximum depth."
             ),
+            "validation_constraints": {
+                "success_criteria_ids": criterion_ids,
+                "available_capabilities": sorted(capabilities),
+                "maximum_plan_depth": policy.effective.budgets.max_plan_depth,
+                "maximum_nodes": max(1, policy.effective.budgets.max_plan_depth * 4),
+            },
         }
-        draft = await client.plan(
-            json.dumps(revision_context, ensure_ascii=False, separators=(",", ":")),
-            contract=contract,
-        )
-        registry = build_tool_registry(settings)
-        capabilities = set(registry.specs())
-        for spec in registry.specs().values():
-            capabilities.update(spec.capabilities)
-        PlanValidator().validate(
-            draft,
-            task_contract=contract,
-            available_capabilities=capabilities,
-            budgets=policy.effective.budgets,
-        )
+        validator = PlanValidator()
+        draft: PlanDraft | None = None
+        validation_error: str | None = None
+        for attempt in range(2):
+            attempt_context = dict(revision_context)
+            if validation_error:
+                attempt_context["validation_feedback"] = (
+                    f"The previous replacement plan was rejected: {validation_error}. "
+                    "Return a corrected complete PlanDraft."
+                )
+            try:
+                candidate = await client.plan(
+                    json.dumps(attempt_context, ensure_ascii=False, separators=(",", ":")),
+                    contract=contract,
+                )
+                candidate = _normalize_revision_metadata(
+                    candidate,
+                    criterion_ids=criterion_ids,
+                    available_capabilities=capabilities,
+                )
+                draft = validator.validate(
+                    candidate,
+                    task_contract=contract,
+                    available_capabilities=capabilities,
+                    budgets=policy.effective.budgets,
+                )
+                break
+            except (ModelOutputError, PlanValidationError) as exc:
+                validation_error = str(exc)
+                if attempt == 1:
+                    raise
+        if draft is None:
+            raise PlanRevisionError("Plan revision did not produce a validated draft")
         current_by_key = {node.node_key: node for node in current.nodes}
         lineage = {
             node.node_key: current_by_key[node.node_key].id
@@ -135,6 +168,32 @@ def _dependency_keys(plan, node_id: str) -> list[str]:
         for edge in plan.edges
         if edge.successor_id == node_id and edge.predecessor_id in nodes
     )
+
+
+def _normalize_revision_metadata(
+    draft: PlanDraft,
+    *,
+    criterion_ids: list[str],
+    available_capabilities: set[str],
+) -> PlanDraft:
+    valid_criteria = set(criterion_ids)
+    nodes = []
+    for node in draft.nodes:
+        criteria = [
+            criterion
+            for criterion in node.success_criteria_refs
+            if criterion in valid_criteria
+        ] or list(criterion_ids)
+        capabilities = [
+            capability
+            for capability in node.required_capabilities
+            if capability in available_capabilities
+        ]
+        nodes.append(node.model_copy(update={
+            "success_criteria_refs": list(dict.fromkeys(criteria)),
+            "required_capabilities": list(dict.fromkeys(capabilities)),
+        }))
+    return draft.model_copy(update={"nodes": nodes})
 
 
 def _preserved_state(node) -> dict[str, object]:

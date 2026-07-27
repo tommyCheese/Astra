@@ -12,6 +12,7 @@ dependencies = [
   "httpx>=0.27.0",
   "pydantic>=2.6.0",
   "pydantic-settings>=2.2.0",
+  "PyYAML>=6.0.0",
   "sqlalchemy[asyncio]>=2.0.0",
   "trafilatura>=2.0.0,<3.0.0",
   "uvicorn[standard]>=0.27.0"
@@ -27,6 +28,7 @@ include = ["app*"]
 
 [tool.setuptools.package-data]
 "app.agent_profile" = ["*.md"]
+"app.builtin_skills" = ["**/*"]
 
 [project.optional-dependencies]
 dev = [

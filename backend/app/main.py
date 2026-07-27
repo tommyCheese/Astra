@@ -15,6 +15,7 @@ from app.api.permissions import router as permissions_router
 from app.api.preferences import router as preferences_router
 from app.api.runs import router as runs_router
 from app.api.runtime import router as runtime_router
+from app.api.skills import router as skills_router
 from app.api.tools import router as tools_router
 from app.api.usage import router as usage_router
 from app.core.config import Settings, get_settings
@@ -29,6 +30,7 @@ from app.db.mode_upgrade import validate_mode_upgrade
 from app.db.session import SessionLocal
 from app.repositories.usage import UsageRepository
 from app.runtime_profiles import RuntimeProfileService
+from app.skills.storage import ensure_builtin_skills
 
 logger = logging.getLogger("astra.http")
 
@@ -49,6 +51,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             await app.state.runtime_profile_service.startup()
             async with SessionLocal() as session:
                 await validate_mode_upgrade(session)
+                await ensure_builtin_skills(session, settings)
+                await session.commit()
                 interrupted = await UsageRepository(session).reconcile_interrupted()
                 if interrupted:
                     logger.warning("usage.reconciled_interrupted count=%s", interrupted)
@@ -79,6 +83,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(runtime_router)
     app.include_router(tools_router)
     app.include_router(usage_router)
+    app.include_router(skills_router)
 
     @app.middleware("http")
     async def local_api_boundary(request: Request, call_next):

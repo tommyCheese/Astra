@@ -2,11 +2,12 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 import TrustedExecutionGraph from '../src/TrustedExecutionGraph';
 import { complexDagRunFixture } from '../src/dev/complexDagFixture';
+import { I18nProvider } from '../src/i18n';
 
 describe('TrustedExecutionGraph complex DAG', () => {
   it('renders every branch, merge and transitively blocked node', async () => {
     const { container } = render(
-      <TrustedExecutionGraph run={complexDagRunFixture} title="复杂多路可信执行图谱" />,
+      <I18nProvider><TrustedExecutionGraph run={complexDagRunFixture} title="复杂多路可信执行图谱" /></I18nProvider>,
     );
 
     expect(screen.getByRole('region', { name: '复杂多路可信执行图谱' })).toBeInTheDocument();
@@ -22,7 +23,7 @@ describe('TrustedExecutionGraph complex DAG', () => {
     expect(container.querySelector('.trusted-plan-node.status-running')).toHaveAttribute('aria-current', 'step');
     expect(container.querySelector('.trusted-plan-node.status-completed')).toHaveAttribute('data-node-status', 'completed');
     expect(container.querySelector('.trusted-plan-node.status-completed')).not.toHaveAttribute('aria-current');
-    expect(screen.getByText(/2 个活动节点 · 槽位 2\/3/)).toBeInTheDocument();
+    expect(screen.getByText(/2 个活动节点 · 并行 2\/3/)).toBeInTheDocument();
     expect(screen.getByText('等待资源释放')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '定位活动节点 (3)' })).toBeInTheDocument();
     expect(screen.queryByText('结构化节点列表')).not.toBeInTheDocument();

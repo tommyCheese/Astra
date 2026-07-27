@@ -421,6 +421,15 @@ class ToolThenFinalizeClient(MockModelClient):
         return await super().reflect(goal, context)
 
 
+class DirectFinalizeClient(MockModelClient):
+    async def decide_with_answer(self, goal, context, *, on_delta=None, on_reasoning_delta=None):
+        return AgentDecision(
+            decision_type="finalize",
+            reasoning_summary="直接回复用户",
+            node_result={"answer": "可信模式运行正常"},
+        ), FinalAnswer(summary="可信模式运行正常")
+
+
 class ArtifactReferencingClient(MockModelClient):
     def __init__(self, artifact_ids: list[str]):
         self.artifact_ids = artifact_ids
@@ -729,6 +738,28 @@ async def test_reflection_patch_updates_persisted_agent_state(session):
     events = await repo.list_events(run.id)
     created = next(event for event in events if event.type == "reflection.created")
     assert created.payload["state_version"] == 3
+
+
+async def test_finalize_node_completion_persists_success_criteria(session):
+    settings = Settings(model_provider="mock")
+    repo = RunRepository(session)
+    run = await repo.create_task_run(
+        "请直接回复：可信模式运行正常。",
+        settings.model_policy,
+        reasoning_policy=compiled_policy(),
+    )
+    contract = build_default_contract(run.task.description)
+    await initialize_canonical_plan(repo, run, contract)
+
+    output = await AgentLoop(
+        settings,
+        model_client=DirectFinalizeClient(),
+        tool_registry=fake_web_registry(),
+    ).run(repo, run.id, run.task.description)
+
+    loaded = await repo.require_run(run.id)
+    assert output["status"] == "completed"
+    assert loaded.agent_state["task_contract"]["success_criteria"][0]["status"] == "satisfied"
 
 
 async def test_every_turn_reflection_runs_after_successful_non_terminal_turn(session):

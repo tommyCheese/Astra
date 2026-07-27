@@ -26,7 +26,7 @@ export type PlanGraphLayout = {
 const terminalDependencyStatuses = new Set<PlanNodeStatus>(['completed', 'skipped']);
 const failedDependencyStatuses = new Set<PlanNodeStatus>(['failed', 'blocked']);
 
-export function graphSnapshot(run: RunView): PlanGraphSnapshot | null {
+function graphSnapshot(run: RunView): PlanGraphSnapshot | null {
   const graph = run.answer_mode === 'trusted' ? run.plan_graph : undefined;
   return graph && 'id' in graph && typeof graph.id === 'string' ? graph as PlanGraphSnapshot : null;
 }

@@ -6,7 +6,7 @@ from typing import Any
 
 from app.core.config import Settings
 from app.sandbox.runtime import SandboxError, SandboxRequest
-from app.tools.base import Tool, ToolExecutionError, ToolSpec
+from app.tools.base import Tool, ToolExecutionError, ToolSpec, materialize_skill_inputs
 
 MAX_SANDBOX_REQUEST_BYTES = 256 * 1024
 MAX_SANDBOX_CONFIG_BYTES = 64 * 1024
@@ -92,6 +92,14 @@ class SandboxedWebTool(Tool):
             shutil.rmtree(root, ignore_errors=True)
             raise ToolExecutionError("invalid_input", "Sandbox tool configuration is too large")
         (input_dir / "runtime-config.json").write_bytes(runtime_config)
+        try:
+            skill_inputs = await materialize_skill_inputs(context, input_dir)
+        except ValueError as exc:
+            shutil.rmtree(root, ignore_errors=True)
+            raise ToolExecutionError(
+                "sandbox_policy_violation",
+                "Skill sandbox inputs failed immutable binding validation",
+            ) from exc
         request = SandboxRequest(
             template=self.settings.sandbox_web_runtime_image,
             command=["/opt/astra/bin/tool-runtime"],
@@ -104,7 +112,11 @@ class SandboxedWebTool(Tool):
             allow_internet_access=True,
             record_stdout=False,
             environment={"TZ": "UTC", "PYTHONHASHSEED": "0"},
-            metadata={"tool": self.spec.name, "protocol": "1"},
+            metadata={
+                "tool": self.spec.name,
+                "protocol": "1",
+                "skill_input_count": str(len(skill_inputs)),
+            },
         )
         try:
             _job, _refs, result = await context.sandbox_service.execute(

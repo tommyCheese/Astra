@@ -96,6 +96,8 @@ class ReadOnlyAgentNodeExecutor:
                 },
                 "memory_reads": [],
                 "evidence_pack": _evidence_pack(observations),
+                "skill_catalog": list(context.skill_catalog),
+                "active_skills": list(context.active_skills),
             }
             decision, candidate_answer = await self.model_client.decide_with_answer(
                 goal,
@@ -294,6 +296,18 @@ class ReadOnlyAgentNodeExecutor:
                 },
             )
             try:
+                if context.active_skills:
+                    await repository.add_event(
+                        context.run_id,
+                        "skill.attributed_action",
+                        {
+                            "tool_call_id": call.id,
+                            "plan_node_id": context.plan_node_id,
+                            "node_execution_id": context.execution_id,
+                            "skills": list(context.active_skills),
+                            "effect_plan": effect_plan.model_dump(mode="json"),
+                        },
+                    )
                 output = await tool.run(
                     decision.tool_input,
                     context=ToolExecutionContext(
@@ -305,6 +319,8 @@ class ReadOnlyAgentNodeExecutor:
                         sandbox_service=None,
                         task_id=run.task_id,
                         effect_plan=effect_plan.model_dump(mode="json"),
+                        skill_bindings=tuple(context.active_skills),
+                        skill_draft_test=context.skill_draft_test,
                     ),
                 )
             except ToolExecutionError as exc:

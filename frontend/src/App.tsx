@@ -1,19 +1,23 @@
 import { Component, CSSProperties, FormEvent, KeyboardEvent as ReactKeyboardEvent, lazy, MouseEvent, PointerEvent as ReactPointerEvent, ReactNode, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { AstraApiError, ApiErrorPayload, buildRuntime, cancelRun, cancelRuntimeBuild, confirmPlanExecution, createConversationShare, createRun, decideToolApproval, deleteConversation, getConversation, getConversationStrategy, getPermissionCenter, getRun, getRuntimeProfile, getToolSettings, listConversationShares, listConversations, listLibraryFiles, listRuns, resumeRun, revisePlan, revokeConversationShare, revokePermissionGrant, streamRunEvents, updateConversation, updateConversationStrategy, updateToolSettings, type ConversationStrategyPreferences, type LibraryFile, type PermissionCenterView, type RunModelConfig, type ToolSetting } from './api';
+import { AstraApiError, ApiErrorPayload, buildRuntime, cancelRun, cancelRuntimeBuild, confirmPlanExecution, createConversationShare, createRun, decideToolApproval, deleteConversation, getConversation, getConversationStrategy, getPermissionCenter, getRun, getRunSkills, getRuntimeProfile, getToolSettings, listConversationShares, listConversations, listLibraryFiles, listRuns, listSkills, resumeRun, revisePlan, revokeConversationShare, revokePermissionGrant, streamRunEvents, updateConversation, updateConversationStrategy, updateToolSettings, type ConversationStrategyPreferences, type LibraryFile, type PermissionCenterView, type RunModelConfig, type RunSkillsAudit, type SkillSummary, type ToolSetting } from './api';
 import { buildAuditLog, buildIdentityPresentation, type IdentityGroup } from './auditPresentation';
 import { I18nProvider, useI18n } from './i18n';
 import { ThemeProvider, useTheme } from './theme';
 import type { ArtifactView, ChatMessage, ConversationShare, ConversationShareSummary, ConversationSummary, PendingApproval, RunView } from './types';
 import { UsageDashboard } from './UsageDashboard';
 import { GraphPaneWindowActions } from './GraphPaneWindowActions';
+import { CloseButton } from './CloseButton';
 import { buildPresentation, HISTORY_LIMIT, normalizeRunView, type ConversationEntry } from './conversations';
 import { createOptimisticProcessState, isDecisionGroup, reconcileProcessSnapshot, reduceProcessEvent, type ProcessStreamItem, type ProcessStreamState } from './processStream';
 import { createPlanGraphStreamState, reconcilePlanGraphSnapshot, reducePlanGraphEvent, type PlanGraphStreamState } from './planGraph';
 import type { RunStreamEvent } from './api';
 
 const TrustedExecutionGraph = lazy(() => import('./TrustedExecutionGraph'));
+const SkillWorkbench = lazy(() => import('./SkillWorkbench').then((module) => ({
+  default: module.SkillWorkbench,
+})));
 
 class GraphErrorBoundary extends Component<{ children: ReactNode; fallback: ReactNode }, { failed: boolean }> {
   state = { failed: false };
@@ -62,7 +66,7 @@ function toolLimitForEffort(effort: ConversationStrategyPreferences['reasoning_e
   return current !== null && current >= range.min && current <= range.max ? current : range.defaultValue;
 }
 
-function reasoningEffortLabel(value: ConversationStrategyPreferences['reasoning_effort']): string {
+function reasoningEffortLabel(value: string): string {
   return value === 'fast' ? '快速' : value === 'deep' ? '深入' : '均衡';
 }
 
@@ -97,7 +101,7 @@ function AppContent() {
   const [graphPaneExpanded, setGraphPaneExpanded] = useState(false);
   const [showJumpToLatest, setShowJumpToLatest] = useState(false);
   const [error, setError] = useState<ApiErrorPayload | null>(null);
-  const [view, setView] = useState<'chat' | 'settings' | 'shares' | 'library'>('chat');
+  const [view, setView] = useState<'chat' | 'settings' | 'shares' | 'library' | 'skills'>('chat');
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => readLocalJson<boolean>(STORAGE_KEYS.sidebarCollapsed) ?? false);
   const [sidebarWidth, setSidebarWidth] = useState(loadSidebarWidth);
@@ -107,6 +111,8 @@ function AppContent() {
   const [conversationAction, setConversationAction] = useState<{ kind: 'rename' | 'share' | 'delete'; conversation: ConversationEntry } | null>(null);
   const [modelOpen, setModelOpen] = useState(false);
   const [attachOpen, setAttachOpen] = useState(false);
+  const [availableSkills, setAvailableSkills] = useState<SkillSummary[]>([]);
+  const [selectedSkillIds, setSelectedSkillIds] = useState<string[]>([]);
   const [executionMenuOpen, setExecutionMenuOpen] = useState(false);
   const [executionMode, setExecutionMode] = useState<'default' | 'bypass'>('default');
   const [bypassConfirmOpen, setBypassConfirmOpen] = useState(false);
@@ -182,8 +188,10 @@ function AppContent() {
     const controller = new AbortController();
     void getConversationStrategy(controller.signal).then((strategy) => {
       if (!active || conversationStrategyTouchedRef.current) return;
-      conversationStrategyRef.current = strategy;
-      setAnswerMode(strategy.preferred_answer_mode ?? 'standard');
+      conversationStrategyRef.current = {
+        ...strategy,
+        preferred_answer_mode: conversationStrategyRef.current.preferred_answer_mode,
+      };
       setReasoningEffort(reasoningEffortLabel(strategy.reasoning_effort));
       setToolCallLimit(strategy.max_tool_calls);
       setReflectionEnabled(strategy.reflection_enabled);
@@ -195,6 +203,14 @@ function AppContent() {
       active = false;
       controller.abort();
     };
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    void listSkills().then((items) => {
+      if (active) setAvailableSkills(items.filter((item) => item.enabled && item.active_revision));
+    }).catch(() => { /* Skills remain optional when the feature is unavailable. */ });
+    return () => { active = false; };
   }, []);
 
   useEffect(() => () => {
@@ -220,7 +236,7 @@ function AppContent() {
       if (!summaries.length) throw new Error('no persisted conversations');
       setConversationHistory((local) => summaries.map((summary) => {
         const cached = local.find((item) => item.id === summary.id);
-        return { ...cached, id: summary.id, priorMessages: cached?.priorMessages ?? [], title: summary.title, pinned_at: summary.pinned_at, updated_at: summary.updated_at, has_active_share: summary.has_active_share };
+        return { ...cached, id: summary.id, priorMessages: cached?.priorMessages ?? [], title: summary.title, preferred_answer_mode: summary.preferred_answer_mode, pinned_at: summary.pinned_at, updated_at: summary.updated_at, has_active_share: summary.has_active_share };
       }));
     }).catch(() => listRuns(200).then((runs) => {
       if (!active) return;
@@ -287,8 +303,16 @@ function AppContent() {
     setActiveConversationId(conversationId);
     setConversationHistory((items) => {
       const existing = items.find((item) => item.id === conversationId);
-      return [{ ...existing, id: conversationId, run: nextRun, priorMessages: previousMessages, title: existing?.title ?? conversationTitle(nextRun, t('当前 Web Agent 会话')), updated_at: new Date().toISOString() }, ...items.filter((item) => item.id !== conversationId)].slice(0, HISTORY_LIMIT);
+      return [{ ...existing, id: conversationId, run: nextRun, priorMessages: previousMessages, title: existing?.title ?? conversationTitle(nextRun, t('当前 Web Agent 会话')), preferred_answer_mode: nextRun.answer_mode, updated_at: new Date().toISOString() }, ...items.filter((item) => item.id !== conversationId)].slice(0, HISTORY_LIMIT);
     });
+  }
+
+  function applyConversationAnswerMode(mode: 'standard' | 'trusted') {
+    conversationStrategyRef.current = {
+      ...conversationStrategyRef.current,
+      preferred_answer_mode: mode,
+    };
+    setAnswerMode(mode);
   }
 
   async function openConversation(conversation: ConversationEntry) {
@@ -304,6 +328,9 @@ function AppContent() {
     setAnswerSettling(false);
     deltaBufferRef.current = '';
     processEventBufferRef.current = [];
+    applyConversationAnswerMode(
+      conversation.preferred_answer_mode ?? conversation.run?.answer_mode ?? 'standard'
+    );
     try {
       const detail = await getConversation(conversation.id, controller.signal);
       if (conversationControllerRef.current !== controller) return;
@@ -312,14 +339,16 @@ function AppContent() {
       if (!latest) throw new Error('conversation has no runs');
       setPriorMessages(runs.slice(0, -1).flatMap(buildPresentation));
       setRun(latest);
+      applyConversationAnswerMode(detail.preferred_answer_mode ?? latest.answer_mode ?? 'standard');
       setProcessState(reconcileProcessSnapshot(null, latest));
-      setConversationHistory((items) => items.map((item) => item.id === conversation.id ? { ...item, run: latest, title: detail.title, pinned_at: detail.pinned_at, updated_at: detail.updated_at, has_active_share: detail.has_active_share } : item));
+      setConversationHistory((items) => items.map((item) => item.id === conversation.id ? { ...item, run: latest, title: detail.title, preferred_answer_mode: detail.preferred_answer_mode, pinned_at: detail.pinned_at, updated_at: detail.updated_at, has_active_share: detail.has_active_share } : item));
     } catch (error) {
       if (controller.signal.aborted) return;
       if (conversation.run) {
         const snapshot = normalizeRunView(conversation.run);
         setPriorMessages(conversation.priorMessages);
         setRun(snapshot);
+        applyConversationAnswerMode(conversation.preferred_answer_mode ?? snapshot.answer_mode ?? 'standard');
         setProcessState(reconcileProcessSnapshot(null, snapshot));
       } else {
         setActiveConversationId(previousConversationId);
@@ -337,9 +366,12 @@ function AppContent() {
 
   function persistConversationStrategy(patch: Partial<ConversationStrategyPreferences>) {
     conversationStrategyTouchedRef.current = true;
-    const next = { ...conversationStrategyRef.current, ...patch };
+    const next = {
+      ...conversationStrategyRef.current,
+      ...patch,
+      preferred_answer_mode: 'standard' as const,
+    };
     conversationStrategyRef.current = next;
-    setAnswerMode(next.preferred_answer_mode);
     setReasoningEffort(reasoningEffortLabel(next.reasoning_effort));
     setToolCallLimit(next.max_tool_calls);
     setReflectionEnabled(next.reflection_enabled);
@@ -378,7 +410,27 @@ function AppContent() {
       setTrustedTransitionActive(false);
       trustedTransitionTimerRef.current = undefined;
     }
-    persistConversationStrategy({ preferred_answer_mode: nextMode });
+    applyConversationAnswerMode(nextMode);
+    if (activeConversationId) {
+      setConversationHistory((items) => items.map((item) => item.id === activeConversationId
+        ? { ...item, preferred_answer_mode: nextMode }
+        : item));
+      void updateConversation(activeConversationId, { preferred_answer_mode: nextMode })
+        .then((updated) => {
+          setConversationHistory((items) => items.map((item) => item.id === updated.id
+            ? { ...item, preferred_answer_mode: updated.preferred_answer_mode ?? nextMode, updated_at: updated.updated_at }
+            : item));
+        })
+        .catch((err) => {
+          setError(err instanceof AstraApiError ? err.payload : {
+            type: 'infrastructure.database',
+            code: 'CONVERSATION_MODE_SAVE_FAILED',
+            message: t('保存对话模式失败，重新打开后可能恢复为之前的模式。'),
+            retryable: true,
+            trace_id: 'unavailable',
+          });
+        });
+    }
   }
 
   async function cancelRunById(runId: string, previousMessages: ChatMessage[] = priorMessages) {
@@ -446,7 +498,8 @@ function AppContent() {
         reflection_trigger: conversationStrategyRef.current.reflection_trigger,
         execution_mode: executionMode === 'bypass' ? 'auto_approval' : 'request_approval',
         verification_level: 'standard',
-        }, modelConfig, answerMode === 'trusted' ? planExecution : undefined);
+        }, modelConfig, answerMode === 'trusted' ? planExecution : undefined,
+        ...(selectedSkillIds.length ? [selectedSkillIds] : []));
       const createdAnswerMode = (created as { answer_mode?: 'standard' | 'trusted' }).answer_mode;
       const current = normalizeRunView({
         id: created.run_id,
@@ -509,6 +562,15 @@ function AppContent() {
     } : undefined;
   }
 
+  async function reconcileResumedRun(optimistic: RunView) {
+    setRun(optimistic);
+    rememberConversation(optimistic);
+    const snapshot = normalizeRunView(await getRun(optimistic.id));
+    setRun(snapshot);
+    setProcessState((state) => reconcileProcessSnapshot(state, snapshot));
+    rememberConversation(snapshot);
+  }
+
   async function decideApproval(decision: 'approve_once' | 'allow_similar' | 'allow_task' | 'reject') {
     const approval = run?.pending_approval;
     const token = run?.waiting_state?.continuation_token;
@@ -518,12 +580,7 @@ function AppContent() {
     try {
       const resumed = await decideToolApproval(run.id, approval.id, decision, token, selectedRunModel());
       const optimistic = { ...run, status: resumed.status, pending_approval: null, waiting_state: null };
-      setRun(optimistic);
-      rememberConversation(optimistic);
-      const snapshot = normalizeRunView(await getRun(run.id));
-      setRun(snapshot);
-      setProcessState((state) => reconcileProcessSnapshot(state, snapshot));
-      rememberConversation(snapshot);
+      await reconcileResumedRun(optimistic);
     } catch (err) {
       setError(err instanceof AstraApiError ? err.payload : { type: 'runtime.internal_error', code: 'APPROVAL_FAILED', message: t('提交批准决定失败，请刷新后重试。'), retryable: true, trace_id: 'unavailable' });
     } finally {
@@ -543,12 +600,7 @@ function AppContent() {
         stateVersion: planConfirmation.state_version,
       }, selectedRunModel());
       const optimistic = { ...run, status: resumed.status, waiting_state: null };
-      setRun(optimistic);
-      rememberConversation(optimistic);
-      const snapshot = normalizeRunView(await getRun(run.id));
-      setRun(snapshot);
-      setProcessState((state) => reconcileProcessSnapshot(state, snapshot));
-      rememberConversation(snapshot);
+      await reconcileResumedRun(optimistic);
     } catch (err) {
       setError(err instanceof AstraApiError ? err.payload : {
         type: 'runtime.state_conflict',
@@ -563,7 +615,7 @@ function AppContent() {
   }
 
   async function reviseConfirmedPlan(request: string) {
-    if (!run || !planConfirmation || planRevisionSubmitting || !request.trim()) return;
+    if (!run || !planConfirmation || planRevisionSubmitting || !request.trim()) return false;
     setPlanRevisionSubmitting(true);
     setError(null);
     try {
@@ -582,6 +634,7 @@ function AppContent() {
         return graph;
       });
       rememberConversation(snapshot);
+      return true;
     } catch (err) {
       setError(err instanceof AstraApiError ? err.payload : {
         type: 'runtime.state_conflict',
@@ -602,6 +655,7 @@ function AppContent() {
       } catch {
         // Keep the visible original graph when refresh is temporarily unavailable.
       }
+      return false;
     } finally {
       setPlanRevisionSubmitting(false);
     }
@@ -824,7 +878,7 @@ function AppContent() {
     jumpResetTimerRef.current = window.setTimeout(() => { jumpingToLatestRef.current = false; }, 450);
   }
 
-  function changeView(nextView: 'chat' | 'settings' | 'shares' | 'library') {
+  function changeView(nextView: 'chat' | 'settings' | 'shares' | 'library' | 'skills') {
     setView(nextView);
   }
 
@@ -835,6 +889,7 @@ function AppContent() {
     initialSnapshotControllerRef.current = undefined;
     setRun(null);
     setActiveConversationId(null);
+    applyConversationAnswerMode('standard');
     setPriorMessages([]);
     setError(null);
     setStreamingAnswer('');
@@ -900,6 +955,7 @@ function AppContent() {
         }}
         onOpenShares={() => { setSidebarOpen(false); changeView('shares'); }}
         onOpenLibrary={() => { setSidebarOpen(false); changeView('library'); }}
+        onOpenSkills={() => { setSidebarOpen(false); changeView('skills'); }}
         onOpenUsage={() => { setSidebarOpen(false); setUsageOpen(true); }}
         onClose={() => setSidebarOpen(false)}
         collapsed={sidebarCollapsed}
@@ -911,7 +967,17 @@ function AppContent() {
       {sidebarOpen && <button className="sidebar-backdrop" type="button" aria-label={t('关闭导航遮罩')} onClick={() => setSidebarOpen(false)} />}
 
       <section className="workspace">
-        {view === 'library' ? (
+        {view === 'skills' ? (
+          <Suspense fallback={<div className="skill-empty">{t('正在加载 Skills…')}</div>}>
+            <SkillWorkbench
+              onClose={() => changeView('chat')}
+              onTestRun={(runId) => {
+                changeView('chat');
+                void getRun(runId).then((snapshot) => setRun(normalizeRunView(snapshot)));
+              }}
+            />
+          </Suspense>
+        ) : view === 'library' ? (
           <LibraryView
             onClose={() => changeView('chat')}
             onOpenConversation={(id, title) => { void openConversation({ id, title, priorMessages: [] }); }}
@@ -980,15 +1046,15 @@ function AppContent() {
             <Icon name="route" />
             <span>{t('打开执行图谱')}</span>
           </button>}
-          {showJumpToLatest && <button className="jump-latest-button" type="button" onClick={jumpToLatest}><span aria-hidden="true">↓</span>{t('回到最新')}</button>}
-          <div ref={composerDockRef} className={`composer-dock ${run?.pending_approval ? 'has-approval' : ''}`}>
+          {showJumpToLatest && !planConfirmation && <button className="jump-latest-button" type="button" onClick={jumpToLatest}><span aria-hidden="true">↓</span>{t('回到最新')}</button>}
+          <div ref={composerDockRef} className={`composer-dock ${run?.pending_approval ? 'has-approval' : ''} ${planConfirmation ? 'has-plan-confirmation' : ''}`}>
             {run && planConfirmation && (
               <PlanConfirmationCard
                 run={effectiveRun ?? run}
                 submitting={planConfirmationSubmitting}
                 revisionSubmitting={planRevisionSubmitting}
                 onExecute={() => { void executeConfirmedPlan(); }}
-                onRevise={(request) => { void reviseConfirmedPlan(request); }}
+                onRevise={reviseConfirmedPlan}
                 onCancel={() => { void cancelRunById(run.id); }}
               />
             )}
@@ -1036,6 +1102,9 @@ function AppContent() {
                   <button type="button" disabled><span>↥</span><div><strong>{t('上传文件')}</strong><small>{t('即将支持')}</small></div></button>
                   <button type="button" disabled><span>▧</span><div><strong>{t('添加图片')}</strong><small>{t('即将支持')}</small></div></button>
                   <button type="button" disabled><span>⌁</span><div><strong>{t('连接来源')}</strong><small>{t('即将支持')}</small></div></button>
+                  {availableSkills.map((skill) => <button type="button" key={skill.id} aria-pressed={selectedSkillIds.includes(skill.qualified_identity)} onClick={() => setSelectedSkillIds((items) => items.includes(skill.qualified_identity) ? items.filter((item) => item !== skill.qualified_identity) : [...items, skill.qualified_identity])}>
+                    <span>✦</span><div><strong>{skill.name}</strong><small>{selectedSkillIds.includes(skill.qualified_identity) ? t('已选择 Skill') : skill.description}</small></div>
+                  </button>)}
                 </div>
               )}
             </div>
@@ -1134,14 +1203,14 @@ function AppContent() {
   );
 }
 
-function Sidebar({ open, collapsed, width, run, activeConversationId, conversations, activeView, onNewChat, onSelectConversation, onConversationAction, onTogglePin, onOpenSettings, onOpenShares, onOpenLibrary, onOpenUsage, onClose, onCollapse, onExpand, onWidthChange }: {
+function Sidebar({ open, collapsed, width, run, activeConversationId, conversations, activeView, onNewChat, onSelectConversation, onConversationAction, onTogglePin, onOpenSettings, onOpenShares, onOpenLibrary, onOpenSkills, onOpenUsage, onClose, onCollapse, onExpand, onWidthChange }: {
   open: boolean;
   collapsed: boolean;
   width: number;
   run: RunView | null;
   activeConversationId: string | null;
   conversations: ConversationEntry[];
-  activeView: 'chat' | 'settings' | 'shares' | 'library';
+  activeView: 'chat' | 'settings' | 'shares' | 'library' | 'skills';
   onNewChat: () => void;
   onSelectConversation: (conversation: ConversationEntry) => void;
   onConversationAction: (kind: 'rename' | 'share' | 'delete', conversation: ConversationEntry) => void;
@@ -1149,6 +1218,7 @@ function Sidebar({ open, collapsed, width, run, activeConversationId, conversati
   onOpenSettings: () => void;
   onOpenShares: () => void;
   onOpenLibrary: () => void;
+  onOpenSkills: () => void;
   onOpenUsage: () => void;
   onClose: () => void;
   onCollapse: () => void;
@@ -1249,7 +1319,7 @@ function Sidebar({ open, collapsed, width, run, activeConversationId, conversati
           <span>Agent Console</span>
         </div>
         <button className="sidebar-collapse-trigger" type="button" aria-label={t('收起侧边栏')} onClick={onCollapse}><SidebarPanelIcon /></button>
-        <button className="mobile-sidebar-close" type="button" aria-label={t('关闭导航')} onClick={onClose}>×</button>
+        <CloseButton className="mobile-sidebar-close" label={t('关闭导航')} onClick={onClose} />
       </div>
 
       {collapsed && <button className="sidebar-expand-trigger" type="button" aria-label={t('展开侧边栏')} title={t('展开侧边栏')} onClick={onExpand}><SidebarPanelIcon /></button>}
@@ -1270,6 +1340,11 @@ function Sidebar({ open, collapsed, width, run, activeConversationId, conversati
       </nav>
 
       <div className="sidebar-bottom">
+        <button className={`side-action sidebar-skills-action ${activeView === 'skills' ? 'active' : ''}`} type="button" aria-label={t('Skills')} title={collapsed ? t('Skills') : undefined} onClick={onOpenSkills}>
+          <Icon name="library" />
+          <span>{t('Skills')}</span>
+          <small>{t('工作流')}</small>
+        </button>
         <button className={`side-action sidebar-library-action ${activeView === 'library' ? 'active' : ''}`} type="button" aria-label={t('资料库')} title={collapsed ? t('资料库') : undefined} onClick={onOpenLibrary}>
           <Icon name="library" />
           <span>{t('资料库')}</span>
@@ -1283,7 +1358,7 @@ function Sidebar({ open, collapsed, width, run, activeConversationId, conversati
         <button className="side-action sidebar-usage-action" type="button" aria-label={t('用量统计')} title={collapsed ? t('用量统计') : undefined} onClick={onOpenUsage}>
           <Icon name="chart" />
           <span>{t('用量统计')}</span>
-          <small>{run?.tool_calls.length ?? 0} calls</small>
+          <small>{t('{count} 次调用').replace('{count}', String(run?.tool_calls.length ?? 0))}</small>
         </button>
         <button className={`side-action sidebar-settings-action ${activeView === 'settings' ? 'active' : ''}`} type="button" aria-label={t('设置')} title={collapsed ? t('设置') : undefined} onClick={onOpenSettings}>
           <Icon name="settings" />
@@ -1386,7 +1461,7 @@ function LibraryView({ onClose, onOpenConversation }: { onClose: () => void; onO
   return <section className="library-page">
     <header className="library-header">
       <div><span className="library-eyebrow">Astra Library</span><h2>{t('资料库')}</h2><p>{t('集中查看所有会话生成或保存的文档、图片和其他文件。')}</p></div>
-      <button className="settings-close" type="button" aria-label={t('关闭资料库')} onClick={onClose}>×</button>
+      <CloseButton className="settings-close" label={t('关闭资料库')} onClick={onClose} />
     </header>
     <div className="library-toolbar">
       <label className="library-search"><span className="sr-only">{t('搜索资料库')}</span><input value={query} onChange={(event) => setQuery(event.currentTarget.value)} placeholder={t('搜索文件或会话')} /></label>
@@ -1479,7 +1554,7 @@ function SharedConversationsView({ onClose, onOpenConversation, onShareChanged }
   return <section className="shares-page">
     <header className="shares-header">
       <div><span>{t('对话管理')}</span><h1>{t('已分享对话')}</h1><p>{t('管理当前仍可访问的只读对话快照。')}</p></div>
-      <button className="close-button" type="button" aria-label={t('关闭已分享对话')} onClick={onClose}>×</button>
+      <CloseButton label={t('关闭已分享对话')} onClick={onClose} />
     </header>
     <div className="shares-toolbar">
       <label><input type="checkbox" aria-label={t('全选已分享对话')} checked={allSelected} onChange={() => setSelected(allSelected ? new Set() : new Set(shares.map((item) => item.conversation_id)))} />{t('全选')}</label>
@@ -1627,7 +1702,7 @@ function SettingsView({ activeCategory, onCategoryChange, onClose, providerConfi
     <section className="settings-page">
       <header className="settings-header">
         <div><span>{t('工作区')}</span><h1>{t('设置')}</h1></div>
-        <button className="close-button" type="button" aria-label={t('关闭设置')} onClick={onClose}>×</button>
+        <CloseButton label={t('关闭设置')} onClick={onClose} />
       </header>
       <div className="settings-layout">
         <nav className="settings-nav" aria-label={t('设置类别')}>
@@ -1694,7 +1769,7 @@ function ToolSettings() {
       {!tools.length && <p className="tool-settings-message">{t(message)}</p>}
     </div>
     {tools.length > 0 && message && <p className="tool-settings-message" role="status">{t(message)}</p>}
-    <p className="tool-settings-note">{t('开关保存在数据库中，服务重启后仍会保持当前状态。')}</p>
+    <p className="tool-settings-note">{t('设置已保存，并会应用于之后创建的任务。')}</p>
   </SettingsGroup>;
 }
 
@@ -1793,7 +1868,7 @@ function RuntimeSettings() {
   const buildProgress = Math.min(100, Math.max(0, profile?.build?.progress ?? (buildStatus === 'queued' ? 0 : 5)));
   return <SettingsGroup title="Docker 运行时" description="管理绘图工具使用的隔离镜像与 Python 依赖。只有构建阶段联网，工具执行始终断网。">
     <section className="runtime-overview" aria-label={t('Docker 运行状态')}>
-      <div className="runtime-engine"><div><span>{t('运行引擎')}</span><strong><span className="runtime-health-dot" aria-hidden="true" />Docker Ready</strong><small>{t('一次性强化容器')}</small></div><span className={`runtime-status-badge runtime-status-${buildStatus}`}>{t(buildStatusLabel[buildStatus] ?? buildStatus)}</span></div>
+      <div className="runtime-engine"><div><span>{t('运行引擎')}</span><strong><span className="runtime-health-dot" aria-hidden="true" />Docker · {t('已就绪')}</strong><small>{t('一次性强化容器')}</small></div><span className={`runtime-status-badge runtime-status-${buildStatus}`}>{t(buildStatusLabel[buildStatus] ?? buildStatus)}</span></div>
       <div className="runtime-overview-details"><div><span>{t('当前镜像')}</span><strong>{profile?.active_image ?? t('读取中')}</strong></div><div><span>{t('依赖摘要')}</span><strong>{profile?.dependency_digest?.slice(0, 16) ?? t('基础依赖')}</strong></div></div>
       <div className="runtime-security-strip"><span>{t('断网执行')}</span><span>{t('只读根目录')}</span><span>{t('非 root')}</span><span>{t('资源受限')}</span></div>
     </section>
@@ -2096,7 +2171,7 @@ function PlanConfirmationCard({ run, submitting, revisionSubmitting, onExecute, 
   submitting: boolean;
   revisionSubmitting: boolean;
   onExecute: () => void;
-  onRevise: (request: string) => void;
+  onRevise: (request: string) => Promise<boolean>;
   onCancel: () => void;
 }) {
   const { t } = useI18n();
@@ -2114,7 +2189,13 @@ function PlanConfirmationCard({ run, submitting, revisionSubmitting, onExecute, 
     </header>
     {revisionOpen && <form className="plan-revision-form" onSubmit={(event) => {
       event.preventDefault();
-      if (revision.trim()) onRevise(revision);
+      if (revision.trim()) {
+        void onRevise(revision).then((revised) => {
+          if (!revised) return;
+          setRevision('');
+          setRevisionOpen(false);
+        });
+      }
     }}>
       <label htmlFor="plan-revision-request">{t('如何调整这个计划？')}</label>
       <textarea
@@ -2132,11 +2213,11 @@ function PlanConfirmationCard({ run, submitting, revisionSubmitting, onExecute, 
         </button>
       </div>
     </form>}
-    <div className="plan-confirmation-actions">
+    {!revisionOpen && <div className="plan-confirmation-actions">
       <button className="secondary-button" type="button" disabled={submitting || revisionSubmitting} onClick={() => setRevisionOpen((value) => !value)}>{t('调整计划')}</button>
       <button className="secondary-button" type="button" disabled={submitting || revisionSubmitting} onClick={onCancel}>{t('取消任务')}</button>
       <button className="primary-button" type="button" disabled={submitting || revisionSubmitting} onClick={onExecute}>{submitting ? t('正在确认…') : t('执行计划')}</button>
-    </div>
+    </div>}
   </section>;
 }
 
@@ -2322,11 +2403,17 @@ function formatFileSize(bytes: number, language = 'zh-CN') {
 function ControlCenterDialog({ run, onClose }: { run: RunView; onClose: () => void }) {
   const { language, t } = useI18n();
   const [permissions, setPermissions] = useState<PermissionCenterView | null>(null);
+  const [skillsAudit, setSkillsAudit] = useState<RunSkillsAudit | null>(null);
   const [loadError, setLoadError] = useState('');
   const refresh = useCallback(async () => {
     try {
       const permissionView = await getPermissionCenter(run.id);
       setPermissions(permissionView);
+      try {
+        setSkillsAudit(await getRunSkills(run.id));
+      } catch {
+        setSkillsAudit(null);
+      }
       setLoadError('');
     } catch (error) {
       setLoadError(error instanceof Error ? error.message : t('加载安全信息失败'));
@@ -2338,7 +2425,7 @@ function ControlCenterDialog({ run, onClose }: { run: RunView; onClose: () => vo
   const auditEntries = buildAuditLog(permissions?.policy_explanations ?? [], t);
   return <div className="modal-backdrop" role="presentation" onMouseDown={onClose}>
     <section className="control-center-modal" role="dialog" aria-modal="true" aria-label={t('任务安全')} onMouseDown={(event) => event.stopPropagation()}>
-      <header><div><h2>{t('任务安全')}</h2><p>{t('管理 Astra 在这个任务中可以继续执行的操作，并查看安全审计记录。')}</p></div><button type="button" aria-label={t('关闭任务安全')} onClick={onClose}>×</button></header>
+      <header><div><h2>{t('任务安全')}</h2><p>{t('管理 Astra 在这个任务中可以继续执行的操作，并查看安全审计记录。')}</p></div><CloseButton label={t('关闭任务安全')} onClick={onClose} /></header>
       {loadError && <p className="control-center-error">{loadError}</p>}
       {!permissions ? <p>{t('正在加载…')}</p> : <>
         <div className="control-center-overview security-only" aria-label={t('任务安全概览')}>
@@ -2391,6 +2478,11 @@ function ControlCenterDialog({ run, onClose }: { run: RunView; onClose: () => vo
               {identityPresentation.historicalCount > 0 && <div className="identity-history-note">{t('已折叠当前任务其他运行的 {count} 条身份记录').replace('{count}', String(identityPresentation.historicalCount))}</div>}
             </section>
             <section><h3>{t('工具与凭据')}</h3>{permissions.credentials.map((credential) => <div className="control-center-item" key={credential.id}><strong>{credential.service}</strong><span>{credential.scopes.join(', ') || t('最小权限')} · {credential.revoked_at ? t('已撤销') : t('短期有效')}</span></div>)}{!permissions.credentials.length && <p>{t('未使用服务凭据')}</p>}{permissions.tool_catalog && <div className="control-center-item"><strong>{t('本次运行的工具目录')}</strong><span>{permissions.tool_catalog.catalog.length} {t('个工具')} · {t('完整性校验')} {permissions.tool_catalog.digest.slice(0, 12)}</span></div>}</section>
+            {skillsAudit && <section className="technical-skill-events"><div className="technical-section-heading"><div><h3>{t('Skill 审计')}</h3><p>{t('冻结版本、激活、资源读取、计划绑定与归因操作。')}</p></div><span>{skillsAudit.activations.length}</span></div>
+              <div className="control-center-item"><strong>{skillsAudit.draft_test ? t('Draft 测试快照') : t('Eligible Skill Catalog')}</strong><span>{skillsAudit.catalog.length} Skills · {skillsAudit.catalog_digest.slice(0, 18)}</span></div>
+              {skillsAudit.activations.map((item, index) => <div className="control-center-item" key={`activation-${index}`}><strong>{String(item.qualified_identity ?? 'Skill')}</strong><span>{String(item.revision_id ?? '')} · {String(item.digest ?? '').slice(0, 18)}</span></div>)}
+              <p>{t('{resources} 次资源读取 · {actions} 次归因操作 · {bindings} 个计划绑定').replace('{resources}', String(skillsAudit.resource_reads.length)).replace('{actions}', String(skillsAudit.attributed_actions.length)).replace('{bindings}', String(skillsAudit.plan_bindings.length))}</p>
+            </section>}
             <section className="technical-policy-events"><div className="technical-section-heading"><div><h3>{t('审计流')}</h3><p>{t('按时间倒序记录权限请求、判定、用户决策与阻止事件。')}</p></div><span>{auditEntries.length}</span></div>
               {auditEntries.length ? <div className="audit-log" role="log" aria-label={t('权限审计日志')}>{auditEntries.map((entry) => <article className={`audit-log-entry tone-${entry.tone}`} key={entry.id}>
                 <time dateTime={entry.createdAt}>{formatAuditTime(entry.createdAt, language)}</time>
@@ -2446,7 +2538,7 @@ function ModelMenu({ selectedModelKey, onModelChange, modelOptions, trusted, rea
     {trusted ? <>
       <div className="menu-heading">{t('可信对话策略')}</div>
       <section className="trusted-strategy-section" aria-label={t('计划执行')}>
-        <div className="menu-toggle plan-execution-menu-row"><div><strong>{t('计划生成后直接执行')}</strong><small>{t(planExecution === 'auto' ? '完整计划生成并持久化后立即开始执行。' : '先展示完整计划，由你确认这个版本后开始执行。')}</small></div><Toggle checked={planExecution === 'auto'} onChange={onPlanExecutionChange} label={t('计划生成后直接执行')} /></div>
+        <div className="menu-toggle plan-execution-menu-row"><div><strong>{t('计划生成后直接执行')}</strong><small>{t(planExecution === 'auto' ? '完整计划生成后立即开始执行。' : '先展示完整计划，由你确认这个版本后开始执行。')}</small></div><Toggle checked={planExecution === 'auto'} onChange={onPlanExecutionChange} label={t('计划生成后直接执行')} /></div>
       </section>
       <section className="trusted-strategy-section" aria-label={t('推理强度')}>
         <MenuChoice label="推理强度" value={reasoningEffort} options={['快速', '均衡', '深入']} onChange={onReasoningEffortChange} />
@@ -2477,7 +2569,7 @@ function StrategyHelpDialog({ onClose }: { onClose: () => void }) {
   const groups = [
     { title: '计划执行', items: [
       ['确认后执行', '先展示完整计划，由你确认这个版本后开始执行。'],
-      ['直接执行', '完整计划生成并持久化后立即开始执行。'],
+      ['直接执行', '完整计划生成后立即开始执行。'],
     ] },
     { title: '推理资源', items: [
       ['快速', '允许 0–5 次工具调用，简单任务更快；启用反思时，提供轻量反思能力。'],
@@ -2494,7 +2586,7 @@ function StrategyHelpDialog({ onClose }: { onClose: () => void }) {
       ['每轮', '每轮结束都反思，更审慎但更慢、更耗用量。'],
     ] },
   ];
-  return <div className="modal-backdrop" role="presentation" onMouseDown={onClose}><section className="usage-modal strategy-guide-modal strategy-guide-modal-overview" role="dialog" aria-modal="true" aria-labelledby="strategy-guide-title" onMouseDown={(event) => event.stopPropagation()}><header><div><span>{t('可信执行')}</span><h2 id="strategy-guide-title">{t('可信策略说明')}</h2></div><button className="close-button" type="button" aria-label={t('关闭策略说明')} onClick={onClose}>×</button></header><div className="strategy-guide-grid">{groups.map((group) => <section className="strategy-guide-group" aria-labelledby={`strategy-guide-${group.title}`} key={group.title}><h3 id={`strategy-guide-${group.title}`}>{t(group.title)}</h3>{group.items.map(([label, detail]) => <div className="strategy-guide-item" key={label}><strong>{t(label)}</strong><p>{t(detail)}</p></div>)}</section>)}</div></section></div>;
+  return <div className="modal-backdrop" role="presentation" onMouseDown={onClose}><section className="usage-modal strategy-guide-modal strategy-guide-modal-overview" role="dialog" aria-modal="true" aria-labelledby="strategy-guide-title" onMouseDown={(event) => event.stopPropagation()}><header><div><span>{t('可信执行')}</span><h2 id="strategy-guide-title">{t('可信策略说明')}</h2></div><CloseButton label={t('关闭策略说明')} onClick={onClose} /></header><div className="strategy-guide-grid">{groups.map((group) => <section className="strategy-guide-group" aria-labelledby={`strategy-guide-${group.title}`} key={group.title}><h3 id={`strategy-guide-${group.title}`}>{t(group.title)}</h3>{group.items.map(([label, detail]) => <div className="strategy-guide-item" key={label}><strong>{t(label)}</strong><p>{t(detail)}</p></div>)}</section>)}</div></section></div>;
 }
 
 function MenuChoice({ label, value, options, onChange, disabled = false, disabledOptionHints }: { label: string; value: string; options: string[]; onChange: (value: string) => void; disabled?: boolean; disabledOptionHints?: Record<string, string> }) {
@@ -2514,16 +2606,15 @@ function UnlimitedToolCallLimitControl() {
 
 function ErrorDialog({ error, onClose, onRetry }: { error: ApiErrorPayload; onClose: () => void; onRetry?: () => void }) {
   const { t } = useI18n();
-  const technical = error.type.startsWith('infrastructure.') || error.type.startsWith('configuration.') || error.type.startsWith('dependency.') || error.type.startsWith('runtime.');
-  const technicalTitle = error.type.startsWith('infrastructure.database') ? '数据存储不可用'
-    : error.type.startsWith('configuration.model') ? '大模型尚未配置'
-    : error.type.startsWith('dependency.model') ? '大模型服务异常'
-    : error.type.startsWith('dependency.search') ? '搜索服务异常'
-    : error.type.startsWith('dependency.fetch') ? '网页访问服务异常'
-    : error.type === 'runtime.unclassified_response' ? '后端错误未分类'
-    : '内部运行时异常';
-  const title = error.code === 'GOAL_REQUIRED' ? '请输入任务目标' : technical ? technicalTitle : '无法完成此操作';
-  return <div className="modal-backdrop" role="presentation" onMouseDown={onClose}><section className="confirmation-modal error-dialog" role="alertdialog" aria-modal="true" aria-labelledby="error-title" onMouseDown={(event) => event.stopPropagation()}><div className="warning-mark">!</div><h2 id="error-title">{t(title)}</h2><p>{error.message}</p>{technical && <div className="confirmation-note">{t('错误类型：')}<code>{error.type}</code><br />{t('诊断编号：')}<code>{error.trace_id}</code></div>}<div className="confirmation-actions">{onRetry && <button className="secondary-button" type="button" onClick={onRetry}>{t('重试')}</button>}<button className="danger-confirm-button" type="button" onClick={onClose}>{t('知道了')}</button></div></section></div>;
+  const serviceError = error.type.startsWith('infrastructure.') || error.type.startsWith('dependency.') || error.type.startsWith('runtime.');
+  const title = error.code === 'GOAL_REQUIRED'
+    ? '请输入任务目标'
+    : error.type.startsWith('configuration.model')
+      ? '大模型尚未配置'
+      : serviceError
+        ? '服务暂时不可用'
+        : '无法完成此操作';
+  return <div className="modal-backdrop" role="presentation" onMouseDown={onClose}><section className="confirmation-modal error-dialog" role="alertdialog" aria-modal="true" aria-labelledby="error-title" onMouseDown={(event) => event.stopPropagation()}><div className="warning-mark">!</div><h2 id="error-title">{t(title)}</h2><p>{error.message}</p><div className="confirmation-actions">{onRetry && <button className="secondary-button" type="button" onClick={onRetry}>{t('重试')}</button>}<button className="danger-confirm-button" type="button" onClick={onClose}>{t('知道了')}</button></div></section></div>;
 }
 
 type IconName = 'plus' | 'message' | 'link' | 'library' | 'chart' | 'settings' | 'sparkle' | 'tools' | 'terminal' | 'brain' | 'palette' | 'lock' | 'token' | 'check' | 'info' | 'route' | 'refresh' | 'requestApprove' | 'autoApprove';
@@ -2646,7 +2737,7 @@ function ProcessTimelineRow({ item, run, anchor = false }: { item: ProcessStream
   const call = item.kind === 'tool' && item.toolCallId ? run.tool_calls.find((candidate) => candidate.id === item.toolCallId) : undefined;
   const outputs = call ? visibleArtifacts(run.artifacts).filter((artifact) => artifact.tool_call_id === call.id) : [];
   const statusLabel = item.status === 'running' ? t('进行中') : item.status === 'failed' ? t('失败') : item.status === 'cancelled' ? t('已终止') : t('已完成');
-  const callDetail = call ? `${toolCallStatusLabel(call.status, t)}${toolCallDetail(call.output)}` : undefined;
+  const callDetail = call ? `${toolCallStatusLabel(call.status, t)}${toolCallDetail(call.output, t)}` : undefined;
   const itemDetail = call && item.detail === call.status ? undefined : item.detail;
   const handoff = item.id.startsWith('phase-processing_result-');
   return <div className={`process-step process-${item.kind} status-${item.status} ${anchor ? 'process-group-anchor' : ''} ${handoff ? 'process-handoff' : ''}`}>
@@ -2690,7 +2781,7 @@ function FinalAnswer({ run, fallback }: { run: RunView; fallback: string }) {
         {result.sources.length > 0 && <div className="flat-support-row"><span className="flat-support-label">{t('来源')}</span><div className="source-grid">
           {result.sources.map((source) => {
             const quality = result.source_quality?.find((item) => item.url === source.url);
-            return <a key={source.url} href={externalHref(source.url)} target="_blank" rel="noreferrer" className="source-card"><strong>{source.title || source.url}</strong>{quality && <span>{formatScore(quality.quality_score)} · {quality.extraction_strategy || 'unknown'}</span>}</a>;
+            return <a key={source.url} href={externalHref(source.url)} target="_blank" rel="noreferrer" className="source-card"><strong>{source.title || source.url}</strong>{quality && <span>{t('来源质量 {score}').replace('{score}', formatScore(quality.quality_score))}</span>}</a>;
           })}
         </div></div>}
         {notes.length > 0 && <div className="flat-support-row"><span className="flat-support-label">{t('限制与注意事项')}</span><div className="answer-notes">{notes.map((item, index) => <p key={`note-${index}`}>{item}</p>)}</div></div>}
@@ -2773,13 +2864,21 @@ function ReasoningAuditSummary({ run }: { run: RunView }) {
   const criteria = Array.isArray(run.task_contract?.success_criteria) ? run.task_contract.success_criteria as Array<Record<string, unknown>> : [];
   if (!policy?.effective && !criteria.length && !run.terminal_reason) return null;
   return <div className="reasoning-audit-grid">
-    {policy?.effective && <div><strong>{t('生效策略')}</strong><span>{String(policy.effective.reasoning_effort ?? 'balanced')} · {String(policy.effective.execution_mode ?? 'request_approval')}</span></div>}
-    {(run.state_version ?? 0) > 0 && <div><strong>{t('状态版本')}</strong><span>State {run.state_version}</span></div>}
-    {criteria.map((criterion) => <div key={String(criterion.id)}><strong>{String(criterion.description)}</strong><span>{String(criterion.status ?? 'pending')}</span></div>)}
-    {policy?.adjustments?.map((adjustment, index) => <div key={`adjust-${index}`}><strong>{t('策略调整')}</strong><span>{String(adjustment.reason ?? adjustment.rule)}</span></div>)}
-    {run.terminal_reason && <div><strong>{t('终态原因')}</strong><span>{String(run.terminal_reason.reason ?? run.status)}</span></div>}
-    {(run.sandbox_jobs ?? []).map((job) => <div key={job.id}><strong>Sandbox · {job.status}</strong><span>{job.runtime_name ?? job.executor} · {job.image_digest ?? String(job.runtime_profile.image ?? t('未记录镜像'))} · {job.output_artifact_ids.length} artifacts{job.exit_reason ? ` · ${job.exit_reason}` : ''}</span>{(job.stdout_summary || job.stderr_summary) && <details><summary>{t('截断日志')}</summary><pre>{job.stderr_summary || job.stdout_summary}</pre></details>}</div>)}
+    {policy?.effective && <div><strong>{t('生效策略')}</strong><span>{t(reasoningEffortLabel(String(policy.effective.reasoning_effort ?? 'balanced')))} · {t(executionModeLabel(String(policy.effective.execution_mode ?? 'request_approval')))}</span></div>}
+    {criteria.map((criterion) => <div key={String(criterion.id)}><strong>{String(criterion.description)}</strong><span>{t(criterionStatusLabel(String(criterion.status ?? 'pending')))}</span></div>)}
+    {run.terminal_reason && <div><strong>{t('任务结果')}</strong><span>{t(statusLabel(run.status))}</span></div>}
   </div>;
+}
+
+function executionModeLabel(value: string) {
+  return value === 'auto_approval' ? '自动批准' : '请求批准';
+}
+
+function criterionStatusLabel(value: string) {
+  return value === 'passed' || value === 'completed' ? '已完成'
+    : value === 'failed' ? '失败'
+      : value === 'skipped' ? '已跳过'
+        : '等待执行';
 }
 
 function activeState(run: RunView) {
@@ -2815,17 +2914,15 @@ function formatScore(score?: number | null) {
   return `${Math.round(score * 100)}%`;
 }
 
-function toolCallDetail(output?: Record<string, unknown> | null) {
+function toolCallDetail(output: Record<string, unknown> | null | undefined, t: (key: string) => string) {
   if (!output) {
     return '';
   }
   if (typeof output.candidate_count === 'number') {
-    return ` · ${output.candidate_count} candidates`;
+    return ` · ${t('{count} 个结果').replace('{count}', String(output.candidate_count))}`;
   }
-  if (typeof output.quality_score === 'number' || typeof output.extraction_strategy === 'string') {
-    const strategy = typeof output.extraction_strategy === 'string' ? output.extraction_strategy : 'read';
-    const score = typeof output.quality_score === 'number' ? ` · ${formatScore(output.quality_score)}` : '';
-    return ` · ${strategy}${score}`;
+  if (typeof output.quality_score === 'number') {
+    return ` · ${t('质量 {score}').replace('{score}', formatScore(output.quality_score))}`;
   }
   return '';
 }

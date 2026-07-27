@@ -10,7 +10,13 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.db.models import NodeExecutionRecord, PlanNodeRecord, RunRecord, utc_now
+from app.db.models import (
+    NodeExecutionRecord,
+    PlanNodeRecord,
+    RunRecord,
+    RunSkillSnapshotRecord,
+    utc_now,
+)
 from app.repositories.executions import (
     NodeExecutionRepository,
     NodeExecutionStateError,
@@ -38,6 +44,9 @@ class NodeContextSnapshot(BaseModel):
     dependency_evidence: tuple[str, ...] = ()
     task_contract: dict[str, Any] = Field(default_factory=dict)
     policy: dict[str, Any] = Field(default_factory=dict)
+    skill_catalog: tuple[dict[str, Any], ...] = ()
+    active_skills: tuple[dict[str, Any], ...] = ()
+    skill_draft_test: bool = False
     accepted_facts: tuple[dict[str, Any], ...] = ()
     reserved_budgets: dict[str, int] = Field(default_factory=dict)
     retry_safe: bool = False
@@ -570,6 +579,27 @@ async def _build_context(
     )
     state = run.agent_state or {}
     execution = await NodeExecutionRepository(session).require(execution.id)
+    skill_snapshot = await session.scalar(
+        select(RunSkillSnapshotRecord).where(
+            RunSkillSnapshotRecord.run_id == run.id
+        )
+    )
+    required_skill_ids = set(node.required_skill_ids or [])
+    skill_catalog = tuple(
+        {
+            "qualified_identity": item["qualified_identity"],
+            "name": item["name"],
+            "description": item["description"],
+            "revision_id": item["revision_id"],
+            "digest": item["digest"],
+        }
+        for item in (skill_snapshot.catalog if skill_snapshot else [])
+        if item["qualified_identity"] in required_skill_ids
+    )
+    active_identities = {
+        item["qualified_identity"]
+        for item in (skill_snapshot.activations if skill_snapshot else [])
+    }
     return NodeContextSnapshot(
         run_id=run.id,
         execution_id=execution.id,
@@ -584,6 +614,7 @@ async def _build_context(
             "title": node.title,
             "intent": node.intent,
             "required_capabilities": list(node.required_capabilities or []),
+            "required_skill_ids": list(node.required_skill_ids or []),
             "success_criteria_refs": list(node.success_criteria_refs or []),
             "expected_outcome": dict(node.expected_outcome or {}),
             "risk_level": node.risk_level,
@@ -592,6 +623,13 @@ async def _build_context(
         dependency_evidence=evidence,
         task_contract=dict(run.task_contract or {}),
         policy=dict(run.reasoning_policy or {}),
+        skill_catalog=skill_catalog,
+        active_skills=tuple(
+            item
+            for item in skill_catalog
+            if item["qualified_identity"] in active_identities
+        ),
+        skill_draft_test=bool(skill_snapshot and skill_snapshot.draft_test),
         accepted_facts=tuple(state.get("accepted_facts", [])),
         reserved_budgets={
             reservation.budget_kind: reservation.reserved

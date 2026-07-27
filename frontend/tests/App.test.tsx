@@ -29,7 +29,6 @@ vi.mock('../src/api', () => ({
   createRun: vi.fn(async () => ({ run_id: 'run-1', task_id: 'task-1', status: 'created', answer_mode: 'standard' })),
   confirmPlanExecution: vi.fn(async () => ({ run_id: 'run-1', task_id: 'task-1', status: 'executing' })),
   revisePlan: vi.fn(async () => ({ run_id: 'run-1', task_id: 'task-1', status: 'waiting_user' })),
-  listPlanVersions: vi.fn(async () => []),
   getPlanVersion: vi.fn(),
   getPlanVersionDiff: vi.fn(),
   cancelRun: vi.fn(async () => ({
@@ -44,6 +43,17 @@ vi.mock('../src/api', () => ({
   revokeConversationShare: vi.fn(async () => undefined),
   listConversationShares: vi.fn(async () => []),
   listLibraryFiles: vi.fn(async () => []),
+  listSkills: vi.fn(async () => []),
+  getRunSkills: vi.fn(async () => ({
+    catalog_digest: 'sha256:test',
+    answer_mode: 'standard',
+    draft_test: false,
+    catalog: [],
+    activations: [],
+    resource_reads: [],
+    attributed_actions: [],
+    plan_bindings: [],
+  })),
   listRuns: vi.fn(async () => []),
   resumeRun: vi.fn(async () => ({ run_id: 'run-1', task_id: 'task-1', status: 'executing' })),
   decideToolApproval: vi.fn(async () => ({ run_id: 'run-1', task_id: 'task-1', status: 'executing' })),
@@ -620,7 +630,7 @@ describe('App', () => {
     );
   });
 
-  it('restores conversation strategy from the database and persists manual changes in order', async () => {
+  it('restores reasoning preferences but keeps a fresh conversation in quick mode', async () => {
     vi.mocked(getConversationStrategy).mockResolvedValueOnce({
       preferred_answer_mode: 'trusted',
       reasoning_effort: 'deep',
@@ -631,14 +641,16 @@ describe('App', () => {
     vi.mocked(updateConversationStrategy).mockClear();
     render(<App />);
 
-    await waitFor(() => expect(screen.getByRole('button', { name: '当前模型：gpt-5' })).toHaveTextContent('深入 · 工具不限 · 每轮 反思'));
+    await waitFor(() => expect(screen.getByRole('button', { name: '当前模型：gpt-5' })).toHaveTextContent('快速策略 · 工具按需'));
+    expect(screen.getByRole('switch', { name: '快速响应' })).toHaveAttribute('aria-checked', 'false');
+    await userEvent.click(screen.getByRole('switch', { name: '快速响应' }));
     await userEvent.click(screen.getByRole('button', { name: '当前模型：gpt-5' }));
     expect(screen.getByRole('button', { name: '深入' })).toHaveClass('active');
     expect(screen.getByRole('button', { name: '每轮' })).toHaveClass('active');
 
     await userEvent.click(screen.getByRole('button', { name: '快速' }));
     await waitFor(() => expect(updateConversationStrategy).toHaveBeenLastCalledWith({
-      preferred_answer_mode: 'trusted',
+      preferred_answer_mode: 'standard',
       reasoning_effort: 'fast',
       max_tool_calls: 5,
       reflection_enabled: true,
@@ -975,7 +987,7 @@ describe('App', () => {
     await userEvent.click(screen.getByRole('button', { name: '运行时' }));
 
     expect(screen.getByRole('heading', { name: 'Docker 运行时' })).toBeInTheDocument();
-    expect(screen.getByText('Docker Ready')).toBeInTheDocument();
+    expect(screen.getByText('Docker · 已就绪')).toBeInTheDocument();
     expect(screen.getByText('尚未添加自定义依赖')).toBeInTheDocument();
     expect(screen.getByText('numpy')).toBeInTheDocument();
     expect(screen.getByLabelText('numpy 已锁定')).toBeInTheDocument();
@@ -1111,7 +1123,7 @@ describe('App', () => {
     await userEvent.click(screen.getByRole('button', { name: /^Usage/ }));
     expect(screen.getByRole('dialog', { name: 'Usage' })).toBeInTheDocument();
     expect(await screen.findByText('Total tokens')).toBeInTheDocument();
-    expect(screen.getByText('Token reporting coverage 100%')).toBeInTheDocument();
+    expect(screen.getByText('Usage data completeness 100%')).toBeInTheDocument();
   });
 
   it('switches between system, dark, and light themes', async () => {
@@ -1143,7 +1155,7 @@ describe('App', () => {
     expect(screen.getByText('当前强度可调整范围：6–15 次')).toBeInTheDocument();
   });
 
-  it('defaults to quick answers and persists the prominent trusted mode switch', async () => {
+  it('defaults every new conversation to quick mode', async () => {
     render(<App />);
 
     const trustedSwitch = screen.getByRole('switch', { name: '快速响应' });
@@ -1154,9 +1166,51 @@ describe('App', () => {
 
     await userEvent.click(trustedSwitch);
     expect(trustedSwitch).toHaveAttribute('aria-checked', 'true');
-    await waitFor(() => expect(updateConversationStrategy).toHaveBeenLastCalledWith(expect.objectContaining({
+    await userEvent.click(screen.getByRole('button', { name: '新对话' }));
+    expect(screen.getByRole('switch', { name: '快速响应' })).toHaveAttribute('aria-checked', 'false');
+    expect(updateConversationStrategy).not.toHaveBeenCalled();
+  });
+
+  it('restores and persists trusted mode independently for an existing conversation', async () => {
+    const now = new Date().toISOString();
+    const trustedRunSnapshot = await getRun('trusted-run');
+    vi.mocked(listConversations).mockResolvedValueOnce([{
+      id: 'trusted-chat',
+      title: '可信对话',
+      title_source: 'auto',
       preferred_answer_mode: 'trusted',
-    })));
+      pinned_at: null,
+      created_at: now,
+      updated_at: now,
+      last_run_status: 'completed',
+      last_message_preview: '',
+      has_active_share: false,
+    }]);
+    vi.mocked(getConversation).mockResolvedValueOnce({
+      id: 'trusted-chat',
+      title: '可信对话',
+      title_source: 'auto',
+      preferred_answer_mode: 'trusted',
+      pinned_at: null,
+      created_at: now,
+      updated_at: now,
+      last_run_status: 'completed',
+      last_message_preview: '',
+      has_active_share: false,
+      runs: [{ ...trustedRunSnapshot, id: 'trusted-run', task_id: 'trusted-chat', answer_mode: 'trusted' }],
+    });
+    render(<App />);
+
+    await userEvent.click(await screen.findByRole('button', { name: '可信对话' }));
+    const trustedSwitch = screen.getByRole('switch', { name: '可信执行' });
+    expect(trustedSwitch).toHaveAttribute('aria-checked', 'true');
+
+    await userEvent.click(trustedSwitch);
+    expect(trustedSwitch).toHaveAttribute('aria-checked', 'false');
+    await waitFor(() => expect(updateConversation).toHaveBeenCalledWith(
+      'trusted-chat',
+      { preferred_answer_mode: 'standard' },
+    ));
   });
 
   it('shows a non-blocking full-screen transition when trusted mode is enabled', async () => {
@@ -1274,6 +1328,7 @@ describe('App', () => {
     render(<App />);
 
     expect(screen.queryByRole('switch', { name: '计划生成后直接执行' })).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole('switch', { name: '快速响应' }));
     await userEvent.click(await screen.findByRole('button', { name: '当前模型：gpt-5' }));
     expect(screen.getByRole('region', { name: '计划执行' })).toBeInTheDocument();
     expect(screen.getByRole('region', { name: '推理强度' })).toBeInTheDocument();
@@ -1356,6 +1411,7 @@ describe('App', () => {
 
     expect(await screen.findByText('计划已生成，等待执行确认')).toBeInTheDocument();
     expect(screen.queryByText(/不应展示的内部上下文/)).not.toBeInTheDocument();
+    expect(screen.getByText('计划已生成，等待执行确认').closest('.composer-dock')).toHaveClass('has-plan-confirmation');
     const graphPane = await screen.findByRole('complementary', { name: '执行图谱窗格' });
     expect(graphPane).toContainElement(await screen.findByRole('region', { name: '可信执行图谱' }));
     expect(screen.getByText('计划已生成，等待执行确认').closest('.plan-confirmation-card')?.querySelector('.trusted-graph-workbench')).toBeNull();

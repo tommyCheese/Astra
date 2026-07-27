@@ -49,6 +49,10 @@ class ModelClient(ABC):
         """Bind the immutable effective reasoning effort selected for the current Run."""
         return None
 
+    def bind_skills(self, skills: list[dict[str, Any]]) -> None:
+        """Bind revision-pinned Skill instruction blocks selected for the current Run."""
+        return None
+
     @abstractmethod
     async def contract(self, goal: str) -> TaskContract:
         raise NotImplementedError
@@ -110,6 +114,9 @@ class ModelClient(ABC):
 
 
 class MockModelClient(ModelClient):
+    def bind_skills(self, skills: list[dict[str, Any]]) -> None:
+        self.skill_blocks = list(skills)
+
     async def contract(self, goal: str) -> TaskContract:
         from app.runner.reasoning import build_default_contract
 
@@ -389,6 +396,21 @@ class OpenAICompatibleModelClient(ModelClient):
     def bind_reasoning_effort(self, effort: ReasoningEffort | str) -> None:
         self.reasoning_effort = ReasoningEffort(effort)
 
+    def bind_skills(self, skills: list[dict[str, Any]]) -> None:
+        self.prompt_composer.bind_skills(skills)
+
+    @staticmethod
+    def _active_skill_identities(context: dict[str, Any]) -> set[str]:
+        identities: set[str] = set()
+        for item in context.get("active_skills", []):
+            if isinstance(item, str):
+                identities.add(item)
+            elif isinstance(item, dict):
+                identity = item.get("qualified_identity")
+                if isinstance(identity, str):
+                    identities.add(identity)
+        return identities
+
     async def plan(
         self,
         goal: str,
@@ -496,12 +518,15 @@ class OpenAICompatibleModelClient(ModelClient):
                         operation,
                         "You are the general Agent loop controller. Return JSON only. "
                         "Required keys: decision_type, reasoning_summary. "
-                        "Allowed decision_type values: call_tool, complete_node, reflect, replan, finalize, ask_user, blocked. "
+                        "Allowed decision_type values: activate_skill, read_skill_resource, call_tool, complete_node, reflect, replan, finalize, ask_user, blocked. "
+                        "Use activate_skill with skill_identity only for an identity in context.skill_catalog. "
+                        "Use read_skill_resource with skill_identity and skill_resource_path only for an active Skill inventory item. "
                         "Choose among the tools in context.tool_manifests only when external or current evidence is needed. "
                         "For stable general knowledge, explanation, writing, or conversation, finalize without tools. "
                         "Select tools only from context.tool_manifests and follow each manifest's description, schema, capabilities, and permissions. "
                         "For call_tool include tool_name and tool_input. "
                         "Do not include hidden chain-of-thought; reasoning_summary must be concise and user-auditable.",
+                        skill_identities=self._active_skill_identities(context),
                     ),
                 },
                 {
@@ -533,7 +558,8 @@ class OpenAICompatibleModelClient(ModelClient):
                         operation,
                         "You are the general Agent controller and answer engine. Return one JSON object. "
                         "Always include decision_type and reasoning_summary. Allowed decision_type values: "
-                        "call_tool, complete_node, reflect, replan, finalize, ask_user, blocked. Work only on "
+                        "activate_skill, read_skill_resource, call_tool, complete_node, reflect, replan, finalize, ask_user, blocked. "
+                        "Use activate_skill with skill_identity only for an identity in context.skill_catalog. Work only on "
                         "context.active_node when it is present. Use complete_node after its expected outcome is "
                         "satisfied and include node_result fields required by its expected_outcome; use finalize "
                         "only when context.active_node is null and the plan has no "
@@ -547,12 +573,13 @@ class OpenAICompatibleModelClient(ModelClient):
                         "never invent IDs, and use an empty list when there is no supporting Artifact. "
                         "The summary must contain the complete user-facing answer, not an introduction or preview; "
                         "use findings only for optional supporting details. "
-                        "When context.answer_mode is standard, use only finalize, call_tool, ask_user, or blocked; "
+                        "When context.answer_mode is standard, use only activate_skill, read_skill_resource, finalize, call_tool, ask_user, or blocked; "
                         "never choose complete_node, reflect, or replan, keep reasoning_summary minimal, and begin "
                         "the final_answer summary as early as the JSON structure permits. "
                         "For call_tool include tool_name and tool_input and omit final_answer. For complete_node "
                         "omit final_answer. "
                         "Do not expose hidden chain-of-thought; reasoning_summary must be concise.",
+                        skill_identities=self._active_skill_identities(context),
                     ),
                 },
                 {
@@ -596,6 +623,7 @@ class OpenAICompatibleModelClient(ModelClient):
                         "criterion_updates, plan_patch, added_verification_requirements, "
                         "or terminal_intent. Only include changes justified by the supplied context. "
                         "Use concise audit-safe summaries.",
+                        skill_identities=self._active_skill_identities(context),
                     ),
                 },
                 {
@@ -632,6 +660,7 @@ class OpenAICompatibleModelClient(ModelClient):
                         "Extract durable memory candidates. Return JSON only with key memories. "
                         "Each memory has scope, kind, content, structured_data, provenance, confidence. "
                         "Only include memories with provenance.",
+                        skill_identities=self._active_skill_identities(context),
                     ),
                 },
                 {
