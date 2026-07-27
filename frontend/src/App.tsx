@@ -1240,7 +1240,7 @@ function AppContent() {
           }}>
             {slashCommand && (
               <div className="skill-command-menu" role="listbox" id="skill-command-options" aria-label={t('Skill 命令')}>
-                <header><Icon name="sparkle" /><span>{t('使用 / 选择 Skill')}</span><kbd>esc</kbd></header>
+                <header><Icon name="sparkle" /><span>{t('使用 / 选择 Skill')}</span><span className="skill-command-shortcuts"><kbd>Tab / Enter</kbd><kbd>Esc</kbd></span></header>
                 <div className="skill-command-options">
                   {slashSkillOptions.map(({ skill, selected }, index) => (
                     <button
@@ -1373,10 +1373,14 @@ function AppContent() {
                   setSlashCommand(null);
                   return;
                 }
-                if (slashCommand && event.key === 'Enter') {
-                  event.preventDefault();
+                if (slashCommand && (event.key === 'Enter' || (event.key === 'Tab' && !event.shiftKey))) {
                   const option = slashSkillOptions[slashActiveIndex];
-                  if (option) selectSlashSkill(option.skill);
+                  if (option) {
+                    event.preventDefault();
+                    selectSlashSkill(option.skill);
+                  } else if (event.key === 'Enter') {
+                    event.preventDefault();
+                  }
                   return;
                 }
                 if (event.key === 'Backspace' && !goal && event.currentTarget.selectionStart === 0 && event.currentTarget.selectionEnd === 0 && selectedSkillIds.length) {

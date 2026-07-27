@@ -4584,13 +4584,13 @@ html[data-theme="dark"] .question-preview p {
 }
 
 .skill-command-menu > header .ui-icon { color: #268064; height: 15px; width: 15px; }
+.skill-command-shortcuts { display: flex; align-items: center; gap: 4px; margin-left: auto; }
 .skill-command-menu > header kbd {
   background: rgba(100, 112, 126, .09);
   border: 1px solid rgba(100, 112, 126, .14);
   border-radius: 5px;
   font-family: inherit;
   font-size: 9px;
-  margin-left: auto;
   padding: 2px 5px;
 }
 

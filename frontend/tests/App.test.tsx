@@ -400,6 +400,22 @@ describe('App', () => {
     expect(screen.queryByLabelText('已选择 Skill')).not.toBeInTheDocument();
   });
 
+  it('selects the active slash Skill with Tab and keeps focus in the composer', async () => {
+    vi.mocked(listSkills).mockResolvedValueOnce([helloSkill]);
+    render(<App />);
+    const textbox = screen.getByRole('textbox');
+
+    await waitFor(() => expect(listSkills).toHaveBeenCalled());
+    await userEvent.type(textbox, '/hel');
+    expect(screen.getByRole('option', { name: /hello-astra/ })).toHaveClass('active');
+    await userEvent.keyboard('{Tab}');
+
+    expect(screen.getByLabelText('已选择 Skill')).toHaveTextContent('hello-astra');
+    expect(screen.queryByRole('listbox', { name: 'Skill 命令' })).not.toBeInTheDocument();
+    expect(textbox).toHaveValue('');
+    expect(textbox).toHaveFocus();
+  });
+
   it('shares highlighted Skill state with the attachment menu and retains the draft after submission failure', async () => {
     vi.mocked(listSkills).mockResolvedValueOnce([helloSkill]);
     vi.mocked(createRun).mockRejectedValueOnce(new Error('network unavailable'));
