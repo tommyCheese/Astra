@@ -43,6 +43,79 @@ const STORAGE_KEYS = {
 const SIDEBAR_DEFAULT_WIDTH = 260;
 const SIDEBAR_MIN_WIDTH = 220;
 const SIDEBAR_MAX_WIDTH = 420;
+
+function safeStreamingSlice(value: string, end: number) {
+  let boundary = Math.min(value.length, end);
+  const previous = value.charCodeAt(boundary - 1);
+  if (previous >= 0xD800 && previous <= 0xDBFF) boundary += 1;
+  return value.slice(0, boundary);
+}
+
+function usePacedStreamingText(target: string, streamId: string | undefined) {
+  const [visible, setVisible] = useState('');
+  const targetRef = useRef(target);
+  const visibleRef = useRef('');
+  targetRef.current = target;
+
+  useEffect(() => {
+    if (!target) {
+      visibleRef.current = '';
+      setVisible('');
+      return;
+    }
+    const reduceMotion = typeof window.matchMedia === 'function'
+      && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    let frame: number | undefined;
+    let lastPaint = performance.now();
+    let characterCredit = 1;
+
+    const paint = (now: number) => {
+      const nextTarget = targetRef.current;
+      let current = visibleRef.current;
+      if (reduceMotion) {
+        if (current !== nextTarget) {
+          visibleRef.current = nextTarget;
+          setVisible(nextTarget);
+        }
+        lastPaint = now;
+        frame = window.requestAnimationFrame(paint);
+        return;
+      }
+      if (!nextTarget.startsWith(current)) {
+        current = '';
+        visibleRef.current = '';
+        setVisible('');
+        characterCredit = 1;
+      }
+
+      const backlog = nextTarget.length - current.length;
+      if (backlog > 0) {
+        const elapsed = Math.min(80, Math.max(0, now - lastPaint));
+        const charactersPerSecond = backlog > 240 ? 900
+          : backlog > 80 ? 420
+            : backlog > 24 ? 180
+              : 72;
+        characterCredit += elapsed * charactersPerSecond / 1000;
+        const characterCount = Math.min(backlog, 18, Math.floor(characterCredit));
+        if (characterCount > 0) {
+          characterCredit -= characterCount;
+          const nextVisible = safeStreamingSlice(nextTarget, current.length + characterCount);
+          visibleRef.current = nextVisible;
+          setVisible(nextVisible);
+        }
+      }
+      lastPaint = now;
+      frame = window.requestAnimationFrame(paint);
+    };
+
+    frame = window.requestAnimationFrame(paint);
+    return () => {
+      if (frame !== undefined) window.cancelAnimationFrame(frame);
+    };
+  }, [Boolean(target), streamId]);
+
+  return visible;
+}
 const DEFAULT_CONVERSATION_STRATEGY: ConversationStrategyPreferences = {
   preferred_answer_mode: 'standard',
   reasoning_effort: 'balanced',
@@ -139,6 +212,7 @@ function AppContent() {
   const jumpResetTimerRef = useRef<number>();
   const deltaBufferRef = useRef('');
   const deltaFrameRef = useRef<number>();
+  const streamingAnswerRef = useRef('');
   const processEventBufferRef = useRef<RunStreamEvent[]>([]);
   const processFrameRef = useRef<number>();
   const planGraphEventBufferRef = useRef<RunStreamEvent[]>([]);
@@ -154,6 +228,7 @@ function AppContent() {
   const trustedTransitionTimerRef = useRef<number>();
   const trustedToggleClickTimesRef = useRef<number[]>([]);
   const trustedEasterEggTimerRef = useRef<number>();
+  streamingAnswerRef.current = streamingAnswer;
   const availableModels = useMemo(() => providerConfigs
     .filter((provider) => provider.enabled)
     .flatMap((provider) => parseModelIds(provider.models).map((model) => ({ key: `${provider.id}:${model}`, model, providerId: provider.id, providerName: provider.name }))), [providerConfigs]);
@@ -724,8 +799,7 @@ function AppContent() {
         setProcessState((state) => reconcileProcessSnapshot(state, next));
         rememberConversation(next);
         if (terminalStatuses.has(next.status) && next.result) {
-          setStreamingAnswer('');
-          setAnswerSettling(false);
+          if (!streamingAnswerRef.current) setAnswerSettling(false);
           closeStream();
           if (fallback !== undefined) window.clearInterval(fallback);
         }
@@ -757,7 +831,7 @@ function AppContent() {
       if (event.type === 'answer.settling') {
         if (deltaFrameRef.current !== undefined) window.cancelAnimationFrame(deltaFrameRef.current);
         flushDeltas();
-        setAnswerComplete(true);
+        setAnswerComplete(false);
         setAnswerSettling(true);
         return;
       }
@@ -829,13 +903,25 @@ function AppContent() {
   useEffect(() => {
     if (trustedGraphRun?.id) setGraphPaneOpen(true);
   }, [trustedGraphRun?.id]);
+  const visibleStreamingAnswer = usePacedStreamingText(streamingAnswer, run?.id);
+  useEffect(() => {
+    if (
+      !answerComplete
+      || !streamingAnswer
+      || visibleStreamingAnswer !== streamingAnswer
+      || !run?.result
+      || !terminalStatuses.has(run.status)
+    ) return;
+    setStreamingAnswer('');
+    setAnswerSettling(false);
+  }, [answerComplete, streamingAnswer, visibleStreamingAnswer, run?.result, run?.status]);
   const messages = useMemo(() => {
     const currentMessages = buildPresentation(effectiveRun)
       .filter((message) => !streamingAnswer || message.metadata.presentation !== 'answer')
       .map((message) => ({ ...message, id: `${run?.id ?? 'idle'}:${priorMessages.length}:${message.id}` }));
-    const streamed = streamingAnswer ? [{ id: `${run?.id ?? 'idle'}-stream`, role: 'assistant', content: streamingAnswer, status: answerComplete ? 'completed' : 'streaming', metadata: {} }] : [];
+    const streamed = visibleStreamingAnswer ? [{ id: `${run?.id ?? 'idle'}-stream`, role: 'assistant', content: visibleStreamingAnswer, status: 'streaming', metadata: {} }] : [];
     return [...priorMessages, ...currentMessages, ...streamed];
-  }, [priorMessages, effectiveRun, streamingAnswer, answerComplete]);
+  }, [priorMessages, effectiveRun, streamingAnswer, visibleStreamingAnswer]);
   const activeProcessItemId = [...(processState?.items ?? [])].reverse().find((item) => item.status === 'running')?.id;
   const initializeProcessPanel = useCallback((runId: string) => {
     setProcessPanelOpenByRun((states) => Object.prototype.hasOwnProperty.call(states, runId)
@@ -856,7 +942,7 @@ function AppContent() {
       else element.scrollTop = element.scrollHeight;
     });
     return () => window.cancelAnimationFrame(frame);
-  }, [messages.length, streamingAnswer, run?.status, activeProcessItemId]);
+  }, [messages.length, visibleStreamingAnswer, run?.status, activeProcessItemId]);
 
   function handleConversationScroll() {
     const element = conversationRef.current;
