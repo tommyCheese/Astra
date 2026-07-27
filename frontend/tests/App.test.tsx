@@ -198,6 +198,14 @@ vi.mock('../src/api', () => ({
   })),
 }));
 
+vi.mock('../src/SkillWorkbench', () => ({
+  SkillWorkbench: ({ onClose }: { onClose: () => void }) => (
+    <section aria-label="Skill 资料库">
+      <button type="button" onClick={onClose}>关闭 Skill 资料库</button>
+    </section>
+  ),
+}));
+
 class MockEventSource {
   onmessage: ((message: MessageEvent) => void) | null = null;
   addEventListener = vi.fn();
@@ -328,6 +336,21 @@ describe('App', () => {
       ['custom:hello-astra'],
     );
     expect(screen.queryByLabelText('已选择 Skill')).not.toBeInTheDocument();
+  });
+
+  it('refreshes published Skills after returning from the Skill library', async () => {
+    vi.mocked(listSkills)
+      .mockResolvedValueOnce([])
+      .mockResolvedValue([helloSkill]);
+    render(<App />);
+
+    await waitFor(() => expect(listSkills).toHaveBeenCalledTimes(1));
+    await userEvent.click(screen.getByRole('button', { name: 'Skills' }));
+    await userEvent.click(await screen.findByRole('button', { name: '关闭 Skill 资料库' }));
+    await waitFor(() => expect(listSkills).toHaveBeenCalledTimes(2));
+
+    await userEvent.type(screen.getByRole('textbox'), '/hello');
+    expect(screen.getByRole('option', { name: /hello-astra/ })).toBeInTheDocument();
   });
 
   it('keeps the Skill command and highlighted token usable in dark and narrow layouts', async () => {

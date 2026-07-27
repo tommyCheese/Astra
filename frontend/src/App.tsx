@@ -302,12 +302,13 @@ function AppContent() {
   }, [slashSkillOptions.length, slashCommand?.query]);
 
   useEffect(() => {
+    if (view !== 'chat') return;
     let active = true;
     void listSkills().then((items) => {
       if (active) setAvailableSkills(items.filter((item) => item.enabled && item.active_revision));
     }).catch(() => { /* Skills remain optional when the feature is unavailable. */ });
     return () => { active = false; };
-  }, []);
+  }, [view]);
 
   useEffect(() => () => {
     if (jumpResetTimerRef.current !== undefined) window.clearTimeout(jumpResetTimerRef.current);
