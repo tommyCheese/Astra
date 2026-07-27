@@ -1,11 +1,7 @@
-import logging
-import shutil
-from pathlib import Path
-
 from fastapi import APIRouter, Depends, Query, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.artifacts import LocalArtifactStore
+from app.conversation_lifecycle import ConversationLifecycleService
 from app.core.config import Settings, get_settings
 from app.core.errors import ResourceError, StateError, ValidationError
 from app.db.session import get_session
@@ -24,7 +20,6 @@ from app.schemas.conversations import (
 )
 
 router = APIRouter(prefix="/api", tags=["conversations"])
-logger = logging.getLogger("astra.conversations")
 
 
 async def require_conversation(repo: ConversationRepository, conversation_id: str, *, detailed: bool = False):
@@ -76,20 +71,9 @@ async def delete_conversation(
     repo = ConversationRepository(session)
     task = await require_conversation(repo, conversation_id)
     try:
-        keys = await repo.delete(task)
+        await ConversationLifecycleService(settings).delete(repo, task)
     except RuntimeError as exc:
         raise StateError("CONVERSATION_ACTIVE", "对话仍在执行，请等待结束或先取消运行。") from exc
-    store = LocalArtifactStore(settings.artifact_store_path)
-    for key in keys:
-        try:
-            store.delete(key)
-        except Exception:
-            logger.warning("conversation.artifact_cleanup_failed key=%s", key, exc_info=True)
-    workspace_root = Path(settings.task_workspace_store_path).resolve()
-    workspace_path = (workspace_root / "tasks" / task.id).resolve()
-    if workspace_path.is_relative_to(workspace_root):
-        shutil.rmtree(workspace_path, ignore_errors=True)
-    return Response(status_code=204)
     return Response(status_code=204)
 
 

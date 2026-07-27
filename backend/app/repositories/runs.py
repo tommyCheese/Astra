@@ -535,6 +535,7 @@ class RunRepository:
             return
         run.status = status
         run.updated_at = utc_now()
+        run.task.updated_at = run.updated_at
         if status == "planning" and run.started_at is None:
             run.started_at = utc_now()
         if status in {"completed", "completed_with_warnings", "failed", "blocked", "cancelled"}:
@@ -685,6 +686,7 @@ class RunRepository:
         run.state_version = agent_state["version"]
         run.completed_at = now
         run.updated_at = now
+        run.task.updated_at = now
         for execution in cancelled_executions:
             await self.add_event(
                 run_id,

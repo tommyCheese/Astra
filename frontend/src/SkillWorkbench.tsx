@@ -59,6 +59,11 @@ function editorLanguage(path: string) {
   return languageByExtension[path.split('.').pop()?.toLowerCase() ?? ''] ?? 'plaintext';
 }
 
+function editorModelPath(skillId: string, filePath: string) {
+  const encodedPath = filePath.split('/').map(encodeURIComponent).join('/');
+  return `skill-editor://${encodeURIComponent(skillId)}/${encodedPath}`;
+}
+
 function markdownBody(value: string) {
   return value.replace(/^---\s*\n[\s\S]*?\n---\s*(?:\n|$)/, '');
 }
@@ -157,7 +162,7 @@ function SkillTree({
           }}
         >
           <span className="skill-tree-chevron">{isCollapsed ? '›' : '⌄'}</span>
-          <span className="skill-tree-icon">{isCollapsed ? '▸' : '▾'}</span>
+          <span className={`skill-tree-icon ${isCollapsed ? '' : 'open'}`} aria-hidden="true" />
           <span>{node.name}</span>
         </button>
         {!isCollapsed && renderNodes(node.children, depth + 1)}
@@ -171,7 +176,7 @@ function SkillTree({
       style={{ paddingInlineStart: `${25 + depth * 14}px` }}
       onClick={() => onOpenFile(node.file)}
     >
-      <span className={`skill-file-type kind-${node.file.kind}`}>{node.file.path.endsWith('.md') ? 'M↓' : node.file.kind === 'script' ? '</>' : node.file.kind === 'asset' ? '◇' : '{}'}</span>
+      <span className={`skill-file-type kind-${node.file.kind}`}>{node.file.path.endsWith('.md') ? 'MD' : node.file.kind === 'script' ? '</>' : node.file.kind === 'asset' ? 'IMG' : '{}'}</span>
       <span>{node.name}</span>
       {!node.file.text && <small>{t('二进制')}</small>}
       {readonly && <small>◉</small>}
@@ -179,7 +184,7 @@ function SkillTree({
   });
   return <div className="skill-tree" role="tree">
     <button className={`skill-tree-row folder root ${selectedFolder === '' ? 'selected' : ''}`} role="treeitem" aria-expanded type="button" onClick={() => onSelectFolder('')}>
-      <span className="skill-tree-chevron">⌄</span><span className="skill-tree-icon">▾</span><span>{t('文件')}</span>
+      <span className="skill-tree-chevron">⌄</span><span className="skill-tree-icon open" aria-hidden="true" /><span>{t('Skill 根目录')}</span>
     </button>
     {renderNodes(tree)}
   </div>;
@@ -788,12 +793,15 @@ export function SkillWorkbench({
         </header>
         <div className="skill-editor-shell">
           <aside className="skill-explorer">
-            <header><strong>{t('资源管理器')}</strong><span>{selected.name.toUpperCase()}</span></header>
+            <header>
+              <strong>{t('资源管理器')}</strong>
+              <span>{t('{count} 个文件').replace('{count}', String(selected.files.length))}</span>
+            </header>
             <div className="skill-explorer-tools">
-              <button type="button" disabled={selected.readonly} title={t('新建文件')} aria-label={t('新建文件')} onClick={createFile}>▤＋</button>
-              <button type="button" disabled={selected.readonly} title={t('新建文件夹')} aria-label={t('新建文件夹')} onClick={createFolder}>▾＋</button>
-              <button type="button" disabled={selected.readonly || !activePath || activePath === 'SKILL.md'} title={t('重命名')} aria-label={t('重命名')} onClick={renameFile}>✎</button>
-              <button type="button" disabled={selected.readonly || !activePath || activePath === 'SKILL.md'} title={t('删除')} aria-label={t('删除')} onClick={deleteFile}>⌫</button>
+              <button type="button" disabled={selected.readonly} title={t('新建文件')} aria-label={t('新建文件')} onClick={createFile}><span aria-hidden="true">＋</span>{t('文件')}</button>
+              <button type="button" disabled={selected.readonly} title={t('新建文件夹')} aria-label={t('新建文件夹')} onClick={createFolder}><span aria-hidden="true">＋</span>{t('文件夹')}</button>
+              <button type="button" disabled={selected.readonly || !activePath || activePath === 'SKILL.md'} title={t('重命名')} aria-label={t('重命名')} onClick={renameFile}><span aria-hidden="true">✎</span>{t('重命名')}</button>
+              <button className="danger" type="button" disabled={selected.readonly || !activePath || activePath === 'SKILL.md'} title={t('删除')} aria-label={t('删除')} onClick={deleteFile}><span aria-hidden="true">⌫</span>{t('删除')}</button>
             </div>
             <label className="skill-file-search"><span>⌕</span><input aria-label={t('搜索 Skill 文件')} placeholder={t('筛选文件')} value={fileQuery} onChange={(event) => setFileQuery(event.currentTarget.value)} /></label>
             <SkillTree files={visibleFiles} activePath={activePath} selectedFolder={selectedFolder} virtualFolders={virtualFolders} onOpenFile={(file) => void openFile(file)} onSelectFolder={setSelectedFolder} readonly={selected.readonly} />
@@ -837,7 +845,7 @@ export function SkillWorkbench({
                   <Editor
                     theme={darkTheme ? 'vs-dark' : 'light'}
                     height="100%"
-                    path={activeFile.uri}
+                    path={editorModelPath(selected.id, activeFile.path)}
                     language={editorLanguage(activeFile.path)}
                     value={activeContent ?? ''}
                     onChange={changeContent}

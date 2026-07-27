@@ -467,6 +467,12 @@ function AppContent() {
     setSelectedSkillIds([]);
   }
 
+  function closeSlashCommand() {
+    slashSuppressedStartRef.current = undefined;
+    setSlashCommand(null);
+    setSlashActiveIndex(0);
+  }
+
   async function openConversation(conversation: ConversationEntry) {
     const previousConversationId = activeConversationId;
     initialSnapshotControllerRef.current?.abort();
@@ -670,7 +676,7 @@ function AppContent() {
       setProcessState(createOptimisticProcessState(created.run_id, createdAnswerMode ?? answerMode));
       rememberConversation(current, previousMessages);
       setGoal('');
-      clearSlashDraft();
+      closeSlashCommand();
       if (cancelRequestedRef.current) {
         await cancelRunById(created.run_id, previousMessages);
         return;
@@ -1586,7 +1592,7 @@ function Sidebar({ open, collapsed, width, run, activeConversationId, conversati
       </button>
 
       <nav className="side-section">
-        <div className="history-heading"><span className="side-title">{t('历史对话')}</span><small>{t('最多保留最近 {count} 个会话').replace('{count}', String(HISTORY_LIMIT))}</small></div>
+        <div className="history-heading"><span className="side-title">{t('历史对话')}</span><small>{t('最多显示最近 {count} 个会话').replace('{count}', String(HISTORY_LIMIT))}</small></div>
         <div className="history-list">
           {pinned.length > 0 && <><span className="history-group-title">{t('置顶')}</span>{pinned.map(renderConversation)}</>}
           {recent.length > 0 && pinned.length > 0 && <span className="history-group-title">{t('最近')}</span>}

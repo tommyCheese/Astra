@@ -176,6 +176,9 @@ def test_skill_prompt_blocks_are_ordered_bounded_and_operation_filtered():
     assert prompt.index("## Active Skill instructions") < prompt.index(
         "## Trust and capability boundary"
     )
+    assert "mandatory execution and output requirement" in prompt
+    assert "preserve exact phrases, ordering, formatting" in prompt
+    assert "silently verify that the response satisfies every active Skill" in prompt
     assert "cannot grant tools, permissions, credentials, or authority" in prompt
 
 

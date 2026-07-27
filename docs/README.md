@@ -8,6 +8,7 @@
 - [Astra Agent Graph 完整演进路线](agent-graph-evolution-roadmap.md)：从可信执行图谱到 Durable Runtime、层级自适应、多 Agent 协作与 Graph Memory 的阶段化路线；当前 OpenSpec 只聚焦阶段一。
 - [可信执行图谱](trusted-execution-graph.md)：当前 Plan Graph、Runtime Trace、Evidence 分层，版本查询、实时事件和执行前自然语言修订协议。
 - [Agent Skills](agent-skills.md)：Skill 包、Draft/Revision、Monaco 工作台、两种回答模式、安全边界和 API。
+- [历史对话老化运维](conversation-retention-operations.md)：后台保留策略、保护条件、批量扫描、日志、启用与回滚。
 
 ## 阅读建议
 
@@ -16,6 +17,7 @@
 - 规划 Agent Graph：阅读“Agent Graph 完整演进路线”，再进入对应阶段的 OpenSpec。
 - 修改工具或安全策略：重点读“统一工具执行管线”和“权限、审批与授权租约”。
 - 修改文件交付能力：重点读“Task Workspace、Sandbox 与 Artifact”。
+- 配置历史数据生命周期：阅读“历史对话老化运维”。
 - 修改前端：重点读“前端状态与 SSE 展示链路”。
 
 > 文档基线：`main` 分支提交 `e1bdc3b`。代码持续演进时，应优先相信可执行代码和测试，并同步更新本文。

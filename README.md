@@ -196,3 +196,5 @@ Web 搜索通过 `WebTaskAdapter` 接入通用完成语义。将 `AGENT_USE_GENE
 Memory 当前用于保存 run 内来源摘要和可审计观察。workspace/user 级 memory 写入必须带 `provenance` 和 `confidence`，缺失时会被拒绝并记录 `memory.write_rejected` 事件。第一版尚未引入 embedding memory 或向量召回，避免在来源审计和权限模型稳定前扩大记忆面。
 
 前端现在是聊天式 Agent 窗口：用户消息、工具调用、反思、来源卡片、memory 摘要和最终答案会聚合成对话流；“审计详情”抽屉保留 turns、tool calls、artifacts、Evidence Pack 与 verification report，便于调试和追溯。
+
+历史对话默认永久保存，侧边栏的 100 条上限只是显示上限。部署方可以显式启用有保护条件、批量上限和审计日志的后台老化机制；详见[历史对话老化运维](docs/conversation-retention-operations.md)。

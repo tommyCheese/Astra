@@ -335,7 +335,7 @@ describe('App', () => {
       undefined,
       ['custom:hello-astra'],
     );
-    expect(screen.queryByLabelText('已选择 Skill')).not.toBeInTheDocument();
+    expect(screen.getByLabelText('已选择 Skill')).toHaveTextContent('hello-astra');
   });
 
   it('refreshes published Skills after returning from the Skill library', async () => {
@@ -1099,7 +1099,7 @@ describe('App', () => {
     render(<App />);
 
     expect(await screen.findByRole('button', { name: '历史会话 8' })).toBeInTheDocument();
-    expect(screen.getByText('最多保留最近 100 个会话')).toBeInTheDocument();
+    expect(screen.getByText('最多显示最近 100 个会话')).toBeInTheDocument();
   });
 
   it('can repeatedly switch to incomplete failed history without crashing', async () => {

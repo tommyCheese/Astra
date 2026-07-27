@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import secrets
+from datetime import datetime
 
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -70,6 +71,59 @@ class ConversationRepository:
             select(RunRecord).where(RunRecord.id == run_id).options(*run_detail_options())
         )
         return result.scalar_one_or_none()
+
+    @staticmethod
+    def _retention_predicates(cutoff: datetime):
+        has_runs = (
+            select(RunRecord.id)
+            .where(RunRecord.task_id == TaskRecord.id)
+            .exists()
+        )
+        has_non_terminal_runs = (
+            select(RunRecord.id)
+            .where(
+                RunRecord.task_id == TaskRecord.id,
+                RunRecord.status.not_in(TERMINAL_STATUSES),
+            )
+            .exists()
+        )
+        has_active_share = (
+            select(ConversationShareRecord.id)
+            .where(
+                ConversationShareRecord.conversation_id == TaskRecord.id,
+                ConversationShareRecord.active.is_(True),
+            )
+            .exists()
+        )
+        return (
+            TaskRecord.updated_at <= cutoff,
+            TaskRecord.pinned_at.is_(None),
+            has_runs,
+            ~has_non_terminal_runs,
+            ~has_active_share,
+        )
+
+    async def retention_candidate_ids(
+        self, *, cutoff: datetime, limit: int
+    ) -> list[str]:
+        result = await self.session.scalars(
+            select(TaskRecord.id)
+            .where(*self._retention_predicates(cutoff))
+            .order_by(TaskRecord.updated_at.asc(), TaskRecord.id.asc())
+            .limit(limit)
+        )
+        return list(result.all())
+
+    async def is_retention_eligible(
+        self, conversation_id: str, *, cutoff: datetime
+    ) -> bool:
+        result = await self.session.scalar(
+            select(TaskRecord.id).where(
+                TaskRecord.id == conversation_id,
+                *self._retention_predicates(cutoff),
+            )
+        )
+        return result is not None
 
     async def update(
         self,

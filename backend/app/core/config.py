@@ -1,5 +1,6 @@
 from functools import lru_cache
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -49,6 +50,10 @@ class Settings(BaseSettings):
     api_allow_remote: bool = False
     artifact_store_path: str = "./astra-artifacts"
     task_workspace_store_path: str = "./astra-workspaces"
+    conversation_retention_enabled: bool = False
+    conversation_retention_days: int = Field(default=180, ge=1, le=36_500)
+    conversation_retention_sweep_seconds: int = Field(default=86_400, ge=60, le=2_592_000)
+    conversation_retention_batch_size: int = Field(default=100, ge=1, le=1_000)
     task_workspace_max_files: int = 10_000
     task_workspace_max_bytes: int = 1024 * 1024 * 1024
     task_workspace_max_file_bytes: int = 100 * 1024 * 1024

@@ -6212,33 +6212,54 @@ html[data-theme="dark"] .trusted-plan-node.status-blocked {
   border-right: 1px solid var(--app-line);
   background: color-mix(in srgb, var(--app-sidebar) 88%, var(--app-canvas));
 }
-.skill-explorer > header { display: flex; flex-direction: column; gap: 8px; padding: 11px 12px 5px; }
-.skill-explorer > header strong { font-size: 10px; font-weight: 500; letter-spacing: .08em; text-transform: uppercase; }
-.skill-explorer > header span { overflow: hidden; text-overflow: ellipsis; font-size: 10px; font-weight: 650; white-space: nowrap; }
-.skill-explorer-tools { display: flex; justify-content: flex-end; gap: 2px; padding: 0 7px 5px; }
-.skill-explorer-tools button {
+.skill-explorer > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 42px;
+  padding: 9px 10px 7px;
+  border-bottom: 1px solid var(--app-line);
+}
+.skill-explorer > header strong { font-size: 11px; font-weight: 680; letter-spacing: .02em; }
+.skill-explorer > header span { flex: none; color: var(--app-muted); font-size: 9px; font-weight: 500; white-space: nowrap; }
+.skill-explorer-tools {
   display: grid;
-  place-content: center;
-  width: 25px;
-  height: 24px;
-  border: 0;
-  border-radius: 3px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px;
+  padding: 8px;
+}
+.skill-explorer-tools button {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 5px;
+  min-width: 0;
+  height: 27px;
+  border: 1px solid var(--app-line);
+  border-radius: 5px;
+  padding: 0 7px;
   color: var(--app-muted);
-  background: transparent;
-  font-size: 11px;
+  background: color-mix(in srgb, var(--app-elevated) 72%, transparent);
+  font-size: 9px;
+  font-weight: 570;
+  white-space: nowrap;
   cursor: pointer;
 }
-.skill-explorer-tools button:hover { color: inherit; background: var(--app-hover); }
+.skill-explorer-tools button span { flex: none; width: 11px; color: var(--astra-mint); font-size: 12px; line-height: 1; text-align: center; }
+.skill-explorer-tools button:hover { border-color: color-mix(in srgb, var(--astra-mint) 30%, var(--app-line)); color: inherit; background: var(--app-hover); }
+.skill-explorer-tools button.danger:not(:disabled):hover { border-color: color-mix(in srgb, #d86a6a 35%, var(--app-line)); color: #c65353; }
+.skill-explorer-tools button.danger span { color: #c76a6a; }
 .skill-explorer-tools button:disabled { opacity: .35; cursor: not-allowed; }
-.skill-file-search { min-width: 0; margin: 0 8px 5px; background: var(--app-canvas); }
-.skill-file-search input { padding: 4px 6px; font-size: 11px; }
+.skill-file-search { min-width: 0; margin: 0 8px 8px; background: var(--app-canvas); }
+.skill-file-search input { padding: 5px 6px; font-size: 10px; }
 .skill-tree { min-height: 0; overflow: auto; padding-bottom: 8px; }
 .skill-tree-row {
   display: grid;
   grid-template-columns: 14px 18px minmax(0, 1fr) auto;
   align-items: center;
   width: 100%;
-  height: 23px;
+  height: 27px;
   border: 0;
   padding: 0 7px;
   overflow: hidden;
@@ -6255,8 +6276,27 @@ html[data-theme="dark"] .trusted-plan-node.status-blocked {
 .skill-tree-row.active { color: inherit; background: color-mix(in srgb, var(--astra-mint) 18%, transparent); }
 .skill-tree-row.selected:not(.active) { background: color-mix(in srgb, var(--app-hover) 75%, transparent); }
 .skill-tree-chevron { color: var(--app-muted); font-size: 14px; }
-.skill-tree-icon { color: #dcb67a; }
-.skill-file-type { color: #6ea8d8; font-family: ui-monospace, monospace; font-size: 9px; }
+.skill-tree-icon {
+  position: relative;
+  width: 13px;
+  height: 9px;
+  overflow: visible !important;
+  border-radius: 2px;
+  background: #d9ad65;
+}
+.skill-tree-icon::before {
+  position: absolute;
+  top: -3px;
+  left: 1px;
+  width: 6px;
+  height: 4px;
+  border-radius: 2px 2px 0 0;
+  background: #d9ad65;
+  content: "";
+}
+.skill-tree-icon.open { background: #e0b971; }
+.skill-tree-icon.open::before { background: #e0b971; }
+.skill-file-type { color: #6ea8d8; font-family: ui-monospace, monospace; font-size: 8px; font-weight: 700; letter-spacing: -.04em; }
 .skill-file-type.kind-script { color: #d7ba7d; }
 .skill-file-type.kind-asset { color: #c586c0; }
 .skill-tree-row small { color: var(--app-muted); font-size: 8px; }

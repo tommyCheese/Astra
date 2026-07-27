@@ -18,6 +18,7 @@ from app.api.runtime import router as runtime_router
 from app.api.skills import router as skills_router
 from app.api.tools import router as tools_router
 from app.api.usage import router as usage_router
+from app.conversation_retention import ConversationRetentionService
 from app.core.config import Settings, get_settings
 from app.core.errors import (
     AstraError,
@@ -42,22 +43,24 @@ def application_version() -> str:
         return "0.0.0+local"
 
 
-def create_app(settings: Settings | None = None) -> FastAPI:
+def create_app(settings: Settings | None = None, *, session_factory=SessionLocal) -> FastAPI:
     settings = settings or get_settings()
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         try:
             await app.state.runtime_profile_service.startup()
-            async with SessionLocal() as session:
+            async with session_factory() as session:
                 await validate_mode_upgrade(session)
                 await ensure_builtin_skills(session, settings)
                 await session.commit()
                 interrupted = await UsageRepository(session).reconcile_interrupted()
                 if interrupted:
                     logger.warning("usage.reconciled_interrupted count=%s", interrupted)
+            await app.state.conversation_retention_service.startup()
             yield
         finally:
+            await app.state.conversation_retention_service.shutdown()
             await app.state.runtime_profile_service.shutdown()
 
     logging.basicConfig(
@@ -68,6 +71,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.runtime_profile_service = RuntimeProfileService(
         settings,
         recover_interrupted=True,
+    )
+    app.state.conversation_retention_service = ConversationRetentionService(
+        settings,
+        session_factory,
     )
     app.add_middleware(
         CORSMiddleware,

@@ -28,6 +28,23 @@ Pass the new release version without or with a leading `v`:
 
 Application state is stored under `./data`. Back it up before a major upgrade.
 
+## Conversation retention
+
+Database conversation aging is disabled by default. To opt in, back up `./data`,
+then configure the retention age and bounded sweep in `.env`:
+
+```text
+CONVERSATION_RETENTION_ENABLED=true
+CONVERSATION_RETENTION_DAYS=180
+CONVERSATION_RETENTION_SWEEP_SECONDS=86400
+CONVERSATION_RETENTION_BATCH_SIZE=100
+```
+
+Pinned conversations, active shares, and conversations with non-terminal runs
+are protected. Deletion is permanent; disabling the flag only stops later
+sweeps. See `docs/conversation-retention-operations.md` in the source
+repository for the full policy and log reference.
+
 ## Stop
 
 ```bash

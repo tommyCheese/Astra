@@ -6,8 +6,8 @@ import { I18nProvider } from '../src/i18n';
 import * as api from '../src/api';
 
 vi.mock('@monaco-editor/react', () => ({
-  default: ({ value, onChange, options }: { value: string; onChange: (value: string) => void; options: { readOnly: boolean } }) => (
-    <textarea aria-label="Monaco Skill editor" value={value} readOnly={options.readOnly} onChange={(event) => onChange(event.currentTarget.value)} />
+  default: ({ path, value, onChange, options }: { path: string; value: string; onChange: (value: string) => void; options: { readOnly: boolean } }) => (
+    <textarea aria-label="Monaco Skill editor" data-model-path={path} value={value} readOnly={options.readOnly} onChange={(event) => onChange(event.currentTarget.value)} />
   ),
 }));
 
@@ -105,10 +105,18 @@ describe('SkillWorkbench', () => {
   });
 
   it('lists shared Skills and autosaves a virtual Monaco model', async () => {
+    vi.mocked(api.updateSkillFiles).mockResolvedValueOnce({
+      skill_id: custom.id,
+      revision_token: 'token-2',
+      readonly: false,
+      files: [{ ...custom.files[0], uri: 'skill-draft://skill-1/token-2/SKILL.md' }],
+      diagnostics: [],
+    });
     renderWorkbench();
     await openCustomEditor();
     fireEvent.click(await screen.findByRole('treeitem', { name: /SKILL\.md/ }));
     const editor = await screen.findByLabelText('Monaco Skill editor');
+    expect(editor).toHaveAttribute('data-model-path', 'skill-editor://skill-1/SKILL.md');
     fireEvent.change(editor, { target: { value: '# Updated workflow' } });
     await waitFor(() => expect(api.updateSkillFiles).toHaveBeenCalledWith(
       custom.id,
@@ -116,6 +124,7 @@ describe('SkillWorkbench', () => {
       [{ action: 'write', path: 'SKILL.md', content: '# Updated workflow' }],
     ), { timeout: 1500 });
     expect(await screen.findByText('草稿已保存')).toBeInTheDocument();
+    expect(screen.getByLabelText('Monaco Skill editor')).toHaveAttribute('data-model-path', 'skill-editor://skill-1/SKILL.md');
   });
 
   it('validates and publishes the current immutable revision', async () => {

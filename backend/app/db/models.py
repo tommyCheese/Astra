@@ -59,6 +59,9 @@ class ConversationStrategyPreferenceRecord(Base):
 
 class TaskRecord(Base):
     __tablename__ = "tasks"
+    __table_args__ = (
+        Index("ix_tasks_retention_scan", "pinned_at", "updated_at"),
+    )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_str)
     title: Mapped[str] = mapped_column(String(240))
@@ -108,6 +111,9 @@ class ConversationShareRecord(Base):
 
 class RunRecord(Base):
     __tablename__ = "runs"
+    __table_args__ = (
+        Index("ix_runs_task_status", "task_id", "status"),
+    )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_str)
     task_id: Mapped[str] = mapped_column(ForeignKey("tasks.id"))
