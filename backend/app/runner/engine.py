@@ -1,7 +1,9 @@
 import asyncio
 import hashlib
+import json
 import logging
 import time
+from collections import OrderedDict
 from typing import Any
 
 import httpx
@@ -57,6 +59,8 @@ logger = logging.getLogger("astra.engine")
 STREAM_FLUSH_INTERVAL_SECONDS = 0.1
 STREAM_FLUSH_MAX_CHARS = 512
 _SHARED_MODEL_HTTP_CLIENTS: dict[str, httpx.AsyncClient] = {}
+_SHARED_TOOL_REGISTRIES: OrderedDict[str, ToolRegistry] = OrderedDict()
+MAX_SHARED_TOOL_REGISTRIES = 16
 
 
 def shared_model_http_client(settings: Settings) -> httpx.AsyncClient | None:
@@ -74,8 +78,30 @@ def shared_model_http_client(settings: Settings) -> httpx.AsyncClient | None:
 async def close_shared_model_http_clients() -> None:
     clients = list(_SHARED_MODEL_HTTP_CLIENTS.values())
     _SHARED_MODEL_HTTP_CLIENTS.clear()
+    _SHARED_TOOL_REGISTRIES.clear()
     for client in clients:
         await client.aclose()
+
+
+def shared_tool_registry(settings: Settings) -> ToolRegistry:
+    """Reuse immutable tool manifests without probing the sandbox for every Run."""
+    payload = {
+        name: value
+        for name, value in settings.model_dump(mode="json").items()
+        if not name.startswith("model_")
+    }
+    key = hashlib.sha256(
+        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    registry = _SHARED_TOOL_REGISTRIES.get(key)
+    if registry is not None:
+        _SHARED_TOOL_REGISTRIES.move_to_end(key)
+        return registry
+    registry = build_tool_registry(settings)
+    _SHARED_TOOL_REGISTRIES[key] = registry
+    if len(_SHARED_TOOL_REGISTRIES) > MAX_SHARED_TOOL_REGISTRIES:
+        _SHARED_TOOL_REGISTRIES.popitem(last=False)
+    return registry
 
 
 class RunEngine:
@@ -91,7 +117,7 @@ class RunEngine:
             settings,
             http_client=shared_model_http_client(settings),
         )
-        self.tool_registry = tool_registry or build_tool_registry(settings)
+        self.tool_registry = tool_registry or shared_tool_registry(settings)
         self._answer_buffers: dict[str, str] = {}
         self._answer_flush_at: dict[str, float] = {}
         self._answer_start_pending: set[str] = set()

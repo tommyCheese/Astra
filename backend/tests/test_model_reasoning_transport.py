@@ -5,8 +5,13 @@ import pytest
 
 from app.agent_profile import ModelOperation
 from app.core.config import Settings
-from app.runner.engine import close_shared_model_http_clients, shared_model_http_client
+from app.runner.engine import (
+    close_shared_model_http_clients,
+    shared_model_http_client,
+    shared_tool_registry,
+)
 from app.runner.model_client import AnthropicModelClient, OpenAICompatibleModelClient
+from app.tools.base import ToolRegistry
 
 
 class RecordingUsage:
@@ -325,6 +330,39 @@ async def test_server_reuses_model_connections_across_runs(
     assert options["timeout"].connect == 10
     await close_shared_model_http_clients()
     assert FakeOpenAIAsyncClient.closes == 1
+
+
+async def test_server_reuses_tool_registry_across_model_overrides(monkeypatch):
+    await close_shared_model_http_clients()
+    builds = 0
+
+    def build_registry(_settings):
+        nonlocal builds
+        builds += 1
+        return ToolRegistry()
+
+    monkeypatch.setattr("app.runner.engine.build_tool_registry", build_registry)
+    settings = Settings(
+        model_provider="openai",
+        model_name="first-model",
+        model_api_key="secret",
+        sandbox_skip_availability_check=True,
+    )
+
+    first = shared_tool_registry(settings)
+    second = shared_tool_registry(
+        settings.model_copy(
+            update={"model_name": "second-model", "model_api_key": "other-secret"}
+        )
+    )
+    changed_tools = shared_tool_registry(
+        settings.model_copy(update={"tool_bash_execute_enabled": True})
+    )
+
+    assert first is second
+    assert changed_tools is not first
+    assert builds == 2
+    await close_shared_model_http_clients()
 
 
 async def test_anthropic_transport_applies_output_config_effort(monkeypatch):

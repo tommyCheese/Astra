@@ -958,6 +958,48 @@ async def test_run_event_stream_delivers_committed_broker_event_without_second_q
     await stream.aclose()
 
 
+async def test_new_run_engine_gets_scheduled_before_event_replay(monkeypatch):
+    timeline: list[str] = []
+    engine_tasks: set[asyncio.Task[None]] = set()
+
+    class FakeSession:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+    class FakeRepository:
+        TERMINAL_STATUSES = RunRepository.TERMINAL_STATUSES
+
+        def __init__(self, _session):
+            pass
+
+        async def list_events_with_status(self, _run_id, _after_id):
+            timeline.append("event_replay")
+            return [], "completed"
+
+    async def start_engine():
+        timeline.append("engine")
+
+    def schedule_engine():
+        task = asyncio.create_task(start_engine())
+        engine_tasks.add(task)
+        task.add_done_callback(engine_tasks.discard)
+
+    monkeypatch.setattr(runs_api, "SessionLocal", FakeSession)
+    monkeypatch.setattr(runs_api, "RunRepository", FakeRepository)
+    stream = runs_api._run_event_stream(
+        "new-run",
+        start_after_ready=schedule_engine,
+    )
+
+    assert '"type": "stream.ready"' in await anext(stream)
+    assert '"type": "heartbeat"' in await anext(stream)
+    assert timeline == ["engine", "event_replay"]
+    await stream.aclose()
+
+
 async def test_run_event_stream_resumes_after_event_id(app_client, monkeypatch):
     from app.repositories.runs import RunRepository
 

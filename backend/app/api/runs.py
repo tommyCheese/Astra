@@ -83,6 +83,10 @@ async def _run_event_stream(
         finally:
             if start_after_ready is not None:
                 start_after_ready()
+        if start_after_ready is not None:
+            # Let the newly-created engine task reach its first async I/O
+            # before this stream performs the initial database replay.
+            await asyncio.sleep(0)
         while True:
             published = (
                 None
