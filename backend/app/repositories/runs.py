@@ -1587,11 +1587,17 @@ class RunRepository:
         return list(result.scalars().all())
 
     async def add_event(
-        self, run_id: str, event_type: str, payload: dict[str, Any]
+        self,
+        run_id: str,
+        event_type: str,
+        payload: dict[str, Any],
+        *,
+        flush: bool = True,
     ) -> RunEventRecord:
         event = RunEventRecord(run_id=run_id, type=event_type, payload=payload)
         self.session.add(event)
-        await self.session.flush()
+        if flush:
+            await self.session.flush()
         return event
 
     async def list_events(self, run_id: str, after_id: int = 0) -> list[RunEventRecord]:

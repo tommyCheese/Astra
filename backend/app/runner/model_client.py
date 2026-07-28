@@ -1,3 +1,4 @@
+import asyncio
 import hashlib
 import json
 import logging
@@ -31,6 +32,36 @@ from app.schemas.agent import (
 logger = logging.getLogger("astra.model")
 AnswerDeltaCallback = Callable[[str], Awaitable[None]]
 StreamFieldCallbacks = dict[str, AnswerDeltaCallback]
+
+
+class DeferredUsageInvocation:
+    """Keep usage-ledger writes out of the first-token critical path."""
+
+    def __init__(
+        self,
+        recorder,
+        *,
+        provider: str,
+        model: str,
+        operation: str,
+        attempt: int,
+    ):
+        self.recorder = recorder
+        self.params = {
+            "provider": provider,
+            "model": model,
+            "operation": operation,
+            "attempt": attempt,
+        }
+        self.task: asyncio.Task[str | None] | None = None
+
+    def start(self) -> None:
+        if self.recorder is not None and self.task is None:
+            self.task = asyncio.create_task(self.recorder.start(**self.params))
+
+    async def resolve(self) -> str | None:
+        self.start()
+        return await self.task if self.task is not None else None
 
 
 class ModelConfigurationError(RuntimeError):
@@ -734,14 +765,13 @@ class OpenAICompatibleModelClient(ModelClient):
             effort=self.reasoning_effort,
             operation=operation,
         )
-        invocation_id = None
-        if self.usage_recorder is not None:
-            invocation_id = await self.usage_recorder.start(
-                provider=self.settings.model_provider,
-                model=self.settings.model_name,
-                operation=operation.value,
-                attempt=attempt + 1,
-            )
+        usage_invocation = DeferredUsageInvocation(
+            self.usage_recorder,
+            provider=self.settings.model_provider,
+            model=self.settings.model_name,
+            operation=operation.value,
+            attempt=attempt + 1,
+        )
         usage: dict[str, Any] | None = None
         request_id: str | None = None
         logger.info(
@@ -792,7 +822,7 @@ class OpenAICompatibleModelClient(ModelClient):
                 )
                 if self.usage_recorder is not None:
                     await self.usage_recorder.finish(
-                        invocation_id,
+                        await usage_invocation.resolve(),
                         status="failed",
                         duration_ms=round((time.perf_counter() - started) * 1000),
                         request_id=request_id,
@@ -828,6 +858,7 @@ class OpenAICompatibleModelClient(ModelClient):
                         if field_extractor is not None:
                             for field, value in field_extractor.feed(delta):
                                 await callbacks[field](value)
+                                usage_invocation.start()
                 content = "".join(chunks)
                 chunk_count = len(chunks)
             else:
@@ -839,7 +870,7 @@ class OpenAICompatibleModelClient(ModelClient):
                 except (KeyError, IndexError, TypeError, ValueError, UnicodeDecodeError) as exc:
                     if self.usage_recorder is not None:
                         await self.usage_recorder.finish(
-                            invocation_id,
+                            await usage_invocation.resolve(),
                             status="failed",
                             duration_ms=round((time.perf_counter() - started) * 1000),
                             request_id=request_id,
@@ -866,7 +897,7 @@ class OpenAICompatibleModelClient(ModelClient):
             payload = parse_json_object(content)
             if self.usage_recorder is not None:
                 await self.usage_recorder.finish(
-                    invocation_id,
+                    await usage_invocation.resolve(),
                     status="succeeded",
                     duration_ms=round((time.perf_counter() - started) * 1000),
                     request_id=request_id,
@@ -876,7 +907,7 @@ class OpenAICompatibleModelClient(ModelClient):
         except (json.JSONDecodeError, ValueError) as exc:
             if self.usage_recorder is not None:
                 await self.usage_recorder.finish(
-                    invocation_id,
+                    await usage_invocation.resolve(),
                     status="failed",
                     duration_ms=round((time.perf_counter() - started) * 1000),
                     request_id=request_id,
@@ -929,14 +960,13 @@ class AnthropicModelClient(OpenAICompatibleModelClient):
             message for message in messages if message["role"] in {"user", "assistant"}
         ]
         started = time.perf_counter()
-        invocation_id = None
-        if self.usage_recorder is not None:
-            invocation_id = await self.usage_recorder.start(
-                provider=self.settings.model_provider,
-                model=self.settings.model_name,
-                operation=operation.value,
-                attempt=attempt + 1,
-            )
+        usage_invocation = DeferredUsageInvocation(
+            self.usage_recorder,
+            provider=self.settings.model_provider,
+            model=self.settings.model_name,
+            operation=operation.value,
+            attempt=attempt + 1,
+        )
         callbacks = dict(stream_callbacks or {})
         if stream_field and on_field_delta:
             callbacks[stream_field] = on_field_delta
@@ -999,6 +1029,7 @@ class AnthropicModelClient(OpenAICompatibleModelClient):
                             chunks.append(text_delta)
                             for field, value in field_extractor.feed(text_delta):
                                 await callbacks[field](value)
+                                usage_invocation.start()
                 content = "".join(chunks).strip()
                 body = {"usage": usage}
             else:
@@ -1020,7 +1051,7 @@ class AnthropicModelClient(OpenAICompatibleModelClient):
             payload = parse_json_object(content)
             if self.usage_recorder is not None:
                 await self.usage_recorder.finish(
-                    invocation_id,
+                    await usage_invocation.resolve(),
                     status="succeeded",
                     duration_ms=round((time.perf_counter() - started) * 1000),
                     request_id=request_id,
@@ -1030,7 +1061,7 @@ class AnthropicModelClient(OpenAICompatibleModelClient):
         except (httpx.HTTPError, json.JSONDecodeError, ValueError, ModelOutputError) as exc:
             if self.usage_recorder is not None:
                 await self.usage_recorder.finish(
-                    invocation_id,
+                    await usage_invocation.resolve(),
                     status="failed",
                     duration_ms=round((time.perf_counter() - started) * 1000),
                     usage=attach_reasoning_usage(None, reasoning_config),

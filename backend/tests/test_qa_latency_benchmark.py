@@ -1,4 +1,5 @@
 import argparse
+import asyncio
 
 import pytest
 
@@ -6,6 +7,7 @@ from app.benchmarks.qa_latency import (
     LatencySample,
     iter_sse_payloads,
     percentile,
+    run_benchmark,
     summarize,
 )
 
@@ -64,3 +66,57 @@ def test_benchmark_arguments_default_to_standard_mode():
     assert isinstance(args, argparse.Namespace)
     assert args.answer_mode == "standard"
     assert args.runs == 10
+    assert args.concurrency == 1
+
+
+async def test_benchmark_bounds_parallel_runs(monkeypatch):
+    from app.benchmarks import qa_latency
+
+    active = 0
+    peak = 0
+
+    async def fake_measure(*_args, **_kwargs):
+        nonlocal active, peak
+        active += 1
+        peak = max(peak, active)
+        await asyncio.sleep(0)
+        active -= 1
+        return LatencySample(1, 2, 3, 4), {}
+
+    monkeypatch.setattr(qa_latency, "measure_run", fake_measure)
+    args = qa_latency.build_parser().parse_args(
+        ["--runs", "5", "--warmup", "0", "--concurrency", "2"]
+    )
+
+    result = await run_benchmark(args)
+
+    assert peak == 2
+    assert result["concurrency"] == 2
+    assert result["measured_runs"] == 5
+
+
+async def test_benchmark_defers_cleanup_until_measurements_finish(monkeypatch):
+    from app.benchmarks import qa_latency
+
+    timeline = []
+
+    async def fake_measure(*_args, cleanup_queue=None, **_kwargs):
+        index = len(cleanup_queue)
+        cleanup_queue.append((f"run-{index}", f"task-{index}"))
+        timeline.append(f"measure-{index}")
+        await asyncio.sleep(0)
+        return LatencySample(1, 2, 3, 4), {}
+
+    async def fake_cleanup(_client, run_id, _task_id):
+        timeline.append(f"cleanup-{run_id}")
+
+    monkeypatch.setattr(qa_latency, "measure_run", fake_measure)
+    monkeypatch.setattr(qa_latency, "cleanup_run", fake_cleanup)
+    args = qa_latency.build_parser().parse_args(
+        ["--runs", "3", "--warmup", "0", "--concurrency", "3"]
+    )
+
+    await run_benchmark(args)
+
+    first_cleanup = next(index for index, item in enumerate(timeline) if item.startswith("cleanup"))
+    assert all(item.startswith("measure") for item in timeline[:first_cleanup])

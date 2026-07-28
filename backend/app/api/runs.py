@@ -519,6 +519,10 @@ async def stream_run_events(
     repo = RunRepository(session)
     if await repo.get_run_status(run_id) is None:
         raise ResourceError("RUN_NOT_FOUND", "找不到指定运行记录。")
+    # FastAPI keeps dependency scopes alive until a streaming response closes.
+    # End the existence-check transaction now so an idle SSE connection does not
+    # pin a database connection for the lifetime of the run.
+    await session.rollback()
 
     async def event_stream() -> AsyncIterator[str]:
         logger.info("sse.open run_id=%s after_id=%s", run_id, after_id)
@@ -526,30 +530,33 @@ async def stream_run_events(
         broker_version = run_event_broker.subscribe(run_id)
         try:
             yield f"data: {json.dumps({'type': 'stream.ready', 'payload': {'run_id': run_id}})}\n\n"
-            async with SessionLocal() as stream_session:
-                stream_repo = RunRepository(stream_session)
-                while True:
+            while True:
+                async with SessionLocal() as stream_session:
+                    stream_repo = RunRepository(stream_session)
                     events, status = await stream_repo.list_events_with_status(
                         run_id, last_id
                     )
-                    for event in events:
-                        last_id = event.id
-                        payload = {
+                    payloads = [
+                        {
                             "id": event.id,
                             "type": event.type,
                             "payload": event.payload,
                             "created_at": event.created_at.isoformat(),
                         }
-                        yield f"id: {event.id}\ndata: {json.dumps(payload)}\n\n"
-                    if status in RunRepository.TERMINAL_STATUSES:
-                        if not events:
-                            yield 'data: {"type": "heartbeat", "payload": {}}\n\n'
-                        break
-                    broker_version = await run_event_broker.wait_for_change(
-                        run_id,
-                        broker_version,
-                        timeout=SSE_FALLBACK_POLL_SECONDS,
-                    )
+                        for event in events
+                    ]
+                for payload in payloads:
+                    last_id = payload["id"]
+                    yield f"id: {payload['id']}\ndata: {json.dumps(payload)}\n\n"
+                if status in RunRepository.TERMINAL_STATUSES:
+                    if not payloads:
+                        yield 'data: {"type": "heartbeat", "payload": {}}\n\n'
+                    break
+                broker_version = await run_event_broker.wait_for_change(
+                    run_id,
+                    broker_version,
+                    timeout=SSE_FALLBACK_POLL_SECONDS,
+                )
         finally:
             run_event_broker.unsubscribe(run_id)
         logger.info("sse.close run_id=%s last_id=%s", run_id, last_id)

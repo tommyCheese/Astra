@@ -132,6 +132,7 @@ def test_anthropic_provider_uses_native_client():
 
 async def test_anthropic_client_translates_messages_and_stream_callbacks(monkeypatch):
     requests = []
+    timeline = []
 
     class FakeResponse:
         def __init__(self):
@@ -178,8 +179,19 @@ async def test_anthropic_client_translates_messages_and_stream_callbacks(monkeyp
     )
     deltas = []
 
+    class UsageRecorder:
+        async def start(self, **_kwargs):
+            timeline.append("usage.start")
+            return "invocation-1"
+
+        async def finish(self, _invocation_id, **_kwargs):
+            timeline.append("usage.finish")
+
+    client.usage_recorder = UsageRecorder()
+
     async def on_delta(value):
         deltas.append(value)
+        timeline.append(f"delta:{value}")
 
     payload = await client._chat_json(
         [
@@ -203,6 +215,7 @@ async def test_anthropic_client_translates_messages_and_stream_callbacks(monkeyp
     ]
     assert requests[0][1]["json"]["stream"] is True
     assert deltas == ["完成", "\1"]
+    assert timeline.index("delta:完成") < timeline.index("usage.start")
 
 
 def test_model_json_parser_accepts_fences_and_leading_text():

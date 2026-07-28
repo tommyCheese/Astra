@@ -1,7 +1,12 @@
 from collections.abc import AsyncIterator
 
 from sqlalchemy import event
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import (
+    AsyncEngine,
+    AsyncSession,
+    async_sessionmaker,
+    create_async_engine,
+)
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
@@ -34,8 +39,27 @@ class EventAwareAsyncSession(AsyncSession):
         self.info.pop(PENDING_RUN_EVENT_IDS, None)
         await super().rollback()
 
+
+def configure_sqlite_engine(async_engine: AsyncEngine) -> None:
+    """Tune SQLite for concurrent runs and SSE readers."""
+    if async_engine.url.get_backend_name() != "sqlite":
+        return
+
+    @event.listens_for(async_engine.sync_engine, "connect")
+    def set_sqlite_pragmas(dbapi_connection, _connection_record) -> None:
+        cursor = dbapi_connection.cursor()
+        try:
+            cursor.execute("PRAGMA journal_mode=WAL")
+            cursor.execute("PRAGMA synchronous=NORMAL")
+            cursor.execute("PRAGMA busy_timeout=5000")
+            cursor.execute("PRAGMA temp_store=MEMORY")
+        finally:
+            cursor.close()
+
+
 settings = get_settings()
 engine = create_async_engine(settings.database_url, future=True)
+configure_sqlite_engine(engine)
 SessionLocal = async_sessionmaker(
     engine,
     expire_on_commit=False,

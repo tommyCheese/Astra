@@ -92,6 +92,7 @@ class RunEngine:
         self.tool_registry = tool_registry or build_tool_registry(settings)
         self._answer_buffers: dict[str, str] = {}
         self._answer_flush_at: dict[str, float] = {}
+        self._answer_start_pending: set[str] = set()
 
     async def run(self, run_id: str) -> None:
         if hasattr(self.model_client, "usage_recorder"):
@@ -143,9 +144,11 @@ class RunEngine:
         buffered = self._answer_buffers.pop(run_id, "")
         self._answer_flush_at.pop(run_id, None)
         if not buffered:
+            self._answer_start_pending.discard(run_id)
             return
         async with SessionLocal() as session:
             repo = RunRepository(session)
+            await self._ensure_answer_stream_started(repo, run_id)
             await repo.add_event(run_id, "answer.delta", {"delta": buffered})
             await session.commit()
 
@@ -647,6 +650,7 @@ class RunEngine:
         except Exception:
             self._answer_buffers.pop(run_id, None)
             self._answer_flush_at.pop(run_id, None)
+            self._answer_start_pending.discard(run_id)
             raise
 
         final_answer = loop_result["answer"]
@@ -655,6 +659,7 @@ class RunEngine:
         if status == "waiting_user":
             self._answer_buffers.pop(run_id, None)
             self._answer_flush_at.pop(run_id, None)
+            await self._ensure_answer_stream_started(repo, run_id)
             await repo.add_event(run_id, "answer.paused", {"status": status})
             await repo.session.commit()
         else:
@@ -765,12 +770,25 @@ class RunEngine:
     async def _start_answer_stream(self, repo: RunRepository, run_id: str) -> None:
         self._answer_buffers[run_id] = ""
         self._answer_flush_at[run_id] = 0.0
-        await repo.add_event(run_id, "answer.started", {"role": "assistant", "mode": "native"})
-        await repo.session.commit()
+        self._answer_start_pending.add(run_id)
+
+    async def _ensure_answer_stream_started(
+        self, repo: RunRepository, run_id: str
+    ) -> None:
+        if run_id not in self._answer_start_pending:
+            return
+        self._answer_start_pending.discard(run_id)
+        await repo.add_event(
+            run_id,
+            "answer.started",
+            {"role": "assistant", "mode": "native"},
+            flush=False,
+        )
 
     async def _answer_delta(self, repo: RunRepository, run_id: str, delta: str) -> None:
         if not delta:
             return
+        await self._ensure_answer_stream_started(repo, run_id)
         await repo.add_event(run_id, "answer.delta", {"delta": delta})
         await repo.session.commit()
 
@@ -781,6 +799,7 @@ class RunEngine:
         if delta == "\1":
             buffered = self._answer_buffers.get(run_id, "")
             self._answer_buffers[run_id] = ""
+            await self._ensure_answer_stream_started(repo, run_id)
             if buffered:
                 await repo.add_event(run_id, "answer.delta", {"delta": buffered})
             await repo.add_event(
@@ -811,6 +830,7 @@ class RunEngine:
     async def _complete_answer_stream(self, repo: RunRepository, run_id: str, content: str) -> None:
         buffered = self._answer_buffers.pop(run_id, "")
         self._answer_flush_at.pop(run_id, None)
+        await self._ensure_answer_stream_started(repo, run_id)
         if buffered:
             await repo.add_event(run_id, "answer.delta", {"delta": buffered})
         await repo.add_event(

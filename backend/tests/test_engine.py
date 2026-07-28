@@ -1,4 +1,5 @@
 from collections import Counter
+from unittest.mock import AsyncMock
 
 import pytest
 from fake_web_tools import fake_web_registry
@@ -447,9 +448,13 @@ async def test_answer_delta_batching_flushes_first_and_final_content(session):
     repo = RunRepository(session)
     run = await repo.create_task_run("流式批处理", settings.model_policy)
     engine = RunEngine(settings, model_client=MockModelClient(), tool_registry=fake_web_registry())
+    commit = AsyncMock(wraps=session.commit)
+    session.commit = commit
 
     await engine._start_answer_stream(repo, run.id)
+    commit.assert_not_awaited()
     await engine._handle_answer_delta(repo, run.id, "首")
+    commit.assert_awaited_once()
     await engine._handle_answer_delta(repo, run.id, "尾")
     await engine._handle_answer_delta(repo, run.id, "\1")
     await engine._complete_answer_stream(repo, run.id, "首尾")

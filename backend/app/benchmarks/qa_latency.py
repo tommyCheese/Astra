@@ -74,6 +74,7 @@ async def measure_run(
     goal: str,
     answer_mode: str,
     keep_run: bool,
+    cleanup_queue: list[tuple[str, str]] | None = None,
 ) -> tuple[LatencySample, dict[str, Any]]:
     started = time.perf_counter()
     created = await client.post(
@@ -118,15 +119,29 @@ async def measure_run(
         return sample, run_response.json().get("model_policy", {})
     finally:
         if not keep_run:
-            cancel = await client.post(f"/api/runs/{run_id}/cancel")
-            cancel.raise_for_status()
-            cleanup = await client.delete(f"/api/conversations/{task_id}")
-            cleanup.raise_for_status()
+            if cleanup_queue is not None:
+                cleanup_queue.append((run_id, task_id))
+            else:
+                await cleanup_run(client, run_id, task_id)
+
+
+async def cleanup_run(
+    client: httpx.AsyncClient,
+    run_id: str,
+    task_id: str,
+) -> None:
+    cancel = await client.post(f"/api/runs/{run_id}/cancel")
+    cancel.raise_for_status()
+    cleanup = await client.delete(f"/api/conversations/{task_id}")
+    cleanup.raise_for_status()
 
 
 async def run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
     timeout = httpx.Timeout(args.timeout)
-    limits = httpx.Limits(max_connections=4, max_keepalive_connections=4)
+    limits = httpx.Limits(
+        max_connections=max(4, args.concurrency * 2),
+        max_keepalive_connections=max(4, args.concurrency),
+    )
     samples: list[LatencySample] = []
     model_policy: dict[str, Any] = {}
     async with httpx.AsyncClient(
@@ -134,7 +149,7 @@ async def run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
         timeout=timeout,
         limits=limits,
     ) as client:
-        for index in range(args.warmup + args.runs):
+        for index in range(args.warmup):
             sample, measured_policy = await measure_run(
                 client,
                 goal=f"{args.goal}（基准轮次 {index + 1}）",
@@ -143,8 +158,31 @@ async def run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
             )
             if not model_policy:
                 model_policy = measured_policy
-            if index >= args.warmup:
-                samples.append(sample)
+
+        semaphore = asyncio.Semaphore(args.concurrency)
+        deferred_cleanups: list[tuple[str, str]] = []
+
+        async def measure_index(index: int):
+            async with semaphore:
+                return await measure_run(
+                    client,
+                    goal=f"{args.goal}（基准轮次 {args.warmup + index + 1}）",
+                    answer_mode=args.answer_mode,
+                    keep_run=args.keep_runs,
+                    cleanup_queue=deferred_cleanups,
+                )
+
+        measured = await asyncio.gather(
+            *(measure_index(index) for index in range(args.runs))
+        )
+        samples.extend(sample for sample, _ in measured)
+        if not model_policy:
+            model_policy = next(
+                (policy for _, policy in measured if policy),
+                {},
+            )
+        for run_id, task_id in deferred_cleanups:
+            await cleanup_run(client, run_id, task_id)
     return {
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "base_url": args.base_url,
@@ -153,6 +191,7 @@ async def run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
         "model_policy": model_policy,
         "warmup_runs": args.warmup,
         "measured_runs": args.runs,
+        "concurrency": args.concurrency,
         "metrics_ms": summarize(samples),
         "samples_ms": [asdict(sample) for sample in samples],
     }
@@ -168,14 +207,17 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--runs", type=int, default=10)
     parser.add_argument("--warmup", type=int, default=2)
     parser.add_argument("--timeout", type=float, default=180)
+    parser.add_argument("--concurrency", type=int, default=1)
     parser.add_argument("--keep-runs", action="store_true")
     return parser
 
 
 def main() -> None:
     args = build_parser().parse_args()
-    if args.runs < 1 or args.warmup < 0:
-        raise SystemExit("--runs must be positive and --warmup cannot be negative")
+    if args.runs < 1 or args.warmup < 0 or args.concurrency < 1:
+        raise SystemExit(
+            "--runs and --concurrency must be positive and --warmup cannot be negative"
+        )
     result = asyncio.run(run_benchmark(args))
     print(json.dumps(result, ensure_ascii=False, indent=2))
 
