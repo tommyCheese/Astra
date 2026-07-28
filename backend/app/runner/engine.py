@@ -51,6 +51,29 @@ logger = logging.getLogger("astra.engine")
 
 STREAM_FLUSH_INTERVAL_SECONDS = 0.1
 STREAM_FLUSH_MAX_CHARS = 512
+_SHARED_MODEL_HTTP_CLIENTS: dict[str, httpx.AsyncClient] = {}
+
+
+def shared_model_http_client(settings: Settings) -> httpx.AsyncClient | None:
+    """Reuse provider connections across Runs in the same server process."""
+    if settings.model_provider in {"mock", "anthropic"}:
+        return None
+    endpoint = settings.model_base_url.rstrip("/")
+    client = _SHARED_MODEL_HTTP_CLIENTS.get(endpoint)
+    if client is None:
+        client = httpx.AsyncClient(
+            timeout=60,
+            limits=httpx.Limits(max_connections=64, max_keepalive_connections=16),
+        )
+        _SHARED_MODEL_HTTP_CLIENTS[endpoint] = client
+    return client
+
+
+async def close_shared_model_http_clients() -> None:
+    clients = list(_SHARED_MODEL_HTTP_CLIENTS.values())
+    _SHARED_MODEL_HTTP_CLIENTS.clear()
+    for client in clients:
+        await client.aclose()
 
 
 class RunEngine:
@@ -62,7 +85,10 @@ class RunEngine:
         tool_registry: ToolRegistry | None = None,
     ):
         self.settings = settings
-        self.model_client = model_client or build_model_client(settings)
+        self.model_client = model_client or build_model_client(
+            settings,
+            http_client=shared_model_http_client(settings),
+        )
         self.tool_registry = tool_registry or build_tool_registry(settings)
         self._answer_buffers: dict[str, str] = {}
         self._answer_flush_at: dict[str, float] = {}

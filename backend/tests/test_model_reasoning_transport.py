@@ -5,6 +5,7 @@ import pytest
 
 from app.agent_profile import ModelOperation
 from app.core.config import Settings
+from app.runner.engine import close_shared_model_http_clients, shared_model_http_client
 from app.runner.model_client import AnthropicModelClient, OpenAICompatibleModelClient
 
 
@@ -126,6 +127,27 @@ async def test_openai_compatible_transport_reuses_connection_pool(monkeypatch):
 
     assert FakeOpenAIAsyncClient.instances == 1
     assert len(FakeOpenAIAsyncClient.requests) == 2
+    assert FakeOpenAIAsyncClient.closes == 1
+
+
+async def test_server_reuses_model_connections_across_runs(monkeypatch):
+    await close_shared_model_http_clients()
+    FakeOpenAIAsyncClient.instances = 0
+    FakeOpenAIAsyncClient.closes = 0
+    monkeypatch.setattr("app.runner.engine.httpx.AsyncClient", FakeOpenAIAsyncClient)
+    settings = Settings(
+        model_provider="openai",
+        model_name="gpt-5",
+        model_api_key="secret",
+        model_base_url="https://api.openai.test/v1",
+    )
+
+    first = shared_model_http_client(settings)
+    second = shared_model_http_client(settings)
+
+    assert first is second
+    assert FakeOpenAIAsyncClient.instances == 1
+    await close_shared_model_http_clients()
     assert FakeOpenAIAsyncClient.closes == 1
 
 

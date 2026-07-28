@@ -270,13 +270,11 @@ class ContextAssembler:
                 for item in skill_catalog
                 if item["qualified_identity"] in active_identities
             ]
-        return {
+        context = {
             "run_id": run_id,
             "goal": goal,
             "tool_manifests": {name: spec.model_dump() for name, spec in specs.items()},
-            "unavailable_capabilities": unavailable,
             "observations": observations,
-            "evidence_pack": evidence_pack or {},
             "memory_reads": [
                 {
                     "id": memory.id,
@@ -288,19 +286,29 @@ class ContextAssembler:
                 }
                 for memory in memories
             ],
-            "reasoning_policy": run.reasoning_policy or {},
             "answer_mode": run.answer_mode,
-            "execution_profile": run.execution_profile or {},
             "task_contract": run.task_contract or {},
             "plan_graph": plan_view,
             "active_node": active_node,
-            "agent_state": run.agent_state or {},
             "state_version": run.state_version,
             "plan_version": plan_view.get("version", 1),
             "skill_catalog": skill_catalog,
             "active_skills": active_skills,
-            "skill_draft_test": bool(skill_snapshot and skill_snapshot.draft_test),
         }
+        if unavailable:
+            context["unavailable_capabilities"] = unavailable
+        if skill_snapshot and skill_snapshot.draft_test:
+            context["skill_draft_test"] = True
+        if run.answer_mode != AnswerMode.standard.value:
+            context.update(
+                {
+                    "evidence_pack": evidence_pack or {},
+                    "reasoning_policy": run.reasoning_policy or {},
+                    "execution_profile": run.execution_profile or {},
+                    "agent_state": run.agent_state or {},
+                }
+            )
+        return context
 
 
 class MemoryManager:

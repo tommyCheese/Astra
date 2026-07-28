@@ -30,6 +30,7 @@ from app.core.errors import (
 from app.db.mode_upgrade import validate_mode_upgrade
 from app.db.session import SessionLocal
 from app.repositories.usage import UsageRepository
+from app.runner.engine import close_shared_model_http_clients
 from app.runtime_profiles import RuntimeProfileService
 from app.skills.storage import ensure_builtin_skills
 
@@ -62,6 +63,7 @@ def create_app(settings: Settings | None = None, *, session_factory=SessionLocal
         finally:
             await app.state.conversation_retention_service.shutdown()
             await app.state.runtime_profile_service.shutdown()
+            await close_shared_model_http_clients()
 
     logging.basicConfig(
         level=getattr(logging, settings.log_level.upper(), logging.INFO),

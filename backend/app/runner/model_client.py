@@ -381,7 +381,12 @@ class MockModelClient(ModelClient):
 
 
 class OpenAICompatibleModelClient(ModelClient):
-    def __init__(self, settings: Settings):
+    def __init__(
+        self,
+        settings: Settings,
+        *,
+        http_client: httpx.AsyncClient | None = None,
+    ):
         if (
             not settings.model_api_key
             and settings.model_provider not in API_KEY_OPTIONAL_MODEL_PROVIDERS
@@ -392,7 +397,8 @@ class OpenAICompatibleModelClient(ModelClient):
         self.agent_profile = load_agent_profile()
         self.prompt_composer = PromptComposer(self.agent_profile)
         self.reasoning_effort = ReasoningEffort.balanced
-        self._http_client: httpx.AsyncClient | None = None
+        self._http_client = http_client
+        self._owns_http_client = http_client is None
 
     def _client(self) -> httpx.AsyncClient:
         if self._http_client is None:
@@ -405,7 +411,7 @@ class OpenAICompatibleModelClient(ModelClient):
     async def aclose(self) -> None:
         client = self._http_client
         self._http_client = None
-        if client is not None:
+        if client is not None and self._owns_http_client:
             await client.aclose()
 
     def bind_agent_profile(self, profile: AgentProfile) -> None:
@@ -996,12 +1002,16 @@ class AnthropicModelClient(OpenAICompatibleModelClient):
             raise ModelOutputError("Anthropic returned non-JSON content") from exc
 
 
-def build_model_client(settings: Settings) -> ModelClient:
+def build_model_client(
+    settings: Settings,
+    *,
+    http_client: httpx.AsyncClient | None = None,
+) -> ModelClient:
     if settings.model_provider == "mock":
         return MockModelClient()
     if settings.model_provider == "anthropic":
-        return AnthropicModelClient(settings)
-    return OpenAICompatibleModelClient(settings)
+        return AnthropicModelClient(settings, http_client=http_client)
+    return OpenAICompatibleModelClient(settings, http_client=http_client)
 
 
 def parse_json_object(content: str) -> dict[str, Any]:
