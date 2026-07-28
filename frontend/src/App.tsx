@@ -56,66 +56,90 @@ function usePacedStreamingText(target: string, streamId: string | undefined) {
   const [visible, setVisible] = useState('');
   const targetRef = useRef(target);
   const visibleRef = useRef('');
+  const frameRef = useRef<number>();
+  const lastPaintRef = useRef(performance.now());
+  const characterCreditRef = useRef(1);
   targetRef.current = target;
 
   useEffect(() => {
     if (!target) {
+      if (frameRef.current !== undefined) {
+        window.cancelAnimationFrame(frameRef.current);
+        frameRef.current = undefined;
+      }
       visibleRef.current = '';
       setVisible('');
+      characterCreditRef.current = 1;
       return;
     }
     const reduceMotion = typeof window.matchMedia === 'function'
       && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-    let frame: number | undefined;
-    let lastPaint = performance.now();
-    let characterCredit = 1;
+
+    if (reduceMotion) {
+      if (frameRef.current !== undefined) {
+        window.cancelAnimationFrame(frameRef.current);
+        frameRef.current = undefined;
+      }
+      visibleRef.current = target;
+      setVisible(target);
+      return;
+    }
+    if (!target.startsWith(visibleRef.current)) {
+      visibleRef.current = '';
+      setVisible('');
+      characterCreditRef.current = 1;
+    }
 
     const paint = (now: number) => {
+      frameRef.current = undefined;
       const nextTarget = targetRef.current;
       let current = visibleRef.current;
-      if (reduceMotion) {
-        if (current !== nextTarget) {
-          visibleRef.current = nextTarget;
-          setVisible(nextTarget);
-        }
-        lastPaint = now;
-        frame = window.requestAnimationFrame(paint);
-        return;
-      }
       if (!nextTarget.startsWith(current)) {
         current = '';
         visibleRef.current = '';
         setVisible('');
-        characterCredit = 1;
+        characterCreditRef.current = 1;
       }
 
       const backlog = nextTarget.length - current.length;
       if (backlog > 0) {
-        const elapsed = Math.min(80, Math.max(0, now - lastPaint));
-        const charactersPerSecond = backlog > 240 ? 900
-          : backlog > 80 ? 420
-            : backlog > 24 ? 180
-              : 72;
-        characterCredit += elapsed * charactersPerSecond / 1000;
-        const characterCount = Math.min(backlog, 18, Math.floor(characterCredit));
+        const elapsed = Math.min(80, Math.max(0, now - lastPaintRef.current));
+        const charactersPerSecond = backlog > 240 ? 2400
+          : backlog > 80 ? 1200
+            : backlog > 24 ? 600
+              : 240;
+        characterCreditRef.current += elapsed * charactersPerSecond / 1000;
+        const characterCount = Math.min(
+          backlog,
+          48,
+          Math.floor(characterCreditRef.current),
+        );
         if (characterCount > 0) {
-          characterCredit -= characterCount;
+          characterCreditRef.current -= characterCount;
           const nextVisible = safeStreamingSlice(nextTarget, current.length + characterCount);
           visibleRef.current = nextVisible;
           setVisible(nextVisible);
         }
       }
-      lastPaint = now;
-      frame = window.requestAnimationFrame(paint);
+      lastPaintRef.current = now;
+      if (visibleRef.current !== targetRef.current) {
+        frameRef.current = window.requestAnimationFrame(paint);
+      }
     };
 
-    frame = window.requestAnimationFrame(paint);
-    return () => {
-      if (frame !== undefined) window.cancelAnimationFrame(frame);
-    };
-  }, [Boolean(target), streamId]);
+    if (frameRef.current === undefined) {
+      lastPaintRef.current = performance.now();
+      frameRef.current = window.requestAnimationFrame(paint);
+    }
+  }, [target, streamId]);
+  useEffect(() => () => {
+    if (frameRef.current !== undefined) window.cancelAnimationFrame(frameRef.current);
+  }, []);
 
-  return visible;
+  if (!target) return '';
+  return target.startsWith(visible) && visible
+    ? visible
+    : safeStreamingSlice(target, 1);
 }
 const DEFAULT_CONVERSATION_STRATEGY: ConversationStrategyPreferences = {
   preferred_answer_mode: 'standard',
@@ -835,10 +859,21 @@ function AppContent() {
       deltaFrameRef.current = undefined;
       const delta = deltaBufferRef.current;
       deltaBufferRef.current = '';
-      if (delta) setStreamingAnswer((value) => value + delta);
+      if (delta) {
+        setStreamingAnswer((value) => {
+          const next = value + delta;
+          streamingAnswerRef.current = next;
+          return next;
+        });
+      }
     };
     const queueDelta = (delta: string) => {
+      const firstDelta = !streamingAnswerRef.current && !deltaBufferRef.current;
       deltaBufferRef.current += delta;
+      if (firstDelta) {
+        flushDeltas();
+        return;
+      }
       if (deltaFrameRef.current === undefined) deltaFrameRef.current = window.requestAnimationFrame(flushDeltas);
     };
     const flushProcessEvents = () => {
@@ -904,6 +939,7 @@ function AppContent() {
       initialSnapshotControllerRef.current = undefined;
       if (event.type === 'answer.started') {
         deltaBufferRef.current = '';
+        streamingAnswerRef.current = '';
         setStreamingAnswer('');
         setAnswerComplete(false);
         setAnswerSettling(false);
@@ -925,7 +961,9 @@ function AppContent() {
         if (deltaFrameRef.current !== undefined) window.cancelAnimationFrame(deltaFrameRef.current);
         deltaFrameRef.current = undefined;
         deltaBufferRef.current = '';
-        setStreamingAnswer(String(event.payload.content ?? ''));
+        const content = String(event.payload.content ?? '');
+        streamingAnswerRef.current = content;
+        setStreamingAnswer(content);
         setAnswerComplete(true);
         setAnswerSettling(true);
         scheduleRefresh(true);
