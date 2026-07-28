@@ -545,6 +545,30 @@ class RunRepository:
             raise ValueError(f"Run not found: {run_id}")
         return run
 
+    async def require_run_startup(
+        self,
+        run_id: str,
+        *,
+        include_skills: bool,
+    ) -> tuple[RunRecord, RunSkillSnapshotRecord | None]:
+        """Load a Run and its optional Skill snapshot in one startup query."""
+        result = await self.session.execute(
+            select(RunRecord, RunSkillSnapshotRecord)
+            .outerjoin(
+                RunSkillSnapshotRecord,
+                and_(
+                    RunSkillSnapshotRecord.run_id == RunRecord.id,
+                    include_skills,
+                ),
+            )
+            .where(RunRecord.id == run_id)
+            .execution_options(populate_existing=True)
+        )
+        row = result.one_or_none()
+        if row is None:
+            raise ValueError(f"Run not found: {run_id}")
+        return row[0], row[1]
+
     async def require_run_runtime(self, run_id: str) -> RunRecord:
         """Load the small relationship set required to resume the Agent loop."""
         result = await self.session.execute(
@@ -621,21 +645,31 @@ class RunRepository:
         *,
         summary: str | None = None,
         result: dict[str, Any] | None = None,
+        loaded_run: RunRecord | None = None,
     ) -> None:
-        query_result = await self.session.execute(
-            select(RunRecord)
-            .where(RunRecord.id == run_id)
-            .execution_options(populate_existing=True)
-            .options(selectinload(RunRecord.task))
-        )
-        run = query_result.scalar_one_or_none()
+        run = loaded_run
+        if run is None:
+            query_result = await self.session.execute(
+                select(RunRecord)
+                .where(RunRecord.id == run_id)
+                .execution_options(populate_existing=True)
+                .options(selectinload(RunRecord.task))
+            )
+            run = query_result.scalar_one_or_none()
         if run is None:
             raise ValueError(f"Run not found: {run_id}")
         if run.status == "cancelled" and status != "cancelled":
             return
         run.status = status
         run.updated_at = utc_now()
-        run.task.updated_at = run.updated_at
+        if loaded_run is None:
+            run.task.updated_at = run.updated_at
+        else:
+            await self.session.execute(
+                update(TaskRecord)
+                .where(TaskRecord.id == run.task_id)
+                .values(updated_at=run.updated_at)
+            )
         if status == "planning" and run.started_at is None:
             run.started_at = utc_now()
         if status in {"completed", "completed_with_warnings", "failed", "blocked", "cancelled"}:

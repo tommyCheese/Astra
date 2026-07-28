@@ -9,7 +9,7 @@ from sqlalchemy import select
 
 from app.artifacts import ArtifactService, LocalArtifactStore
 from app.core.config import Settings
-from app.db.models import RunSkillSnapshotRecord
+from app.db.models import RunRecord, RunSkillSnapshotRecord
 from app.permissions.effects import (
     DefaultEffectAnalyzer,
     effect_plan_hash,
@@ -225,8 +225,14 @@ class ContextAssembler:
         observations: list[dict[str, Any]],
         evidence_pack: dict[str, Any] | None = None,
         quick_mode: bool = False,
+        initial_run: RunRecord | None = None,
+        initial_skill_snapshot: RunSkillSnapshotRecord | None = None,
     ) -> dict[str, Any]:
-        if quick_mode:
+        if quick_mode and initial_run is not None:
+            run = initial_run
+            memories = []
+            skill_snapshot = initial_skill_snapshot
+        elif quick_mode:
             run, memories, skill_snapshot = await self.repo.require_run_quick_context(
                 run_id,
                 include_skills=self.skills_enabled,
@@ -494,6 +500,10 @@ class AgentLoop:
         run_id: str,
         goal: str,
         on_answer_delta: Callable[[str], Awaitable[None]] | None = None,
+        *,
+        initial_run: RunRecord | None = None,
+        fresh_run: bool = False,
+        initial_skill_snapshot: RunSkillSnapshotRecord | None = None,
     ) -> dict[str, Any]:
         assembler = ContextAssembler(repo, skills_enabled=self.settings.skills_enabled)
         memory_manager = MemoryManager(self.settings, repo, self.model_client)
@@ -505,7 +515,10 @@ class AgentLoop:
             max_bytes=self.settings.artifact_max_bytes,
         )
         provider = self.sandbox_provider or build_sandbox_provider(self.settings)
-        initial_run = await repo.require_run_runtime(run_id)
+        if initial_run is None:
+            initial_run = await repo.require_run_runtime(run_id)
+        initial_tool_calls = [] if fresh_run else initial_run.tool_calls
+        initial_turns = [] if fresh_run else initial_run.turns
         quick_mode = initial_run.answer_mode == AnswerMode.standard.value
         permission_repository = PermissionRepository(repo.session)
         main_identity = None
@@ -630,7 +643,7 @@ class AgentLoop:
         tool_outputs: list[dict[str, Any]] = []
         tool_call_count = sum(
             1
-            for call in initial_run.tool_calls
+            for call in initial_tool_calls
             if call.status in {"running", "succeeded", "failed"}
         )
         retry_counts: dict[str, int] = {}
@@ -644,7 +657,7 @@ class AgentLoop:
         active_node = None
         approved_call = (
             await repo.get_approved_tool_call(run_id)
-            if initial_run.tool_calls
+            if initial_tool_calls
             else None
         )
         approved_request_snapshot = (
@@ -675,16 +688,16 @@ class AgentLoop:
             )
         approved_turn = (
             next(
-                (turn for turn in initial_run.turns if turn.tool_call_id == approved_call.id),
+                (turn for turn in initial_turns if turn.tool_call_id == approved_call.id),
                 None,
             )
             if approved_call is not None
             else None
         )
-        if initial_run.turns:
-            checkpoint = sorted(initial_run.turns, key=lambda item: item.turn_index)[-1]
+        if initial_turns:
+            checkpoint = sorted(initial_turns, key=lambda item: item.turn_index)[-1]
             call = next(
-                (item for item in initial_run.tool_calls if item.id == checkpoint.tool_call_id),
+                (item for item in initial_tool_calls if item.id == checkpoint.tool_call_id),
                 None,
             )
             if checkpoint.phase == "result_recorded" and call and call.output is not None:
@@ -1000,7 +1013,7 @@ class AgentLoop:
             await repo.session.commit()
 
         start_turn_index = (
-            approved_turn.turn_index if approved_turn is not None else len(initial_run.turns) + 1
+            approved_turn.turn_index if approved_turn is not None else len(initial_turns) + 1
         )
         for turn_index in range(start_turn_index, max_turns + 1):
             if terminal_override == "waiting_user":
@@ -1052,6 +1065,8 @@ class AgentLoop:
                 tool_router=self.router,
                 observations=observations,
                 quick_mode=quick_mode,
+                initial_run=initial_run if fresh_run else None,
+                initial_skill_snapshot=initial_skill_snapshot if fresh_run else None,
             )
             if not quick_mode:
                 await repo.add_event(

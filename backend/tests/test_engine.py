@@ -520,9 +520,17 @@ async def test_standard_fast_path_skips_plan_state_and_all_quality_gates(session
     )
     task_id = run.task_id
     session.expunge_all()
-    client = QuickStreamingClient()
 
     select_statements = []
+
+    class QueryCountingClient(QuickStreamingClient):
+        selects_before_decide: int | None = None
+
+        async def decide_with_answer(self, *args, **kwargs):
+            self.selects_before_decide = len(select_statements)
+            return await super().decide_with_answer(*args, **kwargs)
+
+    client = QueryCountingClient()
 
     def count_selects(_conn, _cursor, statement, _parameters, _context, _executemany):
         if statement.lstrip().upper().startswith("SELECT"):
@@ -544,9 +552,11 @@ async def test_standard_fast_path_skips_plan_state_and_all_quality_gates(session
     assert loaded.plan_graph == {}
     assert loaded.agent_state == {}
     assert loaded.steps == []
-    # The original full-graph loading path issued 129 SELECTs here. Keep the
-    # latency-sensitive production path bounded as relationships are added.
-    assert len(select_statements) <= 20, Counter(
+    # A newly created standard Run reaches the model with one startup read plus
+    # one legacy missing-Skill-snapshot check in this direct repository fixture.
+    assert client.selects_before_decide == 2
+    # The original full-graph loading path issued 129 SELECTs here.
+    assert len(select_statements) <= 12, Counter(
         statement.rsplit("FROM ", 1)[-1].split()[0] for statement in select_statements
     )
     assert await session.scalar(

@@ -417,7 +417,21 @@ class SkillActivationService:
         *,
         identities: set[str] | None = None,
     ) -> list[dict[str, Any]]:
-        snapshot = await self._snapshot(run_id)
+        blocks, _ = await self.prompt_blocks_with_snapshot(
+            run_id,
+            identities=identities,
+        )
+        return blocks
+
+    async def prompt_blocks_with_snapshot(
+        self,
+        run_id: str,
+        *,
+        identities: set[str] | None = None,
+        snapshot: RunSkillSnapshotRecord | None = None,
+    ) -> tuple[list[dict[str, Any]], RunSkillSnapshotRecord]:
+        if snapshot is None:
+            snapshot = await self._snapshot(run_id)
         active = {
             item["qualified_identity"]: item
             for item in snapshot.activations or []
@@ -449,7 +463,7 @@ class SkillActivationService:
                     "metadata": entry.metadata,
                 }
             )
-        return blocks
+        return blocks, snapshot
 
     async def materialize_inputs(
         self,

@@ -14,7 +14,7 @@ from app.agent_profile import (
 )
 from app.core.config import Settings
 from app.core.errors import run_error_from_exception
-from app.db.models import RunRecord
+from app.db.models import RunRecord, RunSkillSnapshotRecord
 from app.db.session import SessionLocal
 from app.repositories.plans import PlanRepository, plan_to_view
 from app.repositories.runs import RunRepository
@@ -155,7 +155,10 @@ class RunEngine:
             await session.commit()
 
     async def _run_with_repo(self, repo: RunRepository, run_id: str) -> None:
-        run = await repo.require_run_core(run_id)
+        run, skill_snapshot = await repo.require_run_startup(
+            run_id,
+            include_skills=self.settings.skills_enabled,
+        )
         profile = await self._profile_for_run(repo, run_id, run.agent_profile_snapshot or {})
         self.model_client.bind_agent_profile(profile)
         self._bind_reasoning_effort(run)
@@ -166,7 +169,12 @@ class RunEngine:
         )
         if self.settings.skills_enabled:
             try:
-                skill_blocks = await skill_service.prompt_blocks(run_id)
+                skill_blocks, skill_snapshot = (
+                    await skill_service.prompt_blocks_with_snapshot(
+                        run_id,
+                        snapshot=skill_snapshot,
+                    )
+                )
             except ValueError as exc:
                 if "snapshot is unavailable" not in str(exc):
                     raise
@@ -209,7 +217,14 @@ class RunEngine:
         if execution_profile is None:
             raise ValueError("Run execution profile is required")
         if execution_profile.answer_mode == AnswerMode.standard:
-            await self._execute_agent_loop(repo, run_id, goal)
+            await self._execute_agent_loop(
+                repo,
+                run_id,
+                goal,
+                initial_run=run,
+                fresh_run=run.status == "created" and not run.state_version,
+                initial_skill_snapshot=skill_snapshot,
+            )
             return
 
         if run.state_version and run.agent_state:
@@ -618,13 +633,22 @@ class RunEngine:
             + f"\nCurrent user request: {current_goal}"
         )
 
-    async def _execute_agent_loop(self, repo: RunRepository, run_id: str, goal: str) -> None:
+    async def _execute_agent_loop(
+        self,
+        repo: RunRepository,
+        run_id: str,
+        goal: str,
+        *,
+        initial_run: RunRecord | None = None,
+        fresh_run: bool = False,
+        initial_skill_snapshot: RunSkillSnapshotRecord | None = None,
+    ) -> None:
         if not self.settings.agent_use_general_runtime:
             raise RuntimeError(
                 "The general Agent runtime is required; the legacy Web workflow has been removed"
             )
 
-        run = await repo.require_run_core(run_id)
+        run = initial_run or await repo.require_run_core(run_id)
         quick_mode = run.answer_mode == AnswerMode.standard.value
         logger.info("run.phase run_id=%s phase=executing quick=%s", run_id, quick_mode)
         await repo.add_event(
@@ -635,7 +659,11 @@ class RunEngine:
                 "label": "正在快速回答" if quick_mode else "正在执行计划",
             },
         )
-        await repo.update_run_status(run_id, "executing")
+        await repo.update_run_status(
+            run_id,
+            "executing",
+            loaded_run=run if fresh_run else None,
+        )
         agent_loop = AgentLoop(
             self.settings,
             model_client=self.model_client,
@@ -648,6 +676,9 @@ class RunEngine:
                 run_id,
                 goal,
                 on_answer_delta=lambda delta: self._handle_answer_delta(repo, run_id, delta),
+                initial_run=run if fresh_run else None,
+                fresh_run=fresh_run,
+                initial_skill_snapshot=initial_skill_snapshot if fresh_run else None,
             )
         except Exception:
             self._answer_buffers.pop(run_id, None)
