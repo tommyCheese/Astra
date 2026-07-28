@@ -430,6 +430,19 @@ class DirectFinalizeClient(MockModelClient):
         ), FinalAnswer(summary="可信模式运行正常")
 
 
+class TransactionInspectingClient(MockModelClient):
+    def __init__(self, session):
+        self.session = session
+        self.transaction_states = []
+
+    async def decide_with_answer(self, goal, context, *, on_delta=None, on_reasoning_delta=None):
+        self.transaction_states.append(self.session.in_transaction())
+        return AgentDecision(
+            decision_type="finalize",
+            reasoning_summary="直接完成",
+        ), FinalAnswer(summary="已完成")
+
+
 class ArtifactReferencingClient(MockModelClient):
     def __init__(self, artifact_ids: list[str]):
         self.artifact_ids = artifact_ids
@@ -560,6 +573,31 @@ async def test_standard_mode_uses_deployment_turn_limit(session):
     )
 
     assert client.decide_calls == 10
+
+
+async def test_standard_mode_releases_read_transaction_before_model_wait(session):
+    settings = Settings(model_provider="mock")
+    profile = RunProfileResolver().resolve(
+        AnswerMode.standard,
+        RequestedReasoningPolicy(execution_mode="auto_approval"),
+    )
+    repo = RunRepository(session)
+    run = await repo.create_task_run(
+        "快速回答",
+        settings.model_policy,
+        reasoning_policy=profile.reasoning_policy.model_dump(mode="json"),
+        answer_mode=profile.answer_mode.value,
+        execution_profile=profile.model_dump(mode="json"),
+    )
+    client = TransactionInspectingClient(session)
+
+    await AgentLoop(
+        settings,
+        model_client=client,
+        tool_registry=fake_web_registry(),
+    ).run(repo, run.id, run.task.description)
+
+    assert client.transaction_states == [False]
 
 
 async def test_standard_mode_uses_deployment_tool_limit(session):

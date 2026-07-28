@@ -295,6 +295,33 @@ async def test_initial_run_view_uses_one_query_and_terminal_falls_back_to_full(s
     assert terminal_view.result.summary == "完整终态"
 
 
+async def test_runtime_resume_context_loads_in_two_queries(session):
+    repo = RunRepository(session)
+    run = await repo.create_task_run("运行时上下文", {"provider": "mock"})
+    run_id = run.id
+    await session.commit()
+    session.expunge_all()
+    statements: list[str] = []
+
+    def count_selects(_conn, _cursor, statement, _parameters, _context, _executemany):
+        if statement.lstrip().upper().startswith("SELECT"):
+            statements.append(statement)
+
+    sqlalchemy_event.listen(
+        session.bind.sync_engine, "before_cursor_execute", count_selects
+    )
+    try:
+        loaded = await repo.require_run_runtime(run_id)
+    finally:
+        sqlalchemy_event.remove(
+            session.bind.sync_engine, "before_cursor_execute", count_selects
+        )
+
+    assert loaded.turns == []
+    assert loaded.tool_calls == []
+    assert len(statements) == 2
+
+
 async def test_loading_autodream_protocol_has_no_database_side_effect(session):
     repo = RunRepository(session)
     run = await repo.create_task_run("AutoDream 占位测试", {"provider": "mock"})

@@ -1,7 +1,8 @@
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
 
-from app.db.session import configure_sqlite_engine
+from app.core.config import Settings
+from app.db.session import configure_sqlite_engine, engine_options_for_settings
 
 
 async def test_sqlite_engine_uses_concurrent_runtime_pragmas(tmp_path):
@@ -20,3 +21,21 @@ async def test_sqlite_engine_uses_concurrent_runtime_pragmas(tmp_path):
     assert synchronous == 1
     assert busy_timeout == 5000
     assert temp_store == 2
+
+
+def test_file_sqlite_uses_bounded_connection_pool():
+    settings = Settings(database_url="sqlite+aiosqlite:///runtime.db")
+
+    assert engine_options_for_settings(settings) == {
+        "pool_size": 5,
+        "max_overflow": 0,
+    }
+
+
+def test_non_file_databases_keep_driver_pool_defaults():
+    assert engine_options_for_settings(
+        Settings(database_url="sqlite+aiosqlite:///:memory:")
+    ) == {}
+    assert engine_options_for_settings(
+        Settings(database_url="postgresql+asyncpg://astra@db/astra")
+    ) == {}

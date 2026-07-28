@@ -1,6 +1,7 @@
 from collections.abc import AsyncIterator
 
 from sqlalchemy import event
+from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -9,7 +10,7 @@ from sqlalchemy.ext.asyncio import (
 )
 from sqlalchemy.orm import Session
 
-from app.core.config import get_settings
+from app.core.config import Settings, get_settings
 from app.db.models import RunEventRecord
 from app.runtime_events import run_event_broker
 
@@ -57,8 +58,25 @@ def configure_sqlite_engine(async_engine: AsyncEngine) -> None:
             cursor.close()
 
 
+def engine_options_for_settings(settings: Settings) -> dict[str, int]:
+    database_url = make_url(settings.database_url)
+    if (
+        database_url.get_backend_name() != "sqlite"
+        or database_url.database in {None, "", ":memory:"}
+    ):
+        return {}
+    return {
+        "pool_size": settings.sqlite_pool_size,
+        "max_overflow": settings.sqlite_max_overflow,
+    }
+
+
 settings = get_settings()
-engine = create_async_engine(settings.database_url, future=True)
+engine = create_async_engine(
+    settings.database_url,
+    future=True,
+    **engine_options_for_settings(settings),
+)
 configure_sqlite_engine(engine)
 SessionLocal = async_sessionmaker(
     engine,

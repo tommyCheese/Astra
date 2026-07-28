@@ -7,6 +7,8 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     log_level: str = "INFO"
     database_url: str = "sqlite+aiosqlite:///./astra-dev.db"
+    sqlite_pool_size: int = Field(default=5, ge=1, le=32)
+    sqlite_max_overflow: int = Field(default=0, ge=0, le=64)
     model_provider: str = "openai"
     model_name: str = "gpt-5"
     model_api_key: str = ""

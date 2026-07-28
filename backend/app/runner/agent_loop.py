@@ -642,7 +642,11 @@ class AgentLoop:
         reflection_count = 0
         replan_count = 0
         active_node = None
-        approved_call = await repo.get_approved_tool_call(run_id)
+        approved_call = (
+            await repo.get_approved_tool_call(run_id)
+            if initial_run.tool_calls
+            else None
+        )
         approved_request_snapshot = (
             {
                 "effect_plan_hash": approved_call.approval_request.effect_plan_hash,
@@ -1134,6 +1138,11 @@ class AgentLoop:
                                 "skills": list(context["active_skills"]),
                             },
                         )
+                    if quick_mode:
+                        # Context assembly opens a read transaction. Release its
+                        # connection before waiting on the model so concurrent
+                        # runs and SSE readers are not starved by network latency.
+                        await repo.session.commit()
                     decision, candidate_answer = await self.model_client.decide_with_answer(
                         goal,
                         context,

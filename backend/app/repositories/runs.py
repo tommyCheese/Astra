@@ -4,7 +4,7 @@ from typing import Any
 
 from sqlalchemy import and_, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import joinedload, selectinload
 
 from app.db.models import (
     AgentTurnRecord,
@@ -553,10 +553,10 @@ class RunRepository:
             .execution_options(populate_existing=True)
             .options(
                 selectinload(RunRecord.tool_calls),
-                selectinload(RunRecord.turns),
+                joinedload(RunRecord.turns),
             )
         )
-        run = result.scalar_one_or_none()
+        run = result.unique().scalar_one_or_none()
         if run is None:
             raise ValueError(f"Run not found: {run_id}")
         return run
