@@ -3,8 +3,8 @@ import logging
 import re
 import time
 from abc import ABC, abstractmethod
-from collections.abc import Awaitable, Callable
-from typing import Any
+from collections.abc import Awaitable, Callable, Iterable
+from typing import Any, ClassVar
 
 import httpx
 
@@ -786,8 +786,9 @@ class OpenAICompatibleModelClient(ModelClient):
                 callbacks = dict(stream_callbacks or {})
                 if stream_field and on_field_delta:
                     callbacks[stream_field] = on_field_delta
-                streamed_values = dict.fromkeys(callbacks, "")
-                completed_fields: set[str] = set()
+                field_extractor = (
+                    StreamingJsonFieldExtractor(callbacks) if callbacks else None
+                )
                 async for line in response.aiter_lines():
                     if not line.startswith("data:"):
                         continue
@@ -803,19 +804,9 @@ class OpenAICompatibleModelClient(ModelClient):
                         continue
                     if delta:
                         chunks.append(delta)
-                        if callbacks:
-                            streamed_content = "".join(chunks)
-                            for field, callback in callbacks.items():
-                                current_value = extract_partial_json_string(streamed_content, field)
-                                previous_value = streamed_values[field]
-                                if len(current_value) > len(previous_value):
-                                    await callback(current_value[len(previous_value) :])
-                                    streamed_values[field] = current_value
-                                if field not in completed_fields and json_string_field_complete(
-                                    streamed_content, field
-                                ):
-                                    await callback("\1")
-                                    completed_fields.add(field)
+                        if field_extractor is not None:
+                            for field, value in field_extractor.feed(delta):
+                                await callbacks[field](value)
                 content = "".join(chunks)
                 chunk_count = len(chunks)
             else:
@@ -924,51 +915,50 @@ class AnthropicModelClient(OpenAICompatibleModelClient):
                 model=self.settings.model_name,
                 operation=operation.value,
                 attempt=attempt + 1,
-            )
+        )
         try:
-            async with httpx.AsyncClient(timeout=60) as client:
-                response = await client.post(
-                    url,
-                    headers={
-                        "x-api-key": self.settings.model_api_key,
-                        "anthropic-version": "2023-06-01",
-                        "content-type": "application/json",
-                    },
-                    json={
-                        "model": self.settings.model_name,
-                        "max_tokens": 8192,
-                        "system": system,
-                        "messages": anthropic_messages,
-                        **reasoning_config.request_params,
-                    },
+            response = await self._client().post(
+                url,
+                headers={
+                    "x-api-key": self.settings.model_api_key,
+                    "anthropic-version": "2023-06-01",
+                    "content-type": "application/json",
+                },
+                json={
+                    "model": self.settings.model_name,
+                    "max_tokens": 8192,
+                    "system": system,
+                    "messages": anthropic_messages,
+                    **reasoning_config.request_params,
+                },
+            )
+            response.raise_for_status()
+            body = response.json()
+            content = "".join(
+                block.get("text", "")
+                for block in body.get("content", [])
+                if isinstance(block, dict) and block.get("type") == "text"
+            ).strip()
+            if not content:
+                raise ModelOutputError("Anthropic endpoint returned no text content")
+            payload = parse_json_object(content)
+            callbacks = dict(stream_callbacks or {})
+            if stream_field and on_field_delta:
+                callbacks[stream_field] = on_field_delta
+            for field, callback in callbacks.items():
+                value = find_json_string_field(payload, field)
+                if value:
+                    await callback(value)
+                await callback("\1")
+            if self.usage_recorder is not None:
+                await self.usage_recorder.finish(
+                    invocation_id,
+                    status="succeeded",
+                    duration_ms=round((time.perf_counter() - started) * 1000),
+                    request_id=response.headers.get("request-id"),
+                    usage=attach_reasoning_usage(body.get("usage"), reasoning_config),
                 )
-                response.raise_for_status()
-                body = response.json()
-                content = "".join(
-                    block.get("text", "")
-                    for block in body.get("content", [])
-                    if isinstance(block, dict) and block.get("type") == "text"
-                ).strip()
-                if not content:
-                    raise ModelOutputError("Anthropic endpoint returned no text content")
-                payload = parse_json_object(content)
-                callbacks = dict(stream_callbacks or {})
-                if stream_field and on_field_delta:
-                    callbacks[stream_field] = on_field_delta
-                for field, callback in callbacks.items():
-                    value = find_json_string_field(payload, field)
-                    if value:
-                        await callback(value)
-                    await callback("\1")
-                if self.usage_recorder is not None:
-                    await self.usage_recorder.finish(
-                        invocation_id,
-                        status="succeeded",
-                        duration_ms=round((time.perf_counter() - started) * 1000),
-                        request_id=response.headers.get("request-id"),
-                        usage=attach_reasoning_usage(body.get("usage"), reasoning_config),
-                    )
-                return payload
+            return payload
         except (httpx.HTTPError, json.JSONDecodeError, ValueError, ModelOutputError) as exc:
             if self.usage_recorder is not None:
                 await self.usage_recorder.finish(
@@ -1112,6 +1102,108 @@ def normalize_memory_payload(payload: dict[str, Any]) -> dict[str, Any] | None:
     except (TypeError, ValueError):
         normalized["confidence"] = 0.5
     return normalized
+
+
+class StreamingJsonFieldExtractor:
+    """Incrementally decode selected JSON string fields in one pass."""
+
+    _ESCAPES: ClassVar[dict[str, str]] = {
+        '"': '"',
+        "\\": "\\",
+        "/": "/",
+        "b": "\b",
+        "f": "\f",
+        "n": "\n",
+        "r": "\r",
+        "t": "\t",
+    }
+
+    def __init__(self, fields: Iterable[str]) -> None:
+        self._fields = frozenset(fields)
+        self._completed: set[str] = set()
+        self._in_string = False
+        self._string_is_value = False
+        self._string_chars: list[str] = []
+        self._capture_field: str | None = None
+        self._pending_key: str | None = None
+        self._awaiting_value_key: str | None = None
+        self._escaped = False
+        self._unicode_digits: list[str] | None = None
+
+    def feed(self, chunk: str) -> list[tuple[str, str]]:
+        events: list[tuple[str, str]] = []
+        captured: list[str] = []
+
+        def flush_capture() -> None:
+            if self._capture_field is not None and captured:
+                events.append((self._capture_field, "".join(captured)))
+                captured.clear()
+
+        def append_decoded(value: str) -> None:
+            if self._capture_field is not None:
+                captured.append(value)
+            else:
+                self._string_chars.append(value)
+
+        for char in chunk:
+            if self._in_string:
+                if self._unicode_digits is not None:
+                    if char in "0123456789abcdefABCDEF":
+                        self._unicode_digits.append(char)
+                        if len(self._unicode_digits) == 4:
+                            append_decoded(chr(int("".join(self._unicode_digits), 16)))
+                            self._unicode_digits = None
+                            self._escaped = False
+                    continue
+                if self._escaped:
+                    if char == "u":
+                        self._unicode_digits = []
+                    elif char in self._ESCAPES:
+                        append_decoded(self._ESCAPES[char])
+                        self._escaped = False
+                    else:
+                        self._escaped = False
+                    continue
+                if char == "\\":
+                    self._escaped = True
+                    continue
+                if char == '"':
+                    flush_capture()
+                    if self._capture_field is not None:
+                        events.append((self._capture_field, "\1"))
+                        self._completed.add(self._capture_field)
+                    elif not self._string_is_value:
+                        self._pending_key = "".join(self._string_chars)
+                    self._in_string = False
+                    self._capture_field = None
+                    self._string_chars.clear()
+                    continue
+                append_decoded(char)
+                continue
+
+            if char.isspace():
+                continue
+            if char == '"':
+                key = self._awaiting_value_key
+                self._awaiting_value_key = None
+                self._in_string = True
+                self._string_is_value = key is not None
+                self._string_chars.clear()
+                self._capture_field = (
+                    key if key in self._fields and key not in self._completed else None
+                )
+                self._escaped = False
+                self._unicode_digits = None
+                continue
+            if char == ":" and self._pending_key is not None:
+                self._awaiting_value_key = self._pending_key
+                self._pending_key = None
+                continue
+            self._pending_key = None
+            self._awaiting_value_key = None
+
+        flush_capture()
+        return events
 
 
 def extract_partial_json_string(content: str, field: str) -> str:

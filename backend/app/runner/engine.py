@@ -56,7 +56,7 @@ _SHARED_MODEL_HTTP_CLIENTS: dict[str, httpx.AsyncClient] = {}
 
 def shared_model_http_client(settings: Settings) -> httpx.AsyncClient | None:
     """Reuse provider connections across Runs in the same server process."""
-    if settings.model_provider in {"mock", "anthropic"}:
+    if settings.model_provider == "mock":
         return None
     endpoint = settings.model_base_url.rstrip("/")
     client = _SHARED_MODEL_HTTP_CLIENTS.get(endpoint)

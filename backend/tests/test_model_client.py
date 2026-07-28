@@ -8,6 +8,7 @@ from app.runner.model_client import (
     AnthropicModelClient,
     MockModelClient,
     ModelConfigurationError,
+    StreamingJsonFieldExtractor,
     build_model_client,
     extract_partial_json_string,
     json_string_field_complete,
@@ -215,6 +216,31 @@ def test_partial_json_stream_separates_reasoning_summary_from_final_answer():
     assert extract_partial_json_string(content, "summary") == "这是最终回答。"
     assert json_string_field_complete(content, "reasoning_summary")
     assert json_string_field_complete(content, "summary")
+
+
+def test_streaming_json_field_extractor_handles_chunked_keys_and_escapes():
+    extractor = StreamingJsonFieldExtractor({"reasoning_summary", "summary"})
+    content = (
+        '{"decision_type":"finalize","reasoning_summary":"先\\n检查\\u4fe1息。",'
+        '"final_answer":{"summary":"回答包含 \\"引号\\"。"}}'
+    )
+    events = []
+    for index in range(0, len(content), 3):
+        events.extend(extractor.feed(content[index : index + 3]))
+
+    reasoning = "".join(
+        value
+        for field, value in events
+        if field == "reasoning_summary" and value != "\1"
+    )
+    summary = "".join(
+        value for field, value in events if field == "summary" and value != "\1"
+    )
+    assert reasoning == "先\n检查信息。"
+    assert summary == '回答包含 "引号"。'
+    assert events.count(("reasoning_summary", "\1")) == 1
+    assert events.count(("summary", "\1")) == 1
+    assert events.index(("reasoning_summary", "\1")) < events.index(("summary", "\1"))
 
 
 def test_model_payload_normalization_accepts_shorthand_contract_and_plan():

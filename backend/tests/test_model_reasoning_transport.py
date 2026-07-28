@@ -130,14 +130,78 @@ async def test_openai_compatible_transport_reuses_connection_pool(monkeypatch):
     assert FakeOpenAIAsyncClient.closes == 1
 
 
-async def test_server_reuses_model_connections_across_runs(monkeypatch):
+async def test_openai_stream_decodes_multiple_fields_across_chunk_boundaries():
+    content = (
+        '{"decision_type":"finalize","reasoning_summary":"先检查",'
+        '"final_answer":{"summary":"流式\\n回答"}}'
+    )
+
+    class StreamingResponse:
+        headers: ClassVar[dict[str, str]] = {"content-type": "text/event-stream"}
+        status_code = 200
+
+        def raise_for_status(self):
+            return None
+
+        async def aiter_lines(self):
+            for index in range(0, len(content), 3):
+                event = {"choices": [{"delta": {"content": content[index : index + 3]}}]}
+                yield f"data: {json.dumps(event, ensure_ascii=False)}"
+            yield "data: [DONE]"
+
+    class StreamingContext:
+        async def __aenter__(self):
+            return StreamingResponse()
+
+        async def __aexit__(self, *args):
+            return None
+
+    class StreamingClient:
+        def stream(self, method, url, **kwargs):
+            return StreamingContext()
+
+    client = OpenAICompatibleModelClient(
+        Settings(model_provider="openai", model_name="gpt-5", model_api_key="secret"),
+        http_client=StreamingClient(),
+    )
+    reasoning = []
+    answer = []
+
+    async def capture_reasoning(value):
+        reasoning.append(value)
+
+    async def capture_answer(value):
+        answer.append(value)
+
+    payload = await client._chat_json(
+        [{"role": "user", "content": "返回 JSON"}],
+        operation=ModelOperation.DECISION_WITH_ANSWER,
+        stream_callbacks={
+            "reasoning_summary": capture_reasoning,
+            "summary": capture_answer,
+        },
+    )
+
+    assert payload["final_answer"]["summary"] == "流式\n回答"
+    assert "".join(reasoning[:-1]) == "先检查"
+    assert "".join(answer[:-1]) == "流式\n回答"
+    assert reasoning[-1] == answer[-1] == "\1"
+
+
+@pytest.mark.parametrize(
+    ("provider", "model"),
+    [("openai", "gpt-5"), ("anthropic", "claude-sonnet-4-6")],
+)
+async def test_server_reuses_model_connections_across_runs(
+    monkeypatch, provider, model
+):
     await close_shared_model_http_clients()
     FakeOpenAIAsyncClient.instances = 0
     FakeOpenAIAsyncClient.closes = 0
     monkeypatch.setattr("app.runner.engine.httpx.AsyncClient", FakeOpenAIAsyncClient)
     settings = Settings(
-        model_provider="openai",
-        model_name="gpt-5",
+        model_provider=provider,
+        model_name=model,
         model_api_key="secret",
         model_base_url="https://api.openai.test/v1",
     )
@@ -167,14 +231,20 @@ async def test_anthropic_transport_applies_output_config_effort(monkeypatch):
             }
 
     class FakeAnthropicAsyncClient:
+        instances = 0
+        closes = 0
+
         def __init__(self, **kwargs):
-            pass
+            self.__class__.instances += 1
 
         async def __aenter__(self):
             return self
 
         async def __aexit__(self, *args):
             return None
+
+        async def aclose(self):
+            self.__class__.closes += 1
 
         async def post(self, url, **kwargs):
             requests.append(kwargs["json"])
@@ -192,10 +262,15 @@ async def test_anthropic_transport_applies_output_config_effort(monkeypatch):
     usage = RecordingUsage()
     client.usage_recorder = usage
 
-    await client._chat_json(
-        [{"role": "user", "content": "返回 JSON"}],
-        operation=ModelOperation.CONTRACT,
-    )
+    for _ in range(2):
+        await client._chat_json(
+            [{"role": "user", "content": "返回 JSON"}],
+            operation=ModelOperation.CONTRACT,
+        )
+    await client.aclose()
 
     assert requests[0]["output_config"] == {"effort": "medium"}
     assert usage.finished[0][1]["usage"]["astra_reasoning"]["adapter"] == "anthropic-effort"
+    assert FakeAnthropicAsyncClient.instances == 1
+    assert len(requests) == 2
+    assert FakeAnthropicAsyncClient.closes == 1
