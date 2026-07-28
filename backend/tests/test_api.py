@@ -857,9 +857,17 @@ async def test_run_event_stream_starts_with_ready_signal(app_client, monkeypatch
     assert '"type": "stream.ready"' in response.text
 
 
-async def test_create_run_stream_returns_identity_on_same_connection(app_client):
+async def test_create_run_stream_returns_identity_before_starting_engine(
+    app_client, monkeypatch
+):
     from app.schemas.agent import CreateRunRequest
 
+    scheduled: list[str] = []
+    monkeypatch.setattr(
+        runs_api,
+        "_schedule_run",
+        lambda run_id, _settings: scheduled.append(run_id),
+    )
     async with app_client._astra_session() as session:
         response = await runs_api.create_run_stream(
             CreateRunRequest(goal="单连接流式创建"),
@@ -867,6 +875,7 @@ async def test_create_run_stream_returns_identity_on_same_connection(app_client)
             settings=app_client._astra_settings,
         )
         ready = json.loads((await anext(response.body_iterator)).removeprefix("data: "))
+        assert scheduled == []
         await response.body_iterator.aclose()
 
     assert ready["type"] == "stream.ready"
@@ -874,6 +883,7 @@ async def test_create_run_stream_returns_identity_on_same_connection(app_client)
     assert ready["payload"]["task_id"]
     assert ready["payload"]["status"] == "created"
     assert ready["payload"]["answer_mode"] == "standard"
+    assert scheduled == [ready["payload"]["run_id"]]
 
 
 async def test_run_event_stream_unsubscribes_when_closed_after_ready(

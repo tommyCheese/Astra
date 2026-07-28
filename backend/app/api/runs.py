@@ -1,7 +1,7 @@
 import asyncio
 import json
 import logging
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from contextlib import suppress
 
 from fastapi import APIRouter, Depends, Header, Query
@@ -58,6 +58,7 @@ async def _run_event_stream(
     *,
     after_id: int = 0,
     ready_payload: dict[str, object] | None = None,
+    start_after_ready: Callable[[], None] | None = None,
 ) -> AsyncIterator[str]:
     logger.info("sse.open run_id=%s after_id=%s", run_id, after_id)
     last_id = after_id
@@ -65,16 +66,23 @@ async def _run_event_stream(
     database_refresh_required = True
     status: str | None = None
     try:
-        yield (
-            "data: "
-            + json.dumps(
-                {
-                    "type": "stream.ready",
-                    "payload": ready_payload or {"run_id": run_id},
-                }
+        try:
+            yield (
+                "data: "
+                + json.dumps(
+                    {
+                        "type": "stream.ready",
+                        "payload": ready_payload or {"run_id": run_id},
+                    }
+                )
+                + "\n\n"
             )
-            + "\n\n"
-        )
+            # Give the ASGI server one scheduling turn to flush the response
+            # headers and ready event before the run engine starts doing work.
+            await asyncio.sleep(0)
+        finally:
+            if start_after_ready is not None:
+                start_after_ready()
         while True:
             published = (
                 None
@@ -252,12 +260,11 @@ async def list_runs(
     return [RunView.model_validate(run_to_view(run)) for run in runs]
 
 
-@router.post("/runs", response_model=CreateRunResponse)
-async def create_run(
+async def _create_run(
     payload: CreateRunRequest,
-    session: AsyncSession = Depends(get_session),
-    settings: Settings = Depends(get_settings),
-) -> CreateRunResponse:
+    session: AsyncSession,
+    settings: Settings,
+) -> tuple[CreateRunResponse, Settings]:
     goal = payload.goal.strip()
     if not goal:
         raise ValidationError("GOAL_REQUIRED", "请输入你想完成的目标。", {"field": "goal"})
@@ -379,16 +386,29 @@ async def create_run(
         if message.startswith("Task not found"):
             raise ResourceError("TASK_NOT_FOUND", "找不到指定任务。") from exc
         raise ValidationError("RUN_REQUEST_INVALID", "无法创建任务。") from exc
-    _schedule_run(run.id, run_settings)
     logger.info(
         "run.create.accepted run_id=%s task_id=%s status=%s", run.id, run.task_id, run.status
     )
-    return CreateRunResponse(
-        task_id=run.task_id,
-        run_id=run.id,
-        status=run.status,
-        answer_mode=profile.answer_mode,
+    return (
+        CreateRunResponse(
+            task_id=run.task_id,
+            run_id=run.id,
+            status=run.status,
+            answer_mode=profile.answer_mode,
+        ),
+        run_settings,
     )
+
+
+@router.post("/runs", response_model=CreateRunResponse)
+async def create_run(
+    payload: CreateRunRequest,
+    session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+) -> CreateRunResponse:
+    created, run_settings = await _create_run(payload, session, settings)
+    _schedule_run(created.run_id, run_settings)
+    return created
 
 
 @router.post("/runs/stream")
@@ -398,7 +418,7 @@ async def create_run_stream(
     settings: Settings = Depends(get_settings),
 ) -> StreamingResponse:
     """Create a run and stream it on the same HTTP request."""
-    created = await create_run(payload, session, settings)
+    created, run_settings = await _create_run(payload, session, settings)
     # The streaming response outlives this endpoint's dependency scope.
     await session.rollback()
     return _streaming_response(
@@ -410,6 +430,7 @@ async def create_run_stream(
                 "status": created.status,
                 "answer_mode": created.answer_mode.value,
             },
+            start_after_ready=lambda: _schedule_run(created.run_id, run_settings),
         )
     )
 
