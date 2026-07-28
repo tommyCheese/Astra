@@ -80,6 +80,8 @@ logger = logging.getLogger("astra.agent_loop")
 
 
 INVALID_ARTIFACT_REFERENCE_WARNING = "已移除无效或不可访问的工具输出引用。"
+REASONING_FLUSH_INTERVAL_SECONDS = 0.1
+REASONING_FLUSH_MAX_CHARS = 512
 
 
 def active_plan_node_id(state: dict[str, Any]) -> str | None:
@@ -214,7 +216,7 @@ class ContextAssembler:
         evidence_pack: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         memories = await self.repo.list_memories(run_id=run_id, min_confidence=0.0, limit=8)
-        run = await self.repo.require_run(run_id)
+        run = await self.repo.require_run_core(run_id)
         plan = await PlanRepository(self.repo.session).active_for_run(run_id)
         plan_view = plan_to_view(plan).model_dump(mode="json") if plan else run.plan_graph or {}
         active_node_id = active_plan_node_id(run.agent_state or {})
@@ -293,6 +295,8 @@ class ContextAssembler:
             "plan_graph": plan_view,
             "active_node": active_node,
             "agent_state": run.agent_state or {},
+            "state_version": run.state_version,
+            "plan_version": plan_view.get("version", 1),
             "skill_catalog": skill_catalog,
             "active_skills": active_skills,
             "skill_draft_test": bool(skill_snapshot and skill_snapshot.draft_test),
@@ -461,7 +465,7 @@ class AgentLoop:
             max_bytes=self.settings.artifact_max_bytes,
         )
         provider = self.sandbox_provider or build_sandbox_provider(self.settings)
-        initial_run = await repo.require_run(run_id)
+        initial_run = await repo.require_run_runtime(run_id)
         permission_repository = PermissionRepository(repo.session)
         main_identity = await permission_repository.get_or_create_identity(
             identity_type="main_agent",
@@ -517,7 +521,10 @@ class AgentLoop:
             max_bytes=self.settings.task_workspace_max_bytes,
             max_file_bytes=self.settings.task_workspace_max_file_bytes,
         )
-        workspace_path = await workspace_service.prepare(initial_run.task_id)
+        # Most standard answers never touch the workspace. Preparing it eagerly
+        # adds a database commit and filesystem work before the first model token.
+        workspace_path = None
+        workspace_changed = False
         sandbox_service = SandboxJobService(
             repo,
             SandboxSupervisor(provider),
@@ -729,13 +736,13 @@ class AgentLoop:
             }
             observations.append(reflection_observation)
             state_version = None
-            current = await repo.require_run(run_id)
+            current = await repo.require_run_core(run_id)
             if current.agent_state:
                 state = AgentState.model_validate(current.agent_state)
                 state.observations = list(observations)
                 state.budget_usage.update(
                     {
-                        "turns": len(current.turns),
+                        "turns": await repo.count_agent_turns(run_id),
                         "tool_calls": tool_call_count,
                         "reflections": reflection_count,
                         "replans": replan_count,
@@ -801,7 +808,7 @@ class AgentLoop:
             return reflection
 
         async def persist_progress(evaluation=None) -> None:
-            current = await repo.require_run(run_id)
+            current = await repo.require_run_core(run_id)
             if not current.agent_state:
                 return
             state = AgentState.model_validate(current.agent_state)
@@ -826,7 +833,7 @@ class AgentLoop:
                         criterion.status = evaluation.criterion_updates[criterion.id]
             state.budget_usage.update(
                 {
-                    "turns": len(current.turns),
+                    "turns": await repo.count_agent_turns(run_id),
                     "tool_calls": tool_call_count,
                     "reflections": reflection_count,
                     "replans": replan_count,
@@ -943,7 +950,7 @@ class AgentLoop:
             active_execution_id = None
             if canonical_plan is not None:
                 canonical_plan = await plan_repository.active_for_run(run_id)
-                current = await repo.require_run(run_id)
+                current = await repo.require_run_core(run_id)
                 active_node_id = active_plan_node_id(current.agent_state or {})
                 active_execution_id = active_node_execution_id(
                     current.agent_state or {},
@@ -963,7 +970,7 @@ class AgentLoop:
                     active_node = await scheduler.select_next(run_id)
                     await repo.session.commit()
                     canonical_plan = await plan_repository.active_for_run(run_id)
-                    current = await repo.require_run(run_id)
+                    current = await repo.require_run_core(run_id)
                     active_execution_id = active_node_execution_id(
                         current.agent_state or {},
                         active_node.id if active_node else None,
@@ -1036,8 +1043,8 @@ class AgentLoop:
                 now = time.monotonic()
                 if (
                     reasoning_last_flush == 0.0
-                    or now - reasoning_last_flush >= 0.02
-                    or len(reasoning_buffer) >= 96
+                    or now - reasoning_last_flush >= REASONING_FLUSH_INTERVAL_SECONDS
+                    or len(reasoning_buffer) >= REASONING_FLUSH_MAX_CHARS
                 ):
                     await repo.add_event(
                         run_id,
@@ -1218,10 +1225,8 @@ class AgentLoop:
                     selected_tool=decision.tool_name,
                     decision=decision.model_dump(),
                     memory_reads=context["memory_reads"],
-                    state_version_before=(await repo.require_run(run_id)).state_version,
-                    plan_version=((await repo.require_run(run_id)).plan_graph or {}).get(
-                        "version", 1
-                    ),
+                    state_version_before=int(context["state_version"]),
+                    plan_version=int(context["plan_version"]),
                     phase="prepared" if decision.decision_type == "call_tool" else "created",
                     idempotency_key=idempotency_key,
                     plan_node_id=active_node.id if active_node is not None else None,
@@ -1243,7 +1248,7 @@ class AgentLoop:
                 continue
             if decision.decision_type == "activate_skill":
                 identity = decision.skill_identity or ""
-                current_run = await repo.require_run(run_id)
+                current_run = await repo.require_run_core(run_id)
                 contract_skills = {
                     item.get("qualified_identity")
                     for item in (current_run.task_contract or {}).get(
@@ -1457,14 +1462,13 @@ class AgentLoop:
                 )
                 terminal_summary = decision.reasoning_summary
                 if terminal_override == "waiting_user":
+                    current_run = await repo.require_run_core(run_id)
                     await repo.set_waiting_state(
                         run_id,
                         {
                             "paused_node": "select_action",
-                            "state_version": (await repo.require_run(run_id)).state_version,
-                            "plan_version": ((await repo.require_run(run_id)).plan_graph or {}).get(
-                                "version", 1
-                            ),
+                            "state_version": current_run.state_version,
+                            "plan_version": (current_run.plan_graph or {}).get("version", 1),
                             "request": decision.expected_observation or decision.reasoning_summary,
                         },
                     )
@@ -1885,6 +1889,9 @@ class AgentLoop:
                     tool_call_count += 1
                 await repo.update_agent_turn(turn.id, phase="executing", tool_call_id=call.id)
                 try:
+                    mount_mode = workspace_mount_mode(effect_plan)
+                    if mount_mode != "none" and workspace_path is None:
+                        workspace_path = await workspace_service.prepare(initial_run.task_id)
                     execution_context = ToolExecutionContext(
                         run_id=run_id,
                         tool_call_id=call.id,
@@ -1894,7 +1901,7 @@ class AgentLoop:
                         sandbox_service=sandbox_service,
                         task_id=initial_run.task_id,
                         workspace_path=workspace_path,
-                        workspace_mode=workspace_mount_mode(effect_plan),
+                        workspace_mode=mount_mode,
                         effect_plan=effect_plan.model_dump(mode="json"),
                         runtime_identity_id=runtime_identity.id,
                         skill_bindings=tuple(context.get("active_skills", [])),
@@ -1920,6 +1927,7 @@ class AgentLoop:
                     raise
                 workspace_changes = await workspace_repository.list_changes_for_tool_call(call.id)
                 if workspace_changes:
+                    workspace_changed = True
                     output = {
                         **output,
                         "data": {
@@ -2207,7 +2215,7 @@ class AgentLoop:
             result["verification_report"] = None
             result["completion_decision"] = None
             result["audit_refs"] = {
-                "agent_turn_count": len((await repo.require_run(run_id)).turns),
+                "agent_turn_count": await repo.count_agent_turns(run_id),
                 "referenced_artifact_ids": referenced_artifact_ids,
             }
             if final_turn_id:
@@ -2220,7 +2228,11 @@ class AgentLoop:
                         "summary": final_answer.summary,
                     },
                 )
-            if final_status not in {"waiting_user", "executing"}:
+            if (
+                final_status not in {"waiting_user", "executing"}
+                and workspace_changed
+                and workspace_path is not None
+            ):
                 checkpoint = await workspace_service.create_checkpoint(
                     run_id=run_id, workspace_dir=workspace_path
                 )
@@ -2388,7 +2400,11 @@ class AgentLoop:
                 reflection=completion_reflection.model_dump() if completion_reflection else None,
             )
         await repo.add_event(run_id, "verification.created", report.model_dump())
-        if final_status not in {"waiting_user", "executing"}:
+        if (
+            final_status not in {"waiting_user", "executing"}
+            and workspace_changed
+            and workspace_path is not None
+        ):
             checkpoint = await workspace_service.create_checkpoint(
                 run_id=run_id, workspace_dir=workspace_path
             )

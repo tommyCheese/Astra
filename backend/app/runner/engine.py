@@ -49,6 +49,9 @@ from app.usage_metering import DatabaseUsageRecorder
 
 logger = logging.getLogger("astra.engine")
 
+STREAM_FLUSH_INTERVAL_SECONDS = 0.1
+STREAM_FLUSH_MAX_CHARS = 512
+
 
 class RunEngine:
     def __init__(
@@ -121,7 +124,7 @@ class RunEngine:
             await session.commit()
 
     async def _run_with_repo(self, repo: RunRepository, run_id: str) -> None:
-        run = await repo.require_run(run_id)
+        run = await repo.require_run_core(run_id)
         profile = await self._profile_for_run(repo, run_id, run.agent_profile_snapshot or {})
         self.model_client.bind_agent_profile(profile)
         self._bind_reasoning_effort(run)
@@ -207,7 +210,7 @@ class RunEngine:
                 }
             ),
         )
-        run = await repo.require_run(run_id)
+        run = await repo.require_run_core(run_id)
         snapshot = ReasoningPolicySnapshot.model_validate(run.reasoning_policy or {})
         contract = contract or build_default_contract(goal)
         capabilities = set(self.tool_registry.specs())
@@ -563,7 +566,9 @@ class RunEngine:
         return prefix + current_request
 
     async def _conversation_goal(self, repo: RunRepository, run: RunRecord) -> str:
-        current_goal = run.model_policy.get("conversation_goal", run.task.description)
+        current_goal = run.model_policy.get("conversation_goal")
+        if not current_goal:
+            current_goal = (await repo.require_run(run.id)).task.description
         conversation_runs = await repo.list_task_runs(run.task_id)
         previous_runs = [item for item in conversation_runs if item.id != run.id][-6:]
         if not previous_runs:
@@ -585,7 +590,7 @@ class RunEngine:
                 "The general Agent runtime is required; the legacy Web workflow has been removed"
             )
 
-        run = await repo.require_run(run_id)
+        run = await repo.require_run_core(run_id)
         quick_mode = run.answer_mode == AnswerMode.standard.value
         logger.info("run.phase run_id=%s phase=executing quick=%s", run_id, quick_mode)
         await repo.add_event(
@@ -693,7 +698,7 @@ class RunEngine:
                     "caveat_count": report.get("caveat_count", len(result.get("caveats", []))),
                 },
             )
-        current = await repo.require_run(run_id)
+        current = await repo.require_run_core(run_id)
         if not current.active_plan_id:
             await self._complete_pending_steps(repo, run_id)
         await repo.update_run_status(
@@ -762,7 +767,11 @@ class RunEngine:
         now = time.monotonic()
         last_flush = self._answer_flush_at.get(run_id, 0.0)
         first_delta = last_flush == 0.0
-        should_flush = first_delta or now - last_flush >= 0.02 or len(buffered) >= 96
+        should_flush = (
+            first_delta
+            or now - last_flush >= STREAM_FLUSH_INTERVAL_SECONDS
+            or len(buffered) >= STREAM_FLUSH_MAX_CHARS
+        )
         if should_flush:
             self._answer_buffers[run_id] = ""
             self._answer_flush_at[run_id] = now
@@ -820,6 +829,8 @@ async def start_run_in_process(run_id: str, settings: Settings) -> None:
         async with SessionLocal() as session:
             await RunRepository(session).cancel_run(run_id)
         raise
+    finally:
+        await engine.model_client.aclose()
 
 
 def error_result(error: dict[str, Any]) -> dict[str, Any]:

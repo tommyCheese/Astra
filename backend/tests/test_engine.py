@@ -1,8 +1,12 @@
+from collections import Counter
+
 import pytest
 from fake_web_tools import fake_web_registry
+from sqlalchemy import event, select
 
 from app.agent_profile import AgentProfileLoader, load_agent_profile
 from app.core.config import Settings
+from app.db.models import TaskWorkspaceRecord, WorkspaceCheckpointRecord
 from app.repositories.plans import PlanRepository, plan_to_view
 from app.repositories.runs import RunRepository
 from app.runner.engine import RunEngine
@@ -477,12 +481,25 @@ async def test_standard_fast_path_skips_plan_state_and_all_quality_gates(session
         reasoning_policy=profile.reasoning_policy.model_dump(mode="json"),
         answer_mode=profile.answer_mode.value,
         execution_profile=profile.model_dump(mode="json"),
+        agent_profile_snapshot=load_agent_profile().snapshot(),
     )
+    task_id = run.task_id
+    session.expunge_all()
     client = QuickStreamingClient()
 
-    await RunEngine(settings, model_client=client, tool_registry=ToolRegistry())._run_with_repo(
-        repo, run.id
-    )
+    select_statements = []
+
+    def count_selects(_conn, _cursor, statement, _parameters, _context, _executemany):
+        if statement.lstrip().upper().startswith("SELECT"):
+            select_statements.append(statement)
+
+    event.listen(session.bind.sync_engine, "before_cursor_execute", count_selects)
+    try:
+        await RunEngine(settings, model_client=client, tool_registry=ToolRegistry())._run_with_repo(
+            repo, run.id
+        )
+    finally:
+        event.remove(session.bind.sync_engine, "before_cursor_execute", count_selects)
 
     loaded = await repo.require_run(run.id)
     events = await repo.list_events(run.id)
@@ -492,6 +509,17 @@ async def test_standard_fast_path_skips_plan_state_and_all_quality_gates(session
     assert loaded.plan_graph == {}
     assert loaded.agent_state == {}
     assert loaded.steps == []
+    # The original full-graph loading path issued 129 SELECTs here. Keep the
+    # latency-sensitive production path bounded as relationships are added.
+    assert len(select_statements) <= 25, Counter(
+        statement.rsplit("FROM ", 1)[-1].split()[0] for statement in select_statements
+    )
+    assert await session.scalar(
+        select(TaskWorkspaceRecord).where(TaskWorkspaceRecord.task_id == task_id)
+    ) is None
+    assert await session.scalar(
+        select(WorkspaceCheckpointRecord).where(WorkspaceCheckpointRecord.run_id == run.id)
+    ) is None
     assert await PlanRepository(session).active_for_run(run.id) is None
     assert loaded.result["summary"] == "立即流式回答"
     assert loaded.result["verification_report"] is None

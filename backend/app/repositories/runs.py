@@ -2,7 +2,7 @@ import uuid
 from copy import deepcopy
 from typing import Any
 
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -516,6 +516,40 @@ class RunRepository:
             raise ValueError(f"Run not found: {run_id}")
         return run
 
+    async def require_run_core(self, run_id: str) -> RunRecord:
+        """Load only the Run row for latency-sensitive runtime decisions."""
+        result = await self.session.execute(
+            select(RunRecord)
+            .where(RunRecord.id == run_id)
+            .execution_options(populate_existing=True)
+        )
+        run = result.scalar_one_or_none()
+        if run is None:
+            raise ValueError(f"Run not found: {run_id}")
+        return run
+
+    async def require_run_runtime(self, run_id: str) -> RunRecord:
+        """Load the small relationship set required to resume the Agent loop."""
+        result = await self.session.execute(
+            select(RunRecord)
+            .where(RunRecord.id == run_id)
+            .execution_options(populate_existing=True)
+            .options(
+                selectinload(RunRecord.tool_calls),
+                selectinload(RunRecord.turns),
+            )
+        )
+        run = result.scalar_one_or_none()
+        if run is None:
+            raise ValueError(f"Run not found: {run_id}")
+        return run
+
+    async def count_agent_turns(self, run_id: str) -> int:
+        count = await self.session.scalar(
+            select(func.count(AgentTurnRecord.id)).where(AgentTurnRecord.run_id == run_id)
+        )
+        return int(count or 0)
+
     async def list_task_runs(self, task_id: str) -> list[RunRecord]:
         result = await self.session.execute(
             select(RunRecord).where(RunRecord.task_id == task_id).order_by(RunRecord.created_at)
@@ -530,7 +564,15 @@ class RunRepository:
         summary: str | None = None,
         result: dict[str, Any] | None = None,
     ) -> None:
-        run = await self.require_run(run_id)
+        query_result = await self.session.execute(
+            select(RunRecord)
+            .where(RunRecord.id == run_id)
+            .execution_options(populate_existing=True)
+            .options(selectinload(RunRecord.task))
+        )
+        run = query_result.scalar_one_or_none()
+        if run is None:
+            raise ValueError(f"Run not found: {run_id}")
         if run.status == "cancelled" and status != "cancelled":
             return
         run.status = status

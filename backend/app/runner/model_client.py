@@ -41,6 +41,10 @@ class ModelOutputError(RuntimeError):
 
 
 class ModelClient(ABC):
+    async def aclose(self) -> None:
+        """Release transport resources owned by this client."""
+        return None
+
     def bind_agent_profile(self, profile: AgentProfile) -> None:
         """Bind the immutable Profile selected for the current Run."""
         return None
@@ -388,6 +392,21 @@ class OpenAICompatibleModelClient(ModelClient):
         self.agent_profile = load_agent_profile()
         self.prompt_composer = PromptComposer(self.agent_profile)
         self.reasoning_effort = ReasoningEffort.balanced
+        self._http_client: httpx.AsyncClient | None = None
+
+    def _client(self) -> httpx.AsyncClient:
+        if self._http_client is None:
+            self._http_client = httpx.AsyncClient(
+                timeout=60,
+                limits=httpx.Limits(max_connections=16, max_keepalive_connections=8),
+            )
+        return self._http_client
+
+    async def aclose(self) -> None:
+        client = self._http_client
+        self._http_client = None
+        if client is not None:
+            await client.aclose()
 
     def bind_agent_profile(self, profile: AgentProfile) -> None:
         self.agent_profile = profile
@@ -725,8 +744,8 @@ class OpenAICompatibleModelClient(ModelClient):
         }
         if reasoning_config.include_json_mode:
             request_payload["response_format"] = {"type": "json_object"}
+        client = self._client()
         async with (
-            httpx.AsyncClient(timeout=60) as client,
             client.stream(
                 "POST",
                 url,

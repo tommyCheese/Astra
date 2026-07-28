@@ -48,15 +48,20 @@ class FakeStreamContext:
 
 class FakeOpenAIAsyncClient:
     requests: ClassVar[list] = []
+    instances: ClassVar[int] = 0
+    closes: ClassVar[int] = 0
 
     def __init__(self, **kwargs):
-        pass
+        self.__class__.instances += 1
 
     async def __aenter__(self):
         return self
 
     async def __aexit__(self, *args):
         return None
+
+    async def aclose(self):
+        self.__class__.closes += 1
 
     def stream(self, method, url, **kwargs):
         self.requests.append((method, url, kwargs))
@@ -101,6 +106,27 @@ async def test_openai_compatible_transport_applies_supported_reasoning_fields(
     metadata = usage.finished[0][1]["usage"]["astra_reasoning"]
     assert metadata["applied"] is bool(expected)
     assert metadata["request_params"] == expected
+
+
+async def test_openai_compatible_transport_reuses_connection_pool(monkeypatch):
+    FakeOpenAIAsyncClient.requests = []
+    FakeOpenAIAsyncClient.instances = 0
+    FakeOpenAIAsyncClient.closes = 0
+    monkeypatch.setattr("app.runner.model_client.httpx.AsyncClient", FakeOpenAIAsyncClient)
+    client = OpenAICompatibleModelClient(
+        Settings(model_provider="openai", model_name="gpt-5", model_api_key="secret")
+    )
+
+    for _ in range(2):
+        await client._chat_json(
+            [{"role": "user", "content": "返回 JSON"}],
+            operation=ModelOperation.SYNTHESIS,
+        )
+    await client.aclose()
+
+    assert FakeOpenAIAsyncClient.instances == 1
+    assert len(FakeOpenAIAsyncClient.requests) == 2
+    assert FakeOpenAIAsyncClient.closes == 1
 
 
 async def test_anthropic_transport_applies_output_config_effort(monkeypatch):
