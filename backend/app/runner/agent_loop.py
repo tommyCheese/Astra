@@ -80,6 +80,15 @@ logger = logging.getLogger("astra.agent_loop")
 
 
 INVALID_ARTIFACT_REFERENCE_WARNING = "已移除无效或不可访问的工具输出引用。"
+QUICK_TOOL_MANIFEST_FIELDS = {
+    "description",
+    "input_schema",
+    "permission",
+    "side_effect_level",
+    "capabilities",
+    "permissions",
+    "risk",
+}
 REASONING_FLUSH_INTERVAL_SECONDS = 0.1
 REASONING_FLUSH_MAX_CHARS = 512
 
@@ -273,7 +282,14 @@ class ContextAssembler:
         context = {
             "run_id": run_id,
             "goal": goal,
-            "tool_manifests": {name: spec.model_dump() for name, spec in specs.items()},
+            "tool_manifests": {
+                name: spec.model_dump(
+                    include=QUICK_TOOL_MANIFEST_FIELDS
+                    if run.answer_mode == AnswerMode.standard.value
+                    else None
+                )
+                for name, spec in specs.items()
+            },
             "observations": observations,
             "memory_reads": [
                 {

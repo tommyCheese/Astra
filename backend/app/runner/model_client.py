@@ -590,17 +590,21 @@ class OpenAICompatibleModelClient(ModelClient):
                         "only when context.active_node is null and the plan has no "
                         "unfinished required node. Use tools only for current, "
                         "external, or otherwise unverifiable information. For stable knowledge, explanation, "
-                        "writing, and conversation, choose finalize and also include final_answer with keys: "
-                        "summary, findings, sources, failed_sources, source_quality, conflicts, caveats, "
-                        "verification_notes. Put final_answer immediately after reasoning_summary. "
+                        "writing, and conversation, choose finalize and also include final_answer. "
+                        "final_answer must contain keys: summary, findings, sources, failed_sources, "
+                        "source_quality, conflicts, caveats, verification_notes. "
                         "Each finding must contain text, source_urls, and artifact_ids. artifact_ids may only "
                         "reference Artifact IDs present in the supplied context that directly support the finding; "
                         "never invent IDs, and use an empty list when there is no supporting Artifact. "
                         "The summary must contain the complete user-facing answer, not an introduction or preview; "
                         "use findings only for optional supporting details. "
                         "When context.answer_mode is standard, use only activate_skill, read_skill_resource, finalize, call_tool, ask_user, or blocked; "
-                        "never choose complete_node, reflect, or replan, keep reasoning_summary minimal, and begin "
-                        "the final_answer summary as early as the JSON structure permits. "
+                        "never choose complete_node, reflect, or replan, and keep reasoning_summary minimal. "
+                        "For a standard-mode finalize response, use a flat low-latency object and emit summary "
+                        "as the very first key, followed by any non-empty final-answer support fields, then "
+                        "decision_type and reasoning_summary. Do not wrap these fields in final_answer. Begin "
+                        "the complete summary text immediately; do not emit any other key or prose before summary. "
+                        "For non-standard finalize responses, put final_answer immediately after reasoning_summary. "
                         "For call_tool include tool_name and tool_input and omit final_answer. For complete_node "
                         "omit final_answer. "
                         "Do not expose hidden chain-of-thought; reasoning_summary must be concise.",
@@ -625,6 +629,12 @@ class OpenAICompatibleModelClient(ModelClient):
         try:
             decision = AgentDecision.model_validate(payload)
             raw_answer = payload.get("final_answer")
+            if (
+                context.get("answer_mode") == "standard"
+                and not isinstance(raw_answer, dict)
+                and isinstance(payload.get("summary"), str)
+            ):
+                raw_answer = payload
             answer = (
                 FinalAnswer.model_validate(normalize_final_answer_payload(raw_answer))
                 if decision.decision_type == "finalize" and isinstance(raw_answer, dict)
@@ -915,47 +925,87 @@ class AnthropicModelClient(OpenAICompatibleModelClient):
                 model=self.settings.model_name,
                 operation=operation.value,
                 attempt=attempt + 1,
-        )
-        try:
-            response = await self._client().post(
-                url,
-                headers={
-                    "x-api-key": self.settings.model_api_key,
-                    "anthropic-version": "2023-06-01",
-                    "content-type": "application/json",
-                },
-                json={
-                    "model": self.settings.model_name,
-                    "max_tokens": 8192,
-                    "system": system,
-                    "messages": anthropic_messages,
-                    **reasoning_config.request_params,
-                },
             )
-            response.raise_for_status()
-            body = response.json()
-            content = "".join(
-                block.get("text", "")
-                for block in body.get("content", [])
-                if isinstance(block, dict) and block.get("type") == "text"
-            ).strip()
+        callbacks = dict(stream_callbacks or {})
+        if stream_field and on_field_delta:
+            callbacks[stream_field] = on_field_delta
+        headers = {
+            "x-api-key": self.settings.model_api_key,
+            "anthropic-version": "2023-06-01",
+            "content-type": "application/json",
+        }
+        request_payload = {
+            "model": self.settings.model_name,
+            "max_tokens": 8192,
+            "system": system,
+            "messages": anthropic_messages,
+            **reasoning_config.request_params,
+        }
+        try:
+            if callbacks:
+                chunks: list[str] = []
+                usage: dict[str, Any] = {}
+                field_extractor = StreamingJsonFieldExtractor(callbacks)
+                async with self._client().stream(
+                    "POST",
+                    url,
+                    headers=headers,
+                    json={**request_payload, "stream": True},
+                ) as response:
+                    response.raise_for_status()
+                    request_id = response.headers.get("request-id")
+                    async for line in response.aiter_lines():
+                        if not line.startswith("data:"):
+                            continue
+                        data = line[5:].strip()
+                        if not data or data == "[DONE]":
+                            continue
+                        try:
+                            event = json.loads(data)
+                        except (TypeError, ValueError):
+                            continue
+                        event_usage = event.get("usage")
+                        if isinstance(event_usage, dict):
+                            usage.update(event_usage)
+                        message = event.get("message")
+                        message_usage = message.get("usage") if isinstance(message, dict) else None
+                        if isinstance(message_usage, dict):
+                            usage.update(message_usage)
+                        delta = event.get("delta")
+                        text_delta = (
+                            delta.get("text")
+                            if isinstance(delta, dict) and delta.get("type") == "text_delta"
+                            else None
+                        )
+                        if text_delta:
+                            chunks.append(text_delta)
+                            for field, value in field_extractor.feed(text_delta):
+                                await callbacks[field](value)
+                content = "".join(chunks).strip()
+                body = {"usage": usage}
+            else:
+                response = await self._client().post(
+                    url,
+                    headers=headers,
+                    json=request_payload,
+                )
+                response.raise_for_status()
+                request_id = response.headers.get("request-id")
+                body = response.json()
+                content = "".join(
+                    block.get("text", "")
+                    for block in body.get("content", [])
+                    if isinstance(block, dict) and block.get("type") == "text"
+                ).strip()
             if not content:
                 raise ModelOutputError("Anthropic endpoint returned no text content")
             payload = parse_json_object(content)
-            callbacks = dict(stream_callbacks or {})
-            if stream_field and on_field_delta:
-                callbacks[stream_field] = on_field_delta
-            for field, callback in callbacks.items():
-                value = find_json_string_field(payload, field)
-                if value:
-                    await callback(value)
-                await callback("\1")
             if self.usage_recorder is not None:
                 await self.usage_recorder.finish(
                     invocation_id,
                     status="succeeded",
                     duration_ms=round((time.perf_counter() - started) * 1000),
-                    request_id=response.headers.get("request-id"),
+                    request_id=request_id,
                     usage=attach_reasoning_usage(body.get("usage"), reasoning_config),
                 )
             return payload

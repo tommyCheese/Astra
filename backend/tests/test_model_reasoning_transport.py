@@ -188,6 +188,75 @@ async def test_openai_stream_decodes_multiple_fields_across_chunk_boundaries():
     assert reasoning[-1] == answer[-1] == "\1"
 
 
+async def test_anthropic_stream_delivers_answer_before_response_completes():
+    content = '{"summary":"即时回答","decision_type":"finalize","reasoning_summary":"完成"}'
+    emitted = 0
+    requests = []
+
+    class StreamingResponse:
+        headers: ClassVar[dict[str, str]] = {"request-id": "request-1"}
+
+        def raise_for_status(self):
+            return None
+
+        async def aiter_lines(self):
+            nonlocal emitted
+            yield 'data: {"type":"message_start","message":{"usage":{"input_tokens":8}}}'
+            for index in range(0, len(content), 3):
+                emitted += 1
+                event = {
+                    "type": "content_block_delta",
+                    "delta": {
+                        "type": "text_delta",
+                        "text": content[index : index + 3],
+                    },
+                }
+                yield f"data: {json.dumps(event, ensure_ascii=False)}"
+            yield 'data: {"type":"message_delta","usage":{"output_tokens":16}}'
+            yield 'data: {"type":"message_stop"}'
+
+    class StreamingContext:
+        async def __aenter__(self):
+            return StreamingResponse()
+
+        async def __aexit__(self, *args):
+            return None
+
+    class StreamingClient:
+        def stream(self, method, url, **kwargs):
+            requests.append(kwargs["json"])
+            return StreamingContext()
+
+    client = AnthropicModelClient(
+        Settings(
+            model_provider="anthropic",
+            model_name="claude-sonnet-4-6",
+            model_api_key="secret",
+        ),
+        http_client=StreamingClient(),
+    )
+    answer = []
+    first_answer_chunk = None
+
+    async def capture_answer(value):
+        nonlocal first_answer_chunk
+        answer.append(value)
+        if value != "\1" and first_answer_chunk is None:
+            first_answer_chunk = emitted
+
+    payload = await client._chat_json(
+        [{"role": "user", "content": "返回 JSON"}],
+        operation=ModelOperation.DECISION_WITH_ANSWER,
+        stream_callbacks={"summary": capture_answer},
+    )
+
+    assert payload["summary"] == "即时回答"
+    assert "".join(answer[:-1]) == "即时回答"
+    assert answer[-1] == "\1"
+    assert first_answer_chunk is not None and first_answer_chunk < emitted
+    assert requests[0]["stream"] is True
+
+
 @pytest.mark.parametrize(
     ("provider", "model"),
     [("openai", "gpt-5"), ("anthropic", "claude-sonnet-4-6")],

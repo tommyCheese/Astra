@@ -194,6 +194,11 @@ class QuickStreamingClient(MockModelClient):
 class QuickToolClient(QuickStreamingClient):
     async def decide_with_answer(self, goal, context, *, on_delta=None, on_reasoning_delta=None):
         self.decide_calls += 1
+        manifest = context["tool_manifests"]["weather_lookup"]
+        assert manifest["input_schema"] == {"required": ["location", "date"]}
+        assert manifest["permission"] == "network_read"
+        assert "output_schema" not in manifest
+        assert "version" not in manifest
         if not context["observations"]:
             return AgentDecision(
                 decision_type="call_tool",

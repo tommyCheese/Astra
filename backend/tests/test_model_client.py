@@ -140,11 +140,18 @@ async def test_anthropic_client_translates_messages_and_stream_callbacks(monkeyp
         def raise_for_status(self):
             return None
 
-        def json(self):
-            return {
-                "content": [{"type": "text", "text": '{"summary":"完成"}'}],
-                "usage": {"input_tokens": 8, "output_tokens": 3},
-            }
+        async def aiter_lines(self):
+            yield (
+                'data: {"type":"content_block_delta",'
+                '"delta":{"type":"text_delta","text":"{\\"summary\\":\\"完成\\"}"}}'
+            )
+
+    class FakeStreamContext:
+        async def __aenter__(self):
+            return FakeResponse()
+
+        async def __aexit__(self, *args):
+            return None
 
     class FakeAsyncClient:
         def __init__(self, **kwargs):
@@ -156,9 +163,9 @@ async def test_anthropic_client_translates_messages_and_stream_callbacks(monkeyp
         async def __aexit__(self, *args):
             return None
 
-        async def post(self, url, **kwargs):
+        def stream(self, method, url, **kwargs):
             requests.append((url, kwargs))
-            return FakeResponse()
+            return FakeStreamContext()
 
     monkeypatch.setattr("app.runner.model_client.httpx.AsyncClient", FakeAsyncClient)
     client = AnthropicModelClient(
@@ -188,6 +195,7 @@ async def test_anthropic_client_translates_messages_and_stream_callbacks(monkeyp
     assert requests[0][0] == "https://api.anthropic.test/v1/messages"
     assert requests[0][1]["headers"]["x-api-key"] == "secret"
     assert requests[0][1]["json"]["system"] == "Return JSON"
+    assert requests[0][1]["json"]["stream"] is True
     assert deltas == ["完成", "\1"]
 
 
@@ -448,3 +456,31 @@ async def test_real_model_operations_use_explicit_profile_composition():
     assert all("Trusted Agent Profile" in item[1][0]["content"] for item in captured)
     assert all("AUTODREAM.md" not in item[1][0]["content"] for item in captured)
     assert all("secret" not in item[1][0]["content"] for item in captured)
+
+
+async def test_standard_combined_answer_prompt_requires_summary_first():
+    client = build_model_client(
+        Settings(model_provider="openai", model_api_key="secret")
+    )
+    captured = []
+
+    async def fake_chat(messages, *, operation, **kwargs):
+        captured.append((messages, operation, kwargs))
+        return {
+            "summary": "完成",
+            "decision_type": "finalize",
+            "reasoning_summary": "可以回答",
+        }
+
+    client._chat_json = AsyncMock(side_effect=fake_chat)
+    decision, answer = await client.decide_with_answer(
+        "目标",
+        {"answer_mode": "standard", "memory_reads": []},
+    )
+
+    system_prompt = captured[0][0][0]["content"]
+    assert "emit summary as the very first key" in system_prompt
+    assert "Do not wrap these fields in final_answer" in system_prompt
+    assert "do not emit any other key or prose before summary" in system_prompt
+    assert decision.decision_type == "finalize"
+    assert answer is not None and answer.summary == "完成"
