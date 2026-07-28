@@ -1,6 +1,4 @@
 import { Component, CSSProperties, FormEvent, KeyboardEvent as ReactKeyboardEvent, lazy, MouseEvent, PointerEvent as ReactPointerEvent, ReactNode, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
 import { AstraApiError, ApiErrorPayload, buildRuntime, cancelRun, cancelRuntimeBuild, confirmPlanExecution, createConversationShare, createRun, decideToolApproval, deleteConversation, getConversation, getConversationStrategy, getPermissionCenter, getRun, getRunSkills, getRuntimeProfile, getToolSettings, listConversationShares, listConversations, listLibraryFiles, listRuns, listSkills, resumeRun, revisePlan, revokeConversationShare, revokePermissionGrant, streamRunEvents, updateConversation, updateConversationStrategy, updateToolSettings, type ConversationStrategyPreferences, type LibraryFile, type PermissionCenterView, type RunModelConfig, type RunSkillsAudit, type SkillSummary, type ToolSetting } from './api';
 import { buildAuditLog, buildIdentityPresentation, type IdentityGroup } from './auditPresentation';
 import { I18nProvider, useI18n } from './i18n';
@@ -19,6 +17,7 @@ const TrustedExecutionGraph = lazy(() => import('./TrustedExecutionGraph'));
 const SkillWorkbench = lazy(() => import('./SkillWorkbench').then((module) => ({
   default: module.SkillWorkbench,
 })));
+const MarkdownRenderer = lazy(() => import('./MarkdownRenderer'));
 
 class GraphErrorBoundary extends Component<{ children: ReactNode; fallback: ReactNode }, { failed: boolean }> {
   state = { failed: false };
@@ -3154,9 +3153,9 @@ function ArtifactCard({ artifact }: { artifact: ArtifactView }) {
 }
 
 function MarkdownContent({ content }: { content: string }) {
-  return <div className="markdown-content"><ReactMarkdown remarkPlugins={[remarkGfm]} components={{
-    a: ({ node: _node, href, ...props }) => <a {...props} href={externalHref(href ?? '')} target="_blank" rel="noreferrer" />,
-  }}>{content}</ReactMarkdown></div>;
+  return <div className="markdown-content"><Suspense fallback={<p>{content}</p>}>
+    <MarkdownRenderer content={content} />
+  </Suspense></div>;
 }
 
 function externalHref(value: string) {

@@ -1,10 +1,14 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import { App } from './App';
-import { SharedConversationPage } from './SharedConversationPage';
 import './styles.css';
 
 const shareMatch = window.location.pathname.match(/^\/share\/([^/]+)\/?$/);
+const SharedConversationPage = shareMatch
+  ? React.lazy(() => import('./SharedConversationPage').then((module) => ({
+    default: module.SharedConversationPage,
+  })))
+  : null;
 const graphVerification = import.meta.env.DEV && window.location.pathname === '/__dev/complex-dag';
 const graphPaneVerification = import.meta.env.DEV && window.location.pathname === '/__dev/complex-dag-pane';
 const ComplexDagVerificationPage = graphVerification
@@ -20,8 +24,8 @@ ReactDOM.createRoot(document.getElementById('root') as HTMLElement).render(
       ? <React.Suspense fallback={null}><ComplexDagPaneVerificationPage /></React.Suspense>
       : ComplexDagVerificationPage
       ? <React.Suspense fallback={null}><ComplexDagVerificationPage /></React.Suspense>
-      : shareMatch
-        ? <SharedConversationPage token={decodeURIComponent(shareMatch[1])} />
+      : shareMatch && SharedConversationPage
+        ? <React.Suspense fallback={null}><SharedConversationPage token={decodeURIComponent(shareMatch[1])} /></React.Suspense>
         : <App />}
   </React.StrictMode>,
 );
