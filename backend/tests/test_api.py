@@ -857,6 +857,25 @@ async def test_run_event_stream_starts_with_ready_signal(app_client, monkeypatch
     assert '"type": "stream.ready"' in response.text
 
 
+async def test_run_event_stream_unsubscribes_when_closed_after_ready(
+    app_client, monkeypatch
+):
+    from app.runtime_events import RunEventBroker
+
+    created = await app_client.post("/api/runs", json={"goal": "流断连测试"})
+    run_id = created.json()["run_id"]
+    broker = RunEventBroker()
+    monkeypatch.setattr(runs_api, "run_event_broker", broker)
+
+    async with app_client._astra_session() as session:
+        response = await runs_api.stream_run_events(run_id, session=session)
+        assert '"type": "stream.ready"' in await anext(response.body_iterator)
+        assert run_id in broker._states
+        await response.body_iterator.aclose()
+
+    assert run_id not in broker._states
+
+
 async def test_run_event_stream_resumes_after_event_id(app_client, monkeypatch):
     from app.repositories.runs import RunRepository
 

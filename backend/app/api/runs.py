@@ -26,6 +26,7 @@ from app.repositories.tool_settings import (
 from app.runner.engine import start_run_in_process
 from app.runner.plan_revision import PlanRevisionError, revise_waiting_plan
 from app.runner.reasoning import RunProfileResolver
+from app.runtime_events import run_event_broker
 from app.schemas.agent import (
     ApprovalDecisionRequest,
     ContinuationAction,
@@ -42,6 +43,7 @@ from app.skills.catalog import SkillActivationService, SkillCatalogBuilder
 
 router = APIRouter(prefix="/api", tags=["runs"])
 logger = logging.getLogger("astra.runs")
+SSE_FALLBACK_POLL_SECONDS = 0.2
 _background_tasks: set[asyncio.Task[None]] = set()
 _background_tasks_by_run: dict[str, asyncio.Task[None]] = {}
 
@@ -516,26 +518,34 @@ async def stream_run_events(
     async def event_stream() -> AsyncIterator[str]:
         logger.info("sse.open run_id=%s after_id=%s", run_id, after_id)
         last_id = after_id
-        yield f"data: {json.dumps({'type': 'stream.ready', 'payload': {'run_id': run_id}})}\n\n"
-        async with SessionLocal() as stream_session:
-            stream_repo = RunRepository(stream_session)
-            while True:
-                events = await stream_repo.list_events(run_id, last_id)
-                for event in events:
-                    last_id = event.id
-                    payload = {
-                        "id": event.id,
-                        "type": event.type,
-                        "payload": event.payload,
-                        "created_at": event.created_at.isoformat(),
-                    }
-                    yield f"id: {event.id}\ndata: {json.dumps(payload)}\n\n"
-                status = await stream_repo.get_run_status(run_id)
-                if status in RunRepository.TERMINAL_STATUSES:
-                    if not events:
-                        yield 'data: {"type": "heartbeat", "payload": {}}\n\n'
-                    break
-                await asyncio.sleep(0.05)
+        broker_version = run_event_broker.subscribe(run_id)
+        try:
+            yield f"data: {json.dumps({'type': 'stream.ready', 'payload': {'run_id': run_id}})}\n\n"
+            async with SessionLocal() as stream_session:
+                stream_repo = RunRepository(stream_session)
+                while True:
+                    events = await stream_repo.list_events(run_id, last_id)
+                    for event in events:
+                        last_id = event.id
+                        payload = {
+                            "id": event.id,
+                            "type": event.type,
+                            "payload": event.payload,
+                            "created_at": event.created_at.isoformat(),
+                        }
+                        yield f"id: {event.id}\ndata: {json.dumps(payload)}\n\n"
+                    status = await stream_repo.get_run_status(run_id)
+                    if status in RunRepository.TERMINAL_STATUSES:
+                        if not events:
+                            yield 'data: {"type": "heartbeat", "payload": {}}\n\n'
+                        break
+                    broker_version = await run_event_broker.wait_for_change(
+                        run_id,
+                        broker_version,
+                        timeout=SSE_FALLBACK_POLL_SECONDS,
+                    )
+        finally:
+            run_event_broker.unsubscribe(run_id)
         logger.info("sse.close run_id=%s last_id=%s", run_id, last_id)
 
     return StreamingResponse(

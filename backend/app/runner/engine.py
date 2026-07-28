@@ -352,6 +352,7 @@ class RunEngine:
             session_factory = async_sessionmaker(
                 repo.session.bind,
                 expire_on_commit=False,
+                class_=type(repo.session),
             )
             recovery = await ExecutionRecovery(
                 session_factory,
