@@ -46,6 +46,71 @@ logger = logging.getLogger("astra.runs")
 SSE_FALLBACK_POLL_SECONDS = 0.2
 _background_tasks: set[asyncio.Task[None]] = set()
 _background_tasks_by_run: dict[str, asyncio.Task[None]] = {}
+SSE_HEADERS = {
+    "Cache-Control": "no-cache, no-transform",
+    "Connection": "keep-alive",
+    "X-Accel-Buffering": "no",
+}
+
+
+async def _run_event_stream(
+    run_id: str,
+    *,
+    after_id: int = 0,
+    ready_payload: dict[str, object] | None = None,
+) -> AsyncIterator[str]:
+    logger.info("sse.open run_id=%s after_id=%s", run_id, after_id)
+    last_id = after_id
+    broker_version = run_event_broker.subscribe(run_id)
+    try:
+        yield (
+            "data: "
+            + json.dumps(
+                {
+                    "type": "stream.ready",
+                    "payload": ready_payload or {"run_id": run_id},
+                }
+            )
+            + "\n\n"
+        )
+        while True:
+            async with SessionLocal() as stream_session:
+                stream_repo = RunRepository(stream_session)
+                events, status = await stream_repo.list_events_with_status(
+                    run_id, last_id
+                )
+                payloads = [
+                    {
+                        "id": event.id,
+                        "type": event.type,
+                        "payload": event.payload,
+                        "created_at": event.created_at.isoformat(),
+                    }
+                    for event in events
+                ]
+            for payload in payloads:
+                last_id = payload["id"]
+                yield f"id: {payload['id']}\ndata: {json.dumps(payload)}\n\n"
+            if status in RunRepository.TERMINAL_STATUSES:
+                if not payloads:
+                    yield 'data: {"type": "heartbeat", "payload": {}}\n\n'
+                break
+            broker_version = await run_event_broker.wait_for_change(
+                run_id,
+                broker_version,
+                timeout=SSE_FALLBACK_POLL_SECONDS,
+            )
+    finally:
+        run_event_broker.unsubscribe(run_id)
+    logger.info("sse.close run_id=%s last_id=%s", run_id, last_id)
+
+
+def _streaming_response(stream: AsyncIterator[str]) -> StreamingResponse:
+    return StreamingResponse(
+        stream,
+        media_type="text/event-stream",
+        headers=SSE_HEADERS,
+    )
 
 
 def _apply_model_config(settings: Settings, model: dict[str, str] | None) -> Settings:
@@ -297,6 +362,29 @@ async def create_run(
     )
 
 
+@router.post("/runs/stream")
+async def create_run_stream(
+    payload: CreateRunRequest,
+    session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+) -> StreamingResponse:
+    """Create a run and stream it on the same HTTP request."""
+    created = await create_run(payload, session, settings)
+    # The streaming response outlives this endpoint's dependency scope.
+    await session.rollback()
+    return _streaming_response(
+        _run_event_stream(
+            created.run_id,
+            ready_payload={
+                "run_id": created.run_id,
+                "task_id": created.task_id,
+                "status": created.status,
+                "answer_mode": created.answer_mode.value,
+            },
+        )
+    )
+
+
 @router.get("/runs/{run_id}", response_model=RunView)
 async def get_run(
     run_id: str,
@@ -523,50 +611,4 @@ async def stream_run_events(
     # End the existence-check transaction now so an idle SSE connection does not
     # pin a database connection for the lifetime of the run.
     await session.rollback()
-
-    async def event_stream() -> AsyncIterator[str]:
-        logger.info("sse.open run_id=%s after_id=%s", run_id, after_id)
-        last_id = after_id
-        broker_version = run_event_broker.subscribe(run_id)
-        try:
-            yield f"data: {json.dumps({'type': 'stream.ready', 'payload': {'run_id': run_id}})}\n\n"
-            while True:
-                async with SessionLocal() as stream_session:
-                    stream_repo = RunRepository(stream_session)
-                    events, status = await stream_repo.list_events_with_status(
-                        run_id, last_id
-                    )
-                    payloads = [
-                        {
-                            "id": event.id,
-                            "type": event.type,
-                            "payload": event.payload,
-                            "created_at": event.created_at.isoformat(),
-                        }
-                        for event in events
-                    ]
-                for payload in payloads:
-                    last_id = payload["id"]
-                    yield f"id: {payload['id']}\ndata: {json.dumps(payload)}\n\n"
-                if status in RunRepository.TERMINAL_STATUSES:
-                    if not payloads:
-                        yield 'data: {"type": "heartbeat", "payload": {}}\n\n'
-                    break
-                broker_version = await run_event_broker.wait_for_change(
-                    run_id,
-                    broker_version,
-                    timeout=SSE_FALLBACK_POLL_SECONDS,
-                )
-        finally:
-            run_event_broker.unsubscribe(run_id)
-        logger.info("sse.close run_id=%s last_id=%s", run_id, last_id)
-
-    return StreamingResponse(
-        event_stream(),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache, no-transform",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",
-        },
-    )
+    return _streaming_response(_run_event_stream(run_id, after_id=after_id))

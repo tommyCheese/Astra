@@ -26,6 +26,7 @@ vi.mock('../src/api', () => ({
   buildRuntime: vi.fn(async () => ({ dependencies: [{ name: 'polars', version: '' }], core_dependencies: [], active_image: 'astra-data-viz:0.1.0', dependency_digest: 'base', build: { id: 'build-1', status: 'queued', phase: '等待构建', progress: 0, log: '等待构建' } })),
   cancelRuntimeBuild: vi.fn(async () => ({ dependencies: [{ name: 'polars', version: '' }], core_dependencies: [], active_image: 'astra-data-viz:0.1.0', dependency_digest: 'base', build: { id: 'build-1', status: 'cancelled', phase: '已取消', progress: 12, log: '构建已由用户取消' } })),
   streamRunEvents: vi.fn(() => () => undefined),
+  takeCreatedRunStream: vi.fn(() => undefined),
   createRun: vi.fn(async () => ({ run_id: 'run-1', task_id: 'task-1', status: 'created', answer_mode: 'standard' })),
   confirmPlanExecution: vi.fn(async () => ({ run_id: 'run-1', task_id: 'task-1', status: 'executing' })),
   revisePlan: vi.fn(async () => ({ run_id: 'run-1', task_id: 'task-1', status: 'waiting_user' })),

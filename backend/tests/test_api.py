@@ -857,6 +857,25 @@ async def test_run_event_stream_starts_with_ready_signal(app_client, monkeypatch
     assert '"type": "stream.ready"' in response.text
 
 
+async def test_create_run_stream_returns_identity_on_same_connection(app_client):
+    from app.schemas.agent import CreateRunRequest
+
+    async with app_client._astra_session() as session:
+        response = await runs_api.create_run_stream(
+            CreateRunRequest(goal="单连接流式创建"),
+            session=session,
+            settings=app_client._astra_settings,
+        )
+        ready = json.loads((await anext(response.body_iterator)).removeprefix("data: "))
+        await response.body_iterator.aclose()
+
+    assert ready["type"] == "stream.ready"
+    assert ready["payload"]["run_id"]
+    assert ready["payload"]["task_id"]
+    assert ready["payload"]["status"] == "created"
+    assert ready["payload"]["answer_mode"] == "standard"
+
+
 async def test_run_event_stream_unsubscribes_when_closed_after_ready(
     app_client, monkeypatch
 ):

@@ -1,5 +1,5 @@
 import { Component, CSSProperties, FormEvent, KeyboardEvent as ReactKeyboardEvent, lazy, MouseEvent, PointerEvent as ReactPointerEvent, ReactNode, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AstraApiError, ApiErrorPayload, buildRuntime, cancelRun, cancelRuntimeBuild, confirmPlanExecution, createConversationShare, createRun, decideToolApproval, deleteConversation, getConversation, getConversationStrategy, getPermissionCenter, getRun, getRunSkills, getRuntimeProfile, getToolSettings, listConversationShares, listConversations, listLibraryFiles, listRuns, listSkills, resumeRun, revisePlan, revokeConversationShare, revokePermissionGrant, streamRunEvents, updateConversation, updateConversationStrategy, updateToolSettings, type ConversationStrategyPreferences, type LibraryFile, type PermissionCenterView, type RunModelConfig, type RunSkillsAudit, type SkillSummary, type ToolSetting } from './api';
+import { AstraApiError, ApiErrorPayload, buildRuntime, cancelRun, cancelRuntimeBuild, confirmPlanExecution, createConversationShare, createRun, decideToolApproval, deleteConversation, getConversation, getConversationStrategy, getPermissionCenter, getRun, getRunSkills, getRuntimeProfile, getToolSettings, listConversationShares, listConversations, listLibraryFiles, listRuns, listSkills, resumeRun, revisePlan, revokeConversationShare, revokePermissionGrant, streamRunEvents, takeCreatedRunStream, updateConversation, updateConversationStrategy, updateToolSettings, type ConversationStrategyPreferences, type LibraryFile, type PermissionCenterView, type RunModelConfig, type RunSkillsAudit, type RunStreamEvent, type RunStreamHandle, type SkillSummary, type ToolSetting } from './api';
 import { buildAuditLog, buildIdentityPresentation, type IdentityGroup } from './auditPresentation';
 import { I18nProvider, useI18n } from './i18n';
 import { ThemeProvider, useTheme } from './theme';
@@ -10,7 +10,6 @@ import { CloseButton } from './CloseButton';
 import { buildPresentation, HISTORY_LIMIT, normalizeRunView, type ConversationEntry } from './conversations';
 import { createOptimisticProcessState, isDecisionGroup, reconcileProcessSnapshot, reduceProcessEvent, type ProcessStreamItem, type ProcessStreamState } from './processStream';
 import { createPlanGraphStreamState, reconcilePlanGraphSnapshot, reducePlanGraphEvent, type PlanGraphStreamState } from './planGraph';
-import type { RunStreamEvent } from './api';
 import { detectSlashSkillCommand, filterSkillCommandOptions, normalizeSelectedSkillIds, type SlashSkillCommand } from './composerSkills';
 
 const TrustedExecutionGraph = lazy(() => import('./TrustedExecutionGraph'));
@@ -249,6 +248,7 @@ function AppContent() {
   const conversationStrategyTouchedRef = useRef(false);
   const conversationStrategySaveRef = useRef<Promise<void>>(Promise.resolve());
   const initialSnapshotControllerRef = useRef<AbortController>();
+  const preconnectedRunStreamRef = useRef<{ runId: string; stream: RunStreamHandle }>();
   const conversationControllerRef = useRef<AbortController>();
   const cancelRequestedRef = useRef(false);
   const trustedTransitionTimerRef = useRef<number>();
@@ -341,6 +341,7 @@ function AppContent() {
     if (refreshTimerRef.current !== undefined) window.clearTimeout(refreshTimerRef.current);
     initialSnapshotControllerRef.current?.abort();
     conversationControllerRef.current?.abort();
+    preconnectedRunStreamRef.current?.stream.close();
   }, []);
 
   useEffect(() => {
@@ -683,6 +684,14 @@ function AppContent() {
         verification_level: 'standard',
         }, modelConfig, answerMode === 'trusted' ? planExecution : undefined,
         ...(explicitSkillIds.length ? [explicitSkillIds] : []));
+      const fastStream = takeCreatedRunStream(created.run_id);
+      if (fastStream) {
+        preconnectedRunStreamRef.current?.stream.close();
+        preconnectedRunStreamRef.current = {
+          runId: created.run_id,
+          stream: fastStream,
+        };
+      }
       const createdAnswerMode = (created as { answer_mode?: 'standard' | 'trusted' }).answer_mode;
       const current = normalizeRunView({
         id: created.run_id,
@@ -721,6 +730,8 @@ function AppContent() {
         rememberConversation(next, previousMessages);
       }).catch(() => { /* SSE and fallback polling will recover the snapshot. */ });
     } catch (err) {
+      preconnectedRunStreamRef.current?.stream.close();
+      preconnectedRunStreamRef.current = undefined;
       cancelRequestedRef.current = false;
       setStopping(false);
       setError(err instanceof AstraApiError ? err.payload : { type: 'runtime.internal_error', code: 'REQUEST_FAILED', message: t('服务暂时出现异常，请稍后重试。'), retryable: true, trace_id: 'unavailable' });
@@ -933,7 +944,7 @@ function AppContent() {
       if (refreshTimerRef.current !== undefined) window.clearTimeout(refreshTimerRef.current);
       refreshTimerRef.current = window.setTimeout(() => { refreshTimerRef.current = undefined; void refreshRun(); }, immediate ? 0 : 100);
     };
-    closeStream = streamRunEvents(run.id, (event) => {
+    const onStreamEvent = (event: RunStreamEvent) => {
       initialSnapshotControllerRef.current?.abort();
       initialSnapshotControllerRef.current = undefined;
       if (event.type === 'answer.started') {
@@ -980,7 +991,16 @@ function AppContent() {
         return;
       }
       if (event.type !== 'heartbeat' && event.type !== 'stream.ready') scheduleRefresh();
-    }, () => { void refreshRun(); });
+    };
+    const onStreamError = () => { void refreshRun(); };
+    const preconnected = preconnectedRunStreamRef.current;
+    if (preconnected && preconnected.runId !== run.id) {
+      preconnected.stream.close();
+      preconnectedRunStreamRef.current = undefined;
+    }
+    closeStream = preconnected?.runId === run.id
+      ? preconnected.stream.subscribe(onStreamEvent, onStreamError)
+      : streamRunEvents(run.id, onStreamEvent, onStreamError);
     fallback = window.setInterval(() => { void refreshRun(); }, 3000);
     return () => {
       active = false;

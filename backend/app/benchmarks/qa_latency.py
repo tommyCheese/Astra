@@ -75,7 +75,16 @@ async def measure_run(
     answer_mode: str,
     keep_run: bool,
     cleanup_queue: list[tuple[str, str]] | None = None,
+    transport: str = "split",
 ) -> tuple[LatencySample, dict[str, Any]]:
+    if transport == "single":
+        return await measure_streaming_run(
+            client,
+            goal=goal,
+            answer_mode=answer_mode,
+            keep_run=keep_run,
+            cleanup_queue=cleanup_queue,
+        )
     started = time.perf_counter()
     created = await client.post(
         "/api/runs",
@@ -125,6 +134,65 @@ async def measure_run(
                 await cleanup_run(client, run_id, task_id)
 
 
+async def measure_streaming_run(
+    client: httpx.AsyncClient,
+    *,
+    goal: str,
+    answer_mode: str,
+    keep_run: bool,
+    cleanup_queue: list[tuple[str, str]] | None = None,
+) -> tuple[LatencySample, dict[str, Any]]:
+    started = time.perf_counter()
+    run_id = ""
+    task_id = ""
+    ready_at: float | None = None
+    first_answer_at: float | None = None
+    completed_at: float | None = None
+    try:
+        async with client.stream(
+            "POST",
+            "/api/runs/stream",
+            json={"goal": goal, "answer_mode": answer_mode},
+        ) as response:
+            response.raise_for_status()
+            submit_at = time.perf_counter()
+            async for payload in iter_sse_payloads(response.aiter_lines()):
+                now = time.perf_counter()
+                event_type = payload.get("type")
+                if event_type == "stream.ready" and ready_at is None:
+                    ready_at = now
+                    ready_payload = payload.get("payload", {})
+                    if isinstance(ready_payload, dict):
+                        run_id = str(ready_payload.get("run_id", ""))
+                        task_id = str(ready_payload.get("task_id", ""))
+                elif event_type == "answer.delta" and first_answer_at is None:
+                    first_answer_at = now
+                elif event_type == "answer.completed":
+                    completed_at = now
+        ended = completed_at or time.perf_counter()
+        if not run_id or not task_id or ready_at is None:
+            raise RuntimeError("Single-stream run ended without creation metadata")
+        if first_answer_at is None:
+            raise RuntimeError(f"Run {run_id} ended without answer.delta")
+        if completed_at is None:
+            raise RuntimeError(f"Run {run_id} ended without answer.completed")
+        sample = LatencySample(
+            submit_ms=(submit_at - started) * 1000,
+            stream_ready_ms=(ready_at - started) * 1000,
+            answer_ttft_ms=(first_answer_at - started) * 1000,
+            complete_ms=(ended - started) * 1000,
+        )
+        run_response = await client.get(f"/api/runs/{run_id}")
+        run_response.raise_for_status()
+        return sample, run_response.json().get("model_policy", {})
+    finally:
+        if run_id and task_id and not keep_run:
+            if cleanup_queue is not None:
+                cleanup_queue.append((run_id, task_id))
+            else:
+                await cleanup_run(client, run_id, task_id)
+
+
 async def cleanup_run(
     client: httpx.AsyncClient,
     run_id: str,
@@ -144,10 +212,19 @@ async def run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
     )
     samples: list[LatencySample] = []
     model_policy: dict[str, Any] = {}
+
+    async def simulate_client_rtt(_request: httpx.Request) -> None:
+        await asyncio.sleep(args.client_rtt_ms / 1000)
+
     async with httpx.AsyncClient(
         base_url=args.base_url.rstrip("/"),
         timeout=timeout,
         limits=limits,
+        event_hooks=(
+            {"request": [simulate_client_rtt]}
+            if args.client_rtt_ms
+            else None
+        ),
     ) as client:
         for index in range(args.warmup):
             sample, measured_policy = await measure_run(
@@ -155,6 +232,7 @@ async def run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
                 goal=f"{args.goal}（基准轮次 {index + 1}）",
                 answer_mode=args.answer_mode,
                 keep_run=args.keep_runs,
+                transport=args.transport,
             )
             if not model_policy:
                 model_policy = measured_policy
@@ -170,6 +248,7 @@ async def run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
                     answer_mode=args.answer_mode,
                     keep_run=args.keep_runs,
                     cleanup_queue=deferred_cleanups,
+                    transport=args.transport,
                 )
 
         measured = await asyncio.gather(
@@ -188,6 +267,8 @@ async def run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
         "base_url": args.base_url,
         "goal": args.goal,
         "answer_mode": args.answer_mode,
+        "transport": args.transport,
+        "client_rtt_ms": args.client_rtt_ms,
         "model_policy": model_policy,
         "warmup_runs": args.warmup,
         "measured_runs": args.runs,
@@ -208,15 +289,22 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--warmup", type=int, default=2)
     parser.add_argument("--timeout", type=float, default=180)
     parser.add_argument("--concurrency", type=int, default=1)
+    parser.add_argument("--transport", choices=("split", "single"), default="single")
+    parser.add_argument("--client-rtt-ms", type=float, default=0)
     parser.add_argument("--keep-runs", action="store_true")
     return parser
 
 
 def main() -> None:
     args = build_parser().parse_args()
-    if args.runs < 1 or args.warmup < 0 or args.concurrency < 1:
+    if (
+        args.runs < 1
+        or args.warmup < 0
+        or args.concurrency < 1
+        or args.client_rtt_ms < 0
+    ):
         raise SystemExit(
-            "--runs and --concurrency must be positive and --warmup cannot be negative"
+            "--runs and --concurrency must be positive; warmup and client RTT cannot be negative"
         )
     result = asyncio.run(run_benchmark(args))
     print(json.dumps(result, ensure_ascii=False, indent=2))

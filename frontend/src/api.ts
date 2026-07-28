@@ -309,16 +309,23 @@ export async function cancelRuntimeBuild(buildId: string): Promise<RuntimeProfil
   return response.json();
 }
 
-export async function createRun(goal: string, taskId: string | undefined, answerMode: 'standard' | 'trusted', reasoningPolicy?: ReasoningPolicyRequest, model?: RunModelConfig, planExecution?: 'auto' | 'confirm', skillIds: string[] = []): Promise<{ run_id: string; task_id: string; status: string; answer_mode?: 'standard' | 'trusted' }> {
-  const response = await fetchWithTimeout('/api/runs', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ goal, task_id: taskId, answer_mode: answerMode, reasoning_policy: reasoningPolicy, model, skill_ids: skillIds, ...(answerMode === 'trusted' ? { plan_execution: planExecution ?? 'confirm' } : {}) }),
-  });
-  if (!response.ok) {
-    throw await responseError(response);
+export type CreatedRun = { run_id: string; task_id: string; status: string; answer_mode?: 'standard' | 'trusted' };
+const createdRunStreams = new Map<string, RunStreamHandle>();
+
+function createRunBody(goal: string, taskId: string | undefined, answerMode: 'standard' | 'trusted', reasoningPolicy?: ReasoningPolicyRequest, model?: RunModelConfig, planExecution?: 'auto' | 'confirm', skillIds: string[] = []): string {
+  return JSON.stringify({ goal, task_id: taskId, answer_mode: answerMode, reasoning_policy: reasoningPolicy, model, skill_ids: skillIds, ...(answerMode === 'trusted' ? { plan_execution: planExecution ?? 'confirm' } : {}) });
+}
+
+export async function createRun(goal: string, taskId: string | undefined, answerMode: 'standard' | 'trusted', reasoningPolicy?: ReasoningPolicyRequest, model?: RunModelConfig, planExecution?: 'auto' | 'confirm', skillIds: string[] = []): Promise<CreatedRun> {
+  const stream = createRunStream(goal, taskId, answerMode, reasoningPolicy, model, planExecution, skillIds);
+  try {
+    const created = await stream.created;
+    createdRunStreams.set(created.run_id, stream);
+    return created;
+  } catch (error) {
+    stream.close();
+    throw error;
   }
-  return response.json();
 }
 
 export async function getRun(runId: string, signal?: AbortSignal, detail: 'full' | 'initial' = 'full'): Promise<RunView> {
@@ -446,6 +453,114 @@ export async function getSharedConversation(token: string, signal?: AbortSignal)
 }
 
 export type RunStreamEvent = { id?: number; type: string; payload: Record<string, unknown>; created_at?: string };
+export type RunStreamHandle = {
+  created: Promise<CreatedRun>;
+  subscribe: (onEvent: (event: RunStreamEvent) => void, onError?: () => void) => () => void;
+  close: () => void;
+};
+
+export function takeCreatedRunStream(runId: string): RunStreamHandle | undefined {
+  const stream = createdRunStreams.get(runId);
+  createdRunStreams.delete(runId);
+  return stream;
+}
+
+async function consumeSse(
+  stream: ReadableStream<Uint8Array>,
+  onEvent: (event: RunStreamEvent) => void,
+): Promise<void> {
+  const reader = stream.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  while (true) {
+    const { done, value } = await reader.read();
+    buffer += decoder.decode(value, { stream: !done }).replace(/\r\n/g, '\n');
+    let boundary = buffer.indexOf('\n\n');
+    while (boundary >= 0) {
+      const block = buffer.slice(0, boundary);
+      buffer = buffer.slice(boundary + 2);
+      const data = block
+        .split('\n')
+        .filter((line) => line.startsWith('data:'))
+        .map((line) => line.slice(5).trimStart())
+        .join('\n');
+      if (data) onEvent(JSON.parse(data) as RunStreamEvent);
+      boundary = buffer.indexOf('\n\n');
+    }
+    if (done) break;
+  }
+}
+
+export function createRunStream(goal: string, taskId: string | undefined, answerMode: 'standard' | 'trusted', reasoningPolicy?: ReasoningPolicyRequest, model?: RunModelConfig, planExecution?: 'auto' | 'confirm', skillIds: string[] = []): RunStreamHandle {
+  const controller = new AbortController();
+  const readyTimer = window.setTimeout(() => controller.abort(), 15000);
+  const queued: RunStreamEvent[] = [];
+  let listener: ((event: RunStreamEvent) => void) | undefined;
+  let errorListener: (() => void) | undefined;
+  let closed = false;
+  let ready = false;
+  let streamEnded = false;
+  let resolveCreated!: (created: CreatedRun) => void;
+  let rejectCreated!: (error: unknown) => void;
+  const created = new Promise<CreatedRun>((resolve, reject) => {
+    resolveCreated = resolve;
+    rejectCreated = reject;
+  });
+
+  void (async () => {
+    try {
+      const response = await fetch('/api/runs/stream', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
+        body: createRunBody(goal, taskId, answerMode, reasoningPolicy, model, planExecution, skillIds),
+        signal: controller.signal,
+      });
+      if (!response.ok) throw await responseError(response);
+      if (!response.body) throw new Error('Streaming response body is unavailable');
+      await consumeSse(response.body, (event) => {
+        if (!ready && event.type === 'stream.ready') {
+          const payload = event.payload as Partial<CreatedRun>;
+          if (payload.run_id && payload.task_id && payload.status) {
+            ready = true;
+            window.clearTimeout(readyTimer);
+            resolveCreated(payload as CreatedRun);
+          }
+        }
+        if (listener) listener(event);
+        else queued.push(event);
+      });
+      streamEnded = true;
+      window.clearTimeout(readyTimer);
+      if (!ready && !closed) rejectCreated(new Error('Run stream ended before ready'));
+      else if (!closed) errorListener?.();
+    } catch (error) {
+      window.clearTimeout(readyTimer);
+      if (closed) return;
+      streamEnded = true;
+      if (!ready) rejectCreated(error);
+      errorListener?.();
+    }
+  })();
+
+  return {
+    created,
+    subscribe(onEvent, onError) {
+      listener = onEvent;
+      errorListener = onError;
+      for (const event of queued.splice(0)) onEvent(event);
+      if (streamEnded) onError?.();
+      return () => {
+        if (listener === onEvent) listener = undefined;
+        if (errorListener === onError) errorListener = undefined;
+      };
+    },
+    close() {
+      closed = true;
+      window.clearTimeout(readyTimer);
+      controller.abort();
+    },
+  };
+}
 
 export function streamRunEvents(runId: string, onEvent: (event: RunStreamEvent) => void, onError?: () => void): () => void {
   if (typeof EventSource === 'undefined') return () => undefined;

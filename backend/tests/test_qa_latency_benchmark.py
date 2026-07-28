@@ -67,6 +67,8 @@ def test_benchmark_arguments_default_to_standard_mode():
     assert args.answer_mode == "standard"
     assert args.runs == 10
     assert args.concurrency == 1
+    assert args.transport == "single"
+    assert args.client_rtt_ms == 0
 
 
 async def test_benchmark_bounds_parallel_runs(monkeypatch):
