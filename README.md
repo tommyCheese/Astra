@@ -92,6 +92,19 @@ MODEL_API_KEY=<your-api-key>
 MODEL_BASE_URL=https://api.openai.com/v1
 ```
 
+启动后端后，可运行端到端问答延迟基准。它会预热连接，测量提交、
+SSE ready、首个回答增量（TTFT）和完成时延，并输出 p50/p95；默认会清理
+基准创建的会话：
+
+```bash
+cd backend
+python -m app.benchmarks.qa_latency --runs 20 --warmup 2
+```
+
+使用 `--answer-mode trusted` 测量可信执行路径，或使用 `--keep-runs` 保留
+基准运行记录。请使用真实模型配置采集供应商端到端指标；内置 `mock`
+模型固定演练工具流程，不适合作为云模型延迟替代值。
+
 ### Web 搜索/抓取配置
 
 每个已支持工具都有独立开关；关闭后工具不会注册，也不会出现在模型可用工具清单中：
