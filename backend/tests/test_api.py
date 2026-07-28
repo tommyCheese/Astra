@@ -895,6 +895,59 @@ async def test_run_event_stream_unsubscribes_when_closed_after_ready(
     assert run_id not in broker._states
 
 
+async def test_run_event_stream_delivers_committed_broker_event_without_second_query(
+    monkeypatch,
+):
+    from app.runtime_events import PublishedRunEvent, RunEventBroker
+
+    query_count = 0
+
+    class FakeSession:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+    class FakeRepository:
+        TERMINAL_STATUSES = RunRepository.TERMINAL_STATUSES
+
+        def __init__(self, _session):
+            pass
+
+        async def list_events_with_status(self, _run_id, _after_id):
+            nonlocal query_count
+            query_count += 1
+            return [], "executing"
+
+    broker = RunEventBroker()
+    monkeypatch.setattr(runs_api, "run_event_broker", broker)
+    monkeypatch.setattr(runs_api, "SessionLocal", FakeSession)
+    monkeypatch.setattr(runs_api, "RunRepository", FakeRepository)
+    stream = runs_api._run_event_stream("run-live")
+    assert '"type": "stream.ready"' in await anext(stream)
+    pending = asyncio.create_task(anext(stream))
+    await asyncio.sleep(0)
+
+    broker.publish_events(
+        [
+            PublishedRunEvent(
+                id=1,
+                run_id="run-live",
+                type="answer.delta",
+                payload={"delta": "即时片段"},
+                created_at="2026-07-29T00:00:00+00:00",
+            )
+        ]
+    )
+
+    streamed = await asyncio.wait_for(pending, timeout=0.05)
+    assert '"type": "answer.delta"' in streamed
+    assert '"id": 1' in streamed
+    assert query_count == 1
+    await stream.aclose()
+
+
 async def test_run_event_stream_resumes_after_event_id(app_client, monkeypatch):
     from app.repositories.runs import RunRepository
 

@@ -62,6 +62,8 @@ async def _run_event_stream(
     logger.info("sse.open run_id=%s after_id=%s", run_id, after_id)
     last_id = after_id
     broker_version = run_event_broker.subscribe(run_id)
+    database_refresh_required = True
+    status: str | None = None
     try:
         yield (
             "data: "
@@ -74,20 +76,44 @@ async def _run_event_stream(
             + "\n\n"
         )
         while True:
-            async with SessionLocal() as stream_session:
-                stream_repo = RunRepository(stream_session)
-                events, status = await stream_repo.list_events_with_status(
-                    run_id, last_id
-                )
+            published = (
+                None
+                if database_refresh_required
+                else run_event_broker.events_after(run_id, last_id)
+            )
+            if published is None:
+                async with SessionLocal() as stream_session:
+                    stream_repo = RunRepository(stream_session)
+                    events, status = await stream_repo.list_events_with_status(
+                        run_id, last_id
+                    )
+                    payloads = [
+                        {
+                            "id": event.id,
+                            "type": event.type,
+                            "payload": event.payload,
+                            "created_at": event.created_at.isoformat(),
+                        }
+                        for event in events
+                    ]
+                if payloads:
+                    last_id = payloads[-1]["id"]
+                run_event_broker.mark_database_synced(run_id, last_id)
+            else:
                 payloads = [
                     {
                         "id": event.id,
                         "type": event.type,
                         "payload": event.payload,
-                        "created_at": event.created_at.isoformat(),
+                        "created_at": event.created_at,
                     }
-                    for event in events
+                    for event in published
                 ]
+                for event in published:
+                    if event.type == "run.status_changed":
+                        status = event.payload.get("status", status)
+                    elif event.type == "run.cancelled":
+                        status = "cancelled"
             for payload in payloads:
                 last_id = payload["id"]
                 yield f"id: {payload['id']}\ndata: {json.dumps(payload)}\n\n"
@@ -95,11 +121,13 @@ async def _run_event_stream(
                 if not payloads:
                     yield 'data: {"type": "heartbeat", "payload": {}}\n\n'
                 break
-            broker_version = await run_event_broker.wait_for_change(
+            next_version = await run_event_broker.wait_for_change(
                 run_id,
                 broker_version,
                 timeout=SSE_FALLBACK_POLL_SECONDS,
             )
+            database_refresh_required = next_version == broker_version
+            broker_version = next_version
     finally:
         run_event_broker.unsubscribe(run_id)
     logger.info("sse.close run_id=%s last_id=%s", run_id, last_id)

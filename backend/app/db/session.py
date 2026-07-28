@@ -12,32 +12,40 @@ from sqlalchemy.orm import Session
 
 from app.core.config import Settings, get_settings
 from app.db.models import RunEventRecord
-from app.runtime_events import run_event_broker
+from app.runtime_events import PublishedRunEvent, run_event_broker
 
-PENDING_RUN_EVENT_IDS = "astra_pending_run_event_ids"
+PENDING_RUN_EVENTS = "astra_pending_run_events"
 
 
 @event.listens_for(Session, "before_flush")
 def collect_pending_run_events(session: Session, _flush_context, _instances) -> None:
-    run_ids = {
-        record.run_id
-        for record in session.new
-        if isinstance(record, RunEventRecord)
-    }
-    if run_ids:
-        session.info.setdefault(PENDING_RUN_EVENT_IDS, set()).update(run_ids)
+    records = [
+        record for record in session.new if isinstance(record, RunEventRecord)
+    ]
+    if records:
+        session.info.setdefault(PENDING_RUN_EVENTS, []).extend(records)
 
 
 class EventAwareAsyncSession(AsyncSession):
     async def commit(self) -> None:
         await self.flush()
-        run_ids = set(self.info.pop(PENDING_RUN_EVENT_IDS, set()))
+        records = self.info.pop(PENDING_RUN_EVENTS, [])
+        events = [
+            PublishedRunEvent(
+                id=record.id,
+                run_id=record.run_id,
+                type=record.type,
+                payload=record.payload,
+                created_at=record.created_at.isoformat(),
+            )
+            for record in records
+        ]
         await super().commit()
-        if run_ids:
-            run_event_broker.publish_many(run_ids)
+        if events:
+            run_event_broker.publish_events(events)
 
     async def rollback(self) -> None:
-        self.info.pop(PENDING_RUN_EVENT_IDS, None)
+        self.info.pop(PENDING_RUN_EVENTS, None)
         await super().rollback()
 
 

@@ -3,6 +3,18 @@ from __future__ import annotations
 import asyncio
 from contextlib import suppress
 from dataclasses import dataclass, field
+from typing import Any
+
+MAX_PUBLISHED_EVENTS_PER_RUN = 2048
+
+
+@dataclass(frozen=True)
+class PublishedRunEvent:
+    id: int
+    run_id: str
+    type: str
+    payload: dict[str, Any]
+    created_at: str
 
 
 @dataclass
@@ -10,6 +22,9 @@ class _RunEventState:
     version: int = 0
     subscribers: int = 0
     event: asyncio.Event = field(default_factory=asyncio.Event)
+    published_events: list[PublishedRunEvent] = field(default_factory=list)
+    cache_complete: bool = True
+    dropped_through_id: int = 0
 
 
 class RunEventBroker:
@@ -35,6 +50,50 @@ class RunEventBroker:
         state = self._states.get(run_id)
         if state is None:
             return
+        state.cache_complete = False
+        self._wake(state)
+
+    def publish_events(self, events: list[PublishedRunEvent]) -> None:
+        events_by_run: dict[str, list[PublishedRunEvent]] = {}
+        for event in events:
+            events_by_run.setdefault(event.run_id, []).append(event)
+        for run_id, run_events in events_by_run.items():
+            state = self._states.get(run_id)
+            if state is None:
+                continue
+            state.published_events.extend(run_events)
+            overflow = len(state.published_events) - MAX_PUBLISHED_EVENTS_PER_RUN
+            if overflow > 0:
+                state.dropped_through_id = max(
+                    state.dropped_through_id,
+                    state.published_events[overflow - 1].id,
+                )
+                del state.published_events[:overflow]
+            self._wake(state)
+
+    def events_after(self, run_id: str, after_id: int) -> list[PublishedRunEvent] | None:
+        """Return committed in-process events, or None when a DB refresh is required."""
+        state = self._states.get(run_id)
+        if (
+            state is None
+            or not state.cache_complete
+            or after_id < state.dropped_through_id
+        ):
+            return None
+        return [event for event in state.published_events if event.id > after_id]
+
+    def mark_database_synced(self, run_id: str, through_id: int) -> None:
+        state = self._states.get(run_id)
+        if state is None:
+            return
+        state.published_events = [
+            event for event in state.published_events if event.id > through_id
+        ]
+        state.dropped_through_id = max(state.dropped_through_id, through_id)
+        state.cache_complete = True
+
+    @staticmethod
+    def _wake(state: _RunEventState) -> None:
         waiting = state.event
         state.version += 1
         state.event = asyncio.Event()
