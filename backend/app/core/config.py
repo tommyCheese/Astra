@@ -13,6 +13,14 @@ class Settings(BaseSettings):
     model_name: str = "gpt-5"
     model_api_key: str = ""
     model_base_url: str = "https://api.openai.com/v1"
+    model_http2_enabled: bool = True
+    model_http_max_connections: int = Field(default=64, ge=1, le=512)
+    model_http_max_keepalive_connections: int = Field(default=32, ge=1, le=256)
+    model_http_keepalive_expiry_seconds: float = Field(default=300.0, ge=5.0, le=3600.0)
+    model_http_connect_timeout_seconds: float = Field(default=10.0, gt=0, le=120.0)
+    model_http_read_timeout_seconds: float = Field(default=60.0, gt=0, le=600.0)
+    model_http_write_timeout_seconds: float = Field(default=30.0, gt=0, le=600.0)
+    model_http_pool_timeout_seconds: float = Field(default=10.0, gt=0, le=120.0)
     tool_web_search_enabled: bool = True
     tool_web_fetch_enabled: bool = True
     tool_chart_render_enabled: bool = True

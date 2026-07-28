@@ -49,11 +49,13 @@ class FakeStreamContext:
 
 class FakeOpenAIAsyncClient:
     requests: ClassVar[list] = []
+    options: ClassVar[list] = []
     instances: ClassVar[int] = 0
     closes: ClassVar[int] = 0
 
     def __init__(self, **kwargs):
         self.__class__.instances += 1
+        self.__class__.options.append(kwargs)
 
     async def __aenter__(self):
         return self
@@ -301,6 +303,7 @@ async def test_server_reuses_model_connections_across_runs(
     await close_shared_model_http_clients()
     FakeOpenAIAsyncClient.instances = 0
     FakeOpenAIAsyncClient.closes = 0
+    FakeOpenAIAsyncClient.options = []
     monkeypatch.setattr("app.runner.engine.httpx.AsyncClient", FakeOpenAIAsyncClient)
     settings = Settings(
         model_provider=provider,
@@ -314,6 +317,12 @@ async def test_server_reuses_model_connections_across_runs(
 
     assert first is second
     assert FakeOpenAIAsyncClient.instances == 1
+    options = FakeOpenAIAsyncClient.options[0]
+    assert options["http2"] is True
+    assert options["limits"].max_connections == 64
+    assert options["limits"].max_keepalive_connections == 32
+    assert options["limits"].keepalive_expiry == 300
+    assert options["timeout"].connect == 10
     await close_shared_model_http_clients()
     assert FakeOpenAIAsyncClient.closes == 1
 

@@ -64,6 +64,24 @@ class DeferredUsageInvocation:
         return await self.task if self.task is not None else None
 
 
+def model_http_client_options(settings: Settings) -> dict[str, Any]:
+    """Build the shared transport policy used by every real model provider."""
+    return {
+        "http2": settings.model_http2_enabled,
+        "timeout": httpx.Timeout(
+            connect=settings.model_http_connect_timeout_seconds,
+            read=settings.model_http_read_timeout_seconds,
+            write=settings.model_http_write_timeout_seconds,
+            pool=settings.model_http_pool_timeout_seconds,
+        ),
+        "limits": httpx.Limits(
+            max_connections=settings.model_http_max_connections,
+            max_keepalive_connections=settings.model_http_max_keepalive_connections,
+            keepalive_expiry=settings.model_http_keepalive_expiry_seconds,
+        ),
+    }
+
+
 class ModelConfigurationError(RuntimeError):
     pass
 
@@ -434,10 +452,7 @@ class OpenAICompatibleModelClient(ModelClient):
 
     def _client(self) -> httpx.AsyncClient:
         if self._http_client is None:
-            self._http_client = httpx.AsyncClient(
-                timeout=60,
-                limits=httpx.Limits(max_connections=16, max_keepalive_connections=8),
-            )
+            self._http_client = httpx.AsyncClient(**model_http_client_options(self.settings))
         return self._http_client
 
     async def aclose(self) -> None:
@@ -806,7 +821,11 @@ class OpenAICompatibleModelClient(ModelClient):
             client.stream(
                 "POST",
                 url,
-                headers={"Authorization": f"Bearer {self.settings.model_api_key}"},
+                headers={
+                    "Authorization": f"Bearer {self.settings.model_api_key}",
+                    "Accept": "text/event-stream",
+                    "Accept-Encoding": "identity",
+                },
                 json=request_payload,
             ) as response,
         ):
@@ -974,6 +993,8 @@ class AnthropicModelClient(OpenAICompatibleModelClient):
             "x-api-key": self.settings.model_api_key,
             "anthropic-version": "2023-06-01",
             "content-type": "application/json",
+            "accept": "text/event-stream" if callbacks else "application/json",
+            "accept-encoding": "identity",
         }
         request_payload = {
             "model": self.settings.model_name,

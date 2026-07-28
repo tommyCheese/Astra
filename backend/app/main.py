@@ -30,7 +30,7 @@ from app.core.errors import (
 from app.db.mode_upgrade import validate_mode_upgrade
 from app.db.session import SessionLocal
 from app.repositories.usage import UsageRepository
-from app.runner.engine import close_shared_model_http_clients
+from app.runner.engine import close_shared_model_http_clients, shared_model_http_client
 from app.runtime_profiles import RuntimeProfileService
 from app.skills.storage import ensure_builtin_skills
 
@@ -50,6 +50,9 @@ def create_app(settings: Settings | None = None, *, session_factory=SessionLocal
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         try:
+            # Build the SSL context and provider transport before the first user
+            # request. No network request is made until a Run starts.
+            shared_model_http_client(settings)
             await app.state.runtime_profile_service.startup()
             async with session_factory() as session:
                 await validate_mode_upgrade(session)

@@ -20,7 +20,12 @@ from app.repositories.plans import PlanRepository, plan_to_view
 from app.repositories.runs import RunRepository
 from app.runner.agent_loop import AgentLoop
 from app.runner.coordinator import RunCoordinator
-from app.runner.model_client import ModelConfigurationError, ModelOutputError, build_model_client
+from app.runner.model_client import (
+    ModelConfigurationError,
+    ModelOutputError,
+    build_model_client,
+    model_http_client_options,
+)
 from app.runner.node_worker import ReadOnlyAgentNodeExecutor
 from app.runner.planning import PlanService, PlanValidationError, canonical_agent_state
 from app.runner.reasoning import (
@@ -61,10 +66,7 @@ def shared_model_http_client(settings: Settings) -> httpx.AsyncClient | None:
     endpoint = settings.model_base_url.rstrip("/")
     client = _SHARED_MODEL_HTTP_CLIENTS.get(endpoint)
     if client is None:
-        client = httpx.AsyncClient(
-            timeout=60,
-            limits=httpx.Limits(max_connections=64, max_keepalive_connections=16),
-        )
+        client = httpx.AsyncClient(**model_http_client_options(settings))
         _SHARED_MODEL_HTTP_CLIENTS[endpoint] = client
     return client
 
