@@ -321,8 +321,9 @@ export async function createRun(goal: string, taskId: string | undefined, answer
   return response.json();
 }
 
-export async function getRun(runId: string, signal?: AbortSignal): Promise<RunView> {
-  const response = await fetch(`/api/runs/${runId}`, { signal });
+export async function getRun(runId: string, signal?: AbortSignal, detail: 'full' | 'initial' = 'full'): Promise<RunView> {
+  const query = detail === 'initial' ? '?detail=initial' : '';
+  const response = await fetch(`/api/runs/${runId}${query}`, { signal });
   if (!response.ok) {
     throw await responseError(response);
   }

@@ -707,7 +707,7 @@ function AppContent() {
       initialSnapshotControllerRef.current?.abort();
       const initialSnapshotController = new AbortController();
       initialSnapshotControllerRef.current = initialSnapshotController;
-      void getRun(created.run_id, initialSnapshotController.signal).then((snapshot) => {
+      void getRun(created.run_id, initialSnapshotController.signal, 'initial').then((snapshot) => {
         if (initialSnapshotControllerRef.current !== initialSnapshotController) return;
         initialSnapshotControllerRef.current = undefined;
         const next = normalizeRunView(snapshot);

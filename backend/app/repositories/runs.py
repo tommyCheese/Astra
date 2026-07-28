@@ -497,6 +497,18 @@ class RunRepository:
         )
         return result.scalar_one_or_none()
 
+    async def get_run_initial(self, run_id: str) -> tuple[RunRecord | None, bool]:
+        """Load a one-query optimistic snapshot unless the Run is already terminal."""
+        result = await self.session.execute(
+            select(RunRecord)
+            .where(RunRecord.id == run_id)
+            .execution_options(populate_existing=True)
+        )
+        run = result.scalar_one_or_none()
+        if run is None or run.status not in self.TERMINAL_STATUSES:
+            return run, False
+        return await self.get_run(run_id), True
+
     async def get_run_status(self, run_id: str) -> str | None:
         result = await self.session.execute(select(RunRecord.status).where(RunRecord.id == run_id))
         return result.scalar_one_or_none()
@@ -1860,6 +1872,51 @@ def run_to_view(run: RunRecord) -> dict[str, Any]:
         else None,
         "node_executions": execution_payloads,
         "parallelism": parallelism,
+        "task_adapter": run.task_adapter or "web",
+        "agent_profile": safe_agent_profile_manifest(run.agent_profile_snapshot or {}),
+    }
+
+
+def run_to_initial_view(run: RunRecord) -> dict[str, Any]:
+    """Build the optimistic active-Run view without touching unloaded relationships."""
+    goal = str((run.model_policy or {}).get("conversation_goal") or "")
+    trusted = (run.answer_mode or "trusted") == "trusted"
+    return {
+        "id": run.id,
+        "task_id": run.task_id,
+        "status": run.status,
+        "mode": run.mode,
+        "answer_mode": run.answer_mode or "trusted",
+        "execution_profile": run.execution_profile or {},
+        "summary": run.summary,
+        "result": None,
+        "steps": [],
+        "tool_calls": [],
+        "artifacts": [],
+        "sandbox_jobs": [],
+        "events": [],
+        "turns": [],
+        "memories": [],
+        "chat_messages": [
+            {
+                "id": f"{run.id}-user",
+                "role": "user",
+                "content": goal,
+                "status": "completed",
+                "metadata": {"task_id": run.task_id},
+            }
+        ],
+        "reasoning_policy": run.reasoning_policy or {},
+        "task_contract": run.task_contract or {},
+        "plan_graph": (run.plan_graph or {}) if trusted else {},
+        "plan_versions": [],
+        "agent_state": run.agent_state or {},
+        "state_version": run.state_version or 0,
+        "terminal_reason": run.terminal_reason,
+        "waiting_state": run.waiting_state,
+        "pending_approval": None,
+        "node_executions": [],
+        "parallelism": None,
         "task_adapter": run.task_adapter or "web",
         "agent_profile": safe_agent_profile_manifest(run.agent_profile_snapshot or {}),
     }

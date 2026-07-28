@@ -17,7 +17,7 @@ from app.model_providers import API_KEY_OPTIONAL_MODEL_PROVIDERS, SUPPORTED_MODE
 from app.permissions.governance import verify_permission_bundle
 from app.repositories.permissions import PermissionRepository
 from app.repositories.plans import PlanRepository, diff_plans, plan_to_summary, plan_to_view
-from app.repositories.runs import RunRepository, run_to_view
+from app.repositories.runs import RunRepository, run_to_initial_view, run_to_view
 from app.repositories.tool_settings import (
     ToolSettingsRepository,
     apply_tool_states,
@@ -300,13 +300,18 @@ async def create_run(
 @router.get("/runs/{run_id}", response_model=RunView)
 async def get_run(
     run_id: str,
+    detail: str = Query(default="full", pattern="^(full|initial)$"),
     session: AsyncSession = Depends(get_session),
 ) -> RunView:
     repo = RunRepository(session)
-    run = await repo.get_run(run_id)
+    if detail == "initial":
+        run, loaded_full = await repo.get_run_initial(run_id)
+    else:
+        run, loaded_full = await repo.get_run(run_id), True
     if run is None:
         raise ResourceError("RUN_NOT_FOUND", "找不到指定运行记录。")
-    return RunView.model_validate(run_to_view(run))
+    payload = run_to_view(run) if loaded_full else run_to_initial_view(run)
+    return RunView.model_validate(payload)
 
 
 @router.get("/runs/{run_id}/plans", response_model=list[PlanVersionSummary])

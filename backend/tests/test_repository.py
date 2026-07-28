@@ -4,7 +4,7 @@ from sqlalchemy import event as sqlalchemy_event
 from app.agent_profile import load_agent_profile
 from app.db.models import ModelInvocationRecord
 from app.repositories.conversation_strategy import ConversationStrategyRepository
-from app.repositories.runs import RunRepository, run_to_view
+from app.repositories.runs import RunRepository, run_to_initial_view, run_to_view
 from app.repositories.tool_settings import ToolSettingsRepository
 from app.repositories.usage import UsageRepository
 from app.runner.reasoning import build_default_contract
@@ -244,6 +244,55 @@ async def test_list_events_with_status_uses_one_query_for_all_result_shapes(sess
         sqlalchemy_event.remove(
             session.bind.sync_engine, "before_cursor_execute", count_selects
         )
+
+
+async def test_initial_run_view_uses_one_query_and_terminal_falls_back_to_full(session):
+    repo = RunRepository(session)
+    run = await repo.create_task_run(
+        "首屏快照测试",
+        {"provider": "mock"},
+        agent_profile_snapshot=load_agent_profile().snapshot(),
+    )
+    run_id = run.id
+    await session.commit()
+    session.expunge_all()
+    statements: list[str] = []
+
+    def count_selects(_conn, _cursor, statement, _parameters, _context, _executemany):
+        if statement.lstrip().upper().startswith("SELECT"):
+            statements.append(statement)
+
+    sqlalchemy_event.listen(
+        session.bind.sync_engine, "before_cursor_execute", count_selects
+    )
+    try:
+        loaded, loaded_full = await repo.get_run_initial(run_id)
+        assert loaded is not None
+        view = RunView.model_validate(run_to_initial_view(loaded))
+        assert loaded_full is False
+        assert view.chat_messages[0].content == "首屏快照测试"
+        assert view.events == []
+        assert len(statements) == 1
+    finally:
+        sqlalchemy_event.remove(
+            session.bind.sync_engine, "before_cursor_execute", count_selects
+        )
+
+    await repo.update_run_status(
+        run_id,
+        "completed",
+        summary="完成",
+        result={"summary": "完整终态"},
+    )
+    await session.commit()
+    session.expunge_all()
+
+    terminal, loaded_full = await repo.get_run_initial(run_id)
+    assert terminal is not None
+    terminal_view = RunView.model_validate(run_to_view(terminal))
+    assert loaded_full is True
+    assert terminal_view.result is not None
+    assert terminal_view.result.summary == "完整终态"
 
 
 async def test_loading_autodream_protocol_has_no_database_side_effect(session):
