@@ -1,4 +1,4 @@
-import { Component, CSSProperties, FormEvent, KeyboardEvent as ReactKeyboardEvent, lazy, MouseEvent, PointerEvent as ReactPointerEvent, ReactNode, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Component, CSSProperties, FormEvent, KeyboardEvent as ReactKeyboardEvent, lazy, MouseEvent, PointerEvent as ReactPointerEvent, ReactNode, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { AstraApiError, ApiErrorPayload, buildRuntime, cancelRun, cancelRuntimeBuild, confirmPlanExecution, createConversationShare, createRun, decideToolApproval, deleteConversation, getConversation, getConversationStrategy, getPermissionCenter, getRun, getRunSkills, getRuntimeProfile, getToolSettings, listConversationShares, listConversations, listLibraryFiles, listRuns, listSkills, resumeRun, revisePlan, revokeConversationShare, revokePermissionGrant, streamRunEvents, takeCreatedRunStream, updateConversation, updateConversationStrategy, updateToolSettings, type ConversationStrategyPreferences, type LibraryFile, type PermissionCenterView, type RunModelConfig, type RunSkillsAudit, type RunStreamEvent, type RunStreamHandle, type SkillSummary, type ToolSetting } from './api';
 import { buildAuditLog, buildIdentityPresentation, type IdentityGroup } from './auditPresentation';
 import { I18nProvider, useI18n } from './i18n';
@@ -11,6 +11,10 @@ import { buildPresentation, HISTORY_LIMIT, normalizeRunView, type ConversationEn
 import { createOptimisticProcessState, isDecisionGroup, reconcileProcessSnapshot, reduceProcessEvent, type ProcessStreamItem, type ProcessStreamState } from './processStream';
 import { createPlanGraphStreamState, reconcilePlanGraphSnapshot, reducePlanGraphEvent, type PlanGraphStreamState } from './planGraph';
 import { detectSlashSkillCommand, filterSkillCommandOptions, normalizeSelectedSkillIds, type SlashSkillCommand } from './composerSkills';
+
+const QUESTION_SUBMIT_MARK = 'astra.question.submit';
+const FIRST_TOKEN_COMMIT_MARK = 'astra.answer.first_token_commit';
+const QUESTION_TO_FIRST_TOKEN_MEASURE = 'astra.question_to_first_token';
 
 const TrustedExecutionGraph = lazy(() => import('./TrustedExecutionGraph'));
 const SkillWorkbench = lazy(() => import('./SkillWorkbench').then((module) => ({
@@ -238,6 +242,7 @@ function AppContent() {
   const deltaBufferRef = useRef('');
   const deltaFrameRef = useRef<number>();
   const streamingAnswerRef = useRef('');
+  const firstTokenTimingPendingRef = useRef(false);
   const processEventBufferRef = useRef<RunStreamEvent[]>([]);
   const processFrameRef = useRef<number>();
   const planGraphEventBufferRef = useRef<RunStreamEvent[]>([]);
@@ -654,6 +659,10 @@ function AppContent() {
       setError({ type: 'validation.input_invalid', code: 'GOAL_REQUIRED', message: t('请输入你想完成的目标。'), retryable: false, trace_id: 'local' });
       return;
     }
+    window.performance.clearMarks(QUESTION_SUBMIT_MARK);
+    window.performance.clearMarks(FIRST_TOKEN_COMMIT_MARK);
+    window.performance.mark(QUESTION_SUBMIT_MARK);
+    firstTokenTimingPendingRef.current = true;
     setError(null);
     followLatestRef.current = true;
     setShowJumpToLatest(false);
@@ -713,23 +722,27 @@ function AppContent() {
         await cancelRunById(created.run_id, previousMessages);
         return;
       }
-      initialSnapshotControllerRef.current?.abort();
-      const initialSnapshotController = new AbortController();
-      initialSnapshotControllerRef.current = initialSnapshotController;
-      void getRun(created.run_id, initialSnapshotController.signal, 'initial').then((snapshot) => {
-        if (initialSnapshotControllerRef.current !== initialSnapshotController) return;
-        initialSnapshotControllerRef.current = undefined;
-        const next = normalizeRunView(snapshot);
-        setRun(next);
-        setProcessState((state) => reconcileProcessSnapshot(state, next));
-        setPlanGraphState((state) => {
-          const graph = reconcilePlanGraphSnapshot(state, next);
-          planGraphStateRef.current = graph;
-          return graph;
-        });
-        rememberConversation(next, previousMessages);
-      }).catch(() => { /* SSE and fallback polling will recover the snapshot. */ });
+      if (!fastStream) {
+        initialSnapshotControllerRef.current?.abort();
+        const initialSnapshotController = new AbortController();
+        initialSnapshotControllerRef.current = initialSnapshotController;
+        void getRun(created.run_id, initialSnapshotController.signal, 'initial').then((snapshot) => {
+          if (initialSnapshotControllerRef.current !== initialSnapshotController) return;
+          initialSnapshotControllerRef.current = undefined;
+          const next = normalizeRunView(snapshot);
+          setRun(next);
+          setProcessState((state) => reconcileProcessSnapshot(state, next));
+          setPlanGraphState((state) => {
+            const graph = reconcilePlanGraphSnapshot(state, next);
+            planGraphStateRef.current = graph;
+            return graph;
+          });
+          rememberConversation(next, previousMessages);
+        }).catch(() => { /* SSE and fallback polling will recover the snapshot. */ });
+      }
     } catch (err) {
+      firstTokenTimingPendingRef.current = false;
+      window.performance.clearMarks(QUESTION_SUBMIT_MARK);
       preconnectedRunStreamRef.current?.stream.close();
       preconnectedRunStreamRef.current = undefined;
       cancelRequestedRef.current = false;
@@ -739,6 +752,21 @@ function AppContent() {
       setLoading(false);
     }
   }
+
+  useLayoutEffect(() => {
+    if (!streamingAnswer || !firstTokenTimingPendingRef.current) return;
+    window.performance.mark(FIRST_TOKEN_COMMIT_MARK);
+    const measurement = window.performance.measure(
+      QUESTION_TO_FIRST_TOKEN_MEASURE,
+      QUESTION_SUBMIT_MARK,
+      FIRST_TOKEN_COMMIT_MARK,
+    );
+    document.documentElement.dataset.astraQuestionToFirstTokenMs =
+      measurement.duration.toFixed(2);
+    firstTokenTimingPendingRef.current = false;
+    window.performance.clearMarks(QUESTION_SUBMIT_MARK);
+    window.performance.clearMarks(FIRST_TOKEN_COMMIT_MARK);
+  }, [streamingAnswer]);
 
   function selectedRunModel(): RunModelConfig | undefined {
     const selectedOption = availableModels.find((item) => item.key === selectedModelKey);
@@ -856,7 +884,7 @@ function AppContent() {
     }
   }
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!run || terminalStatuses.has(run.status)) {
       return;
     }

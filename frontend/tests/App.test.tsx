@@ -2,7 +2,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { App } from '../src/App';
-import { buildRuntime, cancelRun, cancelRuntimeBuild, confirmPlanExecution, createConversationShare, createRun, decideToolApproval, deleteConversation, getConversation, getConversationStrategy, getRun, getRuntimeProfile, listConversationShares, listConversations, listLibraryFiles, listRuns, listSkills, revisePlan, revokeConversationShare, streamRunEvents, updateConversation, updateConversationStrategy, updateToolSettings, type RunStreamEvent, type SkillSummary } from '../src/api';
+import { buildRuntime, cancelRun, cancelRuntimeBuild, confirmPlanExecution, createConversationShare, createRun, decideToolApproval, deleteConversation, getConversation, getConversationStrategy, getRun, getRuntimeProfile, listConversationShares, listConversations, listLibraryFiles, listRuns, listSkills, revisePlan, revokeConversationShare, streamRunEvents, takeCreatedRunStream, updateConversation, updateConversationStrategy, updateToolSettings, type RunStreamEvent, type SkillSummary } from '../src/api';
 
 vi.mock('../src/api', () => ({
   AstraApiError: class AstraApiError extends Error {
@@ -262,6 +262,7 @@ describe('App', () => {
     globalThis.localStorage?.clear();
     Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1024 });
     delete document.documentElement.dataset.theme;
+    delete document.documentElement.dataset.astraQuestionToFirstTokenMs;
     document.documentElement.style.colorScheme = '';
   });
 
@@ -306,6 +307,34 @@ describe('App', () => {
     expect(document.querySelectorAll('.process-decision-group')).toHaveLength(0);
     expect(screen.queryByText('正在执行计划')).not.toBeInTheDocument();
     expect(screen.queryByText('正在分析下一步')).not.toBeInTheDocument();
+  });
+
+  it('renders the preconnected first delta without requesting an initial snapshot', async () => {
+    vi.mocked(getRun).mockClear();
+    vi.mocked(streamRunEvents).mockClear();
+    vi.mocked(takeCreatedRunStream).mockReturnValueOnce({
+      created: Promise.resolve({
+        run_id: 'run-1',
+        task_id: 'task-1',
+        status: 'created',
+        answer_mode: 'standard',
+      }),
+      subscribe(onEvent) {
+        onEvent({ type: 'answer.started', payload: {} });
+        onEvent({ id: 1, type: 'answer.delta', payload: { delta: '首个片段' } });
+        return () => undefined;
+      },
+      close: vi.fn(),
+    });
+    render(<App />);
+
+    await userEvent.type(screen.getByRole('textbox'), '低延迟回答');
+    await userEvent.click(screen.getByRole('button', { name: '发送' }));
+
+    expect(await screen.findByText('首个片段')).toBeInTheDocument();
+    expect(getRun).not.toHaveBeenCalled();
+    expect(streamRunEvents).not.toHaveBeenCalled();
+    expect(Number(document.documentElement.dataset.astraQuestionToFirstTokenMs)).toBeGreaterThan(0);
   });
 
   it('selects a Skill through slash commands, highlights it, and submits a clean explicit binding', async () => {
