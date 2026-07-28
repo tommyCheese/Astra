@@ -2,7 +2,7 @@ import uuid
 from copy import deepcopy
 from typing import Any
 
-from sqlalchemy import func, select, update
+from sqlalchemy import and_, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -1543,6 +1543,27 @@ class RunRepository:
             .order_by(RunEventRecord.id)
         )
         return list(result.scalars().all())
+
+    async def list_events_with_status(
+        self, run_id: str, after_id: int = 0
+    ) -> tuple[list[RunEventRecord], str | None]:
+        """Load an SSE event batch and terminal status in one database round trip."""
+        result = await self.session.execute(
+            select(RunRecord.status, RunEventRecord)
+            .outerjoin(
+                RunEventRecord,
+                and_(
+                    RunEventRecord.run_id == RunRecord.id,
+                    RunEventRecord.id > after_id,
+                ),
+            )
+            .where(RunRecord.id == run_id)
+            .order_by(RunEventRecord.id)
+        )
+        rows = result.all()
+        if not rows:
+            return [], None
+        return [event for _, event in rows if event is not None], rows[0][0]
 
     async def _require_step(self, step_id: str) -> StepRecord:
         result = await self.session.execute(select(StepRecord).where(StepRecord.id == step_id))

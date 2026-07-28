@@ -1,4 +1,5 @@
 import pytest
+from sqlalchemy import event as sqlalchemy_event
 
 from app.agent_profile import load_agent_profile
 from app.db.models import ModelInvocationRecord
@@ -202,6 +203,47 @@ async def test_repository_freezes_profile_once_for_unversioned_new_run(session):
     events = await repo.list_events(run.id)
     assert loaded.agent_profile_snapshot["version"] == snapshot["version"]
     assert [event.type for event in events].count("agent_profile.frozen") == 1
+
+
+async def test_list_events_with_status_uses_one_query_for_all_result_shapes(session):
+    repo = RunRepository(session)
+    run = await repo.create_task_run("流查询测试", {"provider": "mock"})
+    first = await repo.add_event(run.id, "test.first", {"index": 1})
+    second = await repo.add_event(run.id, "test.second", {"index": 2})
+    await repo.update_run_status(run.id, "completed")
+    await session.commit()
+    terminal = (await repo.list_events(run.id))[-1]
+
+    statements: list[str] = []
+
+    def count_selects(_conn, _cursor, statement, _parameters, _context, _executemany):
+        if statement.lstrip().upper().startswith("SELECT"):
+            statements.append(statement)
+
+    sqlalchemy_event.listen(
+        session.bind.sync_engine, "before_cursor_execute", count_selects
+    )
+    try:
+        events, status = await repo.list_events_with_status(run.id, first.id)
+        assert [item.id for item in events] == [second.id, terminal.id]
+        assert status == "completed"
+        assert len(statements) == 1
+
+        statements.clear()
+        events, status = await repo.list_events_with_status(run.id, terminal.id)
+        assert events == []
+        assert status == "completed"
+        assert len(statements) == 1
+
+        statements.clear()
+        events, status = await repo.list_events_with_status("missing-run")
+        assert events == []
+        assert status is None
+        assert len(statements) == 1
+    finally:
+        sqlalchemy_event.remove(
+            session.bind.sync_engine, "before_cursor_execute", count_selects
+        )
 
 
 async def test_loading_autodream_protocol_has_no_database_side_effect(session):

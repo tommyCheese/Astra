@@ -524,7 +524,9 @@ async def stream_run_events(
             async with SessionLocal() as stream_session:
                 stream_repo = RunRepository(stream_session)
                 while True:
-                    events = await stream_repo.list_events(run_id, last_id)
+                    events, status = await stream_repo.list_events_with_status(
+                        run_id, last_id
+                    )
                     for event in events:
                         last_id = event.id
                         payload = {
@@ -534,7 +536,6 @@ async def stream_run_events(
                             "created_at": event.created_at.isoformat(),
                         }
                         yield f"id: {event.id}\ndata: {json.dumps(payload)}\n\n"
-                    status = await stream_repo.get_run_status(run_id)
                     if status in RunRepository.TERMINAL_STATUSES:
                         if not events:
                             yield 'data: {"type": "heartbeat", "payload": {}}\n\n'
