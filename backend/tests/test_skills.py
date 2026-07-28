@@ -4,6 +4,7 @@ import zipfile
 
 import pytest
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy import event as sqlalchemy_event
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
@@ -271,6 +272,29 @@ async def test_catalog_snapshot_activation_and_resource_verification(session, tm
             ],
             tmp_path / "tampered",
         )
+
+
+async def test_new_run_catalog_freeze_avoids_existence_read(session):
+    run = await RunRepository(session).create_task_run("new run", {})
+    builder = SkillCatalogBuilder(session)
+    catalog = await builder.build()
+    statements: list[str] = []
+
+    def count_selects(_conn, _cursor, statement, _parameters, _context, _executemany):
+        if statement.lstrip().upper().startswith("SELECT"):
+            statements.append(statement)
+
+    sqlalchemy_event.listen(
+        session.bind.sync_engine, "before_cursor_execute", count_selects
+    )
+    try:
+        await builder.freeze(run.id, "standard", catalog, new_run=True)
+    finally:
+        sqlalchemy_event.remove(
+            session.bind.sync_engine, "before_cursor_execute", count_selects
+        )
+
+    assert statements == []
 
 
 async def test_catalog_is_deterministic_shortlisted_and_capability_filtered(session):

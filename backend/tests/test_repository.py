@@ -24,6 +24,41 @@ async def test_tool_settings_are_created_and_persisted(session):
     assert await repo.get_or_create(defaults) == updated
 
 
+async def test_tool_settings_cache_publishes_only_after_commit(session):
+    repo = ToolSettingsRepository(session)
+    defaults = {"web_search": True, "web_fetch": True, "chart_render": False}
+    assert await repo.get_or_create(defaults) == defaults
+    await session.commit()
+
+    await repo.set_all({"web_search": False}, defaults)
+    await session.rollback()
+
+    assert await ToolSettingsRepository(session).get_or_create(defaults) == defaults
+
+
+async def test_committed_tool_settings_cache_avoids_database_reads(session):
+    defaults = {"web_search": True, "web_fetch": True, "chart_render": False}
+    assert await ToolSettingsRepository(session).get_or_create(defaults) == defaults
+    await session.commit()
+    statements: list[str] = []
+
+    def count_selects(_conn, _cursor, statement, _parameters, _context, _executemany):
+        if statement.lstrip().upper().startswith("SELECT"):
+            statements.append(statement)
+
+    sqlalchemy_event.listen(
+        session.bind.sync_engine, "before_cursor_execute", count_selects
+    )
+    try:
+        assert await ToolSettingsRepository(session).get_or_create(defaults) == defaults
+    finally:
+        sqlalchemy_event.remove(
+            session.bind.sync_engine, "before_cursor_execute", count_selects
+        )
+
+    assert statements == []
+
+
 async def test_conversation_strategy_is_created_and_persisted(session):
     repo = ConversationStrategyRepository(session)
     assert await repo.get_or_create() == {

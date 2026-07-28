@@ -29,6 +29,7 @@ from app.core.errors import (
 )
 from app.db.mode_upgrade import validate_mode_upgrade
 from app.db.session import SessionLocal
+from app.repositories.tool_settings import ToolSettingsRepository, default_tool_states
 from app.repositories.usage import UsageRepository
 from app.runner.engine import close_shared_model_http_clients, shared_model_http_client
 from app.runtime_profiles import RuntimeProfileService
@@ -57,6 +58,9 @@ def create_app(settings: Settings | None = None, *, session_factory=SessionLocal
             async with session_factory() as session:
                 await validate_mode_upgrade(session)
                 await ensure_builtin_skills(session, settings)
+                await ToolSettingsRepository(session).get_or_create(
+                    default_tool_states(settings)
+                )
                 await session.commit()
                 interrupted = await UsageRepository(session).reconcile_interrupted()
                 if interrupted:

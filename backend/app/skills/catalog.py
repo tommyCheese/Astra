@@ -208,10 +208,15 @@ class SkillCatalogBuilder:
         catalog: SkillCatalog,
         *,
         draft_test: bool = False,
+        new_run: bool = False,
     ) -> RunSkillSnapshotRecord:
-        existing = await self.session.scalar(
-            select(RunSkillSnapshotRecord).where(RunSkillSnapshotRecord.run_id == run_id)
-        )
+        existing = None
+        if not new_run:
+            existing = await self.session.scalar(
+                select(RunSkillSnapshotRecord).where(
+                    RunSkillSnapshotRecord.run_id == run_id
+                )
+            )
         payload = [item.model_dump(mode="json") for item in catalog.entries]
         if existing is not None:
             if existing.catalog_digest != catalog.digest or existing.catalog != payload:

@@ -1,5 +1,9 @@
-from sqlalchemy import select
+from weakref import WeakKeyDictionary
+
+from sqlalchemy import event, select
+from sqlalchemy.engine import Engine
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import Session
 
 from app.core.config import Settings
 from app.db.models import ToolSettingRecord, utc_now
@@ -10,6 +14,26 @@ TOOL_SETTING_FIELDS = {
     "chart_render": "tool_chart_render_enabled",
     "bash_execute": "tool_bash_execute_enabled",
 }
+PENDING_TOOL_SETTINGS_CACHE = "astra_pending_tool_settings_cache"
+_TOOL_SETTINGS_CACHE: WeakKeyDictionary[Engine, dict[str, bool]] = WeakKeyDictionary()
+
+
+def _session_engine(session: Session) -> Engine:
+    bind = session.get_bind()
+    return bind.engine if hasattr(bind, "engine") else bind
+
+
+@event.listens_for(Session, "after_commit")
+def publish_tool_settings_cache(session: Session) -> None:
+    pending = session.info.pop(PENDING_TOOL_SETTINGS_CACHE, None)
+    if pending is not None:
+        engine, states = pending
+        _TOOL_SETTINGS_CACHE[engine] = states
+
+
+@event.listens_for(Session, "after_rollback")
+def discard_tool_settings_cache(session: Session) -> None:
+    session.info.pop(PENDING_TOOL_SETTINGS_CACHE, None)
 
 
 def default_tool_states(settings: Settings) -> dict[str, bool]:
@@ -32,6 +56,14 @@ class ToolSettingsRepository:
         self.session = session
 
     async def get_or_create(self, defaults: dict[str, bool]) -> dict[str, bool]:
+        pending = self.session.sync_session.info.get(PENDING_TOOL_SETTINGS_CACHE)
+        cached = (
+            pending[1]
+            if pending is not None
+            else _TOOL_SETTINGS_CACHE.get(_session_engine(self.session.sync_session))
+        )
+        if cached is not None and defaults.keys() <= cached.keys():
+            return {name: cached[name] for name in defaults}
         records = list((await self.session.scalars(select(ToolSettingRecord))).all())
         by_name = {record.tool_name: record for record in records}
         for name, enabled in defaults.items():
@@ -40,10 +72,12 @@ class ToolSettingsRepository:
                 self.session.add(record)
                 by_name[name] = record
         await self.session.flush()
-        return {name: bool(by_name[name].enabled) for name in defaults}
+        states = {name: bool(by_name[name].enabled) for name in defaults}
+        self._stage_cache(states)
+        return states
 
     async def set_all(self, states: dict[str, bool], defaults: dict[str, bool]) -> dict[str, bool]:
-        await self.get_or_create(defaults)
+        current = await self.get_or_create(defaults)
         records = list(
             (await self.session.scalars(
                 select(ToolSettingRecord).where(ToolSettingRecord.tool_name.in_(states))
@@ -54,4 +88,13 @@ class ToolSettingsRepository:
             record.enabled = states[record.tool_name]
             record.updated_at = now
         await self.session.flush()
-        return {record.tool_name: bool(record.enabled) for record in records}
+        updated = {record.tool_name: bool(record.enabled) for record in records}
+        self._stage_cache({**current, **updated})
+        return updated
+
+    def _stage_cache(self, states: dict[str, bool]) -> None:
+        session = self.session.sync_session
+        session.info[PENDING_TOOL_SETTINGS_CACHE] = (
+            _session_engine(session),
+            dict(states),
+        )

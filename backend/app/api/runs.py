@@ -335,6 +335,7 @@ async def create_run(
                 run.id,
                 profile.answer_mode.value,
                 catalog,
+                new_run=True,
             )
             for identity in payload.skill_ids:
                 try:
