@@ -210,8 +210,9 @@ def _quick_workspace_change_completes_goal(
 
 
 class ContextAssembler:
-    def __init__(self, repo: RunRepository):
+    def __init__(self, repo: RunRepository, *, skills_enabled: bool = True):
         self.repo = repo
+        self.skills_enabled = skills_enabled
 
     async def assemble(
         self,
@@ -223,10 +224,24 @@ class ContextAssembler:
         tool_router: ToolRouter | None = None,
         observations: list[dict[str, Any]],
         evidence_pack: dict[str, Any] | None = None,
+        quick_mode: bool = False,
     ) -> dict[str, Any]:
-        memories = await self.repo.list_memories(run_id=run_id, min_confidence=0.0, limit=8)
-        run = await self.repo.require_run_core(run_id)
-        plan = await PlanRepository(self.repo.session).active_for_run(run_id)
+        if quick_mode:
+            run, memories, skill_snapshot = await self.repo.require_run_quick_context(
+                run_id,
+                include_skills=self.skills_enabled,
+            )
+        else:
+            run = await self.repo.require_run_core(run_id)
+            memories = await self.repo.list_memories(
+                run_id=run_id, min_confidence=0.0, limit=8
+            )
+            skill_snapshot = None
+        plan = (
+            None
+            if run.answer_mode == AnswerMode.standard.value
+            else await PlanRepository(self.repo.session).active_for_run(run_id)
+        )
         plan_view = plan_to_view(plan).model_dump(mode="json") if plan else run.plan_graph or {}
         active_node_id = active_plan_node_id(run.agent_state or {})
         active_node = next(
@@ -251,11 +266,12 @@ class ContextAssembler:
                     }
                 )
             }
-        skill_snapshot = await self.repo.session.scalar(
-            select(RunSkillSnapshotRecord).where(
-                RunSkillSnapshotRecord.run_id == run_id
+        if self.skills_enabled and not quick_mode:
+            skill_snapshot = await self.repo.session.scalar(
+                select(RunSkillSnapshotRecord).where(
+                    RunSkillSnapshotRecord.run_id == run_id
+                )
             )
-        )
         skill_catalog = []
         active_skills = []
         if skill_snapshot is not None:
@@ -479,7 +495,7 @@ class AgentLoop:
         goal: str,
         on_answer_delta: Callable[[str], Awaitable[None]] | None = None,
     ) -> dict[str, Any]:
-        assembler = ContextAssembler(repo)
+        assembler = ContextAssembler(repo, skills_enabled=self.settings.skills_enabled)
         memory_manager = MemoryManager(self.settings, repo, self.model_client)
         verifier = VerificationEngine()
         artifact_service = ArtifactService(
@@ -490,15 +506,9 @@ class AgentLoop:
         )
         provider = self.sandbox_provider or build_sandbox_provider(self.settings)
         initial_run = await repo.require_run_runtime(run_id)
+        quick_mode = initial_run.answer_mode == AnswerMode.standard.value
         permission_repository = PermissionRepository(repo.session)
-        main_identity = await permission_repository.get_or_create_identity(
-            identity_type="main_agent",
-            principal="astra.agent",
-            task_id=initial_run.task_id,
-            run_id=run_id,
-            trust_level="platform",
-            attributes={"permission_scope": {"actions": ["*"], "resources": ["*"]}},
-        )
+        main_identity = None
         provider_identities: dict[str, Any] = {}
         catalog = [
             spec.model_dump(mode="json") for _, spec in sorted(self.tool_registry.specs().items())
@@ -532,11 +542,29 @@ class AgentLoop:
         catalog_digest = hashlib.sha256(
             json.dumps(catalog, sort_keys=True, separators=(",", ":")).encode()
         ).hexdigest()
-        await permission_repository.freeze_tool_catalog(
-            run_id,
-            catalog=catalog,
-            digest=catalog_digest,
-        )
+        permissions_initialized = False
+
+        async def ensure_permission_runtime() -> None:
+            nonlocal main_identity, permissions_initialized
+            if permissions_initialized:
+                return
+            main_identity = await permission_repository.get_or_create_identity(
+                identity_type="main_agent",
+                principal="astra.agent",
+                task_id=initial_run.task_id,
+                run_id=run_id,
+                trust_level="platform",
+                attributes={"permission_scope": {"actions": ["*"], "resources": ["*"]}},
+            )
+            await permission_repository.freeze_tool_catalog(
+                run_id,
+                catalog=catalog,
+                digest=catalog_digest,
+            )
+            permissions_initialized = True
+
+        if not quick_mode:
+            await ensure_permission_runtime()
         workspace_repository = WorkspaceRepository(repo.session)
         workspace_service = WorkspaceRuntimeService(
             workspace_repository,
@@ -563,7 +591,9 @@ class AgentLoop:
             provider_concurrency_limit=self.settings.agent_provider_concurrency_limit,
             capability_concurrency_limit=self.settings.agent_capability_concurrency_limit,
         )
-        canonical_plan = await plan_repository.active_for_run(run_id)
+        canonical_plan = (
+            None if quick_mode else await plan_repository.active_for_run(run_id)
+        )
         orchestrator = LoopOrchestrator()
         no_progress = NoProgressDetector()
         policy_snapshot = ReasoningPolicySnapshot.model_validate(initial_run.reasoning_policy or {})
@@ -1017,6 +1047,7 @@ class AgentLoop:
                 tool_registry=self.tool_registry,
                 tool_router=self.router,
                 observations=observations,
+                quick_mode=quick_mode,
             )
             if not quick_mode:
                 await repo.add_event(
@@ -1148,6 +1179,13 @@ class AgentLoop:
                 )
                 await repo.session.commit()
                 continue
+
+            # A standard answer may stream while the model is still generating.
+            # Permission identities and the immutable catalog are needed before
+            # persisting the decision or executing a tool, not before that first
+            # user-visible token.
+            await ensure_permission_runtime()
+            assert main_identity is not None
 
             if not quick_mode and not reasoning_completed:
                 if reasoning_buffer:

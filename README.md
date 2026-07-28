@@ -105,6 +105,21 @@ python -m app.benchmarks.qa_latency --runs 20 --warmup 2
 基准运行记录。请使用真实模型配置采集供应商端到端指标；内置 `mock`
 模型固定演练工具流程，不适合作为云模型延迟替代值。
 
+需要隔离供应商网络和推理波动时，可在另一个终端启动确定性的
+OpenAI-compatible 流式模型桩：
+
+```bash
+cd backend
+python -m app.benchmarks.model_stub \
+  --first-token-delay-ms 20 \
+  --inter-chunk-delay-ms 1 \
+  --chunk-chars 3
+```
+
+将后端的 `MODEL_BASE_URL` 指向 `http://127.0.0.1:8999/v1`。使用
+`--response-order legacy` 可重放旧版“先决策元数据、后回答”协议，与默认的
+`summary-first` 协议进行相同环境下的 TTFT 对比。
+
 ### Web 搜索/抓取配置
 
 每个已支持工具都有独立开关；关闭后工具不会注册，也不会出现在模型可用工具清单中：

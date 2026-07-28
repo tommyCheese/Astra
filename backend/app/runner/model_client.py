@@ -1,3 +1,4 @@
+import hashlib
 import json
 import logging
 import re
@@ -758,6 +759,16 @@ class OpenAICompatibleModelClient(ModelClient):
             "stream_options": {"include_usage": True},
             **reasoning_config.request_params,
         }
+        if self.settings.model_provider == "openai":
+            static_prefix = "\n\n".join(
+                message["content"]
+                for message in messages
+                if message["role"] == "system"
+            )
+            if static_prefix:
+                request_payload["prompt_cache_key"] = (
+                    "astra:" + hashlib.sha256(static_prefix.encode()).hexdigest()[:32]
+                )
         if reasoning_config.include_json_mode:
             request_payload["response_format"] = {"type": "json_object"}
         client = self._client()
@@ -937,10 +948,17 @@ class AnthropicModelClient(OpenAICompatibleModelClient):
         request_payload = {
             "model": self.settings.model_name,
             "max_tokens": 8192,
-            "system": system,
             "messages": anthropic_messages,
             **reasoning_config.request_params,
         }
+        if system:
+            request_payload["system"] = [
+                {
+                    "type": "text",
+                    "text": system,
+                    "cache_control": {"type": "ephemeral"},
+                }
+            ]
         try:
             if callbacks:
                 chunks: list[str] = []

@@ -194,7 +194,13 @@ async def test_anthropic_client_translates_messages_and_stream_callbacks(monkeyp
     assert payload == {"summary": "完成"}
     assert requests[0][0] == "https://api.anthropic.test/v1/messages"
     assert requests[0][1]["headers"]["x-api-key"] == "secret"
-    assert requests[0][1]["json"]["system"] == "Return JSON"
+    assert requests[0][1]["json"]["system"] == [
+        {
+            "type": "text",
+            "text": "Return JSON",
+            "cache_control": {"type": "ephemeral"},
+        }
+    ]
     assert requests[0][1]["json"]["stream"] is True
     assert deltas == ["完成", "\1"]
 

@@ -20,6 +20,7 @@ from app.db.models import (
     ResourceLeaseRecord,
     RunEventRecord,
     RunRecord,
+    RunSkillSnapshotRecord,
     SandboxJobRecord,
     StepRecord,
     TaskRecord,
@@ -119,7 +120,11 @@ class RunRepository:
         else:
             task.preferred_answer_mode = answer_mode
             task.updated_at = now
-        run_policy = {**model_policy, "conversation_goal": goal}
+        run_policy = {
+            **model_policy,
+            "conversation_goal": goal,
+            "conversation_context_required": task_id is not None,
+        }
         run = RunRecord(
             task=task,
             status="created",
@@ -555,6 +560,47 @@ class RunRepository:
         if run is None:
             raise ValueError(f"Run not found: {run_id}")
         return run
+
+    async def require_run_quick_context(
+        self,
+        run_id: str,
+        *,
+        include_skills: bool,
+        memory_limit: int = 8,
+    ) -> tuple[RunRecord, list[MemoryRecord], RunSkillSnapshotRecord | None]:
+        """Load standard-mode context inputs in one database round trip."""
+        query = (
+            select(RunRecord, MemoryRecord, RunSkillSnapshotRecord)
+            .outerjoin(
+                MemoryRecord,
+                and_(
+                    MemoryRecord.run_id == RunRecord.id,
+                    MemoryRecord.confidence >= 0.0,
+                ),
+            )
+            .outerjoin(
+                RunSkillSnapshotRecord,
+                and_(
+                    RunSkillSnapshotRecord.run_id == RunRecord.id,
+                    include_skills,
+                ),
+            )
+            .where(RunRecord.id == run_id)
+            .order_by(MemoryRecord.updated_at.desc())
+            .limit(memory_limit)
+        )
+        rows = (await self.session.execute(query)).all()
+        if not rows:
+            raise ValueError(f"Run not found: {run_id}")
+        run = rows[0][0]
+        memories = list(
+            dict.fromkeys(memory for _, memory, _ in rows if memory is not None)
+        )
+        skill_snapshot = next(
+            (snapshot for _, _, snapshot in rows if snapshot is not None),
+            None,
+        )
+        return run, memories, skill_snapshot
 
     async def count_agent_turns(self, run_id: str) -> int:
         count = await self.session.scalar(

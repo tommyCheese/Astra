@@ -96,7 +96,10 @@ async def test_openai_compatible_transport_applies_supported_reasoning_fields(
     client.usage_recorder = usage
 
     payload = await client._chat_json(
-        [{"role": "user", "content": "返回 JSON"}],
+        [
+            {"role": "system", "content": "Return JSON"},
+            {"role": "user", "content": "返回 JSON"},
+        ],
         operation=ModelOperation.SYNTHESIS,
     )
 
@@ -104,6 +107,7 @@ async def test_openai_compatible_transport_applies_supported_reasoning_fields(
     assert payload == {"summary": "完成"}
     assert {key: request[key] for key in expected} == expected
     assert ("response_format" in request) is has_json_mode
+    assert ("prompt_cache_key" in request) is (provider == "openai")
     metadata = usage.finished[0][1]["usage"]["astra_reasoning"]
     assert metadata["applied"] is bool(expected)
     assert metadata["request_params"] == expected
@@ -128,6 +132,36 @@ async def test_openai_compatible_transport_reuses_connection_pool(monkeypatch):
     assert FakeOpenAIAsyncClient.instances == 1
     assert len(FakeOpenAIAsyncClient.requests) == 2
     assert FakeOpenAIAsyncClient.closes == 1
+
+
+async def test_openai_prompt_cache_key_tracks_only_the_static_system_prefix(
+    monkeypatch,
+):
+    FakeOpenAIAsyncClient.requests = []
+    monkeypatch.setattr("app.runner.model_client.httpx.AsyncClient", FakeOpenAIAsyncClient)
+    client = OpenAICompatibleModelClient(
+        Settings(model_provider="openai", model_name="gpt-5", model_api_key="secret")
+    )
+
+    for system, user in (
+        ("stable", "first"),
+        ("stable", "second"),
+        ("changed", "third"),
+    ):
+        await client._chat_json(
+            [
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+            operation=ModelOperation.SYNTHESIS,
+        )
+
+    keys = [
+        request[2]["json"]["prompt_cache_key"]
+        for request in FakeOpenAIAsyncClient.requests
+    ]
+    assert keys[0] == keys[1]
+    assert keys[2] != keys[0]
 
 
 async def test_openai_stream_decodes_multiple_fields_across_chunk_boundaries():

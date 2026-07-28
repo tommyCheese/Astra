@@ -6,7 +6,12 @@ from sqlalchemy import event, select
 
 from app.agent_profile import AgentProfileLoader, load_agent_profile
 from app.core.config import Settings
-from app.db.models import TaskWorkspaceRecord, WorkspaceCheckpointRecord
+from app.db.models import (
+    AgentIdentityRecord,
+    TaskWorkspaceRecord,
+    ToolCatalogSnapshotRecord,
+    WorkspaceCheckpointRecord,
+)
 from app.repositories.plans import PlanRepository, plan_to_view
 from app.repositories.runs import RunRepository
 from app.runner.engine import RunEngine
@@ -183,6 +188,26 @@ class QuickStreamingClient(MockModelClient):
         assert on_delta is not None
         assert on_reasoning_delta is None
         await on_delta("立即")
+        await on_delta("流式回答")
+        await on_delta("\1")
+        return AgentDecision(
+            decision_type="finalize",
+            reasoning_summary="直接回答",
+        ), FinalAnswer(summary="立即流式回答")
+
+
+class QuickPermissionTimingClient(QuickStreamingClient):
+    def __init__(self, after_first_delta):
+        super().__init__()
+        self.after_first_delta = after_first_delta
+
+    async def decide_with_answer(
+        self, goal, context, *, on_delta=None, on_reasoning_delta=None
+    ):
+        self.decide_calls += 1
+        assert on_delta is not None
+        await on_delta("立即")
+        await self.after_first_delta()
         await on_delta("流式回答")
         await on_delta("\1")
         return AgentDecision(
@@ -516,7 +541,7 @@ async def test_standard_fast_path_skips_plan_state_and_all_quality_gates(session
     assert loaded.steps == []
     # The original full-graph loading path issued 129 SELECTs here. Keep the
     # latency-sensitive production path bounded as relationships are added.
-    assert len(select_statements) <= 25, Counter(
+    assert len(select_statements) <= 20, Counter(
         statement.rsplit("FROM ", 1)[-1].split()[0] for statement in select_statements
     )
     assert await session.scalar(
@@ -541,6 +566,64 @@ async def test_standard_fast_path_skips_plan_state_and_all_quality_gates(session
         event.type == "reasoning.phase.started"
         and event.payload.get("phase") in {"planning", "selecting_action", "verifying"}
         for event in events
+    )
+
+
+async def test_standard_fast_path_defers_permission_records_until_after_first_delta(session):
+    settings = Settings(model_provider="mock")
+    profile = RunProfileResolver().resolve(
+        AnswerMode.standard, RequestedReasoningPolicy(execution_mode="auto_approval")
+    )
+    repo = RunRepository(session)
+    run = await repo.create_task_run(
+        "快速回答",
+        settings.model_policy,
+        reasoning_policy=profile.reasoning_policy.model_dump(mode="json"),
+        answer_mode=profile.answer_mode.value,
+        execution_profile=profile.model_dump(mode="json"),
+    )
+    observed = {}
+
+    async def capture_permission_state():
+        observed["identities"] = len(
+            (
+                await session.scalars(
+                    select(AgentIdentityRecord).where(
+                        AgentIdentityRecord.run_id == run.id
+                    )
+                )
+            ).all()
+        )
+        observed["catalogs"] = len(
+            (
+                await session.scalars(
+                    select(ToolCatalogSnapshotRecord).where(
+                        ToolCatalogSnapshotRecord.run_id == run.id
+                    )
+                )
+            ).all()
+        )
+
+    await RunEngine(
+        settings,
+        model_client=QuickPermissionTimingClient(capture_permission_state),
+        tool_registry=ToolRegistry(),
+    )._run_with_repo(repo, run.id)
+
+    assert observed == {"identities": 0, "catalogs": 0}
+    assert (
+        await session.scalar(
+            select(AgentIdentityRecord).where(AgentIdentityRecord.run_id == run.id)
+        )
+        is not None
+    )
+    assert (
+        await session.scalar(
+            select(ToolCatalogSnapshotRecord).where(
+                ToolCatalogSnapshotRecord.run_id == run.id
+            )
+        )
+        is not None
     )
 
 

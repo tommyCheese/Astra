@@ -596,6 +596,8 @@ class RunEngine:
         current_goal = run.model_policy.get("conversation_goal")
         if not current_goal:
             current_goal = (await repo.require_run(run.id)).task.description
+        if run.model_policy.get("conversation_context_required") is False:
+            return current_goal
         conversation_runs = await repo.list_task_runs(run.task_id)
         previous_runs = [item for item in conversation_runs if item.id != run.id][-6:]
         if not previous_runs:
