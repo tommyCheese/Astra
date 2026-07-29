@@ -3038,9 +3038,12 @@ function ProcessPanel({ run, messageId, liveState, open, isLatestRun, onInitiali
   const [historicalGraphOpen, setHistoricalGraphOpen] = useState(false);
   const live = Boolean(liveState?.active);
   const processTitle = live ? t('思考中') : t('思考完成');
+  const processItems = liveState?.items ?? reconcileProcessSnapshot(null, run).items;
+  const livePreview = live && !open
+    ? [...processItems].reverse().find((item) => item.status === 'running' && item.detail)?.detail
+    : undefined;
   const report = run.result?.verification_report;
   const notes = [...new Set([...(run.result?.verification_notes ?? []), ...(report?.notes ?? [])])];
-  const processItems = liveState?.items ?? reconcileProcessSnapshot(null, run).items;
   const streamedVerificationText = processItems.filter((item) => item.kind === 'verification').map((item) => item.detail ?? '').join('；');
   const remainingNotes = notes.filter((note) => !streamedVerificationText.includes(note));
   const hasHistoricalGraph = !isLatestRun && run.answer_mode === 'trusted' && run.plan_graph && 'id' in run.plan_graph;
@@ -3049,7 +3052,7 @@ function ProcessPanel({ run, messageId, liveState, open, isLatestRun, onInitiali
     event.preventDefault();
     onOpenChange(run.id, !open);
   };
-  return <article className={`process-entry ${live ? 'live' : ''} ${hasHistoricalGraph ? 'has-historical-graph' : ''}`} id={`message-${messageId}`}><details className="process-panel" open={open}><summary onClick={toggle} aria-expanded={open}><Icon name="brain" /><span className="process-title">{processTitle}{live && <span className="process-thinking-dots" aria-hidden="true"><i /><i /><i /></span>}</span></summary><div className="process-timeline" aria-live={live ? 'polite' : undefined}>
+  return <article className={`process-entry ${live ? 'live' : ''} ${hasHistoricalGraph ? 'has-historical-graph' : ''}`} id={`message-${messageId}`}><details className="process-panel" open={open}><summary onClick={toggle} aria-expanded={open}><Icon name="brain" /><span className="process-title">{processTitle}{live && <span className="process-thinking-dots" aria-hidden="true"><i /><i /><i /></span>}</span>{livePreview && <small className="process-live-preview" aria-live="polite">{livePreview}</small>}</summary><div className="process-timeline" aria-live={live ? 'polite' : undefined}>
     <ProcessTimeline items={processItems} run={run} />
     {!live && remainingNotes.map((note, index) => <div className="process-step verification" key={`verification-${index}`}><span className="process-dot"><Icon name="check" /></span><div><strong>{t('验证')}</strong><p>{note}</p></div></div>)}
     {!live && run.result && <ReasoningAuditSummary run={run} />}

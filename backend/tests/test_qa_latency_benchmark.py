@@ -36,19 +36,20 @@ def test_latency_summary_uses_nearest_rank_percentiles():
         LatencySample(
             submit_ms=float(index),
             stream_ready_ms=float(index + 1),
-            answer_ttft_ms=float(index + 2),
-            complete_ms=float(index + 3),
+            visible_ttft_ms=float(index + 2),
+            answer_ttft_ms=float(index + 3),
+            complete_ms=float(index + 4),
         )
         for index in range(1, 21)
     ]
 
-    assert percentile([sample.answer_ttft_ms for sample in samples], 0.5) == 12
-    assert percentile([sample.answer_ttft_ms for sample in samples], 0.95) == 21
+    assert percentile([sample.answer_ttft_ms for sample in samples], 0.5) == 13
+    assert percentile([sample.answer_ttft_ms for sample in samples], 0.95) == 22
     assert summarize(samples)["answer_ttft_ms"] == {
-        "min": 3.0,
-        "p50": 12.0,
-        "p95": 21.0,
-        "max": 22.0,
+        "min": 4.0,
+        "p50": 13.0,
+        "p95": 22.0,
+        "max": 23.0,
     }
 
 
@@ -83,7 +84,7 @@ async def test_benchmark_bounds_parallel_runs(monkeypatch):
         peak = max(peak, active)
         await asyncio.sleep(0)
         active -= 1
-        return LatencySample(1, 2, 3, 4), {}
+        return LatencySample(1, 2, 3, 4, 5), {}
 
     monkeypatch.setattr(qa_latency, "measure_run", fake_measure)
     args = qa_latency.build_parser().parse_args(
@@ -107,7 +108,7 @@ async def test_benchmark_defers_cleanup_until_measurements_finish(monkeypatch):
         cleanup_queue.append((f"run-{index}", f"task-{index}"))
         timeline.append(f"measure-{index}")
         await asyncio.sleep(0)
-        return LatencySample(1, 2, 3, 4), {}
+        return LatencySample(1, 2, 3, 4, 5), {}
 
     async def fake_cleanup(_client, run_id, _task_id):
         timeline.append(f"cleanup-{run_id}")

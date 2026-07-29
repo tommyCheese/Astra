@@ -89,8 +89,11 @@ QUICK_TOOL_MANIFEST_FIELDS = {
     "permissions",
     "risk",
 }
-REASONING_FLUSH_INTERVAL_SECONDS = 0.1
-REASONING_FLUSH_MAX_CHARS = 512
+# Keep the persisted audit trail and the live SSE feed on the same event stream.
+# A short time window coalesces token-sized provider chunks without making the
+# reasoning panel look stalled, while the size cap keeps bursty providers fluid.
+REASONING_FLUSH_INTERVAL_SECONDS = 0.05
+REASONING_FLUSH_MAX_CHARS = 128
 
 
 def active_plan_node_id(state: dict[str, Any]) -> str | None:
@@ -1167,7 +1170,7 @@ class AgentLoop:
                         on_delta=on_answer_delta
                         if canonical_plan is None or active_node is None
                         else None,
-                        on_reasoning_delta=None if quick_mode else on_reasoning_delta,
+                        on_reasoning_delta=on_reasoning_delta,
                     )
             except ModelOutputError as exc:
                 logger.exception("agent.decision.invalid run_id=%s turn=%s", run_id, turn_index)
@@ -1211,7 +1214,7 @@ class AgentLoop:
             await ensure_permission_runtime()
             assert main_identity is not None
 
-            if not quick_mode and not reasoning_completed:
+            if not reasoning_completed:
                 if reasoning_buffer:
                     await repo.add_event(
                         run_id,

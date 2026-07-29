@@ -1138,7 +1138,15 @@ h1 {
 .process-panel > summary .process-title {
   align-items: center;
   display: inline-flex;
+  flex: 0 0 auto;
   gap: 6px;
+}
+
+.process-panel > summary .process-live-preview {
+  max-width: min(52vw, 520px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .process-thinking-dots {

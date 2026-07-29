@@ -17,6 +17,7 @@ import httpx
 class LatencySample:
     submit_ms: float
     stream_ready_ms: float
+    visible_ttft_ms: float
     answer_ttft_ms: float
     complete_ms: float
 
@@ -96,6 +97,7 @@ async def measure_run(
     task_id = create_payload["task_id"]
     submit_at = time.perf_counter()
     ready_at: float | None = None
+    first_visible_at: float | None = None
     first_answer_at: float | None = None
     completed_at: float | None = None
     try:
@@ -106,8 +108,11 @@ async def measure_run(
                 event_type = payload.get("type")
                 if event_type == "stream.ready" and ready_at is None:
                     ready_at = now
-                elif event_type == "answer.delta" and first_answer_at is None:
-                    first_answer_at = now
+                elif event_type in {"reasoning.summary.delta", "answer.delta"}:
+                    if first_visible_at is None:
+                        first_visible_at = now
+                    if event_type == "answer.delta" and first_answer_at is None:
+                        first_answer_at = now
                 elif event_type == "answer.completed":
                     completed_at = now
         ended = completed_at or time.perf_counter()
@@ -115,11 +120,14 @@ async def measure_run(
             raise RuntimeError(f"Run {run_id} ended without stream.ready")
         if first_answer_at is None:
             raise RuntimeError(f"Run {run_id} ended without answer.delta")
+        if first_visible_at is None:
+            raise RuntimeError(f"Run {run_id} ended without visible output")
         if completed_at is None:
             raise RuntimeError(f"Run {run_id} ended without answer.completed")
         sample = LatencySample(
             submit_ms=(submit_at - started) * 1000,
             stream_ready_ms=(ready_at - started) * 1000,
+            visible_ttft_ms=(first_visible_at - started) * 1000,
             answer_ttft_ms=(first_answer_at - started) * 1000,
             complete_ms=(ended - started) * 1000,
         )
@@ -146,6 +154,7 @@ async def measure_streaming_run(
     run_id = ""
     task_id = ""
     ready_at: float | None = None
+    first_visible_at: float | None = None
     first_answer_at: float | None = None
     completed_at: float | None = None
     try:
@@ -165,8 +174,11 @@ async def measure_streaming_run(
                     if isinstance(ready_payload, dict):
                         run_id = str(ready_payload.get("run_id", ""))
                         task_id = str(ready_payload.get("task_id", ""))
-                elif event_type == "answer.delta" and first_answer_at is None:
-                    first_answer_at = now
+                elif event_type in {"reasoning.summary.delta", "answer.delta"}:
+                    if first_visible_at is None:
+                        first_visible_at = now
+                    if event_type == "answer.delta" and first_answer_at is None:
+                        first_answer_at = now
                 elif event_type == "answer.completed":
                     completed_at = now
         ended = completed_at or time.perf_counter()
@@ -174,11 +186,14 @@ async def measure_streaming_run(
             raise RuntimeError("Single-stream run ended without creation metadata")
         if first_answer_at is None:
             raise RuntimeError(f"Run {run_id} ended without answer.delta")
+        if first_visible_at is None:
+            raise RuntimeError(f"Run {run_id} ended without visible output")
         if completed_at is None:
             raise RuntimeError(f"Run {run_id} ended without answer.completed")
         sample = LatencySample(
             submit_ms=(submit_at - started) * 1000,
             stream_ready_ms=(ready_at - started) * 1000,
+            visible_ttft_ms=(first_visible_at - started) * 1000,
             answer_ttft_ms=(first_answer_at - started) * 1000,
             complete_ms=(ended - started) * 1000,
         )
@@ -280,7 +295,7 @@ async def run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Measure Astra create-to-stream-ready, answer TTFT, and completion latency."
+        description="Measure Astra stream-ready, first visible output, answer TTFT, and completion latency."
     )
     parser.add_argument("--base-url", default="http://127.0.0.1:8000")
     parser.add_argument("--goal", default="用三句话解释递归，并给出一个简短示例。")

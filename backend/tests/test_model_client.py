@@ -477,7 +477,7 @@ async def test_real_model_operations_use_explicit_profile_composition():
     assert all("secret" not in item[1][0]["content"] for item in captured)
 
 
-async def test_standard_combined_answer_prompt_requires_summary_first():
+async def test_standard_combined_answer_prompt_streams_reasoning_before_summary():
     client = build_model_client(
         Settings(model_provider="openai", model_api_key="secret")
     )
@@ -486,9 +486,9 @@ async def test_standard_combined_answer_prompt_requires_summary_first():
     async def fake_chat(messages, *, operation, **kwargs):
         captured.append((messages, operation, kwargs))
         return {
+            "reasoning_summary": "可以回答",
             "summary": "完成",
             "decision_type": "finalize",
-            "reasoning_summary": "可以回答",
         }
 
     client._chat_json = AsyncMock(side_effect=fake_chat)
@@ -498,8 +498,9 @@ async def test_standard_combined_answer_prompt_requires_summary_first():
     )
 
     system_prompt = captured[0][0][0]["content"]
-    assert "emit summary as the very first key" in system_prompt
+    assert "Emit reasoning_summary as the very first key" in system_prompt
+    assert "emit summary immediately after reasoning_summary" in system_prompt
     assert "Do not wrap these fields in final_answer" in system_prompt
-    assert "do not emit any other key or prose before summary" in system_prompt
+    assert "without hidden chain-of-thought" in system_prompt
     assert decision.decision_type == "finalize"
     assert answer is not None and answer.summary == "完成"

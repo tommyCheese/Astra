@@ -712,6 +712,15 @@ describe('App', () => {
     await waitFor(() => expect(emit).toBeTypeOf('function'));
     const snapshotCalls = vi.mocked(getRun).mock.calls.length;
 
+    act(() => {
+      emit?.({ id: 9, type: 'reasoning.summary.delta', payload: { turn_index: 0, delta: '正在理解问题' } });
+    });
+    expect(panel).not.toHaveAttribute('open');
+    await waitFor(() => expect(panel?.querySelector('summary .process-live-preview')).toHaveTextContent('正在理解问题'));
+    act(() => {
+      emit?.({ type: 'reasoning.summary.completed', payload: { turn_index: 0, summary: '正在理解问题' } });
+    });
+
     await userEvent.click(summary);
     expect(panel).toHaveAttribute('open');
     await waitFor(() => expect(JSON.parse(window.localStorage.getItem('astra.process-panel-default-open.v1') ?? 'false')).toBe(true));
@@ -748,7 +757,7 @@ describe('App', () => {
     await userEvent.click(summary);
     expect(panel).not.toHaveAttribute('open');
     act(() => emit?.({ id: 16, type: 'reasoning.summary.delta', payload: { turn_index: 1, delta: '并继续验证' } }));
-    expect(await screen.findByText('正在选择可靠来源并继续验证')).toBeInTheDocument();
+    await waitFor(() => expect(panel?.querySelector('summary .process-live-preview')).toHaveTextContent('正在选择可靠来源并继续验证'));
     expect(panel).not.toHaveAttribute('open');
     await waitFor(() => expect(JSON.parse(window.localStorage.getItem('astra.process-panel-default-open.v1') ?? 'true')).toBe(false));
 

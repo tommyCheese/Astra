@@ -70,8 +70,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--inter-chunk-delay-ms", type=float, default=1)
     parser.add_argument(
         "--response-order",
-        choices=("summary-first", "legacy"),
-        default="summary-first",
+        choices=("reasoning-first", "summary-first", "legacy"),
+        default="reasoning-first",
     )
     return parser
 
@@ -84,19 +84,24 @@ def main() -> None:
         "递归是函数调用自身来逐步缩小问题。设置终止条件后，每次调用都更接近它。"
         "例如 factorial(n) 可返回 n * factorial(n - 1)。"
     )
-    response = (
-        {
+    if args.response_order == "legacy":
+        response = {
             "decision_type": "finalize",
             "reasoning_summary": "可以直接回答",
             "final_answer": {"summary": summary},
         }
-        if args.response_order == "legacy"
-        else {
+    elif args.response_order == "summary-first":
+        response = {
             "summary": summary,
             "decision_type": "finalize",
             "reasoning_summary": "可以直接回答",
         }
-    )
+    else:
+        response = {
+            "reasoning_summary": "正在组织直接回答",
+            "summary": summary,
+            "decision_type": "finalize",
+        }
     StreamingModelHandler.response_body = json.dumps(
         response,
         ensure_ascii=False,

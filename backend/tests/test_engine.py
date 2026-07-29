@@ -187,7 +187,10 @@ class QuickStreamingClient(MockModelClient):
         assert context["plan_graph"] == {}
         assert context["memory_reads"] == []
         assert on_delta is not None
-        assert on_reasoning_delta is None
+        assert on_reasoning_delta is not None
+        await on_reasoning_delta("正在")
+        await on_reasoning_delta("直接回答")
+        await on_reasoning_delta("\1")
         await on_delta("立即")
         await on_delta("流式回答")
         await on_delta("\1")
@@ -207,6 +210,9 @@ class QuickPermissionTimingClient(QuickStreamingClient):
     ):
         self.decide_calls += 1
         assert on_delta is not None
+        assert on_reasoning_delta is not None
+        await on_reasoning_delta("正在直接回答")
+        await on_reasoning_delta("\1")
         await on_delta("立即")
         await self.after_first_delta()
         await on_delta("流式回答")
@@ -220,12 +226,15 @@ class QuickPermissionTimingClient(QuickStreamingClient):
 class QuickToolClient(QuickStreamingClient):
     async def decide_with_answer(self, goal, context, *, on_delta=None, on_reasoning_delta=None):
         self.decide_calls += 1
+        assert on_reasoning_delta is not None
         manifest = context["tool_manifests"]["weather_lookup"]
         assert manifest["input_schema"] == {"required": ["location", "date"]}
         assert manifest["permission"] == "network_read"
         assert "output_schema" not in manifest
         assert "version" not in manifest
         if not context["observations"]:
+            await on_reasoning_delta("查询天气")
+            await on_reasoning_delta("\1")
             return AgentDecision(
                 decision_type="call_tool",
                 reasoning_summary="查询天气",
@@ -233,6 +242,8 @@ class QuickToolClient(QuickStreamingClient):
                 tool_input={"location": "上海", "date": "tomorrow"},
             ), None
         assert on_delta is not None
+        await on_reasoning_delta("返回工具结果")
+        await on_reasoning_delta("\1")
         await on_delta("适合室内训练")
         await on_delta("\1")
         return AgentDecision(
@@ -244,11 +255,16 @@ class QuickToolClient(QuickStreamingClient):
 class QuickForbiddenToolClient(QuickStreamingClient):
     async def decide_with_answer(self, goal, context, *, on_delta=None, on_reasoning_delta=None):
         self.decide_calls += 1
+        assert on_reasoning_delta is not None
         if len(context["observations"]) >= 2:
+            await on_reasoning_delta("确认禁止工具不可用")
+            await on_reasoning_delta("\1")
             return AgentDecision(
                 decision_type="finalize",
                 reasoning_summary="确认禁止工具不可用",
             ), FinalAnswer(summary="禁止工具未被执行")
+        await on_reasoning_delta("尝试不存在的工具")
+        await on_reasoning_delta("\1")
         return AgentDecision(
             decision_type="call_tool",
             reasoning_summary="尝试不存在的工具",
@@ -573,6 +589,15 @@ async def test_standard_fast_path_skips_plan_state_and_all_quality_gates(session
         "立即",
         "流式回答",
     ]
+    reasoning_deltas = [
+        event.payload["delta"]
+        for event in events
+        if event.type == "reasoning.summary.delta"
+    ]
+    assert reasoning_deltas == ["正在", "直接回答"]
+    assert events.index(
+        next(event for event in events if event.type == "reasoning.summary.delta")
+    ) < events.index(next(event for event in events if event.type == "answer.delta"))
     assert "verification.created" not in [event.type for event in events]
     assert "reasoning.completion_decided" not in [event.type for event in events]
     assert "reasoning.runtime_limits" not in [event.type for event in events]
