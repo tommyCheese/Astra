@@ -8202,3 +8202,766 @@ html[data-theme="dark"] .memory-dialog-backdrop {
     animation: none;
   }
 }
+
+/* Astra visual system refresh — shared rhythm, surfaces and interaction language. */
+:root {
+  --workspace-content-width: 960px;
+  --astra-mint: #27785f;
+  --astra-mint-strong: #1f654f;
+  --astra-mint-soft: #e8f3ef;
+  --app-canvas: #f7f9f8;
+  --app-sidebar: rgba(239, 244, 242, .92);
+  --app-elevated: rgba(255, 255, 255, .94);
+  --app-hover: rgba(30, 83, 67, .055);
+  --app-line: rgba(38, 65, 56, .11);
+  --app-text: #1d2925;
+  --app-muted: #68756f;
+  --surface: #fff;
+  --surface-subtle: #f2f6f4;
+  --line-soft: rgba(38, 65, 56, .1);
+  --text-secondary: #68756f;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 18px;
+  --shadow-sm: 0 1px 2px rgba(24, 45, 37, .04), 0 4px 14px rgba(24, 45, 37, .035);
+  --shadow-md: 0 12px 36px rgba(24, 45, 37, .09), 0 2px 8px rgba(24, 45, 37, .04);
+  color: var(--app-text);
+  background: var(--app-canvas);
+  font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  text-rendering: optimizeLegibility;
+}
+
+html[data-theme="dark"] {
+  --astra-mint: #67c5a5;
+  --astra-mint-strong: #86d7bb;
+  --astra-mint-soft: rgba(74, 174, 139, .16);
+  --app-canvas: #171c1a;
+  --app-sidebar: rgba(24, 31, 28, .94);
+  --app-elevated: rgba(31, 39, 36, .96);
+  --app-hover: rgba(255, 255, 255, .06);
+  --app-line: rgba(222, 239, 232, .105);
+  --app-text: #edf4f1;
+  --app-muted: #98a8a1;
+  --surface: #1f2724;
+  --surface-subtle: #222c28;
+  --line-soft: rgba(222, 239, 232, .1);
+  --text-secondary: #a5b3ad;
+}
+
+body {
+  color: var(--app-text);
+  background: var(--app-canvas);
+}
+
+button,
+input,
+textarea,
+select {
+  accent-color: var(--astra-mint);
+}
+
+:where(button, input, textarea, select, a):focus-visible {
+  outline: 0;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--astra-mint) 20%, transparent);
+}
+
+::selection {
+  color: var(--app-text);
+  background: color-mix(in srgb, var(--astra-mint) 22%, transparent);
+}
+
+* {
+  scrollbar-color: color-mix(in srgb, var(--app-muted) 32%, transparent) transparent;
+  scrollbar-width: thin;
+}
+
+.app-layout {
+  color: var(--app-text);
+  background:
+    radial-gradient(circle at 72% -8%, color-mix(in srgb, var(--astra-mint) 5%, transparent), transparent 34%),
+    var(--app-canvas);
+}
+
+.sidebar {
+  gap: 14px;
+  padding: 16px 12px 14px;
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--app-sidebar) 92%, white 8%), var(--app-sidebar));
+  border-right-color: var(--app-line);
+}
+
+.brand {
+  min-height: 44px;
+  padding: 3px 7px;
+}
+
+.brand-mark,
+.brand-mark-trigger {
+  border-radius: 11px;
+}
+
+.brand-mark {
+  box-shadow: 0 5px 15px rgba(27, 105, 80, .18);
+}
+
+.brand strong {
+  color: var(--app-text);
+  font-size: 15px;
+  font-weight: 720;
+  letter-spacing: -.015em;
+}
+
+.brand span {
+  color: var(--app-muted);
+  font-size: 11px;
+  letter-spacing: .015em;
+}
+
+.new-chat-button {
+  min-height: 42px;
+  padding: 0 12px;
+  color: var(--astra-mint-strong);
+  background: color-mix(in srgb, var(--astra-mint) 8%, var(--app-elevated));
+  border: 1px solid color-mix(in srgb, var(--astra-mint) 17%, var(--app-line));
+  border-radius: var(--radius-md);
+  font-weight: 680;
+}
+
+.new-chat-button:hover {
+  color: var(--astra-mint-strong);
+  background: color-mix(in srgb, var(--astra-mint) 13%, var(--app-elevated));
+  border-color: color-mix(in srgb, var(--astra-mint) 28%, var(--app-line));
+}
+
+.new-chat-button .button-icon {
+  color: var(--astra-mint);
+  background: color-mix(in srgb, var(--app-elevated) 82%, transparent);
+}
+
+.history-heading {
+  padding-inline: 10px 8px;
+}
+
+.side-title,
+.history-group-title {
+  color: var(--app-muted);
+  letter-spacing: .045em;
+}
+
+.history-item,
+.side-action {
+  border-radius: 10px;
+  color: color-mix(in srgb, var(--app-text) 88%, var(--app-muted));
+}
+
+.history-item.active,
+.side-action.active {
+  color: var(--app-text);
+  background: color-mix(in srgb, var(--astra-mint) 10%, var(--app-elevated));
+  box-shadow: inset 3px 0 0 var(--astra-mint), inset 0 0 0 1px color-mix(in srgb, var(--astra-mint) 12%, transparent);
+}
+
+.side-action > .ui-icon,
+.side-action:hover > .ui-icon,
+.side-action.active > .ui-icon {
+  color: var(--astra-mint);
+}
+
+.sidebar-resizer:hover,
+.sidebar-resizer:focus-visible {
+  background: color-mix(in srgb, var(--astra-mint) 24%, transparent);
+}
+
+.workspace {
+  padding: 0 28px 20px;
+  background: transparent;
+}
+
+.chat-topbar {
+  min-height: 62px;
+  padding: 0 6px;
+  border-bottom-color: var(--app-line);
+  background: color-mix(in srgb, var(--app-canvas) 78%, transparent);
+}
+
+.chat-topbar h1 {
+  color: var(--app-text);
+  font-size: 15px;
+  font-weight: 680;
+  letter-spacing: -.01em;
+}
+
+.chat-surface {
+  background: transparent;
+}
+
+.conversation {
+  padding-top: 42px;
+}
+
+.welcome {
+  padding-top: clamp(120px, 20vh, 220px);
+}
+
+.welcome-mark {
+  align-items: center;
+  background:
+    linear-gradient(145deg, color-mix(in srgb, var(--astra-mint) 14%, var(--app-elevated)), var(--app-elevated));
+  border: 1px solid color-mix(in srgb, var(--astra-mint) 19%, var(--app-line));
+  border-radius: 18px;
+  box-shadow: 0 10px 30px rgba(29, 94, 73, .09), inset 0 1px 0 rgba(255, 255, 255, .7);
+  color: var(--astra-mint);
+  display: inline-flex;
+  font-size: 20px;
+  height: 50px;
+  justify-content: center;
+  margin-bottom: 20px;
+  width: 50px;
+}
+
+.welcome h2 {
+  color: var(--app-text);
+  font-size: clamp(25px, 2.2vw, 31px);
+  font-weight: 690;
+  letter-spacing: -.04em;
+}
+
+.welcome p {
+  color: var(--app-muted);
+  font-size: 14px;
+  margin-top: 8px;
+}
+
+.bubble {
+  color: var(--app-text);
+}
+
+.bubble.user {
+  background: color-mix(in srgb, var(--astra-mint) 8%, var(--app-elevated));
+  border: 1px solid color-mix(in srgb, var(--astra-mint) 10%, var(--app-line));
+  border-radius: 18px 18px 5px 18px;
+  padding: 11px 15px;
+}
+
+.process-panel,
+.answer-supplementary-flat,
+.artifact-card {
+  border-color: var(--app-line);
+  border-radius: var(--radius-md);
+}
+
+.composer-dock {
+  background: linear-gradient(180deg, transparent, color-mix(in srgb, var(--app-canvas) 92%, transparent) 26%);
+}
+
+.chat-composer {
+  background: color-mix(in srgb, var(--app-elevated) 96%, transparent);
+  border: 1px solid color-mix(in srgb, var(--app-line) 88%, var(--astra-mint) 12%);
+  border-radius: 22px;
+  box-shadow: 0 16px 42px rgba(24, 45, 37, .11), 0 2px 8px rgba(24, 45, 37, .05);
+}
+
+.chat-composer:focus-within {
+  border-color: color-mix(in srgb, var(--astra-mint) 46%, var(--app-line));
+  box-shadow: 0 18px 48px rgba(24, 45, 37, .12), 0 0 0 3px color-mix(in srgb, var(--astra-mint) 9%, transparent);
+}
+
+.chat-composer textarea {
+  color: var(--app-text);
+}
+
+.chat-composer textarea::placeholder {
+  color: color-mix(in srgb, var(--app-muted) 82%, transparent);
+}
+
+.composer-icon-button,
+.model-selector,
+.context-selector {
+  border-radius: 10px;
+}
+
+.composer-icon-button:hover,
+.model-selector:hover,
+.context-selector:hover {
+  background: var(--app-hover);
+}
+
+.send-button {
+  background: var(--astra-mint);
+  box-shadow: 0 5px 14px color-mix(in srgb, var(--astra-mint) 28%, transparent);
+}
+
+.send-button:hover:not(:disabled) {
+  background: var(--astra-mint-strong);
+  transform: translateY(-1px);
+}
+
+.model-menu,
+.context-capacity-panel,
+.attachment-menu,
+.strategy-menu,
+.skill-command-menu {
+  color: var(--app-text);
+  background: color-mix(in srgb, var(--app-elevated) 97%, var(--astra-mint) 3%);
+  border-color: color-mix(in srgb, var(--astra-mint) 18%, var(--app-line));
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-md);
+}
+
+.context-capacity-overview,
+.model-menu-context,
+.model-choice-row.selected {
+  background: color-mix(in srgb, var(--astra-mint) 8%, var(--app-elevated));
+  border-color: color-mix(in srgb, var(--astra-mint) 18%, var(--app-line));
+}
+
+.settings-page,
+.skill-library-page,
+.library-page,
+.shares-page {
+  color: var(--app-text);
+  background: transparent;
+}
+
+.settings-page {
+  max-width: 1180px;
+}
+
+.settings-header {
+  height: 72px;
+  border-bottom-color: var(--app-line);
+}
+
+.settings-header h1 {
+  color: var(--app-text);
+  font-size: 22px;
+  letter-spacing: -.03em;
+}
+
+.settings-layout {
+  height: calc(100% - 72px);
+  grid-template-columns: 196px minmax(0, 1fr);
+}
+
+.settings-nav {
+  gap: 5px;
+  padding: 22px 16px 22px 0;
+  border-right-color: var(--app-line);
+}
+
+.settings-nav button {
+  min-height: 42px;
+  padding: 0 13px;
+  color: var(--app-muted);
+  border-radius: 10px;
+}
+
+.settings-nav button:hover {
+  color: var(--app-text);
+  background: var(--app-hover);
+}
+
+.settings-nav button.active {
+  color: var(--astra-mint-strong);
+  background: color-mix(in srgb, var(--astra-mint) 11%, var(--app-elevated));
+  box-shadow: inset 3px 0 0 var(--astra-mint);
+}
+
+.settings-nav button.active .ui-icon,
+.settings-nav .ui-icon {
+  color: var(--astra-mint);
+}
+
+.settings-content {
+  padding: 34px 4px 70px 34px;
+}
+
+.settings-group > header {
+  padding-bottom: 18px;
+  border-bottom: 1px solid var(--app-line);
+}
+
+.settings-group h2 {
+  color: var(--app-text);
+  font-size: 20px;
+  letter-spacing: -.025em;
+}
+
+.settings-group header p {
+  color: var(--app-muted);
+  line-height: 1.55;
+}
+
+.provider-workspace {
+  border-color: var(--app-line);
+  border-radius: var(--radius-lg);
+  background: var(--app-elevated);
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
+}
+
+.provider-list {
+  background: color-mix(in srgb, var(--app-sidebar) 74%, var(--app-canvas));
+  border-right-color: var(--app-line);
+}
+
+.provider-list-heading,
+.provider-search,
+.provider-editor {
+  border-color: var(--app-line);
+}
+
+.provider-search {
+  border-radius: 10px;
+  background: var(--app-elevated);
+}
+
+.provider-item {
+  min-height: 56px;
+  border-radius: 10px;
+}
+
+.provider-item:hover {
+  background: var(--app-hover);
+}
+
+.provider-item.active {
+  color: var(--app-text);
+  background: color-mix(in srgb, var(--astra-mint) 10%, var(--app-elevated));
+  box-shadow: inset 3px 0 0 var(--astra-mint), inset 0 0 0 1px color-mix(in srgb, var(--astra-mint) 12%, transparent);
+}
+
+.provider-editor input,
+.provider-editor select,
+.provider-editor textarea,
+.secret-input {
+  border-color: var(--app-line);
+  border-radius: 10px;
+  color: var(--app-text);
+  background: var(--app-elevated);
+}
+
+.provider-model-card,
+.capability-item,
+.runtime-overview,
+.runtime-dependencies {
+  color: var(--app-text);
+  border-color: var(--app-line);
+  border-radius: var(--radius-md);
+  background: var(--app-elevated);
+  box-shadow: var(--shadow-sm);
+}
+
+.capability-item {
+  min-height: 62px;
+  padding: 12px 14px;
+}
+
+.capability-item:hover {
+  border-color: color-mix(in srgb, var(--astra-mint) 24%, var(--app-line));
+  background: color-mix(in srgb, var(--astra-mint) 4%, var(--app-elevated));
+}
+
+.runtime-overview,
+.runtime-dependencies {
+  background: var(--app-elevated);
+}
+
+.runtime-security-strip,
+.runtime-core-heading,
+.runtime-dependency-toolbar,
+.runtime-build-actions,
+.runtime-build-progress {
+  border-color: var(--app-line);
+  background: var(--surface-subtle);
+}
+
+.runtime-core-dependencies,
+.runtime-dependency-list,
+.runtime-batch-panel {
+  border-color: var(--app-line);
+  background: var(--app-elevated);
+}
+
+.primary-button,
+.skill-button.primary,
+.skill-commandbar .primary {
+  color: #fff;
+  background: var(--astra-mint);
+  border-color: var(--astra-mint);
+  border-radius: var(--radius-sm);
+  box-shadow: 0 4px 12px color-mix(in srgb, var(--astra-mint) 20%, transparent);
+}
+
+.secondary-button,
+.skill-button,
+.skill-commandbar button,
+.skill-commandbar a,
+.skill-editor-window-actions > button,
+.skill-editor-window-actions > a {
+  color: var(--app-text);
+  background: var(--app-elevated);
+  border-color: var(--app-line);
+  border-radius: var(--radius-sm);
+}
+
+.skill-library-page {
+  max-width: 1360px;
+  border-inline-color: var(--app-line);
+}
+
+.skill-library-header,
+.library-header,
+.shares-header {
+  padding-top: 30px;
+}
+
+.skill-library-heading h2,
+.library-header h2,
+.shares-header h1 {
+  color: var(--app-text);
+  font-size: 27px;
+  font-weight: 680;
+  letter-spacing: -.035em;
+}
+
+.skill-eyebrow,
+.library-eyebrow,
+.shares-header > div > span {
+  color: var(--astra-mint);
+  letter-spacing: .13em;
+}
+
+.skill-library-toolbar,
+.library-toolbar,
+.shares-toolbar {
+  border-color: var(--app-line);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--app-elevated) 88%, var(--app-sidebar));
+  box-shadow: var(--shadow-sm);
+}
+
+.skill-search,
+.skill-file-search,
+.library-search,
+.skill-library-toolbar select,
+.library-sort select {
+  border-color: var(--app-line);
+  border-radius: var(--radius-sm);
+  background: var(--app-elevated);
+}
+
+.skill-library-item,
+.library-card,
+.share-management-item {
+  border-color: var(--app-line);
+  border-radius: var(--radius-md);
+  background: var(--app-elevated);
+  box-shadow: var(--shadow-sm);
+}
+
+.skill-library-item:hover,
+.library-card:hover,
+.share-management-item:hover {
+  border-color: color-mix(in srgb, var(--astra-mint) 34%, var(--app-line));
+  background: color-mix(in srgb, var(--astra-mint) 3%, var(--app-elevated));
+  box-shadow: var(--shadow-md);
+}
+
+.skill-library-item-icon,
+.skill-dialog-icon {
+  border-radius: 10px;
+  color: var(--astra-mint);
+  background: color-mix(in srgb, var(--astra-mint) 9%, var(--app-elevated));
+}
+
+.skill-library-empty,
+.library-state,
+.shares-empty {
+  border-color: var(--app-line);
+  border-radius: var(--radius-lg);
+  color: var(--app-muted);
+}
+
+.skill-detail-dialog,
+.skill-create-drawer,
+.skill-history-dialog,
+.skill-editor-dialog,
+.memory-action-dialog,
+.conversation-action-dialog,
+.usage-modal,
+.control-center-modal {
+  color: var(--app-text);
+  background: var(--app-elevated);
+  border-color: var(--app-line);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 28px 90px rgba(15, 35, 27, .24);
+}
+
+.skill-dialog-titlebar,
+.skill-editor-titlebar,
+.skill-create-titlebar {
+  border-color: var(--app-line);
+  background: color-mix(in srgb, var(--app-elevated) 92%, var(--app-sidebar));
+}
+
+.memory-workbench {
+  color: var(--app-text);
+}
+
+.memory-tabs,
+.memory-panel,
+.memory-filters,
+.memory-record-list,
+.memory-inspector-section,
+.memory-recall-card {
+  border-color: var(--app-line);
+}
+
+.memory-panel {
+  border-radius: var(--radius-md);
+  background: var(--app-elevated);
+  box-shadow: var(--shadow-sm);
+}
+
+.memory-list-pane {
+  background: color-mix(in srgb, var(--app-sidebar) 70%, var(--app-canvas));
+  border-color: var(--app-line);
+}
+
+.memory-record-item {
+  border-radius: 10px;
+}
+
+.memory-record-item:hover {
+  background: var(--app-hover);
+}
+
+.memory-record-item.active {
+  background: color-mix(in srgb, var(--astra-mint) 10%, var(--app-elevated));
+  box-shadow: inset 3px 0 0 var(--astra-mint);
+}
+
+.memory-inspector-section,
+.memory-recall-card {
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--app-elevated) 96%, var(--app-sidebar));
+}
+
+.status,
+.runtime-status-badge,
+.memory-governance-lock,
+.skill-state-pill {
+  border-radius: 999px;
+}
+
+.ui-close-button:hover {
+  color: var(--app-text);
+  background: var(--app-hover);
+}
+
+html[data-theme="dark"] .bubble.user,
+html[data-theme="dark"] .provider-item.active,
+html[data-theme="dark"] .side-action.active,
+html[data-theme="dark"] .history-item.active {
+  background: color-mix(in srgb, var(--astra-mint) 12%, var(--app-elevated));
+}
+
+html[data-theme="dark"] .settings-nav button.active {
+  color: var(--astra-mint-strong);
+  background: color-mix(in srgb, var(--astra-mint) 13%, var(--app-elevated));
+  box-shadow: inset 3px 0 0 var(--astra-mint);
+}
+
+html[data-theme="dark"] .new-chat-button {
+  color: var(--astra-mint-strong);
+  background: color-mix(in srgb, var(--astra-mint) 9%, var(--app-elevated));
+  border-color: color-mix(in srgb, var(--astra-mint) 18%, var(--app-line));
+}
+
+html[data-theme="dark"] .new-chat-button span {
+  color: inherit;
+}
+
+html[data-theme="dark"] .send-button {
+  color: #fff;
+  background: var(--astra-mint);
+  border-color: color-mix(in srgb, var(--astra-mint) 70%, white);
+  box-shadow: 0 5px 16px color-mix(in srgb, var(--astra-mint) 24%, transparent);
+}
+
+html[data-theme="dark"] .welcome-mark {
+  box-shadow: 0 12px 36px rgba(0, 0, 0, .22);
+}
+
+@media (max-width: 1120px) {
+  .settings-page {
+    max-width: 100%;
+  }
+
+  .settings-layout {
+    grid-template-columns: 176px minmax(0, 1fr);
+  }
+
+  .settings-content {
+    padding-left: 26px;
+  }
+}
+
+@media (max-width: 860px) {
+  .workspace {
+    padding-inline: 14px;
+  }
+
+  .chat-topbar {
+    min-height: 56px;
+  }
+
+  .conversation {
+    padding-top: 28px;
+  }
+
+  .settings-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .settings-nav {
+    border-right: 0;
+    border-bottom: 1px solid var(--app-line);
+    padding: 10px 0;
+  }
+
+  .settings-nav button.active {
+    box-shadow: inset 0 -2px 0 var(--astra-mint);
+  }
+
+  .settings-content {
+    padding: 24px 2px 56px;
+  }
+}
+
+@media (max-width: 620px) {
+  .workspace {
+    padding-bottom: 10px;
+  }
+
+  .welcome-mark {
+    height: 44px;
+    margin-bottom: 16px;
+    width: 44px;
+  }
+
+  .welcome h2 {
+    font-size: 24px;
+  }
+
+  .chat-composer {
+    border-radius: 18px;
+  }
+
+  .skill-library-header,
+  .library-header,
+  .shares-header {
+    padding-top: 22px;
+  }
+}

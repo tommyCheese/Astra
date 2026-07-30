@@ -1696,6 +1696,7 @@ function AppContent() {
           <div className="conversation" ref={conversationRef} onScroll={handleConversationScroll}>
             {!messages.length && (
               <div className="welcome">
+                <span className="welcome-mark" aria-hidden="true">✦</span>
                 <h2>{t('Navigate Ideas. Create Reality.')}</h2>
                 <p>{t('今天想完成点什么？')}</p>
               </div>
