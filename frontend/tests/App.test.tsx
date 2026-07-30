@@ -2,7 +2,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { App } from '../src/App';
-import { buildRuntime, cancelRun, cancelRuntimeBuild, confirmPlanExecution, createConversationShare, createRun, decideToolApproval, deleteConversation, getConversation, getConversationStrategy, getRun, getRuntimeProfile, listConversationShares, listConversations, listLibraryFiles, listRuns, listSkills, revisePlan, revokeConversationShare, streamRunEvents, takeCreatedRunStream, updateConversation, updateConversationStrategy, updateToolSettings, type RunStreamEvent, type SkillSummary } from '../src/api';
+import { buildRuntime, cancelRun, cancelRuntimeBuild, confirmPlanExecution, createConversationShare, createRun, decideToolApproval, deleteConversation, executeConversationCommand, getConversation, getConversationContext, getConversationStrategy, getRun, getRuntimeProfile, listConversationShares, listConversations, listLibraryFiles, listRuns, listSkills, listSystemCommands, resolveModelContextCapabilities, resolveModelThinkingCapabilities, resumeRun, revisePlan, revokeConversationShare, streamRunEvents, takeCreatedRunStream, updateConversation, updateConversationStrategy, updateToolSettings, type ModelThinkingCapability, type RunStreamEvent, type SkillSummary } from '../src/api';
 
 vi.mock('../src/api', () => ({
   AstraApiError: class AstraApiError extends Error {
@@ -14,6 +14,28 @@ vi.mock('../src/api', () => ({
     }
   },
   getConversationStrategy: vi.fn(async () => ({ preferred_answer_mode: 'standard', reasoning_effort: 'balanced', max_tool_calls: 8, reflection_enabled: true, reflection_trigger: 'adaptive' })),
+  resolveModelThinkingCapabilities: vi.fn(async (models: Array<{ provider: string; model: string }>) => models.map((item) => ({
+    ...item,
+    supported: item.provider === 'openai',
+    toggle: item.provider === 'openai' ? 'always_on' : 'unavailable',
+    depths: item.provider === 'openai'
+      ? [{ id: 'minimal', label: 'Minimal' }, { id: 'low', label: 'Low' }, { id: 'medium', label: 'Medium' }, { id: 'high', label: 'High' }]
+      : [],
+    default_enabled: item.provider === 'openai',
+    default_depth: item.provider === 'openai' ? 'medium' : null,
+    reason: item.provider === 'openai' ? null : 'unknown_model_capability',
+    adapter: item.provider === 'openai' ? 'openai-gpt5' : 'unsupported',
+    capability_version: 2,
+  }))),
+  resolveModelContextCapabilities: vi.fn(async (models: Array<{ provider: string; model: string }>) => models.map((item) => ({
+    ...item,
+    window_tokens: item.provider === 'openai' ? 400000 : 131072,
+    max_output_tokens: item.provider === 'openai' ? 128000 : null,
+    source: item.provider === 'openai' ? 'catalog' : 'fallback',
+    verified: item.provider === 'openai',
+    documentation_url: item.provider === 'openai' ? 'https://developers.openai.com/api/docs/models/gpt-5' : null,
+    capability_version: 2,
+  }))),
   updateConversationStrategy: vi.fn(async (strategy) => strategy),
   getToolSettings: vi.fn(async () => ({ tools: [
     { name: 'web_search', label: 'Web Search', description: '搜索公开网页并生成候选来源', enabled: true, available: true },
@@ -45,6 +67,26 @@ vi.mock('../src/api', () => ({
   listConversationShares: vi.fn(async () => []),
   listLibraryFiles: vi.fn(async () => []),
   listSkills: vi.fn(async () => []),
+  listSystemCommands: vi.fn(async () => []),
+  getConversationContext: vi.fn(async () => ({
+    provider: 'openai', model: 'gpt-5', window_tokens: 400000, max_output_tokens: 128000,
+    context_source: 'catalog', context_verified: true, context_documentation_url: 'https://developers.openai.com/api/docs/models/gpt-5', available_input_tokens: 391808,
+    used_tokens: 12000, remaining_tokens: 379808, usage_ratio: 0.0306, auto_compact_ratio: 0.8,
+    status: 'normal', estimated: true, summary_active: false, visible_run_count: 1,
+    folded_run_count: 0, last_action: null, last_action_at: null,
+  })),
+  executeConversationCommand: vi.fn(async (_id, command) => ({
+    command: `/${command}`,
+    message: command === 'clear' ? '模型将从当前消息重新开始，完整记录仍保留。' : '已整理较早的对话，完整记录仍保留。',
+    context: {
+      provider: 'openai', model: 'gpt-5', window_tokens: 400000, max_output_tokens: 128000,
+      context_source: 'catalog', context_verified: true, context_documentation_url: 'https://developers.openai.com/api/docs/models/gpt-5', available_input_tokens: 391808,
+      used_tokens: 5000, remaining_tokens: 386808, usage_ratio: 0.0128, auto_compact_ratio: 0.8,
+      status: 'normal', estimated: true, summary_active: command === 'compact', visible_run_count: 1,
+      folded_run_count: command === 'compact' ? 2 : 0, last_action: command, last_action_at: new Date().toISOString(),
+    },
+    details: {},
+  })),
   getRunSkills: vi.fn(async () => ({
     catalog_digest: 'sha256:test',
     answer_mode: 'standard',
@@ -291,6 +333,7 @@ describe('App', () => {
     expect(screen.getByRole('link', { name: '关联来源' })).toHaveAttribute('href', 'https://example.com');
     expect(screen.queryByText('审计详情')).not.toBeInTheDocument();
     expect(screen.getAllByText(/web_search/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText('这里展示 Astra 的公开执行过程摘要，不是模型隐藏思维链。').length).toBeGreaterThan(0);
     expect(screen.getByRole('navigation', { name: '问题导航' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '跳转到问题 1' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '跳转到问题 1' })).toHaveAttribute('aria-current', 'true');
@@ -344,7 +387,7 @@ describe('App', () => {
 
     await waitFor(() => expect(listSkills).toHaveBeenCalled());
     await userEvent.type(textbox, '/hel');
-    const listbox = screen.getByRole('listbox', { name: 'Skill 命令' });
+    const listbox = screen.getByRole('listbox', { name: '快捷操作和 Skill' });
     expect(listbox).toBeInTheDocument();
     const option = screen.getByRole('option', { name: /hello-astra/ });
     expect(option).toHaveAttribute('aria-selected', 'false');
@@ -366,6 +409,98 @@ describe('App', () => {
       ['custom:hello-astra'],
     );
     expect(screen.getByLabelText('已选择 Skill')).toHaveTextContent('hello-astra');
+  });
+
+  it('executes preset slash commands without submitting a model message and refreshes context status', async () => {
+    vi.mocked(listSystemCommands).mockResolvedValueOnce([
+      { name: 'compact', command: '/compact', description: '整理较早的对话，保留近期内容和完整记录', effect: 'compact_context', argument_mode: 'none', usage: '/compact', side_effect: 'write', available: true },
+      { name: 'clear', command: '/clear', description: '让模型从当前消息重新开始，完整记录仍会保留', effect: 'clear_context', argument_mode: 'none', usage: '/clear', side_effect: 'write', available: true },
+    ]);
+    render(<App />);
+    const textbox = screen.getByRole('textbox');
+
+    await userEvent.type(textbox, '先建立对话');
+    await userEvent.click(screen.getByRole('button', { name: '发送' }));
+    await waitFor(() => expect(getRun).toHaveBeenCalled());
+    await waitFor(() => expect(getConversationContext).toHaveBeenCalled());
+    const initialSelector = screen.getByRole('button', { name: '当前模型：gpt-5' });
+    expect(initialSelector.querySelector('[data-testid="model-context-ring"]')).toBeInTheDocument();
+    expect(initialSelector.querySelector('.model-context-ring-value')).toHaveAttribute('stroke-dasharray', '3 100');
+    expect(initialSelector.querySelector('.model-context-usage')).not.toBeInTheDocument();
+    expect(document.querySelector('.context-window-status')).not.toBeInTheDocument();
+
+    const runCalls = vi.mocked(createRun).mock.calls.length;
+    await userEvent.type(textbox, '/comp');
+    const command = screen.getByRole('option', { name: /\/compact/ });
+    expect(command).toHaveTextContent('快捷操作');
+    await userEvent.click(command);
+
+    await waitFor(() => expect(executeConversationCommand).toHaveBeenCalledWith('task-1', 'compact', 'openai', 'gpt-5'));
+    expect(vi.mocked(createRun).mock.calls).toHaveLength(runCalls);
+    expect(textbox).toHaveValue('');
+    const modelSelector = screen.getByRole('button', { name: '当前模型：gpt-5' });
+    expect(modelSelector.querySelector('.model-context-tooltip')).toHaveTextContent('5K / 400K');
+    expect(modelSelector.querySelector('.model-context-tooltip')).toHaveTextContent('已整理');
+    expect(modelSelector.querySelector('.model-context-tooltip')).not.toHaveTextContent('模型目录');
+    expect(modelSelector.querySelector('.model-context-tooltip')).not.toHaveTextContent('回退');
+    expect(modelSelector.querySelector('.model-context-ring > .model-context-tooltip')).toBeInTheDocument();
+    expect(modelSelector).toHaveAttribute('aria-describedby', 'model-thinking-summary-description model-context-status-description');
+    expect(modelSelector).not.toHaveAttribute('title');
+    expect(document.getElementById('model-context-status-description')).toHaveTextContent('已整理较早的对话，完整记录仍保留。');
+    await userEvent.click(modelSelector);
+    expect(screen.getByLabelText('上下文使用情况')).toHaveTextContent('5K / 400K');
+    expect(screen.getByLabelText('上下文使用情况')).not.toHaveTextContent('模型目录');
+    expect(screen.getByLabelText('上下文使用情况')).not.toHaveTextContent('回退');
+    expect(document.querySelector('.context-window-status')).not.toBeInTheDocument();
+    expect(document.querySelector('.chat-composer')).not.toHaveClass('has-context-status');
+  });
+
+  it('stages parameterized automation commands and submits them as host operations', async () => {
+    vi.mocked(listSystemCommands).mockResolvedValueOnce([
+      {
+        name: 'schedule',
+        command: '/schedule',
+        description: '创建、查看或管理当前对话的定时任务',
+        effect: 'manage_schedules',
+        argument_mode: 'required',
+        usage: '/schedule list|show|create|pause|resume|run|delete …',
+        side_effect: 'mixed',
+        available: true,
+      },
+    ]);
+    render(<App />);
+    const textbox = screen.getByRole('textbox');
+
+    await userEvent.type(textbox, '先建立对话');
+    await userEvent.click(screen.getByRole('button', { name: '发送' }));
+    await waitFor(() => expect(getRun).toHaveBeenCalled());
+    const runCalls = vi.mocked(createRun).mock.calls.length;
+
+    await userEvent.type(textbox, '/sche');
+    expect(screen.getByRole('option', { name: /\/schedule/ })).toBeInTheDocument();
+    await userEvent.keyboard('{Enter}');
+    expect(textbox).toHaveValue('/schedule ');
+    expect(executeConversationCommand).not.toHaveBeenCalled();
+
+    await userEvent.type(textbox, 'list');
+    await userEvent.click(screen.getByRole('button', { name: '发送' }));
+
+    await waitFor(() => expect(executeConversationCommand).toHaveBeenCalledWith(
+      'task-1',
+      'schedule',
+      'openai',
+      'gpt-5',
+      'list',
+    ));
+    expect(vi.mocked(createRun).mock.calls).toHaveLength(runCalls);
+    expect(textbox).toHaveValue('');
+
+    vi.mocked(executeConversationCommand).mockRejectedValueOnce(new Error('offline'));
+    await userEvent.type(textbox, '/schedule list');
+    await userEvent.click(screen.getByRole('button', { name: '发送' }));
+    await waitFor(() => expect(screen.getByText('操作执行失败，输入内容已保留，可稍后重试。')).toBeInTheDocument());
+    expect(textbox).toHaveValue('/schedule list');
+    expect(vi.mocked(createRun).mock.calls).toHaveLength(runCalls);
   });
 
   it('refreshes published Skills after returning from the Skill library', async () => {
@@ -392,7 +527,7 @@ describe('App', () => {
     const textbox = screen.getByRole('textbox');
     await userEvent.type(textbox, '/hello');
     expect(document.documentElement.dataset.theme).toBe('dark');
-    expect(screen.getByRole('listbox', { name: 'Skill 命令' })).toHaveClass('skill-command-menu');
+    expect(screen.getByRole('listbox', { name: '快捷操作和 Skill' })).toHaveClass('skill-command-menu');
     await userEvent.click(screen.getByRole('option', { name: /hello-astra/ }));
 
     expect(document.querySelector('.chat-composer')).toHaveClass('has-skill-tokens');
@@ -420,7 +555,7 @@ describe('App', () => {
     expect(textbox).toHaveValue('');
 
     await userEvent.type(textbox, '/missing');
-    expect(screen.getByText('没有匹配的 Skill')).toBeInTheDocument();
+    expect(screen.getByText('没有匹配的操作或 Skill')).toBeInTheDocument();
     await userEvent.keyboard('{Escape}');
     expect(screen.queryByRole('listbox')).not.toBeInTheDocument();
     expect(textbox).toHaveValue('/missing');
@@ -441,7 +576,7 @@ describe('App', () => {
     await userEvent.keyboard('{Tab}');
 
     expect(screen.getByLabelText('已选择 Skill')).toHaveTextContent('hello-astra');
-    expect(screen.queryByRole('listbox', { name: 'Skill 命令' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('listbox', { name: '快捷操作和 Skill' })).not.toBeInTheDocument();
     expect(textbox).toHaveValue('');
     expect(textbox).toHaveFocus();
   });
@@ -1102,11 +1237,60 @@ describe('App', () => {
     await userEvent.clear(screen.getByRole('textbox', { name: '搜索供应商' }));
     const keyInput = screen.getByPlaceholderText('sk-...');
     expect(keyInput).toHaveAttribute('type', 'password');
+    expect(screen.queryByLabelText('gpt-5 窗口来源')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('gpt-5 上下文窗口')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('gpt-5 最大输出')).not.toBeInTheDocument();
+    expect((await screen.findAllByText('上下文上限')).length).toBeGreaterThan(0);
+    expect(screen.queryByText('官方模型目录')).not.toBeInTheDocument();
+    expect(screen.queryByText('保守回退')).not.toBeInTheDocument();
+    expect(screen.getAllByRole('link', { name: /查看模型说明/ })[0]).toHaveAttribute(
+      'href',
+      'https://developers.openai.com/api/docs/models/gpt-5',
+    );
+    expect(resolveModelContextCapabilities).toHaveBeenCalled();
+    await waitFor(() => {
+      const saved = JSON.parse(window.localStorage.getItem('astra.model-providers.v1') ?? '[]');
+      expect(saved.find((item: { id: string }) => item.id === 'openai').models[0]).toEqual({ id: 'gpt-5' });
+    });
 
     await userEvent.type(keyInput, 'secret-key');
     await userEvent.click(screen.getByRole('button', { name: '显示' }));
     expect(keyInput).toHaveAttribute('type', 'text');
     expect(screen.getByText('更改会自动保存到当前浏览器。')).toBeInTheDocument();
+  });
+
+  it('migrates legacy manual model profiles and never sends context overrides', async () => {
+    window.localStorage.setItem('astra.model-providers.v1', JSON.stringify([
+      {
+        id: 'openai',
+        name: 'OpenAI',
+        enabled: true,
+        endpoint: 'https://api.openai.com/v1',
+        models: [
+          { id: 'gpt-5', contextMode: 'manual', contextWindowTokens: 160000, maxOutputTokens: 64000 },
+          'gpt-5-mini',
+        ],
+        apiKey: '',
+      },
+    ]));
+    render(<App />);
+
+    await userEvent.type(screen.getByRole('textbox'), '创建上下文');
+    await userEvent.click(screen.getByRole('button', { name: '发送' }));
+    await waitFor(() => expect(getConversationContext).toHaveBeenCalled());
+    const contextCalls = vi.mocked(getConversationContext).mock.calls;
+    expect(contextCalls[contextCalls.length - 1]).toHaveLength(5);
+    expect(contextCalls[contextCalls.length - 1]?.[4]).toBeInstanceOf(AbortSignal);
+    await userEvent.click(screen.getByRole('button', { name: /设置/ }));
+    await userEvent.click(screen.getByRole('button', { name: '模型管理' }));
+    expect(screen.queryByText('手动上限')).not.toBeInTheDocument();
+    await waitFor(() => {
+      const saved = JSON.parse(window.localStorage.getItem('astra.model-providers.v1') ?? '[]');
+      expect(saved.find((item: { id: string }) => item.id === 'openai').models).toEqual([
+        { id: 'gpt-5' },
+        { id: 'gpt-5-mini' },
+      ]);
+    });
   });
 
   it('restores conversation history and model credentials after remount', async () => {
@@ -1183,8 +1367,8 @@ describe('App', () => {
     await userEvent.click(screen.getByRole('button', { name: '关闭设置' }));
     await userEvent.click(screen.getByRole('button', { name: /当前模型/ }));
 
-    expect(screen.getByRole('button', { name: /deepseek-chat/ })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /deepseek-reasoner/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /deepseek-v4-pro/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /deepseek-v4-flash/ })).toBeInTheDocument();
   });
 
   it('shows sandbox and execution policies in runtime settings', async () => {
@@ -1360,6 +1544,334 @@ describe('App', () => {
     expect(screen.queryByText('最大 Agent 轮次')).not.toBeInTheDocument();
     expect(screen.getByText('工具调用上限')).toBeInTheDocument();
     expect(screen.getByText('当前强度可调整范围：6–15 次')).toBeInTheDocument();
+  });
+
+  it('keeps model thinking independent from quick and trusted mode controls', async () => {
+    render(<App />);
+
+    await waitFor(() => expect(resolveModelThinkingCapabilities).toHaveBeenCalled());
+    const selector = screen.getByRole('button', { name: '当前模型：gpt-5' });
+    expect(selector).toHaveAccessibleDescription('模型思考 · 中');
+    await userEvent.click(selector);
+    const thinkingSwitch = screen.getByRole('switch', { name: '模型思考' });
+    expect(thinkingSwitch).toBeChecked();
+    expect(thinkingSwitch).toBeDisabled();
+    expect(thinkingSwitch).toHaveAccessibleDescription('此模型始终启用扩展思考');
+    expect(screen.getByText('此模型始终启用扩展思考')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: '高' }));
+    expect(screen.getByRole('button', { name: '高' })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByText('当前深度可能显著增加首字和总响应延迟，但不会启用可信模式。')).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('switch', { name: '快速响应' }));
+    await userEvent.click(screen.getByRole('button', { name: '当前模型：gpt-5' }));
+    expect(screen.getByRole('button', { name: '高' })).toHaveClass('active');
+    expect(screen.getByText('当前深度将用于本次运行的多次模型调用，可能增加耗时与用量。')).toBeInTheDocument();
+  });
+
+  it('persists optional model thinking per model and sends it independently from agent effort', async () => {
+    window.localStorage.setItem('astra.model-providers.v1', JSON.stringify([
+      { id: 'openai', name: 'OpenAI', enabled: false, endpoint: 'https://api.openai.com/v1', models: 'gpt-5', apiKey: '' },
+      { id: 'qwen', name: '通义千问', enabled: true, endpoint: 'https://example.test/v1', models: 'qwen3.7-plus, qwen-plus', apiKey: 'secret' },
+    ]));
+    window.localStorage.setItem('astra.selected-model.v1', 'qwen:qwen3.7-plus');
+    window.localStorage.setItem('astra.model-thinking-preferences.v1', JSON.stringify({
+      'qwen:qwen3.7-plus': { enabled: true, depth: 'xhigh', capability_version: 99 },
+    }));
+    vi.mocked(resolveModelThinkingCapabilities).mockResolvedValueOnce([
+      {
+        provider: 'qwen',
+        model: 'qwen3.7-plus',
+        supported: true,
+        toggle: 'optional',
+        depths: [{ id: 'low', label: 'Low' }, { id: 'medium', label: 'Medium' }, { id: 'high', label: 'High' }],
+        default_enabled: true,
+        default_depth: 'medium',
+        reason: null,
+        adapter: 'qwen-hybrid-thinking',
+        capability_version: 2,
+      },
+      {
+        provider: 'qwen',
+        model: 'qwen-plus',
+        supported: true,
+        toggle: 'optional',
+        depths: [{ id: 'low', label: 'Low' }, { id: 'medium', label: 'Medium' }, { id: 'high', label: 'High' }],
+        default_enabled: false,
+        default_depth: 'medium',
+        reason: null,
+        adapter: 'qwen-hybrid-thinking',
+        capability_version: 2,
+      },
+    ]);
+    render(<App />);
+
+    await waitFor(() => expect(screen.getByRole('button', { name: '当前模型：qwen3.7-plus' })).toHaveTextContent('模型思考 · 中'));
+    await userEvent.click(screen.getByRole('button', { name: '当前模型：qwen3.7-plus' }));
+    expect(screen.getByRole('button', { name: '中' })).toHaveClass('active');
+    await userEvent.click(screen.getByRole('switch', { name: '模型思考' }));
+    expect(screen.queryByText('模型思考深度')).not.toBeInTheDocument();
+    expect(screen.getByText('已关闭，不影响 Astra 的公开执行过程。')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('switch', { name: '模型思考' }));
+    await userEvent.click(screen.getByRole('button', { name: '高' }));
+    await userEvent.click(screen.getByRole('button', { name: /qwen-plus/ }));
+    expect(screen.getByRole('switch', { name: '模型思考' })).not.toBeChecked();
+    await userEvent.click(screen.getByRole('button', { name: /qwen3.7-plus/ }));
+    expect(screen.getByRole('button', { name: '高' })).toHaveClass('active');
+
+    await userEvent.type(screen.getByRole('textbox'), '使用独立模型思考深度');
+    await userEvent.click(screen.getByRole('button', { name: '发送' }));
+    expect(createRun).toHaveBeenLastCalledWith(
+      expect.any(String),
+      undefined,
+      'standard',
+      expect.objectContaining({ reasoning_effort: 'balanced' }),
+      expect.objectContaining({
+        provider: 'qwen',
+        name: 'qwen3.7-plus',
+        thinking: { enabled: true, depth: 'high', capability_version: 2 },
+      }),
+      undefined,
+    );
+  });
+
+  it('keeps the public process summary when provider model thinking is off', async () => {
+    window.localStorage.setItem('astra.model-providers.v1', JSON.stringify([
+      {
+        id: 'openai',
+        name: 'OpenAI',
+        enabled: false,
+        endpoint: 'https://api.openai.com/v1',
+        models: 'gpt-5',
+        apiKey: '',
+      },
+      {
+        id: 'qwen',
+        name: '通义千问',
+        enabled: true,
+        endpoint: 'https://example.test/v1',
+        models: 'qwen-plus',
+        apiKey: 'secret',
+      },
+    ]));
+    window.localStorage.setItem('astra.selected-model.v1', 'qwen:qwen-plus');
+    window.localStorage.setItem('astra.model-thinking-preferences.v1', JSON.stringify({
+      'qwen:qwen-plus': { enabled: false, depth: null, capability_version: 2 },
+    }));
+    vi.mocked(resolveModelThinkingCapabilities).mockResolvedValueOnce([{
+      provider: 'qwen',
+      model: 'qwen-plus',
+      supported: true,
+      toggle: 'optional',
+      depths: [{ id: 'low', label: 'Low' }, { id: 'medium', label: 'Medium' }, { id: 'high', label: 'High' }],
+      default_enabled: false,
+      default_depth: 'medium',
+      reason: null,
+      adapter: 'qwen-hybrid-thinking',
+      capability_version: 2,
+    }]);
+    render(<App />);
+
+    await userEvent.type(screen.getByRole('textbox'), '关闭模型思考后继续展示过程');
+    await userEvent.click(screen.getByRole('button', { name: '发送' }));
+
+    expect(createRun).toHaveBeenLastCalledWith(
+      expect.any(String),
+      undefined,
+      'standard',
+      expect.any(Object),
+      expect.objectContaining({
+        thinking: { enabled: false, depth: null, capability_version: 2 },
+      }),
+      undefined,
+    );
+    expect(await screen.findByText('思考完成')).toBeInTheDocument();
+    expect(screen.getAllByText('这里展示 Astra 的公开执行过程摘要，不是模型隐藏思维链。').length).toBeGreaterThan(0);
+  });
+
+  it('fails closed when model thinking capabilities cannot be loaded', async () => {
+    vi.mocked(resolveModelThinkingCapabilities).mockRejectedValueOnce(new Error('offline'));
+    render(<App />);
+
+    await userEvent.click(screen.getByRole('button', { name: '当前模型：gpt-5' }));
+    expect(await screen.findByText('暂时无法读取模型思考能力，当前设置不可调整。')).toBeInTheDocument();
+    expect(screen.queryByRole('switch', { name: '模型思考' })).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: '重试' }));
+    expect(await screen.findByRole('switch', { name: '模型思考' })).toBeInTheDocument();
+  });
+
+  it('shows an explicit unsupported state without exposing inert controls', async () => {
+    vi.mocked(resolveModelThinkingCapabilities).mockResolvedValueOnce([{
+      provider: 'openai',
+      model: 'gpt-5',
+      supported: false,
+      toggle: 'unavailable',
+      depths: [],
+      default_enabled: false,
+      default_depth: null,
+      reason: 'model_not_allowlisted_for_thinking_control',
+      adapter: 'openai-unsupported-model',
+      capability_version: 2,
+    }]);
+    render(<App />);
+
+    await userEvent.click(screen.getByRole('button', { name: '当前模型：gpt-5' }));
+    expect(await screen.findByText('当前模型不支持可配置的思考参数。')).toBeInTheDocument();
+    expect(screen.queryByRole('switch', { name: '模型思考' })).not.toBeInTheDocument();
+  });
+
+  it('does not submit before model thinking capabilities resolve', async () => {
+    let releaseCapabilities!: (capabilities: ModelThinkingCapability[]) => void;
+    vi.mocked(resolveModelThinkingCapabilities).mockReturnValueOnce(
+      new Promise((resolve) => { releaseCapabilities = resolve; }),
+    );
+    render(<App />);
+
+    await userEvent.type(screen.getByRole('textbox'), '等待能力解析');
+    await waitFor(() => expect(resolveModelThinkingCapabilities).toHaveBeenCalled());
+    const send = screen.getByRole('button', { name: '发送' });
+    expect(send).toBeDisabled();
+    await userEvent.click(send);
+    expect(createRun).not.toHaveBeenCalled();
+
+    await act(async () => {
+      releaseCapabilities([{
+        provider: 'openai',
+        model: 'gpt-5',
+        supported: true,
+        toggle: 'always_on',
+        depths: [{ id: 'minimal', label: 'Minimal' }, { id: 'low', label: 'Low' }, { id: 'medium', label: 'Medium' }, { id: 'high', label: 'High' }],
+        default_enabled: true,
+        default_depth: 'medium',
+        reason: null,
+        adapter: 'openai-gpt5',
+        capability_version: 2,
+      }]);
+    });
+    await waitFor(() => expect(send).toBeEnabled());
+    await userEvent.click(send);
+    expect(createRun).toHaveBeenCalledWith(
+      '等待能力解析',
+      undefined,
+      'standard',
+      expect.any(Object),
+      expect.objectContaining({
+        thinking: { enabled: true, depth: 'medium', capability_version: 2 },
+      }),
+      undefined,
+    );
+  });
+
+  it('repairs invalid stored model thinking preferences to provider defaults', async () => {
+    window.localStorage.setItem('astra.model-thinking-preferences.v1', JSON.stringify({
+      'openai:gpt-5': { enabled: true, depth: 'not-a-depth', capability_version: 'stale' },
+    }));
+    render(<App />);
+
+    await waitFor(() => {
+      const saved = JSON.parse(window.localStorage.getItem('astra.model-thinking-preferences.v1') ?? '{}');
+      expect(saved['openai:gpt-5']).toEqual({
+        enabled: true,
+        depth: 'medium',
+        capability_version: 2,
+      });
+    });
+  });
+
+  it('supports a provider max thinking depth', async () => {
+    vi.mocked(resolveModelThinkingCapabilities).mockResolvedValueOnce([{
+      provider: 'openai',
+      model: 'gpt-5',
+      supported: true,
+      toggle: 'optional',
+      depths: [{ id: 'low', label: 'Low' }, { id: 'high', label: 'High' }, { id: 'max', label: 'Max' }],
+      default_enabled: true,
+      default_depth: 'high',
+      reason: null,
+      adapter: 'openai-gpt5-modern',
+      capability_version: 2,
+    }]);
+    render(<App />);
+
+    await userEvent.click(screen.getByRole('button', { name: '当前模型：gpt-5' }));
+    await userEvent.click(await screen.findByRole('button', { name: '最高' }));
+    expect(screen.getByRole('button', { name: '最高' })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByRole('button', { name: '当前模型：gpt-5' })).toHaveAccessibleDescription('模型思考 · 最高');
+  });
+
+  it('resumes a waiting run with its frozen effective thinking snapshot', async () => {
+    window.localStorage.setItem('astra.model-providers.v1', JSON.stringify([
+      {
+        id: 'openai',
+        name: 'OpenAI',
+        enabled: true,
+        endpoint: 'https://api.openai.com/v1',
+        models: 'gpt-5',
+        apiKey: 'runtime-secret',
+      },
+    ]));
+    const completed = await vi.mocked(getRun)('fixture');
+    const waiting = {
+      ...completed,
+      status: 'waiting_user',
+      result: null,
+      summary: null,
+      model_policy: {
+        provider: 'openai',
+        model: 'gpt-5',
+        thinking: {
+          requested: { enabled: false, depth: null, capability_version: 1 },
+          effective: { enabled: true, depth: 'high' },
+          source: 'explicit_model_control',
+          adapter: 'openai-gpt5',
+          adjustments: [{
+            field: 'enabled',
+            requested: false,
+            effective: true,
+            reason: 'model_thinking_always_on',
+          }],
+          capability_version: 2,
+        },
+      },
+      waiting_state: { continuation_token: 'continue-thinking' },
+      chat_messages: [{
+        id: 'u-thinking',
+        role: 'user',
+        content: '需要补充',
+        status: 'completed',
+        metadata: {},
+      }],
+    };
+    vi.mocked(createRun).mockResolvedValueOnce({
+      run_id: 'run-1',
+      task_id: 'task-1',
+      status: 'waiting_user',
+      answer_mode: 'standard',
+    });
+    vi.mocked(getRun).mockResolvedValueOnce(waiting as never);
+
+    render(<App />);
+    await userEvent.type(screen.getByRole('textbox'), '需要补充');
+    await userEvent.click(screen.getByRole('button', { name: '发送' }));
+    await waitFor(() => expect(screen.getByRole('textbox')).toBeEnabled());
+    await userEvent.type(screen.getByRole('textbox'), '这是补充信息');
+    await userEvent.click(screen.getByRole('button', { name: '发送' }));
+
+    expect(resumeRun).toHaveBeenCalledWith(
+      'run-1',
+      '这是补充信息',
+      'continue-thinking',
+      {
+        provider: 'openai',
+        name: 'gpt-5',
+        api_key: 'runtime-secret',
+        base_url: 'https://api.openai.com/v1',
+        thinking: {
+          enabled: true,
+          depth: 'high',
+          capability_version: 2,
+        },
+      },
+    );
   });
 
   it('defaults every new conversation to quick mode', async () => {

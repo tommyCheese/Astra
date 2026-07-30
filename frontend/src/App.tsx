@@ -1,5 +1,5 @@
 import { Component, CSSProperties, FormEvent, KeyboardEvent as ReactKeyboardEvent, lazy, MouseEvent, PointerEvent as ReactPointerEvent, ReactNode, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { AstraApiError, ApiErrorPayload, buildRuntime, cancelRun, cancelRuntimeBuild, confirmPlanExecution, createConversationShare, createRun, decideToolApproval, deleteConversation, getConversation, getConversationStrategy, getPermissionCenter, getRun, getRunSkills, getRuntimeProfile, getToolSettings, listConversationShares, listConversations, listLibraryFiles, listRuns, listSkills, resumeRun, revisePlan, revokeConversationShare, revokePermissionGrant, streamRunEvents, takeCreatedRunStream, updateConversation, updateConversationStrategy, updateToolSettings, type ConversationStrategyPreferences, type LibraryFile, type PermissionCenterView, type RunModelConfig, type RunSkillsAudit, type RunStreamEvent, type RunStreamHandle, type SkillSummary, type ToolSetting } from './api';
+import { AstraApiError, ApiErrorPayload, buildRuntime, cancelRun, cancelRuntimeBuild, confirmPlanExecution, createConversationShare, createRun, decideToolApproval, deleteConversation, executeConversationCommand, getConversation, getConversationContext, getConversationStrategy, getPermissionCenter, getRun, getRunSkills, getRuntimeProfile, getToolSettings, listConversationShares, listConversations, listLibraryFiles, listRuns, listSkills, listSystemCommands, resolveModelContextCapabilities, resolveModelThinkingCapabilities, resumeRun, revisePlan, revokeConversationShare, revokePermissionGrant, streamRunEvents, takeCreatedRunStream, updateConversation, updateConversationStrategy, updateToolSettings, type ContextWindowStatus, type ConversationStrategyPreferences, type LibraryFile, type ModelContextCapability, type ModelThinkingCapability, type ModelThinkingDepth, type ModelThinkingSelection, type PermissionCenterView, type RunModelConfig, type RunSkillsAudit, type RunStreamEvent, type RunStreamHandle, type SkillSummary, type SlashSystemCommand, type ToolSetting } from './api';
 import { buildAuditLog, buildIdentityPresentation, type IdentityGroup } from './auditPresentation';
 import { I18nProvider, useI18n } from './i18n';
 import { ThemeProvider, useTheme } from './theme';
@@ -10,7 +10,8 @@ import { CloseButton } from './CloseButton';
 import { buildPresentation, HISTORY_LIMIT, normalizeRunView, type ConversationEntry } from './conversations';
 import { createOptimisticProcessState, isDecisionGroup, reconcileProcessSnapshot, reduceProcessEvent, type ProcessStreamItem, type ProcessStreamState } from './processStream';
 import { createPlanGraphStreamState, reconcilePlanGraphSnapshot, reducePlanGraphEvent, type PlanGraphStreamState } from './planGraph';
-import { detectSlashSkillCommand, filterSkillCommandOptions, normalizeSelectedSkillIds, type SlashSkillCommand } from './composerSkills';
+import { detectSlashSkillCommand, filterSlashCommandOptions, normalizeSelectedSkillIds, type SlashSkillCommand } from './composerSkills';
+import { citationsForClaim, sourceAnchor, validatedCitations, type PresentedCitation } from './groundingPresentation';
 
 const QUESTION_SUBMIT_MARK = 'astra.question.submit';
 const FIRST_TOKEN_COMMIT_MARK = 'astra.answer.first_token_commit';
@@ -19,6 +20,9 @@ const QUESTION_TO_FIRST_TOKEN_MEASURE = 'astra.question_to_first_token';
 const TrustedExecutionGraph = lazy(() => import('./TrustedExecutionGraph'));
 const SkillWorkbench = lazy(() => import('./SkillWorkbench').then((module) => ({
   default: module.SkillWorkbench,
+})));
+const MemoryWorkbench = lazy(() => import('./MemoryWorkbench').then((module) => ({
+  default: module.MemoryWorkbench,
 })));
 const MarkdownRenderer = lazy(() => import('./MarkdownRenderer'));
 
@@ -40,12 +44,79 @@ const STORAGE_KEYS = {
   processPanelDefaultOpen: 'astra.process-panel-default-open.v1',
   modelProviders: 'astra.model-providers.v1',
   selectedModel: 'astra.selected-model.v1',
+  modelThinkingPreferences: 'astra.model-thinking-preferences.v1',
   sidebarCollapsed: 'astra.sidebar-collapsed.v1',
   sidebarWidth: 'astra.sidebar-width.v1',
 };
 const SIDEBAR_DEFAULT_WIDTH = 260;
 const SIDEBAR_MIN_WIDTH = 220;
 const SIDEBAR_MAX_WIDTH = 420;
+
+function compactTokenCount(value: number): string {
+  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(value >= 10_000_000 ? 0 : 1)}M`;
+  if (value >= 1_000) return `${Math.round(value / 1_000)}K`;
+  return String(value);
+}
+
+function ContextUsageRing({ status, actionLabel = '', compact = false }: {
+  status: ContextWindowStatus;
+  actionLabel?: string;
+  compact?: boolean;
+}) {
+  const { t } = useI18n();
+  const percent = Math.round(Math.min(Math.max(status.usage_ratio, 0), 1) * 100);
+  const exact = `${compactTokenCount(status.used_tokens)} / ${compactTokenCount(status.window_tokens)}`;
+  return <span
+    className={`model-context-ring tone-${status.status} ${compact ? 'compact' : ''}`}
+    data-testid="model-context-ring"
+    aria-hidden="true"
+  >
+    <svg viewBox="0 0 36 36" focusable="false">
+      <circle className="model-context-ring-track" cx="18" cy="18" r="14.5" pathLength="100" />
+      <circle className="model-context-ring-value" cx="18" cy="18" r="14.5" pathLength="100" strokeDasharray={`${percent} 100`} />
+    </svg>
+    <i className={actionLabel ? 'has-action' : ''} />
+    <span className="model-context-tooltip" role="tooltip">
+      <strong>{exact}</strong>
+      <small>{t('剩余')} {compactTokenCount(status.remaining_tokens)} · {percent}%</small>
+      {actionLabel && <small>{actionLabel}</small>}
+    </span>
+  </span>;
+}
+
+type ModelThinkingPreferences = Record<string, ModelThinkingSelection>;
+const MODEL_THINKING_DEPTHS = new Set<ModelThinkingDepth>(['minimal', 'low', 'medium', 'high', 'xhigh', 'max']);
+
+function normalizeThinkingSelection(
+  capability: ModelThinkingCapability | undefined,
+  saved: ModelThinkingSelection | undefined,
+): ModelThinkingSelection | undefined {
+  if (!capability?.supported || capability.toggle === 'unavailable') return undefined;
+  const supportedDepths = new Set(capability.depths.map((item) => item.id));
+  let enabled = saved?.enabled ?? capability.default_enabled;
+  if (capability.toggle === 'always_on') enabled = true;
+  const savedDepth = saved?.depth ?? undefined;
+  const depth = enabled
+    ? supportedDepths.has(savedDepth as ModelThinkingDepth)
+      ? savedDepth as ModelThinkingDepth
+      : capability.default_depth ?? capability.depths[0]?.id
+    : null;
+  return {
+    enabled,
+    depth,
+    capability_version: capability.capability_version,
+  };
+}
+
+function thinkingDepthLabel(depth: ModelThinkingDepth | null | undefined): string {
+  if (depth === 'minimal') return '最低';
+  if (depth === 'low') return '低';
+  if (depth === 'medium') return '中';
+  if (depth === 'high') return '高';
+  if (depth === 'xhigh') return '极高';
+  if (depth === 'max') return '最高';
+  return '自动';
+}
 
 function safeStreamingSlice(value: string, end: number) {
   let boundary = Math.min(value.length, end);
@@ -212,14 +283,25 @@ function AppContent() {
   const [modelOpen, setModelOpen] = useState(false);
   const [attachOpen, setAttachOpen] = useState(false);
   const [availableSkills, setAvailableSkills] = useState<SkillSummary[]>([]);
+  const [systemCommands, setSystemCommands] = useState<SlashSystemCommand[]>([]);
   const [selectedSkillIds, setSelectedSkillIds] = useState<string[]>([]);
   const [slashCommand, setSlashCommand] = useState<SlashSkillCommand | null>(null);
   const [slashActiveIndex, setSlashActiveIndex] = useState(0);
+  const [commandPending, setCommandPending] = useState<string | null>(null);
+  const [contextStatus, setContextStatus] = useState<ContextWindowStatus | null>(null);
+  const [contextNotice, setContextNotice] = useState('');
   const [executionMenuOpen, setExecutionMenuOpen] = useState(false);
   const [executionMode, setExecutionMode] = useState<'default' | 'bypass'>('default');
   const [bypassConfirmOpen, setBypassConfirmOpen] = useState(false);
   const [providerConfigs, setProviderConfigs] = useState<ModelProviderConfig[]>(loadProviderConfigs);
   const [selectedModelKey, setSelectedModelKey] = useState(() => readLocalString(STORAGE_KEYS.selectedModel) || 'openai:gpt-5');
+  const [thinkingCapabilities, setThinkingCapabilities] = useState<Record<string, ModelThinkingCapability>>({});
+  const [thinkingCapabilitiesLoading, setThinkingCapabilitiesLoading] = useState(true);
+  const [thinkingCapabilitiesFailed, setThinkingCapabilitiesFailed] = useState(false);
+  const [thinkingCapabilitiesRetry, setThinkingCapabilitiesRetry] = useState(0);
+  const [thinkingPreferences, setThinkingPreferences] = useState<ModelThinkingPreferences>(
+    loadThinkingPreferences,
+  );
   const [reflectionEnabled, setReflectionEnabled] = useState(true);
   const [answerMode, setAnswerMode] = useState<'standard' | 'trusted'>('standard');
   const [reasoningEffort, setReasoningEffort] = useState('均衡');
@@ -264,13 +346,57 @@ function AppContent() {
   streamingAnswerRef.current = streamingAnswer;
   const availableModels = useMemo(() => providerConfigs
     .filter((provider) => provider.enabled)
-    .flatMap((provider) => parseModelIds(provider.models).map((model) => ({ key: `${provider.id}:${model}`, model, providerId: provider.id, providerName: provider.name }))), [providerConfigs]);
+    .flatMap((provider) => provider.models
+      .filter((profile) => profile.id.trim())
+      .map((profile) => ({
+        key: `${provider.id}:${profile.id}`,
+        model: profile.id,
+        profile,
+        providerId: provider.id,
+        providerName: provider.name,
+      }))), [providerConfigs]);
+  const thinkingCapabilityRequestKey = availableModels
+    .map((item) => `${item.providerId}:${item.model}`)
+    .join('\n');
   const selectedModel = availableModels.find((item) => item.key === selectedModelKey)?.model ?? '';
-  const slashSkillOptions = useMemo(
+  const selectedModelOption = availableModels.find((item) => item.key === selectedModelKey);
+  const selectedThinkingCapability = thinkingCapabilities[selectedModelKey];
+  const selectedThinkingSelection = normalizeThinkingSelection(
+    selectedThinkingCapability,
+    thinkingPreferences[selectedModelKey],
+  );
+  const modelThinkingSummary = thinkingCapabilitiesLoading
+    ? t('正在读取模型思考能力…')
+    : thinkingCapabilitiesFailed || !selectedThinkingCapability?.supported
+      ? t('模型思考不可调')
+      : selectedThinkingSelection?.enabled
+        ? `${t('模型思考')} · ${t(thinkingDepthLabel(selectedThinkingSelection.depth))}`
+        : t('模型思考关闭');
+  const contextActionLabel = contextStatus?.last_action === 'clear'
+    ? t('已清除')
+    : contextStatus?.last_action === 'compact' || contextStatus?.last_action === 'auto_compact'
+      ? t('已整理')
+      : '';
+  const contextAccessibleLabel = contextStatus
+    ? t('上下文：已使用 {used}，总计 {total}，剩余 {remaining}（估算）')
+      .replace('{used}', compactTokenCount(contextStatus.used_tokens))
+      .replace('{remaining}', compactTokenCount(contextStatus.remaining_tokens))
+      .replace('{total}', compactTokenCount(contextStatus.window_tokens))
+    : '';
+  const slashOptions = useMemo(
     () => slashCommand
-      ? filterSkillCommandOptions(availableSkills, slashCommand.query, selectedSkillIds)
+      ? filterSlashCommandOptions(
+        systemCommands,
+        availableSkills,
+        slashCommand.query,
+        selectedSkillIds,
+      ).filter((option) => (
+        option.kind !== 'command'
+        || option.command.argument_mode !== 'required'
+        || goal.slice(0, slashCommand.start).trim() === ''
+      ))
       : [],
-    [availableSkills, selectedSkillIds, slashCommand],
+    [availableSkills, goal, selectedSkillIds, slashCommand, systemCommands],
   );
   const selectedSkillTokens = useMemo(() => selectedSkillIds.map((identity) => ({
     identity,
@@ -290,6 +416,7 @@ function AppContent() {
   useEffect(() => writeLocalJson(STORAGE_KEYS.processPanelDefaultOpen, processPanelDefaultOpen), [processPanelDefaultOpen]);
   useEffect(() => writeLocalJson(STORAGE_KEYS.modelProviders, providerConfigs), [providerConfigs]);
   useEffect(() => writeLocalString(STORAGE_KEYS.selectedModel, selectedModelKey), [selectedModelKey]);
+  useEffect(() => writeLocalJson(STORAGE_KEYS.modelThinkingPreferences, thinkingPreferences), [thinkingPreferences]);
   useEffect(() => writeLocalJson(STORAGE_KEYS.sidebarCollapsed, sidebarCollapsed), [sidebarCollapsed]);
   useEffect(() => writeLocalJson(STORAGE_KEYS.sidebarWidth, sidebarWidth), [sidebarWidth]);
   useEffect(() => () => {
@@ -324,10 +451,57 @@ function AppContent() {
   }, []);
 
   useEffect(() => {
-    setSlashActiveIndex((index) => slashSkillOptions.length
-      ? Math.min(index, slashSkillOptions.length - 1)
+    const controller = new AbortController();
+    if (!availableModels.length) {
+      setThinkingCapabilities({});
+      setThinkingCapabilitiesLoading(false);
+      setThinkingCapabilitiesFailed(false);
+      return () => controller.abort();
+    }
+    setThinkingCapabilitiesLoading(true);
+    setThinkingCapabilitiesFailed(false);
+    void resolveModelThinkingCapabilities(
+      availableModels.map((item) => ({ provider: item.providerId, model: item.model })),
+      controller.signal,
+    ).then((capabilities) => {
+      if (controller.signal.aborted) return;
+      const resolved = Object.fromEntries(
+        capabilities.map((capability) => [`${capability.provider}:${capability.model}`, capability]),
+      );
+      setThinkingCapabilities(resolved);
+      setThinkingPreferences((preferences) => {
+        let changed = false;
+        const normalizedPreferences = { ...preferences };
+        for (const [key, capability] of Object.entries(resolved)) {
+          const normalized = normalizeThinkingSelection(capability, preferences[key]);
+          if (!normalized) continue;
+          const current = preferences[key];
+          if (
+            current?.enabled !== normalized.enabled
+            || current?.depth !== normalized.depth
+            || current?.capability_version !== normalized.capability_version
+          ) {
+            normalizedPreferences[key] = normalized;
+            changed = true;
+          }
+        }
+        return changed ? normalizedPreferences : preferences;
+      });
+    }).catch(() => {
+      if (controller.signal.aborted) return;
+      setThinkingCapabilities({});
+      setThinkingCapabilitiesFailed(true);
+    }).finally(() => {
+      if (!controller.signal.aborted) setThinkingCapabilitiesLoading(false);
+    });
+    return () => controller.abort();
+  }, [thinkingCapabilityRequestKey, thinkingCapabilitiesRetry]);
+
+  useEffect(() => {
+    setSlashActiveIndex((index) => slashOptions.length
+      ? Math.min(index, slashOptions.length - 1)
       : 0);
-  }, [slashSkillOptions.length, slashCommand?.query]);
+  }, [slashOptions.length, slashCommand?.query]);
 
   useEffect(() => {
     if (view !== 'chat') return;
@@ -337,6 +511,41 @@ function AppContent() {
     }).catch(() => { /* Skills remain optional when the feature is unavailable. */ });
     return () => { active = false; };
   }, [view]);
+
+  useEffect(() => {
+    if (view !== 'chat') return;
+    let active = true;
+    void listSystemCommands().then((items) => {
+      if (active) setSystemCommands(items);
+    }).catch(() => { /* System commands remain unavailable while discovery fails. */ });
+    return () => { active = false; };
+  }, [view]);
+
+  useEffect(() => {
+    if (!activeConversationId || !selectedModelOption) {
+      setContextStatus(null);
+      return;
+    }
+    const provider = providerConfigs.find((item) => item.id === selectedModelOption.providerId);
+    if (!provider) {
+      setContextStatus(null);
+      return;
+    }
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => {
+      void getConversationContext(
+        activeConversationId,
+        provider.id,
+        selectedModelOption.model,
+        goal,
+        controller.signal,
+      ).then(setContextStatus).catch(() => { /* Keep the last known estimate during transient refresh errors. */ });
+    }, 180);
+    return () => {
+      window.clearTimeout(timer);
+      controller.abort();
+    };
+  }, [activeConversationId, goal, providerConfigs, run?.status, selectedModelKey]);
 
   useEffect(() => () => {
     if (jumpResetTimerRef.current !== undefined) window.clearTimeout(jumpResetTimerRef.current);
@@ -489,11 +698,98 @@ function AppContent() {
     });
   }
 
+  function selectSlashSystemCommand(command: SlashSystemCommand) {
+    if (!slashCommand || commandPending) return;
+    if (command.argument_mode !== 'required') {
+      void runSlashSystemCommand(command);
+      return;
+    }
+    const prefix = `${command.command} `;
+    const caret = slashCommand.start + prefix.length;
+    setGoal(
+      goal.slice(0, slashCommand.start)
+      + prefix
+      + goal.slice(slashCommand.end)
+    );
+    closeSlashCommand();
+    queueMicrotask(() => {
+      goalInputRef.current?.focus();
+      goalInputRef.current?.setSelectionRange(caret, caret);
+    });
+  }
+
+  async function runSlashSystemCommand(
+    command: SlashSystemCommand,
+    options: {
+      argumentsText?: string;
+      clearFullDraft?: boolean;
+    } = {},
+  ) {
+    if ((!slashCommand && !options.clearFullDraft) || commandPending) return;
+    if (!activeConversationId || !selectedModelOption) {
+      setError({
+        type: 'validation.command_unavailable',
+        code: 'COMMAND_REQUIRES_CONVERSATION',
+        message: t('请先开始一段对话，再使用此快捷操作。'),
+        retryable: false,
+        trace_id: 'local',
+      });
+      return;
+    }
+    const provider = providerConfigs.find((item) => item.id === selectedModelOption.providerId);
+    if (!provider) return;
+    const submittedGoal = goal;
+    const commandRange = slashCommand;
+    const caret = commandRange?.start ?? 0;
+    const nextGoal = options.clearFullDraft
+      ? ''
+      : commandRange
+        ? goal.slice(0, commandRange.start) + goal.slice(commandRange.end)
+        : goal;
+    setCommandPending(command.name);
+    setError(null);
+    try {
+      const result = options.argumentsText === undefined
+        ? await executeConversationCommand(
+          activeConversationId,
+          command.name,
+          provider.id,
+          selectedModelOption.model,
+        )
+        : await executeConversationCommand(
+          activeConversationId,
+          command.name,
+          provider.id,
+          selectedModelOption.model,
+          options.argumentsText,
+        );
+      setGoal((current) => current === submittedGoal ? nextGoal : current);
+      setContextStatus(result.context);
+      setContextNotice(t(result.message));
+      closeSlashCommand();
+      queueMicrotask(() => {
+        goalInputRef.current?.focus();
+        goalInputRef.current?.setSelectionRange(caret, caret);
+      });
+    } catch (err) {
+      setError(err instanceof AstraApiError ? err.payload : {
+        type: 'runtime.command_failed',
+        code: 'SYSTEM_COMMAND_FAILED',
+        message: t('操作执行失败，输入内容已保留，可稍后重试。'),
+        retryable: true,
+        trace_id: 'unavailable',
+      });
+    } finally {
+      setCommandPending(null);
+    }
+  }
+
   function clearSlashDraft() {
     slashSuppressedStartRef.current = undefined;
     setSlashCommand(null);
     setSlashActiveIndex(0);
     setSelectedSkillIds([]);
+    setContextNotice('');
   }
 
   function closeSlashCommand() {
@@ -653,12 +949,35 @@ function AppContent() {
 
   async function submit(event: FormEvent) {
     event.preventDefault();
-    if (loading || run?.pending_approval || (run && !terminalStatuses.has(run.status))) return;
+    if (commandPending) return;
     const trimmedGoal = goal.trim();
     if (!trimmedGoal) {
       setError({ type: 'validation.input_invalid', code: 'GOAL_REQUIRED', message: t('请输入你想完成的目标。'), retryable: false, trace_id: 'local' });
       return;
     }
+    const commandMatch = /^\/([a-z][a-z0-9-]*)(?:\s+([\s\S]*))?$/u.exec(trimmedGoal);
+    const registeredCommand = commandMatch
+      ? systemCommands.find((item) => item.name === commandMatch[1])
+      : undefined;
+    if (registeredCommand) {
+      if (!registeredCommand.available) {
+        setError({
+          type: 'validation.command_unavailable',
+          code: 'SYSTEM_COMMAND_UNAVAILABLE',
+          message: t('这个系统命令当前不可用。'),
+          retryable: false,
+          trace_id: 'local',
+        });
+        return;
+      }
+      await runSlashSystemCommand(registeredCommand, {
+        argumentsText: commandMatch?.[2] ?? '',
+        clearFullDraft: true,
+      });
+      return;
+    }
+    if (loading || run?.pending_approval || (run && !terminalStatuses.has(run.status))) return;
+    if (run?.status !== 'waiting_user' && thinkingCapabilitiesLoading) return;
     window.performance.clearMarks(QUESTION_SUBMIT_MARK);
     window.performance.clearMarks(FIRST_TOKEN_COMMIT_MARK);
     window.performance.mark(QUESTION_SUBMIT_MARK);
@@ -674,14 +993,7 @@ function AppContent() {
     try {
       const previousMessages = run ? messages : [];
       const explicitSkillIds = normalizeSelectedSkillIds(selectedSkillIds);
-      const selectedOption = availableModels.find((item) => item.key === selectedModelKey);
-      const selectedProvider = providerConfigs.find((item) => item.id === selectedOption?.providerId);
-      const modelConfig = selectedOption && selectedProvider ? {
-        provider: selectedProvider.id,
-        name: selectedOption.model,
-        api_key: selectedProvider.apiKey,
-        base_url: selectedProvider.endpoint,
-      } : undefined;
+      const modelConfig = selectedRunModel(run?.status === 'waiting_user' ? run : undefined);
       const created = run?.status === 'waiting_user'
         ? await resumeRun(run.id, trimmedGoal, typeof run.waiting_state?.continuation_token === 'string' ? run.waiting_state.continuation_token : undefined, modelConfig)
         : await createRun(trimmedGoal, run?.task_id, answerMode, {
@@ -708,6 +1020,15 @@ function AppContent() {
         status: created.status,
         mode: 'general-agent',
         answer_mode: createdAnswerMode ?? answerMode,
+        model_policy: modelConfig ? {
+          provider: modelConfig.provider,
+          model: modelConfig.name,
+          base_url: modelConfig.base_url,
+          thinking: modelConfig.thinking ? {
+            requested: modelConfig.thinking,
+            effective: { enabled: modelConfig.thinking.enabled, depth: modelConfig.thinking.depth ?? null },
+          } : undefined,
+        } : {},
         result: null,
         steps: [], tool_calls: [], artifacts: [], events: [], turns: [], memories: [],
         chat_messages: [{ id: `optimistic-${created.run_id}`, role: 'user', content: trimmedGoal, status: 'completed', metadata: {} }],
@@ -768,21 +1089,66 @@ function AppContent() {
     window.performance.clearMarks(FIRST_TOKEN_COMMIT_MARK);
   }, [streamingAnswer]);
 
-  function selectedRunModel(): RunModelConfig | undefined {
-    const selectedOption = availableModels.find((item) => item.key === selectedModelKey);
-    const selectedProvider = providerConfigs.find((item) => item.id === selectedOption?.providerId);
-    const keyOptional = selectedProvider
-      ? ['ollama', 'lmstudio', 'vllm', 'localai'].includes(selectedProvider.id)
-      : false;
-    if (!selectedProvider || (!selectedProvider.apiKey.trim() && !keyOptional)) {
-      return undefined;
+  function updateSelectedThinking(patch: Partial<ModelThinkingSelection>) {
+    if (!selectedThinkingCapability?.supported || thinkingCapabilitiesLoading || thinkingCapabilitiesFailed) return;
+    const current = selectedThinkingSelection;
+    if (!current) return;
+    const nextEnabled = selectedThinkingCapability.toggle === 'always_on'
+      ? true
+      : patch.enabled ?? current.enabled;
+    const requestedDepth = patch.depth !== undefined ? patch.depth : current.depth;
+    const supportedDepths = selectedThinkingCapability.depths.map((item) => item.id);
+    const nextDepth = nextEnabled
+      ? supportedDepths.includes(requestedDepth as ModelThinkingDepth)
+        ? requestedDepth as ModelThinkingDepth
+        : selectedThinkingCapability.default_depth ?? supportedDepths[0]
+      : null;
+    setThinkingPreferences((preferences) => ({
+      ...preferences,
+      [selectedModelKey]: {
+        enabled: nextEnabled,
+        depth: nextDepth,
+        capability_version: selectedThinkingCapability.capability_version,
+      },
+    }));
+  }
+
+  function selectedRunModel(targetRun?: RunView): RunModelConfig | undefined {
+    const policy = targetRun?.model_policy ?? {};
+    const providerId = typeof policy.provider === 'string'
+      ? policy.provider
+      : selectedModelOption?.providerId;
+    const modelName = typeof policy.model === 'string'
+      ? policy.model
+      : selectedModelOption?.model;
+    const selectedProvider = providerConfigs.find((item) => item.id === providerId);
+    if (!selectedProvider || !modelName) return undefined;
+    const keyOptional = ['ollama', 'lmstudio', 'vllm', 'localai', 'compatible'].includes(selectedProvider.id);
+    if (targetRun && !selectedProvider.apiKey.trim() && !keyOptional) return undefined;
+
+    let thinking = selectedThinkingSelection;
+    if (targetRun) {
+      const snapshot = policy.thinking && typeof policy.thinking === 'object'
+        ? policy.thinking as Record<string, unknown>
+        : undefined;
+      const effective = snapshot?.effective && typeof snapshot.effective === 'object'
+        ? snapshot.effective as Record<string, unknown>
+        : undefined;
+      thinking = effective && typeof effective.enabled === 'boolean'
+        ? {
+          enabled: effective.enabled,
+          depth: typeof effective.depth === 'string' ? effective.depth as ModelThinkingDepth : null,
+          capability_version: typeof snapshot?.capability_version === 'number' ? snapshot.capability_version : 1,
+        }
+        : undefined;
     }
-    return selectedOption && selectedProvider ? {
+    return {
       provider: selectedProvider.id,
-      name: selectedOption.model,
+      name: modelName,
       api_key: selectedProvider.apiKey,
-      base_url: selectedProvider.endpoint,
-    } : undefined;
+      base_url: typeof policy.base_url === 'string' && policy.base_url ? policy.base_url : selectedProvider.endpoint,
+      ...(thinking ? { thinking } : {}),
+    };
   }
 
   async function reconcileResumedRun(optimistic: RunView) {
@@ -801,7 +1167,7 @@ function AppContent() {
     setApprovalSubmitting(true);
     setError(null);
     try {
-      const resumed = await decideToolApproval(run.id, approval.id, decision, token, selectedRunModel());
+      const resumed = await decideToolApproval(run.id, approval.id, decision, token, selectedRunModel(run));
       const optimistic = { ...run, status: resumed.status, pending_approval: null, waiting_state: null };
       await reconcileResumedRun(optimistic);
     } catch (err) {
@@ -821,7 +1187,7 @@ function AppContent() {
         planId: planConfirmation.plan_id,
         planVersion: planConfirmation.plan_version,
         stateVersion: planConfirmation.state_version,
-      }, selectedRunModel());
+      }, selectedRunModel(run));
       const optimistic = { ...run, status: resumed.status, waiting_state: null };
       await reconcileResumedRun(optimistic);
     } catch (err) {
@@ -847,7 +1213,7 @@ function AppContent() {
         planId: planConfirmation.plan_id,
         planVersion: planConfirmation.plan_version,
         stateVersion: planConfirmation.state_version,
-      }, selectedRunModel());
+      }, selectedRunModel(run));
       const snapshot = normalizeRunView(await getRun(revised.run_id));
       setRun(snapshot);
       setProcessState((state) => reconcileProcessSnapshot(state, snapshot));
@@ -1329,28 +1695,50 @@ function AppContent() {
               goalInputRef.current?.focus({ preventScroll: true });
             }
           }}>
+            {contextNotice && (
+              <div className="command-result-notice" role="status">
+                {t(contextNotice)}
+              </div>
+            )}
             {slashCommand && (
-              <div className="skill-command-menu" role="listbox" id="skill-command-options" aria-label={t('Skill 命令')}>
-                <header><Icon name="sparkle" /><span>{t('使用 / 选择 Skill')}</span><span className="skill-command-shortcuts"><kbd>Tab / Enter</kbd><kbd>Esc</kbd></span></header>
+              <div className="skill-command-menu" role="listbox" id="skill-command-options" aria-label={t('快捷操作和 Skill')}>
+                <header><Icon name="sparkle" /><span>{t('使用 / 选择操作或 Skill')}</span><span className="skill-command-shortcuts"><kbd>Tab / Enter</kbd><kbd>Esc</kbd></span></header>
                 <div className="skill-command-options">
-                  {slashSkillOptions.map(({ skill, selected }, index) => (
+                  {slashOptions.map((option, index) => option.kind === 'command' ? (
+                    <button
+                      className={`${index === slashActiveIndex ? 'active' : ''} system-command-option`}
+                      id={`skill-command-option-${index}`}
+                      key={`command:${option.command.name}`}
+                      type="button"
+                      role="option"
+                      aria-selected="false"
+                      disabled={Boolean(commandPending)}
+                      onMouseDown={(event) => event.preventDefault()}
+                      onMouseEnter={() => setSlashActiveIndex(index)}
+                      onClick={() => selectSlashSystemCommand(option.command)}
+                    >
+                      <span className="skill-command-icon command-icon" aria-hidden="true">/</span>
+                      <span className="skill-command-copy"><strong>{option.command.command}</strong><small>{t(option.command.description)}</small></span>
+                      <span className="skill-command-meta">{commandPending === option.command.name ? t('执行中…') : t('快捷操作')}</span>
+                    </button>
+                  ) : (
                     <button
                       className={index === slashActiveIndex ? 'active' : ''}
                       id={`skill-command-option-${index}`}
-                      key={skill.qualified_identity}
+                      key={option.skill.qualified_identity}
                       type="button"
                       role="option"
-                      aria-selected={selected}
+                      aria-selected={option.selected}
                       onMouseDown={(event) => event.preventDefault()}
                       onMouseEnter={() => setSlashActiveIndex(index)}
-                      onClick={() => selectSlashSkill(skill)}
+                      onClick={() => selectSlashSkill(option.skill)}
                     >
                       <span className="skill-command-icon" aria-hidden="true">✦</span>
-                      <span className="skill-command-copy"><strong>{skill.name}</strong><small>{skill.description}</small></span>
-                      <span className="skill-command-meta">{skill.origin === 'builtin' ? t('Astra 内建') : t('自定义 Skill')}{selected ? ` · ${t('已选择 Skill')}` : ''}</span>
+                      <span className="skill-command-copy"><strong>{option.skill.name}</strong><small>{option.skill.description}</small></span>
+                      <span className="skill-command-meta">{option.skill.origin === 'builtin' ? t('Astra 内建') : t('自定义 Skill')}{option.selected ? ` · ${t('已选择 Skill')}` : ''}</span>
                     </button>
                   ))}
-                  {!slashSkillOptions.length && <div className="skill-command-empty" role="status"><strong>{t('没有匹配的 Skill')}</strong><span>{t('继续输入其他名称，或按 Esc 保留文本')}</span></div>}
+                  {!slashOptions.length && <div className="skill-command-empty" role="status"><strong>{t('没有匹配的操作或 Skill')}</strong><span>{t('继续输入其他名称，或按 Esc 保留文本')}</span></div>}
                 </div>
               </div>
             )}
@@ -1431,9 +1819,10 @@ function AppContent() {
               aria-autocomplete="list"
               aria-controls={slashCommand ? 'skill-command-options' : undefined}
               aria-expanded={Boolean(slashCommand)}
-              aria-activedescendant={slashCommand && slashSkillOptions.length ? `skill-command-option-${slashActiveIndex}` : undefined}
+              aria-activedescendant={slashCommand && slashOptions.length ? `skill-command-option-${slashActiveIndex}` : undefined}
               onChange={(event) => {
                 setGoal(event.target.value);
+                setContextNotice('');
                 syncSlashCommand(event.target.value, event.target.selectionStart, event.target.selectionEnd);
               }}
               onSelect={(event) => syncSlashCommand(event.currentTarget.value, event.currentTarget.selectionStart, event.currentTarget.selectionEnd)}
@@ -1450,12 +1839,12 @@ function AppContent() {
                 if (event.nativeEvent.isComposing || composerIsComposingRef.current) return;
                 if (slashCommand && ['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) {
                   event.preventDefault();
-                  if (!slashSkillOptions.length) return;
+                  if (!slashOptions.length) return;
                   if (event.key === 'Home') setSlashActiveIndex(0);
-                  else if (event.key === 'End') setSlashActiveIndex(slashSkillOptions.length - 1);
+                  else if (event.key === 'End') setSlashActiveIndex(slashOptions.length - 1);
                   else setSlashActiveIndex((index) => event.key === 'ArrowDown'
-                    ? (index + 1) % slashSkillOptions.length
-                    : (index - 1 + slashSkillOptions.length) % slashSkillOptions.length);
+                    ? (index + 1) % slashOptions.length
+                    : (index - 1 + slashOptions.length) % slashOptions.length);
                   return;
                 }
                 if (slashCommand && event.key === 'Escape') {
@@ -1465,10 +1854,11 @@ function AppContent() {
                   return;
                 }
                 if (slashCommand && (event.key === 'Enter' || (event.key === 'Tab' && !event.shiftKey))) {
-                  const option = slashSkillOptions[slashActiveIndex];
+                  const option = slashOptions[slashActiveIndex];
                   if (option) {
                     event.preventDefault();
-                    selectSlashSkill(option.skill);
+                    if (option.kind === 'command') selectSlashSystemCommand(option.command);
+                    else selectSlashSkill(option.skill);
                   } else if (event.key === 'Enter') {
                     event.preventDefault();
                   }
@@ -1487,19 +1877,46 @@ function AppContent() {
               placeholder={t('输入任务 / 继续追问...')}
             />
             <div className="model-menu-wrap" ref={modelMenuRef}>
-              <button className="model-selector" type="button" aria-expanded={modelOpen} aria-haspopup="menu" aria-label={`${t('当前模型')}${language === 'zh-CN' ? '：' : ': '}${selectedModel || t('未配置模型')}`} onClick={() => {
+              <button
+                className="model-selector"
+                type="button"
+                aria-expanded={modelOpen}
+                aria-haspopup="menu"
+                aria-label={`${t('当前模型')}${language === 'zh-CN' ? '：' : ': '}${selectedModel || t('未配置模型')}`}
+                aria-describedby={[
+                  'model-thinking-summary-description',
+                  contextStatus ? 'model-context-status-description' : '',
+                ].filter(Boolean).join(' ')}
+                onClick={() => {
                 setModelOpen((open) => !open);
                 setAttachOpen(false);
                 setExecutionMenuOpen(false);
               }}>
-                <span>{selectedModel || t('未配置模型')}</span><small>{answerMode === 'trusted' ? `${t(reasoningEffort)} · ${toolCallLimit === null ? t('工具不限') : t('{count} 次工具').replace('{count}', String(toolCallLimit))} · ${reflectionEnabled ? `${t(reflectionTrigger)} ${t('反思')}` : t('反思关闭')}` : t('快速策略 · 工具按需')}</small><b>⌄</b>
+                <span>{selectedModel || t('未配置模型')}</span>
+                {contextStatus && <ContextUsageRing status={contextStatus} actionLabel={contextActionLabel} />}
+                <small>{answerMode === 'trusted' ? `${t(reasoningEffort)} · ${toolCallLimit === null ? t('工具不限') : t('{count} 次工具').replace('{count}', String(toolCallLimit))} · ${reflectionEnabled ? `${t(reflectionTrigger)} ${t('反思')}` : t('反思关闭')}` : t('快速策略 · 工具按需')} · {modelThinkingSummary}</small><b>⌄</b>
               </button>
+              {contextStatus && (
+                <span className="sr-only" id="model-context-status-description">
+                  {contextAccessibleLabel}{contextActionLabel ? ` · ${contextActionLabel}` : ''}{contextNotice ? ` · ${contextNotice}` : ''} · {t('使用量为发送前估算')}
+                </span>
+              )}
+              <span className="sr-only" id="model-thinking-summary-description">{modelThinkingSummary}</span>
               {modelOpen && (
                 <ModelMenu
                   selectedModelKey={selectedModelKey}
                   trusted={answerMode === 'trusted'}
                   onModelChange={setSelectedModelKey}
                   modelOptions={availableModels}
+                  contextStatus={contextStatus}
+                  contextActionLabel={contextActionLabel}
+                  thinkingCapability={selectedThinkingCapability}
+                  thinkingSelection={selectedThinkingSelection}
+                  thinkingLoading={thinkingCapabilitiesLoading}
+                  thinkingFailed={thinkingCapabilitiesFailed}
+                  onThinkingRetry={() => setThinkingCapabilitiesRetry((value) => value + 1)}
+                  onThinkingEnabledChange={(enabled) => updateSelectedThinking({ enabled })}
+                  onThinkingDepthChange={(depth) => updateSelectedThinking({ depth })}
                   reasoningEffort={reasoningEffort}
                   onReasoningEffortChange={(value) => {
                     const effort = reasoningEffortValue(value);
@@ -1525,7 +1942,7 @@ function AppContent() {
                 <span aria-hidden="true" />
               </button>
             ) : (
-              <button className="send-button" type="submit" aria-label={t('发送')} disabled={!conversationStrategyReady || Boolean(run?.pending_approval || planConfirmation)}>↑</button>
+              <button className="send-button" type="submit" aria-label={t('发送')} disabled={Boolean(commandPending) || !conversationStrategyReady || (run?.status !== 'waiting_user' && thinkingCapabilitiesLoading) || Boolean(run?.pending_approval || planConfirmation)}>↑</button>
             )}
             </form>
           </div>
@@ -2082,7 +2499,7 @@ function SettingSection({ category, providerConfigs, onProviderConfigsChange }: 
   if (category === '模型管理') return <ModelManagement providers={providerConfigs} onChange={onProviderConfigsChange} />;
   if (category === '运行时') return <RuntimeSettings />;
   if (category === '工具') return <ToolSettings />;
-  if (category === '记忆') return <SettingsGroup title="记忆" description="管理 Agent 在单次任务和不同对话之间保留的信息。"><SettingRow title="运行记忆" description="在当前任务中保留来源摘要和决策线索"><Toggle checked /></SettingRow><SettingRow title="跨对话记忆" description="在新对话中使用已确认的偏好与事实"><Toggle /></SettingRow><SettingRow title="写入阈值" description="仅保存高于该置信度的结构化记忆"><TranslatedSelect defaultValue="80" options={[['70', '70%'], ['80', '80%'], ['90', '90%']]} /></SettingRow><SettingRow title="记忆保留期" description="到期后自动清理非固定记忆"><TranslatedSelect defaultValue="30" options={[['7', `7 ${t('天')}`], ['30', `30 ${t('天')}`], ['forever', '永久']]} /></SettingRow></SettingsGroup>;
+  if (category === '记忆') return <Suspense fallback={<div className="memory-empty">{t('正在读取记忆…')}</div>}><MemoryWorkbench /></Suspense>;
   if (category === '界面') return <SettingsGroup title="界面" description="调整工作区的信息密度和运行过程展示。"><SettingRow title="语言" description="选择界面显示语言"><select value={language} onChange={(event) => setLanguage(event.target.value as 'zh-CN' | 'en')}><option value="zh-CN">中文</option><option value="en">English</option></select></SettingRow><SettingRow title="主题模式" description="选择界面外观，或随操作系统自动切换"><select value={mode} onChange={(event) => setMode(event.target.value as 'system' | 'light' | 'dark')}><option value="system">{t('跟随系统')}</option><option value="light">{t('浅色模式')}</option><option value="dark">{t('暗色模式')}</option></select></SettingRow><SettingRow title="过程展示" description="在对话中显示工具调用和反思摘要"><Toggle checked /></SettingRow><SettingRow title="审计面板" description="任务完成后显示证据、事件和记忆"><Toggle checked /></SettingRow><SettingRow title="信息密度" description="控制对话和面板的间距"><TranslatedSelect defaultValue="compact" options={[['compact', '紧凑'], ['comfortable', '舒适']]} /></SettingRow></SettingsGroup>;
   if (category === '数据与隐私') return <SettingsGroup title="数据与隐私" description="控制任务记录、工具内容和诊断信息的保存方式。"><SettingRow title="保存运行记录" description="保留对话、工具调用元数据和验证报告"><Toggle checked /></SettingRow><SettingRow title="工具内容保留" description="决定是否保存工具返回的正文、文件内容或结构化结果"><TranslatedSelect defaultValue="metadata" options={[['none', '不保留内容'], ['metadata', '仅保留元数据'], ['full', '保留完整输出']]} /></SettingRow><SettingRow title="诊断日志" description="记录不包含工具内容的性能与错误信息"><Toggle checked /></SettingRow><button className="danger-button" type="button">{t('清除本地运行数据')}</button></SettingsGroup>;
   return null;
@@ -2260,12 +2677,15 @@ type ModelProviderId =
   | 'zhipu' | 'minimax' | 'baidu' | 'tencent' | 'volcengine' | 'ollama'
   | 'lmstudio' | 'vllm' | 'localai' | 'compatible';
 type ModelProviderGroup = 'global' | 'china' | 'local' | 'custom';
+type ModelProfileConfig = {
+  id: string;
+};
 type ModelProviderConfig = {
   id: ModelProviderId;
   name: string;
   enabled: boolean;
   endpoint: string;
-  models: string;
+  models: ModelProfileConfig[];
   apiKey: string;
 };
 
@@ -2317,7 +2737,7 @@ const providerDefaults: Record<ModelProviderId, { endpoint: string; models: stri
   nvidia: { endpoint: 'https://integrate.api.nvidia.com/v1', models: 'meta/llama-3.3-70b-instruct' },
   huggingface: { endpoint: 'https://router.huggingface.co/v1', models: 'openai/gpt-oss-120b' },
   azure: { endpoint: 'https://YOUR-RESOURCE.openai.azure.com/openai/v1', models: '' },
-  deepseek: { endpoint: 'https://api.deepseek.com', models: 'deepseek-chat, deepseek-reasoner' },
+  deepseek: { endpoint: 'https://api.deepseek.com', models: 'deepseek-v4-pro, deepseek-v4-flash' },
   qwen: { endpoint: 'https://dashscope.aliyuncs.com/compatible-mode/v1', models: 'qwen3.7-plus, qwen-plus' },
   siliconflow: { endpoint: 'https://api.siliconflow.cn/v1', models: 'deepseek-ai/DeepSeek-V3, Qwen/Qwen2.5-72B-Instruct' },
   moonshot: { endpoint: 'https://api.moonshot.cn/v1', models: 'kimi-k2.5, kimi-k2-turbo-preview' },
@@ -2337,7 +2757,8 @@ const initialProviderConfigs: ModelProviderConfig[] = modelProviders.map((provid
   id: provider.id,
   name: provider.name,
   enabled: provider.id === 'openai',
-  ...providerDefaults[provider.id],
+  endpoint: providerDefaults[provider.id].endpoint,
+  models: parseModelIds(providerDefaults[provider.id].models).map(makeModelProfile),
   apiKey: '',
 }));
 
@@ -2364,6 +2785,32 @@ function writeLocalJson(key: string, value: unknown) {
   } catch { /* storage may be disabled or full */ }
 }
 
+function loadThinkingPreferences(): ModelThinkingPreferences {
+  const saved = readLocalJson<unknown>(STORAGE_KEYS.modelThinkingPreferences);
+  if (!saved || typeof saved !== 'object' || Array.isArray(saved)) return {};
+  const preferences: ModelThinkingPreferences = {};
+  for (const [key, value] of Object.entries(saved)) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) continue;
+    const candidate = value as Record<string, unknown>;
+    if (typeof candidate.enabled !== 'boolean') continue;
+    const depth = candidate.depth;
+    if (candidate.enabled && (typeof depth !== 'string' || !MODEL_THINKING_DEPTHS.has(depth as ModelThinkingDepth))) continue;
+    if (depth != null && (typeof depth !== 'string' || !MODEL_THINKING_DEPTHS.has(depth as ModelThinkingDepth))) continue;
+    const capabilityVersion = candidate.capability_version;
+    if (
+      typeof capabilityVersion !== 'number'
+      || !Number.isInteger(capabilityVersion)
+      || capabilityVersion < 1
+    ) continue;
+    preferences[key] = {
+      enabled: candidate.enabled,
+      depth: candidate.enabled ? depth as ModelThinkingDepth : null,
+      capability_version: capabilityVersion,
+    };
+  }
+  return preferences;
+}
+
 function readLocalString(key: string) {
   try {
     return localStorageOrNull()?.getItem(key) ?? '';
@@ -2388,11 +2835,20 @@ function loadSidebarWidth() {
 }
 
 function loadProviderConfigs(): ModelProviderConfig[] {
-  const saved = readLocalJson<ModelProviderConfig[]>(STORAGE_KEYS.modelProviders);
+  const saved = readLocalJson<Array<Record<string, unknown>>>(STORAGE_KEYS.modelProviders);
   if (!Array.isArray(saved)) return initialProviderConfigs;
   return initialProviderConfigs.map((defaults) => {
     const configured = saved.find((item) => item?.id === defaults.id);
-    return configured ? { ...defaults, ...configured, id: defaults.id, name: defaults.name } : defaults;
+    if (!configured) return defaults;
+    return {
+      ...defaults,
+      enabled: typeof configured.enabled === 'boolean' ? configured.enabled : defaults.enabled,
+      endpoint: typeof configured.endpoint === 'string' ? configured.endpoint : defaults.endpoint,
+      apiKey: typeof configured.apiKey === 'string' ? configured.apiKey : defaults.apiKey,
+      models: normalizeModelProfiles(configured.models),
+      id: defaults.id,
+      name: defaults.name,
+    };
   });
 }
 
@@ -2417,11 +2873,36 @@ function parseModelIds(models: string) {
   return [...new Set(models.split(',').map((model) => model.trim()).filter(Boolean))];
 }
 
+function makeModelProfile(id: string): ModelProfileConfig {
+  return { id };
+}
+
+function normalizeModelProfiles(value: unknown): ModelProfileConfig[] {
+  const candidates = typeof value === 'string'
+    ? parseModelIds(value)
+    : Array.isArray(value) ? value : [];
+  const seen = new Set<string>();
+  const profiles: ModelProfileConfig[] = [];
+  for (const candidate of candidates) {
+    const raw = typeof candidate === 'string'
+      ? { id: candidate }
+      : candidate && typeof candidate === 'object'
+        ? candidate as Record<string, unknown>
+        : null;
+    const id = typeof raw?.id === 'string' ? raw.id.trim() : '';
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    profiles.push({ id });
+  }
+  return profiles;
+}
+
 function ModelManagement({ providers, onChange }: { providers: ModelProviderConfig[]; onChange: (providers: ModelProviderConfig[]) => void }) {
   const { t } = useI18n();
   const [selectedProvider, setSelectedProvider] = useState<ModelProviderId>('openai');
   const [showKey, setShowKey] = useState(false);
   const [query, setQuery] = useState('');
+  const [contextCapabilities, setContextCapabilities] = useState<Record<string, ModelContextCapability>>({});
   const provider = providers.find((item) => item.id === selectedProvider)!;
   const providerMeta = modelProviders.find((item) => item.id === selectedProvider)!;
   const normalizedQuery = query.trim().toLocaleLowerCase();
@@ -2434,6 +2915,29 @@ function ModelManagement({ providers, onChange }: { providers: ModelProviderConf
     { id: 'local', label: '本地运行时' },
     { id: 'custom', label: '自定义' },
   ];
+  const capabilityRequestKey = providers.flatMap((item) => item.models
+    .map((profile) => `${item.id}:${profile.id.trim()}`)
+    .filter((identity) => !identity.endsWith(':'))).join('|');
+
+  useEffect(() => {
+    const controller = new AbortController();
+    const references = providers.flatMap((item) => item.models
+      .map((profile) => ({ provider: item.id, model: profile.id.trim() }))
+      .filter((reference) => reference.model));
+    if (!references.length) {
+      setContextCapabilities({});
+      return () => controller.abort();
+    }
+    void resolveModelContextCapabilities(references, controller.signal).then((capabilities) => {
+      if (controller.signal.aborted) return;
+      setContextCapabilities(Object.fromEntries(
+        capabilities.map((capability) => [`${capability.provider}:${capability.model}`, capability]),
+      ));
+    }).catch(() => {
+      if (!controller.signal.aborted) setContextCapabilities({});
+    });
+    return () => controller.abort();
+  }, [capabilityRequestKey]);
 
   function selectProvider(id: ModelProviderId) {
     setSelectedProvider(id);
@@ -2446,6 +2950,22 @@ function ModelManagement({ providers, onChange }: { providers: ModelProviderConf
 
   function toggleProvider() {
     updateProvider({ enabled: !provider.enabled });
+  }
+
+  function updateModelProfile(index: number, patch: Partial<ModelProfileConfig>) {
+    updateProvider({
+      models: provider.models.map((item, itemIndex) => itemIndex === index
+        ? { ...item, ...patch }
+        : item),
+    });
+  }
+
+  function addModelProfile() {
+    updateProvider({ models: [...provider.models, makeModelProfile('')] });
+  }
+
+  function removeModelProfile(index: number) {
+    updateProvider({ models: provider.models.filter((_, itemIndex) => itemIndex !== index) });
   }
 
   return (
@@ -2478,7 +2998,42 @@ function ModelManagement({ providers, onChange }: { providers: ModelProviderConf
           <div className="provider-form">
             <label><span>{t('API 地址')}</span><small>{t('供应商 API 的基础地址')}</small><input value={provider.endpoint} onChange={(event) => updateProvider({ endpoint: event.target.value })} spellCheck={false} /></label>
             <label><span>{t('API Key')}</span><small>{t('凭据保存在当前浏览器本地，不会写入运行记录')}</small><div className="secret-input"><input type={showKey ? 'text' : 'password'} value={provider.apiKey} onChange={(event) => updateProvider({ apiKey: event.target.value })} placeholder="sk-..." autoComplete="off" /><button type="button" onClick={() => setShowKey((visible) => !visible)}>{t(showKey ? '隐藏' : '显示')}</button></div></label>
-            <label><span>{t('可用模型 ID')}</span><small>{t('使用逗号分隔，模型选择器将使用这些标识')}</small><textarea value={provider.models} onChange={(event) => updateProvider({ models: event.target.value })} placeholder="model-id-1, model-id-2" /></label>
+            <section className="model-profile-editor" aria-label={t('可用模型')}>
+              <div className="model-profile-heading">
+                <div><strong>{t('可用模型')}</strong><small>{t('上下文上限由 Astra 按模型自动设置，无需手动配置。')}</small></div>
+                <span>{provider.models.length}</span>
+              </div>
+              <div className="model-profile-list">
+                {provider.models.map((profile, index) => {
+                  const capability = contextCapabilities[`${provider.id}:${profile.id}`];
+                  return <article className="model-profile-card" key={index}>
+                    <div className="model-profile-card-header">
+                      <label>
+                        <span className="sr-only">{t('模型 ID')}</span>
+                        <input
+                          aria-label={`${t('模型 ID')} ${index + 1}`}
+                          value={profile.id}
+                          onChange={(event) => updateModelProfile(index, { id: event.target.value })}
+                          placeholder="model-id"
+                          spellCheck={false}
+                        />
+                      </label>
+                      <button type="button" aria-label={`${t('移除模型')} ${profile.id || index + 1}`} onClick={() => removeModelProfile(index)}>−</button>
+                    </div>
+                    <div className="model-context-controls">
+                      <div className={`model-context-auto ${capability?.source !== 'catalog' ? 'unverified' : ''}`}>
+                        <span>{t('上下文上限')}</span>
+                        <strong>{compactTokenCount(capability?.window_tokens ?? 131_072)}</strong>
+                        {capability?.max_output_tokens && <small>{t('单次回复上限')} {compactTokenCount(capability.max_output_tokens)}</small>}
+                        {capability?.documentation_url && <a href={capability.documentation_url} target="_blank" rel="noreferrer">{t('查看模型说明')} ↗</a>}
+                      </div>
+                    </div>
+                  </article>;
+                })}
+                {!provider.models.length && <div className="model-profile-empty">{t('尚未配置模型。添加后才能在聊天中选择。')}</div>}
+              </div>
+              <button className="model-profile-add" type="button" onClick={addModelProfile}><span aria-hidden="true">+</span>{t('添加模型')}</button>
+            </section>
           </div>
 
           <div className="provider-advanced">
@@ -2509,10 +3064,10 @@ function SettingRow({ title, description, children }: { title: string; descripti
   return <div className="setting-row"><div><strong>{t(title)}</strong><span>{t(description)}</span></div>{children}</div>;
 }
 
-function Toggle({ checked = false, onChange, disabled = false, label }: { checked?: boolean; onChange?: (checked: boolean) => void; disabled?: boolean; label?: string }) {
+function Toggle({ checked = false, onChange, disabled = false, label, describedBy }: { checked?: boolean; onChange?: (checked: boolean) => void; disabled?: boolean; label?: string; describedBy?: string }) {
   const [localChecked, setLocalChecked] = useState(checked);
   const value = onChange ? checked : localChecked;
-  return <button className={`toggle ${value ? 'on' : ''}`} type="button" role="switch" aria-checked={value} aria-label={label} disabled={disabled} onClick={() => onChange ? onChange(!value) : setLocalChecked(!value)}><span /></button>;
+  return <button className={`toggle ${value ? 'on' : ''}`} type="button" role="switch" aria-checked={value} aria-label={label} aria-describedby={describedBy} disabled={disabled} onClick={() => onChange ? onChange(!value) : setLocalChecked(!value)}><span /></button>;
 }
 
 function ExecutionModeMenu({ value, onChange }: { value: 'default' | 'bypass'; onChange: (mode: 'default' | 'bypass') => void }) {
@@ -2860,10 +3415,19 @@ function BypassConfirmation({ onCancel, onConfirm }: { onCancel: () => void; onC
   return <div className="modal-backdrop" role="presentation" onMouseDown={onCancel}><section className="confirmation-modal" role="alertdialog" aria-modal="true" aria-labelledby="bypass-title" onMouseDown={(event) => event.stopPropagation()}><div className="warning-mark">!</div><h2 id="bypass-title">{t('启用自动批准模式？')}</h2><p>{t('自动批准模式会跳过可批准行为的交互确认，但仍受平台禁止项、权限边界、预算和沙箱限制。')}</p><div className="confirmation-note"><strong>{t('仅在你信任当前任务和运行环境时启用。')}</strong></div><div className="confirmation-actions"><button className="secondary-button" type="button" onClick={onCancel}>{t('取消')}</button><button className="danger-confirm-button" type="button" onClick={onConfirm}>{t('确认启用自动批准')}</button></div></section></div>;
 }
 
-function ModelMenu({ selectedModelKey, onModelChange, modelOptions, trusted, reasoningEffort, onReasoningEffortChange, toolCallLimit, onToolCallLimitChange, reflectionEnabled, onReflectionChange, reflectionTrigger, onReflectionTriggerChange, planExecution, onPlanExecutionChange, onOpenStrategyHelp }: {
+function ModelMenu({ selectedModelKey, onModelChange, modelOptions, contextStatus, contextActionLabel, thinkingCapability, thinkingSelection, thinkingLoading, thinkingFailed, onThinkingRetry, onThinkingEnabledChange, onThinkingDepthChange, trusted, reasoningEffort, onReasoningEffortChange, toolCallLimit, onToolCallLimitChange, reflectionEnabled, onReflectionChange, reflectionTrigger, onReflectionTriggerChange, planExecution, onPlanExecutionChange, onOpenStrategyHelp }: {
   selectedModelKey: string;
   onModelChange: (modelKey: string) => void;
-  modelOptions: Array<{ key: string; model: string; providerId: ModelProviderId; providerName: string }>;
+  modelOptions: Array<{ key: string; model: string; profile: ModelProfileConfig; providerId: ModelProviderId; providerName: string }>;
+  contextStatus: ContextWindowStatus | null;
+  contextActionLabel: string;
+  thinkingCapability?: ModelThinkingCapability;
+  thinkingSelection?: ModelThinkingSelection;
+  thinkingLoading: boolean;
+  thinkingFailed: boolean;
+  onThinkingRetry: () => void;
+  onThinkingEnabledChange: (enabled: boolean) => void;
+  onThinkingDepthChange: (depth: ModelThinkingDepth) => void;
   trusted: boolean;
   reasoningEffort: string;
   onReasoningEffortChange: (effort: string) => void;
@@ -2878,20 +3442,52 @@ function ModelMenu({ selectedModelKey, onModelChange, modelOptions, trusted, rea
   onOpenStrategyHelp: () => void;
 }) {
   const { t } = useI18n();
-  const groups = modelOptions.reduce<Array<{ providerId: ModelProviderId; providerName: string; models: Array<{ key: string; model: string }> }>>((result, option) => {
+  const groups = modelOptions.reduce<Array<{ providerId: ModelProviderId; providerName: string; models: Array<{ key: string; model: string; profile: ModelProfileConfig }> }>>((result, option) => {
     const group = result.find((item) => item.providerId === option.providerId);
-    if (group) group.models.push({ key: option.key, model: option.model });
-    else result.push({ providerId: option.providerId, providerName: option.providerName, models: [{ key: option.key, model: option.model }] });
+    if (group) group.models.push({ key: option.key, model: option.model, profile: option.profile });
+    else result.push({ providerId: option.providerId, providerName: option.providerName, models: [{ key: option.key, model: option.model, profile: option.profile }] });
     return result;
   }, []);
   const effort = reasoningEffortValue(reasoningEffort);
   const limitRange = effort === 'deep' ? null : TOOL_CALL_LIMITS[effort];
+  const thinkingDepthOptions = thinkingCapability?.depths.map((item) => thinkingDepthLabel(item.id)) ?? [];
+  const highModelThinking = thinkingSelection?.enabled
+    && (thinkingSelection.depth === 'high' || thinkingSelection.depth === 'xhigh' || thinkingSelection.depth === 'max');
   return <div className="floating-menu model-menu">
     <div className="menu-heading">{t('模型')}</div>
     {groups.length ? groups.map((group) => <div className="model-provider-group" key={group.providerId}>
       <div className="model-provider-heading"><span className={`provider-mark provider-${group.providerId}`}>{modelProviders.find((provider) => provider.id === group.providerId)?.mark}</span><span>{group.providerName}</span></div>
       {group.models.map((item) => <button className={`model-option ${selectedModelKey === item.key ? 'selected' : ''}`} type="button" key={item.key} onClick={() => onModelChange(item.key)}><div><strong>{item.model}</strong><small>{group.providerName}</small></div><span>{selectedModelKey === item.key ? '✓' : ''}</span></button>)}
     </div>) : <div className="model-menu-empty">{t('请先在模型管理中启用供应商并配置模型')}</div>}
+    {contextStatus && <section className={`model-menu-context tone-${contextStatus.status}`} aria-label={t('上下文使用情况')}>
+      <ContextUsageRing status={contextStatus} actionLabel={contextActionLabel} compact />
+      <div><strong>{compactTokenCount(contextStatus.used_tokens)} / {compactTokenCount(contextStatus.window_tokens)}</strong><small>{t('剩余')} {compactTokenCount(contextStatus.remaining_tokens)}</small></div>
+      <span>{contextActionLabel || (contextStatus.status === 'normal' ? t('空间充足') : contextStatus.status === 'warning' ? t('即将用满') : t('建议整理'))}</span>
+    </section>}
+    <div className="menu-divider" />
+    <div className="menu-heading">{t('模型思考')}</div>
+    <section className="model-thinking-section" aria-label={t('模型思考')}>
+      {thinkingLoading ? <p className="model-thinking-status" role="status">{t('正在读取模型思考能力…')}</p>
+        : thinkingFailed ? <div className="model-thinking-status unavailable" role="status"><span>{t('暂时无法读取模型思考能力，当前设置不可调整。')}</span><button type="button" onClick={onThinkingRetry}>{t('重试')}</button></div>
+          : !thinkingCapability?.supported || !thinkingSelection ? <p className="model-thinking-status unavailable">{t('当前模型不支持可配置的思考参数。')}</p>
+            : <>
+              <div className="menu-toggle model-thinking-toggle"><div><strong>{t('扩展模型思考')}</strong><small id="model-thinking-toggle-description">{t(thinkingCapability.toggle === 'always_on' ? '此模型始终启用扩展思考' : thinkingSelection.enabled ? '已开启，由所选深度控制模型生成行为。' : '已关闭，不影响 Astra 的公开执行过程。')}</small></div><Toggle checked={thinkingSelection.enabled} disabled={thinkingCapability.toggle === 'always_on'} onChange={onThinkingEnabledChange} label={t('模型思考')} describedBy="model-thinking-toggle-description" /></div>
+              {thinkingSelection.enabled && thinkingDepthOptions.length > 0 && <MenuChoice
+                label="模型思考深度"
+                value={thinkingDepthLabel(thinkingSelection.depth)}
+                options={thinkingDepthOptions}
+                onChange={(value) => {
+                  const depth = thinkingCapability.depths.find((item) => thinkingDepthLabel(item.id) === value)?.id;
+                  if (depth) onThinkingDepthChange(depth);
+                }}
+              />}
+            </>}
+      <p className="model-thinking-note">{t('模型思考控制模型生成行为；聊天中的“思考”是 Astra 的公开执行过程摘要。')}</p>
+      {highModelThinking && <p className="model-thinking-impact">{t(trusted
+        ? '当前深度将用于本次运行的多次模型调用，可能增加耗时与用量。'
+        : '当前深度可能显著增加首字和总响应延迟，但不会启用可信模式。')}</p>}
+      {trusted && thinkingCapability?.supported && thinkingSelection && !thinkingSelection.enabled && <p className="model-thinking-impact">{t('关闭模型思考不会关闭可信模式的计划、审批与验证。')}</p>}
+    </section>
     <div className="menu-divider" />
     {trusted ? <>
       <div className="menu-heading">{t('可信对话策略')}</div>
@@ -2949,7 +3545,7 @@ function StrategyHelpDialog({ onClose }: { onClose: () => void }) {
 
 function MenuChoice({ label, value, options, onChange, disabled = false, disabledOptionHints }: { label: string; value: string; options: string[]; onChange: (value: string) => void; disabled?: boolean; disabledOptionHints?: Record<string, string> }) {
   const { t } = useI18n();
-  return <div className="menu-choice"><span>{t(label)}</span><div className={`segmented-control segments-${options.length}`}>{options.map((option) => <button className={value === option ? 'active' : ''} type="button" key={option} disabled={disabled} title={disabled && disabledOptionHints?.[option] ? t(disabledOptionHints[option]) : undefined} onClick={() => onChange(option)}>{t(option)}</button>)}</div></div>;
+  return <div className="menu-choice"><span>{t(label)}</span><div className={`segmented-control segments-${options.length}`} role="group" aria-label={t(label)}>{options.map((option) => <button className={value === option ? 'active' : ''} type="button" key={option} aria-pressed={value === option} disabled={disabled} title={disabled && disabledOptionHints?.[option] ? t(disabledOptionHints[option]) : undefined} onClick={() => onChange(option)}>{t(option)}</button>)}</div></div>;
 }
 
 function ToolCallLimitControl({ value, min, max, onChange }: { value: number; min: number; max: number; onChange: (value: number) => void }) {
@@ -3053,6 +3649,7 @@ function ProcessPanel({ run, messageId, liveState, open, isLatestRun, onInitiali
     onOpenChange(run.id, !open);
   };
   return <article className={`process-entry ${live ? 'live' : ''} ${hasHistoricalGraph ? 'has-historical-graph' : ''}`} id={`message-${messageId}`}><details className="process-panel" open={open}><summary onClick={toggle} aria-expanded={open}><Icon name="brain" /><span className="process-title">{processTitle}{live && <span className="process-thinking-dots" aria-hidden="true"><i /><i /><i /></span>}</span>{livePreview && <small className="process-live-preview" aria-live="polite">{livePreview}</small>}</summary><div className="process-timeline" aria-live={live ? 'polite' : undefined}>
+    <p className="process-disclosure-note">{t('这里展示 Astra 的公开执行过程摘要，不是模型隐藏思维链。')}</p>
     <ProcessTimeline items={processItems} run={run} />
     {!live && remainingNotes.map((note, index) => <div className="process-step verification" key={`verification-${index}`}><span className="process-dot"><Icon name="check" /></span><div><strong>{t('验证')}</strong><p>{note}</p></div></div>)}
     {!live && run.result && <ReasoningAuditSummary run={run} />}
@@ -3123,32 +3720,55 @@ function FinalAnswer({ run, fallback }: { run: RunView; fallback: string }) {
     return null;
   }
   const presentation = planAnswerPresentation(result.findings, run.artifacts);
+  const groundedCitations = validatedCitations(result);
+  const summaryClaims = result.claims.filter((claim) => (
+    claim.text.trim() === result.summary.trim()
+    || (result.claims.length === 1 && result.findings.length === 0)
+  ));
+  const summaryCitations = summaryClaims.flatMap((claim) => citationsForClaim(groundedCitations, claim.id));
   const notes = [...new Set(result.caveats)];
   const hasSupplementary = result.findings.length > 0 || presentation.supportingArtifacts.length > 0 || result.sources.length > 0 || notes.length > 0;
   const supplementaryCount = result.findings.length + presentation.supportingArtifacts.length + result.sources.length + notes.length;
   return (
     <div className="answer-content">
       <MarkdownContent content={result.summary || fallback} />
+      <CitationMarkers citations={summaryCitations} />
       {presentation.primaryArtifacts.length > 0 && <div className="primary-result-output"><ArtifactGallery artifacts={presentation.primaryArtifacts} label={t('主要结果')} /></div>}
       {hasSupplementary && <details className="answer-supplementary-flat"><summary><Icon name="info" /><span>{t('附加信息')}</span><small>{t('{count} 项').replace('{count}', String(supplementaryCount))}</small><span className="answer-supplementary-chevron" aria-hidden="true">›</span></summary><div className="answer-supplementary-content">
         {result.findings.length > 0 && <div className="flat-support-row"><span className="flat-support-label">{t('支撑证据')}</span><div className="flat-evidence-list">
-          {result.findings.map((finding, index) => <div className="flat-evidence-item" key={index}><span>{index + 1}</span><div>
+          {result.findings.map((finding, index) => {
+            const claim = result.claims.find((candidate) => candidate.text.trim() === finding.text.trim());
+            const citations = claim ? citationsForClaim(groundedCitations, claim.id) : [];
+            return <div className="flat-evidence-item" key={index}><span>{index + 1}</span><div>
             {finding.text.trim() !== result.summary.trim() && <MarkdownContent content={finding.text} />}
+            <CitationMarkers citations={citations} />
             {finding.source_urls.length > 0 && <div className="finding-source-links">{finding.source_urls.map((url) => <a href={externalHref(url)} target="_blank" rel="noreferrer" key={url}>{t('关联来源')}</a>)}</div>}
             {finding.artifact_ids.some((artifactId) => presentation.primaryArtifacts.some((artifact) => artifact.id === artifactId)) && <a className="primary-output-reference" href={`#${artifactDomId(presentation.primaryArtifacts[0].id)}`}>{t('查看主要结果')}</a>}
-          </div></div>)}
+          </div></div>;
+          })}
         </div></div>}
         {presentation.supportingArtifacts.length > 0 && <div className="flat-support-row"><span className="flat-support-label">{t('附件')}</span><ArtifactGallery artifacts={presentation.supportingArtifacts} label={t('附件')} /></div>}
         {result.sources.length > 0 && <div className="flat-support-row"><span className="flat-support-label">{t('来源')}</span><div className="source-grid">
-          {result.sources.map((source) => {
+          {result.sources.map((source, sourceIndex) => {
             const quality = result.source_quality?.find((item) => item.url === source.url);
-            return <a key={source.url} href={externalHref(source.url)} target="_blank" rel="noreferrer" className="source-card"><strong>{source.title || source.url}</strong>{quality && <span>{t('来源质量 {score}').replace('{score}', formatScore(quality.quality_score))}</span>}</a>;
+            return <a id={sourceAnchor(sourceIndex)} key={source.url} href={externalHref(source.url)} target="_blank" rel="noreferrer" className="source-card"><strong>{source.title || source.url}</strong>{quality && <span>{t('来源质量 {score}').replace('{score}', formatScore(quality.quality_score))}</span>}</a>;
           })}
         </div></div>}
         {notes.length > 0 && <div className="flat-support-row"><span className="flat-support-label">{t('限制与注意事项')}</span><div className="answer-notes">{notes.map((item, index) => <p key={`note-${index}`}>{item}</p>)}</div></div>}
       </div></details>}
     </div>
   );
+}
+
+function CitationMarkers({ citations }: { citations: PresentedCitation[] }) {
+  if (!citations.length) return null;
+  return <span className="grounded-citations" aria-label="引用来源">
+    {citations.map((citation) => <a
+      href={`#${sourceAnchor(citation.sourceIndex)}`}
+      key={citation.id}
+      title={citation.title || citation.url || `来源 ${citation.ordinal}`}
+    >[{citation.ordinal}]</a>)}
+  </span>;
 }
 
 function trustedResultStatus(run: RunView) {

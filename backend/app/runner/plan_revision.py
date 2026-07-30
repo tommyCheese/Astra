@@ -16,6 +16,7 @@ from app.schemas.agent import (
     TaskContract,
 )
 from app.tools.registry import build_tool_registry
+from app.usage_metering import DatabaseUsageRecorder
 
 
 class PlanRevisionError(ValueError):
@@ -35,6 +36,7 @@ async def revise_waiting_plan(
     expected_plan_version: int,
     expected_state_version: int,
 ):
+    client = None
     run, current = await repository.claim_plan_revision(
         run_id,
         continuation_token=continuation_token,
@@ -48,6 +50,8 @@ async def revise_waiting_plan(
         contract = TaskContract.model_validate(run.task_contract)
         policy = ReasoningPolicySnapshot.model_validate(run.reasoning_policy)
         client = build_model_client(settings)
+        if hasattr(client, "usage_recorder"):
+            client.usage_recorder = DatabaseUsageRecorder(run_id)
         profile = (
             AgentProfile.from_snapshot(run.agent_profile_snapshot)
             if run.agent_profile_snapshot
@@ -56,6 +60,7 @@ async def revise_waiting_plan(
         )
         client.bind_agent_profile(profile)
         client.bind_reasoning_effort(policy.effective.reasoning_effort)
+        client.bind_model_thinking((run.model_policy or {}).get("thinking"))
         registry = build_tool_registry(settings)
         capabilities = set(registry.specs())
         for spec in registry.specs().values():
@@ -159,6 +164,9 @@ async def revise_waiting_plan(
         if isinstance(exc, PlanRevisionError):
             raise
         raise PlanRevisionError(str(exc), code=code) from exc
+    finally:
+        if client is not None:
+            await client.aclose()
 
 
 def _dependency_keys(plan, node_id: str) -> list[str]:

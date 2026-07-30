@@ -365,11 +365,32 @@ type RunError = {
   details: Record<string, unknown>;
 };
 
-type RunResult = {
+export type GroundedClaim = {
+  id: string;
+  text: string;
+  evidence_refs: string[];
+  material: boolean;
+  support_status: 'unverified' | 'supported' | 'unsupported';
+};
+
+export type GroundingCitation = {
+  id: string;
+  claim_id: string;
+  evidence_ref: string;
+  source_id?: string | null;
+  passage_id?: string | null;
+  url?: string | null;
+  title?: string | null;
+  ordinal?: number | null;
+};
+
+export type RunResult = {
   summary: string;
   answer_mode?: 'standard' | 'trusted';
   assurance_level?: 'basic' | 'full';
   findings: Array<{ text: string; source_urls: string[]; artifact_ids: string[] }>;
+  claims: GroundedClaim[];
+  citations: GroundingCitation[];
   sources: Array<{ url: string; title?: string | null; retrieved_at?: string | null }>;
   failed_sources: FailedSource[];
   source_quality: SourceQuality[];
@@ -391,6 +412,8 @@ type RunResult = {
   }>;
   audit_refs: {
     evidence_pack_artifact_id?: string | null;
+    evidence_ledger_artifact_id?: string | null;
+    evidence_record_count: number;
     agent_turn_count: number;
     referenced_artifact_ids: string[];
   };
@@ -426,6 +449,7 @@ export type RunView = {
   turns?: AgentTurnView[];
   memories?: MemoryView[];
   chat_messages?: ChatMessage[];
+  model_policy?: Record<string, unknown>;
   reasoning_policy?: Record<string, unknown>;
   task_contract?: Record<string, unknown>;
   plan_graph?: PlanGraphSnapshot | LegacyPlanGraph | Record<string, never>;

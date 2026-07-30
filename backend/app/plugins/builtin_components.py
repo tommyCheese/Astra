@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.grounding.fragments import fragments_from_web_result
 from app.plugins.interfaces import (
     ApprovalPresenter,
     ProcessorOutput,
@@ -23,6 +24,7 @@ class LegacyRawResultAdapter(ResultAdapter):
 class WebResultProcessor(ResultProcessor):
     def process(self, spec, tool_input, result):
         data = dict(result.get("data") or {})
+        fragments = fragments_from_web_result(spec.name, data)
         evidence: dict[str, Any]
         if "candidates" in data:
             candidates, dedupe = WebTaskAdapter().filter_candidates(data.get("candidates", []))
@@ -33,9 +35,21 @@ class WebResultProcessor(ResultProcessor):
                 "kind": "search",
                 "candidates": candidates,
                 "warnings": list(data.get("warnings", [])),
+                "fragments": [
+                    item.model_dump(mode="json", exclude_none=True)
+                    for item in fragments
+                ],
             }
         else:
-            evidence = {"domain": "web", "kind": "fetch", "source": data}
+            evidence = {
+                "domain": "web",
+                "kind": "fetch",
+                "source": data,
+                "fragments": [
+                    item.model_dump(mode="json", exclude_none=True)
+                    for item in fragments
+                ],
+            }
         return ProcessorOutput(
             observation=AgentObservation(
                 kind="tool_result",

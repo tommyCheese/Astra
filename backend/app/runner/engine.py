@@ -14,6 +14,7 @@ from app.agent_profile import (
     AgentProfileConfigurationError,
     load_agent_profile,
 )
+from app.conversation_context import ConversationContextManager
 from app.core.config import Settings
 from app.core.errors import run_error_from_exception
 from app.db.models import RunRecord, RunSkillSnapshotRecord
@@ -188,6 +189,7 @@ class RunEngine:
         profile = await self._profile_for_run(repo, run_id, run.agent_profile_snapshot or {})
         self.model_client.bind_agent_profile(profile)
         self._bind_reasoning_effort(run)
+        self._bind_model_thinking(run)
         skill_service = SkillActivationService(
             repo.session,
             max_active=self.settings.skills_max_active,
@@ -459,6 +461,19 @@ class RunEngine:
             )
             self.model_client.bind_reasoning_effort("balanced")
 
+    def _bind_model_thinking(self, run: RunRecord) -> None:
+        thinking = (run.model_policy or {}).get("thinking")
+        try:
+            self.model_client.bind_model_thinking(
+                thinking if isinstance(thinking, dict) else None
+            )
+        except ValueError:
+            logger.warning(
+                "run.model_thinking.invalid run_id=%s fallback=legacy",
+                run.id,
+            )
+            self.model_client.bind_model_thinking(None)
+
     async def _prepare_plan(
         self,
         run_id: str,
@@ -644,20 +659,9 @@ class RunEngine:
             current_goal = (await repo.require_run(run.id)).task.description
         if run.model_policy.get("conversation_context_required") is False:
             return current_goal
-        conversation_runs = await repo.list_task_runs(run.task_id)
-        previous_runs = [item for item in conversation_runs if item.id != run.id][-6:]
-        if not previous_runs:
-            return current_goal
-
-        context_lines: list[str] = []
-        for item in previous_runs:
-            previous_goal = item.model_policy.get("conversation_goal", "")
-            context_lines.extend([f"User: {previous_goal}", f"Assistant: {item.summary or ''}"])
-        return (
-            "Conversation context:\n"
-            + "\n".join(context_lines)
-            + f"\nCurrent user request: {current_goal}"
-        )
+        manager = ConversationContextManager(repo.session, self.settings)
+        task = await manager.require_task(run.task_id)
+        return await manager.render_goal(task, current_goal)
 
     async def _execute_agent_loop(
         self,

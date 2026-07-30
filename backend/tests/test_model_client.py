@@ -406,13 +406,28 @@ def test_reflection_normalization_accepts_common_model_shorthand():
     assert isinstance(reflection.patch.terminal_intent, str)
 
 
-def test_memory_normalization_converts_scalar_provenance_and_drops_empty_content():
+def test_memory_normalization_is_bounded_typed_and_drops_empty_content():
     normalized = normalize_memory_payload(
-        {"content": "用户询问口腔溃疡", "provenance": "conversation", "confidence": 2}
+        {
+            "content": " 用户询问口腔溃疡 ",
+            "scope": "unknown",
+            "kind": "fact",
+            "provenance": "conversation",
+            "confidence": 2,
+            "importance": -1,
+        }
     )
     memory = MemoryRecord.model_validate(normalized)
-    assert memory.provenance == {"source": "conversation"}
+    assert memory.content == "用户询问口腔溃疡"
+    assert memory.scope == "run"
+    assert memory.kind == "semantic_fact"
+    assert memory.status == "candidate"
+    assert memory.memory_key.startswith("memory:")
+    assert memory.provenance == {}
     assert memory.confidence == 1
+    assert memory.importance == 0
+    assert memory.utility_score == 0
+    assert normalize_memory_payload({"content": "x", "kind": "unknown"}) is None
     assert normalize_memory_payload({"content": ""}) is None
 
 

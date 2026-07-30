@@ -589,6 +589,10 @@ async def test_skill_api_authoring_publish_and_run_selection(skill_client):
     test_digest = test_audit.json()["catalog"][0]["digest"]
     test_view = await skill_client.get(f"/api/runs/{draft_test.json()['run_id']}")
     assert test_view.json()["steps"] == []
+    assert test_view.json()["model_policy"]["thinking"]["source"] == (
+        "legacy_reasoning_policy"
+    )
+    assert test_view.json()["model_policy"]["thinking"]["capability_version"] == 2
     ordinary_catalog = await skill_client.get("/api/skills/catalog")
     published_entry = next(
         item

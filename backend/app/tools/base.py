@@ -29,6 +29,10 @@ class ToolSpec(BaseModel):
     retry_policy: dict[str, Any] = Field(default_factory=dict)
     error_categories: list[str] = Field(default_factory=list)
     idempotent: bool = True
+    # Provider-neutral task abilities used for execution-time tool selection.
+    # These are intentionally separate from ``capabilities`` and ``permissions``,
+    # which describe the tool's security authority ceiling.
+    task_capabilities: list[str] = Field(default_factory=list)
     capabilities: list[str] = Field(default_factory=list)
     permissions: list[str] = Field(default_factory=list)
     risk: str = "low"

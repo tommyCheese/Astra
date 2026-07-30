@@ -1557,34 +1557,62 @@ class RunRepository:
         workspace_id: str | None = None,
         created_by: str | None = None,
         structured_data: dict[str, Any] | None = None,
+        memory_key: str | None = None,
+        status: str = "active",
+        importance: float = 0.5,
+        utility_score: float = 0.0,
+        observed_at=None,
+        valid_from=None,
+        valid_to=None,
         expires_at=None,
+        normalize_kind: bool = False,
     ) -> MemoryRecord:
-        if scope in {"workspace", "user"} and (not provenance or confidence is None):
+        from app.memory.domain import (
+            MemoryNamespace,
+            MemoryNamespaceType,
+            MemoryValidationError,
+        )
+        from app.repositories.memories import MemoryRepository
+
+        namespace = None
+        if run_id is None:
+            if scope == "workspace" and workspace_id:
+                namespace = MemoryNamespace(MemoryNamespaceType.workspace, workspace_id)
+            elif scope == "user" and created_by:
+                namespace = MemoryNamespace(MemoryNamespaceType.user, created_by)
+            else:
+                namespace = MemoryNamespace(MemoryNamespaceType.run, str(uuid.uuid4()))
+        try:
+            memory = await MemoryRepository(self.session).create(
+                run_id=run_id,
+                namespace=namespace,
+                scope=scope,
+                kind=kind,
+                content=content,
+                structured_data=structured_data,
+                provenance=provenance,
+                confidence=confidence,
+                memory_key=memory_key,
+                status=status,
+                importance=importance,
+                utility_score=utility_score,
+                observed_at=observed_at,
+                valid_from=valid_from,
+                valid_to=valid_to,
+                expires_at=expires_at,
+                created_by=created_by,
+                normalize_kind=normalize_kind,
+                commit=False,
+            )
+        except MemoryValidationError as exc:
             if run_id:
                 await self.add_event(
                     run_id,
                     "memory.write_rejected",
-                    {"scope": scope, "kind": kind, "reason": "missing_provenance_or_confidence"},
+                    {"scope": scope, "kind": kind, "reason": str(exc)},
                 )
                 await self.session.commit()
-            raise ValueError("Persistent memory requires provenance and confidence")
-        now = utc_now()
-        memory = MemoryRecord(
-            run_id=run_id,
-            workspace_id=workspace_id,
-            created_by=created_by,
-            scope=scope,
-            kind=kind,
-            content=content,
-            structured_data=structured_data or {},
-            provenance=provenance,
-            confidence=confidence,
-            created_at=now,
-            updated_at=now,
-            expires_at=expires_at,
-        )
-        self.session.add(memory)
-        await self.session.flush()
+            raise ValueError(str(exc)) from exc
         if run_id:
             await self.add_event(
                 run_id,
@@ -1593,6 +1621,9 @@ class RunRepository:
                     "memory_id": memory.id,
                     "scope": memory.scope,
                     "kind": memory.kind,
+                    "status": memory.status,
+                    "memory_key": memory.memory_key,
+                    "version": memory.version,
                     "confidence": memory.confidence,
                     "provenance": memory.provenance,
                 },
@@ -1609,16 +1640,18 @@ class RunRepository:
         min_confidence: float = 0.0,
         limit: int = 10,
     ) -> list[MemoryRecord]:
-        query = select(MemoryRecord).where(MemoryRecord.confidence >= min_confidence)
-        if scope:
-            query = query.where(MemoryRecord.scope == scope)
-        if kind:
-            query = query.where(MemoryRecord.kind == kind)
-        if run_id:
-            query = query.where(MemoryRecord.run_id == run_id)
-        query = query.order_by(MemoryRecord.updated_at.desc()).limit(limit)
-        result = await self.session.execute(query)
-        return list(result.scalars().all())
+        from app.memory.domain import MemoryStatus
+        from app.repositories.memories import MemoryRepository
+
+        return await MemoryRepository(self.session).list_records(
+            scope=scope,
+            kind=kind,
+            run_id=run_id,
+            statuses=[MemoryStatus.active],
+            min_confidence=min_confidence,
+            include_expired=False,
+            limit=limit,
+        )
 
     async def add_event(
         self,
@@ -1687,6 +1720,15 @@ class RunRepository:
         if turn is None:
             raise ValueError(f"AgentTurn not found: {turn_id}")
         return turn
+
+
+def _public_model_policy(model_policy: dict[str, Any] | None) -> dict[str, Any]:
+    policy = model_policy or {}
+    return {
+        key: deepcopy(policy[key])
+        for key in ("provider", "model", "thinking", "context")
+        if key in policy
+    }
 
 
 def run_to_view(run: RunRecord) -> dict[str, Any]:
@@ -1886,19 +1928,37 @@ def run_to_view(run: RunRecord) -> dict[str, Any]:
             {
                 "id": memory.id,
                 "run_id": memory.run_id,
+                "memory_key": memory.memory_key,
+                "namespace_type": memory.namespace_type,
+                "namespace_id": memory.namespace_id,
                 "scope": memory.scope,
                 "kind": memory.kind,
+                "status": memory.status,
+                "version": memory.version,
+                "state_version": memory.state_version,
                 "content": memory.content,
                 "structured_data": memory.structured_data,
                 "provenance": memory.provenance,
                 "confidence": memory.confidence,
+                "importance": memory.importance,
+                "utility_score": memory.utility_score,
+                "access_count": memory.access_count,
+                "observed_at": memory.observed_at,
+                "valid_from": memory.valid_from,
+                "valid_to": memory.valid_to,
+                "supersedes_id": memory.supersedes_id,
+                "consolidation_generation": memory.consolidation_generation,
                 "created_at": memory.created_at,
                 "updated_at": memory.updated_at,
                 "expires_at": memory.expires_at,
+                "last_accessed_at": memory.last_accessed_at,
+                "revoked_at": memory.revoked_at,
+                "revoke_reason": memory.revoke_reason,
             }
             for memory in run.memories
         ],
         "chat_messages": build_chat_messages(run),
+        "model_policy": _public_model_policy(run.model_policy),
         "reasoning_policy": run.reasoning_policy or {},
         "task_contract": run.task_contract or {},
         "plan_graph": plan_payload if trusted else {},
@@ -1992,6 +2052,7 @@ def run_to_initial_view(run: RunRecord) -> dict[str, Any]:
                 "metadata": {"task_id": run.task_id},
             }
         ],
+        "model_policy": _public_model_policy(run.model_policy),
         "reasoning_policy": run.reasoning_policy or {},
         "task_contract": run.task_contract or {},
         "plan_graph": (run.plan_graph or {}) if trusted else {},

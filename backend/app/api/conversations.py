@@ -1,6 +1,8 @@
 from fastapi import APIRouter, Depends, Query, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.context_commands import execute_system_command, list_system_commands
+from app.conversation_context import ConversationContextManager
 from app.conversation_lifecycle import ConversationLifecycleService
 from app.core.config import Settings, get_settings
 from app.core.errors import ResourceError, StateError, ValidationError
@@ -11,12 +13,16 @@ from app.repositories.conversations import (
     conversation_view,
 )
 from app.schemas.conversations import (
+    ContextWindowStatus,
     ConversationShareSummary,
     ConversationShareView,
     ConversationSummary,
     ConversationUpdateRequest,
     ConversationView,
     SharedConversation,
+    SlashCommandRequest,
+    SlashCommandResult,
+    SlashSystemCommand,
 )
 
 router = APIRouter(prefix="/api", tags=["conversations"])
@@ -41,6 +47,69 @@ async def list_conversations(
 async def get_conversation(conversation_id: str, session: AsyncSession = Depends(get_session)):
     task = await require_conversation(ConversationRepository(session), conversation_id, detailed=True)
     return conversation_view(task)
+
+
+@router.get("/system-commands", response_model=list[SlashSystemCommand])
+async def get_system_commands():
+    return list_system_commands()
+
+
+@router.get(
+    "/conversations/{conversation_id}/context",
+    response_model=ContextWindowStatus,
+)
+async def get_conversation_context(
+    conversation_id: str,
+    provider: str = Query(min_length=1, max_length=80),
+    model: str = Query(min_length=1, max_length=160),
+    draft: str = Query(default="", max_length=4000),
+    session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+):
+    repo = ConversationRepository(session)
+    task = await require_conversation(repo, conversation_id)
+    return await ConversationContextManager(session, settings).status(
+        task,
+        provider=provider,
+        model=model,
+        draft=draft,
+    )
+
+
+@router.post(
+    "/conversations/{conversation_id}/commands/{command}",
+    response_model=SlashCommandResult,
+)
+async def run_conversation_command(
+    conversation_id: str,
+    command: str,
+    payload: SlashCommandRequest | None = None,
+    provider: str = Query(min_length=1, max_length=80),
+    model: str = Query(min_length=1, max_length=160),
+    session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+):
+    repo = ConversationRepository(session)
+    task = await require_conversation(repo, conversation_id)
+    manager = ConversationContextManager(session, settings)
+    message, details = await execute_system_command(
+        manager,
+        task,
+        command,
+        arguments=payload.arguments if payload else "",
+        session=session,
+        settings=settings,
+    )
+    return {
+        "command": f"/{command}",
+        "message": message,
+        "context": await manager.status(
+            task,
+            provider=provider,
+            model=model,
+        ),
+        "details": details,
+    }
 
 
 @router.patch("/conversations/{conversation_id}", response_model=ConversationSummary)

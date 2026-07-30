@@ -39,7 +39,7 @@ cd astra-v0.1.0
 
 ### Agent Profile、Memory 与运行能力
 
-Astra 的稳定身份与治理原则由后端包中的 `IDENTITY.md`、`SOUL.md`、`MEMORY.md` 和禁用占位的 `AUTODREAM.md` 统一定义并随 Git 发布。每个新 Run 会冻结所用 Profile 的完整不可变快照，历史接口只暴露安全的版本与哈希元数据；服务重启或后续 Profile 升级不会让已有 Run 静默切换人格。
+Astra 的稳定身份与治理原则由后端包中的 `IDENTITY.md`、`SOUL.md`、`MEMORY.md` 和后台专用的 `AUTODREAM.md` 统一定义并随 Git 发布。`AUTODREAM.md` 只有在显式绑定 consolidation job 的专用模型操作中才可加载，文档本身不会启用调度或修改记忆。每个新 Run 会冻结所用 Profile 的完整不可变快照，历史接口只暴露安全的版本与哈希元数据；服务重启或后续 Profile 升级不会让已有 Run 静默切换人格。
 
 Profile 文档不保存实际用户记忆，也不授予工具权限。真实 run/workspace/user Memory 继续存入数据库；本次实际可执行能力由 Tool Manifest、环境配置、持久化工具开关、基础设施状态、Run 权限、风险门控和剩余预算共同决定。
 
@@ -175,6 +175,16 @@ WEB_SEARCH_API_KEY=<your-search-api-key>
 CRAWLER_MAX_CONTENT_CHARS=12000
 CRAWLER_MIN_QUALITY_CHARS=240
 ```
+
+### Web 原子检索与证据共享层
+
+`web_search` 继续兼容单个 `query`，也可以通过 `queries` 一次提交 1–4 个带独立目的的逻辑查询。语言、地区、结果数、时间范围、包含/排除域名和内容类型会被规范化；工具输出会区分 provider 已应用、查询语法模拟、结果后过滤和不支持的约束，避免把未生效的过滤条件误报为成功。
+
+`web_fetch` 保留原工具名和有界 `content` 字段，同时输出规范 URL、不可变 source/snapshot ID、内容摘要、稳定 passage、页面链接、抽取信号和截断信息。搜索摘要只属于 `candidate_only` 候选证据，不能单独支撑关键声明；成功读取的 passage 才能绑定 claim 与 citation。
+
+可信运行会把搜索轨迹、候选、快照和 passage 追加到 run 级 Evidence Ledger，并保留 Plan node、NodeExecution、ToolCall 与 Artifact 谱系。重复写入相同证据是幂等的，同一证据键出现不同内容会拒绝写入。`find_passages` 与 `open_passage` 是 Evidence Ledger 上的本地操作，不会再次访问网络，也不会让无状态 Web Runtime 直接访问数据库。历史结果缺少 `claims`、`citations` 或 grounding 审计字段时会按空列表/空引用兼容读取。
+
+这一层是可信模式与未来 Deep Research 的共享基础，但本阶段不包含 `/deep-research`、研究规划器、补搜循环、来源数量/多样性策略或长报告 UI。普通可信运行不会选择或导入 Deep Research；只有本次运行实际存在 Web 证据或任务契约显式要求时才启用 grounding 校验。未来 Deep Research 应作为可选工作流模块复用该层，并通过自己的冻结验证配置增加覆盖率、新鲜度、多样性和冲突策略。
 
 ### Agent loop 配置
 

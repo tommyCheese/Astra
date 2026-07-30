@@ -63,6 +63,7 @@ class BashExecuteTool(Tool):
         output_schema={"type": "object"},
         permission="command_execute",
         side_effect_level="external_side_effect",
+        task_capabilities=["workspace.execute", "computation.execute"],
         capabilities=["command_execute"],
         permissions=[
             "command_execute",

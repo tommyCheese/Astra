@@ -3,6 +3,7 @@ import type { SkillSummary } from '../src/api';
 import {
   detectSlashSkillCommand,
   filterSkillCommandOptions,
+  filterSlashCommandOptions,
   normalizeSelectedSkillIds,
 } from '../src/composerSkills';
 
@@ -78,5 +79,18 @@ describe('normalizeSelectedSkillIds', () => {
       'invalid',
       'builtin:astra-authoring',
     ])).toEqual(['custom:hello-astra', 'builtin:astra-authoring']);
+  });
+});
+
+describe('filterSlashCommandOptions', () => {
+  it('places matching registered system commands before Skill options', () => {
+    const options = filterSlashCommandOptions(
+      [{ name: 'compact', command: '/compact', description: '压缩上下文', effect: 'compact_context', argument_mode: 'none', usage: '/compact', side_effect: 'write', available: true }],
+      [skill({ name: 'compact-helper', qualified_identity: 'custom:compact-helper' })],
+      'comp',
+      [],
+    );
+    expect(options[0]).toMatchObject({ kind: 'command', command: { name: 'compact' } });
+    expect(options[1]).toMatchObject({ kind: 'skill', skill: { name: 'compact-helper' } });
   });
 });

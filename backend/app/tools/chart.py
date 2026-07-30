@@ -183,6 +183,7 @@ class ChartRenderTool(Tool):
         output_schema={"type": "object"},
         permission="sandboxed_compute",
         side_effect_level="artifact_write",
+        task_capabilities=["data.visualize", "artifact.render"],
         capabilities=["sandboxed_compute", "artifact_write"],
         permissions=["sandboxed_compute", "temporary_compute", "workspace_read", "artifact_write"],
         risk="sandboxed",

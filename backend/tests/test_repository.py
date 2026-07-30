@@ -359,14 +359,14 @@ async def test_runtime_resume_context_loads_in_two_queries(session):
 
 async def test_loading_autodream_protocol_has_no_database_side_effect(session):
     repo = RunRepository(session)
-    run = await repo.create_task_run("AutoDream 占位测试", {"provider": "mock"})
+    run = await repo.create_task_run("AutoDream 协议测试", {"provider": "mock"})
 
     profile = load_agent_profile()
     before = await repo.list_memories(run_id=run.id)
     autodream = profile.document("autodream")
     after = await repo.list_memories(run_id=run.id)
 
-    assert autodream.status == "disabled"
+    assert autodream.status == "active"
     assert before == after == []
     assert not any(event.type.startswith("autodream") for event in await repo.list_events(run.id))
 

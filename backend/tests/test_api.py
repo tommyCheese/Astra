@@ -3,11 +3,12 @@ import json
 
 import pytest
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.api import runs as runs_api
 from app.core.config import Settings, get_settings
-from app.db.models import Base
+from app.db.models import Base, RunRecord, TaskRecord, utc_now
 from app.db.session import get_session
 from app.main import create_app
 from app.repositories.plans import PlanRepository, plan_to_view
@@ -66,6 +67,204 @@ async def test_create_run_rejects_empty_goal(app_client):
     assert error["code"] == "GOAL_REQUIRED"
     assert error["type"] == "validation.input_invalid"
     assert error["trace_id"].startswith("req_")
+
+
+async def test_context_status_and_registered_commands_preserve_history(app_client):
+    now = utc_now()
+    task = TaskRecord(
+        title="长对话",
+        description="开始",
+        status="created",
+        preferred_answer_mode="standard",
+        created_at=now,
+        updated_at=now,
+    )
+    async with app_client._astra_session() as session:
+        session.add(task)
+        await session.flush()
+        for index in range(6):
+            session.add(
+                RunRecord(
+                    task_id=task.id,
+                    status="completed",
+                    mode="web_agent",
+                    answer_mode="standard",
+                    model_policy={"conversation_goal": f"问题 {index}"},
+                    summary=f"回答 {index}",
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+        await session.commit()
+        task_id = task.id
+
+    catalog = await app_client.get("/api/system-commands")
+    assert catalog.status_code == 200
+    assert [item["command"] for item in catalog.json()] == [
+        "/compact",
+        "/clear",
+        "/schedule",
+        "/heartbeat",
+    ]
+    assert catalog.json()[2]["argument_mode"] == "required"
+    assert catalog.json()[2]["usage"].startswith("/schedule ")
+    assert catalog.json()[2]["side_effect"] == "mixed"
+
+    capabilities = await app_client.post(
+        "/api/models/context-capabilities/resolve",
+        json={
+            "models": [
+                {"provider": "openai", "model": "gpt-5.6-sol"},
+                {"provider": "compatible", "model": "private-model"},
+            ]
+        },
+    )
+    assert capabilities.status_code == 200
+    assert capabilities.json()["capabilities"] == [
+        {
+            "provider": "openai",
+            "model": "gpt-5.6-sol",
+            "window_tokens": 1_050_000,
+            "max_output_tokens": 128_000,
+            "source": "catalog",
+            "verified": True,
+            "documentation_url": "https://developers.openai.com/api/docs/models/gpt-5.6-sol",
+            "capability_version": 2,
+        },
+        {
+            "provider": "compatible",
+            "model": "private-model",
+            "window_tokens": 131_072,
+            "max_output_tokens": None,
+            "source": "fallback",
+            "verified": False,
+            "documentation_url": None,
+            "capability_version": 2,
+        },
+    ]
+
+    status = await app_client.get(
+        f"/api/conversations/{task_id}/context",
+        params={"provider": "openai", "model": "gpt-5", "draft": "继续"},
+    )
+    assert status.status_code == 200
+    assert status.json()["window_tokens"] == 400_000
+    assert status.json()["context_source"] == "catalog"
+    assert status.json()["context_verified"] is True
+    assert status.json()["context_documentation_url"] == (
+        "https://developers.openai.com/api/docs/models/gpt-5"
+    )
+    assert status.json()["visible_run_count"] == 6
+    assert status.json()["estimated"] is True
+
+    attempted_override = await app_client.get(
+        f"/api/conversations/{task_id}/context",
+        params={
+            "provider": "compatible",
+            "model": "private-model",
+            "context_mode": "manual",
+            "context_window_tokens": 65_536,
+            "max_output_tokens": 4_096,
+        },
+    )
+    assert attempted_override.status_code == 200
+    assert attempted_override.json()["window_tokens"] == 131_072
+    assert attempted_override.json()["max_output_tokens"] is None
+    assert attempted_override.json()["context_source"] == "fallback"
+    assert attempted_override.json()["context_verified"] is False
+
+    compacted = await app_client.post(
+        f"/api/conversations/{task_id}/commands/compact",
+        params={"provider": "openai", "model": "gpt-5"},
+    )
+    assert compacted.status_code == 200
+    assert compacted.json()["context"]["summary_active"] is True
+    assert compacted.json()["details"]["folded"] == 2
+
+    cleared = await app_client.post(
+        f"/api/conversations/{task_id}/commands/clear",
+        params={"provider": "openai", "model": "gpt-5"},
+    )
+    assert cleared.status_code == 200
+    assert cleared.json()["context"]["visible_run_count"] == 0
+    assert cleared.json()["context"]["summary_active"] is False
+
+    detail = await app_client.get(f"/api/conversations/{task_id}")
+    assert len(detail.json()["runs"]) == 6
+
+    unknown = await app_client.post(
+        f"/api/conversations/{task_id}/commands/not-registered",
+        params={"provider": "openai", "model": "gpt-5"},
+    )
+    assert unknown.status_code == 404
+    assert unknown.json()["error"]["code"] == "SYSTEM_COMMAND_NOT_FOUND"
+
+
+async def test_parameterized_automation_commands_are_host_operations(app_client):
+    now = utc_now()
+    task = TaskRecord(
+        title="自动化命令",
+        description="自动化命令",
+        status="created",
+        preferred_answer_mode="standard",
+        created_at=now,
+        updated_at=now,
+    )
+    async with app_client._astra_session() as session:
+        session.add(task)
+        await session.commit()
+        task_id = task.id
+
+    schedules = await app_client.post(
+        f"/api/conversations/{task_id}/commands/schedule",
+        params={"provider": "mock", "model": "mock-model"},
+        json={"arguments": "list"},
+    )
+    assert schedules.status_code == 200
+    assert schedules.json()["details"] == {"jobs": []}
+
+    heartbeat = await app_client.post(
+        f"/api/conversations/{task_id}/commands/heartbeat",
+        params={"provider": "mock", "model": "mock-model"},
+        json={"arguments": "status"},
+    )
+    assert heartbeat.status_code == 200
+    assert heartbeat.json()["details"]["heartbeat"] == {
+        "configured": False,
+        "enabled": False,
+    }
+
+    invalid = await app_client.post(
+        f"/api/conversations/{task_id}/commands/schedule",
+        params={"provider": "mock", "model": "mock-model"},
+        json={"arguments": "list --shell nope"},
+    )
+    assert invalid.status_code == 422
+    assert invalid.json()["error"]["code"] == "SYSTEM_COMMAND_USAGE_INVALID"
+
+    missing = await app_client.post(
+        f"/api/conversations/{task_id}/commands/heartbeat",
+        params={"provider": "mock", "model": "mock-model"},
+        json={"arguments": ""},
+    )
+    assert missing.status_code == 422
+    assert missing.json()["error"]["code"] == "SYSTEM_COMMAND_ARGUMENTS_REQUIRED"
+
+    compact_with_arguments = await app_client.post(
+        f"/api/conversations/{task_id}/commands/compact",
+        params={"provider": "mock", "model": "mock-model"},
+        json={"arguments": "unexpected"},
+    )
+    assert compact_with_arguments.status_code == 422
+    assert compact_with_arguments.json()["error"]["code"] == (
+        "SYSTEM_COMMAND_USAGE_INVALID"
+    )
+
+    async with app_client._astra_session() as session:
+        runs = await session.execute(
+            select(RunRecord).where(RunRecord.task_id == task_id)
+        )
+        assert list(runs.scalars()) == []
 
 
 async def test_unattended_run_requires_permission_bundle(app_client):
@@ -291,7 +490,11 @@ async def test_plan_confirmation_resume_consumes_bound_token_once(app_client):
     assert replay.json()["error"]["code"] == "PLAN_CONFIRMATION_INVALID"
 
 
-async def _create_waiting_confirmation(app_client, goal: str = "调整计划"):
+async def _create_waiting_confirmation(
+    app_client,
+    goal: str = "调整计划",
+    model_policy: dict | None = None,
+):
     async with app_client._astra_session() as session:
         repo = RunRepository(session)
         profile = RunProfileResolver().resolve(
@@ -301,7 +504,7 @@ async def _create_waiting_confirmation(app_client, goal: str = "调整计划"):
         )
         run = await repo.create_task_run(
             goal,
-            {"provider": "mock"},
+            model_policy or {"provider": "mock"},
             reasoning_policy=profile.reasoning_policy.model_dump(mode="json"),
             answer_mode="trusted",
             execution_profile=profile.model_dump(mode="json"),
@@ -400,6 +603,9 @@ async def test_invalid_plan_revision_restores_original_with_fresh_token(
         def bind_reasoning_effort(self, effort):
             return None
 
+        def bind_model_thinking(self, thinking):
+            return None
+
         async def plan(self, goal, *, contract):
             return PlanDraft(
                 nodes=[
@@ -415,6 +621,9 @@ async def test_invalid_plan_revision_restores_original_with_fresh_token(
                     )
                 ]
             )
+
+        async def aclose(self):
+            return None
 
     monkeypatch.setattr(
         plan_revision_module,
@@ -447,6 +656,9 @@ async def test_plan_revision_repairs_one_invalid_model_draft(app_client, monkeyp
         def bind_reasoning_effort(self, effort):
             return None
 
+        def bind_model_thinking(self, thinking):
+            return None
+
         async def plan(self, goal, *, contract):
             self.goals.append(json.loads(goal))
             depends_on = ["revised"] if len(self.goals) == 1 else []
@@ -466,6 +678,9 @@ async def test_plan_revision_repairs_one_invalid_model_draft(app_client, monkeyp
                 ]
             )
 
+        async def aclose(self):
+            return None
+
     client = RepairingRevisionClient()
     monkeypatch.setattr(
         plan_revision_module,
@@ -483,6 +698,91 @@ async def test_plan_revision_repairs_one_invalid_model_draft(app_client, monkeyp
     node = current["plan_graph"]["nodes"][0]
     assert node["required_capabilities"] == []
     assert node["success_criteria_refs"] == ["criterion-result"]
+
+
+async def test_plan_revision_reuses_frozen_thinking_and_records_usage(
+    app_client, monkeypatch
+):
+    thinking_snapshot = {
+        "requested": {
+            "enabled": True,
+            "depth": "high",
+            "capability_version": 2,
+        },
+        "effective": {"enabled": True, "depth": "high"},
+        "source": "explicit_model_control",
+        "adapter": "openai-gpt5-modern",
+        "adjustments": [],
+        "capability_version": 2,
+    }
+    run_id, _original_plan_id, payload = await _create_waiting_confirmation(
+        app_client,
+        model_policy={
+            "provider": "openai",
+            "model": "gpt-5.6",
+            "base_url": "https://user:secret@example.test/v1",
+            "thinking": thinking_snapshot,
+        },
+    )
+    payload["model"] = {
+        "provider": "openai",
+        "name": "gpt-5.6",
+        "api_key": "runtime-secret",
+        "base_url": "https://example.test/v1",
+        "thinking": {
+            "enabled": True,
+            "depth": "high",
+            "capability_version": 2,
+        },
+    }
+
+    class RevisionSpyClient:
+        def __init__(self):
+            self.usage_recorder = None
+            self.thinking = None
+            self.closed = False
+
+        def bind_agent_profile(self, profile):
+            return None
+
+        def bind_reasoning_effort(self, effort):
+            return None
+
+        def bind_model_thinking(self, thinking):
+            self.thinking = thinking
+
+        async def plan(self, goal, *, contract):
+            return PlanDraft(
+                nodes=[
+                    PlanNodeDraft(
+                        node_key="respond",
+                        title="生成修订回复",
+                        intent="按修订要求回应用户",
+                        success_criteria_refs=["criterion-result"],
+                        expected_outcome=ExpectedObservation(
+                            kind="final_answer",
+                            success_condition="answer exists",
+                        ),
+                    )
+                ]
+            )
+
+        async def aclose(self):
+            self.closed = True
+
+    client = RevisionSpyClient()
+    monkeypatch.setattr(
+        plan_revision_module,
+        "build_model_client",
+        lambda settings: client,
+    )
+
+    revised = await app_client.post(f"/api/runs/{run_id}/resume", json=payload)
+
+    assert revised.status_code == 200
+    assert client.thinking == thinking_snapshot
+    assert client.usage_recorder.run_id == run_id
+    assert client.closed is True
 
 
 async def test_conversation_detail_eager_loads_canonical_plan(app_client):
@@ -763,6 +1063,58 @@ async def test_create_and_get_run(app_client):
     assert body["agent_profile"]["version"].startswith("profile-")
     assert "content" not in body["agent_profile"]["documents"]["identity"]
     assert "secret" not in str(body["agent_profile"]).lower()
+
+
+async def test_run_api_preserves_grounding_result_and_legacy_defaults(app_client):
+    created = await app_client.post("/api/runs", json={"goal": "引用测试"})
+    run_id = created.json()["run_id"]
+    async with app_client._astra_session() as session:
+        await RunRepository(session).update_run_status(
+            run_id,
+            "completed",
+            summary="有证据的回答",
+            result={
+                "summary": "有证据的回答",
+                "claims": [
+                    {
+                        "id": "claim-1",
+                        "text": "有证据的回答",
+                        "evidence_refs": ["evidence-1"],
+                        "support_status": "supported",
+                    }
+                ],
+                "citations": [
+                    {
+                        "id": "citation-1",
+                        "claim_id": "claim-1",
+                        "evidence_ref": "evidence-1",
+                        "url": "https://example.com/source",
+                    }
+                ],
+                "audit_refs": {
+                    "evidence_ledger_artifact_id": "artifact-1",
+                    "evidence_record_count": 2,
+                },
+            },
+        )
+
+    grounded = (await app_client.get(f"/api/runs/{run_id}")).json()["result"]
+    assert grounded["claims"][0]["evidence_refs"] == ["evidence-1"]
+    assert grounded["citations"][0]["claim_id"] == "claim-1"
+    assert grounded["audit_refs"]["evidence_record_count"] == 2
+
+    legacy = await app_client.post("/api/runs", json={"goal": "历史结果"})
+    legacy_run_id = legacy.json()["run_id"]
+    async with app_client._astra_session() as session:
+        await RunRepository(session).update_run_status(
+            legacy_run_id,
+            "completed",
+            result={"summary": "历史回答"},
+        )
+    historical = (await app_client.get(f"/api/runs/{legacy_run_id}")).json()["result"]
+    assert historical["claims"] == []
+    assert historical["citations"] == []
+    assert historical["audit_refs"]["evidence_record_count"] == 0
 
 
 async def test_conversation_management_and_share_lifecycle(app_client):
@@ -1346,7 +1698,7 @@ async def test_resume_requires_waiting_run(app_client):
     assert response.json()["error"]["code"] == "RUN_NOT_WAITING"
 
 
-async def test_resume_reuses_selected_model_configuration(app_client, monkeypatch):
+async def test_resume_rejects_switching_the_frozen_run_model(app_client, monkeypatch):
     created = await app_client.post("/api/runs", json={"goal": "需要补充信息"})
     run_id = created.json()["run_id"]
     async with app_client._astra_session() as session:
@@ -1379,11 +1731,9 @@ async def test_resume_reuses_selected_model_configuration(app_client, monkeypatc
         },
     )
 
-    assert response.status_code == 200
-    assert scheduled["run_id"] == run_id
-    assert scheduled["settings"].model_provider == "compatible"
-    assert scheduled["settings"].model_name == "local-model"
-    assert scheduled["settings"].model_base_url == "http://127.0.0.1:11434/v1"
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "RUN_MODEL_MISMATCH"
+    assert scheduled == {}
 
 
 async def test_missing_run_uses_safe_error_envelope(app_client):
@@ -1397,3 +1747,180 @@ async def test_missing_run_uses_safe_error_envelope(app_client):
         "trace_id": response.json()["error"]["trace_id"],
         "details": {},
     }
+
+
+async def test_model_thinking_capabilities_api_is_batched_and_secret_free(app_client):
+    response = await app_client.post(
+        "/api/models/thinking-capabilities/resolve",
+        json={
+            "models": [
+                {"provider": "openai", "model": "gpt-5.2"},
+                {"provider": "qwen", "model": "qwen3.7-plus"},
+                {"provider": "google", "model": "gemini-2.5-pro"},
+            ]
+        },
+    )
+
+    assert response.status_code == 200
+    capabilities = response.json()["capabilities"]
+    assert [item["toggle"] for item in capabilities] == [
+        "optional",
+        "optional",
+        "unavailable",
+    ]
+    assert all(item["capability_version"] == 2 for item in capabilities)
+    assert all("api_key" not in item and "base_url" not in item for item in capabilities)
+
+
+async def test_create_run_persists_explicit_model_thinking_snapshot(app_client):
+    response = await app_client.post(
+        "/api/runs",
+        json={
+            "goal": "独立配置模型思考",
+            "reasoning_policy": {"reasoning_effort": "fast"},
+            "model": {
+                "provider": "qwen",
+                "name": "qwen3.7-plus",
+                "api_key": "secret",
+                "base_url": "https://example.test/v1",
+                "thinking": {
+                    "enabled": True,
+                    "depth": "high",
+                    "capability_version": 1,
+                },
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    run = (await app_client.get(f"/api/runs/{response.json()['run_id']}")).json()
+    assert run["reasoning_policy"]["effective"]["reasoning_effort"] == "fast"
+    assert "base_url" not in run["model_policy"]
+    assert run["model_policy"]["thinking"] == {
+        "requested": {
+            "enabled": True,
+            "depth": "high",
+            "capability_version": 1,
+        },
+        "effective": {"enabled": True, "depth": "high"},
+        "source": "explicit_model_control",
+        "adapter": "qwen-hybrid-thinking",
+        "adjustments": [
+            {
+                "field": "capability_version",
+                "requested": 1,
+                "effective": 2,
+                "reason": "capability_version_changed",
+            }
+        ],
+        "capability_version": 2,
+    }
+
+
+@pytest.mark.parametrize(
+    (
+        "answer_mode",
+        "provider",
+        "model",
+        "thinking",
+        "expected_source",
+        "expected_enabled",
+        "expected_depth",
+    ),
+    [
+        (
+            "standard",
+            "qwen",
+            "qwen3.7-plus",
+            {"enabled": False, "capability_version": 1},
+            "explicit_model_control",
+            False,
+            None,
+        ),
+        (
+            "trusted",
+            "openai",
+            "gpt-5",
+            {"enabled": False, "capability_version": 1},
+            "explicit_model_control",
+            True,
+            "medium",
+        ),
+        (
+            "standard",
+            "openai",
+            "gpt-4o",
+            {
+                "enabled": True,
+                "depth": "high",
+                "capability_version": 1,
+            },
+            "explicit_model_control",
+            False,
+            None,
+        ),
+        (
+            "trusted",
+            "qwen",
+            "qwen3.7-plus",
+            None,
+            "legacy_reasoning_policy",
+            True,
+            "medium",
+        ),
+    ],
+)
+async def test_model_thinking_api_smoke_matrix_across_answer_modes(
+    app_client,
+    answer_mode,
+    provider,
+    model,
+    thinking,
+    expected_source,
+    expected_enabled,
+    expected_depth,
+):
+    model_config = {
+        "provider": provider,
+        "name": model,
+        "api_key": "secret",
+        "base_url": "https://example.test/v1",
+    }
+    if thinking is not None:
+        model_config["thinking"] = thinking
+    response = await app_client.post(
+        "/api/runs",
+        json={
+            "goal": "模型思考端到端烟雾验证",
+            "answer_mode": answer_mode,
+            "model": model_config,
+        },
+    )
+
+    assert response.status_code == 200
+    run = (await app_client.get(f"/api/runs/{response.json()['run_id']}")).json()
+    snapshot = run["model_policy"]["thinking"]
+    assert snapshot["source"] == expected_source
+    assert snapshot["effective"] == {
+        "enabled": expected_enabled,
+        "depth": expected_depth,
+    }
+
+
+async def test_create_run_rejects_provider_native_thinking_fields(app_client):
+    response = await app_client.post(
+        "/api/runs",
+        json={
+            "goal": "拒绝原生字段",
+            "model": {
+                "provider": "qwen",
+                "name": "qwen3.7-plus",
+                "api_key": "secret",
+                "base_url": "https://example.test/v1",
+                "thinking_budget": 8192,
+            },
+        },
+    )
+
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "REQUEST_INVALID"

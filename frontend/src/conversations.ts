@@ -23,9 +23,18 @@ export function normalizeRunView(run: RunView): RunView {
         ? finding.artifact_ids.filter((artifactId): artifactId is string => typeof artifactId === 'string')
         : [],
     })),
+    claims: Array.isArray(run.result.claims) ? run.result.claims : [],
+    citations: Array.isArray(run.result.citations) ? run.result.citations : [],
     sources: run.result.sources ?? [],
     caveats: run.result.caveats ?? [],
     verification_notes: run.result.verification_notes ?? [],
+    audit_refs: {
+      evidence_record_count: run.result.audit_refs?.evidence_record_count ?? 0,
+      agent_turn_count: run.result.audit_refs?.agent_turn_count ?? 0,
+      referenced_artifact_ids: run.result.audit_refs?.referenced_artifact_ids ?? [],
+      evidence_pack_artifact_id: run.result.audit_refs?.evidence_pack_artifact_id,
+      evidence_ledger_artifact_id: run.result.audit_refs?.evidence_ledger_artifact_id,
+    },
   } : run.result;
   const rawGraph = run.answer_mode === 'trusted' && run.plan_graph && 'id' in run.plan_graph
     ? run.plan_graph

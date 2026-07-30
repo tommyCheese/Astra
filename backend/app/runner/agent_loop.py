@@ -6,10 +6,15 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 
 from sqlalchemy import select
+from sqlalchemy.exc import SQLAlchemyError
 
 from app.artifacts import ArtifactService, LocalArtifactStore
 from app.core.config import Settings
 from app.db.models import RunRecord, RunSkillSnapshotRecord
+from app.grounding.projection import project_grounded_answer
+from app.grounding.repository import EvidenceRepository, EvidenceWriter
+from app.grounding.validators import grounding_validation_outcomes
+from app.memory.domain import MemoryConflictError, MemoryStatus, MemoryValidationError
 from app.permissions.effects import (
     DefaultEffectAnalyzer,
     effect_plan_hash,
@@ -19,6 +24,7 @@ from app.permissions.effects import (
 from app.permissions.engine import PermissionEngine
 from app.permissions.governance import ExtensionTrustPolicy
 from app.repositories.executions import NodeExecutionRepository
+from app.repositories.memories import MemoryRepository
 from app.repositories.permissions import PermissionRepository
 from app.repositories.plans import PlanRepository, plan_to_view
 from app.repositories.runs import RunRepository
@@ -376,26 +382,164 @@ class MemoryManager:
             )
             await self.repo.session.commit()
             return []
-        writes = []
+        memory_repo = MemoryRepository(self.repo.session)
+        writes: list[dict[str, Any]] = []
         for candidate in candidates:
-            memory = await self.repo.create_memory(
-                run_id=run_id,
-                scope=candidate.scope,
-                kind=candidate.kind,
-                content=candidate.content,
-                structured_data=candidate.structured_data,
-                provenance=candidate.provenance,
-                confidence=candidate.confidence,
-                expires_at=candidate.expires_at,
-            )
+            try:
+                protected_fields = {
+                    "approval",
+                    "approvals",
+                    "credential",
+                    "credentials",
+                    "permission",
+                    "permissions",
+                    "sandbox",
+                    "system_prompt",
+                    "tool_allowlist",
+                }
+                if protected_fields & set(candidate.structured_data):
+                    raise MemoryValidationError(
+                        "Memory candidate cannot carry protected authority fields"
+                    )
+                namespace, _ = await memory_repo.namespace_for_write(
+                    run_id=run_id,
+                    scope=candidate.scope,
+                )
+                provenance = dict(candidate.provenance)
+                provenance["run_id"] = run_id
+                memory_key = str(candidate.memory_key or "").strip()
+                if not memory_key:
+                    raise MemoryValidationError("Memory candidate requires a stable key")
+                existing = await memory_repo.latest_for_key(
+                    namespace=namespace,
+                    memory_key=memory_key,
+                    include_sources=True,
+                )
+                if (
+                    existing is not None
+                    and existing.status == MemoryStatus.active.value
+                    and existing.content == candidate.content
+                ):
+                    memory = existing
+                    await self.repo.add_event(
+                        run_id,
+                        "memory.write_deduplicated",
+                        {
+                            "memory_id": memory.id,
+                            "memory_key": memory.memory_key,
+                            "version": memory.version,
+                        },
+                    )
+                    await self.repo.session.commit()
+                elif existing is not None and existing.status == MemoryStatus.active.value:
+                    memory = await memory_repo.create_version(
+                        existing.id,
+                        expected_state_version=existing.state_version,
+                        content=candidate.content,
+                        provenance=provenance,
+                        structured_data=candidate.structured_data,
+                        confidence=candidate.confidence,
+                        importance=candidate.importance,
+                        valid_from=candidate.valid_from,
+                        actor="memory-extractor",
+                        reason="new supported observation for stable memory key",
+                    )
+                    await self.repo.add_event(
+                        run_id,
+                        "memory.version_created",
+                        {
+                            "memory_id": memory.id,
+                            "memory_key": memory.memory_key,
+                            "version": memory.version,
+                            "supersedes_id": memory.supersedes_id,
+                        },
+                    )
+                    await self.repo.session.commit()
+                elif existing is not None:
+                    raise MemoryConflictError(
+                        "Stable Memory key is not currently eligible for replacement"
+                    )
+                else:
+                    memory = await memory_repo.create(
+                        run_id=run_id,
+                        scope=candidate.scope,
+                        kind=candidate.kind,
+                        content=candidate.content,
+                        structured_data=candidate.structured_data,
+                        provenance=provenance,
+                        confidence=candidate.confidence,
+                        memory_key=memory_key,
+                        status=MemoryStatus.candidate,
+                        importance=candidate.importance,
+                        utility_score=0.0,
+                        observed_at=candidate.observed_at,
+                        valid_from=candidate.valid_from,
+                        valid_to=candidate.valid_to,
+                        expires_at=candidate.expires_at,
+                        normalize_kind=True,
+                        commit=False,
+                    )
+                    await self.repo.add_event(
+                        run_id,
+                        "memory.candidate_created",
+                        {
+                            "memory_id": memory.id,
+                            "memory_key": memory.memory_key,
+                            "scope": memory.scope,
+                            "kind": memory.kind,
+                        },
+                    )
+                    await self.repo.session.commit()
+                    memory = await memory_repo.transition(
+                        memory.id,
+                        MemoryStatus.active,
+                        expected_state_version=memory.state_version,
+                        actor="memory-extractor",
+                        reason="validated extractor candidate",
+                        commit=False,
+                    )
+                    await self.repo.add_event(
+                        run_id,
+                        "memory.activated",
+                        {
+                            "memory_id": memory.id,
+                            "memory_key": memory.memory_key,
+                            "state_version": memory.state_version,
+                        },
+                    )
+                    await self.repo.session.commit()
+            except (MemoryValidationError, MemoryConflictError, SQLAlchemyError, ValueError) as exc:
+                await self.repo.session.rollback()
+                logger.warning(
+                    "memory.candidate.rejected run_id=%s kind=%s reason=%s",
+                    run_id,
+                    candidate.kind,
+                    type(exc).__name__,
+                )
+                await self.repo.add_event(
+                    run_id,
+                    "memory.write_rejected",
+                    {
+                        "scope": candidate.scope,
+                        "kind": candidate.kind,
+                        "reason": type(exc).__name__,
+                    },
+                )
+                await self.repo.session.commit()
+                continue
             writes.append(
                 {
                     "id": memory.id,
+                    "memory_key": memory.memory_key,
+                    "namespace_type": memory.namespace_type,
+                    "namespace_id": memory.namespace_id,
                     "scope": memory.scope,
                     "kind": memory.kind,
-                    "content": memory.content,
+                    "status": memory.status,
+                    "version": memory.version,
+                    "state_version": memory.state_version,
                     "confidence": memory.confidence,
-                    "provenance": memory.provenance,
+                    "importance": memory.importance,
                 }
             )
         return writes
@@ -706,6 +850,8 @@ class AgentLoop:
             if checkpoint.phase == "result_recorded" and call and call.output is not None:
                 recovered_output = self._normalize_tool_output(call.tool_name, call.output)
                 recovered_output["tool_call_id"] = call.id
+                recovered_output["plan_node_id"] = call.plan_node_id
+                recovered_output["node_execution_id"] = call.node_execution_id
                 processor = self.processors.for_tool(call.tool_name)
                 if processor:
                     recovered_observation, _ = processor.process(call.tool_name, recovered_output)
@@ -2070,6 +2216,8 @@ class AgentLoop:
                 )
                 output = self._normalize_tool_output(tool.spec.name, output)
                 output["tool_call_id"] = call.id
+                output["plan_node_id"] = call.plan_node_id
+                output["node_execution_id"] = call.node_execution_id
                 tool_outputs.append(output)
                 processor = self.processors.for_tool(tool.spec.name)
                 if processor:
@@ -2269,11 +2417,18 @@ class AgentLoop:
                 content_ref=json.dumps(evidence_pack, ensure_ascii=False),
                 metadata={
                     "format": "json",
+                    "schema": "grounding-ledger.v1",
+                    "evidence_records": len(self.adapter.grounding.records()),
                     "audited_sources": len(evidence_pack["fetched_sources"]),
                     "failed_sources": len(evidence_pack["failed_sources"]),
                 },
             )
             evidence_pack["artifact_id"] = artifact.id
+            await EvidenceWriter(EvidenceRepository(repo.session)).write(
+                run_id,
+                self.adapter.grounding.records(),
+                artifact_ids=[artifact.id],
+            )
         final_context = {
             "run_id": run_id,
             "observations": observations,
@@ -2292,6 +2447,7 @@ class AgentLoop:
             final_answer = await self.model_client.finalize(
                 goal, final_context, on_delta=on_answer_delta
             )
+        final_answer = project_grounded_answer(final_answer, self.adapter.grounding)
         current_artifacts = await repo.list_artifacts(run_id)
         final_answer, invalid_artifact_references, referenced_artifact_ids = (
             normalize_final_answer_artifact_references(final_answer, current_artifacts)
@@ -2304,6 +2460,7 @@ class AgentLoop:
             result["verification_report"] = None
             result["completion_decision"] = None
             result["audit_refs"] = {
+                "evidence_record_count": len(self.adapter.grounding.records()),
                 "agent_turn_count": await repo.count_agent_turns(run_id),
                 "referenced_artifact_ids": referenced_artifact_ids,
             }
@@ -2340,6 +2497,12 @@ class AgentLoop:
                 if self.chart_adapter.attempted and not self.adapter.attempted
                 else self.adapter.validate(final_answer.model_dump(), evidence_pack)
             ]
+            adapter_outcomes.extend(
+                grounding_validation_outcomes(
+                    final_answer.model_dump(mode="json"),
+                    evidence_pack,
+                )
+            )
         report = verifier.verify(
             final_answer,
             evidence_pack,
@@ -2468,6 +2631,8 @@ class AgentLoop:
         result["verification_report"] = report.model_dump()
         result["audit_refs"] = {
             "evidence_pack_artifact_id": artifact.id if artifact is not None else None,
+            "evidence_ledger_artifact_id": artifact.id if artifact is not None else None,
+            "evidence_record_count": len(self.adapter.grounding.records()),
             "agent_turn_count": len(observations) + (1 if final_turn_id else 0),
             "referenced_artifact_ids": referenced_artifact_ids,
         }

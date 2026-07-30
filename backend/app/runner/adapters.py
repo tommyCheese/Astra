@@ -3,6 +3,9 @@ from collections.abc import Iterable
 from typing import Any, ClassVar
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
+from app.grounding.fragments import fragments_from_web_result
+from app.grounding.ledger import EvidenceLedger
+from app.grounding.schemas import EvidenceLineage
 from app.schemas.agent import AgentObservation, ValidationIssue, ValidationOutcome
 
 
@@ -57,6 +60,7 @@ class WebTaskAdapter(TaskAdapter, ToolResultProcessor):
         self.dedupe: dict[str, Any] = {}
         self.search_warnings: list[str] = []
         self.attempted = False
+        self.grounding = EvidenceLedger()
 
     def normalize_tool_result(self, tool_name: str, output: dict[str, Any]) -> AgentObservation:
         return AgentObservation(
@@ -72,10 +76,14 @@ class WebTaskAdapter(TaskAdapter, ToolResultProcessor):
         self.attempted = True
         evidence: dict[str, Any] = {}
         if tool_name == "web_search":
-            self.candidates, self.dedupe = self.filter_candidates(output.get("candidates", []))
+            self.candidates, self.dedupe = self.filter_candidates(
+                [*self.candidates, *output.get("candidates", [])]
+            )
             output["candidates"] = self.candidates
             output["dedupe"] = self.dedupe
-            self.search_warnings = output.get("warnings", [])
+            self.search_warnings = list(
+                dict.fromkeys([*self.search_warnings, *output.get("warnings", [])])
+            )
             evidence = {
                 "candidate_count": output.get("candidate_count", len(self.candidates)),
                 "deduped_count": len(self.candidates),
@@ -87,6 +95,18 @@ class WebTaskAdapter(TaskAdapter, ToolResultProcessor):
                 "fetched_count": len(self.fetched_sources),
                 "last_quality": output.get("quality_score"),
             }
+        fragments = fragments_from_web_result(
+            tool_name,
+            output,
+            lineage=EvidenceLineage(
+                plan_node_id=str(output.get("plan_node_id") or "") or None,
+                node_execution_id=str(output.get("node_execution_id") or "") or None,
+                tool_call_id=str(output.get("tool_call_id") or "") or None,
+            ),
+        )
+        self.grounding.extend(fragments)
+        if fragments:
+            evidence["evidence_refs"] = [item.id for item in fragments]
         return self.normalize_tool_result(tool_name, output), evidence
 
     def record_failure(
@@ -222,6 +242,8 @@ class WebTaskAdapter(TaskAdapter, ToolResultProcessor):
             "dedupe": self.dedupe,
             "warnings": warnings,
             "external_evidence_attempted": attempted,
+            "grounding": self.grounding.model_dump(),
+            "grounding_context": self.grounding.context_projection(),
         }
 
 

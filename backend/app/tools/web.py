@@ -16,6 +16,15 @@ from charset_normalizer import from_bytes
 from trafilatura import extract as extract_main_content
 from trafilatura import extract_metadata
 
+from app.grounding.identity import (
+    candidate_id,
+    canonical_url,
+    digest_text,
+    search_trace_id,
+    segment_passages,
+    snapshot_id,
+    source_id,
+)
 from app.tools.base import Tool, ToolExecutionError, ToolSpec
 
 if TYPE_CHECKING:
@@ -136,21 +145,49 @@ class DuckDuckGoHTMLParser(HTMLParser):
 class WebSearchTool(Tool):
     spec = ToolSpec(
         name="web_search",
-        version="0.3.0",
+        version="0.4.0",
         description="Search the web through a configured provider and return candidate sources.",
         input_schema={
             "type": "object",
-            "required": ["query"],
             "properties": {
                 "query": {"type": "string"},
+                "queries": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 4,
+                    "items": {
+                        "anyOf": [
+                            {"type": "string"},
+                            {
+                                "type": "object",
+                                "required": ["query"],
+                                "properties": {
+                                    "query": {"type": "string"},
+                                    "purpose": {"type": "string"},
+                                },
+                            },
+                        ]
+                    },
+                },
                 "num_results": {"type": "integer"},
                 "language": {"type": "string"},
                 "region": {"type": "string"},
+                "filters": {
+                    "type": "object",
+                    "properties": {
+                        "after": {"type": "string"},
+                        "before": {"type": "string"},
+                        "include_domains": {"type": "array", "items": {"type": "string"}},
+                        "exclude_domains": {"type": "array", "items": {"type": "string"}},
+                        "content_types": {"type": "array", "items": {"type": "string"}},
+                    },
+                },
             },
         },
         output_schema={"type": "object", "required": ["query", "provider", "candidates"]},
         permission="network_read",
         side_effect_level="read_only",
+        task_capabilities=["information.search", "source.discover"],
         timeout_seconds=20,
         retry_policy={"max_attempts": 1},
         error_categories=["invalid_input", "missing_credentials", "search_failed"],
@@ -160,9 +197,38 @@ class WebSearchTool(Tool):
         self.settings = settings
 
     async def run(self, tool_input: dict[str, Any], *, context=None) -> dict[str, Any]:
-        query = str(tool_input.get("query", "")).strip()
-        if not query:
-            raise ToolExecutionError("invalid_input", "web_search requires a non-empty query")
+        requests = self._logical_queries(tool_input)
+        constraints = self._normalized_constraints(tool_input)
+        invocation_scope = str(getattr(context, "tool_call_id", "") or "") or None
+        normalized_input = {
+            **tool_input,
+            "num_results": constraints["max_results"],
+            "language": constraints["language"],
+            "region": constraints["region"],
+        }
+        outputs = await asyncio.gather(
+            *(
+                self._search_one(request["query"], normalized_input)
+                for request in requests
+            )
+        )
+        decorated = [
+            self._decorate_logical_output(
+                output,
+                request=request,
+                ordinal=index,
+                constraints=constraints,
+                invocation_scope=invocation_scope,
+            )
+            for index, (request, output) in enumerate(zip(requests, outputs, strict=True))
+        ]
+        if len(decorated) == 1:
+            return decorated[0]
+        return self._combine_logical_outputs(decorated)
+
+    async def _search_one(
+        self, query: str, tool_input: dict[str, Any]
+    ) -> dict[str, Any]:
         provider = self.settings.web_search_provider
         if provider == "auto":
             return await self._auto_search(query, tool_input)
@@ -174,6 +240,265 @@ class WebSearchTool(Tool):
             degraded=provider in {"bing", "duckduckgo"},
         )
 
+    @staticmethod
+    def _logical_queries(tool_input: dict[str, Any]) -> list[dict[str, str | None]]:
+        raw_queries = tool_input.get("queries")
+        if raw_queries is None:
+            raw_queries = [tool_input.get("query")]
+        if not isinstance(raw_queries, list) or not 1 <= len(raw_queries) <= 4:
+            raise ToolExecutionError(
+                "invalid_input", "web_search requires between one and four queries"
+            )
+        requests: list[dict[str, str | None]] = []
+        for raw in raw_queries:
+            if isinstance(raw, str):
+                query, purpose = raw.strip(), None
+            elif isinstance(raw, dict):
+                query = str(raw.get("query") or "").strip()
+                purpose = str(raw.get("purpose") or "").strip() or None
+            else:
+                query, purpose = "", None
+            if not query:
+                raise ToolExecutionError(
+                    "invalid_input", "web_search requires non-empty logical queries"
+                )
+            requests.append({"query": query[:1000], "purpose": purpose})
+        return requests
+
+    def _normalized_constraints(self, tool_input: dict[str, Any]) -> dict[str, Any]:
+        filters = tool_input.get("filters")
+        filters = filters if isinstance(filters, dict) else {}
+        num_results, language, region = self._search_parameters(tool_input)
+
+        def domains(name: str) -> list[str]:
+            values = filters.get(name) or []
+            if not isinstance(values, list):
+                raise ToolExecutionError("invalid_input", f"{name} must be an array")
+            normalized = []
+            for value in values[:16]:
+                domain = str(value).strip().lower().lstrip(".")
+                if domain and re.fullmatch(r"[a-z0-9.-]+", domain):
+                    normalized.append(domain)
+            return list(dict.fromkeys(normalized))
+
+        content_types = filters.get("content_types") or []
+        if not isinstance(content_types, list):
+            raise ToolExecutionError("invalid_input", "content_types must be an array")
+        return {
+            "language": language or None,
+            "region": region or None,
+            "after": str(filters.get("after") or "").strip() or None,
+            "before": str(filters.get("before") or "").strip() or None,
+            "include_domains": domains("include_domains"),
+            "exclude_domains": domains("exclude_domains"),
+            "content_types": [
+                str(value).strip().lower()
+                for value in content_types[:8]
+                if str(value).strip()
+            ],
+            "max_results": num_results,
+        }
+
+    def _decorate_logical_output(
+        self,
+        output: dict[str, Any],
+        *,
+        request: dict[str, str | None],
+        ordinal: int,
+        constraints: dict[str, Any],
+        invocation_scope: str | None,
+    ) -> dict[str, Any]:
+        query = str(request["query"])
+        trace_id = search_trace_id(query, ordinal, invocation_scope)
+        provider = str(output.get("provider") or "unknown")
+        applied = ["max_results"]
+        unsupported = [
+            name
+            for name in ("after", "before")
+            if constraints.get(name)
+        ]
+        if constraints.get("language"):
+            applied.append("language")
+        if constraints.get("region"):
+            if provider in {"google", "brave", "duckduckgo"}:
+                applied.append("region")
+            else:
+                unsupported.append("region")
+        audit = {
+            "applied": applied,
+            "emulated": [],
+            "post_filtered": [],
+            "unsupported": unsupported,
+        }
+        candidates = list(output.get("candidates") or [])
+        for name in ("include_domains", "exclude_domains", "content_types"):
+            if constraints.get(name):
+                candidates = self._post_filter_candidates(
+                    candidates, name, constraints[name]
+                )
+                audit["post_filtered"].append(name)
+        normalized = []
+        for rank, candidate in enumerate(candidates, start=1):
+            url = str(candidate.get("url") or "")
+            if not url:
+                continue
+            normalized_url = canonical_url(url)
+            normalized.append(
+                {
+                    **candidate,
+                    "candidate_id": candidate_id(trace_id, normalized_url),
+                    "search_trace_id": trace_id,
+                    "canonical_url": normalized_url,
+                    "provider_rank": int(candidate.get("rank") or rank),
+                    "evidence_strength": "candidate_only",
+                }
+            )
+        retrieved_at = iso_now()
+        return {
+            **output,
+            "query": query,
+            "query_count": 1,
+            "constraints": constraints,
+            "constraint_audit": audit,
+            "search_traces": [
+                {
+                    "id": trace_id,
+                    "query": query,
+                    "purpose": request.get("purpose"),
+                    "provider": output.get("provider"),
+                    "constraints": constraints,
+                    "constraint_audit": audit,
+                    "retrieved_at": retrieved_at,
+                }
+            ],
+            "candidate_count": len(normalized),
+            "candidates": normalized,
+            "retrieved_at": retrieved_at,
+        }
+
+    @staticmethod
+    def _post_filter_candidates(
+        candidates: list[dict[str, Any]], name: str, values: list[str]
+    ) -> list[dict[str, Any]]:
+        if name == "include_domains":
+            return [
+                item
+                for item in candidates
+                if any(
+                    (urlparse(str(item.get("url") or "")).hostname or "").lower() == domain
+                    or (urlparse(str(item.get("url") or "")).hostname or "")
+                    .lower()
+                    .endswith(f".{domain}")
+                    for domain in values
+                )
+            ]
+        if name == "exclude_domains":
+            return [
+                item
+                for item in candidates
+                if not any(
+                    (urlparse(str(item.get("url") or "")).hostname or "").lower() == domain
+                    or (urlparse(str(item.get("url") or "")).hostname or "")
+                    .lower()
+                    .endswith(f".{domain}")
+                    for domain in values
+                )
+            ]
+        extensions = {
+            "pdf": (".pdf",),
+            "web": ("", ".html", ".htm", "/"),
+        }
+        allowed = tuple(
+            extension
+            for value in values
+            for extension in extensions.get(value, ())
+        )
+        if not allowed:
+            return candidates
+        return [
+            item
+            for item in candidates
+            if urlparse(str(item.get("url") or "")).path.lower().endswith(allowed)
+        ]
+
+    @staticmethod
+    def _combine_logical_outputs(outputs: list[dict[str, Any]]) -> dict[str, Any]:
+        candidates = [
+            candidate for output in outputs for candidate in output.get("candidates", [])
+        ]
+        providers = list(dict.fromkeys(str(output.get("provider")) for output in outputs))
+        warnings = list(
+            dict.fromkeys(
+                warning for output in outputs for warning in output.get("warnings", [])
+            )
+        )
+        attempts = [
+            {
+                **attempt,
+                "search_trace_id": output["search_traces"][0]["id"],
+            }
+            for output in outputs
+            for attempt in output.get("provider_attempts", [])
+        ]
+        return {
+            "query": str(outputs[0]["query"]),
+            "queries": [
+                {
+                    "query": output["query"],
+                    "purpose": output["search_traces"][0].get("purpose"),
+                }
+                for output in outputs
+            ],
+            "query_count": len(outputs),
+            "provider": providers[0] if len(providers) == 1 else "mixed",
+            "provider_mode": (
+                outputs[0].get("provider_mode")
+                if len({output.get("provider_mode") for output in outputs}) == 1
+                else "mixed"
+            ),
+            "provider_attempts": attempts,
+            "degraded": any(bool(output.get("degraded")) for output in outputs),
+            "parameters": {"query_count": len(outputs)},
+            "constraints": outputs[0].get("constraints", {}),
+            "constraint_audit": {
+                "applied": list(
+                    dict.fromkeys(
+                        item
+                        for output in outputs
+                        for item in output["constraint_audit"]["applied"]
+                    )
+                ),
+                "emulated": list(
+                    dict.fromkeys(
+                        item
+                        for output in outputs
+                        for item in output["constraint_audit"]["emulated"]
+                    )
+                ),
+                "post_filtered": list(
+                    dict.fromkeys(
+                        item
+                        for output in outputs
+                        for item in output["constraint_audit"]["post_filtered"]
+                    )
+                ),
+                "unsupported": list(
+                    dict.fromkeys(
+                        item
+                        for output in outputs
+                        for item in output["constraint_audit"]["unsupported"]
+                    )
+                ),
+            },
+            "search_traces": [
+                trace for output in outputs for trace in output.get("search_traces", [])
+            ],
+            "candidate_count": len(candidates),
+            "warnings": warnings,
+            "candidates": candidates,
+            "retrieved_at": iso_now(),
+        }
+
     async def _run_provider(
         self, provider: str, query: str, tool_input: dict[str, Any]
     ) -> dict[str, Any]:
@@ -184,7 +509,7 @@ class WebSearchTool(Tool):
         if provider == "google":
             return await self._google_search(query, tool_input)
         if provider == "brave":
-            return await self._brave_search(query)
+            return await self._brave_search(query, tool_input)
         raise ToolExecutionError(
             "provider_not_configured",
             f"Unsupported web search provider: {provider}",
@@ -200,7 +525,7 @@ class WebSearchTool(Tool):
                 degraded=False,
             )
         if self.settings.web_search_api_key:
-            output = await self._brave_search(query)
+            output = await self._brave_search(query, tool_input)
             return self._with_audit(
                 output,
                 provider_mode="auto",
@@ -453,14 +778,22 @@ class WebSearchTool(Tool):
             "candidates": candidates,
         }
 
-    async def _brave_search(self, query: str) -> dict[str, Any]:
+    async def _brave_search(
+        self, query: str, tool_input: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
         if not self.settings.web_search_api_key:
             raise ToolExecutionError("missing_credentials", "WEB_SEARCH_API_KEY is required")
+        num_results, language, region = self._search_parameters(tool_input or {})
         try:
             async with httpx.AsyncClient(timeout=self.spec.timeout_seconds) as client:
                 response = await client.get(
                     "https://api.search.brave.com/res/v1/web/search",
-                    params={"q": query, "count": 5},
+                    params={
+                        "q": query,
+                        "count": num_results,
+                        **({"search_lang": language} if language else {}),
+                        **({"country": region} if region else {}),
+                    },
                     headers={"X-Subscription-Token": self.settings.web_search_api_key},
                 )
                 response.raise_for_status()
@@ -486,7 +819,11 @@ class WebSearchTool(Tool):
         return {
             "query": query,
             "provider": "brave",
-            "parameters": {"count": 5},
+            "parameters": {
+                "count": num_results,
+                "language": language,
+                "region": region,
+            },
             "candidate_count": len(candidates),
             "warnings": [],
             "candidates": candidates,
@@ -506,7 +843,7 @@ class FetchedResponse:
 class WebFetchTool(Tool):
     spec = ToolSpec(
         name="web_fetch",
-        version="0.3.0",
+        version="0.4.0",
         description=(
             "Securely fetch a public HTTP(S) URL with bounded streaming and extract its "
             "main readable content and metadata."
@@ -527,6 +864,7 @@ class WebFetchTool(Tool):
         },
         permission="network_read",
         side_effect_level="read_only",
+        task_capabilities=["information.read", "source.retrieve", "evidence.extract"],
         timeout_seconds=20,
         retry_policy={"max_attempts": 1},
         error_categories=[
@@ -793,6 +1131,7 @@ class ContentExtractor(HTMLParser):
         self.title_parts: list[str] = []
         self.metadata: dict[str, Any] = {}
         self.elements: list[dict[str, Any]] = []
+        self.links: list[str] = []
         self._stack: list[tuple[str, dict[str, str]]] = []
         self._skip_depth = 0
         self._current_title = False
@@ -811,6 +1150,8 @@ class ContentExtractor(HTMLParser):
         if tag == "meta":
             self._capture_meta(attr_dict)
             return
+        if tag == "a" and attr_dict.get("href"):
+            self.links.append(attr_dict["href"])
         if tag not in {
             "area",
             "base",
@@ -922,8 +1263,11 @@ def extract_source(
     retrieved_at = iso_now()
     requested_url = requested_url or url
     if "html" not in content_type and "<html" not in body[:500].lower():
-        content = normalize_space(body)[:max_chars]
+        normalized_body = normalize_space(body)
+        content = normalized_body[:max_chars]
         warnings = [] if len(content) >= min_quality_chars else ["正文过短，可能不足以支撑总结。"]
+        if len(normalized_body) > max_chars:
+            warnings.append("正文超过内容上限，已截断并保留稳定快照摘要。")
         return build_fetch_output(
             url,
             status_code,
@@ -942,6 +1286,7 @@ def extract_source(
             retrieved_at,
             min_quality_chars,
             requested_url=requested_url,
+            truncated=len(normalized_body) > max_chars,
         )
 
     parser = ContentExtractor()
@@ -975,6 +1320,11 @@ def extract_source(
         "canonical_url": metadata_attribute(document_metadata, "url"),
         "redirect_count": redirect_count,
         "response_bytes": response_bytes,
+        "links": [
+            urljoin(url, value)
+            for value in parser.links
+            if urlparse(urljoin(url, value)).scheme in {"http", "https"}
+        ][:100],
     }
     strategy = choose_strategy(crawler_plan, parser, description)
     extraction_warnings: list[str] = []
@@ -1020,18 +1370,22 @@ def extract_source(
         strategy = "fallback_snippet"
         content = snippet
         warnings.append("页面正文不可用，使用搜索摘要作为弱证据。")
+    normalized_content = normalize_space(content)
+    if len(normalized_content) > max_chars:
+        warnings.append("正文超过内容上限，已截断并保留稳定快照摘要。")
     return build_fetch_output(
         url,
         status_code,
         title,
         description,
-        content[:max_chars],
+        normalized_content[:max_chars],
         metadata,
         strategy,
         warnings,
         retrieved_at,
         min_quality_chars,
         requested_url=requested_url,
+        truncated=len(normalized_content) > max_chars,
     )
 
 
@@ -1134,13 +1488,28 @@ def build_fetch_output(
     min_quality_chars: int,
     *,
     requested_url: str | None = None,
+    truncated: bool = False,
 ) -> dict[str, Any]:
     content = normalize_space(content)
     quality_score = min(1.0, len(content) / max(float(min_quality_chars), 1.0))
+    canonical = canonical_url(str(metadata.get("canonical_url") or url))
+    source = source_id(canonical)
+    content_hash = digest_text(content)
+    snapshot = snapshot_id(source, content_hash)
+    passages = segment_passages(
+        content,
+        source=source,
+        snapshot=snapshot,
+        max_chars=900,
+        overlap_chars=120,
+        max_passages=32,
+    )
+    links = list(dict.fromkeys(metadata.get("links") or []))
     return {
         "url": url,
         "requested_url": requested_url or url,
         "final_url": url,
+        "canonical_url": canonical,
         "status_code": status_code,
         "title": title,
         "description": description,
@@ -1149,6 +1518,18 @@ def build_fetch_output(
         "extraction_strategy": strategy,
         "quality_score": round(quality_score, 3),
         "content_length": len(content),
+        "content_digest": content_hash,
+        "source_id": source,
+        "snapshot_id": snapshot,
+        "segmentation_version": "passages.v1",
+        "passages": [item.model_dump(mode="json") for item in passages],
+        "links": links,
+        "signals": {
+            "content_length": len(content),
+            "extraction_confidence": round(quality_score, 3),
+            "published_at_detected": bool(metadata.get("published_at")),
+            "truncated": truncated,
+        },
         "source_type": infer_source_type(url, metadata),
         "warnings": warnings,
         "retrieved_at": retrieved_at,

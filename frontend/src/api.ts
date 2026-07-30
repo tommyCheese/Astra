@@ -37,7 +37,110 @@ export type ReasoningPolicyRequest = {
   verification_level: 'basic' | 'standard' | 'strict';
 };
 
-export type RunModelConfig = { provider: string; name: string; api_key: string; base_url: string };
+export type ModelThinkingDepth = 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+export type ModelThinkingSelection = {
+  enabled: boolean;
+  depth?: ModelThinkingDepth | null;
+  capability_version: number;
+};
+export type ModelThinkingCapability = {
+  provider: string;
+  model: string;
+  supported: boolean;
+  toggle: 'optional' | 'always_on' | 'unavailable';
+  depths: Array<{ id: ModelThinkingDepth; label: string }>;
+  default_enabled: boolean;
+  default_depth?: ModelThinkingDepth | null;
+  reason?: string | null;
+  adapter: string;
+  capability_version: number;
+};
+export type RunModelConfig = {
+  provider: string;
+  name: string;
+  api_key: string;
+  base_url: string;
+  thinking?: ModelThinkingSelection;
+};
+export type ModelContextCapability = {
+  provider: string;
+  model: string;
+  window_tokens: number;
+  max_output_tokens: number | null;
+  source: 'catalog' | 'fallback';
+  verified: boolean;
+  documentation_url: string | null;
+  capability_version: 2;
+};
+export type ContextWindowStatus = {
+  provider: string;
+  model: string;
+  window_tokens: number;
+  max_output_tokens: number | null;
+  context_source: 'catalog' | 'fallback';
+  context_verified: boolean;
+  context_documentation_url: string | null;
+  available_input_tokens: number;
+  used_tokens: number;
+  remaining_tokens: number;
+  usage_ratio: number;
+  auto_compact_ratio: number;
+  status: 'normal' | 'warning' | 'compact_required' | 'overflow';
+  estimated: boolean;
+  summary_active: boolean;
+  visible_run_count: number;
+  folded_run_count: number;
+  last_action: 'compact' | 'clear' | 'auto_compact' | null;
+  last_action_at: string | null;
+};
+export type SlashSystemCommand = {
+  name: 'compact' | 'clear' | 'schedule' | 'heartbeat';
+  command: string;
+  description: string;
+  effect: 'compact_context' | 'clear_context' | 'manage_schedules' | 'manage_heartbeat';
+  argument_mode: 'none' | 'required';
+  usage: string;
+  side_effect: 'read' | 'write' | 'mixed';
+  available: boolean;
+};
+export type SlashCommandResult = {
+  command: string;
+  message: string;
+  context: ContextWindowStatus;
+  details: Record<string, unknown>;
+};
+
+export async function resolveModelThinkingCapabilities(
+  models: Array<{ provider: string; model: string }>,
+  signal?: AbortSignal,
+): Promise<ModelThinkingCapability[]> {
+  if (!models.length) return [];
+  const response = await fetchWithTimeout('/api/models/thinking-capabilities/resolve', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ models }),
+    signal,
+  });
+  if (!response.ok) throw await responseError(response);
+  const body = await response.json() as { capabilities: ModelThinkingCapability[] };
+  return body.capabilities;
+}
+
+export async function resolveModelContextCapabilities(
+  models: Array<{ provider: string; model: string }>,
+  signal?: AbortSignal,
+): Promise<ModelContextCapability[]> {
+  if (!models.length) return [];
+  const response = await fetch('/api/models/context-capabilities/resolve', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ models }),
+    signal,
+  });
+  if (!response.ok) throw await responseError(response);
+  const body = await response.json() as { capabilities: ModelContextCapability[] };
+  return body.capabilities;
+}
 export type RuntimeDependency = { name: string; version: string };
 type RuntimeImage = { image: string; dependency_digest: string; dependencies: RuntimeDependency[]; activated_at: string | null };
 type RuntimeBuildStatus = 'queued' | 'building' | 'succeeded' | 'failed' | 'cancelled';
@@ -414,6 +517,49 @@ export async function listConversations(limit = 100): Promise<ConversationSummar
 
 export async function getConversation(id: string, signal?: AbortSignal): Promise<ConversationView> {
   const response = await fetch(`/api/conversations/${id}`, { signal });
+  if (!response.ok) throw await responseError(response);
+  return response.json();
+}
+
+export async function listSystemCommands(signal?: AbortSignal): Promise<SlashSystemCommand[]> {
+  const response = await fetch('/api/system-commands', { signal });
+  if (!response.ok) throw await responseError(response);
+  return response.json();
+}
+
+export async function getConversationContext(
+  id: string,
+  provider: string,
+  model: string,
+  draft = '',
+  signal?: AbortSignal,
+): Promise<ContextWindowStatus> {
+  const query = new URLSearchParams({ provider, model });
+  if (draft) query.set('draft', draft);
+  const response = await fetchWithTimeout(
+    `/api/conversations/${encodeURIComponent(id)}/context?${query}`,
+    { signal },
+  );
+  if (!response.ok) throw await responseError(response);
+  return response.json();
+}
+
+export async function executeConversationCommand(
+  id: string,
+  command: string,
+  provider: string,
+  model: string,
+  argumentsText = '',
+): Promise<SlashCommandResult> {
+  const query = new URLSearchParams({ provider, model });
+  const response = await fetch(
+    `/api/conversations/${encodeURIComponent(id)}/commands/${encodeURIComponent(command)}?${query}`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ arguments: argumentsText }),
+    },
+  );
   if (!response.ok) throw await responseError(response);
   return response.json();
 }

@@ -39,6 +39,81 @@ async def test_web_search_rejects_empty_query():
         await tool.run({"query": ""})
 
 
+async def test_web_search_batches_logical_queries_and_preserves_lineage(monkeypatch):
+    tool = WebSearchTool(Settings(web_search_provider="google"))
+
+    async def fake_search(query, _tool_input):
+        return {
+            "query": query,
+            "provider": "google",
+            "provider_mode": "explicit",
+            "provider_attempts": [
+                {"provider": "google", "status": "succeeded", "candidate_count": 1}
+            ],
+            "degraded": False,
+            "parameters": {},
+            "candidate_count": 1,
+            "warnings": [],
+            "candidates": [
+                {
+                    "url": f"https://docs.example.com/{query.lower()}?utm_source=test",
+                    "title": query,
+                    "snippet": "Candidate only",
+                    "rank": 1,
+                    "provider": "google",
+                }
+            ],
+        }
+
+    monkeypatch.setattr(tool, "_search_one", fake_search)
+    output = await tool.run(
+        {
+            "queries": [
+                {"query": "Alpha", "purpose": "primary"},
+                {"query": "Beta", "purpose": "comparison"},
+            ],
+            "num_results": 3,
+            "filters": {
+                "include_domains": ["example.com"],
+                "after": "2026-01-01",
+            },
+        }
+    )
+
+    assert output["query_count"] == 2
+    assert len(output["search_traces"]) == 2
+    assert len(output["candidates"]) == 2
+    assert {item["search_trace_id"] for item in output["candidates"]} == {
+        item["id"] for item in output["search_traces"]
+    }
+    assert output["constraint_audit"]["post_filtered"] == ["include_domains"]
+    assert output["constraint_audit"]["unsupported"] == ["after"]
+    assert all(
+        item["evidence_strength"] == "candidate_only"
+        for item in output["candidates"]
+    )
+
+
+async def test_web_search_reports_provider_unsupported_region_truthfully(monkeypatch):
+    tool = WebSearchTool(Settings(web_search_provider="bing"))
+
+    async def fake_search(query, _tool_input):
+        return {
+            "query": query,
+            "provider": "bing",
+            "provider_mode": "explicit",
+            "provider_attempts": [],
+            "degraded": True,
+            "candidates": [],
+        }
+
+    monkeypatch.setattr(tool, "_search_one", fake_search)
+    output = await tool.run({"query": "Astra", "region": "CN"})
+
+    assert "region" not in output["constraint_audit"]["applied"]
+    assert "region" in output["constraint_audit"]["unsupported"]
+
+
 def test_duckduckgo_html_results_are_normalized():
     parser = DuckDuckGoHTMLParser()
     parser.feed(
@@ -679,6 +754,12 @@ def test_selector_extraction_and_metadata_fixture():
     assert output["extraction_strategy"] == "selector_extract"
     assert "Selected article body" in output["content"]
     assert output["source_type"] == "article"
+    assert output["source_id"].startswith("src_")
+    assert output["snapshot_id"].startswith("snap_")
+    assert len(output["content_digest"]) == 64
+    assert output["segmentation_version"] == "passages.v1"
+    assert output["passages"]
+    assert output["passages"][0]["source_id"] == output["source_id"]
 
 
 def test_low_quality_page_reports_warning():

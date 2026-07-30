@@ -120,6 +120,49 @@ async def test_openai_compatible_transport_applies_supported_reasoning_fields(
     assert metadata["request_params"] == expected
 
 
+async def test_explicit_model_thinking_depth_overrides_agent_effort_in_transport(
+    monkeypatch,
+):
+    FakeOpenAIAsyncClient.requests = []
+    monkeypatch.setattr("app.runner.model_client.httpx.AsyncClient", FakeOpenAIAsyncClient)
+    client = OpenAICompatibleModelClient(
+        Settings(
+            model_provider="openai",
+            model_name="gpt-5.2",
+            model_api_key="secret",
+        )
+    )
+    client.bind_reasoning_effort("deep")
+    client.bind_model_thinking(
+        {
+            "requested": {
+                "enabled": True,
+                "depth": "low",
+                "capability_version": 1,
+            },
+            "effective": {"enabled": True, "depth": "low"},
+            "source": "explicit_model_control",
+            "adapter": "openai-gpt5-modern",
+            "adjustments": [],
+            "capability_version": 1,
+        }
+    )
+    usage = RecordingUsage()
+    client.usage_recorder = usage
+
+    await client._chat_json(
+        [{"role": "user", "content": "返回 JSON"}],
+        operation=ModelOperation.SYNTHESIS,
+    )
+
+    request = FakeOpenAIAsyncClient.requests[0][2]["json"]
+    assert request["reasoning_effort"] == "low"
+    metadata = usage.finished[0][1]["usage"]["astra_reasoning"]
+    assert metadata["effort"] == "deep"
+    assert metadata["depth"] == "low"
+    assert metadata["source"] == "explicit_model_control"
+
+
 async def test_openai_compatible_transport_reuses_connection_pool(monkeypatch):
     FakeOpenAIAsyncClient.requests = []
     FakeOpenAIAsyncClient.instances = 0
@@ -365,7 +408,7 @@ async def test_server_reuses_tool_registry_across_model_overrides(monkeypatch):
     await close_shared_model_http_clients()
 
 
-async def test_anthropic_transport_applies_output_config_effort(monkeypatch):
+async def test_anthropic_transport_applies_adaptive_thinking_and_effort(monkeypatch):
     requests = []
 
     class FakeResponse:
@@ -409,6 +452,20 @@ async def test_anthropic_transport_applies_output_config_effort(monkeypatch):
         )
     )
     client.bind_reasoning_effort("balanced")
+    client.bind_model_thinking(
+        {
+            "requested": {
+                "enabled": True,
+                "depth": "high",
+                "capability_version": 2,
+            },
+            "effective": {"enabled": True, "depth": "high"},
+            "source": "explicit_model_control",
+            "adapter": "anthropic-adaptive-thinking",
+            "adjustments": [],
+            "capability_version": 2,
+        }
+    )
     usage = RecordingUsage()
     client.usage_recorder = usage
 
@@ -419,8 +476,12 @@ async def test_anthropic_transport_applies_output_config_effort(monkeypatch):
         )
     await client.aclose()
 
-    assert requests[0]["output_config"] == {"effort": "medium"}
-    assert usage.finished[0][1]["usage"]["astra_reasoning"]["adapter"] == "anthropic-effort"
+    assert requests[0]["thinking"] == {"type": "adaptive", "display": "omitted"}
+    assert requests[0]["output_config"] == {"effort": "high"}
+    assert (
+        usage.finished[0][1]["usage"]["astra_reasoning"]["adapter"]
+        == "anthropic-adaptive-thinking"
+    )
     assert FakeAnthropicAsyncClient.instances == 1
     assert len(requests) == 2
     assert FakeAnthropicAsyncClient.closes == 1

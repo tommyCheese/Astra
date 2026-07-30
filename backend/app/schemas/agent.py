@@ -7,6 +7,10 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from app.grounding.schemas import Citation as GroundingCitation
+from app.grounding.schemas import Claim as GroundingClaim
+from app.schemas.models import RunModelConfig
+
 SKILL_QUALIFIED_IDENTITY_RE = re.compile(
     r"^(?:builtin|custom):[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$"
 )
@@ -577,7 +581,7 @@ class CreateRunRequest(BaseModel):
     answer_mode: AnswerMode = AnswerMode.standard
     plan_execution: PlanExecution | None = None
     reasoning_policy: RequestedReasoningPolicy = Field(default_factory=RequestedReasoningPolicy)
-    model: dict[str, str] | None = None
+    model: RunModelConfig | None = None
     interactive: bool = True
     permission_bundle: dict[str, Any] | None = None
     skill_ids: list[str] = Field(default_factory=list, max_length=8)
@@ -618,7 +622,7 @@ class ContinueRunRequest(BaseModel):
     plan_id: str | None = None
     expected_plan_version: int | None = Field(default=None, ge=1)
     expected_state_version: int | None = Field(default=None, ge=1)
-    model: dict[str, str] | None = None
+    model: RunModelConfig | None = None
 
     @model_validator(mode="after")
     def validate_continuation(self) -> ContinueRunRequest:
@@ -651,7 +655,7 @@ class ApprovalDecision(str, Enum):
 class ApprovalDecisionRequest(BaseModel):
     decision: ApprovalDecision
     continuation_token: str
-    model: dict[str, str] | None = None
+    model: RunModelConfig | None = None
     guidance: str | None = Field(default=None, max_length=1000)
 
 
@@ -698,6 +702,8 @@ class Finding(BaseModel):
 class FinalAnswer(BaseModel):
     summary: str
     findings: list[Finding] = Field(default_factory=list)
+    claims: list[GroundingClaim] = Field(default_factory=list)
+    citations: list[GroundingCitation] = Field(default_factory=list)
     sources: list[SourceReference] = Field(default_factory=list)
     failed_sources: list[dict[str, Any]] = Field(default_factory=list)
     source_quality: list[dict[str, Any]] = Field(default_factory=list)
@@ -750,12 +756,24 @@ class AgentReflection(BaseModel):
 
 class MemoryRecord(BaseModel):
     id: str | None = None
+    memory_key: str | None = None
+    namespace_type: str | None = None
+    namespace_id: str | None = None
     scope: str
     kind: str
+    status: str = "candidate"
+    version: int = 1
+    state_version: int = 1
     content: str
     structured_data: dict[str, Any] = Field(default_factory=dict)
     provenance: dict[str, Any] = Field(default_factory=dict)
     confidence: float = 0.5
+    importance: float = 0.5
+    utility_score: float = 0.0
+    observed_at: datetime | None = None
+    valid_from: datetime | None = None
+    valid_to: datetime | None = None
+    supersedes_id: str | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
     expires_at: datetime | None = None
@@ -830,6 +848,8 @@ class ResultMemoryReference(BaseModel):
 
 class AuditReferences(BaseModel):
     evidence_pack_artifact_id: str | None = None
+    evidence_ledger_artifact_id: str | None = None
+    evidence_record_count: int = 0
     agent_turn_count: int = 0
     referenced_artifact_ids: list[str] = Field(default_factory=list)
 
@@ -852,6 +872,8 @@ class RunResult(BaseModel):
     answer_mode: AnswerMode = AnswerMode.trusted
     assurance_level: AssuranceLevel = AssuranceLevel.full
     findings: list[Finding] = Field(default_factory=list)
+    claims: list[GroundingClaim] = Field(default_factory=list)
+    citations: list[GroundingCitation] = Field(default_factory=list)
     sources: list[SourceReference] = Field(default_factory=list)
     failed_sources: list[FailedSource] = Field(default_factory=list)
     source_quality: list[SourceQuality] = Field(default_factory=list)
@@ -875,6 +897,12 @@ class RunResult(BaseModel):
         normalized["summary"] = summary if isinstance(summary, str) else str(summary or "")
         normalized["findings"] = _validated_records(
             normalized.get("findings"), Finding, scalar_field="text"
+        )
+        normalized["claims"] = _validated_records(
+            normalized.get("claims"), GroundingClaim, scalar_field="text"
+        )
+        normalized["citations"] = _validated_records(
+            normalized.get("citations"), GroundingCitation
         )
         normalized["sources"] = _validated_records(
             normalized.get("sources"), SourceReference, scalar_field="url"
@@ -1043,15 +1071,32 @@ class AgentTurnView(BaseModel):
 class MemoryView(BaseModel):
     id: str
     run_id: str | None
+    memory_key: str
+    namespace_type: str
+    namespace_id: str
     scope: str
     kind: str
+    status: str
+    version: int
+    state_version: int
     content: str
     structured_data: dict[str, Any]
     provenance: dict[str, Any]
     confidence: float
+    importance: float
+    utility_score: float
+    access_count: int
+    observed_at: datetime
+    valid_from: datetime
+    valid_to: datetime | None
+    supersedes_id: str | None
+    consolidation_generation: int
     created_at: datetime
     updated_at: datetime
     expires_at: datetime | None
+    last_accessed_at: datetime | None
+    revoked_at: datetime | None
+    revoke_reason: str | None
 
 
 class ChatMessageView(BaseModel):
@@ -1099,6 +1144,7 @@ class RunView(BaseModel):
     turns: list[AgentTurnView] = Field(default_factory=list)
     memories: list[MemoryView] = Field(default_factory=list)
     chat_messages: list[ChatMessageView] = Field(default_factory=list)
+    model_policy: dict[str, Any] = Field(default_factory=dict)
     reasoning_policy: dict[str, Any] = Field(default_factory=dict)
     task_contract: dict[str, Any] = Field(default_factory=dict)
     plan_graph: PlanView | dict[str, Any] = Field(default_factory=dict)

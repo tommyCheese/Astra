@@ -25,6 +25,7 @@ from app.db.models import (
 )
 from app.db.session import get_session
 from app.repositories.runs import RunRepository
+from app.runner.model_reasoning import normalize_model_thinking
 from app.runner.reasoning import RunProfileResolver
 from app.schemas.agent import CreateRunResponse, PlanExecution, RequestedReasoningPolicy
 from app.schemas.skills import (
@@ -735,9 +736,18 @@ async def create_skill_test_run(
                 PlanExecution.auto if payload.answer_mode.value == "trusted" else None
             ),
         )
+        thinking = normalize_model_thinking(
+            provider=settings.model_provider,
+            model=settings.model_name,
+            selection=None,
+            legacy_effort=profile.reasoning_policy.effective.reasoning_effort,
+        )
         run = await RunRepository(session).create_task_run(
             payload.goal.strip(),
-            settings.model_policy,
+            {
+                **settings.model_policy,
+                "thinking": thinking.model_dump(mode="json"),
+            },
             reasoning_policy=profile.reasoning_policy.model_dump(mode="json"),
             answer_mode=profile.answer_mode.value,
             execution_profile=profile.model_dump(mode="json"),

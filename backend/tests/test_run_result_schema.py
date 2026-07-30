@@ -39,11 +39,48 @@ def test_run_result_normalizes_legacy_payload_and_omits_unknown_fields():
     assert payload["source_quality"][0]["quality_score"] == 0.8
     assert payload["conflicts"] == []
     assert payload["caveats"] == ["legacy caveat"]
+    assert payload["claims"] == []
+    assert payload["citations"] == []
     assert payload["memory_references"] == []
     assert payload["audit_refs"]["referenced_artifact_ids"] == []
+    assert payload["audit_refs"]["evidence_record_count"] == 0
     assert payload["verification_report"] is None
     assert payload["completion_decision"] is None
     assert "internal_debug_payload" not in payload
+
+
+def test_run_result_preserves_grounding_claims_citations_and_audit_refs():
+    result = RunResult.model_validate(
+        {
+            "summary": "grounded",
+            "claims": [
+                {
+                    "id": "claim-1",
+                    "text": "grounded",
+                    "evidence_refs": ["evidence-1"],
+                    "support_status": "supported",
+                }
+            ],
+            "citations": [
+                {
+                    "id": "citation-1",
+                    "claim_id": "claim-1",
+                    "evidence_ref": "evidence-1",
+                    "url": "https://example.com/source",
+                    "ordinal": 1,
+                }
+            ],
+            "audit_refs": {
+                "evidence_ledger_artifact_id": "artifact-1",
+                "evidence_record_count": 3,
+            },
+        }
+    )
+
+    assert result.claims[0].evidence_refs == ["evidence-1"]
+    assert result.citations[0].claim_id == "claim-1"
+    assert result.audit_refs.evidence_ledger_artifact_id == "artifact-1"
+    assert result.audit_refs.evidence_record_count == 3
 
 
 def test_run_result_preserves_structured_failure():

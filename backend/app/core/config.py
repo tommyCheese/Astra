@@ -54,6 +54,15 @@ class Settings(BaseSettings):
     agent_node_attempt_timeout_seconds: int = 120
     agent_node_max_safe_retries: int = 1
     agent_memory_write_enabled: bool = True
+    agent_memory_cross_session_enabled: bool = False
+    agent_memory_cross_session_shadow: bool = False
+    agent_memory_retrieval_policy_version: str = "memory-retrieval-v1"
+    agent_memory_retrieval_candidate_limit: int = Field(default=100, ge=1, le=1_000)
+    agent_memory_retrieval_max_items: int = Field(default=8, ge=0, le=50)
+    agent_memory_retrieval_max_characters: int = Field(default=8_000, ge=0, le=100_000)
+    agent_memory_retrieval_max_tokens: int = Field(default=2_000, ge=0, le=32_000)
+    agent_memory_retrieval_min_confidence: float = Field(default=0.2, ge=0.0, le=1.0)
+    agent_memory_retrieval_min_score: float = Field(default=0.05, ge=0.0, le=1.0)
     agent_use_general_runtime: bool = True
     allow_network_read: bool = True
     cors_origins: str = "http://localhost:5173"
@@ -64,6 +73,24 @@ class Settings(BaseSettings):
     conversation_retention_days: int = Field(default=180, ge=1, le=36_500)
     conversation_retention_sweep_seconds: int = Field(default=86_400, ge=60, le=2_592_000)
     conversation_retention_batch_size: int = Field(default=100, ge=1, le=1_000)
+    scheduler_enabled: bool = False
+    scheduler_poll_seconds: float = Field(default=1.0, ge=0.1, le=60.0)
+    scheduler_lease_seconds: int = Field(default=30, ge=5, le=3_600)
+    scheduler_batch_size: int = Field(default=20, ge=1, le=500)
+    scheduler_max_dispatch_concurrency: int = Field(default=4, ge=1, le=64)
+    scheduler_history_retention_days: int = Field(default=90, ge=1, le=36_500)
+    scheduler_default_misfire_grace_seconds: int = Field(
+        default=300, ge=0, le=604_800
+    )
+    scheduler_heartbeat_min_interval_seconds: int = Field(
+        default=300, ge=60, le=86_400
+    )
+    context_window_fallback_tokens: int = Field(default=131_072, ge=16_384)
+    context_system_reserve_tokens: int = Field(default=4_096, ge=1_024)
+    context_output_reserve_tokens: int = Field(default=8_192, ge=1_024)
+    context_auto_compact_ratio: float = Field(default=0.8, ge=0.5, le=0.95)
+    context_compact_retain_runs: int = Field(default=4, ge=1, le=20)
+    context_summary_max_chars: int = Field(default=12_000, ge=2_000, le=100_000)
     task_workspace_max_files: int = 10_000
     task_workspace_max_bytes: int = 1024 * 1024 * 1024
     task_workspace_max_file_bytes: int = 100 * 1024 * 1024

@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
+from app.grounding.schemas import EvidenceFragment
 from app.permissions.effects import DefaultEffectAnalyzer, effect_plan_hash
 from app.plugins.catalog import PluginCatalog
 from app.plugins.interfaces import (
@@ -49,6 +50,7 @@ class InvocationRequest:
     tool_call_id: str | None = None
     step_id: str | None = None
     plan_node_id: str | None = None
+    node_execution_id: str | None = None
     idempotency_key: str | None = None
     resumed: bool = False
 
@@ -148,11 +150,13 @@ class InvocationPipeline:
         authorization: InvocationAuthorizationGateway,
         recorder: InvocationRecorder | None = None,
         fallback_analyzer: EffectAnalyzer | None = None,
+        evidence_writer: Any | None = None,
     ):
         self.catalog = catalog
         self.authorization = authorization
         self.recorder = recorder or InvocationRecorder()
         self.fallback_analyzer = fallback_analyzer or DefaultEffectAnalyzer()
+        self.evidence_writer = evidence_writer
         self._components = {
             entry.identity.component_id: entry.create()
             for entry in (
@@ -220,6 +224,22 @@ class InvocationPipeline:
                 raise ToolExecutionError("tool_failed", "Tool reported a failed result")
             phase = "result_processing"
             processed = self._process(tool, request, envelope)
+            if self.evidence_writer is not None:
+                phase = "evidence_persistence"
+                fragments = [
+                    EvidenceFragment.model_validate(fragment)
+                    for item in processed
+                    for fragment in item.evidence.get("fragments", [])
+                ]
+                if fragments:
+                    await self.evidence_writer.write(
+                        request.run_id,
+                        fragments,
+                        plan_node_id=request.plan_node_id,
+                        node_execution_id=request.node_execution_id,
+                        tool_call_id=request.tool_call_id,
+                        artifact_ids=[artifact.id for artifact in envelope.artifacts],
+                    )
             outcome = InvocationOutcome(
                 status=InvocationStatus.succeeded,
                 tool_name=tool.spec.name,
@@ -263,6 +283,7 @@ class InvocationPipeline:
                 "result_adaptation": "invalid_result",
                 "result_validation": "invalid_result",
                 "result_processing": "result_processing_failed",
+                "evidence_persistence": "evidence_persistence_failed",
             }.get(phase, "invocation_failed")
             error = ToolExecutionError(category, f"Invocation failed during {phase}")
             error = await self._record_failure(request, error)

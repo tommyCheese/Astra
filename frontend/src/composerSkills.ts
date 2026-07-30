@@ -1,4 +1,4 @@
-import type { SkillSummary } from './api';
+import type { SkillSummary, SlashSystemCommand } from './api';
 
 export type SlashSkillCommand = {
   start: number;
@@ -10,6 +10,10 @@ export type SkillCommandOption = {
   skill: SkillSummary;
   selected: boolean;
 };
+
+export type SlashCommandOption =
+  | { kind: 'command'; command: SlashSystemCommand }
+  | { kind: 'skill'; skill: SkillSummary; selected: boolean };
 
 export function detectSlashSkillCommand(
   value: string,
@@ -61,6 +65,29 @@ export function filterSkillCommandOptions(
       || left.qualified_identity.localeCompare(right.qualified_identity)
     ))
     .map((skill) => ({ skill, selected: selected.has(skill.qualified_identity) }));
+}
+
+export function filterSlashCommandOptions(
+  commands: SlashSystemCommand[],
+  skills: SkillSummary[],
+  query: string,
+  selectedSkillIds: string[],
+): SlashCommandOption[] {
+  const normalizedQuery = query.trim().toLocaleLowerCase();
+  const commandOptions: SlashCommandOption[] = commands
+    .filter((command) => command.available)
+    .filter((command) => !normalizedQuery || [
+      command.name,
+      command.command,
+      command.description,
+    ].some((value) => value.toLocaleLowerCase().includes(normalizedQuery)))
+    .map((command) => ({ kind: 'command', command }));
+  const skillOptions: SlashCommandOption[] = filterSkillCommandOptions(
+    skills,
+    query,
+    selectedSkillIds,
+  ).map((option) => ({ kind: 'skill', ...option }));
+  return [...commandOptions, ...skillOptions];
 }
 
 export function normalizeSelectedSkillIds(identities: string[]): string[] {

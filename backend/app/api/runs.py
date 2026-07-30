@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent_profile import AgentProfileConfigurationError, load_agent_profile
 from app.artifacts import LocalArtifactStore
+from app.conversation_context import ConversationContextManager, resolve_context_window
 from app.core.config import Settings, get_settings
 from app.core.errors import ConfigurationError, ResourceError, StateError, ValidationError
 from app.db.session import SessionLocal, get_session
@@ -24,6 +25,7 @@ from app.repositories.tool_settings import (
     default_tool_states,
 )
 from app.runner.engine import start_run_in_process
+from app.runner.model_reasoning import normalize_model_thinking
 from app.runner.plan_revision import PlanRevisionError, revise_waiting_plan
 from app.runner.reasoning import RunProfileResolver
 from app.runtime_events import run_event_broker
@@ -38,6 +40,7 @@ from app.schemas.agent import (
     PlanView,
     RunView,
 )
+from app.schemas.models import RunModelConfig
 from app.schemas.permissions import PermissionBundle
 from app.skills.catalog import SkillActivationService, SkillCatalogBuilder
 
@@ -153,18 +156,22 @@ def _streaming_response(stream: AsyncIterator[str]) -> StreamingResponse:
     )
 
 
-def _apply_model_config(settings: Settings, model: dict[str, str] | None) -> Settings:
+def _apply_model_config(
+    settings: Settings, model: RunModelConfig | dict | None
+) -> Settings:
     if not model:
         return settings
-    provider = model.get("provider", "")
+    if not isinstance(model, RunModelConfig):
+        model = RunModelConfig.model_validate(model)
+    provider = model.provider
     if provider not in SUPPORTED_MODEL_PROVIDERS:
         raise ValidationError("MODEL_PROVIDER_UNSUPPORTED", "当前模型供应商尚未接入通用运行时。")
     configured = settings.model_copy(
         update={
             "model_provider": provider,
-            "model_name": model.get("name", ""),
-            "model_api_key": model.get("api_key", ""),
-            "model_base_url": model.get("base_url", ""),
+            "model_name": model.name,
+            "model_api_key": model.api_key,
+            "model_base_url": model.base_url,
         }
     )
     if (
@@ -176,6 +183,30 @@ def _apply_model_config(settings: Settings, model: dict[str, str] | None) -> Set
             "MODEL_CONFIGURATION_REQUIRED", "请先配置模型名称、API 地址和 API Key。"
         )
     return configured
+
+
+def _restore_run_model_config(
+    settings: Settings,
+    model_policy: dict,
+) -> Settings:
+    provider = str(model_policy.get("provider") or "")
+    model = str(model_policy.get("model") or "")
+    base_url = str(model_policy.get("base_url") or "")
+    if not provider or not model:
+        return settings
+    if settings.model_provider != provider or settings.model_name != model:
+        raise ValidationError(
+            "RUN_MODEL_MISMATCH",
+            "继续运行时必须使用该任务开始时选择的模型。",
+            {"provider": provider, "model": model},
+        )
+    return settings.model_copy(
+        update={
+            "model_provider": provider,
+            "model_name": model,
+            "model_base_url": base_url or settings.model_base_url,
+        }
+    )
 
 
 def _configured_skill_capabilities(settings: Settings) -> set[str]:
@@ -276,8 +307,8 @@ async def _create_run(
     logger.info(
         "run.create.start task_id=%s provider=%s model=%s goal_chars=%s",
         payload.task_id,
-        (payload.model or {}).get("provider", settings.model_provider),
-        (payload.model or {}).get("name", settings.model_name),
+        payload.model.provider if payload.model else settings.model_provider,
+        payload.model.name if payload.model else settings.model_name,
         len(goal),
     )
     try:
@@ -287,6 +318,28 @@ async def _create_run(
         # Keep the database-backed tool configuration active at creation time.
         run_settings = apply_tool_states(settings, tool_states)
         run_settings = _apply_model_config(run_settings, payload.model)
+        context_window = resolve_context_window(
+            run_settings.model_provider,
+            run_settings.model_name,
+            fallback_tokens=run_settings.context_window_fallback_tokens,
+        )
+        context_policy = {
+            "window_tokens": context_window.tokens,
+            "max_output_tokens": context_window.max_output_tokens,
+            "source": context_window.source,
+            "verified": context_window.verified,
+            "documentation_url": context_window.documentation_url,
+            "capability_version": 2,
+        }
+        if payload.task_id:
+            context_manager = ConversationContextManager(session, run_settings)
+            context_task = await context_manager.require_task(payload.task_id)
+            await context_manager.prepare_for_run(
+                context_task,
+                provider=run_settings.model_provider,
+                model=run_settings.model_name,
+                draft=goal,
+            )
         profile = RunProfileResolver().resolve(
             payload.answer_mode,
             payload.reasoning_policy,
@@ -314,6 +367,12 @@ async def _create_run(
                     "PERMISSION_BUNDLE_INVALID", "权限包签名无效或签名密钥未配置。"
                 )
         policy = profile.reasoning_policy
+        thinking = normalize_model_thinking(
+            provider=run_settings.model_provider,
+            model=run_settings.model_name,
+            selection=payload.model.thinking if payload.model else None,
+            legacy_effort=policy.effective.reasoning_effort,
+        )
         profile = profile.model_copy(
             update={
                 "interactive": payload.interactive,
@@ -325,7 +384,11 @@ async def _create_run(
         execution_profile = profile.model_dump(mode="json")
         run = await repo.create_task_run(
             goal,
-            run_settings.model_policy,
+            {
+                **run_settings.model_policy,
+                "thinking": thinking.model_dump(mode="json"),
+                "context": context_policy,
+            },
             payload.task_id,
             reasoning_policy=policy.model_dump(mode="json"),
             answer_mode=profile.answer_mode.value,
@@ -529,8 +592,10 @@ async def resume_run(
     settings: Settings = Depends(get_settings),
 ) -> CreateRunResponse:
     repo = RunRepository(session)
+    existing_run = await repo.require_run(run_id)
     tool_states = await ToolSettingsRepository(session).get_or_create(default_tool_states(settings))
     run_settings = _apply_model_config(apply_tool_states(settings, tool_states), payload.model)
+    run_settings = _restore_run_model_config(run_settings, existing_run.model_policy)
     try:
         if payload.action == ContinuationAction.execute_plan:
             run = await repo.confirm_waiting_plan(
@@ -610,10 +675,12 @@ async def decide_tool_approval(
     settings: Settings = Depends(get_settings),
 ) -> CreateRunResponse:
     repo = RunRepository(session)
+    existing_run = await repo.require_run(run_id)
     tool_states = await ToolSettingsRepository(session).get_or_create(default_tool_states(settings))
     run_settings = _apply_model_config(apply_tool_states(settings, tool_states), payload.model)
+    run_settings = _restore_run_model_config(run_settings, existing_run.model_policy)
     try:
-        run = await repo.require_run(run_id)
+        run = existing_run
         reviewer = await PermissionRepository(session).get_or_create_identity(
             identity_type="reviewer",
             principal="local-user",

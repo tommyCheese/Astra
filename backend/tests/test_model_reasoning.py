@@ -72,13 +72,13 @@ def test_anthropic_supported_model_maps_output_effort():
 @pytest.mark.parametrize(
     ("provider", "model", "reason"),
     [
-        ("deepseek", "deepseek-reasoner", "native_api_controls_reasoning_by_model_selection"),
+        ("deepseek", "deepseek-reasoner", "model_retired_migrate_to_deepseek_v4"),
         ("google", "gemini-3.1-pro", "native_generate_content_transport_not_implemented"),
         ("compatible", "custom-model", "provider_has_no_declared_reasoning_adapter"),
         (
-            "qwen",
-            "qwen3-235b-thinking",
-            "thinking_only_model_cannot_apply_unified_effort_safely",
+            "openai",
+            "gpt-5.4-pro",
+            "responses_api_required_for_pro_model",
         ),
     ],
 )

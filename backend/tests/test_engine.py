@@ -787,9 +787,13 @@ class UnavailableCapabilityPlanClient(MockModelClient):
 class EffortSpyClient(MockModelClient):
     def __init__(self):
         self.bound_efforts = []
+        self.bound_thinking = []
 
     def bind_reasoning_effort(self, effort):
         self.bound_efforts.append(str(effort))
+
+    def bind_model_thinking(self, thinking):
+        self.bound_thinking.append(thinking)
 
 
 async def test_engine_binds_effective_reasoning_effort_before_model_operations(session):
@@ -802,7 +806,21 @@ async def test_engine_binds_effective_reasoning_effort_before_model_operations(s
     )
     run = await repo.create_task_run(
         "查询 mock 数据",
-        settings.model_policy,
+        {
+            **settings.model_policy,
+            "thinking": {
+                "requested": {
+                    "enabled": True,
+                    "depth": "low",
+                    "capability_version": 1,
+                },
+                "effective": {"enabled": True, "depth": "low"},
+                "source": "explicit_model_control",
+                "adapter": "openai-gpt5-modern",
+                "adjustments": [],
+                "capability_version": 1,
+            },
+        },
         reasoning_policy=profile.reasoning_policy.model_dump(mode="json"),
         answer_mode="trusted",
         execution_profile=profile.model_dump(mode="json"),
@@ -814,6 +832,46 @@ async def test_engine_binds_effective_reasoning_effort_before_model_operations(s
     )._run_with_repo(repo, run.id)
 
     assert client.bound_efforts == ["deep"]
+    assert client.bound_thinking[0]["effective"] == {"enabled": True, "depth": "low"}
+
+
+async def test_disabled_model_thinking_does_not_suppress_public_process_events(session):
+    settings = Settings(model_provider="mock", web_search_provider="mock")
+    profile = RunProfileResolver().resolve(
+        AnswerMode.standard,
+        RequestedReasoningPolicy(),
+    )
+    repo = RunRepository(session)
+    run = await repo.create_task_run(
+        "快速回答",
+        {
+            **settings.model_policy,
+            "thinking": {
+                "requested": {
+                    "enabled": False,
+                    "depth": None,
+                    "capability_version": 1,
+                },
+                "effective": {"enabled": False, "depth": None},
+                "source": "explicit_model_control",
+                "adapter": "qwen-hybrid-thinking",
+                "adjustments": [],
+                "capability_version": 1,
+            },
+        },
+        reasoning_policy=profile.reasoning_policy.model_dump(mode="json"),
+        answer_mode="standard",
+        execution_profile=profile.model_dump(mode="json"),
+    )
+
+    await RunEngine(
+        settings, model_client=MockModelClient(), tool_registry=fake_web_registry()
+    )._run_with_repo(repo, run.id)
+
+    events = await repo.list_events(run.id)
+    summaries = [event for event in events if event.type == "reasoning.summary.completed"]
+    assert summaries
+    assert all("reasoning_content" not in event.payload for event in summaries)
 
 
 async def test_standard_profile_skips_planning_and_quality_assurance_objects(session):

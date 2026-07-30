@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -59,3 +59,52 @@ class ConversationShareSummary(ConversationShareView):
     conversation_id: str
     title: str
     message_count: int = 0
+
+
+class ContextWindowStatus(BaseModel):
+    provider: str
+    model: str
+    window_tokens: int
+    max_output_tokens: int | None = None
+    context_source: Literal["catalog", "fallback"]
+    context_verified: bool
+    context_documentation_url: str | None = None
+    available_input_tokens: int
+    used_tokens: int
+    remaining_tokens: int
+    usage_ratio: float
+    auto_compact_ratio: float
+    status: Literal["normal", "warning", "compact_required", "overflow"]
+    estimated: bool = True
+    summary_active: bool = False
+    visible_run_count: int = 0
+    folded_run_count: int = 0
+    last_action: Literal["compact", "clear", "auto_compact"] | None = None
+    last_action_at: datetime | None = None
+
+
+class SlashSystemCommand(BaseModel):
+    name: Literal["compact", "clear", "schedule", "heartbeat"]
+    command: str
+    description: str
+    effect: Literal[
+        "compact_context",
+        "clear_context",
+        "manage_schedules",
+        "manage_heartbeat",
+    ]
+    argument_mode: Literal["none", "required"]
+    usage: str
+    side_effect: Literal["read", "write", "mixed"]
+    available: bool = True
+
+
+class SlashCommandRequest(BaseModel):
+    arguments: str = Field(default="", max_length=40_000)
+
+
+class SlashCommandResult(BaseModel):
+    command: str
+    message: str
+    context: ContextWindowStatus
+    details: dict[str, Any] = Field(default_factory=dict)
