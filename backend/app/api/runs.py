@@ -2,7 +2,6 @@ import asyncio
 import json
 import logging
 from collections.abc import AsyncIterator, Callable
-from contextlib import suppress
 
 from fastapi import APIRouter, Depends, Header, Query
 from fastapi.responses import FileResponse, StreamingResponse
@@ -246,8 +245,19 @@ async def _cancel_background_run(run_id: str) -> bool:
     if task is None or task.done():
         return False
     task.cancel()
-    with suppress(asyncio.CancelledError):
+    try:
         await task
+    except asyncio.CancelledError:
+        pass
+    except Exception as exc:
+        # Cancellation is finalized authoritatively by the request session
+        # below. A best-effort background cleanup failure must not turn the
+        # user's stop action into a database availability error.
+        logger.warning(
+            "run.background.cancel_cleanup_failed run_id=%s cause=%s",
+            run_id,
+            type(exc).__name__,
+        )
     return True
 
 

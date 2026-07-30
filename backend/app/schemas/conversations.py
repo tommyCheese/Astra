@@ -61,6 +61,12 @@ class ConversationShareSummary(ConversationShareView):
     message_count: int = 0
 
 
+class ContextUsageItem(BaseModel):
+    kind: Literal["system", "summary", "conversation", "draft", "output_reserve"]
+    tokens: int
+    item_count: int = 0
+
+
 class ContextWindowStatus(BaseModel):
     provider: str
     model: str
@@ -79,6 +85,7 @@ class ContextWindowStatus(BaseModel):
     summary_active: bool = False
     visible_run_count: int = 0
     folded_run_count: int = 0
+    breakdown: list[ContextUsageItem] = Field(default_factory=list)
     last_action: Literal["compact", "clear", "auto_compact"] | None = None
     last_action_at: datetime | None = None
 

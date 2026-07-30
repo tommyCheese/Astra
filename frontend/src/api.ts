@@ -90,6 +90,11 @@ export type ContextWindowStatus = {
   summary_active: boolean;
   visible_run_count: number;
   folded_run_count: number;
+  breakdown?: Array<{
+    kind: 'system' | 'summary' | 'conversation' | 'draft' | 'output_reserve';
+    tokens: number;
+    item_count: number;
+  }>;
   last_action: 'compact' | 'clear' | 'auto_compact' | null;
   last_action_at: string | null;
 };

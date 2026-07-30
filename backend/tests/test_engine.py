@@ -53,6 +53,30 @@ class FakeWeather(Tool):
         }
 
 
+async def test_cancelled_answer_flush_reuses_active_repository_session():
+    engine = RunEngine(Settings(model_provider="mock"), model_client=MockModelClient())
+    repo = AsyncMock()
+    repo.session = AsyncMock()
+    engine._answer_buffers["run-1"] = "停止前的部分回答"
+    engine._answer_start_pending.add("run-1")
+
+    await engine._flush_cancelled_answer(repo, "run-1")
+
+    assert repo.add_event.await_args_list[0].args == (
+        "run-1",
+        "answer.started",
+        {"role": "assistant", "mode": "native"},
+    )
+    assert repo.add_event.await_args_list[0].kwargs == {"flush": False}
+    assert repo.add_event.await_args_list[1].args == (
+        "run-1",
+        "answer.delta",
+        {"delta": "停止前的部分回答"},
+    )
+    repo.session.commit.assert_awaited_once()
+    assert "run-1" not in engine._answer_buffers
+
+
 class WeatherPlanClient(MockModelClient):
     async def plan(self, goal, *, contract):
         criterion_ids = [item.id for item in contract.success_criteria]

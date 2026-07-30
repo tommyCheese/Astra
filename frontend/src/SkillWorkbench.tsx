@@ -775,7 +775,6 @@ export function SkillWorkbench({
               <div><dt>{t('兼容性')}</dt><dd>{selected.compatibility || t('无兼容性声明')}</dd></div>
               <div><dt>{t('文件')}</dt><dd>{t('{count} 个文件').replace('{count}', String(selected.files.length))}</dd></div>
               <div className="wide"><dt>{t('请求能力')}</dt><dd>{selected.requested_tool_patterns.length ? selected.requested_tool_patterns.map((item) => <code key={item}>{item}</code>) : t('未请求工具能力')}</dd></div>
-              <div className="wide"><dt>{t('内容摘要')}</dt><dd><code>{selected.active_revision?.digest ?? '—'}</code></dd></div>
             </dl>
           </section>
         </div>
@@ -893,7 +892,7 @@ export function SkillWorkbench({
                   : <span>{t('没有诊断问题')}</span>)}
                 {inspector === 'history' && (revisions.length
                   ? revisions.map((revision) => <div className="skill-history-row" key={revision.id}>
-                    <span>v{revision.version}</span><code>{revision.digest.slice(0, 20)}…</code><time>{formatDate(revision.published_at, language)}</time>
+                    <span>v{revision.version}</span><time>{formatDate(revision.published_at, language)}</time>
                     <button type="button" onClick={() => viewRevision(revision)}>{t('查看')}</button>
                     <button type="button" onClick={() => compareRevision(revision)}>{t('比较')}</button>
                     {!selected.readonly && <button type="button" onClick={() => void perform(async () => { await restoreSkillRevision(selected.id, revision.id); await refreshDetail(); })}>{t('恢复到 Draft')}</button>}
@@ -933,7 +932,7 @@ export function SkillWorkbench({
         <div className={`skill-history-shell ${historyMode === 'diff' ? 'show-diff' : ''}`}>
           <aside className="skill-explorer history"><header><strong>{t('历史文件')}</strong><span>v{historyRevision.version}</span></header><SkillTree files={historyRevision.files} activePath={historyPath} selectedFolder="" onOpenFile={openHistoryFile} onSelectFolder={() => undefined} readonly /></aside>
           {historyMode === 'files' ? <main className="skill-history-viewer">
-            <div className="skill-history-meta"><code>{historyRevision.digest}</code><span>{historyRevision.files.length} {t('文件')}</span></div>
+            <div className="skill-history-meta"><span>v{historyRevision.version}</span><span>{historyRevision.files.length} {t('文件')}</span></div>
             {historyPath ? <Editor theme={darkTheme ? 'vs-dark' : 'light'} height="100%" path={`history-${historyRevision.id}-${historyPath}`} language={editorLanguage(historyPath)} value={historyContent} options={{ readOnly: true, minimap: { enabled: false }, automaticLayout: true, scrollBeyondLastLine: false }} />
               : <div className="skill-editor-empty"><strong>{t('选择一个历史文件')}</strong><span>{t('此版本为不可变只读快照，不会影响当前 Draft。')}</span></div>}
           </main> : <main className="skill-git-diff">

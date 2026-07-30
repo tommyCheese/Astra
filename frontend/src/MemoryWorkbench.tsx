@@ -628,12 +628,8 @@ function EvolutionInspector({ candidate, language }: { candidate: EvolutionCandi
     </header>
     <p id="promotion-disabled-reason" className="memory-safety-note">{t('初始版本只允许离线评估与人工复核；候选不会修改 Skills、提示词、权限或运行策略。')}</p>
     <dl className="memory-metadata">
-      <div><dt>{t('候选键')}</dt><dd>{candidate.candidate_key || '—'}</dd></div>
       <div><dt>{t('标题')}</dt><dd>{candidate.title || '—'}</dd></div>
-      <div><dt>{t('修订')}</dt><dd>r{candidate.revision} · state {candidate.state_version}</dd></div>
       <div><dt>{t('目标组件')}</dt><dd>{candidate.target_component || '—'}</dd></div>
-      <div><dt>{t('命名空间')}</dt><dd>{candidate.namespace_type}:{candidate.namespace_id}</dd></div>
-      <div><dt>{t('内容摘要')}</dt><dd>{shortId(candidate.content_digest)}</dd></div>
       <div><dt>{t('评估结论')}</dt><dd>{candidate.current_evaluation_verdict || '—'}</dd></div>
       <div><dt>{t('更新时间')}</dt><dd>{safeDate(candidate.updated_at, language)}</dd></div>
     </dl>
@@ -654,8 +650,7 @@ function EvolutionInspector({ candidate, language }: { candidate: EvolutionCandi
       {candidate.evaluations.length ? <div className="evolution-evaluation-list">
         {candidate.evaluations.map((evaluation) => <div key={evaluation.id}>
           <span className={`evaluation-verdict verdict-${evaluation.verdict}`}>{evaluation.verdict}</span>
-          <strong>v{evaluation.version} · {evaluation.evaluator}</strong>
-          <code>{shortId(evaluation.manifest_digest)}</code>
+          <strong>v{evaluation.version}</strong>
           <time>{safeDate(evaluation.created_at, language)}</time>
         </div>)}
       </div> : <p className="memory-section-empty">{t('尚未附加可比离线评估')}</p>}

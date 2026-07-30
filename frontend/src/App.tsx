@@ -1,6 +1,6 @@
 import { Component, CSSProperties, FormEvent, KeyboardEvent as ReactKeyboardEvent, lazy, MouseEvent, PointerEvent as ReactPointerEvent, ReactNode, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { AstraApiError, ApiErrorPayload, buildRuntime, cancelRun, cancelRuntimeBuild, confirmPlanExecution, createConversationShare, createRun, decideToolApproval, deleteConversation, executeConversationCommand, getConversation, getConversationContext, getConversationStrategy, getPermissionCenter, getRun, getRunSkills, getRuntimeProfile, getToolSettings, listConversationShares, listConversations, listLibraryFiles, listRuns, listSkills, listSystemCommands, resolveModelContextCapabilities, resolveModelThinkingCapabilities, resumeRun, revisePlan, revokeConversationShare, revokePermissionGrant, streamRunEvents, takeCreatedRunStream, updateConversation, updateConversationStrategy, updateToolSettings, type ContextWindowStatus, type ConversationStrategyPreferences, type LibraryFile, type ModelContextCapability, type ModelThinkingCapability, type ModelThinkingDepth, type ModelThinkingSelection, type PermissionCenterView, type RunModelConfig, type RunSkillsAudit, type RunStreamEvent, type RunStreamHandle, type SkillSummary, type SlashSystemCommand, type ToolSetting } from './api';
-import { buildAuditLog, buildIdentityPresentation, type IdentityGroup } from './auditPresentation';
+import { AstraApiError, ApiErrorPayload, buildRuntime, cancelRun, cancelRuntimeBuild, confirmPlanExecution, createConversationShare, createRun, decideToolApproval, deleteConversation, executeConversationCommand, getConversation, getConversationContext, getConversationStrategy, getPermissionCenter, getRun, getRuntimeProfile, getToolSettings, listConversationShares, listConversations, listLibraryFiles, listRuns, listSkills, listSystemCommands, resolveModelContextCapabilities, resolveModelThinkingCapabilities, resumeRun, revisePlan, revokeConversationShare, revokePermissionGrant, streamRunEvents, takeCreatedRunStream, updateConversation, updateConversationStrategy, updateToolSettings, type ContextWindowStatus, type ConversationStrategyPreferences, type LibraryFile, type ModelContextCapability, type ModelThinkingCapability, type ModelThinkingDepth, type ModelThinkingSelection, type PermissionCenterView, type RunModelConfig, type RunStreamEvent, type RunStreamHandle, type SkillSummary, type SlashSystemCommand, type ToolSetting } from './api';
+import { buildAuditLog } from './auditPresentation';
 import { I18nProvider, useI18n } from './i18n';
 import { ThemeProvider, useTheme } from './theme';
 import type { ArtifactView, ChatMessage, ConversationShare, ConversationShareSummary, ConversationSummary, PendingApproval, RunView } from './types';
@@ -85,6 +85,7 @@ function ContextUsageRing({ status, actionLabel = '', compact = false }: {
 }
 
 function initialContextStatus(capability: ModelContextCapability): ContextWindowStatus {
+  const outputReserve = Math.min(capability.max_output_tokens ?? 8_192, 8_192);
   return {
     provider: capability.provider,
     model: capability.model,
@@ -103,6 +104,7 @@ function initialContextStatus(capability: ModelContextCapability): ContextWindow
     summary_active: false,
     visible_run_count: 0,
     folded_run_count: 0,
+    breakdown: [{ kind: 'output_reserve', tokens: outputReserve, item_count: 1 }],
     last_action: null,
     last_action_at: null,
   };
@@ -305,6 +307,7 @@ function AppContent() {
   const [strategyHelpOpen, setStrategyHelpOpen] = useState(false);
   const [conversationAction, setConversationAction] = useState<{ kind: 'rename' | 'share' | 'delete'; conversation: ConversationEntry } | null>(null);
   const [modelOpen, setModelOpen] = useState(false);
+  const [contextOpen, setContextOpen] = useState(false);
   const [attachOpen, setAttachOpen] = useState(false);
   const [availableSkills, setAvailableSkills] = useState<SkillSummary[]>([]);
   const [systemCommands, setSystemCommands] = useState<SlashSystemCommand[]>([]);
@@ -340,6 +343,7 @@ function AppContent() {
   const attachMenuRef = useRef<HTMLDivElement>(null);
   const executionMenuRef = useRef<HTMLDivElement>(null);
   const modelMenuRef = useRef<HTMLDivElement>(null);
+  const contextMenuRef = useRef<HTMLDivElement>(null);
   const goalInputRef = useRef<HTMLTextAreaElement>(null);
   const conversationRef = useRef<HTMLDivElement>(null);
   const composerDockRef = useRef<HTMLDivElement>(null);
@@ -644,7 +648,7 @@ function AppContent() {
   }, [availableModels, selectedModelKey]);
 
   useEffect(() => {
-    if (!attachOpen && !modelOpen && !executionMenuOpen) {
+    if (!attachOpen && !modelOpen && !contextOpen && !executionMenuOpen) {
       return;
     }
 
@@ -656,6 +660,9 @@ function AppContent() {
       if (!modelMenuRef.current?.contains(target)) {
         setModelOpen(false);
       }
+      if (!contextMenuRef.current?.contains(target)) {
+        setContextOpen(false);
+      }
       if (!executionMenuRef.current?.contains(target)) {
         setExecutionMenuOpen(false);
       }
@@ -665,6 +672,7 @@ function AppContent() {
       if (event.key === 'Escape') {
         setAttachOpen(false);
         setModelOpen(false);
+        setContextOpen(false);
         setExecutionMenuOpen(false);
       }
     }
@@ -675,7 +683,7 @@ function AppContent() {
       document.removeEventListener('pointerdown', closeOnOutsideInteraction);
       document.removeEventListener('keydown', closeOnEscape);
     };
-  }, [attachOpen, modelOpen, executionMenuOpen]);
+  }, [attachOpen, modelOpen, contextOpen, executionMenuOpen]);
 
   useEffect(() => {
     if (!sidebarOpen) return;
@@ -727,6 +735,7 @@ function AppContent() {
     }
     setAttachOpen(false);
     setModelOpen(false);
+    setContextOpen(false);
     setExecutionMenuOpen(false);
     setSlashCommand((current) => {
       if (!current || current.start !== next.start || current.query !== next.query) {
@@ -1833,6 +1842,7 @@ function AppContent() {
                 onClick={() => {
                   setAttachOpen((open) => !open);
                   setModelOpen(false);
+                  setContextOpen(false);
                   setExecutionMenuOpen(false);
                 }}
               >+</button>
@@ -1852,6 +1862,7 @@ function AppContent() {
                 setExecutionMenuOpen((open) => !open);
                 setAttachOpen(false);
                 setModelOpen(false);
+                setContextOpen(false);
               }}>
                 <Icon name={executionMode === 'bypass' ? 'autoApprove' : 'requestApprove'} />
                 <span>{executionMode === 'bypass' ? t('自动批准') : t('请求批准')}</span>
@@ -1929,6 +1940,34 @@ function AppContent() {
               }}
               placeholder={t('输入任务 / 继续追问...')}
             />
+            <div className="context-menu-wrap" ref={contextMenuRef}>
+              <button
+                className={`context-selector ${displayedContextStatus ? `tone-${displayedContextStatus.status}` : ''}`}
+                type="button"
+                aria-expanded={contextOpen}
+                aria-haspopup="dialog"
+                aria-label={displayedContextStatus ? contextAccessibleLabel : t('上下文容量')}
+                onClick={() => {
+                  setContextOpen((open) => !open);
+                  setModelOpen(false);
+                  setAttachOpen(false);
+                  setExecutionMenuOpen(false);
+                }}
+              >
+                {displayedContextStatus ? <ContextUsageRing status={displayedContextStatus} actionLabel={contextActionLabel} compact /> : <Icon name="token" />}
+                <span><strong>{t('上下文')}</strong><small>{displayedContextStatus ? `${Math.round(displayedContextStatus.usage_ratio * 100)}%` : t('未就绪')}</small></span>
+              </button>
+              {displayedContextStatus && (
+                <span className="sr-only" id="model-context-status-description">
+                  {contextAccessibleLabel}{contextActionLabel ? ` · ${contextActionLabel}` : ''}{contextNotice ? ` · ${contextNotice}` : ''} · {t('使用量为发送前估算')}
+                </span>
+              )}
+              {contextOpen && <ContextCapacityPanel
+                status={displayedContextStatus}
+                selectedSkills={selectedSkillTokens.flatMap(({ skill }) => skill ? [skill] : [])}
+                actionLabel={contextActionLabel}
+              />}
+            </div>
             <div className="model-menu-wrap" ref={modelMenuRef}>
               <button
                 className={`model-selector ${displayedContextStatus ? 'has-context' : 'without-context'}`}
@@ -1942,18 +1981,15 @@ function AppContent() {
                 ].filter(Boolean).join(' ')}
                 onClick={() => {
                 setModelOpen((open) => !open);
+                setContextOpen(false);
                 setAttachOpen(false);
                 setExecutionMenuOpen(false);
               }}>
                 <span>{selectedModel || t('未配置模型')}</span>
-                {displayedContextStatus && <ContextUsageRing status={displayedContextStatus} actionLabel={contextActionLabel} />}
-                <small>{answerMode === 'trusted' ? `${t(reasoningEffort)} · ${toolCallLimit === null ? t('工具不限') : t('{count} 次工具').replace('{count}', String(toolCallLimit))} · ${reflectionEnabled ? `${t(reflectionTrigger)} ${t('反思')}` : t('反思关闭')}` : t('快速策略 · 工具按需')} · {modelThinkingSummary}</small><b>⌄</b>
+                <small>{answerMode === 'trusted' ? `${t(reasoningEffort)} · ${toolCallLimit === null ? t('工具不限') : t('{count} 次工具').replace('{count}', String(toolCallLimit))} · ${reflectionEnabled ? `${t(reflectionTrigger)} ${t('反思')}` : t('反思关闭')}` : t('快速策略 · 工具按需')} · {modelThinkingSummary}</small>
+                {displayedContextStatus && <span className="legacy-model-context-indicator"><ContextUsageRing status={displayedContextStatus} actionLabel={contextActionLabel} /></span>}
+                <b>⌄</b>
               </button>
-              {displayedContextStatus && (
-                <span className="sr-only" id="model-context-status-description">
-                  {contextAccessibleLabel}{contextActionLabel ? ` · ${contextActionLabel}` : ''}{contextNotice ? ` · ${contextNotice}` : ''} · {t('使用量为发送前估算')}
-                </span>
-              )}
               <span className="sr-only" id="model-thinking-summary-description">{modelThinkingSummary}</span>
               {modelOpen && (
                 <ModelMenu
@@ -1961,8 +1997,6 @@ function AppContent() {
                   trusted={answerMode === 'trusted'}
                   onModelChange={setSelectedModelKey}
                   modelOptions={availableModels}
-                  contextStatus={displayedContextStatus}
-                  contextActionLabel={contextActionLabel}
                   thinkingCapability={selectedThinkingCapability}
                   thinkingSelection={selectedThinkingSelection}
                   thinkingLoading={thinkingCapabilitiesLoading}
@@ -2697,7 +2731,6 @@ function RuntimeSettings() {
   return <SettingsGroup title="Docker 运行时" description="管理绘图工具使用的隔离镜像与 Python 依赖。只有构建阶段联网，工具执行始终断网。">
     <section className="runtime-overview" aria-label={t('Docker 运行状态')}>
       <div className="runtime-engine"><div><span>{t('运行引擎')}</span><strong><span className="runtime-health-dot" aria-hidden="true" />Docker · {t('已就绪')}</strong><small>{t('一次性强化容器')}</small></div><span className={`runtime-status-badge runtime-status-${buildStatus}`}>{t(buildStatusLabel[buildStatus] ?? buildStatus)}</span></div>
-      <div className="runtime-overview-details"><div><span>{t('当前镜像')}</span><strong>{profile?.active_image ?? t('读取中')}</strong></div><div><span>{t('依赖摘要')}</span><strong>{profile?.dependency_digest?.slice(0, 16) ?? t('基础依赖')}</strong></div></div>
       <div className="runtime-security-strip"><span>{t('断网执行')}</span><span>{t('只读根目录')}</span><span>{t('非 root')}</span><span>{t('资源受限')}</span></div>
     </section>
     <section className="runtime-dependencies" aria-labelledby="runtime-dependencies-title">
@@ -3320,33 +3353,6 @@ function permissionScopeLabel(scope: string) {
   return scope === 'task' ? '当前任务持续有效' : scope === 'run' ? '仅当前运行有效' : '临时授权';
 }
 
-function identityTypeLabel(type: string) {
-  const labels: Record<string, string> = {
-    main_agent: '主 Agent',
-    reviewer: '审批用户',
-    tool_provider: '工具提供方',
-    tool_runtime: '工具运行时',
-    subagent: '子 Agent',
-  };
-  return labels[type] || type.replace(/_/g, ' ');
-}
-
-function trustLevelLabel(level: string) {
-  return level === 'platform' ? '平台内置' : level === 'user' ? '当前用户' : level === 'managed' ? '受管理' : level;
-}
-
-function identityRoleDescription(identity: IdentityGroup) {
-  const descriptions: Record<string, string> = {
-    main_agent: '理解任务并发起工具调用',
-    subagent: '在授权范围内处理委派任务',
-    tool_provider: '声明并提供受信任工具',
-    external_provider: '提供外部扩展工具',
-    tool_runtime: '以最小权限执行具体工具',
-    reviewer: '确认或拒绝需要审批的操作',
-  };
-  return descriptions[identity.type] || '参与本次运行的审计主体';
-}
-
 function formatAuditTime(value: string, language = 'zh-CN') {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
@@ -3369,17 +3375,11 @@ function formatFileSize(bytes: number, language = 'zh-CN') {
 function ControlCenterDialog({ run, onClose }: { run: RunView; onClose: () => void }) {
   const { language, t } = useI18n();
   const [permissions, setPermissions] = useState<PermissionCenterView | null>(null);
-  const [skillsAudit, setSkillsAudit] = useState<RunSkillsAudit | null>(null);
   const [loadError, setLoadError] = useState('');
   const refresh = useCallback(async () => {
     try {
       const permissionView = await getPermissionCenter(run.id);
       setPermissions(permissionView);
-      try {
-        setSkillsAudit(await getRunSkills(run.id));
-      } catch {
-        setSkillsAudit(null);
-      }
       setLoadError('');
     } catch (error) {
       setLoadError(error instanceof Error ? error.message : t('加载安全信息失败'));
@@ -3387,7 +3387,6 @@ function ControlCenterDialog({ run, onClose }: { run: RunView; onClose: () => vo
   }, [run.id, t]);
   useEffect(() => { void refresh(); }, [refresh]);
   const activeGrants = permissions?.grants.filter((grant) => grant.status === 'active') ?? [];
-  const identityPresentation = buildIdentityPresentation(permissions?.identities ?? [], run.id);
   const auditEntries = buildAuditLog(permissions?.policy_explanations ?? [], t);
   return <div className="modal-backdrop" role="presentation" onMouseDown={onClose}>
     <section className="control-center-modal" role="dialog" aria-modal="true" aria-label={t('任务安全')} onMouseDown={(event) => event.stopPropagation()}>
@@ -3429,35 +3428,6 @@ function ControlCenterDialog({ run, onClose }: { run: RunView; onClose: () => vo
           </section>
 
         </div>
-
-        <details className="control-center-technical">
-          <summary><span>{t('技术与审计详情')}</span><small>{t('身份链、工具来源、凭据和内部决策记录')}</small></summary>
-          <div className="control-center-technical-grid">
-            <section className="identity-chain-section"><div className="technical-section-heading"><div><h3>{t('本次运行身份链')}</h3><p>{t('从任务协调者到具体工具运行时的责任边界。')}</p></div><span>{identityPresentation.execution.length}</span></div>
-              {identityPresentation.execution.length ? <div className="identity-chain">{identityPresentation.execution.map((identity, index) => <div className="identity-chain-step" key={`${identity.type}:${identity.principal}:${identity.parent_identity_id || ''}`}>
-                {index > 0 && <span className="identity-chain-connector" aria-hidden="true">↓</span>}
-                <div className={`identity-role-icon identity-${identity.type}`} aria-hidden="true">{index + 1}</div>
-                <div className="identity-role-main"><strong>{t(identityTypeLabel(identity.type))}{identity.count > 1 && <small>×{identity.count}</small>}</strong><code>{identity.principal}</code><span>{t(identityRoleDescription(identity))}</span></div>
-                <span className="identity-trust-badge">{t(trustLevelLabel(identity.trust_level))}</span>
-              </div>)}</div> : <div className="control-center-empty compact"><span>{t('本次运行尚未登记执行身份')}</span></div>}
-              {identityPresentation.reviewers.length > 0 && <div className="identity-reviewers"><span>{t('审批主体')}</span>{identityPresentation.reviewers.map((identity) => <div key={identity.id}><strong>{identity.principal}</strong><small>{t(trustLevelLabel(identity.trust_level))} · {t(identityRoleDescription(identity))}</small></div>)}</div>}
-              {identityPresentation.historicalCount > 0 && <div className="identity-history-note">{t('已折叠当前任务其他运行的 {count} 条身份记录').replace('{count}', String(identityPresentation.historicalCount))}</div>}
-            </section>
-            <section><h3>{t('工具与凭据')}</h3>{permissions.credentials.map((credential) => <div className="control-center-item" key={credential.id}><strong>{credential.service}</strong><span>{credential.scopes.join(', ') || t('最小权限')} · {credential.revoked_at ? t('已撤销') : t('短期有效')}</span></div>)}{!permissions.credentials.length && <p>{t('未使用服务凭据')}</p>}{permissions.tool_catalog && <div className="control-center-item"><strong>{t('本次运行的工具目录')}</strong><span>{permissions.tool_catalog.catalog.length} {t('个工具')} · {t('完整性校验')} {permissions.tool_catalog.digest.slice(0, 12)}</span></div>}</section>
-            {skillsAudit && <section className="technical-skill-events"><div className="technical-section-heading"><div><h3>{t('Skill 审计')}</h3><p>{t('冻结版本、激活、资源读取、计划绑定与归因操作。')}</p></div><span>{skillsAudit.activations.length}</span></div>
-              <div className="control-center-item"><strong>{skillsAudit.draft_test ? t('Draft 测试快照') : t('Eligible Skill Catalog')}</strong><span>{skillsAudit.catalog.length} Skills · {skillsAudit.catalog_digest.slice(0, 18)}</span></div>
-              {skillsAudit.activations.map((item, index) => <div className="control-center-item" key={`activation-${index}`}><strong>{String(item.qualified_identity ?? 'Skill')}</strong><span>{String(item.revision_id ?? '')} · {String(item.digest ?? '').slice(0, 18)}</span></div>)}
-              <p>{t('{resources} 次资源读取 · {actions} 次归因操作 · {bindings} 个计划绑定').replace('{resources}', String(skillsAudit.resource_reads.length)).replace('{actions}', String(skillsAudit.attributed_actions.length)).replace('{bindings}', String(skillsAudit.plan_bindings.length))}</p>
-            </section>}
-            <section className="technical-policy-events"><div className="technical-section-heading"><div><h3>{t('审计流')}</h3><p>{t('按时间倒序记录权限请求、判定、用户决策与阻止事件。')}</p></div><span>{auditEntries.length}</span></div>
-              {auditEntries.length ? <div className="audit-log" role="log" aria-label={t('权限审计日志')}>{auditEntries.map((entry) => <article className={`audit-log-entry tone-${entry.tone}`} key={entry.id}>
-                <time dateTime={entry.createdAt}>{formatAuditTime(entry.createdAt, language)}</time>
-                <span className="audit-level">{entry.tone === 'danger' ? 'BLOCK' : entry.tone === 'warning' ? 'ASK' : entry.tone === 'success' ? 'ALLOW' : 'INFO'}</span>
-                <div className="audit-log-message"><strong>{t(entry.title)}</strong><span>{t(entry.detail)}</span><small>{entry.actor} · <code>{entry.code}</code> · #{entry.id}</small></div>
-              </article>)}</div> : <div className="control-center-empty compact"><span>{t('暂无权限审计事件')}</span></div>}
-            </section>
-          </div>
-        </details>
       </>}
     </section>
   </div>;
@@ -3468,12 +3438,84 @@ function BypassConfirmation({ onCancel, onConfirm }: { onCancel: () => void; onC
   return <div className="modal-backdrop" role="presentation" onMouseDown={onCancel}><section className="confirmation-modal" role="alertdialog" aria-modal="true" aria-labelledby="bypass-title" onMouseDown={(event) => event.stopPropagation()}><div className="warning-mark">!</div><h2 id="bypass-title">{t('启用自动批准模式？')}</h2><p>{t('自动批准模式会跳过可批准行为的交互确认，但仍受平台禁止项、权限边界、预算和沙箱限制。')}</p><div className="confirmation-note"><strong>{t('仅在你信任当前任务和运行环境时启用。')}</strong></div><div className="confirmation-actions"><button className="secondary-button" type="button" onClick={onCancel}>{t('取消')}</button><button className="danger-confirm-button" type="button" onClick={onConfirm}>{t('确认启用自动批准')}</button></div></section></div>;
 }
 
-function ModelMenu({ selectedModelKey, onModelChange, modelOptions, contextStatus, contextActionLabel, thinkingCapability, thinkingSelection, thinkingLoading, thinkingFailed, onThinkingRetry, onThinkingEnabledChange, onThinkingDepthChange, trusted, reasoningEffort, onReasoningEffortChange, toolCallLimit, onToolCallLimitChange, reflectionEnabled, onReflectionChange, reflectionTrigger, onReflectionTriggerChange, planExecution, onPlanExecutionChange, onOpenStrategyHelp }: {
+function estimateUiTokens(value: string): number {
+  let cjk = 0;
+  for (const character of value) {
+    if (/[\u2e80-\u2eff\u3000-\u303f\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uac00-\ud7af\uff00-\uffef]/.test(character)) cjk += 1;
+  }
+  return cjk + Math.ceil(Math.max(0, value.length - cjk) / 3.2);
+}
+
+function ContextCapacityPanel({ status, selectedSkills, actionLabel }: {
+  status: ContextWindowStatus | null;
+  selectedSkills: SkillSummary[];
+  actionLabel: string;
+}) {
+  const { t } = useI18n();
+  if (!status) return <div className="floating-menu context-capacity-panel"><div className="context-panel-empty">{t('开始对话后显示当前模型的上下文构成')}</div></div>;
+
+  const serverItems = (status.breakdown ?? [
+    { kind: 'system' as const, tokens: Math.min(4096, status.used_tokens), item_count: 1 },
+    { kind: 'conversation' as const, tokens: Math.max(0, status.used_tokens - Math.min(4096, status.used_tokens)), item_count: status.visible_run_count },
+    { kind: 'output_reserve' as const, tokens: Math.max(0, status.window_tokens - status.available_input_tokens), item_count: 1 },
+  ]).filter((item) => item.tokens > 0);
+  const skillEstimate = selectedSkills.length
+    ? Math.max(32, selectedSkills.reduce((total, skill) => total + estimateUiTokens(`${skill.name}\n${skill.description}`) + 12, 0))
+    : 0;
+  const systemItem = serverItems.find((item) => item.kind === 'system');
+  const allocatedSkillTokens = Math.min(systemItem?.tokens ?? 0, skillEstimate);
+  const items = serverItems.flatMap((item) => {
+    if (item.kind !== 'system') return [item];
+    const baseTokens = Math.max(0, item.tokens - allocatedSkillTokens);
+    return [
+      ...(baseTokens ? [{ ...item, tokens: baseTokens }] : []),
+      ...(allocatedSkillTokens ? [{ kind: 'skills' as const, tokens: allocatedSkillTokens, item_count: selectedSkills.length }] : []),
+    ];
+  });
+  const labels = {
+    system: [t('基础占用'), t('当前任务所需内容')],
+    summary: [t('已整理的对话'), t('较早对话的压缩摘要')],
+    conversation: [t('对话与运行结果'), t('{count} 轮可见上下文').replace('{count}', String(status.visible_run_count))],
+    draft: [t('当前输入'), t('尚未发送的任务内容')],
+    skills: [t('已加载 Skill'), t('{count} 个已选择 Skill').replace('{count}', String(selectedSkills.length))],
+    output_reserve: [t('回复预留'), t('为当前模型输出保留的容量')],
+  } as const;
+  const percent = Math.round(Math.min(Math.max(status.usage_ratio, 0), 1) * 100);
+
+  return <div className="floating-menu context-capacity-panel" role="dialog" aria-label={t('上下文容量')}>
+    <header className="context-panel-header">
+      <div><span>{status.model}</span><strong>{t('上下文容量')}</strong></div>
+      <span className={`context-health tone-${status.status}`}>{actionLabel || (status.status === 'normal' ? t('空间充足') : status.status === 'warning' ? t('即将用满') : t('建议整理'))}</span>
+    </header>
+    <section className="context-capacity-overview">
+      <ContextUsageRing status={status} compact />
+      <div><strong>{compactTokenCount(status.used_tokens)} <small>/ {compactTokenCount(status.available_input_tokens)}</small></strong><span>{t('已使用 {percent}%').replace('{percent}', String(percent))}</span></div>
+      <div className="context-remaining"><span>{t('剩余')}</span><strong>{compactTokenCount(status.remaining_tokens)}</strong></div>
+    </section>
+    <div className="context-stack" aria-hidden="true">
+      {items.map((item) => <i className={`context-stack-${item.kind}`} key={item.kind} style={{ flexGrow: item.tokens }} />)}
+    </div>
+    <section className="context-breakdown" aria-label={t('上下文构成')}>
+      {items.map((item) => {
+        const [label, detail] = labels[item.kind];
+        return <div className="context-breakdown-row" key={item.kind}>
+          <i className={`context-dot context-stack-${item.kind}`} />
+          <div><strong>{label}</strong><small>{detail}</small></div>
+          <span>{compactTokenCount(item.tokens)}</span>
+        </div>;
+      })}
+    </section>
+    <footer className="context-panel-footer">
+      <span>{status.summary_active ? t('已启用对话整理') : t('使用量为发送前估算')}</span>
+      {status.max_output_tokens && <span>{t('模型最大输出 {tokens}').replace('{tokens}', compactTokenCount(status.max_output_tokens))}</span>}
+    </footer>
+  </div>;
+}
+
+function ModelMenu({ selectedModelKey, onModelChange, modelOptions, thinkingCapability, thinkingSelection, thinkingLoading, thinkingFailed, onThinkingRetry, onThinkingEnabledChange, onThinkingDepthChange, trusted, reasoningEffort, onReasoningEffortChange, toolCallLimit, onToolCallLimitChange, reflectionEnabled, onReflectionChange, reflectionTrigger, onReflectionTriggerChange, planExecution, onPlanExecutionChange, onOpenStrategyHelp }: {
   selectedModelKey: string;
   onModelChange: (modelKey: string) => void;
   modelOptions: Array<{ key: string; model: string; profile: ModelProfileConfig; providerId: ModelProviderId; providerName: string }>;
-  contextStatus: ContextWindowStatus | null;
-  contextActionLabel: string;
   thinkingCapability?: ModelThinkingCapability;
   thinkingSelection?: ModelThinkingSelection;
   thinkingLoading: boolean;
@@ -3505,36 +3547,36 @@ function ModelMenu({ selectedModelKey, onModelChange, modelOptions, contextStatu
   const limitRange = effort === 'deep' ? null : TOOL_CALL_LIMITS[effort];
   const thinkingDepthOptions = thinkingCapability?.depths.map((item) => thinkingDepthLabel(item.id)) ?? [];
   return <div className="floating-menu model-menu">
-    <div className="menu-heading">{t('模型')}</div>
+    <div className="model-menu-title"><div><strong>{t('选择模型')}</strong><small>{t('思考深度随模型单独保存')}</small></div></div>
     {groups.length ? groups.map((group) => <div className="model-provider-group" key={group.providerId}>
       <div className="model-provider-heading"><span className={`provider-mark provider-${group.providerId}`}>{modelProviders.find((provider) => provider.id === group.providerId)?.mark}</span><span>{group.providerName}</span></div>
-      {group.models.map((item) => <button className={`model-option ${selectedModelKey === item.key ? 'selected' : ''}`} type="button" key={item.key} onClick={() => onModelChange(item.key)}><div><strong>{item.model}</strong><small>{group.providerName}</small></div><span>{selectedModelKey === item.key ? '✓' : ''}</span></button>)}
+      {group.models.map((item) => <div className={`model-choice-row ${selectedModelKey === item.key ? 'selected' : ''}`} key={item.key}>
+        <button className="model-option" type="button" onClick={() => onModelChange(item.key)}>
+          <div><strong>{item.model}</strong><small>{group.providerName}</small></div>
+          {selectedModelKey === item.key && <span className="model-row-thinking-summary">
+            {thinkingLoading ? t('读取中') : thinkingSelection?.enabled ? `${t('思考')} · ${t(thinkingDepthLabel(thinkingSelection.depth))}` : t('思考关闭')}
+          </span>}
+          <span className="model-selected-mark">{selectedModelKey === item.key ? '✓' : ''}</span>
+        </button>
+        {selectedModelKey === item.key && <section className="model-row-thinking-controls" aria-label={t('模型思考')}>
+          {thinkingLoading ? <p className="model-thinking-status" role="status">{t('正在读取模型思考能力…')}</p>
+            : thinkingFailed ? <div className="model-thinking-status unavailable" role="status"><span>{t('暂时无法读取模型思考能力，当前设置不可调整。')}</span><button type="button" onClick={onThinkingRetry}>{t('重试')}</button></div>
+              : !thinkingCapability?.supported || !thinkingSelection ? <p className="model-thinking-status unavailable">{t('当前模型不支持可配置的思考参数。')}</p>
+                : <>
+                  <div className="model-row-thinking-head"><span>{t('扩展思考')}</span><Toggle checked={thinkingSelection.enabled} disabled={thinkingCapability.toggle === 'always_on'} onChange={onThinkingEnabledChange} label={t('模型思考')} /></div>
+                  {thinkingSelection.enabled && thinkingDepthOptions.length > 0 && <MenuChoice
+                    label="模型思考深度"
+                    value={thinkingDepthLabel(thinkingSelection.depth)}
+                    options={thinkingDepthOptions}
+                    onChange={(value) => {
+                      const depth = thinkingCapability.depths.find((depth) => thinkingDepthLabel(depth.id) === value)?.id;
+                      if (depth) onThinkingDepthChange(depth);
+                    }}
+                  />}
+                </>}
+        </section>}
+      </div>)}
     </div>) : <div className="model-menu-empty">{t('请先在模型管理中启用供应商并配置模型')}</div>}
-    {contextStatus && <section className={`model-menu-context tone-${contextStatus.status}`} aria-label={t('上下文使用情况')}>
-      <ContextUsageRing status={contextStatus} actionLabel={contextActionLabel} compact />
-      <div><strong>{compactTokenCount(contextStatus.used_tokens)} / {compactTokenCount(contextStatus.window_tokens)}</strong><small>{t('剩余')} {compactTokenCount(contextStatus.remaining_tokens)}</small></div>
-      <span>{contextActionLabel || (contextStatus.status === 'normal' ? t('空间充足') : contextStatus.status === 'warning' ? t('即将用满') : t('建议整理'))}</span>
-    </section>}
-    <div className="menu-divider" />
-    <div className="menu-heading">{t('模型思考')}</div>
-    <section className="model-thinking-section" aria-label={t('模型思考')}>
-      {thinkingLoading ? <p className="model-thinking-status" role="status">{t('正在读取模型思考能力…')}</p>
-        : thinkingFailed ? <div className="model-thinking-status unavailable" role="status"><span>{t('暂时无法读取模型思考能力，当前设置不可调整。')}</span><button type="button" onClick={onThinkingRetry}>{t('重试')}</button></div>
-          : !thinkingCapability?.supported || !thinkingSelection ? <p className="model-thinking-status unavailable">{t('当前模型不支持可配置的思考参数。')}</p>
-            : <>
-              <div className="menu-toggle model-thinking-toggle"><div><strong>{t('扩展模型思考')}</strong><small id="model-thinking-toggle-description">{t(thinkingCapability.toggle === 'always_on' ? '此模型始终启用扩展思考' : thinkingSelection.enabled ? '已开启，由所选深度控制模型生成行为。' : '已关闭，不影响 Astra 的公开执行过程。')}</small></div><Toggle checked={thinkingSelection.enabled} disabled={thinkingCapability.toggle === 'always_on'} onChange={onThinkingEnabledChange} label={t('模型思考')} describedBy="model-thinking-toggle-description" /></div>
-              {thinkingSelection.enabled && thinkingDepthOptions.length > 0 && <MenuChoice
-                label="模型思考深度"
-                value={thinkingDepthLabel(thinkingSelection.depth)}
-                options={thinkingDepthOptions}
-                onChange={(value) => {
-                  const depth = thinkingCapability.depths.find((item) => thinkingDepthLabel(item.id) === value)?.id;
-                  if (depth) onThinkingDepthChange(depth);
-                }}
-              />}
-            </>}
-      <p className="model-thinking-note">{t('模型思考控制模型生成行为；聊天中的“思考”是 Astra 的公开执行过程摘要。')}</p>
-    </section>
     <div className="menu-divider" />
     {trusted ? <>
       <div className="menu-heading">{t('可信对话策略')}</div>
@@ -3696,10 +3738,8 @@ function ProcessPanel({ run, messageId, liveState, open, isLatestRun, onInitiali
     onOpenChange(run.id, !open);
   };
   return <article className={`process-entry ${live ? 'live' : ''} ${hasHistoricalGraph ? 'has-historical-graph' : ''}`} id={`message-${messageId}`}><details className="process-panel" open={open}><summary onClick={toggle} aria-expanded={open}><Icon name="brain" /><span className="process-title">{processTitle}{live && <span className="process-thinking-dots" aria-hidden="true"><i /><i /><i /></span>}</span>{livePreview && <small className="process-live-preview" aria-live="polite">{livePreview}</small>}</summary><div className="process-timeline" aria-live={live ? 'polite' : undefined}>
-    <p className="process-disclosure-note">{t('这里展示 Astra 的公开执行过程摘要，不是模型隐藏思维链。')}</p>
     <ProcessTimeline items={processItems} run={run} />
     {!live && remainingNotes.map((note, index) => <div className="process-step verification" key={`verification-${index}`}><span className="process-dot"><Icon name="check" /></span><div><strong>{t('验证')}</strong><p>{note}</p></div></div>)}
-    {!live && run.result && <ReasoningAuditSummary run={run} />}
   </div></details>
     {hasHistoricalGraph && <button
       className="historical-graph-toggle"
@@ -3884,29 +3924,6 @@ function externalHref(value: string) {
   if (href.startsWith('//')) return `https:${href}`;
   const embeddedDomain = href.match(/(?:[a-z0-9-]+\.)+[a-z]{2,}(?:\/[^\s，。；、）)\]]*)?/i)?.[0];
   return `https://${(embeddedDomain ?? href).replace(/^\/+/, '')}`;
-}
-
-function ReasoningAuditSummary({ run }: { run: RunView }) {
-  const { t } = useI18n();
-  const policy = run.reasoning_policy as { effective?: Record<string, unknown>; adjustments?: Array<Record<string, unknown>> } | undefined;
-  const criteria = Array.isArray(run.task_contract?.success_criteria) ? run.task_contract.success_criteria as Array<Record<string, unknown>> : [];
-  if (!policy?.effective && !criteria.length && !run.terminal_reason) return null;
-  return <div className="reasoning-audit-grid">
-    {policy?.effective && <div><strong>{t('生效策略')}</strong><span>{t(reasoningEffortLabel(String(policy.effective.reasoning_effort ?? 'balanced')))} · {t(executionModeLabel(String(policy.effective.execution_mode ?? 'request_approval')))}</span></div>}
-    {criteria.map((criterion) => <div key={String(criterion.id)}><strong>{String(criterion.description)}</strong><span>{t(criterionStatusLabel(String(criterion.status ?? 'pending')))}</span></div>)}
-    {run.terminal_reason && <div><strong>{t('任务结果')}</strong><span>{t(statusLabel(run.status))}</span></div>}
-  </div>;
-}
-
-function executionModeLabel(value: string) {
-  return value === 'auto_approval' ? '自动批准' : '请求批准';
-}
-
-function criterionStatusLabel(value: string) {
-  return value === 'passed' || value === 'completed' ? '已完成'
-    : value === 'failed' ? '失败'
-      : value === 'skipped' ? '已跳过'
-        : '等待执行';
 }
 
 function activeState(run: RunView) {

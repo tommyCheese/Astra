@@ -308,7 +308,7 @@ describe('App', () => {
     document.documentElement.style.colorScheme = '';
   });
 
-  it('shows the selected model context ring before the first conversation exists', async () => {
+  it('shows the standalone context capacity control before the first conversation exists', async () => {
     render(<App />);
 
     const selector = screen.getByRole('button', { name: '当前模型：gpt-5' });
@@ -316,17 +316,17 @@ describe('App', () => {
     expect(getConversationContext).not.toHaveBeenCalled();
 
     await waitFor(() => expect(selector).toHaveClass('has-context'));
-    const ring = selector.querySelector('[data-testid="model-context-ring"]');
-    expect(ring).toBeInTheDocument();
-    expect(ring?.querySelector('.model-context-ring-value')).toHaveAttribute('stroke-dasharray', '0 100');
-    expect(ring?.querySelector('.model-context-tooltip')).toHaveTextContent('0 / 400K');
+    const contextControl = screen.getByRole('button', { name: '上下文：已使用 0，总计 400K，剩余 400K（估算）' });
+    expect(contextControl.querySelector('.model-context-ring-value')).toHaveAttribute('stroke-dasharray', '0 100');
+    await userEvent.click(contextControl);
+    expect(screen.getByRole('dialog', { name: '上下文容量' })).toHaveTextContent('回复预留');
     expect(document.getElementById('model-context-status-description')).toHaveTextContent(
       '上下文：已使用 0，总计 400K，剩余 400K（估算）',
     );
     expect(getConversationContext).not.toHaveBeenCalled();
   });
 
-  it('reinitializes the zero-usage context ring when switching models before the first message', async () => {
+  it('reinitializes the standalone context capacity when switching models before the first message', async () => {
     render(<App />);
 
     const initialSelector = screen.getByRole('button', { name: '当前模型：gpt-5' });
@@ -336,8 +336,8 @@ describe('App', () => {
 
     const nextSelector = screen.getByRole('button', { name: '当前模型：gpt-5-mini' });
     await waitFor(() => expect(nextSelector).toHaveClass('has-context'));
-    expect(nextSelector.querySelector('.model-context-ring-value')).toHaveAttribute('stroke-dasharray', '0 100');
-    expect(nextSelector.querySelector('.model-context-tooltip')).toHaveTextContent('0 / 400K');
+    const contextControl = screen.getByRole('button', { name: '上下文：已使用 0，总计 400K，剩余 400K（估算）' });
+    expect(contextControl.querySelector('.model-context-ring-value')).toHaveAttribute('stroke-dasharray', '0 100');
     expect(getConversationContext).not.toHaveBeenCalled();
   });
 
@@ -366,7 +366,7 @@ describe('App', () => {
     expect(screen.getByRole('link', { name: '关联来源' })).toHaveAttribute('href', 'https://example.com');
     expect(screen.queryByText('审计详情')).not.toBeInTheDocument();
     expect(screen.getAllByText(/web_search/).length).toBeGreaterThan(0);
-    expect(screen.getAllByText('这里展示 Astra 的公开执行过程摘要，不是模型隐藏思维链。').length).toBeGreaterThan(0);
+    expect(screen.queryByText('这里展示 Astra 的公开执行过程摘要，不是模型隐藏思维链。')).not.toBeInTheDocument();
     expect(screen.getByRole('navigation', { name: '问题导航' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '跳转到问题 1' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '跳转到问题 1' })).toHaveAttribute('aria-current', 'true');
@@ -480,12 +480,13 @@ describe('App', () => {
     expect(modelSelector).toHaveAttribute('aria-describedby', 'model-thinking-summary-description model-context-status-description');
     expect(modelSelector).not.toHaveAttribute('title');
     expect(document.getElementById('model-context-status-description')).toHaveTextContent('已整理较早的对话，完整记录仍保留。');
-    await userEvent.click(modelSelector);
-    const menuContext = screen.getByLabelText('上下文使用情况');
-    expect(menuContext).toHaveTextContent('5K / 400K');
-    expect(menuContext).not.toHaveTextContent('模型目录');
-    expect(menuContext).not.toHaveTextContent('回退');
-    expect(menuContext.querySelector('.model-context-tooltip')).not.toBeInTheDocument();
+    const contextControl = screen.getByRole('button', { name: /上下文：已使用 5K/ });
+    await userEvent.click(contextControl);
+    const capacityPanel = screen.getByRole('dialog', { name: '上下文容量' });
+    expect(capacityPanel).toHaveTextContent('5K');
+    expect(capacityPanel).toHaveTextContent('对话与运行结果');
+    expect(capacityPanel).not.toHaveTextContent('模型目录');
+    expect(capacityPanel).not.toHaveTextContent('回退');
     expect(document.querySelector('.context-window-status')).not.toBeInTheDocument();
     expect(document.querySelector('.chat-composer')).not.toHaveClass('has-context-status');
   });
@@ -1436,7 +1437,7 @@ describe('App', () => {
     expect(screen.queryByText('并行工具调用')).not.toBeInTheDocument();
     expect(screen.queryByText('工具失败重试')).not.toBeInTheDocument();
     expect(screen.queryByText('命令执行确认')).not.toBeInTheDocument();
-    expect(screen.getByText('当前镜像')).toBeInTheDocument();
+    expect(screen.queryByText('当前镜像')).not.toBeInTheDocument();
   });
 
   it('shows live runtime build progress and supports cancellation', async () => {
@@ -1591,8 +1592,8 @@ describe('App', () => {
     const thinkingSwitch = screen.getByRole('switch', { name: '模型思考' });
     expect(thinkingSwitch).toBeChecked();
     expect(thinkingSwitch).toBeDisabled();
-    expect(thinkingSwitch).toHaveAccessibleDescription('此模型始终启用扩展思考');
-    expect(screen.getByText('此模型始终启用扩展思考')).toBeInTheDocument();
+    expect(thinkingSwitch).not.toHaveAccessibleDescription();
+    expect(screen.queryByText('此模型始终启用扩展思考')).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: '高' }));
     expect(screen.getByRole('button', { name: '高' })).toHaveAttribute('aria-pressed', 'true');
     expect(screen.queryByText('当前深度可能显著增加首字和总响应延迟，但不会启用可信模式。')).not.toBeInTheDocument();
@@ -1646,7 +1647,7 @@ describe('App', () => {
     expect(screen.getByRole('button', { name: '中' })).toHaveClass('active');
     await userEvent.click(screen.getByRole('switch', { name: '模型思考' }));
     expect(screen.queryByText('模型思考深度')).not.toBeInTheDocument();
-    expect(screen.getByText('已关闭，不影响 Astra 的公开执行过程。')).toBeInTheDocument();
+    expect(screen.queryByText('已关闭，不影响 Astra 的公开执行过程。')).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole('switch', { name: '模型思考' }));
     await userEvent.click(screen.getByRole('button', { name: '高' }));
     await userEvent.click(screen.getByRole('button', { name: /qwen-plus/ }));
@@ -1721,7 +1722,7 @@ describe('App', () => {
       undefined,
     );
     expect(await screen.findByText('思考完成')).toBeInTheDocument();
-    expect(screen.getAllByText('这里展示 Astra 的公开执行过程摘要，不是模型隐藏思维链。').length).toBeGreaterThan(0);
+    expect(screen.queryByText('这里展示 Astra 的公开执行过程摘要，不是模型隐藏思维链。')).not.toBeInTheDocument();
   });
 
   it('fails closed when model thinking capabilities cannot be loaded', async () => {

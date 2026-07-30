@@ -138,7 +138,12 @@ class RunEngine:
             try:
                 await self._run_with_repo(repo, run_id)
             except asyncio.CancelledError:
-                await self._flush_cancelled_answer(run_id)
+                # Reuse the active repository session while draining the final
+                # buffered delta. Opening a second SQLite writer here can race
+                # with this still-open transaction and surface as "database
+                # unavailable" to the cancellation endpoint.
+                await repo.session.rollback()
+                await self._flush_cancelled_answer(repo, run_id)
                 raise
             except (
                 AgentProfileConfigurationError,
@@ -170,17 +175,15 @@ class RunEngine:
                     },
                 )
 
-    async def _flush_cancelled_answer(self, run_id: str) -> None:
+    async def _flush_cancelled_answer(self, repo: RunRepository, run_id: str) -> None:
         buffered = self._answer_buffers.pop(run_id, "")
         self._answer_flush_at.pop(run_id, None)
         if not buffered:
             self._answer_start_pending.discard(run_id)
             return
-        async with SessionLocal() as session:
-            repo = RunRepository(session)
-            await self._ensure_answer_stream_started(repo, run_id)
-            await repo.add_event(run_id, "answer.delta", {"delta": buffered})
-            await session.commit()
+        await self._ensure_answer_stream_started(repo, run_id)
+        await repo.add_event(run_id, "answer.delta", {"delta": buffered})
+        await repo.session.commit()
 
     async def _run_with_repo(self, repo: RunRepository, run_id: str) -> None:
         run, skill_snapshot = await repo.require_run_startup(

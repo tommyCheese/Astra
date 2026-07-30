@@ -271,11 +271,19 @@ class ConversationContextManager:
             fallback_tokens=self.settings.context_window_fallback_tokens,
         )
         messages = [projection.summary] if projection.summary else []
+        summary_tokens = (
+            estimate_messages_tokens([projection.summary]) if projection.summary else 0
+        )
+        conversation_tokens = 0
         for run in projection.runs:
-            messages.extend(self._run_context(run))
+            run_messages = list(self._run_context(run))
+            messages.extend(run_messages)
+            conversation_tokens += estimate_messages_tokens(run_messages)
+        draft_tokens = estimate_messages_tokens([draft]) if draft else 0
         if draft:
             messages.append(draft)
-        used = self.settings.context_system_reserve_tokens + estimate_messages_tokens(messages)
+        system_tokens = self.settings.context_system_reserve_tokens
+        used = system_tokens + estimate_messages_tokens(messages)
         output_reserve = self.settings.context_output_reserve_tokens
         if window.max_output_tokens is not None:
             output_reserve = min(output_reserve, window.max_output_tokens)
@@ -307,6 +315,33 @@ class ConversationContextManager:
             "summary_active": bool(projection.summary),
             "visible_run_count": len(projection.runs),
             "folded_run_count": len(projection.folded_run_ids),
+            "breakdown": [
+                {"kind": "system", "tokens": system_tokens, "item_count": 1},
+                *(
+                    [{"kind": "summary", "tokens": summary_tokens, "item_count": 1}]
+                    if summary_tokens
+                    else []
+                ),
+                *(
+                    [{
+                        "kind": "conversation",
+                        "tokens": conversation_tokens,
+                        "item_count": len(projection.runs),
+                    }]
+                    if conversation_tokens
+                    else []
+                ),
+                *(
+                    [{"kind": "draft", "tokens": draft_tokens, "item_count": 1}]
+                    if draft_tokens
+                    else []
+                ),
+                {
+                    "kind": "output_reserve",
+                    "tokens": output_reserve,
+                    "item_count": 1,
+                },
+            ],
             "last_action": state.get("last_action"),
             "last_action_at": self._parse_datetime(state.get("last_action_at")),
         }

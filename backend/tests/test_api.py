@@ -1575,6 +1575,29 @@ async def test_active_run_can_be_cancelled_idempotently(app_client, monkeypatch)
     assert run_id not in runs_api._background_tasks_by_run
 
 
+async def test_cancel_run_survives_background_cleanup_failure(app_client, monkeypatch):
+    started = asyncio.Event()
+
+    async def cleanup_failing_runner(run_id, settings):
+        started.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError as exc:
+            raise RuntimeError("simulated cleanup failure") from exc
+
+    monkeypatch.setattr(runs_api, "start_run_in_process", cleanup_failing_runner)
+    created = await app_client.post("/api/runs", json={"goal": "生成流式回答"})
+    run_id = created.json()["run_id"]
+    await started.wait()
+
+    cancelled = await app_client.post(f"/api/runs/{run_id}/cancel")
+
+    assert cancelled.status_code == 200
+    assert cancelled.json()["status"] == "cancelled"
+    assert cancelled.json()["terminal_reason"]["category"] == "user_cancelled"
+    assert run_id not in runs_api._background_tasks_by_run
+
+
 async def test_cancel_run_returns_completed_snapshot_and_missing_run_is_404(app_client):
     created = await app_client.post("/api/runs", json={"goal": "已完成任务"})
     run_id = created.json()["run_id"]

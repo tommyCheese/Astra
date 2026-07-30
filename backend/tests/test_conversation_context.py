@@ -157,3 +157,27 @@ async def test_automatic_compaction_and_active_run_guard(session):
     await session.commit()
     with pytest.raises(StateError):
         await manager.clear(task)
+
+
+@pytest.mark.asyncio
+async def test_status_reports_adaptive_context_breakdown(session):
+    task = await _conversation_with_runs(session, count=2)
+    settings = Settings(model_provider="mock")
+    status = await ConversationContextManager(session, settings).status(
+        task,
+        provider="openai",
+        model="gpt-5",
+        draft="继续分析",
+    )
+
+    breakdown = {item["kind"]: item for item in status["breakdown"]}
+    assert breakdown["system"]["tokens"] == settings.context_system_reserve_tokens
+    assert breakdown["conversation"]["item_count"] == 2
+    assert breakdown["conversation"]["tokens"] > 0
+    assert breakdown["draft"]["tokens"] > 0
+    assert breakdown["output_reserve"]["tokens"] == settings.context_output_reserve_tokens
+    assert sum(
+        item["tokens"]
+        for item in status["breakdown"]
+        if item["kind"] != "output_reserve"
+    ) == status["used_tokens"]
