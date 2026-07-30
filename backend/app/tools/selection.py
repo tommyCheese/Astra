@@ -7,8 +7,31 @@ from typing import Any
 from app.tools.base import ToolSpec
 from app.tools.router import ToolRouter
 
-
 _SUCCESS_STATUSES = frozenset({"completed", "succeeded", "success"})
+
+
+def task_capability_catalog(specs: Mapping[str, ToolSpec]) -> set[str]:
+    """Return the provider-neutral abilities that planning is allowed to reference."""
+    return {
+        capability for spec in specs.values() for capability in spec.task_capabilities if capability
+    }
+
+
+def forbidden_plan_bindings(specs: Mapping[str, ToolSpec]) -> set[str]:
+    """Return concrete/runtime identities that must not leak into new Plans."""
+    semantic = task_capability_catalog(specs)
+    bindings = set(specs)
+    for spec in specs.values():
+        bindings.update(spec.capabilities)
+        bindings.update(spec.permissions)
+        bindings.update(
+            {
+                spec.permission,
+                spec.provider_id,
+                spec.execution_backend,
+            }
+        )
+    return {binding for binding in bindings if binding and binding not in semantic}
 
 
 def _normalized_values(values: Iterable[str] | str | None) -> tuple[str, ...]:
@@ -154,9 +177,7 @@ class CapabilityToolResolver:
             if required and not matched:
                 continue
             if tool_name in excluded:
-                rejections.append(
-                    CapabilityToolRejection(tool_name, "excluded", matched)
-                )
+                rejections.append(CapabilityToolRejection(tool_name, "excluded", matched))
                 continue
             if require_read_only and spec.side_effect_level != "read_only":
                 rejections.append(
@@ -164,9 +185,7 @@ class CapabilityToolResolver:
                 )
                 continue
             if require_idempotent and not spec.idempotent:
-                rejections.append(
-                    CapabilityToolRejection(tool_name, "non_idempotent", matched)
-                )
+                rejections.append(CapabilityToolRejection(tool_name, "non_idempotent", matched))
                 continue
             candidates.append(
                 CapabilityToolCandidate(
@@ -201,10 +220,21 @@ class CapabilityToolResolver:
                 )
             )
 
+        side_effect_rank = {
+            "read_only": 0,
+            "temporary": 1,
+            "workspace_write": 2,
+            "external_write": 3,
+            "destructive": 4,
+        }
+        risk_rank = {"low": 0, "sandboxed": 1, "high": 2}
         candidates.sort(
             key=lambda candidate: (
-                candidate.tool_name,
+                -len(candidate.matched_capabilities) if required else 0,
+                side_effect_rank.get(candidate.spec.side_effect_level, 99),
+                risk_rank.get(candidate.spec.risk, 99),
                 candidate.provider_id,
+                candidate.tool_name,
                 candidate.tool_version,
                 candidate.provider_digest,
             )
@@ -217,9 +247,7 @@ class CapabilityToolResolver:
             )
         )
         covered = {
-            capability
-            for candidate in candidates
-            for capability in candidate.matched_capabilities
+            capability for candidate in candidates for capability in candidate.matched_capabilities
         }
         gaps = tuple(sorted(unresolved_set - covered))
         return CapabilityToolResolution(

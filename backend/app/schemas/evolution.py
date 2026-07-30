@@ -44,6 +44,10 @@ class EvolutionRollbackRequest(EvolutionReviewRequest):
     rollback_criteria: dict[str, Any] = Field(default_factory=dict)
 
 
+class EvolutionPromotionRequest(EvolutionReviewRequest):
+    target: Literal["shadow", "canary", "promoted"]
+
+
 class EvolutionSourceView(BaseModel):
     source_type: str
     source_id: str

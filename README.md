@@ -27,14 +27,14 @@ cd astra-v0.1.0
 
 ## 第一条纵向切片
 
-当前实现方向是 `implement-web-data-query-task-runner`：一个由 Python 后端支撑的 Web App，用真实模型接口和 `web_search` / `web_fetch` 工具运行通用 Web 数据查询任务。
+当前实现已经从最初的 Web 数据查询纵向切片，演进为由 Python 后端支撑的通用 Agent Runtime。Web 搜索与读取仍是可用的原子能力，但不再决定整体任务规划结构。
 
-工具系统已开始迁移为策略驱动的通用 Runtime：Web 领域处理从 AgentLoop 解耦，计算型工具通过 `ToolExecutionContext`、`SandboxJob` 和 `ArtifactRef` 保留审计关联。声明式 `chart.render` 支持 Matplotlib、Seaborn 和 ECharts；绘图能力默认关闭，启用后通过 Docker Engine 执行，不在 API 进程内执行任意 Python 或 JavaScript。本地、CI 和 Linux 部署共用相同镜像与安全参数。部署要求见 [沙箱与图表 Runtime 运维指南](docs/sandbox-and-chart-runtime-operations.md)。
+工具系统采用策略驱动的通用 Runtime：计划描述目标、依赖、预期结果和 provider-neutral 的任务语义能力，具体工具只在执行回合根据当前需求、可用 manifest、策略与安全约束动态选择。Web 领域处理从 AgentLoop 解耦，计算型工具通过 `ToolExecutionContext`、`SandboxJob` 和 `ArtifactRef` 保留审计关联。声明式 `chart.render` 支持 Matplotlib、Seaborn 和 ECharts；绘图能力默认关闭，启用后通过 Docker Engine 执行，不在 API 进程内执行任意 Python 或 JavaScript。本地、CI 和 Linux 部署共用相同镜像与安全参数。部署要求见 [沙箱与图表 Runtime 运维指南](docs/sandbox-and-chart-runtime-operations.md)。
 
 核心闭环：
 
 ```text
-用户目标 -> 创建 Task/Run -> 模型规划 -> 工具执行 -> 结果综合 -> 证据验证 -> 时间线报告
+用户目标 -> 创建 Task/Run -> 工具无关规划 -> 动态候选解析 -> 工具执行 -> 结果综合 -> 证据验证 -> 时间线报告
 ```
 
 ### Agent Profile、Memory 与运行能力
@@ -43,13 +43,19 @@ Astra 的稳定身份与治理原则由后端包中的 `IDENTITY.md`、`SOUL.md`
 
 Profile 文档不保存实际用户记忆，也不授予工具权限。真实 run/workspace/user Memory 继续存入数据库；本次实际可执行能力由 Tool Manifest、环境配置、持久化工具开关、基础设施状态、Run 权限、风险门控和剩余预算共同决定。
 
-当前默认执行路径已经演进为 Web-only Agent loop：
+当前默认执行路径是通用 Agent loop：
 
 ```text
-用户消息 -> Agent 决策 -> 工具调用 -> Observation -> Reflection/继续执行 -> Evidence Pack -> Final Answer -> Verification Report
+用户消息 -> PlanNode 需求 -> 动态工具候选 -> Agent 决策 -> PolicyGate
+        -> ToolCall -> Observation -> Reflection/继续执行
+        -> Evidence/Artifact -> Final Answer -> Verification Report
 ```
 
-第一版 Agent loop 只开放低风险读取工具：`web_search` 和 `web_fetch`。后端 `ToolRouter` 会校验工具是否注册、是否在 allowlist、权限是否为 `network_read`、副作用等级是否为 `read_only`，以及必填输入是否完整。任何未授权工具请求都会被写入 Agent turn observation，而不会执行。
+`PlanNode.required_capabilities` 表达诸如 `information.search`、`information.read`、`data.visualize` 的任务需求，不保存具体工具、provider、permission 或 backend 名称。`CapabilityToolResolver` 在每个执行回合从当前合规 manifest 中生成有序候选；多个工具实现同一语义能力时可以替换，候选失效不需要改写 Plan。历史上绑定具体工具名的 Plan 仅通过显式兼容模式执行，新 Plan、PlanPatch 和 Plan revision 都拒绝这种绑定。
+
+任务语义能力与安全 authority 是两个维度：`task_capabilities` 只说明工具能完成什么；`capabilities`、`permissions`、risk、backend 和具体 Effect Plan 决定本次调用是否允许。模型选定具体工具后，`ToolRouter`、Effect Analyzer、Permission Engine、审批、预算和结果验证仍按原顺序执行。任何非候选或未授权选择都会写入审计事件而不会运行；节点声明的全部语义需求未满足时，CompletionGate 会拒绝提前完成。
+
+可信模式和未来可选的 Deep Research 子系统共享这套能力目录、候选解析、安全执行与证据层。Deep Research 可以增加研究规划、补搜循环和来源覆盖策略，但普通可信运行不导入或强制依赖 Deep Research 模块。
 
 ### 本地开发
 
@@ -196,6 +202,9 @@ AGENT_MAX_TOOL_CALLS=8
 AGENT_PARALLEL_EXECUTION_ENABLED=true
 AGENT_MAX_PARALLEL_NODES=3
 AGENT_MEMORY_WRITE_ENABLED=true
+AGENT_MEMORY_CROSS_SESSION_ENABLED=false
+AGENT_MEMORY_CROSS_SESSION_SHADOW=false
+AGENT_MEMORY_AUTODREAM_ENABLED=false
 AGENT_USE_GENERAL_RUNTIME=true
 ```
 
@@ -231,7 +240,7 @@ Web 搜索通过 `WebTaskAdapter` 接入通用完成语义。将 `AGENT_USE_GENE
 
 所有 API 失败均返回安全的错误信封：`error.type`、稳定的 `error.code`、用户可见的 `error.message`、`error.retryable` 和 `error.trace_id`。验证错误使用 422，资源不存在使用 404，状态冲突使用 409，依赖或数据库不可用使用 503，未分类运行时错误使用 500。响应不会包含堆栈、连接字符串或密钥；请使用 trace ID 在服务端日志中定位技术问题。后台 Run 失败也在 `result.error` 与 `run.error` 事件中使用相同字段。
 
-Memory 当前用于保存 run 内来源摘要和可审计观察。workspace/user 级 memory 写入必须带 `provenance` 和 `confidence`，缺失时会被拒绝并记录 `memory.write_rejected` 事件。第一版尚未引入 embedding memory 或向量召回，避免在来源审计和权限模型稳定前扩大记忆面。
+Memory 已支持 Run、Task、Workspace 和 user 显式命名空间、类型化生命周期、不可变版本、跨 Session 确定性召回、召回反馈与来源删除传播。跨 Session 注入和 AutoDream 调度默认关闭，可先用 shadow 模式采集审计指标；后台 consolidation 只生成可审查、可回滚的版本。Agent evolution candidate 可以附加离线评估并被人工批准，但生产晋升和执行保持故障闭合。首版不依赖 embedding、向量库或图数据库，完整配置与回滚说明见[深度记忆、AutoDream 与 Agent 自进化运维](docs/deep-memory-autodream-evolution.md)。
 
 前端现在是聊天式 Agent 窗口：用户消息、工具调用、反思、来源卡片、memory 摘要和最终答案会聚合成对话流；“审计详情”抽屉保留 turns、tool calls、artifacts、Evidence Pack 与 verification report，便于调试和追溯。
 

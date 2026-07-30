@@ -8,6 +8,11 @@ The Chat Composer SHALL display the selected model's context capacity, estimated
 - **THEN** a compact circular context indicator inside the model selector shows estimated usage against total capacity
 - **THEN** assistive text exposes used, remaining, model, and estimate semantics
 
+#### Scenario: View context capacity before the first message
+- **WHEN** a model is selected but no conversation has been created
+- **THEN** the model selector initializes a zero-usage circular indicator from that model's server-resolved capacity
+- **THEN** the selector does not reserve an empty circular-indicator column while capacity is still loading or unavailable
+
 #### Scenario: Keep the Composer input area compact
 - **WHEN** context-window status is available
 - **THEN** the UI does not add a separate context row above the message input
@@ -32,6 +37,16 @@ The Chat Composer SHALL display the selected model's context capacity, estimated
 - **WHEN** the user hovers the model name, strategy summary, or empty area of the selected model control
 - **THEN** the circular indicator tooltip remains hidden
 - **THEN** assistive technology can still read the context status from the selected model control
+
+#### Scenario: Inspect context inside the open model menu
+- **WHEN** the model menu is open and already displays exact context values
+- **THEN** hovering its compact circular indicator does not open a second tooltip over the menu
+- **THEN** the exact used, total, and remaining values remain visible in the context detail row
+
+#### Scenario: Keep model controls free of redundant warning cards
+- **WHEN** the user changes model-thinking depth or trusted execution mode
+- **THEN** the model menu does not insert a separate yellow explanatory warning card
+- **THEN** the selected controls continue to communicate their current state directly
 
 #### Scenario: Change the selected model configuration
 - **WHEN** the selected model's effective context configuration changes

@@ -1,0 +1,135 @@
+{
+  "schema_version": 1,
+  "cases": [
+    {
+      "case_id": "cross-session-database-fact",
+      "query": "项目的 PostgreSQL 主数据库是什么？",
+      "as_of": "2026-07-30T12:00:00Z",
+      "legacy_run_id": "run-current-1",
+      "namespaces": [
+        {"type": "run", "id": "run-current-1"},
+        {"type": "task", "id": "task-1"}
+      ],
+      "relevant_ids": ["fact-postgresql"],
+      "required_ids": ["fact-postgresql"],
+      "stale_ids": [],
+      "harmful_ids": [],
+      "candidates": [
+        {
+          "id": "legacy-recent-1",
+          "namespace_type": "run",
+          "namespace_id": "run-current-1",
+          "kind": "episodic_experience",
+          "status": "active",
+          "content": "本次对话刚刚开始，尚无项目数据库结论。",
+          "confidence": 0.6,
+          "importance": 0.3,
+          "provenance": {"run_id": "run-current-1"},
+          "accessible_source_count": 1,
+          "updated_at": "2026-07-30T11:59:00Z"
+        },
+        {
+          "id": "fact-postgresql",
+          "namespace_type": "task",
+          "namespace_id": "task-1",
+          "kind": "semantic_fact",
+          "status": "active",
+          "content": "项目使用 PostgreSQL 作为主数据库。",
+          "confidence": 0.98,
+          "importance": 0.9,
+          "provenance": {"run_id": "run-source-1"},
+          "accessible_source_count": 1,
+          "updated_at": "2026-07-20T10:00:00Z"
+        }
+      ],
+      "consolidated_candidates": [
+        {
+          "id": "fact-postgresql",
+          "namespace_type": "task",
+          "namespace_id": "task-1",
+          "kind": "semantic_fact",
+          "status": "active",
+          "content": "项目主数据库：PostgreSQL。",
+          "confidence": 0.99,
+          "importance": 0.95,
+          "provenance": {"source_count": 3},
+          "accessible_source_count": 3,
+          "updated_at": "2026-07-29T10:00:00Z"
+        }
+      ]
+    },
+    {
+      "case_id": "temporal-preference-replacement",
+      "query": "用户偏好使用哪种语言回答？中文还是英文？",
+      "as_of": "2026-07-30T12:00:00Z",
+      "legacy_run_id": "run-current-2",
+      "namespaces": [
+        {"type": "run", "id": "run-current-2"},
+        {"type": "task", "id": "task-2"}
+      ],
+      "relevant_ids": ["preference-chinese"],
+      "required_ids": ["preference-chinese"],
+      "stale_ids": ["preference-english-stale"],
+      "harmful_ids": ["preference-english-stale"],
+      "candidates": [
+        {
+          "id": "preference-english-stale",
+          "namespace_type": "run",
+          "namespace_id": "run-current-2",
+          "kind": "user_preference",
+          "status": "active",
+          "content": "用户偏好使用英文回答。",
+          "confidence": 0.4,
+          "importance": 0.5,
+          "provenance": {"run_id": "run-current-2"},
+          "accessible_source_count": 1,
+          "updated_at": "2026-07-30T11:58:00Z"
+        },
+        {
+          "id": "preference-chinese",
+          "namespace_type": "task",
+          "namespace_id": "task-2",
+          "kind": "user_preference",
+          "status": "active",
+          "content": "用户最新明确偏好使用中文回答。",
+          "confidence": 0.99,
+          "importance": 0.9,
+          "provenance": {"run_id": "run-source-2"},
+          "accessible_source_count": 1,
+          "valid_from": "2026-07-25T08:00:00Z",
+          "updated_at": "2026-07-25T08:00:00Z"
+        },
+        {
+          "id": "preference-english-superseded",
+          "namespace_type": "task",
+          "namespace_id": "task-2",
+          "kind": "user_preference",
+          "status": "superseded",
+          "content": "用户过去偏好使用英文回答。",
+          "confidence": 0.9,
+          "importance": 0.7,
+          "provenance": {"run_id": "run-old-2"},
+          "accessible_source_count": 1,
+          "valid_to": "2026-07-25T08:00:00Z",
+          "updated_at": "2026-07-01T08:00:00Z"
+        }
+      ],
+      "consolidated_candidates": [
+        {
+          "id": "preference-chinese",
+          "namespace_type": "task",
+          "namespace_id": "task-2",
+          "kind": "user_preference",
+          "status": "active",
+          "content": "当前有效偏好：中文回答。",
+          "confidence": 0.99,
+          "importance": 0.95,
+          "provenance": {"source_count": 2},
+          "accessible_source_count": 2,
+          "valid_from": "2026-07-25T08:00:00Z",
+          "updated_at": "2026-07-29T08:00:00Z"
+        }
+      ]
+    }
+  ]
+}

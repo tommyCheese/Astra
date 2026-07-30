@@ -308,6 +308,39 @@ describe('App', () => {
     document.documentElement.style.colorScheme = '';
   });
 
+  it('shows the selected model context ring before the first conversation exists', async () => {
+    render(<App />);
+
+    const selector = screen.getByRole('button', { name: '当前模型：gpt-5' });
+    expect(selector).toHaveClass('without-context');
+    expect(getConversationContext).not.toHaveBeenCalled();
+
+    await waitFor(() => expect(selector).toHaveClass('has-context'));
+    const ring = selector.querySelector('[data-testid="model-context-ring"]');
+    expect(ring).toBeInTheDocument();
+    expect(ring?.querySelector('.model-context-ring-value')).toHaveAttribute('stroke-dasharray', '0 100');
+    expect(ring?.querySelector('.model-context-tooltip')).toHaveTextContent('0 / 400K');
+    expect(document.getElementById('model-context-status-description')).toHaveTextContent(
+      '上下文：已使用 0，总计 400K，剩余 400K（估算）',
+    );
+    expect(getConversationContext).not.toHaveBeenCalled();
+  });
+
+  it('reinitializes the zero-usage context ring when switching models before the first message', async () => {
+    render(<App />);
+
+    const initialSelector = screen.getByRole('button', { name: '当前模型：gpt-5' });
+    await waitFor(() => expect(initialSelector).toHaveClass('has-context'));
+    await userEvent.click(initialSelector);
+    await userEvent.click(screen.getByRole('button', { name: /gpt-5-mini/ }));
+
+    const nextSelector = screen.getByRole('button', { name: '当前模型：gpt-5-mini' });
+    await waitFor(() => expect(nextSelector).toHaveClass('has-context'));
+    expect(nextSelector.querySelector('.model-context-ring-value')).toHaveAttribute('stroke-dasharray', '0 100');
+    expect(nextSelector.querySelector('.model-context-tooltip')).toHaveTextContent('0 / 400K');
+    expect(getConversationContext).not.toHaveBeenCalled();
+  });
+
   it('submits a goal and renders the result', async () => {
     render(<App />);
 
@@ -448,9 +481,11 @@ describe('App', () => {
     expect(modelSelector).not.toHaveAttribute('title');
     expect(document.getElementById('model-context-status-description')).toHaveTextContent('已整理较早的对话，完整记录仍保留。');
     await userEvent.click(modelSelector);
-    expect(screen.getByLabelText('上下文使用情况')).toHaveTextContent('5K / 400K');
-    expect(screen.getByLabelText('上下文使用情况')).not.toHaveTextContent('模型目录');
-    expect(screen.getByLabelText('上下文使用情况')).not.toHaveTextContent('回退');
+    const menuContext = screen.getByLabelText('上下文使用情况');
+    expect(menuContext).toHaveTextContent('5K / 400K');
+    expect(menuContext).not.toHaveTextContent('模型目录');
+    expect(menuContext).not.toHaveTextContent('回退');
+    expect(menuContext.querySelector('.model-context-tooltip')).not.toBeInTheDocument();
     expect(document.querySelector('.context-window-status')).not.toBeInTheDocument();
     expect(document.querySelector('.chat-composer')).not.toHaveClass('has-context-status');
   });
@@ -1551,7 +1586,7 @@ describe('App', () => {
 
     await waitFor(() => expect(resolveModelThinkingCapabilities).toHaveBeenCalled());
     const selector = screen.getByRole('button', { name: '当前模型：gpt-5' });
-    expect(selector).toHaveAccessibleDescription('模型思考 · 中');
+    expect(selector).toHaveAccessibleDescription(/模型思考 · 中/);
     await userEvent.click(selector);
     const thinkingSwitch = screen.getByRole('switch', { name: '模型思考' });
     expect(thinkingSwitch).toBeChecked();
@@ -1560,12 +1595,13 @@ describe('App', () => {
     expect(screen.getByText('此模型始终启用扩展思考')).toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: '高' }));
     expect(screen.getByRole('button', { name: '高' })).toHaveAttribute('aria-pressed', 'true');
-    expect(screen.getByText('当前深度可能显著增加首字和总响应延迟，但不会启用可信模式。')).toBeInTheDocument();
+    expect(screen.queryByText('当前深度可能显著增加首字和总响应延迟，但不会启用可信模式。')).not.toBeInTheDocument();
 
     await userEvent.click(screen.getByRole('switch', { name: '快速响应' }));
     await userEvent.click(screen.getByRole('button', { name: '当前模型：gpt-5' }));
     expect(screen.getByRole('button', { name: '高' })).toHaveClass('active');
-    expect(screen.getByText('当前深度将用于本次运行的多次模型调用，可能增加耗时与用量。')).toBeInTheDocument();
+    expect(screen.queryByText('当前深度将用于本次运行的多次模型调用，可能增加耗时与用量。')).not.toBeInTheDocument();
+    expect(document.querySelector('.model-thinking-impact')).not.toBeInTheDocument();
   });
 
   it('persists optional model thinking per model and sends it independently from agent effort', async () => {
@@ -1795,7 +1831,7 @@ describe('App', () => {
     await userEvent.click(screen.getByRole('button', { name: '当前模型：gpt-5' }));
     await userEvent.click(await screen.findByRole('button', { name: '最高' }));
     expect(screen.getByRole('button', { name: '最高' })).toHaveAttribute('aria-pressed', 'true');
-    expect(screen.getByRole('button', { name: '当前模型：gpt-5' })).toHaveAccessibleDescription('模型思考 · 最高');
+    expect(screen.getByRole('button', { name: '当前模型：gpt-5' })).toHaveAccessibleDescription(/模型思考 · 最高/);
   });
 
   it('resumes a waiting run with its frozen effective thinking snapshot', async () => {

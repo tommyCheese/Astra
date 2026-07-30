@@ -53,6 +53,7 @@ from app.schemas.agent import (
 from app.skills.catalog import SkillActivationService
 from app.tools.base import ToolRegistry
 from app.tools.registry import build_tool_registry
+from app.tools.selection import forbidden_plan_bindings, task_capability_catalog
 from app.usage_metering import DatabaseUsageRecorder
 
 logger = logging.getLogger("astra.engine")
@@ -197,11 +198,9 @@ class RunEngine:
         )
         if self.settings.skills_enabled:
             try:
-                skill_blocks, skill_snapshot = (
-                    await skill_service.prompt_blocks_with_snapshot(
-                        run_id,
-                        snapshot=skill_snapshot,
-                    )
+                skill_blocks, skill_snapshot = await skill_service.prompt_blocks_with_snapshot(
+                    run_id,
+                    snapshot=skill_snapshot,
                 )
             except ValueError as exc:
                 if "snapshot is unavailable" not in str(exc):
@@ -229,9 +228,7 @@ class RunEngine:
                     run_id,
                     "skill.resolution.completed",
                     {
-                        "selected": [
-                            item["qualified_identity"] for item in skill_blocks
-                        ],
+                        "selected": [item["qualified_identity"] for item in skill_blocks],
                         "phase": "before_task_contract",
                     },
                 )
@@ -276,20 +273,14 @@ class RunEngine:
             "run.plan.ready run_id=%s nodes=%s capabilities=%s",
             run_id,
             len(plan.nodes),
-            len(
-                {
-                    capability
-                    for node in plan.nodes
-                    for capability in node.required_capabilities
-                }
-            ),
+            len({capability for node in plan.nodes for capability in node.required_capabilities}),
         )
         run = await repo.require_run_core(run_id)
         snapshot = ReasoningPolicySnapshot.model_validate(run.reasoning_policy or {})
         contract = contract or build_default_contract(goal)
-        capabilities = set(self.tool_registry.specs())
-        for spec in self.tool_registry.specs().values():
-            capabilities.update(spec.capabilities)
+        tool_specs = self.tool_registry.specs()
+        capabilities = task_capability_catalog(tool_specs)
+        forbidden_capabilities = forbidden_plan_bindings(tool_specs)
         plan_service = PlanService(PlanRepository(repo.session))
         try:
             canonical_plan = await plan_service.create(
@@ -297,6 +288,7 @@ class RunEngine:
                 plan,
                 contract=contract,
                 capabilities=capabilities,
+                forbidden_capabilities=forbidden_capabilities,
                 budgets=snapshot.effective.budgets,
                 activate=execution_profile.plan_execution == PlanExecution.auto,
             )
@@ -316,6 +308,7 @@ class RunEngine:
                 plan,
                 contract=contract,
                 capabilities=capabilities,
+                forbidden_capabilities=forbidden_capabilities,
                 budgets=snapshot.effective.budgets,
                 activate=execution_profile.plan_execution == PlanExecution.auto,
             )
@@ -450,7 +443,9 @@ class RunEngine:
         policy = run.reasoning_policy or {}
         effective = policy.get("effective") if isinstance(policy.get("effective"), dict) else {}
         requested = policy.get("requested") if isinstance(policy.get("requested"), dict) else {}
-        effort = effective.get("reasoning_effort") or requested.get("reasoning_effort") or "balanced"
+        effort = (
+            effective.get("reasoning_effort") or requested.get("reasoning_effort") or "balanced"
+        )
         try:
             self.model_client.bind_reasoning_effort(effort)
         except ValueError:
@@ -464,9 +459,7 @@ class RunEngine:
     def _bind_model_thinking(self, run: RunRecord) -> None:
         thinking = (run.model_policy or {}).get("thinking")
         try:
-            self.model_client.bind_model_thinking(
-                thinking if isinstance(thinking, dict) else None
-            )
+            self.model_client.bind_model_thinking(thinking if isinstance(thinking, dict) else None)
         except ValueError:
             logger.warning(
                 "run.model_thinking.invalid run_id=%s fallback=legacy",
@@ -515,11 +508,7 @@ class RunEngine:
             known_checks: set[str] = set()
             for block in getattr(self, "_active_skill_blocks", []):
                 metadata = block.get("metadata", {})
-                checks = (
-                    metadata.get("mandatory_checks", [])
-                    if isinstance(metadata, dict)
-                    else []
-                )
+                checks = metadata.get("mandatory_checks", []) if isinstance(metadata, dict) else []
                 if not isinstance(checks, list):
                     continue
                 for raw_check in checks:
@@ -528,9 +517,7 @@ class RunEngine:
                         continue
                     known_checks.add(check)
                     identity = block["qualified_identity"]
-                    stable_id = hashlib.sha256(
-                        f"{identity}\0{check}".encode()
-                    ).hexdigest()[:12]
+                    stable_id = hashlib.sha256(f"{identity}\0{check}".encode()).hexdigest()[:12]
                     criteria.append(
                         SuccessCriterion(
                             id=f"skill-check-{stable_id}",
@@ -569,9 +556,7 @@ class RunEngine:
                     "nodes": [
                         node
                         if node.required_skill_ids
-                        else node.model_copy(
-                            update={"required_skill_ids": active_identities}
-                        )
+                        else node.model_copy(update={"required_skill_ids": active_identities})
                         for node in plan.nodes
                     ]
                 }
@@ -835,9 +820,7 @@ class RunEngine:
         self._answer_flush_at[run_id] = 0.0
         self._answer_start_pending.add(run_id)
 
-    async def _ensure_answer_stream_started(
-        self, repo: RunRepository, run_id: str
-    ) -> None:
+    async def _ensure_answer_stream_started(self, repo: RunRepository, run_id: str) -> None:
         if run_id not in self._answer_start_pending:
             return
         self._answer_start_pending.discard(run_id)

@@ -9,6 +9,7 @@ class FakeSearch(Tool):
         output_schema={},
         permission="network_read",
         side_effect_level="read_only",
+        task_capabilities=["information.search", "source.discover"],
     )
 
     async def run(self, tool_input, *, context=None):
@@ -38,6 +39,7 @@ class FakeFetch(Tool):
         output_schema={},
         permission="network_read",
         side_effect_level="read_only",
+        task_capabilities=["information.read", "source.retrieve", "evidence.extract"],
     )
 
     async def run(self, tool_input, *, context=None):

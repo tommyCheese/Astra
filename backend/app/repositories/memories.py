@@ -721,3 +721,65 @@ class MemoryRepository:
         if commit:
             await self.session.commit()
         return event
+
+    async def materialize_expired(
+        self,
+        *,
+        as_of: datetime | None = None,
+        limit: int = 500,
+        commit: bool = True,
+    ) -> int:
+        instant = _as_utc(as_of) or utc_now()
+        records = list(
+            (
+                await self.session.execute(
+                    select(MemoryRecord)
+                    .where(
+                        MemoryRecord.status == MemoryStatus.active.value,
+                        MemoryRecord.expires_at.is_not(None),
+                        MemoryRecord.expires_at <= instant,
+                    )
+                    .order_by(MemoryRecord.expires_at, MemoryRecord.id)
+                    .limit(max(0, limit))
+                )
+            )
+            .scalars()
+            .all()
+        )
+        materialized = 0
+        for memory in records:
+            result = await self.session.execute(
+                update(MemoryRecord)
+                .where(
+                    MemoryRecord.id == memory.id,
+                    MemoryRecord.status == MemoryStatus.active.value,
+                    MemoryRecord.state_version == memory.state_version,
+                )
+                .values(
+                    status=MemoryStatus.expired.value,
+                    state_version=memory.state_version + 1,
+                    valid_to=instant,
+                    updated_at=instant,
+                )
+            )
+            if result.rowcount != 1:
+                continue
+            materialized += 1
+            self.session.add(
+                MemoryAuditRecord(
+                    memory_id=memory.id,
+                    event_type="expiration_materialized",
+                    actor="memory-retention",
+                    reason="expires_at_elapsed",
+                    payload={
+                        "expires_at": memory.expires_at.isoformat()
+                        if memory.expires_at
+                        else None
+                    },
+                    created_at=instant,
+                )
+            )
+        await self.session.flush()
+        if commit:
+            await self.session.commit()
+        return materialized

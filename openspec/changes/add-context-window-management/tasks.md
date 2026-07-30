@@ -64,3 +64,13 @@
 
 - [x] 12.1 Remove catalog, fallback, verification, metadata, and command-registry implementation terms from context-related UI
 - [x] 12.2 Update command copy and frontend assertions, then run focused verification
+
+## 13. Initial Composer context state
+
+- [x] 13.1 Initialize the context ring from the selected model capability before a conversation exists and collapse unavailable placeholder space
+- [x] 13.2 Add initial-state and model-switch coverage, then run focused frontend and visual verification
+
+## 14. Model-menu display cleanup
+
+- [x] 14.1 Suppress the compact context ring's duplicate tooltip and remove model-thinking warning cards
+- [x] 14.2 Add regression coverage and run frontend, OpenSpec, and visual verification

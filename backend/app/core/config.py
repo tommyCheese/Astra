@@ -1,6 +1,6 @@
 from functools import lru_cache
 
-from pydantic import Field
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -63,6 +63,22 @@ class Settings(BaseSettings):
     agent_memory_retrieval_max_tokens: int = Field(default=2_000, ge=0, le=32_000)
     agent_memory_retrieval_min_confidence: float = Field(default=0.2, ge=0.0, le=1.0)
     agent_memory_retrieval_min_score: float = Field(default=0.05, ge=0.0, le=1.0)
+    agent_memory_autodream_enabled: bool = False
+    agent_memory_autodream_scan_seconds: int = Field(
+        default=3_600, ge=60, le=604_800
+    )
+    agent_memory_autodream_cooldown_seconds: int = Field(
+        default=86_400, ge=0, le=2_592_000
+    )
+    agent_memory_autodream_min_candidates: int = Field(default=2, ge=2, le=100)
+    agent_memory_autodream_max_records_per_job: int = Field(
+        default=100, ge=2, le=100
+    )
+    agent_memory_autodream_max_model_calls: int = Field(default=0, ge=0, le=8)
+    agent_memory_autodream_lease_seconds: int = Field(
+        default=120, ge=30, le=3_600
+    )
+    agent_memory_autodream_batch_size: int = Field(default=4, ge=1, le=32)
     agent_use_general_runtime: bool = True
     allow_network_read: bool = True
     cors_origins: str = "http://localhost:5173"
@@ -129,6 +145,17 @@ class Settings(BaseSettings):
     skills_safety_scanner_required: bool = True
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
+
+    @model_validator(mode="after")
+    def validate_autodream_bounds(self) -> "Settings":
+        if (
+            self.agent_memory_autodream_min_candidates
+            > self.agent_memory_autodream_max_records_per_job
+        ):
+            raise ValueError(
+                "AutoDream minimum candidates cannot exceed records per job"
+            )
+        return self
 
     @property
     def cors_origin_list(self) -> list[str]:

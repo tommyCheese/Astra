@@ -2,6 +2,7 @@ import asyncio
 import json
 
 import pytest
+from fake_web_tools import fake_web_registry
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
@@ -11,6 +12,7 @@ from app.core.config import Settings, get_settings
 from app.db.models import Base, RunRecord, TaskRecord, utc_now
 from app.db.session import get_session
 from app.main import create_app
+from app.repositories.memories import MemoryRepository
 from app.repositories.plans import PlanRepository, plan_to_view
 from app.repositories.runs import RunRepository
 from app.runner import plan_revision as plan_revision_module
@@ -42,6 +44,11 @@ async def app_client(monkeypatch, tmp_path):
         return None
 
     monkeypatch.setattr(runs_api, "start_run_in_process", noop_runner)
+    monkeypatch.setattr(
+        plan_revision_module,
+        "build_tool_registry",
+        lambda settings: fake_web_registry(),
+    )
     settings = Settings(
         model_provider="mock",
         artifact_store_path=str(tmp_path / "artifacts"),
@@ -67,6 +74,90 @@ async def test_create_run_rejects_empty_goal(app_client):
     assert error["code"] == "GOAL_REQUIRED"
     assert error["type"] == "validation.input_invalid"
     assert error["trace_id"].startswith("req_")
+
+
+async def test_memory_management_api_lists_details_and_revokes_with_cas(app_client):
+    async with app_client._astra_session() as session:
+        run_repo = RunRepository(session)
+        source_run = await run_repo.create_task_run(
+            "记住数据库",
+            {"provider": "mock", "model": "mock"},
+        )
+        target_run = await run_repo.create_task_run(
+            "读取数据库",
+            {"provider": "mock", "model": "mock"},
+            task_id=source_run.task_id,
+        )
+        memory = await MemoryRepository(session).create(
+            run_id=source_run.id,
+            scope="task",
+            kind="semantic_fact",
+            memory_key="project:database",
+            content="项目主数据库是 PostgreSQL。",
+            provenance={"run_id": source_run.id},
+            confidence=0.95,
+        )
+        memory_id = memory.id
+        target_task_id = target_run.task_id
+
+    listed = await app_client.get(
+        "/api/memories",
+        params={
+            "namespace_type": "task",
+            "namespace_id": target_task_id,
+            "include_history": "true",
+        },
+    )
+    assert listed.status_code == 200
+    assert listed.json()["total"] == 1
+    assert listed.json()["items"][0]["id"] == memory_id
+    assert listed.json()["items"][0]["namespace_id"] == target_task_id
+
+    detail = await app_client.get(f"/api/memories/{memory_id}")
+    assert detail.status_code == 200
+    assert detail.json()["sources"][0]["run_id"] == source_run.id
+    assert detail.json()["history"][0]["memory_key"] == "project:database"
+    assert detail.json()["audit_events"][0]["event_type"] == "created"
+
+    stale = await app_client.post(
+        f"/api/memories/{memory_id}/revoke",
+        json={
+            "expected_state_version": 99,
+            "reason": "错误信息",
+            "actor": "local-test",
+        },
+    )
+    assert stale.status_code == 409
+    assert stale.json()["error"]["code"] == "MEMORY_VERSION_CONFLICT"
+
+    revoked = await app_client.post(
+        f"/api/memories/{memory_id}/revoke",
+        json={
+            "expected_state_version": 1,
+            "reason": "错误信息",
+            "actor": "local-test",
+        },
+    )
+    assert revoked.status_code == 200
+    assert revoked.json()["status"] == "revoked"
+    assert revoked.json()["state_version"] == 2
+    assert revoked.json()["revoke_reason"] == "错误信息"
+    assert revoked.json()["audit_events"][-1]["event_type"] == "status_changed"
+
+
+async def test_memory_management_api_rejects_incomplete_namespace_and_missing_memory(
+    app_client,
+):
+    incomplete = await app_client.get(
+        "/api/memories",
+        params={"namespace_type": "workspace"},
+    )
+    assert incomplete.status_code == 422
+    assert incomplete.json()["error"]["code"] == "MEMORY_NAMESPACE_INCOMPLETE"
+
+    missing = await app_client.get("/api/memories/missing")
+    assert missing.status_code == 404
+    assert missing.json()["error"]["code"] == "MEMORY_NOT_FOUND"
 
 
 async def test_context_status_and_registered_commands_preserve_history(app_client):
@@ -256,21 +347,15 @@ async def test_parameterized_automation_commands_are_host_operations(app_client)
         json={"arguments": "unexpected"},
     )
     assert compact_with_arguments.status_code == 422
-    assert compact_with_arguments.json()["error"]["code"] == (
-        "SYSTEM_COMMAND_USAGE_INVALID"
-    )
+    assert compact_with_arguments.json()["error"]["code"] == ("SYSTEM_COMMAND_USAGE_INVALID")
 
     async with app_client._astra_session() as session:
-        runs = await session.execute(
-            select(RunRecord).where(RunRecord.task_id == task_id)
-        )
+        runs = await session.execute(select(RunRecord).where(RunRecord.task_id == task_id))
         assert list(runs.scalars()) == []
 
 
 async def test_unattended_run_requires_permission_bundle(app_client):
-    response = await app_client.post(
-        "/api/runs", json={"goal": "后台整理", "interactive": False}
-    )
+    response = await app_client.post("/api/runs", json={"goal": "后台整理", "interactive": False})
     assert response.status_code == 422
     assert response.json()["error"]["code"] == "PERMISSION_BUNDLE_REQUIRED"
 
@@ -314,19 +399,31 @@ async def test_policy_simulation_reports_shadow_decision_change(app_client):
         },
         "policies": {
             "version": "1",
-            "rules": [{
-                "id": "allow", "source": "user", "tier": "user", "decision": "allow",
-                "actions": ["workspace.file.write"], "resources": ["task://*/workspace/**"],
-                "reason_code": "allowed",
-            }],
+            "rules": [
+                {
+                    "id": "allow",
+                    "source": "user",
+                    "tier": "user",
+                    "decision": "allow",
+                    "actions": ["workspace.file.write"],
+                    "resources": ["task://*/workspace/**"],
+                    "reason_code": "allowed",
+                }
+            ],
         },
         "shadow_policies": {
             "version": "2",
-            "rules": [{
-                "id": "deny", "source": "managed", "tier": "managed", "decision": "deny",
-                "actions": ["workspace.file.write"], "resources": ["task://*/workspace/**"],
-                "reason_code": "managed_deny",
-            }],
+            "rules": [
+                {
+                    "id": "deny",
+                    "source": "managed",
+                    "tier": "managed",
+                    "decision": "deny",
+                    "actions": ["workspace.file.write"],
+                    "resources": ["task://*/workspace/**"],
+                    "reason_code": "managed_deny",
+                }
+            ],
         },
     }
     response = await app_client.post("/api/permissions/simulate", json=payload)
@@ -386,7 +483,9 @@ async def test_library_lists_present_files_with_conversation_context(app_client)
         path = await runtime.prepare(run.task_id)
         before = runtime.scan(path)
         (path / "library.md").write_text("# library", encoding="utf-8")
-        await runtime.capture_changes(run_id=run.id, tool_call_id=None, workspace_dir=path, before=before)
+        await runtime.capture_changes(
+            run_id=run.id, tool_call_id=None, workspace_dir=path, before=before
+        )
 
     response = await app_client.get("/api/library/files")
     assert response.status_code == 200
@@ -591,9 +690,7 @@ async def test_plan_revision_creates_new_waiting_version_and_rejects_replay(app_
     assert confirmed.json()["status"] == "executing"
 
 
-async def test_invalid_plan_revision_restores_original_with_fresh_token(
-    app_client, monkeypatch
-):
+async def test_invalid_plan_revision_restores_original_with_fresh_token(app_client, monkeypatch):
     run_id, original_plan_id, payload = await _create_waiting_confirmation(app_client)
 
     class InvalidRevisionClient:
@@ -662,6 +759,9 @@ async def test_plan_revision_repairs_one_invalid_model_draft(app_client, monkeyp
         async def plan(self, goal, *, contract):
             self.goals.append(json.loads(goal))
             depends_on = ["revised"] if len(self.goals) == 1 else []
+            capabilities = (
+                ["invented_capability"] if len(self.goals) == 1 else ["information.search"]
+            )
             return PlanDraft(
                 nodes=[
                     PlanNodeDraft(
@@ -669,7 +769,7 @@ async def test_plan_revision_repairs_one_invalid_model_draft(app_client, monkeyp
                         title="修正后的计划",
                         intent="按调整要求完成目标",
                         depends_on=depends_on,
-                        required_capabilities=["invented_capability"],
+                        required_capabilities=capabilities,
                         success_criteria_refs=["invented-criterion"],
                         expected_outcome=ExpectedObservation(
                             kind="step_result", success_condition="目标完成"
@@ -696,13 +796,11 @@ async def test_plan_revision_repairs_one_invalid_model_draft(app_client, monkeyp
     assert "validation_feedback" in client.goals[1]
     assert current["plan_graph"]["version"] == 2
     node = current["plan_graph"]["nodes"][0]
-    assert node["required_capabilities"] == []
+    assert node["required_capabilities"] == ["information.search"]
     assert node["success_criteria_refs"] == ["criterion-result"]
 
 
-async def test_plan_revision_reuses_frozen_thinking_and_records_usage(
-    app_client, monkeypatch
-):
+async def test_plan_revision_reuses_frozen_thinking_and_records_usage(app_client, monkeypatch):
     thinking_snapshot = {
         "requested": {
             "enabled": True,
@@ -1209,9 +1307,7 @@ async def test_run_event_stream_starts_with_ready_signal(app_client, monkeypatch
     assert '"type": "stream.ready"' in response.text
 
 
-async def test_create_run_stream_returns_identity_before_starting_engine(
-    app_client, monkeypatch
-):
+async def test_create_run_stream_returns_identity_before_starting_engine(app_client, monkeypatch):
     from app.schemas.agent import CreateRunRequest
 
     scheduled: list[str] = []
@@ -1238,9 +1334,7 @@ async def test_create_run_stream_returns_identity_before_starting_engine(
     assert scheduled == [ready["payload"]["run_id"]]
 
 
-async def test_run_event_stream_unsubscribes_when_closed_after_ready(
-    app_client, monkeypatch
-):
+async def test_run_event_stream_unsubscribes_when_closed_after_ready(app_client, monkeypatch):
     from app.runtime_events import RunEventBroker
 
     created = await app_client.post("/api/runs", json={"goal": "流断连测试"})
@@ -1386,9 +1480,7 @@ async def test_plan_graph_events_replay_in_order_without_sensitive_failure_data(
     monkeypatch.setattr(runs_api, "SessionLocal", app_client._astra_session)
     async with app_client._astra_session() as session:
         repo = RunRepository(session)
-        run = await repo.create_task_run(
-            "图事件回放", {"provider": "mock"}, answer_mode="trusted"
-        )
+        run = await repo.create_task_run("图事件回放", {"provider": "mock"}, answer_mode="trusted")
         plan = await PlanRepository(session).create(
             run.id,
             PlanDraft(

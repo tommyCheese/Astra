@@ -294,6 +294,19 @@ child scope ⊆ parent scope ∩ task policy ∩ explicit delegated scope
 - 冲突、过期、删除和权限变化可以及时传播；
 - 自动优化经过离线评估和渐进发布，不直接污染生产策略。
 
+### 9.6 已实现的关系型基础（2026-07）
+
+`add-deep-memory-agent-evolution` 已提前交付阶段五中不依赖 Graph Runtime 的安全底座：
+
+- 显式 Run/Task/Workspace/user 命名空间、类型化 Memory、时态生命周期和不可变版本；
+- 来源链接、删除传播、确定性跨 Session 召回、shadow 审计和有界 feedback；
+- 不要求 embedding 的 lexical/kind/tag/recency/confidence/importance/utility baseline；
+- 默认关闭、带数据库 lease/idempotency 的 AutoDream consolidation，以及人工 publish/rollback；
+- 不可执行的 evolution candidate、冻结离线 evaluation、人工 approve/reject 和 promotion deny；
+- 固定 no-memory、legacy、cross-session、consolidation 对照夹具与 leakage/stale/harm 指标。
+
+这不是 Graph Memory 完成声明。当前数据库仍是关系模型，没有 Memory 节点/边投影、图遍历、embedding/vector index、反事实 Graph Replay 或自动 Shadow/Canary promotion。未来实现必须复用已经落地的 namespace、source、lifecycle、evaluation 和 deletion contract；向量或图索引只能是可删除的派生投影，不能成为新的授权或事实来源。
+
 ## 10. 跨阶段基础设施
 
 以下能力不是独立阶段，但必须贯穿整条路线。
@@ -352,7 +365,7 @@ Plan Graph
 
 ## 12. 当前决策
 
-- 当前 OpenSpec 继续只实现**阶段一：Trusted Execution Graph Workbench**。
-- 本文记录完整方向，但不扩大当前提案的任务、验收标准或交付周期。
-- 阶段二至阶段五分别创建新的 OpenSpec，不在阶段一中预埋未经验证的通用抽象。
-- 阶段一只需确保稳定身份、版本事件、Trace/Evidence 关联和布局隔离能够支持未来演进，不需要提前实现未来行为。
+- 阶段一 Trusted Execution Graph 已继续演进；每项后续能力仍使用独立 OpenSpec 管理。
+- 阶段五的关系型 Deep Memory 与治理基础已由 `add-deep-memory-agent-evolution` 实现，但 active cross-session recall、AutoDream 调度和 production evolution promotion 默认关闭。
+- 阶段二至阶段四以及真正的 Graph/semantic indexing 继续按各自进入条件推进，不因关系型 Memory 基础而视为完成。
+- 在离线指标证明收益前，不启用自动发布或执行 approved candidate；安全下限、来源与删除传播不参与优化。

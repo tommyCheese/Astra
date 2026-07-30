@@ -76,12 +76,36 @@ function ContextUsageRing({ status, actionLabel = '', compact = false }: {
       <circle className="model-context-ring-value" cx="18" cy="18" r="14.5" pathLength="100" strokeDasharray={`${percent} 100`} />
     </svg>
     <i className={actionLabel ? 'has-action' : ''} />
-    <span className="model-context-tooltip" role="tooltip">
+    {!compact && <span className="model-context-tooltip" role="tooltip">
       <strong>{exact}</strong>
       <small>{t('剩余')} {compactTokenCount(status.remaining_tokens)} · {percent}%</small>
       {actionLabel && <small>{actionLabel}</small>}
-    </span>
+    </span>}
   </span>;
+}
+
+function initialContextStatus(capability: ModelContextCapability): ContextWindowStatus {
+  return {
+    provider: capability.provider,
+    model: capability.model,
+    window_tokens: capability.window_tokens,
+    max_output_tokens: capability.max_output_tokens,
+    context_source: capability.source,
+    context_verified: capability.verified,
+    context_documentation_url: capability.documentation_url,
+    available_input_tokens: capability.window_tokens,
+    used_tokens: 0,
+    remaining_tokens: capability.window_tokens,
+    usage_ratio: 0,
+    auto_compact_ratio: 0.8,
+    status: 'normal',
+    estimated: true,
+    summary_active: false,
+    visible_run_count: 0,
+    folded_run_count: 0,
+    last_action: null,
+    last_action_at: null,
+  };
 }
 
 type ModelThinkingPreferences = Record<string, ModelThinkingSelection>;
@@ -289,6 +313,7 @@ function AppContent() {
   const [slashActiveIndex, setSlashActiveIndex] = useState(0);
   const [commandPending, setCommandPending] = useState<string | null>(null);
   const [contextStatus, setContextStatus] = useState<ContextWindowStatus | null>(null);
+  const [contextCapabilities, setContextCapabilities] = useState<Record<string, ModelContextCapability>>({});
   const [contextNotice, setContextNotice] = useState('');
   const [executionMenuOpen, setExecutionMenuOpen] = useState(false);
   const [executionMode, setExecutionMode] = useState<'default' | 'bypass'>('default');
@@ -355,11 +380,19 @@ function AppContent() {
         providerId: provider.id,
         providerName: provider.name,
       }))), [providerConfigs]);
-  const thinkingCapabilityRequestKey = availableModels
+  const modelCapabilityRequestKey = availableModels
     .map((item) => `${item.providerId}:${item.model}`)
     .join('\n');
   const selectedModel = availableModels.find((item) => item.key === selectedModelKey)?.model ?? '';
   const selectedModelOption = availableModels.find((item) => item.key === selectedModelKey);
+  const selectedContextCapability = contextCapabilities[selectedModelKey];
+  const displayedContextStatus = contextStatus
+    && contextStatus.provider === selectedModelOption?.providerId
+    && contextStatus.model === selectedModelOption.model
+    ? contextStatus
+    : selectedContextCapability
+      ? initialContextStatus(selectedContextCapability)
+      : null;
   const selectedThinkingCapability = thinkingCapabilities[selectedModelKey];
   const selectedThinkingSelection = normalizeThinkingSelection(
     selectedThinkingCapability,
@@ -372,16 +405,16 @@ function AppContent() {
       : selectedThinkingSelection?.enabled
         ? `${t('模型思考')} · ${t(thinkingDepthLabel(selectedThinkingSelection.depth))}`
         : t('模型思考关闭');
-  const contextActionLabel = contextStatus?.last_action === 'clear'
+  const contextActionLabel = displayedContextStatus?.last_action === 'clear'
     ? t('已清除')
-    : contextStatus?.last_action === 'compact' || contextStatus?.last_action === 'auto_compact'
+    : displayedContextStatus?.last_action === 'compact' || displayedContextStatus?.last_action === 'auto_compact'
       ? t('已整理')
       : '';
-  const contextAccessibleLabel = contextStatus
+  const contextAccessibleLabel = displayedContextStatus
     ? t('上下文：已使用 {used}，总计 {total}，剩余 {remaining}（估算）')
-      .replace('{used}', compactTokenCount(contextStatus.used_tokens))
-      .replace('{remaining}', compactTokenCount(contextStatus.remaining_tokens))
-      .replace('{total}', compactTokenCount(contextStatus.window_tokens))
+      .replace('{used}', compactTokenCount(displayedContextStatus.used_tokens))
+      .replace('{remaining}', compactTokenCount(displayedContextStatus.remaining_tokens))
+      .replace('{total}', compactTokenCount(displayedContextStatus.window_tokens))
     : '';
   const slashOptions = useMemo(
     () => slashCommand
@@ -495,7 +528,27 @@ function AppContent() {
       if (!controller.signal.aborted) setThinkingCapabilitiesLoading(false);
     });
     return () => controller.abort();
-  }, [thinkingCapabilityRequestKey, thinkingCapabilitiesRetry]);
+  }, [modelCapabilityRequestKey, thinkingCapabilitiesRetry]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    if (!availableModels.length) {
+      setContextCapabilities({});
+      return () => controller.abort();
+    }
+    void resolveModelContextCapabilities(
+      availableModels.map((item) => ({ provider: item.providerId, model: item.model })),
+      controller.signal,
+    ).then((capabilities) => {
+      if (controller.signal.aborted) return;
+      setContextCapabilities(Object.fromEntries(
+        capabilities.map((capability) => [`${capability.provider}:${capability.model}`, capability]),
+      ));
+    }).catch(() => {
+      if (!controller.signal.aborted) setContextCapabilities({});
+    });
+    return () => controller.abort();
+  }, [modelCapabilityRequestKey]);
 
   useEffect(() => {
     setSlashActiveIndex((index) => slashOptions.length
@@ -1878,14 +1931,14 @@ function AppContent() {
             />
             <div className="model-menu-wrap" ref={modelMenuRef}>
               <button
-                className="model-selector"
+                className={`model-selector ${displayedContextStatus ? 'has-context' : 'without-context'}`}
                 type="button"
                 aria-expanded={modelOpen}
                 aria-haspopup="menu"
                 aria-label={`${t('当前模型')}${language === 'zh-CN' ? '：' : ': '}${selectedModel || t('未配置模型')}`}
                 aria-describedby={[
                   'model-thinking-summary-description',
-                  contextStatus ? 'model-context-status-description' : '',
+                  displayedContextStatus ? 'model-context-status-description' : '',
                 ].filter(Boolean).join(' ')}
                 onClick={() => {
                 setModelOpen((open) => !open);
@@ -1893,10 +1946,10 @@ function AppContent() {
                 setExecutionMenuOpen(false);
               }}>
                 <span>{selectedModel || t('未配置模型')}</span>
-                {contextStatus && <ContextUsageRing status={contextStatus} actionLabel={contextActionLabel} />}
+                {displayedContextStatus && <ContextUsageRing status={displayedContextStatus} actionLabel={contextActionLabel} />}
                 <small>{answerMode === 'trusted' ? `${t(reasoningEffort)} · ${toolCallLimit === null ? t('工具不限') : t('{count} 次工具').replace('{count}', String(toolCallLimit))} · ${reflectionEnabled ? `${t(reflectionTrigger)} ${t('反思')}` : t('反思关闭')}` : t('快速策略 · 工具按需')} · {modelThinkingSummary}</small><b>⌄</b>
               </button>
-              {contextStatus && (
+              {displayedContextStatus && (
                 <span className="sr-only" id="model-context-status-description">
                   {contextAccessibleLabel}{contextActionLabel ? ` · ${contextActionLabel}` : ''}{contextNotice ? ` · ${contextNotice}` : ''} · {t('使用量为发送前估算')}
                 </span>
@@ -1908,7 +1961,7 @@ function AppContent() {
                   trusted={answerMode === 'trusted'}
                   onModelChange={setSelectedModelKey}
                   modelOptions={availableModels}
-                  contextStatus={contextStatus}
+                  contextStatus={displayedContextStatus}
                   contextActionLabel={contextActionLabel}
                   thinkingCapability={selectedThinkingCapability}
                   thinkingSelection={selectedThinkingSelection}
@@ -3451,8 +3504,6 @@ function ModelMenu({ selectedModelKey, onModelChange, modelOptions, contextStatu
   const effort = reasoningEffortValue(reasoningEffort);
   const limitRange = effort === 'deep' ? null : TOOL_CALL_LIMITS[effort];
   const thinkingDepthOptions = thinkingCapability?.depths.map((item) => thinkingDepthLabel(item.id)) ?? [];
-  const highModelThinking = thinkingSelection?.enabled
-    && (thinkingSelection.depth === 'high' || thinkingSelection.depth === 'xhigh' || thinkingSelection.depth === 'max');
   return <div className="floating-menu model-menu">
     <div className="menu-heading">{t('模型')}</div>
     {groups.length ? groups.map((group) => <div className="model-provider-group" key={group.providerId}>
@@ -3483,10 +3534,6 @@ function ModelMenu({ selectedModelKey, onModelChange, modelOptions, contextStatu
               />}
             </>}
       <p className="model-thinking-note">{t('模型思考控制模型生成行为；聊天中的“思考”是 Astra 的公开执行过程摘要。')}</p>
-      {highModelThinking && <p className="model-thinking-impact">{t(trusted
-        ? '当前深度将用于本次运行的多次模型调用，可能增加耗时与用量。'
-        : '当前深度可能显著增加首字和总响应延迟，但不会启用可信模式。')}</p>}
-      {trusted && thinkingCapability?.supported && thinkingSelection && !thinkingSelection.enabled && <p className="model-thinking-impact">{t('关闭模型思考不会关闭可信模式的计划、审批与验证。')}</p>}
     </section>
     <div className="menu-divider" />
     {trusted ? <>

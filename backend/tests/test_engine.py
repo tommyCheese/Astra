@@ -40,6 +40,7 @@ class FakeWeather(Tool):
         output_schema={},
         permission="network_read",
         side_effect_level="read_only",
+        task_capabilities=["weather.lookup"],
     )
 
     async def run(self, tool_input, *, context=None):
@@ -70,9 +71,9 @@ class WeatherPlanClient(MockModelClient):
                 PlanNodeDraft(
                     node_key="step-2",
                     title="查询天气",
-                    intent="调用 weather_lookup",
+                    intent="获取指定地点和日期的天气信息",
                     depends_on=["step-1"],
-                    required_capabilities=["weather_lookup"],
+                    required_capabilities=["weather.lookup"],
                     success_criteria_refs=criterion_ids,
                     expected_outcome=ExpectedObservation(
                         kind="weather_result",
@@ -205,9 +206,7 @@ class QuickPermissionTimingClient(QuickStreamingClient):
         super().__init__()
         self.after_first_delta = after_first_delta
 
-    async def decide_with_answer(
-        self, goal, context, *, on_delta=None, on_reasoning_delta=None
-    ):
+    async def decide_with_answer(self, goal, context, *, on_delta=None, on_reasoning_delta=None):
         self.decide_calls += 1
         assert on_delta is not None
         assert on_reasoning_delta is not None
@@ -297,13 +296,18 @@ async def test_engine_completes_mock_web_query(session):
     await engine._run_with_repo(repo, run.id)
 
     loaded = await repo.require_run(run.id)
-    assert loaded.status == "blocked"
+    assert loaded.status == "completed"
     assert loaded.result["verification_notes"]
     assert loaded.steps == []
     canonical_plan = await PlanRepository(session).active_for_run(run.id)
     assert canonical_plan is not None
     assert canonical_plan.status == "active"
-    assert all(call.plan_node_id == canonical_plan.nodes[0].id for call in loaded.tool_calls)
+    execution_node = next(node for node in canonical_plan.nodes if node.required_capabilities)
+    assert execution_node.required_capabilities == [
+        "information.search",
+        "information.read",
+    ]
+    assert all(call.plan_node_id == execution_node.id for call in loaded.tool_calls)
 
     events = await repo.list_events(run.id)
     event_types = [event.type for event in events]
@@ -321,6 +325,22 @@ async def test_engine_completes_mock_web_query(session):
     process_events = [event for event in events if event.type.startswith("reasoning.")]
     assert all("reasoning_content" not in event.payload for event in process_events)
     assert all("tool_input" not in event.payload for event in process_events)
+    resolutions = [
+        event.payload
+        for event in events
+        if event.type == "tool.resolution.candidates"
+        and event.payload.get("plan_node_id") == execution_node.id
+    ]
+    assert any(
+        payload["unresolved_capabilities"] == ["information.read", "information.search"]
+        for payload in resolutions
+    )
+    assert any(
+        payload["unresolved_capabilities"] == ["information.read"] for payload in resolutions
+    )
+    assert {
+        event.payload["tool_name"] for event in events if event.type == "tool.selection.accepted"
+    } >= {"web_search", "web_fetch"}
 
 
 async def test_trusted_skill_checks_become_provenanced_completion_criteria():
@@ -353,9 +373,7 @@ async def test_trusted_skill_checks_become_provenanced_completion_criteria():
     assert criterion.verification_method == "task_adapter"
     assert criterion.provenance["qualified_identity"] == "custom:verified-workflow"
     assert contract.skill_revisions[0]["digest"] == "sha256:abc"
-    assert all(
-        "custom:verified-workflow" in node.required_skill_ids for node in plan.nodes
-    )
+    assert all("custom:verified-workflow" in node.required_skill_ids for node in plan.nodes)
 
 
 async def test_weather_plan_executes_nodes_in_dependency_order(session):
@@ -515,9 +533,9 @@ async def test_final_plan_node_answer_is_regenerated_as_canonical_stream(session
     assert client.answer_callbacks[-1] is True
     assert all(value is False for value in client.answer_callbacks[:-1])
     assert deltas == ["真正的", "流式回答"]
-    assert events.index(next(event for event in events if event.type == "answer.delta")) < events.index(
-        next(event for event in events if event.type == "answer.completed")
-    )
+    assert events.index(
+        next(event for event in events if event.type == "answer.delta")
+    ) < events.index(next(event for event in events if event.type == "answer.completed"))
 
 
 async def test_standard_fast_path_skips_plan_state_and_all_quality_gates(session):
@@ -575,12 +593,18 @@ async def test_standard_fast_path_skips_plan_state_and_all_quality_gates(session
     assert len(select_statements) <= 12, Counter(
         statement.rsplit("FROM ", 1)[-1].split()[0] for statement in select_statements
     )
-    assert await session.scalar(
-        select(TaskWorkspaceRecord).where(TaskWorkspaceRecord.task_id == task_id)
-    ) is None
-    assert await session.scalar(
-        select(WorkspaceCheckpointRecord).where(WorkspaceCheckpointRecord.run_id == run.id)
-    ) is None
+    assert (
+        await session.scalar(
+            select(TaskWorkspaceRecord).where(TaskWorkspaceRecord.task_id == task_id)
+        )
+        is None
+    )
+    assert (
+        await session.scalar(
+            select(WorkspaceCheckpointRecord).where(WorkspaceCheckpointRecord.run_id == run.id)
+        )
+        is None
+    )
     assert await PlanRepository(session).active_for_run(run.id) is None
     assert loaded.result["summary"] == "立即流式回答"
     assert loaded.result["verification_report"] is None
@@ -590,9 +614,7 @@ async def test_standard_fast_path_skips_plan_state_and_all_quality_gates(session
         "流式回答",
     ]
     reasoning_deltas = [
-        event.payload["delta"]
-        for event in events
-        if event.type == "reasoning.summary.delta"
+        event.payload["delta"] for event in events if event.type == "reasoning.summary.delta"
     ]
     assert reasoning_deltas == ["正在", "直接回答"]
     assert events.index(
@@ -628,9 +650,7 @@ async def test_standard_fast_path_defers_permission_records_until_after_first_de
         observed["identities"] = len(
             (
                 await session.scalars(
-                    select(AgentIdentityRecord).where(
-                        AgentIdentityRecord.run_id == run.id
-                    )
+                    select(AgentIdentityRecord).where(AgentIdentityRecord.run_id == run.id)
                 )
             ).all()
         )
@@ -659,9 +679,7 @@ async def test_standard_fast_path_defers_permission_records_until_after_first_de
     )
     assert (
         await session.scalar(
-            select(ToolCatalogSnapshotRecord).where(
-                ToolCatalogSnapshotRecord.run_id == run.id
-            )
+            select(ToolCatalogSnapshotRecord).where(ToolCatalogSnapshotRecord.run_id == run.id)
         )
         is not None
     )
@@ -684,7 +702,9 @@ async def test_standard_fast_path_reuses_tool_router_without_creating_steps(sess
     registry.register(FakeWeather())
     client = QuickToolClient()
 
-    await RunEngine(settings, model_client=client, tool_registry=registry)._run_with_repo(repo, run.id)
+    await RunEngine(settings, model_client=client, tool_registry=registry)._run_with_repo(
+        repo, run.id
+    )
 
     loaded = await repo.require_run(run.id)
     assert client.decide_calls == 2

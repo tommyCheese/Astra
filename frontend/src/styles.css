@@ -1813,6 +1813,14 @@ html[data-theme="dark"] .plan-confirmation-card {
   text-align: left;
 }
 
+.model-selector.without-context {
+  grid-template-columns: minmax(0, auto) 18px;
+}
+
+.model-selector.without-context b {
+  grid-column: 2;
+}
+
 .execution-mode-button {
   align-items: center;
   background: transparent;
@@ -2358,8 +2366,7 @@ html[data-theme="dark"] .plan-confirmation-card {
 }
 
 .model-thinking-status,
-.model-thinking-note,
-.model-thinking-impact {
+.model-thinking-note {
   font-size: 10px;
   line-height: 1.5;
   margin: 0;
@@ -2377,15 +2384,6 @@ html[data-theme="dark"] .plan-confirmation-card {
 .model-thinking-note {
   color: #7b8797;
   padding: 5px 8px 2px;
-}
-
-.model-thinking-impact {
-  background: #fff8e8;
-  border: 1px solid #f2ddb0;
-  border-radius: 8px;
-  color: #805c16;
-  margin: 6px 5px 3px;
-  padding: 7px 8px;
 }
 
 .trusted-strategy-section + .trusted-strategy-section::before {
@@ -4056,12 +4054,6 @@ html[data-theme="dark"] .floating-menu .segmented-control button.active {
 html[data-theme="dark"] .model-thinking-toggle {
   background: rgba(60, 170, 136, .08);
   border-color: rgba(90, 190, 157, .18);
-}
-
-html[data-theme="dark"] .model-thinking-impact {
-  background: rgba(139, 99, 20, .16);
-  border-color: rgba(201, 153, 55, .3);
-  color: #e5c274;
 }
 
 html[data-theme="dark"] .process-disclosure-note {
@@ -7085,5 +7077,832 @@ html[data-theme="dark"] .trusted-plan-node.status-blocked {
   .skill-history-dialog {
     animation: none;
     transition: none;
+  }
+}
+
+/* Deep Memory audit and governance workbench */
+.memory-workbench {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+  color: inherit;
+}
+
+.memory-workbench-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+}
+
+.memory-workbench-header > div {
+  min-width: 0;
+}
+
+.memory-workbench-header > div > span {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--astra-mint);
+  font-size: 10px;
+  font-weight: 750;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+}
+
+.memory-workbench-header h2 {
+  font-size: 22px;
+  letter-spacing: -.025em;
+}
+
+.memory-workbench-header p {
+  max-width: 680px;
+  margin-top: 7px;
+  color: var(--app-muted);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.memory-governance-lock {
+  flex: none;
+  border: 1px solid color-mix(in srgb, #b7791f 32%, var(--app-line));
+  border-radius: 999px;
+  padding: 6px 10px;
+  color: color-mix(in srgb, #9a6700 82%, currentColor);
+  background: color-mix(in srgb, #f6c453 12%, var(--app-elevated));
+  font-size: 10px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.memory-tabs {
+  display: flex;
+  gap: 3px;
+  width: fit-content;
+  border: 1px solid var(--app-line);
+  border-radius: 7px;
+  padding: 3px;
+  background: color-mix(in srgb, var(--app-sidebar) 66%, var(--app-canvas));
+}
+
+.memory-tabs button {
+  min-height: 31px;
+  border: 0;
+  border-radius: 5px;
+  padding: 0 12px;
+  color: var(--app-muted);
+  background: transparent;
+  font-size: 11px;
+}
+
+.memory-tabs button:hover {
+  color: inherit;
+  background: var(--app-hover);
+}
+
+.memory-tabs button.active {
+  color: inherit;
+  background: var(--app-elevated);
+  box-shadow: 0 1px 4px color-mix(in srgb, #000 9%, transparent);
+  font-weight: 680;
+}
+
+.memory-panel {
+  display: grid;
+  grid-template-columns: minmax(260px, 32%) minmax(0, 1fr);
+  height: clamp(540px, calc(100dvh - 250px), 760px);
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid var(--app-line);
+  border-radius: 9px;
+  background: var(--app-canvas);
+}
+
+.memory-list-pane,
+.memory-detail-pane {
+  min-width: 0;
+  min-height: 0;
+}
+
+.memory-list-pane {
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  border-right: 1px solid var(--app-line);
+  background: color-mix(in srgb, var(--app-sidebar) 62%, var(--app-canvas));
+}
+
+.memory-detail-pane {
+  overflow: auto;
+  overscroll-behavior: contain;
+  background: color-mix(in srgb, var(--app-elevated) 52%, var(--app-canvas));
+}
+
+.memory-filters {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 7px;
+  padding: 11px;
+  border-bottom: 1px solid var(--app-line);
+}
+
+.memory-filters label {
+  grid-column: 1 / -1;
+}
+
+.memory-filters input,
+.memory-filters select {
+  width: 100%;
+  min-width: 0;
+  min-height: 32px;
+  border: 1px solid var(--app-line);
+  border-radius: 5px;
+  padding: 0 8px;
+  color: inherit;
+  background: var(--app-canvas);
+  font-size: 10px;
+}
+
+.memory-filters select {
+  padding-right: 24px;
+}
+
+.memory-list-summary,
+.memory-list-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 34px;
+  padding: 7px 11px;
+  border-bottom: 1px solid var(--app-line);
+  color: var(--app-muted);
+  font-size: 9px;
+}
+
+.memory-list-heading strong {
+  color: inherit;
+  font-size: 10px;
+}
+
+.memory-list-heading span {
+  border-radius: 999px;
+  padding: 2px 7px;
+  background: var(--app-hover);
+  font-variant-numeric: tabular-nums;
+}
+
+.memory-record-list {
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding: 5px;
+}
+
+.memory-record-list > button {
+  display: grid;
+  gap: 6px;
+  width: 100%;
+  min-width: 0;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  padding: 9px;
+  color: inherit;
+  text-align: left;
+  background: transparent;
+}
+
+.memory-record-list > button:hover {
+  background: var(--app-hover);
+}
+
+.memory-record-list > button.active {
+  border-color: color-mix(in srgb, var(--astra-mint) 32%, var(--app-line));
+  background: color-mix(in srgb, var(--astra-mint) 9%, var(--app-elevated));
+}
+
+.memory-record-list > button > span {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.memory-record-list > button strong {
+  display: -webkit-box;
+  overflow: hidden;
+  font-size: 11px;
+  font-weight: 620;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.memory-record-list > button small {
+  overflow: hidden;
+  color: var(--app-muted);
+  font-size: 8px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.memory-empty {
+  display: grid;
+  place-content: center;
+  min-height: 130px;
+  padding: 24px;
+  color: var(--app-muted);
+  text-align: center;
+  font-size: 11px;
+}
+
+.memory-notice,
+.memory-error {
+  border: 1px solid color-mix(in srgb, var(--astra-mint) 34%, var(--app-line));
+  border-radius: 6px;
+  padding: 8px 10px;
+  color: color-mix(in srgb, var(--astra-mint) 82%, currentColor);
+  background: color-mix(in srgb, var(--astra-mint) 8%, var(--app-elevated));
+  font-size: 10px;
+}
+
+.memory-error {
+  border-color: color-mix(in srgb, #d14343 34%, var(--app-line));
+  color: color-mix(in srgb, #d14343 82%, currentColor);
+  background: color-mix(in srgb, #d14343 7%, var(--app-elevated));
+}
+
+.memory-inspector {
+  display: grid;
+  gap: 14px;
+  padding: 16px 18px 28px;
+}
+
+.memory-inspector > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--app-line);
+}
+
+.memory-inspector > header > div {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.memory-inspector > header > div > span:not(.memory-status) {
+  overflow: hidden;
+  color: var(--app-muted);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.memory-content {
+  border-left: 2px solid color-mix(in srgb, var(--astra-mint) 55%, var(--app-line));
+  padding: 3px 0 3px 12px;
+  font-size: 13px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.memory-status {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  border: 1px solid var(--app-line);
+  border-radius: 999px;
+  padding: 2px 7px;
+  color: var(--app-muted);
+  background: var(--app-hover);
+  font-size: 8px;
+  font-weight: 720;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+
+.memory-status:is(.status-active, .status-published, .status-approved) {
+  border-color: color-mix(in srgb, #2f9e6f 34%, var(--app-line));
+  color: color-mix(in srgb, #20845a 80%, currentColor);
+  background: color-mix(in srgb, #2f9e6f 10%, var(--app-elevated));
+}
+
+.memory-status:is(.status-candidate, .status-proposed, .status-evaluating, .status-running, .status-queued) {
+  border-color: color-mix(in srgb, #397bc6 32%, var(--app-line));
+  color: color-mix(in srgb, #397bc6 82%, currentColor);
+  background: color-mix(in srgb, #397bc6 9%, var(--app-elevated));
+}
+
+.memory-status:is(.status-quarantined, .status-shadow, .status-canary) {
+  border-color: color-mix(in srgb, #b7791f 34%, var(--app-line));
+  color: color-mix(in srgb, #a16816 82%, currentColor);
+  background: color-mix(in srgb, #d8a327 11%, var(--app-elevated));
+}
+
+.memory-status:is(.status-revoked, .status-rejected, .status-failed, .status-validation_failed, .status-conflict) {
+  border-color: color-mix(in srgb, #d14343 34%, var(--app-line));
+  color: color-mix(in srgb, #c43a3a 82%, currentColor);
+  background: color-mix(in srgb, #d14343 8%, var(--app-elevated));
+}
+
+.memory-metadata {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1px;
+  margin: 0;
+  overflow: hidden;
+  border: 1px solid var(--app-line);
+  border-radius: 6px;
+  background: var(--app-line);
+}
+
+.memory-metadata > div {
+  min-width: 0;
+  padding: 8px 10px;
+  background: var(--app-elevated);
+}
+
+.memory-metadata dt {
+  margin-bottom: 4px;
+  color: var(--app-muted);
+  font-size: 8px;
+}
+
+.memory-metadata dd {
+  margin: 0;
+  overflow: hidden;
+  font-family: var(--app-mono, ui-monospace, monospace);
+  font-size: 9px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+  text-overflow: ellipsis;
+}
+
+.memory-inspector-section {
+  display: grid;
+  gap: 9px;
+  min-width: 0;
+}
+
+.memory-inspector-section > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.memory-inspector-section > header h3 {
+  font-size: 11px;
+}
+
+.memory-inspector-section > header span {
+  border-radius: 999px;
+  padding: 1px 6px;
+  color: var(--app-muted);
+  background: var(--app-hover);
+  font-size: 8px;
+}
+
+.memory-section-empty {
+  border: 1px dashed var(--app-line);
+  border-radius: 6px;
+  padding: 12px;
+  color: var(--app-muted);
+  font-size: 9px;
+  text-align: center;
+}
+
+.memory-source-list,
+.memory-version-list,
+.consolidation-operation-list,
+.evolution-evaluation-list {
+  display: grid;
+  overflow: hidden;
+  border: 1px solid var(--app-line);
+  border-radius: 6px;
+}
+
+.memory-source-list > div,
+.memory-version-list > div,
+.consolidation-operation-list > div,
+.evolution-evaluation-list > div {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) minmax(90px, auto);
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 8px 9px;
+  border-bottom: 1px solid var(--app-line);
+  font-size: 9px;
+}
+
+.memory-source-list > div:last-child,
+.memory-version-list > div:last-child,
+.consolidation-operation-list > div:last-child,
+.evolution-evaluation-list > div:last-child {
+  border-bottom: 0;
+}
+
+.memory-source-list code,
+.evolution-evaluation-list code {
+  overflow: hidden;
+  color: var(--app-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.source-ok,
+.source-blocked,
+.evaluation-verdict {
+  border-radius: 999px;
+  padding: 2px 6px;
+  color: #20845a;
+  background: color-mix(in srgb, #2f9e6f 10%, transparent);
+  font-size: 8px;
+  white-space: nowrap;
+}
+
+.source-blocked,
+.verdict-failed {
+  color: #c43a3a;
+  background: color-mix(in srgb, #d14343 10%, transparent);
+}
+
+.memory-recall-card {
+  display: grid;
+  gap: 10px;
+  border: 1px solid var(--app-line);
+  border-radius: 6px;
+  padding: 10px;
+  background: color-mix(in srgb, var(--app-sidebar) 45%, var(--app-canvas));
+}
+
+.memory-recall-card + .memory-recall-card {
+  margin-top: 8px;
+}
+
+.memory-recall-card > header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.memory-recall-card > header div {
+  display: grid;
+  gap: 2px;
+}
+
+.memory-recall-card > header small,
+.memory-recall-card > header code,
+.memory-recall-card > p {
+  color: var(--app-muted);
+  font-size: 8px;
+}
+
+.memory-score-breakdown {
+  display: grid;
+  gap: 5px;
+}
+
+.memory-score-row {
+  display: grid;
+  grid-template-columns: 60px minmax(70px, 1fr) 46px;
+  align-items: center;
+  gap: 8px;
+  color: var(--app-muted);
+  font-size: 8px;
+}
+
+.memory-score-row > div {
+  height: 4px;
+  overflow: hidden;
+  border-radius: 99px;
+  background: var(--app-hover);
+}
+
+.memory-score-row i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--astra-mint);
+}
+
+.memory-score-row strong {
+  color: inherit;
+  font-family: var(--app-mono, ui-monospace, monospace);
+  font-size: 8px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.memory-audit-list {
+  display: grid;
+  gap: 1px;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--app-line);
+  border-radius: 6px;
+  background: var(--app-line);
+  list-style: none;
+}
+
+.memory-audit-list li {
+  display: grid;
+  grid-template-columns: minmax(90px, .6fr) minmax(120px, 1fr) auto;
+  gap: 9px;
+  padding: 8px 9px;
+  background: var(--app-elevated);
+  font-size: 8px;
+}
+
+.memory-audit-list strong {
+  overflow-wrap: anywhere;
+}
+
+.memory-audit-list time {
+  color: var(--app-muted);
+  white-space: nowrap;
+}
+
+.memory-json-details {
+  min-width: 0;
+  border-top: 1px solid var(--app-line);
+  padding-top: 10px;
+}
+
+.memory-json-details summary {
+  color: var(--app-muted);
+  font-size: 9px;
+  cursor: pointer;
+}
+
+.memory-json-details > div {
+  margin-top: 9px;
+}
+
+.memory-json-details > div > strong {
+  color: var(--app-muted);
+  font: 8px/1.4 var(--app-mono, ui-monospace, monospace);
+}
+
+.memory-json-block,
+.memory-json-details pre {
+  max-height: 300px;
+  margin: 6px 0 0;
+  overflow: auto;
+  border: 1px solid var(--app-line);
+  border-radius: 5px;
+  padding: 10px;
+  color: inherit;
+  background: color-mix(in srgb, var(--app-sidebar) 72%, var(--app-canvas));
+  font: 9px/1.5 var(--app-mono, ui-monospace, monospace);
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.memory-detail-actions {
+  display: flex !important;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px !important;
+}
+
+.memory-detail-actions button,
+.memory-inspector > header > button,
+.memory-action-dialog button {
+  min-height: 30px;
+  border: 1px solid var(--app-line);
+  border-radius: 5px;
+  padding: 0 9px;
+  color: inherit;
+  background: var(--app-elevated);
+  font-size: 9px;
+}
+
+.memory-detail-actions button:hover:not(:disabled),
+.memory-inspector > header > button:hover:not(:disabled),
+.memory-action-dialog button:hover:not(:disabled) {
+  background: var(--app-hover);
+}
+
+.memory-danger-button {
+  border-color: color-mix(in srgb, #d14343 36%, var(--app-line)) !important;
+  color: color-mix(in srgb, #d14343 82%, currentColor) !important;
+}
+
+.promotion-disabled-button:disabled {
+  cursor: not-allowed;
+  opacity: .72;
+}
+
+.memory-safety-note {
+  border: 1px solid color-mix(in srgb, #b7791f 25%, var(--app-line));
+  border-radius: 6px;
+  padding: 9px 10px;
+  color: var(--app-muted);
+  background: color-mix(in srgb, #f6c453 8%, var(--app-elevated));
+  font-size: 9px;
+  line-height: 1.5;
+}
+
+.consolidation-operation-list > div {
+  grid-template-columns: minmax(70px, auto) minmax(0, 1fr) auto;
+}
+
+.consolidation-operation-list p {
+  grid-column: 1 / -1;
+  color: var(--app-muted);
+  font-size: 9px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.consolidation-validation {
+  display: grid;
+  gap: 7px;
+  border: 1px solid color-mix(in srgb, #d14343 30%, var(--app-line));
+  border-radius: 6px;
+  padding: 10px;
+  color: color-mix(in srgb, #d14343 78%, currentColor);
+  background: color-mix(in srgb, #d14343 7%, var(--app-elevated));
+  font-size: 9px;
+}
+
+.consolidation-validation.passed {
+  border-color: color-mix(in srgb, #2f9e6f 30%, var(--app-line));
+  color: color-mix(in srgb, #20845a 78%, currentColor);
+  background: color-mix(in srgb, #2f9e6f 7%, var(--app-elevated));
+}
+
+.consolidation-validation p {
+  display: flex;
+  gap: 8px;
+  color: var(--app-muted);
+  overflow-wrap: anywhere;
+}
+
+.evolution-evaluation-list > div {
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+}
+
+.evolution-evaluation-list time {
+  color: var(--app-muted);
+  white-space: nowrap;
+}
+
+.memory-dialog-backdrop {
+  position: fixed;
+  z-index: 180;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: color-mix(in srgb, #111 34%, transparent);
+  animation: backdrop-enter 160ms ease both;
+}
+
+.memory-action-dialog {
+  display: grid;
+  gap: 13px;
+  width: min(460px, 100%);
+  border: 1px solid var(--app-line);
+  border-radius: 9px;
+  padding: 18px;
+  color: inherit;
+  background: var(--app-canvas);
+  box-shadow: 0 24px 72px color-mix(in srgb, #000 25%, transparent);
+}
+
+.memory-action-dialog h2 {
+  font-size: 16px;
+}
+
+.memory-action-dialog > p,
+.memory-action-dialog label > span {
+  color: var(--app-muted);
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.memory-action-dialog label {
+  display: grid;
+  gap: 6px;
+}
+
+.memory-action-dialog textarea {
+  width: 100%;
+  resize: vertical;
+  border: 1px solid var(--app-line);
+  border-radius: 6px;
+  padding: 8px;
+  color: inherit;
+  background: var(--app-elevated);
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.memory-action-dialog > div {
+  display: flex;
+  justify-content: flex-end;
+  gap: 7px;
+}
+
+.memory-workbench :is(button, input, select, textarea, summary):focus-visible {
+  outline: 1px solid var(--astra-mint);
+  outline-offset: 2px;
+}
+
+html[data-theme="dark"] .memory-governance-lock,
+html[data-theme="dark"] .memory-safety-note {
+  color: #e8c979;
+}
+
+html[data-theme="dark"] .memory-dialog-backdrop {
+  background: rgba(0, 0, 0, .58);
+}
+
+@media (max-width: 900px) {
+  .memory-panel {
+    grid-template-columns: 1fr;
+    height: auto;
+    max-height: none;
+    overflow: visible;
+  }
+
+  .memory-list-pane {
+    max-height: 390px;
+    border-right: 0;
+    border-bottom: 1px solid var(--app-line);
+  }
+
+  .memory-detail-pane {
+    overflow: visible;
+  }
+}
+
+@media (max-width: 640px) {
+  .memory-workbench-header {
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .memory-tabs {
+    width: 100%;
+  }
+
+  .memory-tabs button {
+    flex: 1;
+    padding-inline: 5px;
+  }
+
+  .memory-filters,
+  .memory-metadata {
+    grid-template-columns: 1fr;
+  }
+
+  .memory-filters label {
+    grid-column: 1;
+  }
+
+  .memory-inspector {
+    padding-inline: 12px;
+  }
+
+  .memory-inspector > header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .memory-detail-actions {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .memory-audit-list li {
+    grid-template-columns: 1fr;
+  }
+
+  .memory-source-list > div,
+  .memory-version-list > div,
+  .evolution-evaluation-list > div {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .memory-source-list code,
+  .memory-version-list > div > span,
+  .evolution-evaluation-list time {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .memory-dialog-backdrop {
+    animation: none;
   }
 }

@@ -3,12 +3,15 @@ from __future__ import annotations
 import secrets
 from datetime import datetime
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.db.models import (
     AgentDelegationRecord,
+    AgentEvolutionAuditRecord,
+    AgentEvolutionCandidateRecord,
+    AgentEvolutionSourceRecord,
     AgentIdentityRecord,
     AgentTurnRecord,
     ApprovalGrantRecord,
@@ -17,7 +20,11 @@ from app.db.models import (
     ConversationShareRecord,
     CredentialGrantRecord,
     DataFlowStateRecord,
+    MemoryAuditRecord,
+    MemoryLinkRecord,
+    MemoryRecallEventRecord,
     MemoryRecord,
+    MemorySourceRecord,
     ModelInvocationRecord,
     PlanRecord,
     RunEventRecord,
@@ -251,6 +258,7 @@ class ConversationRepository:
             raise RuntimeError("conversation is active")
         storage_keys: list[str] = []
         if run_ids:
+            await self._propagate_derived_source_deletion(run_ids)
             storage_keys = list((await self.session.scalars(
                 select(ArtifactRecord.storage_key).where(
                     ArtifactRecord.run_id.in_(run_ids), ArtifactRecord.storage_key.is_not(None)
@@ -291,16 +299,231 @@ class ConversationRepository:
                 await self.session.execute(
                     delete(AgentIdentityRecord).where(AgentIdentityRecord.id.in_(identity_ids))
                 )
+            await self.session.execute(
+                delete(MemoryRecallEventRecord).where(
+                    MemoryRecallEventRecord.run_id.in_(run_ids)
+                )
+            )
             for model in (ApprovalGrantRecord, ApprovalRequestRecord,
                           ArtifactRecord, SandboxJobRecord, ToolCallRecord, StepRecord,
-                          RunEventRecord, AgentTurnRecord, MemoryRecord, ModelInvocationRecord,
-                          PlanRecord):
+                          RunEventRecord, AgentTurnRecord, ModelInvocationRecord, PlanRecord):
                 await self.session.execute(delete(model).where(model.run_id.in_(run_ids)))
             await self.session.execute(delete(RunRecord).where(RunRecord.id.in_(run_ids)))
         await self.session.execute(delete(ConversationShareRecord).where(ConversationShareRecord.conversation_id == task.id))
         await self.session.execute(delete(TaskRecord).where(TaskRecord.id == task.id))
         await self.session.commit()
         return storage_keys
+
+    async def _propagate_derived_source_deletion(self, run_ids: list[str]) -> None:
+        now = utc_now()
+        affected_sources = list(
+            (
+                await self.session.scalars(
+                    select(MemorySourceRecord).where(
+                        MemorySourceRecord.run_id.in_(run_ids)
+                    )
+                )
+            ).all()
+        )
+        affected_memory_ids = {source.memory_id for source in affected_sources}
+        affected_memory_ids.update(
+            (
+                await self.session.scalars(
+                    select(MemoryRecord.id).where(MemoryRecord.run_id.in_(run_ids))
+                )
+            ).all()
+        )
+        memories = (
+            list(
+                (
+                    await self.session.scalars(
+                        select(MemoryRecord).where(
+                            MemoryRecord.id.in_(affected_memory_ids)
+                        )
+                    )
+                ).all()
+            )
+            if affected_memory_ids
+            else []
+        )
+        all_memory_sources = (
+            list(
+                (
+                    await self.session.scalars(
+                        select(MemorySourceRecord).where(
+                            MemorySourceRecord.memory_id.in_(affected_memory_ids)
+                        )
+                    )
+                ).all()
+            )
+            if affected_memory_ids
+            else []
+        )
+        removed_source_ids = {source.id for source in affected_sources}
+        remaining_by_memory: dict[str, list[MemorySourceRecord]] = {}
+        for source in all_memory_sources:
+            if (
+                source.id not in removed_source_ids
+                and source.accessible
+                and source.revoked_at is None
+            ):
+                remaining_by_memory.setdefault(source.memory_id, []).append(source)
+
+        run_memory_ids: set[str] = set()
+        revoked_memory_ids: set[str] = set()
+        for memory in memories:
+            if memory.namespace_type == "run" and memory.namespace_id in run_ids:
+                run_memory_ids.add(memory.id)
+                continue
+            remaining_sources = remaining_by_memory.get(memory.id, [])
+            memory.run_id = None if memory.run_id in run_ids else memory.run_id
+            memory.provenance = {
+                "source_count": len(remaining_sources),
+                "deleted_sources_redacted": True,
+            }
+            if (
+                not remaining_sources
+                and memory.status in {"candidate", "active", "quarantined"}
+            ):
+                memory.status = "revoked"
+                memory.state_version += 1
+                memory.valid_to = now
+                memory.revoked_at = now
+                memory.revoke_reason = "source_conversation_deleted"
+                memory.updated_at = now
+                revoked_memory_ids.add(memory.id)
+                event_type = "revoked_by_source_deletion"
+            else:
+                event_type = "source_removed"
+            self.session.add(
+                MemoryAuditRecord(
+                    memory_id=memory.id,
+                    event_type=event_type,
+                    actor="conversation-lifecycle",
+                    reason="source_conversation_deleted",
+                    payload={
+                        "deleted_source_count": sum(
+                            source.memory_id == memory.id for source in affected_sources
+                        ),
+                        "remaining_source_count": len(remaining_sources),
+                    },
+                    created_at=now,
+                )
+            )
+
+        invalid_memory_ids = run_memory_ids | revoked_memory_ids
+        evolution_sources = list(
+            (
+                await self.session.scalars(
+                    select(AgentEvolutionSourceRecord).where(
+                        or_(
+                            AgentEvolutionSourceRecord.run_id.in_(run_ids),
+                            AgentEvolutionSourceRecord.memory_id.in_(invalid_memory_ids),
+                        )
+                    )
+                )
+            ).all()
+        )
+        affected_candidate_ids = {
+            source.candidate_id for source in evolution_sources
+        }
+        if affected_candidate_ids:
+            removed_evolution_source_ids = {source.id for source in evolution_sources}
+            all_evolution_sources = list(
+                (
+                    await self.session.scalars(
+                        select(AgentEvolutionSourceRecord).where(
+                            AgentEvolutionSourceRecord.candidate_id.in_(
+                                affected_candidate_ids
+                            )
+                        )
+                    )
+                ).all()
+            )
+            remaining_by_candidate: dict[str, int] = {}
+            for source in all_evolution_sources:
+                if (
+                    source.id not in removed_evolution_source_ids
+                    and source.accessible
+                ):
+                    remaining_by_candidate[source.candidate_id] = (
+                        remaining_by_candidate.get(source.candidate_id, 0) + 1
+                    )
+            candidates = list(
+                (
+                    await self.session.scalars(
+                        select(AgentEvolutionCandidateRecord).where(
+                            AgentEvolutionCandidateRecord.id.in_(
+                                affected_candidate_ids
+                            )
+                        )
+                    )
+                ).all()
+            )
+            for candidate in candidates:
+                remaining_count = remaining_by_candidate.get(candidate.id, 0)
+                previous_status = candidate.status
+                if remaining_count == 0:
+                    candidate.status = (
+                        "rolled_back"
+                        if candidate.status in {"shadow", "canary", "promoted"}
+                        else "rejected"
+                    )
+                    if candidate.status != previous_status:
+                        candidate.state_version += 1
+                    candidate.reviewed_by = "conversation-lifecycle"
+                    candidate.review_reason = "source_conversation_deleted"
+                    candidate.updated_at = now
+                    event_type = "rejected_by_source_deletion"
+                else:
+                    event_type = "source_removed"
+                self.session.add(
+                    AgentEvolutionAuditRecord(
+                        candidate_id=candidate.id,
+                        event_type=event_type,
+                        actor="conversation-lifecycle",
+                        reason="source_conversation_deleted",
+                        actual_state_version=candidate.state_version,
+                        payload={
+                            "previous_status": previous_status,
+                            "current_status": candidate.status,
+                            "remaining_source_count": remaining_count,
+                        },
+                        created_at=now,
+                    )
+                )
+            await self.session.execute(
+                delete(AgentEvolutionSourceRecord).where(
+                    AgentEvolutionSourceRecord.id.in_(removed_evolution_source_ids)
+                )
+            )
+
+        if affected_sources:
+            await self.session.execute(
+                delete(MemorySourceRecord).where(
+                    MemorySourceRecord.id.in_(removed_source_ids)
+                )
+            )
+        if run_memory_ids:
+            await self.session.execute(
+                delete(MemoryLinkRecord).where(
+                    MemoryLinkRecord.source_memory_id.in_(run_memory_ids)
+                    | MemoryLinkRecord.target_memory_id.in_(run_memory_ids)
+                )
+            )
+            await self.session.execute(
+                delete(MemoryAuditRecord).where(
+                    MemoryAuditRecord.memory_id.in_(run_memory_ids)
+                )
+            )
+            await self.session.execute(
+                delete(MemorySourceRecord).where(
+                    MemorySourceRecord.memory_id.in_(run_memory_ids)
+                )
+            )
+            await self.session.execute(
+                delete(MemoryRecord).where(MemoryRecord.id.in_(run_memory_ids))
+            )
 
 
 def conversation_summary(task: TaskRecord) -> dict:

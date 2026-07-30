@@ -44,6 +44,7 @@ class PlanValidator:
         *,
         task_contract: TaskContract,
         available_capabilities: set[str] | None = None,
+        forbidden_capabilities: set[str] | None = None,
         budgets: RunBudgets | None = None,
     ) -> PlanDraft:
         keys = [node.node_key for node in draft.nodes]
@@ -56,7 +57,7 @@ class PlanValidator:
             for item in task_contract.skill_revisions
             if item.get("qualified_identity")
         }
-        available_capabilities = available_capabilities or set()
+        forbidden_capabilities = forbidden_capabilities or set()
         for node in draft.nodes:
             unknown_dependencies = set(node.depends_on) - known
             if unknown_dependencies:
@@ -70,7 +71,20 @@ class PlanValidator:
                 raise PlanValidationError(
                     f"Unknown success criteria for {node.node_key}: {sorted(unknown_criteria)}"
                 )
-            if available_capabilities:
+            forbidden_bindings = set(node.required_capabilities) & forbidden_capabilities
+            prefixed_bindings = {
+                capability
+                for capability in node.required_capabilities
+                if capability.startswith(
+                    ("provider:", "permission:", "backend:", "executor:", "tool:")
+                )
+            }
+            if forbidden_bindings or prefixed_bindings:
+                raise PlanValidationError(
+                    f"Concrete runtime bindings are not allowed for {node.node_key}: "
+                    f"{sorted(forbidden_bindings | prefixed_bindings)}"
+                )
+            if available_capabilities is not None:
                 unknown_capabilities = set(node.required_capabilities) - available_capabilities
                 if unknown_capabilities:
                     raise PlanValidationError(
@@ -123,6 +137,7 @@ class PlanService:
         *,
         contract: TaskContract,
         capabilities: set[str] | None = None,
+        forbidden_capabilities: set[str] | None = None,
         budgets: RunBudgets | None = None,
         activate: bool = True,
     ) -> PlanRecord:
@@ -130,6 +145,7 @@ class PlanService:
             draft,
             task_contract=contract,
             available_capabilities=capabilities,
+            forbidden_capabilities=forbidden_capabilities,
             budgets=budgets,
         )
         return await self.repository.create(
@@ -145,6 +161,7 @@ class PlanService:
         *,
         contract: TaskContract,
         capabilities: set[str] | None = None,
+        forbidden_capabilities: set[str] | None = None,
         budgets: RunBudgets | None = None,
     ) -> PlanRecord:
         current = await self.repository.active_for_run(run_id)
@@ -159,23 +176,15 @@ class PlanService:
             raise error
         view = plan_to_view(current)
         running_node_ids = {
-            node.id
-            for node in view.nodes
-            if node.status.value == PlanNodeStatus.running.value
+            node.id for node in view.nodes if node.status.value == PlanNodeStatus.running.value
         }
         if running_node_ids:
-            active = await NodeExecutionRepository(
-                self.repository.session
-            ).active_for_run(run_id)
+            active = await NodeExecutionRepository(self.repository.session).active_for_run(run_id)
             owned_running_node_ids = {
-                execution.plan_node_id
-                for execution in active
-                if execution.plan_id == current.id
+                execution.plan_node_id for execution in active if execution.plan_id == current.id
             }
             if not running_node_ids <= owned_running_node_ids:
-                error = PlanStateError(
-                    "Cannot replan while an unowned plan node is running"
-                )
+                error = PlanStateError("Cannot replan while an unowned plan node is running")
                 await self._record_patch_rejection(run_id, patch, error)
                 raise error
             await self._drain_for_replan(run_id, current)
@@ -217,6 +226,7 @@ class PlanService:
                 draft,
                 task_contract=contract,
                 available_capabilities=capabilities,
+                forbidden_capabilities=forbidden_capabilities,
                 budgets=budgets,
             )
         except (TypeError, ValueError) as exc:
@@ -850,10 +860,7 @@ class PlanScheduler:
         run: RunRecord,
         total_slots: int,
     ) -> dict[str, int]:
-        budgets = (
-            ((run.reasoning_policy or {}).get("effective") or {}).get("budgets")
-            or {}
-        )
+        budgets = ((run.reasoning_policy or {}).get("effective") or {}).get("budgets") or {}
         defaults = {"turns": 6, "tool_calls": 3, "model_calls": 6}
         limits = {
             "turns": budgets.get("max_turns"),

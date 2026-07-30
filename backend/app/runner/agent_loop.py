@@ -3,6 +3,7 @@ import json
 import logging
 import time
 from collections.abc import Awaitable, Callable
+from datetime import datetime, timezone
 from typing import Any
 
 from sqlalchemy import select
@@ -15,6 +16,14 @@ from app.grounding.projection import project_grounded_answer
 from app.grounding.repository import EvidenceRepository, EvidenceWriter
 from app.grounding.validators import grounding_validation_outcomes
 from app.memory.domain import MemoryConflictError, MemoryStatus, MemoryValidationError
+from app.memory.retrieval import (
+    MemoryRetrievalBudget,
+    MemoryRetrievalCandidate,
+    MemoryRetrievalPolicy,
+    MemoryRetrievalQuery,
+    ScoredMemory,
+    retrieve_memories,
+)
 from app.permissions.effects import (
     DefaultEffectAnalyzer,
     effect_plan_hash,
@@ -80,6 +89,11 @@ from app.tools.base import (
     ToolRegistry,
 )
 from app.tools.router import ToolRouter
+from app.tools.selection import (
+    CapabilityToolResolver,
+    forbidden_plan_bindings,
+    task_capability_catalog,
+)
 from app.workspaces.runtime import WorkspaceRuntimeService
 
 logger = logging.getLogger("astra.agent_loop")
@@ -91,6 +105,7 @@ QUICK_TOOL_MANIFEST_FIELDS = {
     "input_schema",
     "permission",
     "side_effect_level",
+    "task_capabilities",
     "capabilities",
     "permissions",
     "risk",
@@ -219,9 +234,178 @@ def _quick_workspace_change_completes_goal(
 
 
 class ContextAssembler:
-    def __init__(self, repo: RunRepository, *, skills_enabled: bool = True):
+    def __init__(
+        self,
+        repo: RunRepository,
+        *,
+        skills_enabled: bool = True,
+        settings: Settings | None = None,
+    ):
         self.repo = repo
         self.skills_enabled = skills_enabled
+        self.settings = settings
+
+    @staticmethod
+    def _memory_audit_view(
+        memory,
+        *,
+        score: dict[str, float | None] | None = None,
+        recall_event_id: str | None = None,
+    ) -> dict[str, Any]:
+        view = {
+            "id": memory.id,
+            "memory_key": getattr(memory, "memory_key", None),
+            "namespace_type": getattr(memory, "namespace_type", None),
+            "namespace_id": getattr(memory, "namespace_id", None),
+            "scope": getattr(memory, "scope", getattr(memory, "namespace_type", "run")),
+            "kind": memory.kind,
+            "status": getattr(memory, "status", "active"),
+            "version": getattr(memory, "version", 1),
+            "state_version": getattr(memory, "state_version", 1),
+            "confidence": memory.confidence,
+            "importance": getattr(memory, "importance", 0.5),
+        }
+        if score is not None:
+            view["score"] = score
+        if recall_event_id is not None:
+            view["recall_event_id"] = recall_event_id
+        return view
+
+    @staticmethod
+    def _memory_context_view(
+        memory,
+        *,
+        score: dict[str, float | None] | None = None,
+    ) -> dict[str, Any]:
+        view = ContextAssembler._memory_audit_view(memory, score=score)
+        view.update(
+            {
+                "content": memory.content,
+                "structured_data": getattr(memory, "structured_data", {}) or {},
+                "provenance": memory.provenance,
+                "trust": "untrusted_memory_data",
+                "authority": "none",
+            }
+        )
+        return view
+
+    async def _retrieve_cross_session(
+        self,
+        *,
+        run_id: str,
+        goal: str,
+    ) -> tuple[list[ScoredMemory], str]:
+        if self.settings is None:
+            raise RuntimeError("Cross-Session Memory retrieval requires Settings")
+        memory_repo = MemoryRepository(self.repo.session)
+        namespaces = await memory_repo.namespaces_for_run(run_id)
+        records = await memory_repo.list_records(
+            namespaces=namespaces,
+            min_confidence=0.0,
+            include_expired=True,
+            include_sources=True,
+            limit=self.settings.agent_memory_retrieval_candidate_limit,
+        )
+        candidates = [
+            MemoryRetrievalCandidate(
+                id=memory.id,
+                namespace_type=memory.namespace_type,
+                namespace_id=memory.namespace_id,
+                kind=memory.kind,
+                status=memory.status,
+                content=memory.content,
+                structured_data=memory.structured_data or {},
+                provenance=memory.provenance or {},
+                confidence=memory.confidence,
+                importance=memory.importance,
+                utility_score=memory.utility_score,
+                version=memory.version,
+                observed_at=memory.observed_at,
+                valid_from=memory.valid_from,
+                valid_to=memory.valid_to,
+                expires_at=memory.expires_at,
+                revoked_at=memory.revoked_at,
+                updated_at=memory.updated_at,
+                accessible_source_count=sum(
+                    source.accessible and source.revoked_at is None for source in memory.sources
+                ),
+            )
+            for memory in records
+        ]
+        as_of = datetime.now(timezone.utc)
+        query = MemoryRetrievalQuery(
+            text=goal,
+            namespaces=frozenset(namespaces),
+            as_of=as_of,
+        )
+        result = retrieve_memories(
+            candidates,
+            query,
+            policy=MemoryRetrievalPolicy(
+                minimum_confidence=self.settings.agent_memory_retrieval_min_confidence,
+                minimum_score=self.settings.agent_memory_retrieval_min_score,
+            ),
+            budget=MemoryRetrievalBudget(
+                max_items=self.settings.agent_memory_retrieval_max_items,
+                max_characters=self.settings.agent_memory_retrieval_max_characters,
+                max_tokens=self.settings.agent_memory_retrieval_max_tokens,
+            ),
+        )
+        namespace_manifest = [
+            namespace.as_dict()
+            for namespace in sorted(namespaces, key=lambda item: (item.type.value, item.id))
+        ]
+        query_fingerprint = hashlib.sha256(
+            json.dumps(
+                {
+                    "query": goal,
+                    "namespaces": namespace_manifest,
+                    "policy_version": self.settings.agent_memory_retrieval_policy_version,
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest()
+        ranked_by_id = {item.candidate.id: item for item in result.ranked}
+        shadow = self.settings.agent_memory_cross_session_shadow
+        recall = await memory_repo.record_recall_event(
+            run_id=run_id,
+            query_hash=query_fingerprint,
+            policy_version=self.settings.agent_memory_retrieval_policy_version,
+            shadow=shadow,
+            namespace_manifest=namespace_manifest,
+            candidates=[
+                {
+                    "id": memory.id,
+                    "version": memory.version,
+                    "namespace_type": memory.namespace_type,
+                    "namespace_id": memory.namespace_id,
+                    "status": memory.status,
+                    "score": ranked_by_id[memory.id].score.as_dict()
+                    if memory.id in ranked_by_id
+                    else None,
+                }
+                for memory in candidates
+            ],
+            selected=[
+                {
+                    "id": item.candidate.id,
+                    "version": item.candidate.version,
+                    "score": item.score.as_dict(),
+                }
+                for item in result.selected
+            ],
+            excluded=[
+                {
+                    "id": item.memory_id,
+                    "stage": item.stage,
+                    "reasons": list(item.reasons),
+                }
+                for item in result.excluded
+            ],
+        )
+        return list(result.selected), recall.id
 
     async def assemble(
         self,
@@ -248,10 +432,29 @@ class ContextAssembler:
             )
         else:
             run = await self.repo.require_run_core(run_id)
-            memories = await self.repo.list_memories(
-                run_id=run_id, min_confidence=0.0, limit=8
-            )
+            memories = await self.repo.list_memories(run_id=run_id, min_confidence=0.0, limit=8)
             skill_snapshot = None
+        memory_scores: dict[str, dict[str, float | None]] = {}
+        recall_event_id: str | None = None
+        cross_session_active = bool(
+            self.settings
+            and (
+                self.settings.agent_memory_cross_session_enabled
+                or self.settings.agent_memory_cross_session_shadow
+            )
+        )
+        if cross_session_active:
+            selected, recall_event_id = await self._retrieve_cross_session(
+                run_id=run_id,
+                goal=goal,
+            )
+            if (
+                self.settings is not None
+                and self.settings.agent_memory_cross_session_enabled
+                and not self.settings.agent_memory_cross_session_shadow
+            ):
+                memories = [item.candidate for item in selected]
+                memory_scores = {item.candidate.id: item.score.as_dict() for item in selected}
         plan = (
             None
             if run.answer_mode == AnswerMode.standard.value
@@ -263,36 +466,30 @@ class ContextAssembler:
             (item for item in plan_view.get("nodes", []) if item.get("id") == active_node_id),
             None,
         )
-        specs, unavailable = tool_registry.specs(), {}
-        if tool_router is not None:
-            specs, unavailable = tool_router.eligible_specs()
-        if active_node and active_node.get("required_capabilities"):
-            required = set(active_node["required_capabilities"])
-            specs = {
-                name: spec
-                for name, spec in specs.items()
-                if name in required
-                or bool(
-                    required
-                    & {
-                        *spec.capabilities,
-                        *spec.permissions,
-                        spec.permission,
-                    }
-                )
-            }
+        if tool_router is None:
+            tool_router = ToolRouter(
+                tool_registry,
+                available_backends={
+                    spec.execution_backend for spec in tool_registry.specs().values()
+                }
+                or {"in_process"},
+            )
+        resolution = CapabilityToolResolver(tool_router).resolve(
+            active_node.get("required_capabilities", []) if active_node else [],
+            observations=observations,
+            plan_node_id=active_node_id,
+        )
+        specs = {candidate.tool_name: candidate.spec for candidate in resolution.candidates}
+        _, unavailable = tool_router.eligible_specs()
         if self.skills_enabled and not quick_mode:
             skill_snapshot = await self.repo.session.scalar(
-                select(RunSkillSnapshotRecord).where(
-                    RunSkillSnapshotRecord.run_id == run_id
-                )
+                select(RunSkillSnapshotRecord).where(RunSkillSnapshotRecord.run_id == run_id)
             )
         skill_catalog = []
         active_skills = []
         if skill_snapshot is not None:
             active_identities = {
-                item["qualified_identity"]
-                for item in skill_snapshot.activations or []
+                item["qualified_identity"] for item in skill_snapshot.activations or []
             }
             skill_catalog = [
                 {
@@ -306,9 +503,7 @@ class ContextAssembler:
                 for item in skill_snapshot.catalog
             ]
             active_skills = [
-                item
-                for item in skill_catalog
-                if item["qualified_identity"] in active_identities
+                item for item in skill_catalog if item["qualified_identity"] in active_identities
             ]
         context = {
             "run_id": run_id,
@@ -323,20 +518,25 @@ class ContextAssembler:
             },
             "observations": observations,
             "memory_reads": [
-                {
-                    "id": memory.id,
-                    "scope": memory.scope,
-                    "kind": memory.kind,
-                    "content": memory.content,
-                    "confidence": memory.confidence,
-                    "provenance": memory.provenance,
-                }
+                self._memory_audit_view(
+                    memory,
+                    score=memory_scores.get(memory.id),
+                    recall_event_id=recall_event_id,
+                )
+                for memory in memories
+            ],
+            "memory_context": [
+                self._memory_context_view(
+                    memory,
+                    score=memory_scores.get(memory.id),
+                )
                 for memory in memories
             ],
             "answer_mode": run.answer_mode,
             "task_contract": run.task_contract or {},
             "plan_graph": plan_view,
             "active_node": active_node,
+            "tool_selection": resolution.audit_payload(),
             "state_version": run.state_version,
             "plan_version": plan_view.get("version", 1),
             "skill_catalog": skill_catalog,
@@ -344,6 +544,16 @@ class ContextAssembler:
         }
         if unavailable:
             context["unavailable_capabilities"] = unavailable
+        if recall_event_id is not None:
+            context["memory_recall"] = {
+                "event_id": recall_event_id,
+                "mode": "shadow"
+                if self.settings and self.settings.agent_memory_cross_session_shadow
+                else "active",
+                "policy_version": self.settings.agent_memory_retrieval_policy_version
+                if self.settings
+                else None,
+            }
         if skill_snapshot and skill_snapshot.draft_test:
             context["skill_draft_test"] = True
         if run.answer_mode != AnswerMode.standard.value:
@@ -652,7 +862,11 @@ class AgentLoop:
         fresh_run: bool = False,
         initial_skill_snapshot: RunSkillSnapshotRecord | None = None,
     ) -> dict[str, Any]:
-        assembler = ContextAssembler(repo, skills_enabled=self.settings.skills_enabled)
+        assembler = ContextAssembler(
+            repo,
+            skills_enabled=self.settings.skills_enabled,
+            settings=self.settings,
+        )
         memory_manager = MemoryManager(self.settings, repo, self.model_client)
         verifier = VerificationEngine()
         artifact_service = ArtifactService(
@@ -751,9 +965,7 @@ class AgentLoop:
             provider_concurrency_limit=self.settings.agent_provider_concurrency_limit,
             capability_concurrency_limit=self.settings.agent_capability_concurrency_limit,
         )
-        canonical_plan = (
-            None if quick_mode else await plan_repository.active_for_run(run_id)
-        )
+        canonical_plan = None if quick_mode else await plan_repository.active_for_run(run_id)
         orchestrator = LoopOrchestrator()
         no_progress = NoProgressDetector()
         policy_snapshot = ReasoningPolicySnapshot.model_validate(initial_run.reasoning_policy or {})
@@ -789,9 +1001,7 @@ class AgentLoop:
         )
         tool_outputs: list[dict[str, Any]] = []
         tool_call_count = sum(
-            1
-            for call in initial_tool_calls
-            if call.status in {"running", "succeeded", "failed"}
+            1 for call in initial_tool_calls if call.status in {"running", "succeeded", "failed"}
         )
         retry_counts: dict[str, int] = {}
         failed_action_counts: dict[str, int] = {}
@@ -802,11 +1012,7 @@ class AgentLoop:
         reflection_count = 0
         replan_count = 0
         active_node = None
-        approved_call = (
-            await repo.get_approved_tool_call(run_id)
-            if initial_tool_calls
-            else None
-        )
+        approved_call = await repo.get_approved_tool_call(run_id) if initial_tool_calls else None
         approved_request_snapshot = (
             {
                 "effect_plan_hash": approved_call.approval_request.effect_plan_hash,
@@ -972,14 +1178,13 @@ class AgentLoop:
                 if patch and patch.actionable():
                     try:
                         if patch.plan_patch and canonical_plan is not None:
-                            capabilities = set(self.tool_registry.specs())
-                            for spec in self.tool_registry.specs().values():
-                                capabilities.update(spec.capabilities)
+                            tool_specs = self.tool_registry.specs()
                             canonical_plan = await PlanService(plan_repository).apply_patch(
                                 run_id,
                                 patch.plan_patch,
                                 contract=state.task_contract,
-                                capabilities=capabilities,
+                                capabilities=task_capability_catalog(tool_specs),
+                                forbidden_capabilities=forbidden_plan_bindings(tool_specs),
                                 budgets=policy.budgets,
                             )
                             state.active_plan_id = canonical_plan.id
@@ -1128,9 +1333,7 @@ class AgentLoop:
             await maybe_reflect(
                 "expectation_mismatch",
                 {
-                    "last_observation": observation.model_dump(mode="json")
-                    if observation
-                    else {},
+                    "last_observation": observation.model_dump(mode="json") if observation else {},
                     "runtime_context": context,
                     "retry_count": 0,
                 },
@@ -1220,6 +1423,14 @@ class AgentLoop:
             if not quick_mode:
                 await repo.add_event(
                     run_id,
+                    "tool.resolution.candidates",
+                    {
+                        "turn_index": turn_index,
+                        **context["tool_selection"],
+                    },
+                )
+                await repo.add_event(
+                    run_id,
                     "reasoning.phase.started",
                     {
                         "phase": "selecting_action",
@@ -1296,9 +1507,7 @@ class AgentLoop:
                             {
                                 "operation": "decision_with_answer",
                                 "turn_index": turn_index,
-                                "plan_node_id": active_node.id
-                                if active_node is not None
-                                else None,
+                                "plan_node_id": active_node.id if active_node is not None else None,
                                 "skills": list(context["active_skills"]),
                             },
                         )
@@ -1414,30 +1623,24 @@ class AgentLoop:
             idempotency_key = None
             disallowed_tool_observation = None
             if decision.decision_type == "call_tool":
-                if active_node is not None and active_node.required_capabilities:
-                    proposed_spec = self.tool_registry.specs().get(decision.tool_name or "")
-                    required = set(active_node.required_capabilities)
-                    provided = (
-                        {
-                            decision.tool_name,
-                            *proposed_spec.capabilities,
-                            *proposed_spec.permissions,
-                            proposed_spec.permission,
-                        }
-                        if proposed_spec is not None
-                        else {decision.tool_name}
+                candidate_names = set(context.get("tool_selection", {}).get("candidate_names", []))
+                if decision.tool_name not in candidate_names:
+                    disallowed_tool_observation = AgentObservation(
+                        kind="tool_selection_rejected",
+                        status="failed",
+                        summary="模型选择的工具不在当前动态候选集中。",
+                        data={
+                            "plan_node_id": active_node.id if active_node is not None else None,
+                            "tool_name": decision.tool_name,
+                            "candidate_names": sorted(candidate_names),
+                            "unresolved_capabilities": context.get("tool_selection", {}).get(
+                                "unresolved_capabilities", []
+                            ),
+                            "capability_gaps": context.get("tool_selection", {}).get(
+                                "capability_gaps", []
+                            ),
+                        },
                     )
-                    if not required & provided:
-                        disallowed_tool_observation = AgentObservation(
-                            kind="decision_error",
-                            status="failed",
-                            summary="模型选择了活动节点未声明的工具。",
-                            data={
-                                "plan_node_id": active_node.id,
-                                "tool_name": decision.tool_name,
-                                "required_capabilities": sorted(required),
-                            },
-                        )
                 encoded = json.dumps(
                     {
                         "run_id": run_id,
@@ -1476,19 +1679,36 @@ class AgentLoop:
                 )
                 await repo.add_event(
                     run_id,
+                    "tool.selection.rejected",
+                    disallowed_tool_observation.model_dump(mode="json"),
+                )
+                await repo.add_event(
+                    run_id,
                     "reasoning.decision_rejected",
                     disallowed_tool_observation.model_dump(mode="json"),
                 )
                 await repo.session.commit()
                 continue
+            if decision.decision_type == "call_tool":
+                await repo.add_event(
+                    run_id,
+                    "tool.selection.accepted",
+                    {
+                        "turn_index": turn_index,
+                        "plan_node_id": active_node.id if active_node is not None else None,
+                        "tool_name": decision.tool_name,
+                        "candidate_names": context.get("tool_selection", {}).get(
+                            "candidate_names", []
+                        ),
+                    },
+                )
+                await repo.session.commit()
             if decision.decision_type == "activate_skill":
                 identity = decision.skill_identity or ""
                 current_run = await repo.require_run_core(run_id)
                 contract_skills = {
                     item.get("qualified_identity")
-                    for item in (current_run.task_contract or {}).get(
-                        "skill_revisions", []
-                    )
+                    for item in (current_run.task_contract or {}).get("skill_revisions", [])
                     if isinstance(item, dict)
                 }
                 if not quick_mode and identity not in contract_skills:
@@ -1526,9 +1746,7 @@ class AgentLoop:
                             data={
                                 "activation": activated["activation"],
                                 "resources": activated["resources"],
-                                "mode_recommendation": activated.get(
-                                    "mode_recommendation"
-                                ),
+                                "mode_recommendation": activated.get("mode_recommendation"),
                             },
                         )
                     except ValueError as exc:
@@ -1556,9 +1774,7 @@ class AgentLoop:
                     max_resource_bytes=self.settings.skills_max_resource_bytes_per_run,
                 )
                 try:
-                    content = await activation_service.read_resource(
-                        run_id, identity, path
-                    )
+                    content = await activation_service.read_resource(run_id, identity, path)
                     observation = AgentObservation(
                         kind="skill_resource",
                         status="completed",
@@ -1596,6 +1812,44 @@ class AgentLoop:
                     },
                 )
                 await repo.session.commit()
+
+            unresolved_capabilities = list(
+                context.get("tool_selection", {}).get("unresolved_capabilities", [])
+            )
+            if (
+                decision.decision_type in {"finalize", "complete_node"}
+                and active_node is not None
+                and unresolved_capabilities
+            ):
+                observation = AgentObservation(
+                    kind="capability_requirements_unresolved",
+                    status="failed",
+                    summary="活动节点仍有尚未满足的任务能力，不能提前完成。",
+                    data={
+                        "plan_node_id": active_node.id,
+                        "unresolved_capabilities": unresolved_capabilities,
+                        "capability_gaps": context.get("tool_selection", {}).get(
+                            "capability_gaps", []
+                        ),
+                        "candidate_names": context.get("tool_selection", {}).get(
+                            "candidate_names", []
+                        ),
+                    },
+                )
+                observations.append(observation.model_dump(mode="json"))
+                await repo.update_agent_turn(
+                    turn.id,
+                    status="failed",
+                    observation=observation.model_dump(mode="json"),
+                    phase="failed",
+                )
+                await repo.add_event(
+                    run_id,
+                    "reasoning.decision_rejected",
+                    observation.model_dump(mode="json"),
+                )
+                await repo.session.commit()
+                continue
 
             if decision.decision_type == "finalize":
                 if not quick_mode:
@@ -2001,9 +2255,7 @@ class AgentLoop:
                     bound_execution = None
                     if active_execution_id:
                         execution_repository = NodeExecutionRepository(repo.session)
-                        bound_execution = await execution_repository.require(
-                            active_execution_id
-                        )
+                        bound_execution = await execution_repository.require(active_execution_id)
                         bound_execution = await execution_repository.transition(
                             bound_execution.id,
                             expected_version=bound_execution.state_version,
@@ -2034,9 +2286,7 @@ class AgentLoop:
                         analyzer_version=effect_plan.analyzer_version,
                         analyzer_digest=effect_plan.analyzer_digest,
                         node_execution_id=active_execution_id,
-                        execution_attempt=bound_execution.attempt
-                        if bound_execution
-                        else None,
+                        execution_attempt=bound_execution.attempt if bound_execution else None,
                         expected_execution_state_version=bound_execution.state_version
                         if bound_execution
                         else None,
@@ -2081,9 +2331,7 @@ class AgentLoop:
                             if bound_execution
                             else None,
                             "expected_execution_state_version": (
-                                bound_execution.state_version
-                                if bound_execution
-                                else None
+                                bound_execution.state_version if bound_execution else None
                             ),
                             "paused_node": "policy_gate",
                             "request": terminal_summary,
@@ -2096,9 +2344,7 @@ class AgentLoop:
                     await repo.transition_tool_call(call.id, "running")
                     if call.node_execution_id:
                         execution_repository = NodeExecutionRepository(repo.session)
-                        execution = await execution_repository.require(
-                            call.node_execution_id
-                        )
+                        execution = await execution_repository.require(call.node_execution_id)
                         if execution.phase == NodeExecutionPhase.waiting_approval.value:
                             await execution_repository.acquire_slot(
                                 execution.id,
@@ -2149,9 +2395,7 @@ class AgentLoop:
                             "skill.attributed_action",
                             {
                                 "tool_call_id": call.id,
-                                "plan_node_id": active_node.id
-                                if active_node is not None
-                                else None,
+                                "plan_node_id": active_node.id if active_node is not None else None,
                                 "skills": list(execution_context.skill_bindings),
                                 "effect_plan": execution_context.effect_plan,
                             },
@@ -2550,8 +2794,7 @@ class AgentLoop:
                     required_user_action=required_user_action,
                     active_executions=list(run_record.node_executions),
                     unresolved_approvals=sum(
-                        item.status == "pending"
-                        for item in run_record.approval_requests
+                        item.status == "pending" for item in run_record.approval_requests
                     ),
                     unmerged_budgets=sum(
                         reservation.status == "reserved"

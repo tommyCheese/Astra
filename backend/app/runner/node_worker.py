@@ -14,6 +14,8 @@ from app.runner.coordinator import NodeContextSnapshot, NodeExecutionResult
 from app.runner.model_client import ModelClient
 from app.schemas.agent import AgentObservation, NodeExecutionPhase, NodeExecutionStatus
 from app.tools.base import ToolExecutionContext, ToolExecutionError, ToolRegistry
+from app.tools.router import ToolRouter
+from app.tools.selection import CapabilityToolResolver
 
 
 class ReadOnlyAgentNodeExecutor:
@@ -29,6 +31,11 @@ class ReadOnlyAgentNodeExecutor:
         self.settings = settings
         self.model_client = model_client
         self.tool_registry = tool_registry
+        backends = {"in_process"}
+        if settings.sandbox_enabled:
+            backends.add("sandbox.remote")
+        self.router = ToolRouter(tool_registry, available_backends=backends)
+        self.resolver = CapabilityToolResolver(self.router)
 
     @property
     def safe_capabilities(self) -> set[str]:
@@ -36,7 +43,7 @@ class ReadOnlyAgentNodeExecutor:
         for name, spec in self.tool_registry.specs().items():
             if spec.side_effect_level != "read_only" or not spec.idempotent:
                 continue
-            capabilities.update({name, spec.permission, *spec.capabilities})
+            capabilities.update({name, *spec.task_capabilities})
         return capabilities
 
     async def __call__(
@@ -57,7 +64,7 @@ class ReadOnlyAgentNodeExecutor:
             if call.id in dependency_refs and call.status == "succeeded"
         ]
         evidence_refs = list(context.dependency_evidence)
-        allowed_tools = self._allowed_tools(context)
+        excluded_tools: set[str] = set()
         maximum_turns = max(1, int(context.reserved_budgets.get("turns", 1)))
         maximum_tool_calls = max(
             0,
@@ -65,6 +72,18 @@ class ReadOnlyAgentNodeExecutor:
         )
         tool_calls = 0
         for local_turn in range(1, maximum_turns + 1):
+            resolution = self.resolver.resolve(
+                context.node.get("required_capabilities") or [],
+                observations=observations,
+                plan_node_id=context.plan_node_id,
+                require_read_only=True,
+                require_idempotent=True,
+                excluded_tools=excluded_tools,
+            )
+            allowed_tools = {
+                candidate.tool_name: self.tool_registry.get(candidate.tool_name)
+                for candidate in resolution.candidates
+            }
             await repository.add_event(
                 context.run_id,
                 "reasoning.phase.started",
@@ -75,6 +94,15 @@ class ReadOnlyAgentNodeExecutor:
                     "node_execution_id": context.execution_id,
                     "plan_node_id": context.plan_node_id,
                     "attempt": context.attempt,
+                },
+            )
+            await repository.add_event(
+                context.run_id,
+                "tool.resolution.candidates",
+                {
+                    "turn_index": context.node["index"] * 1000 + local_turn,
+                    "node_execution_id": context.execution_id,
+                    **resolution.audit_payload(),
                 },
             )
             await repository.session.commit()
@@ -91,9 +119,9 @@ class ReadOnlyAgentNodeExecutor:
                 "accepted_facts": list(context.accepted_facts),
                 "observations": observations,
                 "tool_manifests": {
-                    name: tool.spec.model_dump(mode="json")
-                    for name, tool in allowed_tools.items()
+                    name: tool.spec.model_dump(mode="json") for name, tool in allowed_tools.items()
                 },
+                "tool_selection": resolution.audit_payload(),
                 "memory_reads": [],
                 "evidence_pack": _evidence_pack(observations),
                 "skill_catalog": list(context.skill_catalog),
@@ -129,6 +157,32 @@ class ReadOnlyAgentNodeExecutor:
                 node_execution_id=context.execution_id,
             )
             if decision.decision_type in {"complete_node", "finalize"}:
+                if resolution.unresolved_capabilities:
+                    observation = {
+                        "plan_node_id": context.plan_node_id,
+                        "node_execution_id": context.execution_id,
+                        "kind": "capability_requirements_unresolved",
+                        "status": "failed",
+                        "summary": ("Parallel node still has unresolved task capabilities."),
+                        "data": {
+                            "unresolved_capabilities": list(resolution.unresolved_capabilities),
+                            "capability_gaps": list(resolution.capability_gaps),
+                            "candidate_names": list(resolution.candidate_names),
+                        },
+                    }
+                    observations.append(observation)
+                    await repository.update_agent_turn(
+                        turn.id,
+                        status="failed",
+                        observation=observation,
+                        phase="failed",
+                    )
+                    await repository.add_event(
+                        context.run_id,
+                        "reasoning.decision_rejected",
+                        observation,
+                    )
+                    continue
                 observation = {
                     "plan_node_id": context.plan_node_id,
                     "node_execution_id": context.execution_id,
@@ -136,9 +190,7 @@ class ReadOnlyAgentNodeExecutor:
                     "status": "succeeded",
                     "summary": decision.reasoning_summary,
                     "data": {
-                        "candidate_summary": candidate_answer.summary
-                        if candidate_answer
-                        else None
+                        "candidate_summary": candidate_answer.summary if candidate_answer else None
                     },
                 }
                 await repository.update_agent_turn(
@@ -194,14 +246,65 @@ class ReadOnlyAgentNodeExecutor:
                 )
             tool = allowed_tools.get(decision.tool_name)
             if tool is None:
-                return await self._unsafe_tool_result(
-                    repository,
-                    context,
+                observation = {
+                    "kind": "tool_selection_rejected",
+                    "status": "failed",
+                    "summary": "Tool is not in the current parallel-safe candidate set.",
+                    "data": {
+                        "tool_name": decision.tool_name,
+                        "candidate_names": list(resolution.candidate_names),
+                    },
+                }
+                observations.append(observation)
+                await repository.update_agent_turn(
                     turn.id,
-                    decision.tool_name,
-                    local_turn,
-                    tool_calls,
+                    status="failed",
+                    phase="failed",
+                    observation=observation,
                 )
+                await repository.add_event(
+                    context.run_id,
+                    "tool.selection.rejected",
+                    observation,
+                )
+                continue
+            try:
+                tool = self.router.resolve(decision.tool_name, decision.tool_input)
+            except ToolExecutionError as exc:
+                observation = {
+                    "kind": "tool_selection_rejected",
+                    "status": "failed",
+                    "summary": exc.message,
+                    "data": {
+                        "tool_name": decision.tool_name,
+                        "candidate_names": list(resolution.candidate_names),
+                    },
+                    "error": exc.to_payload(),
+                }
+                observations.append(observation)
+                await repository.update_agent_turn(
+                    turn.id,
+                    status="failed",
+                    phase="failed",
+                    observation=observation,
+                )
+                await repository.add_event(
+                    context.run_id,
+                    "tool.selection.rejected",
+                    observation,
+                )
+                continue
+            await repository.add_event(
+                context.run_id,
+                "tool.selection.accepted",
+                {
+                    "turn_index": context.node["index"] * 1000 + local_turn,
+                    "node_execution_id": context.execution_id,
+                    "plan_node_id": context.plan_node_id,
+                    "tool_name": tool.spec.name,
+                    "candidate_names": list(resolution.candidate_names),
+                },
+            )
             effect_plan = DefaultEffectAnalyzer().analyze(
                 tool.spec,
                 decision.tool_input,
@@ -247,9 +350,7 @@ class ReadOnlyAgentNodeExecutor:
                         "phase": NodeExecutionPhase.waiting_resource.value,
                         "status": NodeExecutionStatus.waiting.value,
                         "wait_reason": "resource_conflict",
-                        "resource_summaries": [
-                            claim.resource_summary for claim in claims
-                        ],
+                        "resource_summaries": [claim.resource_summary for claim in claims],
                     },
                 )
                 return NodeExecutionResult(
@@ -267,9 +368,7 @@ class ReadOnlyAgentNodeExecutor:
                     },
                     checkpoint={
                         "wait_reason": "resource_conflict",
-                        "resource_summaries": [
-                            claim.resource_summary for claim in claims
-                        ],
+                        "resource_summaries": [claim.resource_summary for claim in claims],
                     },
                 )
             call = await repository.start_tool_call(
@@ -329,19 +428,25 @@ class ReadOnlyAgentNodeExecutor:
                     context.execution_id,
                     reason="tool_failed",
                 )
+                observation = {
+                    "plan_node_id": context.plan_node_id,
+                    "node_execution_id": context.execution_id,
+                    "kind": "tool_result",
+                    "status": "failed",
+                    "summary": exc.message,
+                    "data": {"tool_name": tool.spec.name},
+                    "error": exc.to_payload(),
+                }
+                observations.append(observation)
+                excluded_tools.add(tool.spec.name)
                 await repository.update_agent_turn(
                     turn.id,
                     status="failed",
-                    observation={
-                        "kind": "tool_result",
-                        "status": "failed",
-                        "summary": exc.message,
-                        "error": exc.to_payload(),
-                    },
+                    observation=observation,
                     phase="failed",
                     tool_call_id=call.id,
                 )
-                raise
+                continue
             await repository.finish_tool_call(call.id, output=output)
             tool_calls += 1
             evidence_refs.append(call.id)
@@ -392,18 +497,6 @@ class ReadOnlyAgentNodeExecutor:
             },
             failure={"category": "node_turn_budget_exhausted"},
         )
-
-    def _allowed_tools(self, context: NodeContextSnapshot) -> dict[str, Any]:
-        required = set(context.node.get("required_capabilities") or [])
-        result = {}
-        for name, spec in self.tool_registry.specs().items():
-            identities = {name, spec.permission, *spec.capabilities}
-            if required and not required & identities:
-                continue
-            if spec.side_effect_level != "read_only" or not spec.idempotent:
-                continue
-            result[name] = self.tool_registry.get(name)
-        return result
 
     @staticmethod
     async def _unsafe_tool_result(

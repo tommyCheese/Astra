@@ -11,6 +11,7 @@
 - Run 创建、规划、执行、暂停、审批恢复、验证和终结；
 - Effect-aware 权限判定、授权租约和无人值守权限包；
 - Task Workspace、Docker Sandbox、Artifact 和变更审计；
+- 类型化跨 Session Memory、AutoDream consolidation 与受治理 evolution candidate；
 - SSE 事件流及前端状态聚合；
 - 当前实现边界、风险和后续演进建议。
 
@@ -53,6 +54,7 @@ Task / Conversation ── 1:N ── Run
 4. **Run 可恢复。** 计划、AgentState、Turn phase、ToolCall、等待状态和事件都落库；审批或澄清后继续原 Run。
 5. **文件状态属于 Task。** Task Workspace 跨同一 Task 的多个 Run 保留；Sandbox Job 是隔离的执行实例。
 6. **事件是展示和审计的共同基础。** 后端持久化 `RunEventRecord`，前端通过 SSE 增量聚合答案和过程状态。
+7. **学习结果不是授权来源。** Memory、AutoDream 和 evolution candidate 都必须通过命名空间、来源、生命周期、离线评估与显式审查；生产自进化晋升保持关闭。
 
 ## 3. 实现成熟度
 
@@ -69,6 +71,9 @@ Task / Conversation ── 1:N ── Run
 | Credential Broker | 基础实现与测试已具备，未普遍接入工具调用 | `permissions/credentials.py` |
 | 子 Agent 权限衰减委托 | 数据模型、仓储和测试已具备，主循环尚未创建子 Agent | `repositories/permissions.py` |
 | MCP / 插件供应链治理 | 通用模型已设计；当前主要覆盖已注册 Tool provider | `permissions/governance.py` |
+| 跨 Session Memory | schema、写入、确定性召回、shadow、审计、删除传播和管理 UI 已具备；active 注入默认关闭 | `memory/`、`repositories/memories.py`、`api/memories.py` |
+| AutoDream consolidation | 确定性提案、DB lease、手动发布/回滚和后台 worker 已具备；调度默认关闭 | `memory/autodream.py`、`repositories/memory_consolidation.py` |
+| Agent evolution candidate | 创建、不可变评估、人工 approve/reject 和审计已具备；生产 promotion 与执行关闭 | `evolution/`、`repositories/evolution.py`、`api/evolution.py` |
 
 ## 4. 代码分层与依赖方向
 
@@ -475,6 +480,16 @@ Turn phase 区分 `executing`、`result_recorded`、`committed` 等阶段：
 
 这是避免外部副作用重复执行的关键约束。
 
+### 10.4 深度记忆与受治理自进化
+
+Memory 是 Run 证据的派生投影，不替代 Run、Turn、ToolCall、Artifact 或 evaluation。每个版本包含稳定 `memory_key`、显式 Run/Task/Workspace/user 命名空间、类型、生命周期、有效时间、来源、置信度、重要度和受限 utility。缺失 Workspace/user 身份时拒绝跨 Session 写入；召回先做命名空间、来源、生命周期和时态过滤，再执行确定性 lexical/kind/tag/recency/confidence/importance/utility 评分及完整条目预算。注入 Prompt 的内容始终是无 authority 的不可信数据，Turn 审计只保留 ID、版本和分数。
+
+AutoDream 只运行绑定 consolidation job 的专用 Profile operation。输入 manifest 和 Profile 摘要被冻结并哈希；发布在事务中创建新 generation 与 supersession，支持期望状态版本和审计 rollback。后台调度、模型调用和自动发布均有独立预算，其中调度默认关闭。
+
+Evolution candidate 是不可变 procedure 或受限 policy recommendation。离线 evaluation 要求 baseline、held-out case、安全、样本、成本和延迟门槛；候选不能扩大 Tool、permission、credential、approval、sandbox 或 retention authority。即使 approved，API 仍返回 `executable=false`，Shadow/Canary/production promotion 统一故障闭合。
+
+Conversation 删除先处理 Memory/evolution source：保留有独立来源且仍有效的派生记录，撤销或拒绝失去全部来源的记录，再删除源 Run。TTL 在查询时生效，后台状态物化不是正确性依赖。详细开关和运维协议见 [深度记忆、AutoDream 与 Agent 自进化运维](deep-memory-autodream-evolution.md)。
+
 ## 11. 前端状态与 SSE 展示链路
 
 ### 11.1 API 与事件流
@@ -662,6 +677,11 @@ child scope ⊆ parent scope ∩ task policy ∩ explicit delegated scope
 | Failure Fingerprint | AgentState failures | 相同失败策略的稳定指纹和重试计数 | 6.3、10.1、10.3 |
 | Idempotency Key | `AgentTurnRecord.idempotency_key` | 工具执行重试、恢复和重复副作用防护的稳定键 | 5.3、10.3、14 |
 | Final Answer / Run Result | `RunRecord.result`、`FinalAnswer` | 最终摘要、发现、来源、限制、验证结果和错误信息 | 1、2、5.2、6.3、6.4、11.2 |
+| Memory Version | `MemoryRecord` | 带显式命名空间、类型、生命周期、有效时间和来源的不可变记忆投影 | 3、5.1、10.4、12、14 |
+| Memory Source / Link | `MemorySourceRecord`、`MemoryLinkRecord` | Memory 对 Run/Turn/ToolCall/Artifact 的来源以及 supersession/derivation 关系 | 5.1、10.4、14 |
+| Memory Recall Event | `MemoryRecallEventRecord` | 查询指纹、policy、候选、选择、排除、分数、shadow 和反馈审计 | 10.4、11、12、15 |
+| Consolidation Job | `MemoryConsolidationJobRecord` | AutoDream 冻结输入、lease、提案、验证、发布 generation 和 rollback | 10.4、12、13、15 |
+| Evolution Candidate / Evaluation | `AgentEvolutionCandidateRecord`、`AgentEvolutionEvaluationRecord` | 非可执行的受治理改进候选、离线对照评估和 review 状态 | 10.4、12、14、15 |
 
 ### 18.2 工具、权限与安全数据
 

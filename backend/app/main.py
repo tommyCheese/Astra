@@ -11,6 +11,10 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.api.conversations import router as conversations_router
+from app.api.evolution import router as evolution_router
+from app.api.memories import recall_router as memory_recall_router
+from app.api.memories import router as memories_router
+from app.api.memory_consolidation import router as memory_consolidation_router
 from app.api.models import router as models_router
 from app.api.permissions import router as permissions_router
 from app.api.preferences import router as preferences_router
@@ -30,6 +34,7 @@ from app.core.errors import (
 )
 from app.db.mode_upgrade import validate_mode_upgrade
 from app.db.session import SessionLocal
+from app.memory.autodream import AutoDreamService
 from app.repositories.tool_settings import (
     ToolSettingsRepository,
     apply_tool_states,
@@ -76,8 +81,10 @@ def create_app(settings: Settings | None = None, *, session_factory=SessionLocal
                 if interrupted:
                     logger.warning("usage.reconciled_interrupted count=%s", interrupted)
             await app.state.conversation_retention_service.startup()
+            await app.state.autodream_service.startup()
             yield
         finally:
+            await app.state.autodream_service.shutdown()
             await app.state.conversation_retention_service.shutdown()
             await app.state.runtime_profile_service.shutdown()
             await close_shared_model_http_clients()
@@ -95,6 +102,7 @@ def create_app(settings: Settings | None = None, *, session_factory=SessionLocal
         settings,
         session_factory,
     )
+    app.state.autodream_service = AutoDreamService(settings, session_factory)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origin_list,
@@ -104,6 +112,10 @@ def create_app(settings: Settings | None = None, *, session_factory=SessionLocal
     )
     app.include_router(runs_router)
     app.include_router(conversations_router)
+    app.include_router(evolution_router)
+    app.include_router(memories_router)
+    app.include_router(memory_recall_router)
+    app.include_router(memory_consolidation_router)
     app.include_router(models_router)
     app.include_router(preferences_router)
     app.include_router(permissions_router)

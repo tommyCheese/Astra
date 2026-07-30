@@ -16,6 +16,7 @@ from app.schemas.agent import (
     TaskContract,
 )
 from app.tools.registry import build_tool_registry
+from app.tools.selection import forbidden_plan_bindings, task_capability_catalog
 from app.usage_metering import DatabaseUsageRecorder
 
 
@@ -62,9 +63,9 @@ async def revise_waiting_plan(
         client.bind_reasoning_effort(policy.effective.reasoning_effort)
         client.bind_model_thinking((run.model_policy or {}).get("thinking"))
         registry = build_tool_registry(settings)
-        capabilities = set(registry.specs())
-        for spec in registry.specs().values():
-            capabilities.update(spec.capabilities)
+        tool_specs = registry.specs()
+        capabilities = task_capability_catalog(tool_specs)
+        forbidden_capabilities = forbidden_plan_bindings(tool_specs)
         criterion_ids = [item.id for item in contract.success_criteria]
         revision_context = {
             "original_goal": contract.original_goal,
@@ -82,8 +83,10 @@ async def revise_waiting_plan(
             "instruction": (
                 "Generate a complete replacement plan. Preserve a node_key only when the "
                 "revised node represents the same logical work. Use only the supplied success "
-                "criterion IDs and available capabilities. Keep the dependency graph acyclic "
-                "and within the supplied maximum depth."
+                "criterion IDs and provider-neutral task capabilities. Never bind a Plan node "
+                "to a concrete tool, provider, permission, executor, or backend. Every listed "
+                "task capability must be satisfied during that node's lifecycle. Keep the "
+                "dependency graph acyclic and within the supplied maximum depth."
             ),
             "validation_constraints": {
                 "success_criteria_ids": criterion_ids,
@@ -110,12 +113,12 @@ async def revise_waiting_plan(
                 candidate = _normalize_revision_metadata(
                     candidate,
                     criterion_ids=criterion_ids,
-                    available_capabilities=capabilities,
                 )
                 draft = validator.validate(
                     candidate,
                     task_contract=contract,
                     available_capabilities=capabilities,
+                    forbidden_capabilities=forbidden_capabilities,
                     budgets=policy.effective.budgets,
                 )
                 break
@@ -182,25 +185,21 @@ def _normalize_revision_metadata(
     draft: PlanDraft,
     *,
     criterion_ids: list[str],
-    available_capabilities: set[str],
 ) -> PlanDraft:
     valid_criteria = set(criterion_ids)
     nodes = []
     for node in draft.nodes:
         criteria = [
-            criterion
-            for criterion in node.success_criteria_refs
-            if criterion in valid_criteria
+            criterion for criterion in node.success_criteria_refs if criterion in valid_criteria
         ] or list(criterion_ids)
-        capabilities = [
-            capability
-            for capability in node.required_capabilities
-            if capability in available_capabilities
-        ]
-        nodes.append(node.model_copy(update={
-            "success_criteria_refs": list(dict.fromkeys(criteria)),
-            "required_capabilities": list(dict.fromkeys(capabilities)),
-        }))
+        nodes.append(
+            node.model_copy(
+                update={
+                    "success_criteria_refs": list(dict.fromkeys(criteria)),
+                    "required_capabilities": list(dict.fromkeys(node.required_capabilities)),
+                }
+            )
+        )
     return draft.model_copy(update={"nodes": nodes})
 
 

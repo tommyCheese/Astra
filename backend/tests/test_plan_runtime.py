@@ -94,6 +94,26 @@ def test_validator_rejects_unknown_references_and_capabilities():
         )
 
 
+def test_validator_rejects_concrete_tool_bindings_and_honors_empty_catalog():
+    contract = build_default_contract("查询天气")
+    concrete = weather_plan().model_copy(deep=True)
+    concrete.nodes[1].required_capabilities = ["weather_lookup"]
+    with pytest.raises(PlanValidationError, match="Concrete runtime bindings"):
+        PlanValidator().validate(
+            concrete,
+            task_contract=contract,
+            available_capabilities={"weather.lookup"},
+            forbidden_capabilities={"weather_lookup"},
+        )
+
+    with pytest.raises(PlanValidationError, match="Unavailable capabilities"):
+        PlanValidator().validate(
+            weather_plan(),
+            task_contract=contract,
+            available_capabilities=set(),
+        )
+
+
 async def test_plan_repository_persists_graph_and_projects_run_view(session):
     run = await RunRepository(session).create_task_run(
         "查询天气", {"provider": "mock"}, answer_mode="trusted"
@@ -148,9 +168,7 @@ async def test_plan_projection_uses_explicit_edges_and_keeps_depends_on(session)
     view = plan_to_view(plan)
     node_ids = {node.node_key: node.id for node in view.nodes}
     assert view.nodes[1].depends_on == ["resolve-location"]
-    assert {
-        (edge.predecessor_node_id, edge.successor_node_id) for edge in view.edges
-    } == {
+    assert {(edge.predecessor_node_id, edge.successor_node_id) for edge in view.edges} == {
         (node_ids["resolve-location"], node_ids["fetch-weather"]),
         (node_ids["fetch-weather"], node_ids["answer"]),
     }
@@ -352,9 +370,10 @@ async def test_plan_patch_preserves_completed_nodes_and_evidence(session):
     assert preserved.lineage_node_id == first.id
 
     graph_diff = diff_plans(plan, revised)
-    assert next(
-        item for item in graph_diff.nodes if item.node_key == "resolve-location"
-    ).change == "inherited_completed"
+    assert (
+        next(item for item in graph_diff.nodes if item.node_key == "resolve-location").change
+        == "inherited_completed"
+    )
     assert next(item for item in graph_diff.nodes if item.node_key == "answer").change == "modified"
 
 

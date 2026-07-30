@@ -69,6 +69,8 @@ export type MemoryAuditEvent = {
 export type MemoryRecord = {
   id: string;
   run_id?: string | null;
+  workspace_id?: string | null;
+  created_by?: string | null;
   memory_key: string;
   namespace_type: MemoryNamespaceType | string;
   namespace_id: string;
@@ -113,7 +115,6 @@ export type MemoryListQuery = {
   run_id?: string;
   include_history?: boolean;
   limit?: number;
-  cursor?: string;
 };
 
 export type MemoryListResult = {
@@ -132,7 +133,9 @@ export type ConsolidationJobStatus =
   | 'queued'
   | 'running'
   | 'proposed'
+  | 'insufficient_input'
   | 'validation_failed'
+  | 'conflict'
   | 'published'
   | 'rolled_back'
   | 'interrupted'
@@ -174,6 +177,8 @@ export type ConsolidationJob = {
   model_usage: JsonObject;
   publish_result: JsonObject;
   error?: JsonObject | null;
+  lease_owner?: string | null;
+  lease_expires_at?: string | null;
   rollback_of_id?: string | null;
   created_at?: string | null;
   started_at?: string | null;
@@ -185,6 +190,19 @@ export type ConsolidationJobListResult = {
   items: ConsolidationJob[];
   total: number;
   next_cursor?: string | null;
+};
+
+export type ConsolidationJobListQuery = {
+  namespace_type?: MemoryNamespaceType | '';
+  namespace_id?: string;
+  status?: ConsolidationJobStatus | '';
+  limit?: number;
+};
+
+export type ConsolidationTriggerRequest = {
+  namespace_type: MemoryNamespaceType | string;
+  namespace_id: string;
+  idempotency_key?: string;
 };
 
 export type ConsolidationActionRequest = {
@@ -212,6 +230,7 @@ export type EvolutionSource = {
   memory_id?: string | null;
   accessible: boolean;
   created_at?: string | null;
+  revoked_at?: string | null;
 };
 
 export type EvolutionEvaluation = {
@@ -225,6 +244,42 @@ export type EvolutionEvaluation = {
   created_at?: string | null;
 };
 
+export type EvolutionAuditEvent = {
+  id: string;
+  event_type: string;
+  actor?: string | null;
+  reason?: string | null;
+  expected_state_version?: number | null;
+  actual_state_version?: number | null;
+  payload: JsonObject;
+  created_at?: string | null;
+};
+
+export type EvolutionCandidatePayload = {
+  schema_version: 1;
+  candidate_key: string;
+  revision: number;
+  candidate_type: 'procedure' | 'policy_recommendation';
+  target: 'procedure' | 'planner' | 'model_routing' | 'memory_retrieval' | 'scheduling';
+  title: string;
+  content: string;
+  source_refs: Array<{
+    source_type: string;
+    source_id: string;
+    digest: string;
+  }>;
+  required_tools: string[];
+  environment_constraints: Array<{
+    key: string;
+    value: unknown;
+  }>;
+  parameter_changes: Array<{
+    path: string;
+    value: unknown;
+  }>;
+  supersedes_id?: string | null;
+};
+
 export type EvolutionCandidate = {
   id: string;
   candidate_key: string;
@@ -232,21 +287,27 @@ export type EvolutionCandidate = {
   supersedes_id?: string | null;
   candidate_type: 'procedure' | 'policy_recommendation' | string;
   target_component: string;
+  title: string;
   namespace_type: MemoryNamespaceType | string;
   namespace_id: string;
   status: EvolutionCandidateStatus | string;
   state_version: number;
-  content: JsonObject;
+  content: string | JsonObject;
   content_digest?: string | null;
-  source_manifest: JsonObject;
-  source_manifest_digest?: string | null;
-  environment_constraints: JsonObject;
+  environment_constraints: JsonObject[];
+  required_tools: string[];
+  parameter_changes: JsonObject[];
   current_evaluation_id?: string | null;
+  current_evaluation_verdict?: string | null;
   created_by?: string | null;
   reviewed_by?: string | null;
   review_reason?: string | null;
   sources: EvolutionSource[];
   evaluations: EvolutionEvaluation[];
+  audit_events: EvolutionAuditEvent[];
+  rollback_metadata?: JsonObject | null;
+  executable: false;
+  production_promotion_enabled: false;
   created_at?: string | null;
   updated_at?: string | null;
 };
@@ -256,4 +317,48 @@ export type EvolutionCandidateListResult = {
   total: number;
   next_cursor?: string | null;
   production_promotion_enabled: false;
+};
+
+export type EvolutionCandidateListQuery = {
+  namespace_type?: MemoryNamespaceType | '';
+  namespace_id?: string;
+  status?: EvolutionCandidateStatus | '';
+  limit?: number;
+};
+
+export type EvolutionReviewRequest = {
+  decision: 'approve' | 'reject';
+  expected_state_version: number;
+  reason: string;
+  actor: string;
+};
+
+export type EvolutionEvaluationRequest = {
+  expected_state_version: number;
+  manifest: JsonObject;
+  actor: string;
+  reason?: string;
+};
+
+export type EvolutionCandidateCreateRequest = {
+  namespace_type: MemoryNamespaceType | string;
+  namespace_id: string;
+  actor: string;
+  candidate: EvolutionCandidatePayload;
+};
+
+export type EvolutionRollbackRequest = {
+  expected_state_version: number;
+  actor: string;
+  reason: string;
+  audience: JsonObject;
+  observed_metrics: JsonObject;
+  rollback_criteria: JsonObject;
+};
+
+export type EvolutionPromotionRequest = {
+  expected_state_version: number;
+  actor: string;
+  reason: string;
+  target: 'shadow' | 'canary' | 'promoted';
 };

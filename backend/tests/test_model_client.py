@@ -42,8 +42,16 @@ async def test_mock_model_client_returns_structured_outputs():
     )
 
     assert plan.nodes
-    assert "web_search" in plan.nodes[0].required_capabilities
-    assert plan.nodes[-1].depends_on == ["step-4", "step-5"]
+    assert all(
+        "web_search" not in node.required_capabilities
+        and "web_fetch" not in node.required_capabilities
+        for node in plan.nodes
+    )
+    assert plan.nodes[1].required_capabilities == [
+        "information.search",
+        "information.read",
+    ]
+    assert plan.nodes[-1].depends_on == ["step-2"]
     assert answer.sources[0].url == "https://example.com/a"
 
 
@@ -256,13 +264,9 @@ def test_streaming_json_field_extractor_handles_chunked_keys_and_escapes():
         events.extend(extractor.feed(content[index : index + 3]))
 
     reasoning = "".join(
-        value
-        for field, value in events
-        if field == "reasoning_summary" and value != "\1"
+        value for field, value in events if field == "reasoning_summary" and value != "\1"
     )
-    summary = "".join(
-        value for field, value in events if field == "summary" and value != "\1"
-    )
+    summary = "".join(value for field, value in events if field == "summary" and value != "\1")
     assert reasoning == "先\n检查信息。"
     assert summary == '回答包含 "引号"。'
     assert events.count(("reasoning_summary", "\1")) == 1
@@ -493,9 +497,7 @@ async def test_real_model_operations_use_explicit_profile_composition():
 
 
 async def test_standard_combined_answer_prompt_streams_reasoning_before_summary():
-    client = build_model_client(
-        Settings(model_provider="openai", model_api_key="secret")
-    )
+    client = build_model_client(Settings(model_provider="openai", model_api_key="secret"))
     captured = []
 
     async def fake_chat(messages, *, operation, **kwargs):

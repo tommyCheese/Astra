@@ -14,8 +14,10 @@ import {
 import type {
   ConsolidationActionRequest,
   ConsolidationJob,
+  ConsolidationJobListQuery,
   ConsolidationJobListResult,
   EvolutionCandidate,
+  EvolutionCandidateListQuery,
   EvolutionCandidateListResult,
   JsonObject,
   MemoryDetail,
@@ -37,11 +39,11 @@ export type DeepMemoryClient = {
   listMemories: (query?: MemoryListQuery, signal?: AbortSignal) => Promise<MemoryListResult>;
   getMemory: (memoryId: string, signal?: AbortSignal) => Promise<MemoryDetail>;
   revokeMemory: (memoryId: string, request: MemoryRevocationRequest) => Promise<MemoryDetail>;
-  listConsolidationJobs: (signal?: AbortSignal) => Promise<ConsolidationJobListResult>;
+  listConsolidationJobs: (query?: ConsolidationJobListQuery, signal?: AbortSignal) => Promise<ConsolidationJobListResult>;
   getConsolidationJob: (jobId: string, signal?: AbortSignal) => Promise<ConsolidationJob>;
   publishConsolidationJob: (jobId: string, request: ConsolidationActionRequest) => Promise<ConsolidationJob>;
   rollbackConsolidationJob: (jobId: string, request: ConsolidationActionRequest) => Promise<ConsolidationJob>;
-  listEvolutionCandidates: (signal?: AbortSignal) => Promise<EvolutionCandidateListResult>;
+  listEvolutionCandidates: (query?: EvolutionCandidateListQuery, signal?: AbortSignal) => Promise<EvolutionCandidateListResult>;
   getEvolutionCandidate: (candidateId: string, signal?: AbortSignal) => Promise<EvolutionCandidate>;
 };
 
@@ -86,6 +88,19 @@ const candidateStatusLabels: Record<string, string> = {
   rolled_back: '已回滚',
 };
 
+const consolidationStatusLabels: Record<string, string> = {
+  queued: '排队中',
+  running: '运行中',
+  proposed: '待复核',
+  insufficient_input: '输入不足',
+  validation_failed: '校验失败',
+  conflict: '版本冲突',
+  published: '已发布',
+  rolled_back: '已回滚',
+  interrupted: '已中断',
+  failed: '失败',
+};
+
 function isAbort(error: unknown): boolean {
   return error instanceof DOMException && error.name === 'AbortError';
 }
@@ -114,13 +129,23 @@ function boundedJson(value: JsonObject): string {
   }
 }
 
+function boundedContent(value: string | JsonObject): string {
+  if (typeof value !== 'string') return boundedJson(value);
+  return value.length > 6000 ? `${value.slice(0, 6000)}\n…` : value;
+}
+
+function safeCssToken(value: string): string {
+  const normalized = value.toLocaleLowerCase().replace(/[^a-z0-9_-]/g, '-');
+  return normalized || 'unknown';
+}
+
 function summaryAsDetail(memory: MemoryRecord): MemoryDetail {
   return { ...memory, sources: [], recall_events: [], audit_events: [], history: [] };
 }
 
 function StatusBadge({ status, labels = lifecycleLabels }: { status: string; labels?: Record<string, string> }) {
   const { t } = useI18n();
-  return <span className={`memory-status status-${status}`}>{t(labels[status] ?? status)}</span>;
+  return <span className={`memory-status status-${safeCssToken(status)}`}>{t(labels[status] ?? status)}</span>;
 }
 
 function MetricBar({ label, value }: { label: string; value: number }) {
@@ -202,7 +227,7 @@ export function MemoryWorkbench({ client = defaultClient }: { client?: DeepMemor
             }
           }
         } else if (tab === 'consolidation') {
-          const result = await client.listConsolidationJobs(controller.signal);
+          const result = await client.listConsolidationJobs({ limit: 100 }, controller.signal);
           if (controller.signal.aborted) return;
           setJobs(result.items);
           if (result.items[0]) {
@@ -214,7 +239,7 @@ export function MemoryWorkbench({ client = defaultClient }: { client?: DeepMemor
             }
           }
         } else {
-          const result = await client.listEvolutionCandidates(controller.signal);
+          const result = await client.listEvolutionCandidates({ limit: 100 }, controller.signal);
           if (controller.signal.aborted) return;
           setCandidates(result.items);
           if (result.items[0]) {
@@ -407,7 +432,7 @@ export function MemoryWorkbench({ client = defaultClient }: { client?: DeepMemor
             key={job.id}
             onClick={() => void inspectJob(job)}
           >
-            <span><StatusBadge status={job.status} labels={{ proposed: '待复核', published: '已发布', rolled_back: '已回滚', validation_failed: '校验失败', queued: '排队中', running: '运行中', failed: '失败', interrupted: '已中断' }} /><small>G{job.generation}</small></span>
+            <span><StatusBadge status={job.status} labels={consolidationStatusLabels} /><small>G{job.generation}</small></span>
             <strong>{job.namespace_type}:{shortId(job.namespace_id)}</strong>
             <small>{safeDate(job.created_at, language)}</small>
           </button>)}
@@ -473,11 +498,13 @@ function MemoryInspector({ memory, language, onRevoke }: {
     <p className="memory-content" data-testid="memory-safe-content">{memory.content || t('无内容摘要')}</p>
     <dl className="memory-metadata">
       <div><dt>{t('命名空间')}</dt><dd>{memory.namespace_type}:{memory.namespace_id || '—'}</dd></div>
+      <div><dt>{t('作用域')}</dt><dd>{memory.scope || '—'}</dd></div>
       <div><dt>{t('稳定键')}</dt><dd>{memory.memory_key || '—'}</dd></div>
       <div><dt>{t('版本')}</dt><dd>v{memory.version} · state {memory.state_version}</dd></div>
       <div><dt>{t('置信度')}</dt><dd>{memory.confidence.toFixed(3)}</dd></div>
       <div><dt>{t('重要性')}</dt><dd>{memory.importance.toFixed(3)}</dd></div>
       <div><dt>{t('效用')}</dt><dd>{memory.utility_score.toFixed(3)}</dd></div>
+      <div><dt>{t('观察时间')}</dt><dd>{safeDate(memory.observed_at, language)}</dd></div>
       <div><dt>{t('有效时间')}</dt><dd>{safeDate(memory.valid_from, language)} → {safeDate(memory.valid_to, language)}</dd></div>
       <div><dt>{t('到期时间')}</dt><dd>{safeDate(memory.expires_at, language)}</dd></div>
       <div><dt>{t('替代关系')}</dt><dd>{memory.supersedes_id ? `← ${memory.supersedes_id}` : '—'}</dd></div>
@@ -539,7 +566,7 @@ function ConsolidationInspector({ job, language, onPublish, onRollback }: {
   const canRollback = job.status === 'published';
   return <article className="memory-inspector consolidation-inspector" aria-label={t('AutoDream 作业详情')}>
     <header>
-      <div><StatusBadge status={job.status} labels={{ proposed: '待复核', published: '已发布', rolled_back: '已回滚', validation_failed: '校验失败', queued: '排队中', running: '运行中', failed: '失败', interrupted: '已中断' }} /><span>Generation {job.generation}</span></div>
+      <div><StatusBadge status={job.status} labels={consolidationStatusLabels} /><span>Generation {job.generation}</span></div>
       <div className="memory-detail-actions">
         <button type="button" disabled={!canPublish} onClick={onPublish}>{t('发布已验证代次')}</button>
         <button className="memory-danger-button" type="button" disabled={!canRollback} onClick={onRollback}>{t('回滚此代次')}</button>
@@ -576,6 +603,14 @@ function ConsolidationInspector({ job, language, onPublish, onRollback }: {
         {job.validation.warnings.map((warning) => <p key={warning}>{warning}</p>)}
       </div>
     </InspectorSection>
+
+    <details className="memory-json-details">
+      <summary>{t('作业审计元数据')}</summary>
+      <div><strong>profile_snapshot</strong><pre>{boundedJson(job.profile_snapshot)}</pre></div>
+      <div><strong>model_usage</strong><pre>{boundedJson(job.model_usage)}</pre></div>
+      <div><strong>publish_result</strong><pre>{boundedJson(job.publish_result)}</pre></div>
+      {job.error && <div><strong>error</strong><pre>{boundedJson(job.error)}</pre></div>}
+    </details>
   </article>;
 }
 
@@ -594,15 +629,17 @@ function EvolutionInspector({ candidate, language }: { candidate: EvolutionCandi
     <p id="promotion-disabled-reason" className="memory-safety-note">{t('初始版本只允许离线评估与人工复核；候选不会修改 Skills、提示词、权限或运行策略。')}</p>
     <dl className="memory-metadata">
       <div><dt>{t('候选键')}</dt><dd>{candidate.candidate_key || '—'}</dd></div>
+      <div><dt>{t('标题')}</dt><dd>{candidate.title || '—'}</dd></div>
       <div><dt>{t('修订')}</dt><dd>r{candidate.revision} · state {candidate.state_version}</dd></div>
       <div><dt>{t('目标组件')}</dt><dd>{candidate.target_component || '—'}</dd></div>
       <div><dt>{t('命名空间')}</dt><dd>{candidate.namespace_type}:{candidate.namespace_id}</dd></div>
       <div><dt>{t('内容摘要')}</dt><dd>{shortId(candidate.content_digest)}</dd></div>
+      <div><dt>{t('评估结论')}</dt><dd>{candidate.current_evaluation_verdict || '—'}</dd></div>
       <div><dt>{t('更新时间')}</dt><dd>{safeDate(candidate.updated_at, language)}</dd></div>
     </dl>
 
-    <InspectorSection title={t('候选内容')} count={Object.keys(candidate.content).length}>
-      <pre className="memory-json-block" data-testid="candidate-safe-content">{boundedJson(candidate.content)}</pre>
+    <InspectorSection title={t('候选内容')} count={candidate.content ? 1 : 0}>
+      <pre className="memory-json-block" data-testid="candidate-safe-content">{boundedContent(candidate.content)}</pre>
     </InspectorSection>
     <InspectorSection title={t('支撑来源')} count={candidate.sources.length}>
       {candidate.sources.length ? <div className="memory-source-list">
@@ -623,6 +660,22 @@ function EvolutionInspector({ candidate, language }: { candidate: EvolutionCandi
         </div>)}
       </div> : <p className="memory-section-empty">{t('尚未附加可比离线评估')}</p>}
     </InspectorSection>
+    <InspectorSection title={t('候选审计')} count={candidate.audit_events.length}>
+      {candidate.audit_events.length ? <ol className="memory-audit-list">
+        {candidate.audit_events.map((event) => <li key={event.id}>
+          <span>{event.event_type}</span>
+          <strong>{event.reason || t('未提供原因')}</strong>
+          <time>{safeDate(event.created_at, language)}</time>
+        </li>)}
+      </ol> : <p className="memory-section-empty">{t('尚无候选审计事件')}</p>}
+    </InspectorSection>
+    <details className="memory-json-details">
+      <summary>{t('约束与回滚元数据')}</summary>
+      <div><strong>required_tools</strong><pre>{boundedJson({ items: candidate.required_tools })}</pre></div>
+      <div><strong>environment_constraints</strong><pre>{boundedJson({ items: candidate.environment_constraints })}</pre></div>
+      <div><strong>parameter_changes</strong><pre>{boundedJson({ items: candidate.parameter_changes })}</pre></div>
+      {candidate.rollback_metadata && <div><strong>rollback_metadata</strong><pre>{boundedJson(candidate.rollback_metadata)}</pre></div>}
+    </details>
   </article>;
 }
 

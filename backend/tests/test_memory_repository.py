@@ -233,3 +233,31 @@ async def test_memory_links_cannot_cross_namespaces(session):
             target_memory_id=memory_b.id,
             relation="related",
         )
+
+
+async def test_expiration_is_query_time_safe_before_bounded_materialization(session):
+    run = await _run_with_identity(session)
+    repository = MemoryRepository(session)
+    expired = await repository.create(
+        run_id=run.id,
+        scope="run",
+        kind="semantic_fact",
+        content="Expired fact",
+        provenance={"run_id": run.id},
+        confidence=0.9,
+        expires_at=utc_now() - timedelta(seconds=1),
+    )
+
+    assert await repository.list_records(
+        run_id=run.id,
+        statuses=[MemoryStatus.active],
+        include_expired=False,
+    ) == []
+    assert await repository.materialize_expired(limit=0) == 0
+    assert (await repository.require(expired.id)).status == "active"
+
+    assert await repository.materialize_expired(limit=1) == 1
+    materialized = await repository.require(expired.id)
+    assert materialized.status == "expired"
+    assert materialized.state_version == 2
+    assert await repository.materialize_expired(limit=1) == 0

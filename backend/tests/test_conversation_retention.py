@@ -4,13 +4,24 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 from pydantic import ValidationError
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.conversation_lifecycle import ConversationLifecycleService
 from app.conversation_retention import ConversationRetentionService
 from app.core.config import Settings
-from app.db.models import Base, ConversationShareRecord, TaskRecord
+from app.db.models import (
+    AgentEvolutionAuditRecord,
+    AgentEvolutionCandidateRecord,
+    AgentEvolutionSourceRecord,
+    Base,
+    ConversationShareRecord,
+    MemoryAuditRecord,
+    MemorySourceRecord,
+    TaskRecord,
+)
 from app.repositories.conversations import ConversationRepository
+from app.repositories.memories import MemoryRepository
 from app.repositories.runs import RunRepository
 
 
@@ -178,6 +189,171 @@ async def test_lifecycle_deletes_database_artifact_and_workspace(
 
     assert not artifact_path.exists()
     assert not workspace_path.exists()
+
+
+async def test_lifecycle_revalidates_memory_and_evolution_sources_before_deletion(
+    retention_database,
+    tmp_path,
+):
+    settings = retention_settings(tmp_path)
+    async with retention_database() as session:
+        runs = RunRepository(session)
+        deleted_run = await runs.create_task_run(
+            "待删除来源",
+            {"provider": "mock"},
+        )
+        retained_run = await runs.create_task_run(
+            "独立来源",
+            {"provider": "mock"},
+        )
+        deleted_task = await session.get(TaskRecord, deleted_run.task_id)
+        retained_task = await session.get(TaskRecord, retained_run.task_id)
+        assert deleted_task is not None and retained_task is not None
+        deleted_task.workspace_id = "workspace-shared"
+        retained_task.workspace_id = "workspace-shared"
+        await runs.update_run_status(deleted_run.id, "completed", summary="done")
+        await runs.update_run_status(retained_run.id, "completed", summary="done")
+        await session.commit()
+
+        memories = MemoryRepository(session)
+        supported = await memories.create(
+            run_id=deleted_run.id,
+            scope="workspace",
+            kind="semantic_fact",
+            memory_key="workspace:supported",
+            content="仍有独立证据支持。",
+            provenance={"run_id": deleted_run.id},
+            confidence=0.9,
+        )
+        session.add(
+            MemorySourceRecord(
+                memory_id=supported.id,
+                source_kind="run",
+                source_ref=retained_run.id,
+                source_hash="b" * 64,
+                run_id=retained_run.id,
+                source_data={"run_id": retained_run.id},
+                accessible=True,
+            )
+        )
+        unsupported = await memories.create(
+            run_id=deleted_run.id,
+            scope="workspace",
+            kind="semantic_fact",
+            memory_key="workspace:unsupported",
+            content="只有待删除来源支持。",
+            provenance={"run_id": deleted_run.id},
+            confidence=0.9,
+        )
+        supported_candidate = AgentEvolutionCandidateRecord(
+            candidate_key="procedure:supported",
+            revision=1,
+            candidate_type="procedure",
+            target_component="procedure",
+            namespace_type="workspace",
+            namespace_id="workspace-shared",
+            status="draft",
+            state_version=1,
+            content={"procedure": "safe"},
+            content_digest="c" * 64,
+            source_manifest={},
+            source_manifest_digest="d" * 64,
+            environment_constraints={},
+        )
+        unsupported_candidate = AgentEvolutionCandidateRecord(
+            candidate_key="procedure:unsupported",
+            revision=1,
+            candidate_type="procedure",
+            target_component="procedure",
+            namespace_type="workspace",
+            namespace_id="workspace-shared",
+            status="approved",
+            state_version=2,
+            content={"procedure": "reviewed"},
+            content_digest="e" * 64,
+            source_manifest={},
+            source_manifest_digest="f" * 64,
+            environment_constraints={},
+        )
+        session.add_all([supported_candidate, unsupported_candidate])
+        await session.flush()
+        session.add_all(
+            [
+                AgentEvolutionSourceRecord(
+                    candidate_id=supported_candidate.id,
+                    source_kind="run",
+                    source_ref=deleted_run.id,
+                    source_hash="1" * 64,
+                    run_id=deleted_run.id,
+                    accessible=True,
+                ),
+                AgentEvolutionSourceRecord(
+                    candidate_id=supported_candidate.id,
+                    source_kind="run",
+                    source_ref=retained_run.id,
+                    source_hash="2" * 64,
+                    run_id=retained_run.id,
+                    accessible=True,
+                ),
+                AgentEvolutionSourceRecord(
+                    candidate_id=unsupported_candidate.id,
+                    source_kind="memory",
+                    source_ref=unsupported.id,
+                    source_hash="3" * 64,
+                    run_id=deleted_run.id,
+                    memory_id=unsupported.id,
+                    accessible=True,
+                ),
+            ]
+        )
+        await session.commit()
+
+        task = await ConversationRepository(session).get(deleted_task.id)
+        assert task is not None
+        await ConversationLifecycleService(settings).delete(
+            ConversationRepository(session),
+            task,
+        )
+
+        await session.refresh(supported)
+        await session.refresh(unsupported)
+        await session.refresh(supported_candidate)
+        await session.refresh(unsupported_candidate)
+        assert supported.status == "active"
+        assert supported.run_id is None
+        assert unsupported.status == "revoked"
+        assert unsupported.revoke_reason == "source_conversation_deleted"
+        assert supported_candidate.status == "draft"
+        assert unsupported_candidate.status == "rejected"
+        assert unsupported_candidate.state_version == 3
+        assert await session.scalar(
+            select(func.count(MemorySourceRecord.id)).where(
+                MemorySourceRecord.memory_id == supported.id
+            )
+        ) == 1
+        assert await session.scalar(
+            select(func.count(MemorySourceRecord.id)).where(
+                MemorySourceRecord.memory_id == unsupported.id
+            )
+        ) == 0
+        assert await session.scalar(
+            select(func.count(AgentEvolutionSourceRecord.id)).where(
+                AgentEvolutionSourceRecord.candidate_id == supported_candidate.id
+            )
+        ) == 1
+        assert await session.scalar(
+            select(func.count(MemoryAuditRecord.id)).where(
+                MemoryAuditRecord.memory_id == unsupported.id,
+                MemoryAuditRecord.event_type == "revoked_by_source_deletion",
+            )
+        ) == 1
+        assert await session.scalar(
+            select(func.count(AgentEvolutionAuditRecord.id)).where(
+                AgentEvolutionAuditRecord.candidate_id == unsupported_candidate.id,
+                AgentEvolutionAuditRecord.event_type
+                == "rejected_by_source_deletion",
+            )
+        ) == 1
 
 
 async def test_lifecycle_rejects_escaped_workspace_and_isolates_artifact_failure(

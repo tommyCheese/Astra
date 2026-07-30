@@ -1,11 +1,20 @@
 import type {
   ConsolidationActionRequest,
   ConsolidationJob,
+  ConsolidationJobListQuery,
   ConsolidationJobListResult,
   ConsolidationProposalOperation,
+  ConsolidationTriggerRequest,
   ConsolidationValidation,
   EvolutionCandidate,
+  EvolutionCandidateCreateRequest,
+  EvolutionCandidateListQuery,
   EvolutionCandidateListResult,
+  EvolutionEvaluationRequest,
+  EvolutionPromotionRequest,
+  EvolutionRollbackRequest,
+  EvolutionReviewRequest,
+  EvolutionAuditEvent,
   EvolutionEvaluation,
   EvolutionSource,
   JsonObject,
@@ -116,7 +125,10 @@ async function apiJson(input: RequestInfo | URL, init: RequestInit = {}): Promis
   }
   const error = objectValue(body.error);
   throw new DeepMemoryApiError(
-    stringValue(error.message, stringValue(body.message, '深度记忆服务暂时不可用。')),
+    stringValue(
+      error.message,
+      stringValue(body.message, stringValue(body.detail, '深度记忆服务暂时不可用。')),
+    ),
     response.status,
     stringValue(error.code, stringValue(body.code, 'DEEP_MEMORY_REQUEST_FAILED')),
     objectValue(error.details ?? body.details),
@@ -179,7 +191,7 @@ function normalizeRecall(value: unknown): MemoryRecallAudit {
 function normalizeAudit(value: unknown): MemoryAuditEvent {
   const item = objectValue(value);
   return {
-    id: stringValue(item.id),
+    id: typeof item.id === 'number' ? String(item.id) : stringValue(item.id),
     event_type: stringValue(item.event_type, 'unknown'),
     actor: optionalString(item.actor),
     reason: optionalString(item.reason),
@@ -193,6 +205,8 @@ export function normalizeMemory(value: unknown): MemoryRecord {
   return {
     id: stringValue(item.id),
     run_id: optionalString(item.run_id),
+    workspace_id: optionalString(item.workspace_id),
+    created_by: optionalString(item.created_by),
     memory_key: stringValue(item.memory_key),
     namespace_type: stringValue(item.namespace_type, 'run'),
     namespace_id: stringValue(item.namespace_id),
@@ -237,7 +251,7 @@ export function normalizeMemoryDetail(value: unknown): MemoryDetail {
 function normalizeOperation(value: unknown): ConsolidationProposalOperation {
   const item = objectValue(value);
   return {
-    operation: stringValue(item.operation, stringValue(item.type, 'unknown')),
+    operation: stringValue(item.operation, stringValue(item.action, stringValue(item.type, 'unknown'))),
     memory_id: optionalString(item.memory_id),
     memory_key: optionalString(item.memory_key),
     content: optionalString(item.content),
@@ -265,7 +279,7 @@ function normalizeValidation(value: unknown): ConsolidationValidation {
       const detail = objectValue(issue);
       return {
         code: stringValue(detail.code, 'VALIDATION_ISSUE'),
-        message: stringValue(detail.message),
+        message: stringValue(detail.message, stringValue(detail.detail)),
         severity: stringValue(detail.severity, 'error'),
       };
     }),
@@ -293,6 +307,8 @@ export function normalizeConsolidationJob(value: unknown): ConsolidationJob {
     model_usage: objectValue(item.model_usage),
     publish_result: objectValue(item.publish_result),
     error: item.error ? objectValue(item.error) : null,
+    lease_owner: optionalString(item.lease_owner),
+    lease_expires_at: optionalString(item.lease_expires_at),
     rollback_of_id: optionalString(item.rollback_of_id),
     created_at: optionalString(item.created_at),
     started_at: optionalString(item.started_at),
@@ -304,14 +320,15 @@ export function normalizeConsolidationJob(value: unknown): ConsolidationJob {
 function normalizeEvolutionSource(value: unknown): EvolutionSource {
   const item = objectValue(value);
   return {
-    id: stringValue(item.id, `${stringValue(item.source_kind)}:${stringValue(item.source_ref)}`),
-    source_kind: stringValue(item.source_kind, 'unknown'),
-    source_ref: stringValue(item.source_ref),
-    source_hash: optionalString(item.source_hash),
+    id: stringValue(item.id, `${stringValue(item.source_kind ?? item.source_type)}:${stringValue(item.source_ref ?? item.source_id)}`),
+    source_kind: stringValue(item.source_kind, stringValue(item.source_type, 'unknown')),
+    source_ref: stringValue(item.source_ref, stringValue(item.source_id)),
+    source_hash: optionalString(item.source_hash ?? item.digest),
     run_id: optionalString(item.run_id),
     memory_id: optionalString(item.memory_id),
     accessible: booleanValue(item.accessible, true),
     created_at: optionalString(item.created_at),
+    revoked_at: optionalString(item.revoked_at),
   };
 }
 
@@ -329,30 +346,75 @@ function normalizeEvaluation(value: unknown): EvolutionEvaluation {
   };
 }
 
+function normalizeEvolutionAudit(value: unknown): EvolutionAuditEvent {
+  const item = objectValue(value);
+  return {
+    id: typeof item.id === 'number' ? String(item.id) : stringValue(item.id),
+    event_type: stringValue(item.event_type, 'unknown'),
+    actor: optionalString(item.actor),
+    reason: optionalString(item.reason),
+    expected_state_version: typeof item.expected_state_version === 'number'
+      ? item.expected_state_version
+      : null,
+    actual_state_version: typeof item.actual_state_version === 'number'
+      ? item.actual_state_version
+      : null,
+    payload: objectValue(item.payload),
+    created_at: optionalString(item.created_at),
+  };
+}
+
 export function normalizeEvolutionCandidate(value: unknown): EvolutionCandidate {
-  const item = envelopeRecord(value, ['candidate', 'evolution_candidate']);
+  const root = objectValue(value);
+  const data = objectValue(root.data);
+  const wrapped = objectValue(root.evolution_candidate);
+  const dataWrapped = objectValue(data.evolution_candidate ?? data.candidate);
+  const rootCandidateEnvelope = objectValue(root.candidate);
+  const item = stringValue(root.id)
+    ? root
+    : Object.keys(wrapped).length
+      ? wrapped
+      : stringValue(rootCandidateEnvelope.id)
+        ? rootCandidateEnvelope
+        : Object.keys(dataWrapped).length
+          ? dataWrapped
+          : Object.keys(data).length
+            ? data
+            : root;
+  const nested = objectValue(item.candidate);
+  const candidate = Object.keys(nested).length ? nested : item;
+  const rawContent = candidate.content;
+  const content = typeof rawContent === 'string' ? rawContent : objectValue(rawContent);
+  const sourceRefs = arrayValue(candidate.source_refs);
+  const explicitSources = arrayValue(item.sources);
   return {
     id: stringValue(item.id),
-    candidate_key: stringValue(item.candidate_key),
-    revision: numberValue(item.revision, 1),
-    supersedes_id: optionalString(item.supersedes_id),
-    candidate_type: stringValue(item.candidate_type, 'procedure'),
-    target_component: stringValue(item.target_component, stringValue(item.target)),
+    candidate_key: stringValue(candidate.candidate_key),
+    revision: numberValue(candidate.revision, 1),
+    supersedes_id: optionalString(candidate.supersedes_id),
+    candidate_type: stringValue(candidate.candidate_type, 'procedure'),
+    target_component: stringValue(candidate.target_component, stringValue(candidate.target)),
+    title: stringValue(candidate.title),
     namespace_type: stringValue(item.namespace_type, 'run'),
     namespace_id: stringValue(item.namespace_id),
     status: stringValue(item.status, 'draft'),
     state_version: numberValue(item.state_version, 1),
-    content: objectValue(item.content),
-    content_digest: optionalString(item.content_digest),
-    source_manifest: objectValue(item.source_manifest),
-    source_manifest_digest: optionalString(item.source_manifest_digest),
-    environment_constraints: objectValue(item.environment_constraints),
+    content,
+    content_digest: optionalString(item.content_digest ?? item.candidate_digest),
+    environment_constraints: arrayValue(candidate.environment_constraints).map(objectValue),
+    required_tools: arrayValue(candidate.required_tools).map((tool) => stringValue(tool)).filter(Boolean),
+    parameter_changes: arrayValue(candidate.parameter_changes).map(objectValue),
     current_evaluation_id: optionalString(item.current_evaluation_id),
+    current_evaluation_verdict: optionalString(item.current_evaluation_verdict),
     created_by: optionalString(item.created_by),
     reviewed_by: optionalString(item.reviewed_by),
     review_reason: optionalString(item.review_reason),
-    sources: arrayValue(item.sources).map(normalizeEvolutionSource),
+    sources: (explicitSources.length ? explicitSources : sourceRefs).map(normalizeEvolutionSource),
     evaluations: arrayValue(item.evaluations).map(normalizeEvaluation),
+    audit_events: arrayValue(item.audit_events).map(normalizeEvolutionAudit),
+    rollback_metadata: item.rollback_metadata ? objectValue(item.rollback_metadata) : null,
+    executable: false,
+    production_promotion_enabled: false,
     created_at: optionalString(item.created_at),
     updated_at: optionalString(item.updated_at),
   };
@@ -390,8 +452,11 @@ export async function revokeMemory(memoryId: string, request: MemoryRevocationRe
   }));
 }
 
-export async function listConsolidationJobs(signal?: AbortSignal): Promise<ConsolidationJobListResult> {
-  const body = await apiJson(DEEP_MEMORY_API_PATHS.consolidationJobs, { signal });
+export async function listConsolidationJobs(
+  query: ConsolidationJobListQuery = {},
+  signal?: AbortSignal,
+): Promise<ConsolidationJobListResult> {
+  const body = await apiJson(appendQuery(DEEP_MEMORY_API_PATHS.consolidationJobs, query), { signal });
   const { items, envelope } = envelopeItems(body, ['jobs', 'consolidation_jobs']);
   return {
     items: items.map(normalizeConsolidationJob),
@@ -404,11 +469,11 @@ export async function getConsolidationJob(jobId: string, signal?: AbortSignal): 
   return normalizeConsolidationJob(await apiJson(DEEP_MEMORY_API_PATHS.consolidationJob(jobId), { signal }));
 }
 
-export async function triggerConsolidation(namespaceType: string, namespaceId: string): Promise<ConsolidationJob> {
+export async function triggerConsolidation(request: ConsolidationTriggerRequest): Promise<ConsolidationJob> {
   return normalizeConsolidationJob(await apiJson(DEEP_MEMORY_API_PATHS.consolidationJobs, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ namespace_type: namespaceType, namespace_id: namespaceId }),
+    body: JSON.stringify(request),
   }));
 }
 
@@ -428,8 +493,11 @@ export async function rollbackConsolidationJob(jobId: string, request: Consolida
   }));
 }
 
-export async function listEvolutionCandidates(signal?: AbortSignal): Promise<EvolutionCandidateListResult> {
-  const body = await apiJson(DEEP_MEMORY_API_PATHS.evolutionCandidates, { signal });
+export async function listEvolutionCandidates(
+  query: EvolutionCandidateListQuery = {},
+  signal?: AbortSignal,
+): Promise<EvolutionCandidateListResult> {
+  const body = await apiJson(appendQuery(DEEP_MEMORY_API_PATHS.evolutionCandidates, query), { signal });
   const { items, envelope } = envelopeItems(body, ['candidates', 'evolution_candidates']);
   return {
     items: items.map(normalizeEvolutionCandidate),
@@ -444,22 +512,55 @@ export async function getEvolutionCandidate(candidateId: string, signal?: AbortS
   return normalizeEvolutionCandidate(await apiJson(DEEP_MEMORY_API_PATHS.evolutionCandidate(candidateId), { signal }));
 }
 
-export async function reviewEvolutionCandidate(
-  candidateId: string,
-  request: { decision: 'approve' | 'reject'; expected_state_version: number; reason: string; actor?: string },
+export async function createEvolutionCandidate(
+  request: EvolutionCandidateCreateRequest,
 ): Promise<EvolutionCandidate> {
-  return normalizeEvolutionCandidate(await apiJson(`${DEEP_MEMORY_API_PATHS.evolutionCandidate(candidateId)}/review`, {
+  return normalizeEvolutionCandidate(await apiJson(DEEP_MEMORY_API_PATHS.evolutionCandidates, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(request),
   }));
 }
 
+export async function reviewEvolutionCandidate(
+  candidateId: string,
+  request: EvolutionReviewRequest,
+): Promise<EvolutionCandidate> {
+  const { decision, ...body } = request;
+  return normalizeEvolutionCandidate(await apiJson(`${DEEP_MEMORY_API_PATHS.evolutionCandidate(candidateId)}/${decision}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  }));
+}
+
 export async function attachEvolutionEvaluation(
   candidateId: string,
-  request: { expected_state_version: number; manifest: JsonObject; evaluator: string; issuer: string },
+  request: EvolutionEvaluationRequest,
 ): Promise<EvolutionCandidate> {
   return normalizeEvolutionCandidate(await apiJson(`${DEEP_MEMORY_API_PATHS.evolutionCandidate(candidateId)}/evaluations`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(request),
+  }));
+}
+
+export async function recordEvolutionRollback(
+  candidateId: string,
+  request: EvolutionRollbackRequest,
+): Promise<EvolutionCandidate> {
+  return normalizeEvolutionCandidate(await apiJson(`${DEEP_MEMORY_API_PATHS.evolutionCandidate(candidateId)}/rollback`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(request),
+  }));
+}
+
+export async function requestEvolutionPromotion(
+  candidateId: string,
+  request: EvolutionPromotionRequest,
+): Promise<EvolutionCandidate> {
+  return normalizeEvolutionCandidate(await apiJson(`${DEEP_MEMORY_API_PATHS.evolutionCandidate(candidateId)}/promotion`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(request),

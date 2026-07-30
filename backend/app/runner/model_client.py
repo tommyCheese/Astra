@@ -106,9 +106,7 @@ class ModelClient(ABC):
         """Bind the immutable effective reasoning effort selected for the current Run."""
         return None
 
-    def bind_model_thinking(
-        self, thinking: ModelThinkingSnapshot | dict[str, Any] | None
-    ) -> None:
+    def bind_model_thinking(self, thinking: ModelThinkingSnapshot | dict[str, Any] | None) -> None:
         """Bind the immutable effective model-thinking selection for the current Run."""
         return None
 
@@ -192,42 +190,54 @@ class MockModelClient(ModelClient):
         contract: TaskContract,
     ) -> PlanDraft:
         criterion_ids = [item.id for item in contract.success_criteria]
+        normalized_goal = goal.casefold()
+        if any(
+            marker in normalized_goal
+            for marker in (
+                "搜索",
+                "查询",
+                "查找",
+                "来源",
+                "最新",
+                "网页",
+                "search",
+                "research",
+                "source",
+                "current",
+                "latest",
+            )
+        ):
+            task_capabilities = ["information.search", "information.read"]
+        elif any(
+            marker in normalized_goal
+            for marker in ("图表", "绘图", "可视化", "chart", "plot", "visuali")
+        ):
+            task_capabilities = ["data.visualize"]
+        elif any(
+            marker in normalized_goal
+            for marker in ("工作区", "文件", "命令", "workspace", "file", "command")
+        ):
+            task_capabilities = ["workspace.execute"]
+        else:
+            task_capabilities = []
         definitions = [
             {
-                "title": "搜索候选来源",
-                "intent": f"围绕用户目标搜索相关来源：{goal}",
-                "required_capabilities": ["web_search"],
+                "title": "分析目标与约束",
+                "intent": f"明确用户目标、交付物和成功条件：{goal}",
+                "required_capabilities": [],
                 "depends_on": [],
             },
             {
-                "title": "筛选和去重来源",
-                "intent": "筛选搜索候选来源并去除重复 URL",
-                "required_capabilities": [],
+                "title": "完成目标所需工作",
+                "intent": "根据节点需求和当前可用能力完成主要交付物，不预先指定实现工具。",
+                "required_capabilities": task_capabilities,
                 "depends_on": ["step-1"],
             },
             {
-                "title": "抓取来源内容",
-                "intent": "抓取候选来源并提取可用于回答的文本证据",
-                "required_capabilities": ["web_fetch"],
+                "title": "验证并交付结果",
+                "intent": "依据成功条件检查结果，说明证据、限制和未满足项。",
+                "required_capabilities": [],
                 "depends_on": ["step-2"],
-            },
-            {
-                "title": "构造证据包",
-                "intent": "基于已审计工具调用构造 Evidence Pack",
-                "required_capabilities": [],
-                "depends_on": ["step-3"],
-            },
-            {
-                "title": "综合答案",
-                "intent": "基于已记录的工具输出生成带来源的答案",
-                "required_capabilities": [],
-                "depends_on": ["step-3"],
-            },
-            {
-                "title": "验证证据",
-                "intent": "检查来源是否足以支撑最终答案",
-                "required_capabilities": [],
-                "depends_on": ["step-4", "step-5"],
             },
         ]
         return PlanDraft(
@@ -352,6 +362,24 @@ class MockModelClient(ModelClient):
 
     async def decide(self, goal: str, context: dict[str, Any]) -> AgentDecision:
         observations = context.get("observations", [])
+        active_node = context.get("active_node")
+        tool_selection = context.get("tool_selection") or {}
+        unresolved = set(tool_selection.get("unresolved_capabilities") or [])
+        if active_node is not None and (
+            not active_node.get("required_capabilities") or not unresolved
+        ):
+            return AgentDecision(
+                decision_type="complete_node",
+                reasoning_summary="当前节点的预期工作和能力要求已经满足。",
+                node_result={"status": "completed"},
+                expected_observation="节点结果满足预期。",
+            )
+        if active_node is None and context.get("plan_graph", {}).get("nodes"):
+            return AgentDecision(
+                decision_type="finalize",
+                reasoning_summary="计划节点已经完成，可以生成最终回复。",
+                expected_observation="最终答案包含结果、限制和验证备注。",
+            )
         fetched_urls = {
             observation.get("data", {}).get("url")
             for observation in observations
@@ -367,23 +395,58 @@ class MockModelClient(ModelClient):
             ),
             None,
         )
-        if search_observation is None:
+        search_tools = [
+            name
+            for name, manifest in context.get("tool_manifests", {}).items()
+            if "information.search" in manifest.get("task_capabilities", [])
+        ]
+        read_tools = [
+            name
+            for name, manifest in context.get("tool_manifests", {}).items()
+            if "information.read" in manifest.get("task_capabilities", [])
+        ]
+        # Direct mock-unit calls predate manifest context; production runtime
+        # always supplies the dynamically resolved manifests.
+        if "tool_manifests" not in context:
+            search_tools = ["web_search"]
+            read_tools = ["web_fetch"]
+        quick_web_goal = active_node is None and any(
+            marker in goal.casefold()
+            for marker in (
+                "搜索",
+                "查询",
+                "查找",
+                "来源",
+                "最新",
+                "网页",
+                "search",
+                "research",
+                "source",
+                "current",
+                "latest",
+            )
+        )
+        if (
+            "information.search" in unresolved or (quick_web_goal and search_observation is None)
+        ) and search_tools:
             return AgentDecision(
                 decision_type="call_tool",
                 reasoning_summary="先搜索候选来源，建立可抓取的证据候选集。",
-                tool_name="web_search",
+                tool_name=search_tools[0],
                 tool_input={"query": goal},
                 expected_observation="返回候选来源和搜索 warning。",
                 stop_condition="获得候选来源后抓取正文。",
             )
-        candidates = search_observation.get("data", {}).get("candidates", [])
+        candidates = (
+            search_observation.get("data", {}).get("candidates", []) if search_observation else []
+        )
         for candidate in candidates:
             url = candidate.get("url")
-            if url and url not in fetched_urls:
+            if url and url not in fetched_urls and read_tools:
                 return AgentDecision(
                     decision_type="call_tool",
                     reasoning_summary="抓取候选来源正文，用于构造证据包和最终回答。",
-                    tool_name="web_fetch",
+                    tool_name=read_tools[0],
                     tool_input={
                         "url": url,
                         "query": goal,
@@ -393,9 +456,15 @@ class MockModelClient(ModelClient):
                     expected_observation="返回正文、质量评分、抓取策略和 warning。",
                     stop_condition="抓取足够来源后进行综合验证。",
                 )
+        if active_node is not None:
+            return AgentDecision(
+                decision_type="blocked",
+                reasoning_summary="当前节点仍有任务能力需求，但没有可安全执行的候选行动。",
+                expected_observation="需要启用匹配的工具能力或调整任务约束。",
+            )
         return AgentDecision(
             decision_type="finalize",
-            reasoning_summary="已有搜索和抓取观察，可以基于证据包生成最终回复。",
+            reasoning_summary="已有观察足以生成最终回复。",
             expected_observation="最终答案包含来源、限制和验证备注。",
         )
 
@@ -428,6 +497,7 @@ class MockModelClient(ModelClient):
             MemoryRecord(
                 scope="run",
                 kind="episodic_experience",
+                memory_key=(f"run:{context.get('run_id') or 'unknown'}:source-summary"),
                 content=f"本次任务围绕「{goal}」抓取了 {len(fetched_sources)} 个来源。",
                 structured_data={"source_count": len(fetched_sources)},
                 provenance={
@@ -478,9 +548,7 @@ class OpenAICompatibleModelClient(ModelClient):
     def bind_reasoning_effort(self, effort: ReasoningEffort | str) -> None:
         self.reasoning_effort = ReasoningEffort(effort)
 
-    def bind_model_thinking(
-        self, thinking: ModelThinkingSnapshot | dict[str, Any] | None
-    ) -> None:
+    def bind_model_thinking(self, thinking: ModelThinkingSnapshot | dict[str, Any] | None) -> None:
         self.model_thinking = (
             thinking
             if isinstance(thinking, ModelThinkingSnapshot)
@@ -522,7 +590,13 @@ class OpenAICompatibleModelClient(ModelClient):
                         "depends_on, required_capabilities, success_criteria_refs, expected_outcome, "
                         "risk_level, and optional. expected_outcome must contain kind, "
                         "success_condition, and required_fields. Dependencies must form a complete "
-                        "DAG covering the contract before execution. Reference only criterion IDs "
+                        "DAG covering the contract before execution. required_capabilities may "
+                        "contain only provider-neutral task semantics such as information.search, "
+                        "information.read, data.visualize, or workspace.execute. Never put a tool "
+                        "name, provider, permission, executor, or backend in the Plan. Every listed "
+                        "task capability is required over the node lifecycle; use an empty list for "
+                        "reasoning-only work. Concrete tools are selected later at execution time. "
+                        "Reference only criterion IDs "
                         f"from this task contract: {contract.model_dump_json()}.",
                     ),
                 },
@@ -531,9 +605,7 @@ class OpenAICompatibleModelClient(ModelClient):
             operation=operation,
         )
         try:
-            return PlanDraft.model_validate(
-                normalize_plan_payload(payload, contract=contract)
-            )
+            return PlanDraft.model_validate(normalize_plan_payload(payload, contract=contract))
         except Exception as exc:
             raise ModelOutputError(f"Invalid plan output: {exc}") from exc
 
@@ -617,7 +689,9 @@ class OpenAICompatibleModelClient(ModelClient):
                         "Allowed decision_type values: activate_skill, read_skill_resource, call_tool, complete_node, reflect, replan, finalize, ask_user, blocked. "
                         "Use activate_skill with skill_identity only for an identity in context.skill_catalog. "
                         "Use read_skill_resource with skill_identity and skill_resource_path only for an active Skill inventory item. "
-                        "Choose among the tools in context.tool_manifests only when external or current evidence is needed. "
+                        "Choose among the current dynamic candidates in context.tool_manifests only "
+                        "when external or current evidence is needed. Use context.tool_selection to "
+                        "respect unresolved task requirements and capability gaps. "
                         "For stable general knowledge, explanation, writing, or conversation, finalize without tools. "
                         "Select tools only from context.tool_manifests and follow each manifest's description, schema, capabilities, and permissions. "
                         "For call_tool include tool_name and tool_input. "
@@ -656,7 +730,9 @@ class OpenAICompatibleModelClient(ModelClient):
                         "Always include decision_type and reasoning_summary. Allowed decision_type values: "
                         "activate_skill, read_skill_resource, call_tool, complete_node, reflect, replan, finalize, ask_user, blocked. "
                         "Use activate_skill with skill_identity only for an identity in context.skill_catalog. Work only on "
-                        "context.active_node when it is present. Use complete_node after its expected outcome is "
+                        "context.active_node when it is present. Tools in context.tool_manifests are "
+                        "the current policy-compliant candidates, not a Plan binding. Use "
+                        "context.tool_selection to satisfy every unresolved task capability. Use complete_node after its expected outcome is "
                         "satisfied and include node_result fields required by its expected_outcome; use finalize "
                         "only when context.active_node is null and the plan has no "
                         "unfinished required node. Use tools only for current, "
@@ -840,9 +916,7 @@ class OpenAICompatibleModelClient(ModelClient):
         }
         if self.settings.model_provider == "openai":
             static_prefix = "\n\n".join(
-                message["content"]
-                for message in messages
-                if message["role"] == "system"
+                message["content"] for message in messages if message["role"] == "system"
             )
             if static_prefix:
                 request_payload["prompt_cache_key"] = (
@@ -890,9 +964,7 @@ class OpenAICompatibleModelClient(ModelClient):
                 callbacks = dict(stream_callbacks or {})
                 if stream_field and on_field_delta:
                     callbacks[stream_field] = on_field_delta
-                field_extractor = (
-                    StreamingJsonFieldExtractor(callbacks) if callbacks else None
-                )
+                field_extractor = StreamingJsonFieldExtractor(callbacks) if callbacks else None
                 async for line in response.aiter_lines():
                     if not line.startswith("data:"):
                         continue
@@ -1257,8 +1329,10 @@ def normalize_memory_payload(payload: dict[str, Any]) -> dict[str, Any] | None:
     normalized["scope"] = scope
     normalized["kind"] = kind.value
     memory_key = str(payload.get("memory_key") or "").strip()
-    if not memory_key or len(memory_key) > 240 or not re.fullmatch(
-        r"[A-Za-z0-9][A-Za-z0-9._:/-]*", memory_key
+    if (
+        not memory_key
+        or len(memory_key) > 240
+        or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:/-]*", memory_key)
     ):
         key_material = json.dumps(
             {
@@ -1286,9 +1360,7 @@ def normalize_memory_payload(payload: dict[str, Any]) -> dict[str, Any] | None:
     except (TypeError, ValueError):
         normalized["confidence"] = 0.5
     try:
-        normalized["importance"] = min(
-            1.0, max(0.0, float(payload.get("importance", 0.5)))
-        )
+        normalized["importance"] = min(1.0, max(0.0, float(payload.get("importance", 0.5))))
     except (TypeError, ValueError):
         normalized["importance"] = 0.5
     normalized["utility_score"] = 0.0
@@ -1567,15 +1639,11 @@ def normalize_plan_payload(
                 "intent": str(node.get("intent") or title),
                 "depends_on": [
                     str(item)
-                    for item in (
-                        dependencies if isinstance(dependencies, list) else [dependencies]
-                    )
+                    for item in (dependencies if isinstance(dependencies, list) else [dependencies])
                 ],
                 "required_capabilities": [
                     str(item)
-                    for item in (
-                        capabilities if isinstance(capabilities, list) else [capabilities]
-                    )
+                    for item in (capabilities if isinstance(capabilities, list) else [capabilities])
                 ],
                 "success_criteria_refs": [
                     str(item)
@@ -1586,8 +1654,7 @@ def normalize_plan_payload(
                 "expected_outcome": {
                     "kind": str(expected.get("kind") or "step_result"),
                     "success_condition": str(
-                        expected.get("success_condition")
-                        or "step completed with accepted evidence"
+                        expected.get("success_condition") or "step completed with accepted evidence"
                     ),
                     "required_fields": [
                         str(item)
@@ -1633,15 +1700,14 @@ def normalize_final_answer_payload(payload: dict[str, Any]) -> dict[str, Any]:
         item["id"] = str(item.get("id") or stable_id("claim", str(index), item["text"]))
         refs = item.get("evidence_refs") or []
         item["evidence_refs"] = (
-            [str(ref) for ref in refs if isinstance(ref, str)]
-            if isinstance(refs, list)
-            else []
+            [str(ref) for ref in refs if isinstance(ref, str)] if isinstance(refs, list) else []
         )
         item["material"] = bool(item.get("material", True))
         item["support_status"] = str(item.get("support_status") or "unverified")
     citations = normalized.get("citations") or []
     normalized["citations"] = [
-        item for item in (citations if isinstance(citations, list) else [citations])
+        item
+        for item in (citations if isinstance(citations, list) else [citations])
         if isinstance(item, dict)
     ]
     for index, item in enumerate(normalized["citations"]):
