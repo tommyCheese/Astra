@@ -8965,3 +8965,503 @@ html[data-theme="dark"] .welcome-mark {
     padding-top: 22px;
   }
 }
+
+/* macOS interaction pass — vibrancy, spring motion and native control behavior. */
+:root {
+  --macos-ease: cubic-bezier(.22, .82, .24, 1);
+  --macos-spring: cubic-bezier(.18, .9, .22, 1.15);
+  --macos-hairline: color-mix(in srgb, var(--app-line) 76%, transparent);
+  --macos-control: color-mix(in srgb, var(--app-elevated) 88%, var(--app-sidebar));
+  --macos-control-hover: color-mix(in srgb, var(--app-text) 5%, var(--macos-control));
+  --macos-control-pressed: color-mix(in srgb, var(--app-text) 9%, var(--macos-control));
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", Inter, system-ui, sans-serif;
+}
+
+button {
+  -webkit-tap-highlight-color: transparent;
+  transition:
+    color 140ms ease,
+    background-color 140ms ease,
+    border-color 140ms ease,
+    box-shadow 180ms ease,
+    opacity 140ms ease,
+    transform 220ms var(--macos-spring);
+  user-select: none;
+}
+
+button:active:not(:disabled) {
+  transform: scale(.965);
+  transition-duration: 70ms;
+}
+
+input,
+textarea,
+select {
+  caret-color: var(--astra-mint);
+  transition: border-color 150ms ease, background-color 150ms ease, box-shadow 180ms ease;
+}
+
+input:focus,
+textarea:focus,
+select:focus {
+  outline: 0;
+}
+
+:where(
+  .provider-editor input,
+  .provider-editor textarea,
+  .provider-editor select,
+  .setting-row select,
+  .skill-search,
+  .skill-file-search,
+  .library-search,
+  .skill-library-toolbar select,
+  .library-sort select,
+  .runtime-dependency-row input
+):focus-within {
+  border-color: color-mix(in srgb, var(--astra-mint) 48%, var(--app-line));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--astra-mint) 14%, transparent);
+}
+
+.sidebar {
+  backdrop-filter: blur(34px) saturate(145%);
+  -webkit-backdrop-filter: blur(34px) saturate(145%);
+  box-shadow: inset -1px 0 0 rgba(255, 255, 255, .28);
+}
+
+.chat-topbar {
+  backdrop-filter: blur(30px) saturate(145%);
+  -webkit-backdrop-filter: blur(30px) saturate(145%);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, .34);
+}
+
+.brand-mark-trigger:hover {
+  filter: brightness(1.035);
+  transform: translateY(-1px);
+}
+
+.brand-mark-trigger:active:not(:disabled) {
+  filter: brightness(.97);
+  transform: scale(.91);
+}
+
+.sidebar-collapse-trigger,
+.sidebar-expand-trigger,
+.ui-close-button,
+.composer-icon-button,
+.trusted-graph-pane-collapse,
+.trusted-graph-pane-expand {
+  background: transparent;
+  border: 1px solid transparent;
+}
+
+.sidebar-collapse-trigger:hover,
+.sidebar-expand-trigger:hover,
+.ui-close-button:hover,
+.composer-icon-button:hover,
+.trusted-graph-pane-collapse:hover,
+.trusted-graph-pane-expand:hover {
+  color: var(--app-text);
+  background: var(--macos-control-hover);
+  border-color: var(--macos-hairline);
+  box-shadow: 0 1px 2px rgba(20, 35, 29, .05);
+}
+
+.sidebar-collapse-trigger:active:not(:disabled),
+.sidebar-expand-trigger:active:not(:disabled),
+.ui-close-button:active:not(:disabled),
+.composer-icon-button:active:not(:disabled) {
+  background: var(--macos-control-pressed);
+  box-shadow: inset 0 1px 2px rgba(20, 35, 29, .08);
+}
+
+.new-chat-button,
+.history-item,
+.side-action,
+.settings-nav button,
+.provider-item {
+  transition:
+    color 140ms ease,
+    background-color 160ms ease,
+    border-color 160ms ease,
+    box-shadow 180ms ease,
+    transform 180ms var(--macos-ease);
+}
+
+.history-item:active,
+.side-action:active,
+.settings-nav button:active,
+.provider-item:active {
+  transform: scale(.985);
+}
+
+.history-item.active,
+.side-action.active,
+.settings-nav button.active,
+.provider-item.active {
+  box-shadow:
+    inset 3px 0 0 var(--astra-mint),
+    inset 0 0 0 1px color-mix(in srgb, var(--astra-mint) 12%, transparent),
+    0 1px 2px rgba(20, 35, 29, .035);
+}
+
+.chat-composer {
+  backdrop-filter: blur(36px) saturate(155%);
+  -webkit-backdrop-filter: blur(36px) saturate(155%);
+  transition:
+    border-color 180ms ease,
+    box-shadow 260ms var(--macos-ease),
+    transform 260ms var(--macos-ease),
+    background-color 180ms ease;
+}
+
+.chat-composer:focus-within {
+  transform: translateY(-1px);
+}
+
+.send-button {
+  transition:
+    background-color 140ms ease,
+    box-shadow 180ms ease,
+    opacity 140ms ease,
+    transform 240ms var(--macos-spring);
+}
+
+.send-button:hover:not(:disabled) {
+  box-shadow: 0 7px 20px color-mix(in srgb, var(--astra-mint) 30%, transparent);
+}
+
+.send-button:active:not(:disabled) {
+  box-shadow: 0 2px 7px color-mix(in srgb, var(--astra-mint) 22%, transparent);
+  transform: scale(.91);
+}
+
+.toggle {
+  background: color-mix(in srgb, var(--app-muted) 42%, var(--app-elevated));
+  border: 0;
+  height: 22px;
+  padding: 2px;
+  width: 38px;
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--app-text) 10%, transparent),
+    inset 0 1px 2px rgba(20, 35, 29, .1);
+  transition: background-color 180ms ease, box-shadow 180ms ease, opacity 140ms ease;
+}
+
+.toggle span {
+  height: 18px;
+  width: 18px;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(20, 35, 29, .28), 0 0 0 .5px rgba(20, 35, 29, .12);
+  transition: width 120ms ease, transform 240ms var(--macos-spring), box-shadow 160ms ease;
+}
+
+.toggle:hover:not(:disabled) span {
+  box-shadow: 0 2px 5px rgba(20, 35, 29, .3), 0 0 0 .5px rgba(20, 35, 29, .12);
+}
+
+.toggle:active:not(:disabled) {
+  transform: none;
+}
+
+.toggle:active:not(:disabled) span {
+  width: 21px;
+  box-shadow: 0 1px 3px rgba(20, 35, 29, .24);
+}
+
+.toggle.on {
+  background: var(--astra-mint);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--astra-mint-strong) 35%, transparent);
+}
+
+.toggle.on span {
+  transform: translateX(16px);
+}
+
+.toggle.on:active:not(:disabled) span {
+  transform: translateX(13px);
+}
+
+.segmented-control,
+.library-group-switch,
+.library-view-switch,
+.skill-view-switch,
+.memory-tabs {
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--macos-hairline);
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--app-text) 5%, var(--app-sidebar));
+  box-shadow: inset 0 1px 2px rgba(20, 35, 29, .045);
+}
+
+.floating-menu .segmented-control button,
+.library-group-switch button,
+.library-view-switch button,
+.skill-view-switch button,
+.memory-tabs button {
+  border: 0;
+  border-radius: 6px;
+  box-shadow: none;
+  transition: color 130ms ease, background-color 130ms ease, box-shadow 160ms ease, transform 180ms var(--macos-spring);
+}
+
+.floating-menu .segmented-control button.active,
+.library-group-switch button[aria-pressed="true"],
+.library-view-switch button[aria-pressed="true"],
+.skill-view-switch button[aria-pressed="true"],
+.memory-tabs button[aria-selected="true"] {
+  color: var(--app-text);
+  background: var(--app-elevated);
+  box-shadow:
+    0 1px 3px rgba(20, 35, 29, .13),
+    0 0 0 .5px rgba(20, 35, 29, .08);
+}
+
+.floating-menu .segmented-control button:active:not(:disabled),
+.library-group-switch button:active:not(:disabled),
+.library-view-switch button:active:not(:disabled),
+.skill-view-switch button:active:not(:disabled),
+.memory-tabs button:active:not(:disabled) {
+  transform: scale(.95);
+}
+
+.model-menu,
+.context-capacity-panel,
+.attachment-menu,
+.execution-menu,
+.floating-menu,
+.skill-command-menu,
+.history-menu {
+  animation: macos-popover-in 190ms var(--macos-spring) both;
+  backdrop-filter: blur(42px) saturate(165%);
+  -webkit-backdrop-filter: blur(42px) saturate(165%);
+  background: color-mix(in srgb, var(--app-elevated) 86%, transparent);
+  border-color: color-mix(in srgb, var(--app-line) 82%, white 18%);
+  box-shadow:
+    0 24px 64px rgba(18, 35, 28, .18),
+    0 7px 20px rgba(18, 35, 28, .08),
+    inset 0 1px 0 rgba(255, 255, 255, .62);
+  transform-origin: 50% 100%;
+}
+
+@keyframes macos-popover-in {
+  from {
+    opacity: 0;
+    transform: translateY(7px) scale(.975);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.floating-menu button,
+.model-option,
+.model-choice-row,
+.attachment-menu button,
+.skill-command-options > button,
+.history-menu button {
+  border-radius: 8px;
+  transition: color 120ms ease, background-color 120ms ease, transform 160ms var(--macos-ease);
+}
+
+.floating-menu button:hover,
+.model-choice-row:hover,
+.attachment-menu button:hover,
+.skill-command-options > button:hover,
+.history-menu button:hover {
+  background: color-mix(in srgb, var(--astra-mint) 9%, var(--app-hover));
+}
+
+.floating-menu button:active:not(:disabled),
+.model-choice-row:active,
+.attachment-menu button:active:not(:disabled),
+.skill-command-options > button:active:not(:disabled),
+.history-menu button:active:not(:disabled) {
+  transform: scale(.985);
+}
+
+.modal-backdrop,
+.skill-modal-layer,
+.skill-create-layer,
+.skill-action-layer,
+.memory-dialog-backdrop {
+  animation: macos-backdrop-in 180ms ease both;
+  backdrop-filter: blur(14px) saturate(115%);
+  -webkit-backdrop-filter: blur(14px) saturate(115%);
+  background: color-mix(in srgb, rgba(18, 25, 22, .34) 72%, transparent);
+}
+
+.skill-detail-dialog,
+.skill-create-drawer,
+.skill-history-dialog,
+.skill-editor-dialog,
+.memory-action-dialog,
+.conversation-action-dialog,
+.usage-modal,
+.control-center-modal,
+.confirmation-modal {
+  animation: macos-window-in 260ms var(--macos-spring) both;
+  box-shadow:
+    0 38px 110px rgba(12, 25, 20, .3),
+    0 10px 32px rgba(12, 25, 20, .14),
+    inset 0 1px 0 rgba(255, 255, 255, .62);
+}
+
+@keyframes macos-backdrop-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes macos-window-in {
+  from {
+    opacity: 0;
+    transform: translateY(14px) scale(.972);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.primary-button,
+.secondary-button,
+.skill-button,
+.skill-commandbar button,
+.skill-commandbar a {
+  min-height: 32px;
+  box-shadow: 0 1px 2px rgba(20, 35, 29, .07), inset 0 1px 0 rgba(255, 255, 255, .38);
+}
+
+.primary-button:hover:not(:disabled),
+.skill-button.primary:hover:not(:disabled),
+.skill-commandbar .primary:hover:not(:disabled) {
+  filter: brightness(1.045);
+  box-shadow: 0 4px 12px color-mix(in srgb, var(--astra-mint) 22%, transparent), inset 0 1px 0 rgba(255, 255, 255, .36);
+}
+
+.primary-button:active:not(:disabled),
+.secondary-button:active:not(:disabled),
+.skill-button:active:not(:disabled),
+.skill-commandbar button:active:not(:disabled),
+.skill-commandbar a:active {
+  box-shadow: inset 0 1px 3px rgba(20, 35, 29, .14);
+  transform: scale(.97);
+}
+
+.setting-row {
+  border-bottom-color: var(--macos-hairline);
+}
+
+.setting-row select,
+.skill-library-toolbar select,
+.library-sort select {
+  min-height: 32px;
+  border-color: var(--macos-hairline);
+  background-color: var(--macos-control);
+  box-shadow: 0 1px 2px rgba(20, 35, 29, .045);
+}
+
+.setting-row select:hover,
+.skill-library-toolbar select:hover,
+.library-sort select:hover {
+  background-color: var(--macos-control-hover);
+  border-color: color-mix(in srgb, var(--app-text) 14%, var(--app-line));
+}
+
+.status,
+.runtime-status-badge,
+.memory-governance-lock,
+.skill-state-pill {
+  backdrop-filter: blur(12px) saturate(125%);
+  -webkit-backdrop-filter: blur(12px) saturate(125%);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .3);
+}
+
+.skill-toast,
+.command-result-notice {
+  animation: macos-toast-in 260ms var(--macos-spring) both;
+  backdrop-filter: blur(28px) saturate(150%);
+  -webkit-backdrop-filter: blur(28px) saturate(150%);
+  background: color-mix(in srgb, var(--app-elevated) 88%, transparent);
+  border: 1px solid var(--macos-hairline);
+  border-radius: 12px;
+  box-shadow: 0 16px 44px rgba(18, 35, 28, .18), inset 0 1px 0 rgba(255, 255, 255, .5);
+}
+
+@keyframes macos-toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(.96);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+html[data-theme="dark"] .sidebar,
+html[data-theme="dark"] .chat-topbar {
+  box-shadow: inset -1px 0 0 rgba(255, 255, 255, .035);
+}
+
+html[data-theme="dark"] .model-menu,
+html[data-theme="dark"] .context-capacity-panel,
+html[data-theme="dark"] .attachment-menu,
+html[data-theme="dark"] .execution-menu,
+html[data-theme="dark"] .floating-menu,
+html[data-theme="dark"] .skill-command-menu,
+html[data-theme="dark"] .history-menu {
+  background: color-mix(in srgb, var(--app-elevated) 88%, transparent);
+  border-color: rgba(255, 255, 255, .12);
+  box-shadow: 0 28px 72px rgba(0, 0, 0, .42), inset 0 1px 0 rgba(255, 255, 255, .08);
+}
+
+html[data-theme="dark"] .toggle span {
+  background: #f6f8f7;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, .5), 0 0 0 .5px rgba(0, 0, 0, .26);
+}
+
+@media (hover: hover) {
+  .skill-library-item:hover,
+  .library-card:hover,
+  .share-management-item:hover,
+  .capability-item:hover {
+    transform: translateY(-2px) scale(1.002);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .model-menu,
+  .context-capacity-panel,
+  .attachment-menu,
+  .execution-menu,
+  .floating-menu,
+  .skill-command-menu,
+  .history-menu,
+  .modal-backdrop,
+  .skill-modal-layer,
+  .skill-create-layer,
+  .skill-action-layer,
+  .memory-dialog-backdrop,
+  .skill-detail-dialog,
+  .skill-create-drawer,
+  .skill-history-dialog,
+  .skill-editor-dialog,
+  .memory-action-dialog,
+  .conversation-action-dialog,
+  .usage-modal,
+  .control-center-modal,
+  .confirmation-modal,
+  .skill-toast,
+  .command-result-notice {
+    animation: none;
+  }
+
+  button,
+  .chat-composer,
+  .toggle span {
+    transition-duration: 1ms;
+  }
+}
