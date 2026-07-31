@@ -25,6 +25,14 @@ CORE_DEPENDENCIES = [
 ]
 PROTECTED = {item["name"] for item in CORE_DEPENDENCIES} | {"echarts", "playwright"}
 MANAGED_IMAGE = re.compile(r"^astra-data-viz:(?:build-[0-9a-f-]+|custom-[0-9a-f]+)$")
+MEMORY_SETTING_BOUNDS = {
+    "retrieval_max_items": (0, 50),
+    "retrieval_max_tokens": (0, 32_000),
+    "retrieval_min_confidence": (0.0, 1.0),
+    "retrieval_min_score": (0.0, 1.0),
+    "autodream_scan_seconds": (60, 604_800),
+    "autodream_min_candidates": (2, 100),
+}
 
 
 def normalize_dependencies(values):
@@ -53,6 +61,9 @@ class RuntimeProfileService:
         self.recovered_staging_images = []
         self._packaged_agent_profile = AgentProfileLoader().load()
         self._active_agent_profile = self._load_agent_profile(self._read_persisted())
+        persisted_memory = self._read_persisted().get("memory_settings")
+        if persisted_memory is not None:
+            self._apply_memory_settings(self._normalize_memory_settings(persisted_memory))
         if recover_interrupted:
             self._recover_interrupted_build()
 
@@ -105,6 +116,87 @@ class RuntimeProfileService:
         self.write(state)
         self._active_agent_profile = self._packaged_agent_profile
         return self._agent_profile_view(state)
+
+    def memory_settings(self):
+        mode = "off"
+        if self.settings.agent_memory_cross_session_shadow:
+            mode = "shadow"
+        elif self.settings.agent_memory_cross_session_enabled:
+            mode = "on"
+        return {
+            "write_enabled": self.settings.agent_memory_write_enabled,
+            "cross_session_mode": mode,
+            "retrieval_max_items": self.settings.agent_memory_retrieval_max_items,
+            "retrieval_max_tokens": self.settings.agent_memory_retrieval_max_tokens,
+            "retrieval_min_confidence": self.settings.agent_memory_retrieval_min_confidence,
+            "retrieval_min_score": self.settings.agent_memory_retrieval_min_score,
+            "autodream_enabled": self.settings.agent_memory_autodream_enabled,
+            "autodream_scan_seconds": self.settings.agent_memory_autodream_scan_seconds,
+            "autodream_min_candidates": self.settings.agent_memory_autodream_min_candidates,
+        }
+
+    def _normalize_memory_settings(self, value):
+        if not isinstance(value, dict):
+            raise ValueError("记忆运行设置必须是对象")
+        required = set(self.memory_settings())
+        if set(value) != required:
+            raise ValueError("记忆运行设置字段不完整")
+        if not isinstance(value["write_enabled"], bool) or not isinstance(
+            value["autodream_enabled"], bool
+        ):
+            raise ValueError("记忆运行开关必须是布尔值")
+        mode = value["cross_session_mode"]
+        if mode not in {"off", "shadow", "on"}:
+            raise ValueError("跨任务召回模式无效")
+        normalized = {
+            "write_enabled": value["write_enabled"],
+            "cross_session_mode": mode,
+            "autodream_enabled": value["autodream_enabled"],
+        }
+        integer_fields = {
+            "retrieval_max_items",
+            "retrieval_max_tokens",
+            "autodream_scan_seconds",
+            "autodream_min_candidates",
+        }
+        for field, (minimum, maximum) in MEMORY_SETTING_BOUNDS.items():
+            raw = value[field]
+            if field in integer_fields:
+                if not isinstance(raw, int) or isinstance(raw, bool):
+                    raise ValueError(f"记忆运行设置 {field} 必须是整数")
+            elif not isinstance(raw, (int, float)) or isinstance(raw, bool):
+                raise ValueError(f"记忆运行设置 {field} 必须是数字")
+            if not minimum <= raw <= maximum:
+                raise ValueError(f"记忆运行设置 {field} 超出允许范围")
+            normalized[field] = raw
+        return normalized
+
+    def _apply_memory_settings(self, value):
+        mode = value["cross_session_mode"]
+        self.settings.agent_memory_write_enabled = value["write_enabled"]
+        self.settings.agent_memory_cross_session_enabled = mode == "on"
+        self.settings.agent_memory_cross_session_shadow = mode == "shadow"
+        self.settings.agent_memory_retrieval_max_items = value["retrieval_max_items"]
+        self.settings.agent_memory_retrieval_max_tokens = value["retrieval_max_tokens"]
+        self.settings.agent_memory_retrieval_min_confidence = value[
+            "retrieval_min_confidence"
+        ]
+        self.settings.agent_memory_retrieval_min_score = value["retrieval_min_score"]
+        self.settings.agent_memory_autodream_enabled = value["autodream_enabled"]
+        self.settings.agent_memory_autodream_scan_seconds = value[
+            "autodream_scan_seconds"
+        ]
+        self.settings.agent_memory_autodream_min_candidates = value[
+            "autodream_min_candidates"
+        ]
+
+    def update_memory_settings(self, value):
+        normalized = self._normalize_memory_settings(value)
+        state = self._read_persisted()
+        state["memory_settings"] = normalized
+        self.write(state, persist_memory_settings=True)
+        self._apply_memory_settings(normalized)
+        return self.memory_settings()
 
     def _recover_interrupted_build(self):
         if not self.path.exists():
@@ -163,9 +255,10 @@ class RuntimeProfileService:
             "retention_days": max(0, self.settings.runtime_image_retention_days),
         }
         state["agent_profile"] = self._agent_profile_view(state)
+        state["memory_settings"] = self.memory_settings()
         return state
 
-    def write(self, value):
+    def write(self, value, *, persist_memory_settings: bool = False):
         self.path.parent.mkdir(parents=True, exist_ok=True)
         temporary = self.path.with_suffix(f"{self.path.suffix}.tmp")
         persisted = {
@@ -181,6 +274,11 @@ class RuntimeProfileService:
                 }
             else:
                 persisted.pop("agent_profile", None)
+        if (
+            not persist_memory_settings
+            and "memory_settings" not in self._read_persisted()
+        ):
+            persisted.pop("memory_settings", None)
         temporary.write_text(json.dumps(persisted, ensure_ascii=False, indent=2))
         temporary.replace(self.path)
 

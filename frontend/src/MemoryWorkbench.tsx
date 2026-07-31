@@ -30,6 +30,7 @@ import type {
 import { useI18n } from './i18n';
 
 type WorkbenchTab = 'memories' | 'consolidation' | 'evolution';
+type MemoryDetailMode = 'basic' | 'audit';
 type ConfirmAction =
   | { kind: 'revoke'; target: MemoryDetail }
   | { kind: 'publish'; target: ConsolidationJob }
@@ -177,9 +178,21 @@ function ScoreBreakdown({ scores }: { scores: RecallScoreComponents }) {
   </div>;
 }
 
-export function MemoryWorkbench({ client = defaultClient }: { client?: DeepMemoryClient }) {
+export function MemoryWorkbench({
+  client = defaultClient,
+  visibleTabs = ['memories', 'consolidation', 'evolution'],
+  initialTab,
+  showHeader = true,
+  memoryDetailMode = 'audit',
+}: {
+  client?: DeepMemoryClient;
+  visibleTabs?: WorkbenchTab[];
+  initialTab?: WorkbenchTab;
+  showHeader?: boolean;
+  memoryDetailMode?: MemoryDetailMode;
+}) {
   const { language, t } = useI18n();
-  const [tab, setTab] = useState<WorkbenchTab>('memories');
+  const [tab, setTab] = useState<WorkbenchTab>(initialTab ?? visibleTabs[0] ?? 'memories');
   const [memories, setMemories] = useState<MemoryRecord[]>([]);
   const [selectedMemory, setSelectedMemory] = useState<MemoryDetail | null>(null);
   const [jobs, setJobs] = useState<ConsolidationJob[]>([]);
@@ -353,29 +366,31 @@ export function MemoryWorkbench({ client = defaultClient }: { client?: DeepMemor
   }
 
   return <section className="memory-workbench" aria-labelledby="memory-workbench-title">
-    <header className="memory-workbench-header">
+    {showHeader && <header className="memory-workbench-header">
       <div>
         <span>Deep Memory</span>
         <h2 id="memory-workbench-title">{t('记忆与自进化')}</h2>
         <p>{t('检查跨对话记忆、AutoDream 代次与受治理候选；这些记录不授予任何工具或权限。')}</p>
       </div>
-      <span className="memory-governance-lock">{t('生产晋升关闭')}</span>
-    </header>
+      {visibleTabs.includes('evolution') && <span className="memory-governance-lock">{t('自动应用改进：关闭')}</span>}
+    </header>}
 
-    <div className="memory-tabs" role="tablist" aria-label={t('深度记忆视图')}>
+    {visibleTabs.length > 1 && <div className="memory-tabs" role="tablist" aria-label={t('深度记忆视图')}>
       {([
-        ['memories', '记忆审计'],
-        ['consolidation', 'AutoDream'],
-        ['evolution', '自进化候选'],
-      ] as const).map(([id, label]) => <button
+        ['memories', '已保存的记忆'],
+        ['consolidation', '整理与合并'],
+        ['evolution', 'Agent 改进'],
+      ] as const).filter(([id]) => visibleTabs.includes(id)).map(([id, label]) => <button
         key={id}
         type="button"
         role="tab"
         aria-selected={tab === id}
         className={tab === id ? 'active' : ''}
+        data-setting-search-key={label}
+        data-setting-search-activate="true"
         onClick={() => setTab(id)}
       >{t(label)}</button>)}
-    </div>
+    </div>}
 
     {notice && <p className="memory-notice" role="status">{notice}</p>}
     {errors[tab] && <p className="memory-error" role="alert">{errors[tab]}</p>}
@@ -416,6 +431,7 @@ export function MemoryWorkbench({ client = defaultClient }: { client?: DeepMemor
         {selectedMemory ? <MemoryInspector
           memory={selectedMemory}
           language={language}
+          detailMode={memoryDetailMode}
           onRevoke={() => openAction({ kind: 'revoke', target: selectedMemory })}
         /> : <div className="memory-empty">{t('选择一条记忆查看审计详情')}</div>}
       </div>
@@ -483,9 +499,10 @@ export function MemoryWorkbench({ client = defaultClient }: { client?: DeepMemor
   </section>;
 }
 
-function MemoryInspector({ memory, language, onRevoke }: {
+function MemoryInspector({ memory, language, detailMode, onRevoke }: {
   memory: MemoryDetail;
   language: string;
+  detailMode: MemoryDetailMode;
   onRevoke: () => void;
 }) {
   const { t } = useI18n();
@@ -499,15 +516,17 @@ function MemoryInspector({ memory, language, onRevoke }: {
     <dl className="memory-metadata">
       <div><dt>{t('命名空间')}</dt><dd>{memory.namespace_type}:{memory.namespace_id || '—'}</dd></div>
       <div><dt>{t('作用域')}</dt><dd>{memory.scope || '—'}</dd></div>
-      <div><dt>{t('稳定键')}</dt><dd>{memory.memory_key || '—'}</dd></div>
-      <div><dt>{t('版本')}</dt><dd>v{memory.version} · state {memory.state_version}</dd></div>
       <div><dt>{t('置信度')}</dt><dd>{memory.confidence.toFixed(3)}</dd></div>
-      <div><dt>{t('重要性')}</dt><dd>{memory.importance.toFixed(3)}</dd></div>
-      <div><dt>{t('效用')}</dt><dd>{memory.utility_score.toFixed(3)}</dd></div>
       <div><dt>{t('观察时间')}</dt><dd>{safeDate(memory.observed_at, language)}</dd></div>
-      <div><dt>{t('有效时间')}</dt><dd>{safeDate(memory.valid_from, language)} → {safeDate(memory.valid_to, language)}</dd></div>
       <div><dt>{t('到期时间')}</dt><dd>{safeDate(memory.expires_at, language)}</dd></div>
-      <div><dt>{t('替代关系')}</dt><dd>{memory.supersedes_id ? `← ${memory.supersedes_id}` : '—'}</dd></div>
+      {detailMode === 'audit' && <>
+        <div><dt>{t('稳定键')}</dt><dd>{memory.memory_key || '—'}</dd></div>
+        <div><dt>{t('版本')}</dt><dd>v{memory.version} · state {memory.state_version}</dd></div>
+        <div><dt>{t('重要性')}</dt><dd>{memory.importance.toFixed(3)}</dd></div>
+        <div><dt>{t('效用')}</dt><dd>{memory.utility_score.toFixed(3)}</dd></div>
+        <div><dt>{t('有效时间')}</dt><dd>{safeDate(memory.valid_from, language)} → {safeDate(memory.valid_to, language)}</dd></div>
+        <div><dt>{t('替代关系')}</dt><dd>{memory.supersedes_id ? `← ${memory.supersedes_id}` : '—'}</dd></div>
+      </>}
     </dl>
 
     <InspectorSection title={t('来源证据')} count={memory.sources.length}>
@@ -520,7 +539,7 @@ function MemoryInspector({ memory, language, onRevoke }: {
       </div> : <p className="memory-section-empty">{t('详情响应未包含来源记录')}</p>}
     </InspectorSection>
 
-    <InspectorSection title={t('召回审计')} count={memory.recall_events.length}>
+    {detailMode === 'audit' && <><InspectorSection title={t('召回审计')} count={memory.recall_events.length}>
       {memory.recall_events.length ? memory.recall_events.map((event) => <div className="memory-recall-card" key={event.event_id}>
         <header>
           <div><strong>{event.shadow ? t('影子召回') : event.selected ? t('已注入上下文') : t('未选中')}</strong><small>{safeDate(event.created_at, language)}</small></div>
@@ -551,7 +570,7 @@ function MemoryInspector({ memory, language, onRevoke }: {
       <summary>{t('结构化数据与溯源元数据')}</summary>
       <div><strong>structured_data</strong><pre>{boundedJson(memory.structured_data)}</pre></div>
       <div><strong>provenance</strong><pre>{boundedJson(memory.provenance)}</pre></div>
-    </details>
+    </details></>}
   </article>;
 }
 

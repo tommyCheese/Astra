@@ -2,7 +2,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { App } from '../src/App';
-import { buildRuntime, cancelRun, cancelRuntimeBuild, confirmPlanExecution, createConversationShare, createRun, decideToolApproval, deleteConversation, executeConversationCommand, getConversation, getConversationContext, getConversationStrategy, getRun, getRuntimeDefaultModel, getRuntimeProfile, listConversationShares, listConversations, listLibraryFiles, listRuns, listSkills, listSystemCommands, resetRuntimeAgentProfile, resolveModelContextCapabilities, resolveModelThinkingCapabilities, resumeRun, revisePlan, revokeConversationShare, streamRunEvents, takeCreatedRunStream, updateConversation, updateConversationStrategy, updateRuntimeAgentProfile, updateToolSettings, type ModelThinkingCapability, type RunStreamEvent, type SkillSummary } from '../src/api';
+import { buildRuntime, cancelRun, cancelRuntimeBuild, confirmPlanExecution, createConversationShare, createRun, decideToolApproval, deleteConversation, executeConversationCommand, getConversation, getConversationContext, getConversationStrategy, getRun, getRuntimeDefaultModel, getRuntimeProfile, listConversationShares, listConversations, listLibraryFiles, listRuns, listSkills, listSystemCommands, resetRuntimeAgentProfile, resolveModelContextCapabilities, resolveModelThinkingCapabilities, resumeRun, revisePlan, revokeConversationShare, streamRunEvents, takeCreatedRunStream, updateConversation, updateConversationStrategy, updateRuntimeAgentProfile, updateRuntimeMemorySettings, updateToolSettings, type ModelThinkingCapability, type RunStreamEvent, type SkillSummary } from '../src/api';
 
 vi.mock('../src/api', () => ({
   AstraApiError: class AstraApiError extends Error {
@@ -45,9 +45,10 @@ vi.mock('../src/api', () => ({
     { name: 'bash_execute', label: 'Bash Execute', description: '在隔离容器中执行命令', enabled: false, available: true },
   ] })),
   updateToolSettings: vi.fn(async (tools) => ({ tools })),
-  getRuntimeProfile: vi.fn(async () => ({ dependencies: [], core_dependencies: [{ name: 'numpy', version: '2.2.6' }, { name: 'matplotlib', version: '3.10.3' }], active_image: 'astra-data-viz:0.1.0', dependency_digest: 'base', build: null, agent_profile: { source: 'default', version: 'profile-default', documents: { identity: '# Astra Identity\n\n## Identity\nDefault', soul: '# Astra Soul', memory: '# Astra Memory Protocol', autodream: '# Astra AutoDream Protocol' } } })),
+  getRuntimeProfile: vi.fn(async () => ({ dependencies: [], core_dependencies: [{ name: 'numpy', version: '2.2.6' }, { name: 'matplotlib', version: '3.10.3' }], active_image: 'astra-data-viz:0.1.0', dependency_digest: 'base', build: null, agent_profile: { source: 'default', version: 'profile-default', documents: { identity: '# Astra Identity\n\n## Identity\nDefault', soul: '# Astra Soul', memory: '# Astra Memory Protocol', autodream: '# Astra AutoDream Protocol' } }, memory_settings: { write_enabled: true, cross_session_mode: 'off', retrieval_max_items: 8, retrieval_max_tokens: 2000, retrieval_min_confidence: 0.2, retrieval_min_score: 0.05, autodream_enabled: false, autodream_scan_seconds: 3600, autodream_min_candidates: 2 } })),
   updateRuntimeAgentProfile: vi.fn(async (documents) => ({ source: 'user', version: 'profile-user', documents })),
   resetRuntimeAgentProfile: vi.fn(async () => ({ source: 'default', version: 'profile-default', documents: { identity: '# Astra Identity\n\n## Identity\nDefault', soul: '# Astra Soul', memory: '# Astra Memory Protocol', autodream: '# Astra AutoDream Protocol' } })),
+  updateRuntimeMemorySettings: vi.fn(async (settings) => settings),
   buildRuntime: vi.fn(async () => ({ dependencies: [{ name: 'polars', version: '' }], core_dependencies: [], active_image: 'astra-data-viz:0.1.0', dependency_digest: 'base', build: { id: 'build-1', status: 'queued', phase: '等待构建', progress: 0, log: '等待构建' } })),
   cancelRuntimeBuild: vi.fn(async () => ({ dependencies: [{ name: 'polars', version: '' }], core_dependencies: [], active_image: 'astra-data-viz:0.1.0', dependency_digest: 'base', build: { id: 'build-1', status: 'cancelled', phase: '已取消', progress: 12, log: '构建已由用户取消' } })),
   streamRunEvents: vi.fn(() => () => undefined),
@@ -1491,7 +1492,7 @@ describe('App', () => {
     render(<App />);
 
     await userEvent.click(screen.getByRole('button', { name: /设置/ }));
-    await userEvent.click(screen.getByRole('button', { name: '运行时' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Agent' }));
     const identity = await screen.findByLabelText('IDENTITY.md');
     fireEvent.change(identity, { target: { value: '# Astra Identity\n\n## Identity\nCustomized' } });
 
@@ -1512,7 +1513,7 @@ describe('App', () => {
     render(<App />);
 
     await userEvent.click(screen.getByRole('button', { name: /设置/ }));
-    await userEvent.click(screen.getByRole('button', { name: '运行时' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Agent' }));
     const identity = await screen.findByLabelText('IDENTITY.md');
     fireEvent.change(identity, { target: { value: 'invalid profile text' } });
     await userEvent.click(screen.getByRole('button', { name: '保存 Agent Profile' }));
@@ -1520,6 +1521,50 @@ describe('App', () => {
     expect(await screen.findByRole('status')).toHaveTextContent('IDENTITY.md 缺少必需章节');
     expect(identity).toHaveValue('invalid profile text');
     expect(screen.getByRole('button', { name: '保存 Agent Profile' })).toBeEnabled();
+  });
+
+  it('separates Agent, Runtime, Memory, and experimental improvement settings', async () => {
+    render(<App />);
+    await userEvent.click(screen.getByRole('button', { name: /设置/ }));
+
+    await userEvent.click(screen.getByRole('button', { name: '运行时' }));
+    expect(screen.getByRole('heading', { name: '安全运行环境' })).toBeInTheDocument();
+    expect(screen.queryByLabelText('IDENTITY.md')).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Agent' }));
+    expect(await screen.findByLabelText('IDENTITY.md')).toBeInTheDocument();
+    expect(screen.getByText(/不会开启记忆、工具或后台作业/)).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: '记忆' }));
+    expect(screen.getByRole('tab', { name: '记忆设置' })).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: '已保存的记忆' })).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: '整理与合并' })).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: '活动与审计' })).toBeInTheDocument();
+    expect(screen.queryByText('自动应用改进：关闭')).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: '实验功能' }));
+    expect(screen.getByRole('heading', { name: 'Agent 改进' })).toBeInTheDocument();
+    expect(screen.getByText(/不会自动改变正式运行行为/)).toBeInTheDocument();
+  });
+
+  it('saves enforced Memory runtime settings and preserves failed edits', async () => {
+    render(<App />);
+    await userEvent.click(screen.getByRole('button', { name: /设置/ }));
+    await userEvent.click(screen.getByRole('button', { name: '记忆' }));
+
+    const recallMode = await screen.findByLabelText('跨任务召回');
+    await userEvent.selectOptions(recallMode, 'shadow');
+    fireEvent.change(screen.getByLabelText('每次最多召回'), { target: { value: '5' } });
+    await userEvent.click(screen.getByRole('button', { name: '保存记忆设置' }));
+    await waitFor(() => expect(updateRuntimeMemorySettings).toHaveBeenCalledWith(expect.objectContaining({ cross_session_mode: 'shadow', retrieval_max_items: 5 })));
+    expect(screen.getByText('记忆设置已保存，将应用于之后新建的任务。')).toBeInTheDocument();
+
+    vi.mocked(updateRuntimeMemorySettings).mockRejectedValueOnce(new Error('最低相关度无效'));
+    fireEvent.change(screen.getByLabelText('最低相关度'), { target: { value: '0.3' } });
+    await userEvent.click(screen.getByRole('button', { name: '保存记忆设置' }));
+    expect(await screen.findByRole('status')).toHaveTextContent('最低相关度无效');
+    expect(screen.getByLabelText('最低相关度')).toHaveValue(0.3);
+    expect(screen.getByRole('button', { name: '保存记忆设置' })).toBeEnabled();
   });
 
   it('shows live runtime build progress and supports cancellation', async () => {
@@ -1607,6 +1652,25 @@ describe('App', () => {
     await userEvent.click(screen.getByRole('button', { name: '数据与隐私' }));
     expect(screen.getByText('工具内容保留')).toBeInTheDocument();
     expect(screen.queryByText('保存抓取正文')).not.toBeInTheDocument();
+  });
+
+  it('searches settings and tabs with exact and fuzzy matching', async () => {
+    render(<App />);
+
+    await userEvent.click(screen.getByRole('button', { name: /设置/ }));
+    const search = screen.getByRole('combobox', { name: '搜索设置' });
+
+    await userEvent.type(search, '主题模式');
+    await userEvent.click(screen.getByRole('option', { name: /主题模式.*界面/ }));
+    expect(screen.getByRole('button', { name: '界面' })).toHaveAttribute('aria-current', 'page');
+    expect(screen.getByDisplayValue('跟随系统')).toBeInTheDocument();
+
+    await userEvent.type(search, '主题模时');
+    expect(screen.getByRole('option', { name: /主题模式.*界面/ })).toBeInTheDocument();
+    await userEvent.clear(search);
+    await userEvent.type(search, '运行时');
+    await userEvent.click(screen.getByRole('option', { name: /运行时.*Tab/ }));
+    expect(screen.getByRole('button', { name: '运行时' })).toHaveAttribute('aria-current', 'page');
   });
 
   it('switches the interface between Chinese and English', async () => {

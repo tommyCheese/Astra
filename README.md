@@ -43,6 +43,8 @@ Astra 的稳定身份与治理原则由后端包中的 `IDENTITY.md`、`SOUL.md`
 
 Profile 文档不保存实际用户记忆，也不授予工具权限。真实 run/workspace/user Memory 继续存入数据库；本次实际可执行能力由 Tool Manifest、环境配置、持久化工具开关、基础设施状态、Run 权限、风险门控和剩余预算共同决定。
 
+设置界面也遵循这条边界：“Agent”编辑行为指令，“运行时”管理隔离环境和依赖，“记忆”管理强制运行设置、真实 Memory、AutoDream 整理与审计，“实验功能 → Agent 改进”管理不会自动进入生产的改进候选。
+
 当前默认执行路径是通用 Agent loop：
 
 ```text

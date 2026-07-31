@@ -1,6 +1,6 @@
 # Astra Agent Profile
 
-本目录保存 Astra 随后端发布的默认受信任 Agent Profile。文档由 Git 管理，只描述稳定的产品身份与治理原则，不保存用户数据，也不授予运行时能力。本机用户可以在“设置 → 运行时 → Agent Profile”中激活经过同一 schema 校验的覆盖；覆盖保存在 Runtime 配置中，不会写回这些源文件。
+本目录保存 Astra 随后端发布的默认受信任 Agent Profile。文档由 Git 管理，只描述稳定的产品身份与治理原则，不保存用户数据，也不授予运行时能力。本机用户可以在“设置 → Agent → Agent Profile”中激活经过同一 schema 校验的覆盖；覆盖保存在 Runtime 配置中，不会写回这些源文件。
 
 - `IDENTITY.md`：Astra 是谁、使命、长期目标和稳定边界。
 - `SOUL.md`：人格、沟通气质、求真态度和协作方式。

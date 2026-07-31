@@ -81,6 +81,14 @@ AGENT_MEMORY_RETRIEVAL_MIN_CONFIDENCE=0.2
 AGENT_MEMORY_RETRIEVAL_MIN_SCORE=0.05
 ```
 
+本机用户也可以在“设置 → 记忆 → 记忆设置”中修改其中具有稳定产品含义的参数。保存后的覆盖写入 Runtime Profile，并立即用于之后新建的 Run；环境变量仍提供没有用户覆盖时的启动默认值。跨 Session 的两个底层布尔开关在界面中合并为三种互斥模式：
+
+- `关闭`：不跨任务查找或注入 Memory；
+- `仅评估`（shadow）：执行候选选择并记录审计，但不把结果注入模型；
+- `开启`：把通过过滤和预算限制的 Memory 注入后续 Run。
+
+“记忆设置”是后端强制执行的运行策略；Agent Profile 中的 `MEMORY.md` 只是模型应遵循的记忆治理指令，不能打开写入、跨任务召回或扩大预算。
+
 推荐发布顺序：
 
 1. 保持两个 cross-session flag 关闭，只写新 schema 与审计；
@@ -144,7 +152,9 @@ Memory 管理 API：
 
 列表支持 lifecycle、kind、run 和显式 namespace 过滤；详情包含来源、版本历史、召回分数和 lifecycle audit。撤销与 feedback 都有界并可审计。Astra 默认只允许 loopback 访问 `/api`；在完整账号/组织授权模型落地前，不应把本地管理 API 直接暴露到公网。
 
-前端的“记忆”工作台提供 Memory、AutoDream 和自进化三个面板。所有来自 Memory/candidate 的文本都按数据渲染，不执行 HTML 或指令；生产晋升控件固定禁用。
+前端“记忆”设置按用户任务分成“记忆设置”“已保存的记忆”“整理与合并”和“活动与审计”。普通详情只展示内容、范围、状态与来源；召回评分、排除原因、版本、生命周期和原始溯源数据集中在审计视图。AutoDream 是“整理与合并”的后台维护机制，不是一种 Memory，也不会修改 Agent Profile。
+
+自进化候选位于“实验功能 → Agent 改进”，不再与记忆数据混列。界面中的“自动应用改进：关闭”表示候选即使通过离线评估和人工批准，也不会自动修改生产 Prompt、Skill、Tool、权限或模型路由。所有来自 Memory/candidate 的文本仍按数据渲染，不执行 HTML 或指令；生产晋升控件固定禁用。
 
 ## 7. 删除、过期与恢复
 

@@ -1,5 +1,5 @@
 import { Component, CSSProperties, FormEvent, KeyboardEvent as ReactKeyboardEvent, lazy, MouseEvent, PointerEvent as ReactPointerEvent, ReactNode, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { AstraApiError, ApiErrorPayload, buildRuntime, cancelRun, cancelRuntimeBuild, confirmPlanExecution, createConversationShare, createRun, decideToolApproval, deleteConversation, executeConversationCommand, getConversation, getConversationContext, getConversationStrategy, getPermissionCenter, getRun, getRuntimeDefaultModel, getRuntimeProfile, getToolSettings, listConversationShares, listConversations, listLibraryFiles, listRuns, listSkills, listSystemCommands, resetRuntimeAgentProfile, resolveModelContextCapabilities, resolveModelThinkingCapabilities, resumeRun, revisePlan, revokeConversationShare, revokePermissionGrant, streamRunEvents, takeCreatedRunStream, updateConversation, updateConversationStrategy, updateRuntimeAgentProfile, updateToolSettings, type AgentProfileDocuments, type ContextWindowStatus, type ConversationStrategyPreferences, type LibraryFile, type ModelContextCapability, type ModelThinkingCapability, type ModelThinkingDepth, type ModelThinkingSelection, type PermissionCenterView, type RunModelConfig, type RunStreamEvent, type RunStreamHandle, type RuntimeDefaultModel, type SkillSummary, type SlashSystemCommand, type ToolSetting } from './api';
+import { AstraApiError, ApiErrorPayload, buildRuntime, cancelRun, cancelRuntimeBuild, confirmPlanExecution, createConversationShare, createRun, decideToolApproval, deleteConversation, executeConversationCommand, getConversation, getConversationContext, getConversationStrategy, getPermissionCenter, getRun, getRuntimeDefaultModel, getRuntimeProfile, getToolSettings, listConversationShares, listConversations, listLibraryFiles, listRuns, listSkills, listSystemCommands, resetRuntimeAgentProfile, resolveModelContextCapabilities, resolveModelThinkingCapabilities, resumeRun, revisePlan, revokeConversationShare, revokePermissionGrant, streamRunEvents, takeCreatedRunStream, updateConversation, updateConversationStrategy, updateRuntimeAgentProfile, updateRuntimeMemorySettings, updateToolSettings, type AgentProfileDocuments, type ContextWindowStatus, type ConversationStrategyPreferences, type LibraryFile, type MemoryRuntimeSettings, type ModelContextCapability, type ModelThinkingCapability, type ModelThinkingDepth, type ModelThinkingSelection, type PermissionCenterView, type RunModelConfig, type RunStreamEvent, type RunStreamHandle, type RuntimeDefaultModel, type SkillSummary, type SlashSystemCommand, type ToolSetting } from './api';
 import { buildAuditLog } from './auditPresentation';
 import { I18nProvider, useI18n } from './i18n';
 import { ThemeProvider, useTheme } from './theme';
@@ -2533,7 +2533,7 @@ function CapabilityItem({ tool, busy, onChange }: { tool: ToolSetting; busy: boo
   const { t } = useI18n();
   const state = !tool.available ? tool.unavailable_reason ?? '当前不可用' : tool.enabled ? '已启用' : '已停用';
   return (
-    <div className={`capability-item ${!tool.available ? 'unavailable' : ''}`}>
+    <div className={`capability-item ${!tool.available ? 'unavailable' : ''}`} data-setting-search-key={tool.label}>
       <div>
         <strong>{t(tool.label)}</strong>
         <span>{t(tool.description)}</span>
@@ -2586,15 +2586,93 @@ function AstraBrandIcon() {
   );
 }
 
-const settingCategories = ['模型管理', '工具', '运行时', '记忆', '界面', '数据与隐私'];
+const settingCategories = ['模型管理', 'Agent', '工具', '运行时', '记忆', '实验功能', '界面', '数据与隐私'];
 const settingCategoryIcons: Record<string, IconName> = {
   '模型管理': 'sparkle',
+  'Agent': 'brain',
   '工具': 'tools',
   '运行时': 'terminal',
   '记忆': 'brain',
+  '实验功能': 'sparkle',
   '界面': 'palette',
   '数据与隐私': 'lock',
 };
+
+type SettingSearchEntry = {
+  category: string;
+  title: string;
+  description: string;
+  target?: string;
+  keywords?: string;
+  type: 'tab' | 'setting';
+};
+
+const settingSearchItems: SettingSearchEntry[] = [
+  { category: '模型管理', title: 'API 地址', description: '供应商 API 的基础地址', target: 'API 地址', keywords: 'endpoint url 接口地址', type: 'setting' },
+  { category: '模型管理', title: 'API Key', description: '模型供应商访问凭据', target: 'API Key', keywords: '密钥 token credential', type: 'setting' },
+  { category: '模型管理', title: '可用模型', description: '配置可在聊天中选择的模型', target: '可用模型', keywords: '模型 ID context 上下文', type: 'setting' },
+  { category: '模型管理', title: '请求协议', description: '查看供应商使用的请求协议', target: '请求协议', keywords: 'protocol', type: 'setting' },
+  { category: '工具', title: '网页搜索', description: '管理 Agent 的网页搜索能力', target: '网页搜索', keywords: 'web search', type: 'setting' },
+  { category: '工具', title: '网页读取', description: '管理 Agent 的网页读取能力', target: '网页读取', keywords: 'web fetch', type: 'setting' },
+  { category: '工具', title: '图表工具', description: '管理图表生成能力', target: '图表工具', keywords: 'chart render', type: 'setting' },
+  { category: '工具', title: '命令工具', description: '管理命令执行能力', target: '命令工具', keywords: 'bash execute terminal', type: 'setting' },
+  { category: '运行时', title: '安全运行环境', description: '隔离环境、状态和安全限制', target: '安全运行环境', keywords: 'sandbox runtime', type: 'setting' },
+  { category: 'Agent', title: 'Agent Profile', description: '身份、表达方式和记忆治理', target: 'Agent Profile', keywords: 'identity soul memory autodream', type: 'setting' },
+  { category: '运行时', title: '自定义依赖', description: '添加 Python 包并构建运行环境', target: '自定义依赖', keywords: 'python package dependency 依赖', type: 'setting' },
+  { category: '记忆', title: '记忆设置', description: '控制写入、跨任务召回和整理策略', target: '记忆设置', keywords: 'memory recall autodream', type: 'setting' },
+  { category: '记忆', title: '已保存的记忆', description: '查看和撤销 Astra 记住的内容', target: '已保存的记忆', keywords: 'memory', type: 'setting' },
+  { category: '记忆', title: '整理与合并', description: '查看后台记忆整理批次', target: '整理与合并', keywords: 'AutoDream 记忆整理 合并代次', type: 'setting' },
+  { category: '实验功能', title: 'Agent 改进', description: '查看受治理的改进候选和离线评估', target: 'Agent 改进', keywords: 'evolution 自进化', type: 'setting' },
+  { category: '界面', title: '语言', description: '选择界面显示语言', target: '语言', keywords: 'language 中文 english', type: 'setting' },
+  { category: '界面', title: '主题模式', description: '选择浅色、暗色或跟随系统', target: '主题模式', keywords: 'theme light dark 外观', type: 'setting' },
+  { category: '界面', title: '过程展示', description: '显示工具调用和反思摘要', target: '过程展示', keywords: 'process reasoning', type: 'setting' },
+  { category: '界面', title: '审计面板', description: '任务完成后显示证据、事件和记忆', target: '审计面板', keywords: 'audit', type: 'setting' },
+  { category: '界面', title: '信息密度', description: '控制对话和面板的间距', target: '信息密度', keywords: '紧凑 舒适 compact comfortable', type: 'setting' },
+  { category: '数据与隐私', title: '保存运行记录', description: '保留对话、工具调用元数据和验证报告', target: '保存运行记录', keywords: 'history retention', type: 'setting' },
+  { category: '数据与隐私', title: '工具内容保留', description: '设置工具返回内容的保存范围', target: '工具内容保留', keywords: 'metadata full none', type: 'setting' },
+  { category: '数据与隐私', title: '诊断日志', description: '记录性能与错误信息', target: '诊断日志', keywords: 'diagnostic log', type: 'setting' },
+  { category: '数据与隐私', title: '清除本地运行数据', description: '删除当前浏览器保存的运行数据', keywords: '删除 清理 clear local data', type: 'setting' },
+];
+
+function normalizeSettingSearch(value: string) {
+  return value.toLocaleLowerCase().replace(/[\s\p{P}\p{S}]+/gu, '');
+}
+
+function settingEditDistance(left: string, right: string) {
+  const previous = Array.from({ length: right.length + 1 }, (_, index) => index);
+  for (let leftIndex = 1; leftIndex <= left.length; leftIndex += 1) {
+    const current = [leftIndex];
+    for (let rightIndex = 1; rightIndex <= right.length; rightIndex += 1) {
+      current[rightIndex] = Math.min(
+        current[rightIndex - 1] + 1,
+        previous[rightIndex] + 1,
+        previous[rightIndex - 1] + (left[leftIndex - 1] === right[rightIndex - 1] ? 0 : 1),
+      );
+    }
+    previous.splice(0, previous.length, ...current);
+  }
+  return previous[right.length];
+}
+
+function settingFuzzyScore(query: string, fields: string[]) {
+  const normalizedQuery = normalizeSettingSearch(query);
+  if (!normalizedQuery) return null;
+  const normalizedFields = fields.map(normalizeSettingSearch).filter(Boolean);
+  if (normalizedFields[0] === normalizedQuery) return 0;
+  if (normalizedFields[0]?.includes(normalizedQuery)) return 1;
+  if (normalizedFields.some((field) => field.includes(normalizedQuery))) return 2;
+  let bestDistance = Number.POSITIVE_INFINITY;
+  for (const field of normalizedFields) {
+    const candidates = [field, ...field.split(/(?=[A-Z])|[^\p{L}\p{N}]+/u)].filter(Boolean);
+    for (const candidate of candidates) bestDistance = Math.min(bestDistance, settingEditDistance(normalizedQuery, candidate));
+  }
+  const distanceLimit = Math.max(1, Math.floor(normalizedQuery.length * .34));
+  if (bestDistance <= distanceLimit) return 3 + bestDistance;
+  const combined = normalizedFields.join('');
+  let cursor = 0;
+  for (const character of combined) if (character === normalizedQuery[cursor]) cursor += 1;
+  return cursor === normalizedQuery.length ? 10 + combined.length - normalizedQuery.length : null;
+}
 
 function SettingsView({ activeCategory, onCategoryChange, onClose, providerConfigs, onProviderConfigsChange }: {
   activeCategory: string;
@@ -2604,16 +2682,92 @@ function SettingsView({ activeCategory, onCategoryChange, onClose, providerConfi
   onProviderConfigsChange: (configs: ModelProviderConfig[]) => void;
 }) {
   const { t } = useI18n();
+  const [searchQuery, setSearchQuery] = useState('');
+  const [activeResult, setActiveResult] = useState(0);
+  const [searchTarget, setSearchTarget] = useState<string | null>(null);
+  const searchEntries = useMemo(() => [
+    ...settingCategories.map((category): SettingSearchEntry => ({ category, title: category, description: '设置类别', type: 'tab' })),
+    ...settingSearchItems,
+    ...modelProviders.map((provider): SettingSearchEntry => ({ category: '模型管理', title: provider.name, description: provider.detail, target: provider.name, keywords: provider.id, type: 'setting' })),
+  ], []);
+  const searchResults = useMemo(() => searchEntries
+    .map((entry) => ({ entry, score: settingFuzzyScore(searchQuery, [t(entry.title), entry.title, t(entry.category), entry.category, entry.description, entry.keywords ?? '']) }))
+    .filter((result): result is { entry: SettingSearchEntry; score: number } => result.score !== null)
+    .sort((left, right) => left.score - right.score || Number(left.entry.type === 'setting') - Number(right.entry.type === 'setting'))
+    .slice(0, 8), [searchEntries, searchQuery, t]);
+
+  useEffect(() => setActiveResult(0), [searchQuery]);
+  useEffect(() => {
+    if (!searchTarget) return;
+    let attempts = 0;
+    let timer: number | undefined;
+    const findTarget = () => {
+      const target = [...document.querySelectorAll<HTMLElement>('[data-setting-search-key]')]
+        .find((element) => element.dataset.settingSearchKey === searchTarget);
+      if (!target && attempts < 12) {
+        attempts += 1;
+        timer = window.setTimeout(findTarget, 50);
+        return;
+      }
+      if (!target) return;
+      if (target.dataset.settingSearchActivate === 'true') target.click();
+      target.scrollIntoView?.({ behavior: 'smooth', block: 'center' });
+      target.classList.add('settings-search-focus');
+      timer = window.setTimeout(() => target.classList.remove('settings-search-focus'), 1600);
+      setSearchTarget(null);
+    };
+    timer = window.setTimeout(findTarget, 0);
+    return () => { if (timer !== undefined) window.clearTimeout(timer); };
+  }, [activeCategory, searchTarget]);
+
+  function selectSearchResult(entry: SettingSearchEntry) {
+    onCategoryChange(entry.category);
+    setSearchTarget(entry.target ?? null);
+    setSearchQuery('');
+  }
+
   return (
     <section className="settings-page">
       <header className="settings-header">
         <div><span>{t('工作区')}</span><h1>{t('设置')}</h1></div>
+        <div className="settings-search">
+          <label><span aria-hidden="true">⌕</span><input
+            role="combobox"
+            aria-label={t('搜索设置')}
+            aria-expanded={Boolean(searchQuery)}
+            aria-controls="settings-search-results"
+            aria-activedescendant={searchResults[activeResult] ? `settings-search-result-${activeResult}` : undefined}
+            autoComplete="off"
+            placeholder={t('搜索设置项或 Tab')}
+            value={searchQuery}
+            onChange={(event) => setSearchQuery(event.currentTarget.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'ArrowDown') { event.preventDefault(); setActiveResult((current) => Math.min(current + 1, Math.max(0, searchResults.length - 1))); }
+              if (event.key === 'ArrowUp') { event.preventDefault(); setActiveResult((current) => Math.max(0, current - 1)); }
+              if (event.key === 'Enter' && searchResults[activeResult]) { event.preventDefault(); selectSearchResult(searchResults[activeResult].entry); }
+              if (event.key === 'Escape') setSearchQuery('');
+            }}
+          />{searchQuery && <CloseButton className="settings-search-clear" label={t('清除搜索')} onClick={() => setSearchQuery('')} />}</label>
+          {searchQuery && <div className="settings-search-results" id="settings-search-results" role="listbox" aria-label={t('设置搜索结果')}>
+            {searchResults.map(({ entry }, index) => <button
+              className={index === activeResult ? 'active' : ''}
+              id={`settings-search-result-${index}`}
+              role="option"
+              aria-selected={index === activeResult}
+              type="button"
+              key={`${entry.type}:${entry.category}:${entry.title}`}
+              onMouseEnter={() => setActiveResult(index)}
+              onClick={() => selectSearchResult(entry)}
+            ><span className={`settings-search-result-icon ${entry.type}`}><Icon name={entry.type === 'tab' ? settingCategoryIcons[entry.category] : 'route'} /></span><span><strong>{t(entry.title)}</strong><small>{entry.type === 'tab' ? t('Tab') : `${t(entry.category)} · ${t('设置项')}`}</small></span></button>)}
+            {!searchResults.length && <p>{t('没有匹配的设置')}</p>}
+          </div>}
+        </div>
         <CloseButton label={t('关闭设置')} onClick={onClose} />
       </header>
       <div className="settings-layout">
         <nav className="settings-nav" aria-label={t('设置类别')}>
           {settingCategories.map((category) => (
-            <button className={category === activeCategory ? 'active' : ''} type="button" key={category} aria-current={category === activeCategory ? 'page' : undefined} onClick={() => onCategoryChange(category)}><Icon name={settingCategoryIcons[category]} /><span>{t(category)}</span></button>
+            <button className={category === activeCategory ? 'active' : ''} type="button" key={category} aria-current={category === activeCategory ? 'page' : undefined} onClick={() => { setSearchQuery(''); onCategoryChange(category); }}><Icon name={settingCategoryIcons[category]} /><span>{t(category)}</span></button>
           ))}
         </nav>
         <div className="settings-content">
@@ -2628,9 +2782,11 @@ function SettingSection({ category, providerConfigs, onProviderConfigsChange }: 
   const { language, setLanguage, t } = useI18n();
   const { mode, setMode } = useTheme();
   if (category === '模型管理') return <ModelManagement providers={providerConfigs} onChange={onProviderConfigsChange} />;
-  if (category === '运行时') return <RuntimeSettings />;
+  if (category === 'Agent') return <RuntimeSettings mode="agent" />;
+  if (category === '运行时') return <RuntimeSettings mode="runtime" />;
   if (category === '工具') return <ToolSettings />;
-  if (category === '记忆') return <Suspense fallback={<div className="memory-empty">{t('正在读取记忆…')}</div>}><MemoryWorkbench /></Suspense>;
+  if (category === '记忆') return <MemoryCenter />;
+  if (category === '实验功能') return <SettingsGroup title="Agent 改进" description="查看由运行证据形成的实验性改进建议。候选只用于离线评估，不会自动改变正式运行行为。"><Suspense fallback={<div className="memory-empty">{t('正在读取自进化候选…')}</div>}><MemoryWorkbench visibleTabs={['evolution']} initialTab="evolution" showHeader={false} /></Suspense></SettingsGroup>;
   if (category === '界面') return <SettingsGroup title="界面" description="调整工作区的信息密度和运行过程展示。"><SettingRow title="语言" description="选择界面显示语言"><select value={language} onChange={(event) => setLanguage(event.target.value as 'zh-CN' | 'en')}><option value="zh-CN">中文</option><option value="en">English</option></select></SettingRow><SettingRow title="主题模式" description="选择界面外观，或随操作系统自动切换"><select value={mode} onChange={(event) => setMode(event.target.value as 'system' | 'light' | 'dark')}><option value="system">{t('跟随系统')}</option><option value="light">{t('浅色模式')}</option><option value="dark">{t('暗色模式')}</option></select></SettingRow><SettingRow title="过程展示" description="在对话中显示工具调用和反思摘要"><Toggle checked /></SettingRow><SettingRow title="审计面板" description="任务完成后显示证据、事件和记忆"><Toggle checked /></SettingRow><SettingRow title="信息密度" description="控制对话和面板的间距"><TranslatedSelect defaultValue="compact" options={[['compact', '紧凑'], ['comfortable', '舒适']]} /></SettingRow></SettingsGroup>;
   if (category === '数据与隐私') return <SettingsGroup title="数据与隐私" description="控制任务记录、工具内容和诊断信息的保存方式。"><SettingRow title="保存运行记录" description="保留对话、工具调用元数据和验证报告"><Toggle checked /></SettingRow><SettingRow title="工具内容保留" description="决定是否保存工具返回的正文、文件内容或结构化结果"><TranslatedSelect defaultValue="metadata" options={[['none', '不保留内容'], ['metadata', '仅保留元数据'], ['full', '保留完整输出']]} /></SettingRow><SettingRow title="诊断日志" description="记录不包含工具内容的性能与错误信息"><Toggle checked /></SettingRow><button className="danger-button" type="button">{t('清除本地运行数据')}</button></SettingsGroup>;
   return null;
@@ -2679,7 +2835,102 @@ function ToolSettings() {
   </SettingsGroup>;
 }
 
-function RuntimeSettings() {
+type MemoryCenterTab = 'settings' | 'stored' | 'maintenance' | 'audit';
+
+function MemoryCenter() {
+  const { t } = useI18n();
+  const [tab, setTab] = useState<MemoryCenterTab>('settings');
+  const tabs: Array<[MemoryCenterTab, string]> = [
+    ['settings', '记忆设置'],
+    ['stored', '已保存的记忆'],
+    ['maintenance', '整理与合并'],
+    ['audit', '活动与审计'],
+  ];
+  return <SettingsGroup title="记忆" description="控制 Astra 如何保存和使用记忆，并管理已保存内容、整理作业与审计记录。">
+    <div className="memory-center-tabs" role="tablist" aria-label={t('记忆管理视图')}>
+      {tabs.map(([id, label]) => <button
+        key={id}
+        type="button"
+        role="tab"
+        aria-selected={tab === id}
+        className={tab === id ? 'active' : ''}
+        data-setting-search-key={label}
+        data-setting-search-activate="true"
+        onClick={() => setTab(id)}
+      >{t(label)}</button>)}
+    </div>
+    <div className="memory-center-content">
+      {tab === 'settings' && <MemoryRuntimeSettings />}
+      {tab === 'stored' && <Suspense fallback={<div className="memory-empty">{t('正在读取记忆…')}</div>}><MemoryWorkbench visibleTabs={['memories']} initialTab="memories" showHeader={false} memoryDetailMode="basic" /></Suspense>}
+      {tab === 'maintenance' && <><p className="memory-center-explainer">{t('AutoDream 在同一命名空间内提出去重、合并和冲突处理建议；提案只有通过校验并发布后才会改变生效记忆。')}</p><Suspense fallback={<div className="memory-empty">{t('正在读取 AutoDream 作业…')}</div>}><MemoryWorkbench visibleTabs={['consolidation']} initialTab="consolidation" showHeader={false} /></Suspense></>}
+      {tab === 'audit' && <><p className="memory-center-explainer">{t('高级视图展示来源、召回评分、排除原因、版本、生命周期和原始溯源元数据。')}</p><Suspense fallback={<div className="memory-empty">{t('正在读取记忆…')}</div>}><MemoryWorkbench visibleTabs={['memories']} initialTab="memories" showHeader={false} memoryDetailMode="audit" /></Suspense></>}
+    </div>
+  </SettingsGroup>;
+}
+
+function MemoryRuntimeSettings() {
+  const { t } = useI18n();
+  const [settings, setSettings] = useState<MemoryRuntimeSettings | null>(null);
+  const [dirty, setDirty] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState('');
+  const [failed, setFailed] = useState(false);
+  useEffect(() => {
+    const controller = new AbortController();
+    void getRuntimeProfile(controller.signal).then((profile) => {
+      if (profile.memory_settings) setSettings(profile.memory_settings);
+    }).catch((error) => {
+      if (error instanceof DOMException && error.name === 'AbortError') return;
+      setFailed(true);
+      setMessage('无法读取记忆设置');
+    });
+    return () => controller.abort();
+  }, []);
+  function change<K extends keyof MemoryRuntimeSettings>(key: K, value: MemoryRuntimeSettings[K]) {
+    setSettings((current) => current ? { ...current, [key]: value } : current);
+    setDirty(true);
+    setFailed(false);
+    setMessage('');
+  }
+  async function save() {
+    if (!settings) return;
+    try {
+      setSaving(true);
+      setFailed(false);
+      setMessage('');
+      const saved = await updateRuntimeMemorySettings(settings);
+      setSettings(saved);
+      setDirty(false);
+      setMessage('记忆设置已保存，将应用于之后新建的任务。');
+    } catch (error) {
+      setFailed(true);
+      setMessage(error instanceof Error ? error.message : '保存记忆设置失败');
+    } finally {
+      setSaving(false);
+    }
+  }
+  if (!settings) return <div className="memory-empty">{t(message || '正在读取记忆设置…')}</div>;
+  return <div className="memory-runtime-settings" data-setting-search-key="记忆设置">
+    <SettingRow title="保存新记忆" description="允许 Agent 在任务结束后提取并保存有来源的记忆候选"><Toggle checked={settings.write_enabled} disabled={saving} label={t('保存新记忆')} onChange={(value) => change('write_enabled', value)} /></SettingRow>
+    <SettingRow title="跨任务召回" description="控制其他任务中的记忆是否参与当前任务">
+      <select aria-label={t('跨任务召回')} value={settings.cross_session_mode} disabled={saving} onChange={(event) => change('cross_session_mode', event.currentTarget.value as MemoryRuntimeSettings['cross_session_mode'])}>
+        <option value="off">{t('关闭')}</option><option value="shadow">{t('仅评估，不影响回答')}</option><option value="on">{t('开启并注入上下文')}</option>
+      </select>
+    </SettingRow>
+    <SettingRow title="每次最多召回" description="限制一次上下文组装最多使用的记忆条数"><label className="memory-setting-number"><input aria-label={t('每次最多召回')} type="number" min={0} max={50} value={settings.retrieval_max_items} disabled={saving} onChange={(event) => change('retrieval_max_items', Number(event.currentTarget.value))} /><span>{t('条')}</span></label></SettingRow>
+    <SettingRow title="记忆上下文预算" description="限制召回记忆占用的模型上下文 Token"><label className="memory-setting-number"><input aria-label={t('记忆上下文预算')} type="number" min={0} max={32000} step={100} value={settings.retrieval_max_tokens} disabled={saving} onChange={(event) => change('retrieval_max_tokens', Number(event.currentTarget.value))} /><span>tokens</span></label></SettingRow>
+    <SettingRow title="最低置信度" description="低于此可靠度的记忆不会进入最终召回"><input aria-label={t('最低置信度')} type="number" min={0} max={1} step={0.05} value={settings.retrieval_min_confidence} disabled={saving} onChange={(event) => change('retrieval_min_confidence', Number(event.currentTarget.value))} /></SettingRow>
+    <SettingRow title="最低相关度" description="低于此综合召回分数的记忆不会被选中"><input aria-label={t('最低相关度')} type="number" min={0} max={1} step={0.05} value={settings.retrieval_min_score} disabled={saving} onChange={(event) => change('retrieval_min_score', Number(event.currentTarget.value))} /></SettingRow>
+    <div className="memory-settings-divider"><strong>{t('自动整理')}</strong><span>{t('AutoDream 只整理同一命名空间中的记忆，不会修改 Agent Profile 或权限。')}</span></div>
+    <SettingRow title="自动整理记忆" description="后台扫描并生成可复核的去重、合并和冲突处理提案"><Toggle checked={settings.autodream_enabled} disabled={saving} label={t('自动整理记忆')} onChange={(value) => change('autodream_enabled', value)} /></SettingRow>
+    <SettingRow title="扫描间隔" description="AutoDream 检查可整理记忆的时间间隔"><label className="memory-setting-number"><input aria-label={t('扫描间隔')} type="number" min={60} max={604800} step={60} value={settings.autodream_scan_seconds} disabled={saving || !settings.autodream_enabled} onChange={(event) => change('autodream_scan_seconds', Number(event.currentTarget.value))} /><span>{t('秒')}</span></label></SettingRow>
+    <SettingRow title="最低候选数" description="同一命名空间至少积累多少条候选后才创建整理作业"><label className="memory-setting-number"><input aria-label={t('最低候选数')} type="number" min={2} max={100} value={settings.autodream_min_candidates} disabled={saving || !settings.autodream_enabled} onChange={(event) => change('autodream_min_candidates', Number(event.currentTarget.value))} /><span>{t('条')}</span></label></SettingRow>
+    <div className="memory-settings-actions"><span>{dirty ? t('有未保存修改') : t('配置已同步')}</span><button className="primary-button" type="button" disabled={!dirty || saving} onClick={() => void save()}>{t(saving ? '正在保存…' : '保存记忆设置')}</button></div>
+    {message && <p className={failed ? 'runtime-build-error' : 'runtime-agent-profile-success'} role="status">{t(message)}</p>}
+  </div>;
+}
+
+function RuntimeSettings({ mode = 'runtime' }: { mode?: 'runtime' | 'agent' }) {
   const { t } = useI18n();
   const tr = (key: string, values: Record<string, string | number>) => Object.entries(values).reduce((text, [name, value]) => text.replace(`{${name}}`, String(value)), t(key));
   const [profile, setProfile] = useState<Awaited<ReturnType<typeof getRuntimeProfile>> | null>(null);
@@ -2822,12 +3073,15 @@ function RuntimeSettings() {
   const buildStatus = profile?.build?.status ?? 'ready';
   const buildStatusLabel: Record<string, string> = { ready: '已就绪', queued: '等待构建', building: '构建中', succeeded: '构建成功', failed: '构建失败', cancelled: '已取消' };
   const buildProgress = Math.min(100, Math.max(0, profile?.build?.progress ?? (buildStatus === 'queued' ? 0 : 5)));
-  return <SettingsGroup title="安全运行环境" description="管理数据处理与绘图所需的隔离环境和扩展依赖。">
-    <section className="runtime-overview" aria-label={t('安全运行环境状态')}>
+  return <SettingsGroup
+    title={mode === 'agent' ? 'Agent Profile' : '安全运行环境'}
+    description={mode === 'agent' ? '管理 Astra 的身份、表达方式与治理原则。' : '管理数据处理与绘图所需的隔离环境和扩展依赖。'}
+  >
+    {mode === 'runtime' && <section className="runtime-overview" aria-label={t('安全运行环境状态')} data-setting-search-key="安全运行环境">
       <div className="runtime-engine"><div><span>{t('运行引擎')}</span><strong><span className="runtime-health-dot" aria-hidden="true" />{t('隔离环境')} · {t('已就绪')}</strong><small>{t('按任务自动创建')}</small></div><span className={`runtime-status-badge runtime-status-${buildStatus}`}>{t(buildStatusLabel[buildStatus] ?? buildStatus)}</span></div>
       <div className="runtime-security-strip"><span>{t('断网执行')}</span><span>{t('只读根目录')}</span><span>{t('非 root')}</span><span>{t('资源受限')}</span></div>
-    </section>
-    <section className="runtime-agent-profile" aria-labelledby="runtime-agent-profile-title">
+    </section>}
+    {mode === 'agent' && <><p className="agent-profile-boundary-note">{t('这些文档指导模型行为，但不会开启记忆、工具或后台作业，也不能覆盖运行时强制设置。')}</p><section className="runtime-agent-profile" aria-labelledby="runtime-agent-profile-title" data-setting-search-key="Agent Profile">
       <div className="runtime-agent-profile-heading">
         <div><strong id="runtime-agent-profile-title">{t('Agent Profile')}</strong><span>{t('自定义 Astra 的身份、表达方式和记忆治理。修改只影响之后新建的任务。')}</span></div>
         <div><span className={`runtime-profile-source source-${profile?.agent_profile?.source ?? 'default'}`}>{t(profile?.agent_profile?.source === 'user' ? '用户配置' : '内置默认')}</span><code title={profile?.agent_profile?.version}>{profile?.agent_profile?.version?.slice(0, 20) ?? '—'}</code></div>
@@ -2848,15 +3102,15 @@ function RuntimeSettings() {
         <div><button type="button" className="secondary-button" disabled={agentProfileBusy || profile?.agent_profile?.source !== 'user'} onClick={() => void restoreAgentProfile()}>{t('恢复内置默认')}</button><button type="button" className="primary-button" disabled={!agentProfileDirty || agentProfileBusy || !agentDocuments} onClick={() => void saveAgentProfile()}>{t(agentProfileBusy ? '正在保存…' : '保存 Agent Profile')}</button></div>
       </div>
       {agentProfileMessage && <p className={agentProfileError ? 'runtime-build-error' : 'runtime-agent-profile-success'} role="status">{t(agentProfileMessage)}</p>}
-    </section>
-    <section className="runtime-dependencies" aria-labelledby="runtime-dependencies-title">
+    </section></>}
+    {mode === 'runtime' && <section className="runtime-dependencies" aria-labelledby="runtime-dependencies-title">
       <div className="runtime-dependency-heading"><div><strong id="runtime-dependencies-title">{t('Python 依赖管理')}</strong><span>{t('版本可留空，构建时将安装最新版本。核心绘图库由基础镜像锁定。')}</span></div></div>
       <div className="runtime-core-dependencies" aria-label={t('基础镜像核心依赖')}>
         <div className="runtime-core-heading"><div><strong>{t('核心依赖')}</strong><span>{t('随基础镜像提供，不允许修改或删除')}</span></div><span>{tr('{count} 项已锁定', { count: profile?.core_dependencies?.length ?? 0 })}</span></div>
         <div className="runtime-core-columns" aria-hidden="true"><span /><span>{t('依赖名称')}</span><span>{t('锁定版本')}</span><span>{t('状态')}</span></div>
         {(profile?.core_dependencies ?? []).map((item) => <div className="runtime-core-row" key={item.name}><span className="runtime-lock" aria-label={`${item.name} ${t('已锁定')}`}><Icon name="lock" /></span><strong>{item.name}</strong><code>{item.version}</code><span className="runtime-locked-badge">{t('已锁定')}</span></div>)}
       </div>
-      <div className="runtime-custom-dependencies">
+      <div className="runtime-custom-dependencies" data-setting-search-key="自定义依赖">
         <div className="runtime-custom-heading"><div><strong>{t('自定义依赖')}</strong><span>{t('可编辑、删除，并在下一次构建后生效')}</span></div><span>{tr('{count} 项', { count: dependencies.length })}</span></div>
         <div className="runtime-dependency-list">
           {dependencies.length > 0 && <><div className="runtime-dependency-toolbar"><label><input type="checkbox" aria-label={t('选择全部依赖')} checked={selected.size === dependencies.length} disabled={controlsDisabled} onChange={(event) => setSelected(event.target.checked ? new Set(dependencies.map((item) => item.id)) : new Set())} />{t('选择全部')}</label><button type="button" disabled={!selected.size || controlsDisabled} onClick={() => removeDependencies(selected)}>{t('删除所选')}{selected.size ? ` (${selected.size})` : ''}</button></div><div className="runtime-dependency-columns" aria-hidden="true"><span /><span>{t('依赖名称')}</span><span>{t('版本')}</span><span /></div></>}
@@ -2868,7 +3122,7 @@ function RuntimeSettings() {
       {building ? <div className="runtime-build-progress" role="status" aria-live="polite"><div className="runtime-build-progress-heading"><div><strong>{t(profile?.build?.phase ?? '准备构建')}</strong><span>{tr('{count} 个自定义依赖', { count: dependencies.length })}</span></div><b>{buildProgress}%</b></div><div className="runtime-progress-track" role="progressbar" aria-label={t('依赖构建进度')} aria-valuemin={0} aria-valuemax={100} aria-valuenow={buildProgress}><span style={{ width: `${buildProgress}%` }} /></div><p>{t(profile?.build?.log ?? '正在等待构建输出')}</p><button className="secondary-button" type="button" onClick={() => void cancelBuild()}>{t('取消构建')}</button></div> : <div className="runtime-build-actions"><div><span>{tr('{count} 个自定义依赖', { count: dependencies.length })}{dirty ? ` · ${t('有未应用修改')}` : ''}</span>{profile?.build?.log && profile.build.status !== 'failed' && <small role="status">{t(profile.build.log)}</small>}</div><button className="primary-button" type="button" onClick={() => void build()} disabled={!dirty || submitting}>{t(submitting ? '正在提交…' : dirty ? '构建并激活' : '配置已同步')}</button></div>}
       {profile?.build?.status === 'failed' && profile.build.log && <p className="runtime-build-error" role="alert">{t(profile.build.log)}</p>}
       {message && <p className="runtime-build-error" role="alert">{message}</p>}
-    </section>
+    </section>}
   </SettingsGroup>;
 }
 
@@ -3187,7 +3441,7 @@ function ModelManagement({ providers, onChange }: { providers: ModelProviderConf
             {providerGroups.map((group) => {
               const items = visibleProviders.filter((item) => item.group === group.id);
               return items.length > 0 && <div className="provider-group" key={group.id}><div className="provider-group-label">{t(group.label)}</div>{items.map((item) => (
-                <button className={`provider-item ${item.id === selectedProvider ? 'active' : ''}`} type="button" key={item.id} onClick={() => selectProvider(item.id)}>
+                <button className={`provider-item ${item.id === selectedProvider ? 'active' : ''}`} type="button" key={item.id} data-setting-search-key={item.name} data-setting-search-activate="true" onClick={() => selectProvider(item.id)}>
                   <span className={`provider-mark provider-${item.id}`}>{item.mark}</span>
                   <span><strong>{t(item.name)}</strong><small>{t(item.detail)}</small></span>
                   <i className={providers.find((configured) => configured.id === item.id)?.enabled ? 'connected' : ''} />
@@ -3205,9 +3459,9 @@ function ModelManagement({ providers, onChange }: { providers: ModelProviderConf
           </header>
 
           <div className="provider-form">
-            <label><span>{t('API 地址')}</span><small>{t('供应商 API 的基础地址')}</small><input value={provider.endpoint} onChange={(event) => updateProvider({ endpoint: event.target.value })} spellCheck={false} /></label>
-            <label><span>{t('API Key')}</span><small>{t('凭据保存在当前浏览器本地，不会写入运行记录')}</small><div className="secret-input"><input type={showKey ? 'text' : 'password'} value={provider.apiKey} onChange={(event) => updateProvider({ apiKey: event.target.value })} placeholder="sk-..." autoComplete="off" /><button type="button" onClick={() => setShowKey((visible) => !visible)}>{t(showKey ? '隐藏' : '显示')}</button></div></label>
-            <section className="model-profile-editor" aria-label={t('可用模型')}>
+            <label data-setting-search-key="API 地址"><span>{t('API 地址')}</span><small>{t('供应商 API 的基础地址')}</small><input value={provider.endpoint} onChange={(event) => updateProvider({ endpoint: event.target.value })} spellCheck={false} /></label>
+            <label data-setting-search-key="API Key"><span>{t('API Key')}</span><small>{t('凭据保存在当前浏览器本地，不会写入运行记录')}</small><div className="secret-input"><input type={showKey ? 'text' : 'password'} value={provider.apiKey} onChange={(event) => updateProvider({ apiKey: event.target.value })} placeholder="sk-..." autoComplete="off" /><button type="button" onClick={() => setShowKey((visible) => !visible)}>{t(showKey ? '隐藏' : '显示')}</button></div></label>
+            <section className="model-profile-editor" aria-label={t('可用模型')} data-setting-search-key="可用模型">
               <div className="model-profile-heading">
                 <div><strong>{t('可用模型')}</strong><small>{t('上下文上限由 Astra 按模型自动设置，无需手动配置。')}</small></div>
                 <span>{provider.models.length}</span>
@@ -3245,7 +3499,7 @@ function ModelManagement({ providers, onChange }: { providers: ModelProviderConf
             </section>
           </div>
 
-          <div className="provider-advanced">
+          <div className="provider-advanced" data-setting-search-key="请求协议">
             <div><strong>{t('请求协议')}</strong><small>{providerMeta.protocol}</small></div>
           </div>
 
@@ -3265,12 +3519,12 @@ function TranslatedSelect({ defaultValue, options }: { defaultValue: string; opt
 
 function SettingsGroup({ title, description, children }: { title: string; description: string; children: React.ReactNode }) {
   const { t } = useI18n();
-  return <section className="settings-group"><header><h2>{t(title)}</h2><p>{t(description)}</p></header>{children}</section>;
+  return <section className="settings-group" data-setting-search-key={title}><header><h2>{t(title)}</h2><p>{t(description)}</p></header>{children}</section>;
 }
 
 function SettingRow({ title, description, children }: { title: string; description: string; children: React.ReactNode }) {
   const { t } = useI18n();
-  return <div className="setting-row"><div><strong>{t(title)}</strong><span>{t(description)}</span></div>{children}</div>;
+  return <div className="setting-row" data-setting-search-key={title}><div><strong>{t(title)}</strong><span>{t(description)}</span></div>{children}</div>;
 }
 
 function Toggle({ checked = false, onChange, disabled = false, label, describedBy }: { checked?: boolean; onChange?: (checked: boolean) => void; disabled?: boolean; label?: string; describedBy?: string }) {

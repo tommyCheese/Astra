@@ -64,6 +64,7 @@ async def app_client(monkeypatch, tmp_path):
         client._astra_session = Session
         client._astra_settings = settings
         client._astra_runtime_service = app.state.runtime_profile_service
+        client._astra_autodream_service = app.state.autodream_service
         yield client
     await engine.dispose()
 
@@ -1014,6 +1015,43 @@ async def test_runtime_agent_profile_update_is_used_by_new_runs_and_can_reset(ap
     assert reset.status_code == 200
     assert reset.json()["source"] == "default"
     assert reset.json()["version"] == original["version"]
+
+
+async def test_runtime_memory_settings_update_controls_autodream(app_client, monkeypatch):
+    initial = (await app_client.get("/api/runtime")).json()["memory_settings"]
+    calls = []
+
+    async def startup():
+        calls.append("startup")
+
+    async def shutdown():
+        calls.append("shutdown")
+
+    monkeypatch.setattr(app_client._astra_autodream_service, "startup", startup)
+    monkeypatch.setattr(app_client._astra_autodream_service, "shutdown", shutdown)
+    enabled = {
+        **initial,
+        "cross_session_mode": "shadow",
+        "retrieval_max_items": 4,
+        "autodream_enabled": True,
+    }
+    response = await app_client.put("/api/runtime/memory-settings", json=enabled)
+    assert response.status_code == 200
+    assert response.json() == enabled
+    assert calls == ["startup"]
+    assert app_client._astra_settings.agent_memory_cross_session_shadow is True
+
+    disabled = {**enabled, "autodream_enabled": False}
+    response = await app_client.put("/api/runtime/memory-settings", json=disabled)
+    assert response.status_code == 200
+    assert calls == ["startup", "shutdown"]
+
+    invalid = await app_client.put(
+        "/api/runtime/memory-settings",
+        json={**disabled, "retrieval_min_confidence": 2},
+    )
+    assert invalid.status_code == 422
+    assert app_client._astra_runtime_service.memory_settings() == disabled
 
 
 async def test_tool_settings_can_be_read_and_updated(app_client):

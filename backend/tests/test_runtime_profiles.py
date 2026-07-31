@@ -90,6 +90,48 @@ def test_invalid_agent_profile_update_is_atomic(tmp_path):
     assert not profile_path.exists()
 
 
+def test_memory_settings_are_applied_and_survive_service_restart(tmp_path):
+    profile_path = tmp_path / "profile.json"
+    settings = Settings(runtime_profile_path=str(profile_path))
+    service = RuntimeProfileService(settings)
+    defaults = service.read()["memory_settings"]
+    assert defaults["cross_session_mode"] == "off"
+    assert defaults["write_enabled"] is True
+
+    updated = {
+        **defaults,
+        "cross_session_mode": "shadow",
+        "retrieval_max_items": 5,
+        "retrieval_max_tokens": 1200,
+        "retrieval_min_confidence": 0.4,
+        "retrieval_min_score": 0.2,
+        "autodream_enabled": True,
+        "autodream_scan_seconds": 900,
+        "autodream_min_candidates": 4,
+    }
+    assert service.update_memory_settings(updated) == updated
+    assert settings.agent_memory_cross_session_shadow is True
+    assert settings.agent_memory_cross_session_enabled is False
+
+    restarted_settings = Settings(runtime_profile_path=str(profile_path))
+    restarted = RuntimeProfileService(restarted_settings)
+    assert restarted.memory_settings() == updated
+    assert restarted_settings.agent_memory_autodream_enabled is True
+
+
+def test_invalid_memory_settings_update_is_atomic(tmp_path):
+    profile_path = tmp_path / "profile.json"
+    settings = Settings(runtime_profile_path=str(profile_path))
+    service = RuntimeProfileService(settings)
+    initial = service.memory_settings()
+
+    with pytest.raises(ValueError, match="超出允许范围"):
+        service.update_memory_settings({**initial, "retrieval_min_score": 2.0})
+
+    assert service.memory_settings() == initial
+    assert not profile_path.exists()
+
+
 @pytest.mark.parametrize(
     "dependency",
     [
@@ -136,6 +178,7 @@ async def test_profile_write_is_atomic_and_finished_tasks_are_removed(tmp_path, 
     persisted = json.loads((tmp_path / "runtime" / "profile.json").read_text())
     assert persisted["dependencies"] == []
     assert "core_dependencies" not in persisted
+    assert "memory_settings" not in persisted
     assert not (tmp_path / "runtime" / "profile.json.tmp").exists()
 
 

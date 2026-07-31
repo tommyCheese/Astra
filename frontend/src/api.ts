@@ -160,6 +160,17 @@ export async function resolveModelContextCapabilities(
 export type RuntimeDependency = { name: string; version: string };
 export type AgentProfileDocuments = { identity: string; soul: string; memory: string; autodream: string };
 export type RuntimeAgentProfile = { source: 'default' | 'user'; version: string; documents: AgentProfileDocuments };
+export type MemoryRuntimeSettings = {
+  write_enabled: boolean;
+  cross_session_mode: 'off' | 'shadow' | 'on';
+  retrieval_max_items: number;
+  retrieval_max_tokens: number;
+  retrieval_min_confidence: number;
+  retrieval_min_score: number;
+  autodream_enabled: boolean;
+  autodream_scan_seconds: number;
+  autodream_min_candidates: number;
+};
 type RuntimeImage = { image: string; dependency_digest: string; dependencies: RuntimeDependency[]; activated_at: string | null };
 type RuntimeBuildStatus = 'queued' | 'building' | 'succeeded' | 'failed' | 'cancelled';
 type RuntimeBuild = {
@@ -177,6 +188,7 @@ export type RuntimeProfile = {
   dependency_digest: string;
   build: RuntimeBuild | null;
   agent_profile?: RuntimeAgentProfile;
+  memory_settings?: MemoryRuntimeSettings;
   images?: RuntimeImage[];
   image_policy?: { keep_recent: number; retention_days: number };
 };
@@ -439,6 +451,12 @@ export async function updateRuntimeAgentProfile(documents: AgentProfileDocuments
 
 export async function resetRuntimeAgentProfile(): Promise<RuntimeAgentProfile> {
   const response = await fetch('/api/runtime/agent-profile/reset', { method: 'POST' });
+  if (!response.ok) throw await responseError(response);
+  return response.json();
+}
+
+export async function updateRuntimeMemorySettings(settings: MemoryRuntimeSettings): Promise<MemoryRuntimeSettings> {
+  const response = await fetch('/api/runtime/memory-settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(settings) });
   if (!response.ok) throw await responseError(response);
   return response.json();
 }

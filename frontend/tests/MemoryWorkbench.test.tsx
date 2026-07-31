@@ -274,6 +274,17 @@ describe('MemoryWorkbench', () => {
     );
   });
 
+  it('uses progressive disclosure for the stored Memory view', async () => {
+    const client = clientFixture();
+    render(<I18nProvider><MemoryWorkbench client={client} visibleTabs={['memories']} showHeader={false} memoryDetailMode="basic" /></I18nProvider>);
+
+    expect(await screen.findByLabelText('记忆详情')).toBeInTheDocument();
+    expect(screen.getByText('turn-1')).toBeInTheDocument();
+    expect(screen.queryByText('召回审计')).not.toBeInTheDocument();
+    expect(screen.queryByText('生命周期审计')).not.toBeInTheDocument();
+    expect(screen.queryByText('结构化数据与溯源元数据')).not.toBeInTheDocument();
+  });
+
   it('revokes with the visible state version and keeps the audit history', async () => {
     const client = clientFixture();
     renderWorkbench(client);
@@ -301,7 +312,7 @@ describe('MemoryWorkbench', () => {
   it('reviews a published consolidation generation and performs audited rollback', async () => {
     const client = clientFixture();
     const view = renderWorkbench(client);
-    fireEvent.click(screen.getByRole('tab', { name: 'AutoDream' }));
+    fireEvent.click(screen.getByRole('tab', { name: '整理与合并' }));
 
     expect(await screen.findByLabelText('AutoDream 作业详情')).toBeInTheDocument();
     expect(screen.getByText('preference.editor.theme')).toBeInTheDocument();
@@ -331,7 +342,7 @@ describe('MemoryWorkbench', () => {
   it('renders evolution evidence safely and keeps production promotion visibly disabled', async () => {
     const client = clientFixture();
     const view = renderWorkbench(client);
-    fireEvent.click(screen.getByRole('tab', { name: '自进化候选' }));
+    fireEvent.click(screen.getByRole('tab', { name: 'Agent 改进' }));
 
     expect(await screen.findByLabelText('自进化候选详情')).toBeInTheDocument();
     expect(screen.getByTestId('candidate-safe-content')).toHaveTextContent(
