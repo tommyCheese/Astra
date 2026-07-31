@@ -3671,15 +3671,12 @@ function ModelMenu({ selectedModelKey, onModelChange, modelOptions, thinkingCapa
   const limitRange = effort === 'deep' ? null : TOOL_CALL_LIMITS[effort];
   const thinkingDepthOptions = thinkingCapability?.depths.map((item) => thinkingDepthLabel(item.id)) ?? [];
   return <div className="floating-menu model-menu">
-    <div className="model-menu-title"><div><strong>{t('选择模型')}</strong><small>{t('思考深度随模型单独保存')}</small></div></div>
+    <div className="model-menu-title"><strong>{t('选择模型')}</strong></div>
     {groups.length ? groups.map((group) => <div className="model-provider-group" key={group.key}>
       <div className="model-provider-heading"><span className={`provider-mark provider-${group.runtimeDefault ? 'runtime' : group.providerId}`}>{group.runtimeDefault ? 'A' : modelProviders.find((provider) => provider.id === group.providerId)?.mark}</span><span>{group.providerName}</span></div>
       {group.models.map((item) => <div className={`model-choice-row ${selectedModelKey === item.key ? 'selected' : ''}`} key={item.key}>
         <button className="model-option" type="button" onClick={() => onModelChange(item.key)}>
-          <div><strong>{item.model}</strong><small>{group.providerName}</small></div>
-          {selectedModelKey === item.key && <span className="model-row-thinking-summary">
-            {thinkingLoading ? t('读取中') : thinkingSelection?.enabled ? `${t('思考')} · ${t(thinkingDepthLabel(thinkingSelection.depth))}` : t('思考关闭')}
-          </span>}
+          <strong>{item.model}</strong>
           <span className="model-selected-mark">{selectedModelKey === item.key ? '✓' : ''}</span>
         </button>
         {selectedModelKey === item.key && <section className="model-row-thinking-controls" aria-label={t('模型思考')}>
@@ -3687,7 +3684,7 @@ function ModelMenu({ selectedModelKey, onModelChange, modelOptions, thinkingCapa
             : thinkingFailed ? <div className="model-thinking-status unavailable" role="status"><span>{t('暂时无法读取模型思考能力，当前设置不可调整。')}</span><button type="button" onClick={onThinkingRetry}>{t('重试')}</button></div>
               : !thinkingCapability?.supported || !thinkingSelection ? <p className="model-thinking-status unavailable">{t('当前模型不支持可配置的思考参数。')}</p>
                 : <>
-                  <div className="model-row-thinking-head"><span>{t('扩展思考')}</span><Toggle checked={thinkingSelection.enabled} disabled={thinkingCapability.toggle === 'always_on'} onChange={onThinkingEnabledChange} label={t('模型思考')} /></div>
+                  <div className="model-row-thinking-head"><span>{t('模型思考')}</span><Toggle checked={thinkingSelection.enabled} disabled={thinkingCapability.toggle === 'always_on'} onChange={onThinkingEnabledChange} label={t('模型思考')} /></div>
                   {thinkingSelection.enabled && thinkingDepthOptions.length > 0 && <MenuChoice
                     label="模型思考深度"
                     value={thinkingDepthLabel(thinkingSelection.depth)}
@@ -3701,8 +3698,8 @@ function ModelMenu({ selectedModelKey, onModelChange, modelOptions, thinkingCapa
         </section>}
       </div>)}
     </div>) : <div className="model-menu-empty">{t('请先在模型管理中启用供应商并配置模型')}</div>}
-    <div className="menu-divider" />
-    {trusted ? <>
+    {trusted && <>
+      <div className="menu-divider" />
       <div className="menu-heading">{t('可信对话策略')}</div>
       <section className="trusted-strategy-section" aria-label={t('计划执行')}>
         <div className="menu-toggle plan-execution-menu-row"><div><strong>{t('计划生成后直接执行')}</strong><small>{t(planExecution === 'auto' ? '完整计划生成后立即开始执行。' : '先展示完整计划，由你确认这个版本后开始执行。')}</small></div><Toggle checked={planExecution === 'auto'} onChange={onPlanExecutionChange} label={t('计划生成后直接执行')} /></div>
@@ -3722,7 +3719,7 @@ function ModelMenu({ selectedModelKey, onModelChange, modelOptions, thinkingCapa
           <b aria-hidden="true">›</b>
         </button>
       </div>
-    </> : <div className="standard-mode-note"><Icon name="requestApprove" /><div><strong>{t('快速响应')}</strong><small>{t('开启可信执行后会先生成完整计划并进行结果校验。')}</small></div></div>}
+    </>}
   </div>;
 }
 

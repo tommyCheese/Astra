@@ -2000,7 +2000,8 @@ describe('App', () => {
     expect(trustedSwitch).toHaveAttribute('aria-checked', 'false');
     expect(trustedSwitch).toHaveTextContent('快速响应');
     await userEvent.click(await screen.findByRole('button', { name: '当前模型：gpt-5' }));
-    expect(screen.getByText('开启可信执行后会先生成完整计划并进行结果校验。')).toBeInTheDocument();
+    expect(screen.queryByText('开启可信执行后会先生成完整计划并进行结果校验。')).not.toBeInTheDocument();
+    expect(screen.getByRole('switch', { name: '模型思考' })).toBeInTheDocument();
 
     await userEvent.click(trustedSwitch);
     expect(trustedSwitch).toHaveAttribute('aria-checked', 'true');

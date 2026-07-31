@@ -2194,8 +2194,8 @@ html[data-theme="dark"] .plan-confirmation-card {
 }
 
 .model-menu {
-  max-height: min(620px, calc(100vh - 120px));
-  min-width: 390px;
+  max-height: min(560px, calc(100vh - 120px));
+  min-width: 350px;
   overflow-y: auto;
   right: 0;
 }
@@ -2417,16 +2417,10 @@ html[data-theme="dark"] .plan-confirmation-card {
 
 .model-menu-title {
   align-items: center;
-  border-bottom: 1px solid #e8ecf0;
   display: flex;
   justify-content: space-between;
-  margin: 0 4px 5px;
-  padding: 7px 6px 11px;
-}
-
-.model-menu-title > div {
-  display: grid;
-  gap: 2px;
+  margin: 0 4px 3px;
+  padding: 6px 7px 7px;
 }
 
 .model-menu-title strong {
@@ -2434,34 +2428,30 @@ html[data-theme="dark"] .plan-confirmation-card {
   font-size: 14px;
 }
 
-.model-menu-title small {
-  color: #7a8795;
-  font-size: 9px;
-}
-
 .model-choice-row {
   border: 1px solid transparent;
-  border-radius: 10px;
-  margin: 2px 4px;
+  border-radius: 9px;
+  margin: 1px 4px;
   overflow: hidden;
 }
 
 .model-choice-row.selected {
-  background: rgba(47, 143, 115, .055);
-  border-color: rgba(47, 143, 115, .16);
+  background: rgba(47, 143, 115, .035);
+  border-color: rgba(47, 143, 115, .13);
 }
 
 .model-choice-row .model-option {
   border-radius: 0;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto 18px;
+  grid-template-columns: minmax(0, 1fr) 18px;
   margin: 0;
+  min-height: 38px;
+  padding-block: 7px;
 }
 
-.model-row-thinking-summary {
-  color: #427665;
-  font-size: 9px;
-  font-weight: 700;
+.model-choice-row .model-option > strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
@@ -2473,7 +2463,7 @@ html[data-theme="dark"] .plan-confirmation-card {
 
 .model-row-thinking-controls {
   border-top: 1px solid rgba(47, 143, 115, .12);
-  padding: 8px 10px 10px;
+  padding: 7px 10px 9px;
 }
 
 .model-row-thinking-head {
@@ -2483,7 +2473,7 @@ html[data-theme="dark"] .plan-confirmation-card {
   font-size: 10px;
   font-weight: 700;
   justify-content: space-between;
-  margin-bottom: 8px;
+  margin-bottom: 6px;
 }
 
 .model-row-thinking-controls .menu-choice {
@@ -2503,8 +2493,8 @@ html[data-theme="dark"] .plan-confirmation-card {
 
 .model-provider-group + .model-provider-group {
   border-top: 1px solid #e7ebf0;
-  margin-top: 4px;
-  padding-top: 4px;
+  margin-top: 3px;
+  padding-top: 3px;
 }
 
 .model-provider-heading {
@@ -2514,14 +2504,14 @@ html[data-theme="dark"] .plan-confirmation-card {
   font-size: 10px;
   font-weight: 700;
   gap: 7px;
-  padding: 5px 10px 3px;
+  padding: 4px 10px 2px;
 }
 
 .model-provider-heading .provider-mark {
   border-radius: 5px;
   font-size: 8px;
-  height: 20px;
-  width: 20px;
+  height: 18px;
+  width: 18px;
 }
 
 .model-menu-empty {
