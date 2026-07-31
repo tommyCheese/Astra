@@ -1539,7 +1539,7 @@ describe('App', () => {
     expect(screen.getByRole('tab', { name: '记忆设置' })).toBeInTheDocument();
     expect(screen.getByRole('tab', { name: '已保存的记忆' })).toBeInTheDocument();
     expect(screen.getByRole('tab', { name: '整理与合并' })).toBeInTheDocument();
-    expect(screen.getByRole('tab', { name: '活动与审计' })).toBeInTheDocument();
+    expect(screen.queryByRole('tab', { name: '活动与审计' })).not.toBeInTheDocument();
     expect(screen.queryByText('自动应用改进：关闭')).not.toBeInTheDocument();
 
     await userEvent.click(screen.getByRole('button', { name: '实验功能' }));
@@ -1565,6 +1565,25 @@ describe('App', () => {
     expect(await screen.findByRole('status')).toHaveTextContent('最低相关度无效');
     expect(screen.getByLabelText('最低相关度')).toHaveValue(0.3);
     expect(screen.getByRole('button', { name: '保存记忆设置' })).toBeEnabled();
+  });
+
+  it('exits loading and can retry when an older backend omits Memory settings', async () => {
+    vi.mocked(getRuntimeProfile).mockResolvedValueOnce({
+      dependencies: [],
+      core_dependencies: [],
+      active_image: 'astra-data-viz:0.1.0',
+      dependency_digest: 'base',
+      build: null,
+    });
+    render(<App />);
+    await userEvent.click(screen.getByRole('button', { name: /设置/ }));
+    await userEvent.click(screen.getByRole('button', { name: '记忆' }));
+
+    expect(await screen.findByRole('status')).toHaveTextContent('当前后端尚未提供记忆设置，请重启 Astra 后重试。');
+    expect(screen.queryByText('正在读取记忆设置…')).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: '重试' }));
+    expect(await screen.findByLabelText('跨任务召回')).toBeInTheDocument();
   });
 
   it('shows live runtime build progress and supports cancellation', async () => {

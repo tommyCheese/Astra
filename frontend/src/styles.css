@@ -353,7 +353,7 @@ p {
   border-radius: 12px;
   display: grid;
   gap: 4px;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   margin-top: 18px;
   padding: 4px;
 }
@@ -402,7 +402,7 @@ p {
   .runtime-agent-profile-heading > div:last-child { align-items: start; justify-items: start; }
   .runtime-agent-profile-actions > div { display: grid; grid-template-columns: 1fr 1fr; }
   .runtime-agent-profile-editors textarea { min-height: 220px; }
-  .memory-center-tabs { grid-template-columns: 1fr 1fr; }
+  .memory-center-tabs { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .memory-runtime-settings .setting-row { align-items: flex-start; gap: 10px; }
   .memory-settings-actions { align-items: stretch; flex-direction: column; gap: 8px; }
 }
@@ -8209,6 +8209,40 @@ html[data-theme="dark"] .trusted-plan-node.status-blocked {
   padding-top: 10px;
 }
 
+.memory-audit-details {
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--app-line);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--app-sidebar) 42%, var(--app-canvas));
+}
+
+.memory-audit-details > summary {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 10px 11px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.memory-audit-details > summary::-webkit-details-marker { display: none; }
+.memory-audit-details > summary::after {
+  content: '›';
+  margin-left: auto;
+  color: var(--app-muted);
+  font-size: 16px;
+  transition: transform 160ms ease;
+}
+.memory-audit-details[open] > summary::after { transform: rotate(90deg); }
+.memory-audit-details > summary span { font-size: 10px; font-weight: 750; }
+.memory-audit-details > summary small { color: var(--app-muted); font-size: 8px; }
+.memory-audit-details-content {
+  display: grid;
+  gap: 15px;
+  padding: 2px 11px 11px;
+}
+
 .memory-json-details summary {
   color: var(--app-muted);
   font-size: 9px;
@@ -9742,6 +9776,24 @@ html[data-theme="dark"] .command-result-notice {
 html[data-theme="dark"] .toggle span {
   background: #f6f8f7;
   box-shadow: 0 1px 4px rgba(0, 0, 0, .5), 0 0 0 .5px rgba(0, 0, 0, .26);
+}
+
+/* Settings fields use a neutral focus treatment. Keep this after the shared
+   accent focus rules so nested provider, runtime, and memory controls cannot
+   reintroduce a green outline or glow. */
+.settings-page :is(input, textarea, select):focus,
+.settings-page :is(input, textarea, select):focus-visible {
+  border-color: color-mix(in srgb, var(--app-text) 24%, var(--app-line)) !important;
+  box-shadow: none !important;
+  outline: none !important;
+  outline-offset: 0 !important;
+}
+
+.settings-page .settings-search > label:focus-within,
+.settings-page .provider-search:focus-within {
+  background: var(--app-elevated);
+  border-color: color-mix(in srgb, var(--app-text) 24%, var(--app-line));
+  box-shadow: none;
 }
 
 @media (hover: hover) {

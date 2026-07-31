@@ -15,3 +15,9 @@
 - [x] 3.1 Add responsive styles and Chinese/English copy that explain instruction versus enforced-setting boundaries
 - [x] 3.2 Add frontend API and interaction tests for navigation, Memory settings persistence, view separation, and failed-save preservation
 - [x] 3.3 Update documentation and run backend/frontend tests, type-check, i18n, lint, and OpenSpec validation
+
+## 4. Merge stored Memory and audit views
+
+- [x] 4.1 Replace the duplicate activity-and-audit top-level tab with collapsible audit details inside stored Memory
+- [x] 4.2 Remove obsolete view-mode plumbing and update navigation, progressive-disclosure, and single-fetch tests
+- [x] 4.3 Update documentation and run frontend build, tests, i18n, and strict OpenSpec validation

@@ -9,15 +9,20 @@ The settings UI SHALL provide an Agent category for Profile documents and SHALL 
 - **THEN** the UI states that the document does not enable Memory or bypass runtime controls
 
 ### Requirement: Memory settings follow user tasks and progressive disclosure
-The Memory category SHALL separate runtime controls, stored Memory management, AutoDream maintenance, and detailed activity audit. The default stored-Memory view SHALL prioritize content, scope, lifecycle, source summary, and revocation while technical recall scores, state versions, history, and raw metadata remain available in the audit view.
+The Memory category SHALL separate runtime controls, stored Memory management, and AutoDream maintenance. Stored Memory and its audit trail SHALL share one list and detail context. The default detail SHALL prioritize content, scope, lifecycle, source summary, and revocation while technical recall scores, state versions, history, and raw metadata remain available through collapsed audit sections.
 
 #### Scenario: User checks what Astra remembers
 - **WHEN** a user opens the stored Memory view
 - **THEN** the user can inspect content, type, scope, status, sources, and revoke an eligible record without first interpreting raw audit JSON
 
 #### Scenario: Operator diagnoses a recall
-- **WHEN** an operator opens the activity and audit view
+- **WHEN** an operator expands audit details for a stored Memory
 - **THEN** the UI exposes recall selection, exclusion reasons, score components, lifecycle events, versions, and provenance metadata
+
+#### Scenario: User navigates Memory management
+- **WHEN** a user opens the Memory category
+- **THEN** stored Memory and audit are not presented as duplicate top-level views
+- **THEN** expanding audit information does not fetch or render a second Memory list
 
 ### Requirement: AutoDream is presented as Memory maintenance
 The settings UI SHALL present AutoDream as “整理与合并”, explain that it processes stored Memory within a namespace, and keep publication and rollback actions scoped to consolidation generations.
@@ -36,4 +41,3 @@ The settings UI SHALL place evolution candidates under an Experimental Agent Imp
 #### Scenario: User opens Agent Improvement
 - **WHEN** a user views an evolution candidate
 - **THEN** the UI explains that production application is disabled and the candidate is non-executable
-

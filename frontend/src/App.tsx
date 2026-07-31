@@ -2835,7 +2835,7 @@ function ToolSettings() {
   </SettingsGroup>;
 }
 
-type MemoryCenterTab = 'settings' | 'stored' | 'maintenance' | 'audit';
+type MemoryCenterTab = 'settings' | 'stored' | 'maintenance';
 
 function MemoryCenter() {
   const { t } = useI18n();
@@ -2844,7 +2844,6 @@ function MemoryCenter() {
     ['settings', '记忆设置'],
     ['stored', '已保存的记忆'],
     ['maintenance', '整理与合并'],
-    ['audit', '活动与审计'],
   ];
   return <SettingsGroup title="记忆" description="控制 Astra 如何保存和使用记忆，并管理已保存内容、整理作业与审计记录。">
     <div className="memory-center-tabs" role="tablist" aria-label={t('记忆管理视图')}>
@@ -2861,9 +2860,8 @@ function MemoryCenter() {
     </div>
     <div className="memory-center-content">
       {tab === 'settings' && <MemoryRuntimeSettings />}
-      {tab === 'stored' && <Suspense fallback={<div className="memory-empty">{t('正在读取记忆…')}</div>}><MemoryWorkbench visibleTabs={['memories']} initialTab="memories" showHeader={false} memoryDetailMode="basic" /></Suspense>}
+      {tab === 'stored' && <Suspense fallback={<div className="memory-empty">{t('正在读取记忆…')}</div>}><MemoryWorkbench visibleTabs={['memories']} initialTab="memories" showHeader={false} /></Suspense>}
       {tab === 'maintenance' && <><p className="memory-center-explainer">{t('AutoDream 在同一命名空间内提出去重、合并和冲突处理建议；提案只有通过校验并发布后才会改变生效记忆。')}</p><Suspense fallback={<div className="memory-empty">{t('正在读取 AutoDream 作业…')}</div>}><MemoryWorkbench visibleTabs={['consolidation']} initialTab="consolidation" showHeader={false} /></Suspense></>}
-      {tab === 'audit' && <><p className="memory-center-explainer">{t('高级视图展示来源、召回评分、排除原因、版本、生命周期和原始溯源元数据。')}</p><Suspense fallback={<div className="memory-empty">{t('正在读取记忆…')}</div>}><MemoryWorkbench visibleTabs={['memories']} initialTab="memories" showHeader={false} memoryDetailMode="audit" /></Suspense></>}
     </div>
   </SettingsGroup>;
 }
@@ -2871,6 +2869,7 @@ function MemoryCenter() {
 function MemoryRuntimeSettings() {
   const { t } = useI18n();
   const [settings, setSettings] = useState<MemoryRuntimeSettings | null>(null);
+  const [reloadVersion, setReloadVersion] = useState(0);
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState('');
@@ -2878,14 +2877,21 @@ function MemoryRuntimeSettings() {
   useEffect(() => {
     const controller = new AbortController();
     void getRuntimeProfile(controller.signal).then((profile) => {
-      if (profile.memory_settings) setSettings(profile.memory_settings);
+      if (profile.memory_settings) {
+        setSettings(profile.memory_settings);
+        setFailed(false);
+        setMessage('');
+        return;
+      }
+      setFailed(true);
+      setMessage('当前后端尚未提供记忆设置，请重启 Astra 后重试。');
     }).catch((error) => {
       if (error instanceof DOMException && error.name === 'AbortError') return;
       setFailed(true);
       setMessage('无法读取记忆设置');
     });
     return () => controller.abort();
-  }, []);
+  }, [reloadVersion]);
   function change<K extends keyof MemoryRuntimeSettings>(key: K, value: MemoryRuntimeSettings[K]) {
     setSettings((current) => current ? { ...current, [key]: value } : current);
     setDirty(true);
@@ -2909,7 +2915,14 @@ function MemoryRuntimeSettings() {
       setSaving(false);
     }
   }
-  if (!settings) return <div className="memory-empty">{t(message || '正在读取记忆设置…')}</div>;
+  if (!settings) return <div className="memory-empty" role={failed ? 'status' : undefined}>
+    <span>{t(message || '正在读取记忆设置…')}</span>
+    {failed && <button type="button" className="secondary-button" onClick={() => {
+      setFailed(false);
+      setMessage('');
+      setReloadVersion((value) => value + 1);
+    }}>{t('重试')}</button>}
+  </div>;
   return <div className="memory-runtime-settings" data-setting-search-key="记忆设置">
     <SettingRow title="保存新记忆" description="允许 Agent 在任务结束后提取并保存有来源的记忆候选"><Toggle checked={settings.write_enabled} disabled={saving} label={t('保存新记忆')} onChange={(value) => change('write_enabled', value)} /></SettingRow>
     <SettingRow title="跨任务召回" description="控制其他任务中的记忆是否参与当前任务">

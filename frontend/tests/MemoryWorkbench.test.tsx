@@ -276,13 +276,20 @@ describe('MemoryWorkbench', () => {
 
   it('uses progressive disclosure for the stored Memory view', async () => {
     const client = clientFixture();
-    render(<I18nProvider><MemoryWorkbench client={client} visibleTabs={['memories']} showHeader={false} memoryDetailMode="basic" /></I18nProvider>);
+    render(<I18nProvider><MemoryWorkbench client={client} visibleTabs={['memories']} showHeader={false} /></I18nProvider>);
 
     expect(await screen.findByLabelText('记忆详情')).toBeInTheDocument();
     expect(screen.getByText('turn-1')).toBeInTheDocument();
-    expect(screen.queryByText('召回审计')).not.toBeInTheDocument();
-    expect(screen.queryByText('生命周期审计')).not.toBeInTheDocument();
-    expect(screen.queryByText('结构化数据与溯源元数据')).not.toBeInTheDocument();
+    const auditDetails = screen.getByTestId('memory-audit-details');
+    expect(auditDetails).not.toHaveAttribute('open');
+    expect(client.listMemories).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(screen.getByText('审计详情'));
+    expect(auditDetails).toHaveAttribute('open');
+    expect(screen.getByText('召回审计')).toBeInTheDocument();
+    expect(screen.getByText('生命周期审计')).toBeInTheDocument();
+    expect(screen.getByText('结构化数据与溯源元数据')).toBeInTheDocument();
+    expect(client.listMemories).toHaveBeenCalledTimes(1);
   });
 
   it('revokes with the visible state version and keeps the audit history', async () => {

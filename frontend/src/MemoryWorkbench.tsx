@@ -30,7 +30,6 @@ import type {
 import { useI18n } from './i18n';
 
 type WorkbenchTab = 'memories' | 'consolidation' | 'evolution';
-type MemoryDetailMode = 'basic' | 'audit';
 type ConfirmAction =
   | { kind: 'revoke'; target: MemoryDetail }
   | { kind: 'publish'; target: ConsolidationJob }
@@ -183,13 +182,11 @@ export function MemoryWorkbench({
   visibleTabs = ['memories', 'consolidation', 'evolution'],
   initialTab,
   showHeader = true,
-  memoryDetailMode = 'audit',
 }: {
   client?: DeepMemoryClient;
   visibleTabs?: WorkbenchTab[];
   initialTab?: WorkbenchTab;
   showHeader?: boolean;
-  memoryDetailMode?: MemoryDetailMode;
 }) {
   const { language, t } = useI18n();
   const [tab, setTab] = useState<WorkbenchTab>(initialTab ?? visibleTabs[0] ?? 'memories');
@@ -431,7 +428,6 @@ export function MemoryWorkbench({
         {selectedMemory ? <MemoryInspector
           memory={selectedMemory}
           language={language}
-          detailMode={memoryDetailMode}
           onRevoke={() => openAction({ kind: 'revoke', target: selectedMemory })}
         /> : <div className="memory-empty">{t('选择一条记忆查看审计详情')}</div>}
       </div>
@@ -499,10 +495,9 @@ export function MemoryWorkbench({
   </section>;
 }
 
-function MemoryInspector({ memory, language, detailMode, onRevoke }: {
+function MemoryInspector({ memory, language, onRevoke }: {
   memory: MemoryDetail;
   language: string;
-  detailMode: MemoryDetailMode;
   onRevoke: () => void;
 }) {
   const { t } = useI18n();
@@ -519,14 +514,6 @@ function MemoryInspector({ memory, language, detailMode, onRevoke }: {
       <div><dt>{t('置信度')}</dt><dd>{memory.confidence.toFixed(3)}</dd></div>
       <div><dt>{t('观察时间')}</dt><dd>{safeDate(memory.observed_at, language)}</dd></div>
       <div><dt>{t('到期时间')}</dt><dd>{safeDate(memory.expires_at, language)}</dd></div>
-      {detailMode === 'audit' && <>
-        <div><dt>{t('稳定键')}</dt><dd>{memory.memory_key || '—'}</dd></div>
-        <div><dt>{t('版本')}</dt><dd>v{memory.version} · state {memory.state_version}</dd></div>
-        <div><dt>{t('重要性')}</dt><dd>{memory.importance.toFixed(3)}</dd></div>
-        <div><dt>{t('效用')}</dt><dd>{memory.utility_score.toFixed(3)}</dd></div>
-        <div><dt>{t('有效时间')}</dt><dd>{safeDate(memory.valid_from, language)} → {safeDate(memory.valid_to, language)}</dd></div>
-        <div><dt>{t('替代关系')}</dt><dd>{memory.supersedes_id ? `← ${memory.supersedes_id}` : '—'}</dd></div>
-      </>}
     </dl>
 
     <InspectorSection title={t('来源证据')} count={memory.sources.length}>
@@ -539,38 +526,52 @@ function MemoryInspector({ memory, language, detailMode, onRevoke }: {
       </div> : <p className="memory-section-empty">{t('详情响应未包含来源记录')}</p>}
     </InspectorSection>
 
-    {detailMode === 'audit' && <><InspectorSection title={t('召回审计')} count={memory.recall_events.length}>
-      {memory.recall_events.length ? memory.recall_events.map((event) => <div className="memory-recall-card" key={event.event_id}>
-        <header>
-          <div><strong>{event.shadow ? t('影子召回') : event.selected ? t('已注入上下文') : t('未选中')}</strong><small>{safeDate(event.created_at, language)}</small></div>
-          <code>{shortId(event.query_fingerprint)}</code>
-        </header>
-        <ScoreBreakdown scores={event.scores} />
-        {event.exclusion_reason && <p>{t('排除原因')}：{event.exclusion_reason}</p>}
-      </div>) : <p className="memory-section-empty">{t('尚无召回评分')}</p>}
-    </InspectorSection>
+    <details className="memory-audit-details" data-testid="memory-audit-details">
+      <summary><span>{t('审计详情')}</span><small>{t('召回记录、生命周期、历史版本与原始元数据')}</small></summary>
+      <div className="memory-audit-details-content">
+        <dl className="memory-metadata">
+          <div><dt>{t('稳定键')}</dt><dd>{memory.memory_key || '—'}</dd></div>
+          <div><dt>{t('版本')}</dt><dd>v{memory.version} · state {memory.state_version}</dd></div>
+          <div><dt>{t('重要性')}</dt><dd>{memory.importance.toFixed(3)}</dd></div>
+          <div><dt>{t('效用')}</dt><dd>{memory.utility_score.toFixed(3)}</dd></div>
+          <div><dt>{t('有效时间')}</dt><dd>{safeDate(memory.valid_from, language)} → {safeDate(memory.valid_to, language)}</dd></div>
+          <div><dt>{t('替代关系')}</dt><dd>{memory.supersedes_id ? `← ${memory.supersedes_id}` : '—'}</dd></div>
+        </dl>
 
-    <InspectorSection title={t('生命周期审计')} count={memory.audit_events.length}>
-      {memory.audit_events.length ? <ol className="memory-audit-list">
-        {memory.audit_events.map((event) => <li key={event.id}>
-          <span>{event.event_type}</span>
-          <strong>{event.reason || t('未提供原因')}</strong>
-          <time>{safeDate(event.created_at, language)}</time>
-        </li>)}
-      </ol> : <p className="memory-section-empty">{t('尚无生命周期事件')}</p>}
-    </InspectorSection>
+        <InspectorSection title={t('召回审计')} count={memory.recall_events.length}>
+          {memory.recall_events.length ? memory.recall_events.map((event) => <div className="memory-recall-card" key={event.event_id}>
+            <header>
+              <div><strong>{event.shadow ? t('影子召回') : event.selected ? t('已注入上下文') : t('未选中')}</strong><small>{safeDate(event.created_at, language)}</small></div>
+              <code>{shortId(event.query_fingerprint)}</code>
+            </header>
+            <ScoreBreakdown scores={event.scores} />
+            {event.exclusion_reason && <p>{t('排除原因')}：{event.exclusion_reason}</p>}
+          </div>) : <p className="memory-section-empty">{t('尚无召回评分')}</p>}
+        </InspectorSection>
 
-    <InspectorSection title={t('历史版本')} count={memory.history.length}>
-      {memory.history.length ? <div className="memory-version-list">
-        {memory.history.map((version) => <div key={version.id}><StatusBadge status={version.status} /><strong>v{version.version}</strong><span>{version.content}</span></div>)}
-      </div> : <p className="memory-section-empty">{t('当前记录没有更早版本')}</p>}
-    </InspectorSection>
+        <InspectorSection title={t('生命周期审计')} count={memory.audit_events.length}>
+          {memory.audit_events.length ? <ol className="memory-audit-list">
+            {memory.audit_events.map((event) => <li key={event.id}>
+              <span>{event.event_type}</span>
+              <strong>{event.reason || t('未提供原因')}</strong>
+              <time>{safeDate(event.created_at, language)}</time>
+            </li>)}
+          </ol> : <p className="memory-section-empty">{t('尚无生命周期事件')}</p>}
+        </InspectorSection>
 
-    <details className="memory-json-details">
-      <summary>{t('结构化数据与溯源元数据')}</summary>
-      <div><strong>structured_data</strong><pre>{boundedJson(memory.structured_data)}</pre></div>
-      <div><strong>provenance</strong><pre>{boundedJson(memory.provenance)}</pre></div>
-    </details></>}
+        <InspectorSection title={t('历史版本')} count={memory.history.length}>
+          {memory.history.length ? <div className="memory-version-list">
+            {memory.history.map((version) => <div key={version.id}><StatusBadge status={version.status} /><strong>v{version.version}</strong><span>{version.content}</span></div>)}
+          </div> : <p className="memory-section-empty">{t('当前记录没有更早版本')}</p>}
+        </InspectorSection>
+
+        <details className="memory-json-details">
+          <summary>{t('结构化数据与溯源元数据')}</summary>
+          <div><strong>structured_data</strong><pre>{boundedJson(memory.structured_data)}</pre></div>
+          <div><strong>provenance</strong><pre>{boundedJson(memory.provenance)}</pre></div>
+        </details>
+      </div>
+    </details>
   </article>;
 }
 
