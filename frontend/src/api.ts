@@ -25,7 +25,7 @@ async function responseError(response: Response): Promise<AstraApiError> {
     const body = await response.json() as { error?: ApiErrorPayload };
     if (body.error?.code && body.error.type) return new AstraApiError(body.error);
   } catch { /* use safe fallback */ }
-  return new AstraApiError({ type: 'runtime.unclassified_response', code: 'UNCLASSIFIED_RESPONSE', message: '服务返回了未分类错误，暂时无法判断具体故障来源。请重启后端服务后重试。', retryable: response.status >= 500, trace_id: '未提供' });
+  return new AstraApiError({ type: 'runtime.unclassified_response', code: 'UNCLASSIFIED_RESPONSE', message: '服务暂时无法完成请求，请稍后重试。若问题持续，请重新启动 Astra。', retryable: response.status >= 500, trace_id: '未提供' });
 }
 
 export type ReasoningPolicyRequest = {
@@ -61,6 +61,11 @@ export type RunModelConfig = {
   api_key: string;
   base_url: string;
   thinking?: ModelThinkingSelection;
+};
+export type RuntimeDefaultModel = {
+  provider: string;
+  model: string;
+  configured: boolean;
 };
 export type ModelContextCapability = {
   provider: string;
@@ -114,6 +119,12 @@ export type SlashCommandResult = {
   context: ContextWindowStatus;
   details: Record<string, unknown>;
 };
+
+export async function getRuntimeDefaultModel(signal?: AbortSignal): Promise<RuntimeDefaultModel> {
+  const response = await fetchWithTimeout('/api/models/default', { signal });
+  if (!response.ok) throw await responseError(response);
+  return response.json() as Promise<RuntimeDefaultModel>;
+}
 
 export async function resolveModelThinkingCapabilities(
   models: Array<{ provider: string; model: string }>,

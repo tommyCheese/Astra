@@ -104,6 +104,14 @@ class ModelContextCapabilitiesResponse(BaseModel):
     capabilities: list[ModelContextCapability]
 
 
+class RuntimeDefaultModelResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    provider: str
+    model: str
+    configured: bool
+
+
 class ModelThinkingAdjustment(BaseModel):
     field: str
     requested: Any

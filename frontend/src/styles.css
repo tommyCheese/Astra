@@ -3331,6 +3331,7 @@ textarea {
 .provider-vllm,
 .provider-localai { background: #4e6478; font-size: 8px; }
 .provider-compatible { background: #5b6472; font-size: 15px; }
+.provider-runtime { background: linear-gradient(145deg, #27785f, #3f9d7d); }
 
 .provider-editor {
   background: rgba(255, 255, 255, 0.72);

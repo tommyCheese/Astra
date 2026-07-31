@@ -2,7 +2,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { App } from '../src/App';
-import { buildRuntime, cancelRun, cancelRuntimeBuild, confirmPlanExecution, createConversationShare, createRun, decideToolApproval, deleteConversation, executeConversationCommand, getConversation, getConversationContext, getConversationStrategy, getRun, getRuntimeProfile, listConversationShares, listConversations, listLibraryFiles, listRuns, listSkills, listSystemCommands, resolveModelContextCapabilities, resolveModelThinkingCapabilities, resumeRun, revisePlan, revokeConversationShare, streamRunEvents, takeCreatedRunStream, updateConversation, updateConversationStrategy, updateToolSettings, type ModelThinkingCapability, type RunStreamEvent, type SkillSummary } from '../src/api';
+import { buildRuntime, cancelRun, cancelRuntimeBuild, confirmPlanExecution, createConversationShare, createRun, decideToolApproval, deleteConversation, executeConversationCommand, getConversation, getConversationContext, getConversationStrategy, getRun, getRuntimeDefaultModel, getRuntimeProfile, listConversationShares, listConversations, listLibraryFiles, listRuns, listSkills, listSystemCommands, resolveModelContextCapabilities, resolveModelThinkingCapabilities, resumeRun, revisePlan, revokeConversationShare, streamRunEvents, takeCreatedRunStream, updateConversation, updateConversationStrategy, updateToolSettings, type ModelThinkingCapability, type RunStreamEvent, type SkillSummary } from '../src/api';
 
 vi.mock('../src/api', () => ({
   AstraApiError: class AstraApiError extends Error {
@@ -14,6 +14,7 @@ vi.mock('../src/api', () => ({
     }
   },
   getConversationStrategy: vi.fn(async () => ({ preferred_answer_mode: 'standard', reasoning_effort: 'balanced', max_tool_calls: 8, reflection_enabled: true, reflection_trigger: 'adaptive' })),
+  getRuntimeDefaultModel: vi.fn(async () => { throw new Error('runtime default unavailable in unit tests'); }),
   resolveModelThinkingCapabilities: vi.fn(async (models: Array<{ provider: string; model: string }>) => models.map((item) => ({
     ...item,
     supported: item.provider === 'openai',
@@ -40,7 +41,7 @@ vi.mock('../src/api', () => ({
   getToolSettings: vi.fn(async () => ({ tools: [
     { name: 'web_search', label: 'Web Search', description: '搜索公开网页并生成候选来源', enabled: true, available: true },
     { name: 'web_fetch', label: 'Web Fetch', description: '自适应提取页面主要内容', enabled: true, available: true },
-    { name: 'chart_render', label: 'Chart Render', description: '在隔离的 Docker 运行时中生成图表', enabled: true, available: false, unavailable_reason: '需要先启用 Docker 沙箱。' },
+    { name: 'chart_render', label: 'Chart Render', description: '生成图表', enabled: true, available: false, unavailable_reason: '需要先启用安全运行环境。' },
     { name: 'bash_execute', label: 'Bash Execute', description: '在隔离容器中执行命令', enabled: false, available: true },
   ] })),
   updateToolSettings: vi.fn(async (tools) => ({ tools })),
@@ -285,7 +286,17 @@ const helloSkill: SkillSummary = {
 describe('App', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    const values = new Map<string, string>();
+    const values = new Map<string, string>([[
+      'astra.model-providers.v1',
+      JSON.stringify([{
+        id: 'openai',
+        name: 'OpenAI',
+        enabled: true,
+        endpoint: 'https://api.openai.com/v1',
+        models: [{ id: 'gpt-5' }, { id: 'gpt-5-mini' }],
+        apiKey: 'unit-test-key',
+      }]),
+    ]]);
     Object.defineProperty(window, 'localStorage', {
       configurable: true,
       value: {
@@ -311,8 +322,7 @@ describe('App', () => {
   it('shows the standalone context capacity control before the first conversation exists', async () => {
     render(<App />);
 
-    const selector = screen.getByRole('button', { name: '当前模型：gpt-5' });
-    expect(selector).toHaveClass('without-context');
+    const selector = await screen.findByRole('button', { name: '当前模型：gpt-5' });
     expect(getConversationContext).not.toHaveBeenCalled();
 
     await waitFor(() => expect(selector).toHaveClass('has-context'));
@@ -329,7 +339,7 @@ describe('App', () => {
   it('reinitializes the standalone context capacity when switching models before the first message', async () => {
     render(<App />);
 
-    const initialSelector = screen.getByRole('button', { name: '当前模型：gpt-5' });
+    const initialSelector = await screen.findByRole('button', { name: '当前模型：gpt-5' });
     await waitFor(() => expect(initialSelector).toHaveClass('has-context'));
     await userEvent.click(initialSelector);
     await userEvent.click(screen.getByRole('button', { name: /gpt-5-mini/ }));
@@ -339,6 +349,36 @@ describe('App', () => {
     const contextControl = screen.getByRole('button', { name: '上下文：已使用 0，总计 400K，剩余 400K（估算）' });
     expect(contextControl.querySelector('.model-context-ring-value')).toHaveAttribute('stroke-dasharray', '0 100');
     expect(getConversationContext).not.toHaveBeenCalled();
+  });
+
+  it('keeps the runtime model separate from a configured provider with the same id', async () => {
+    vi.mocked(getRuntimeDefaultModel).mockResolvedValueOnce({ provider: 'openai', model: 'gpt-5', configured: true });
+    render(<App />);
+
+    await userEvent.click(await screen.findByRole('button', { name: '当前模型：gpt-5' }));
+    const headings = [...document.querySelectorAll('.model-provider-heading')].map((item) => item.textContent);
+    expect(headings).toEqual(expect.arrayContaining([
+      expect.stringContaining('Astra 当前运行模型'),
+      expect.stringContaining('OpenAI'),
+    ]));
+  });
+
+  it('shows a local configuration error before submitting when no runnable model exists', async () => {
+    window.localStorage.removeItem('astra.model-providers.v1');
+    vi.mocked(getRuntimeDefaultModel).mockResolvedValueOnce({
+      provider: 'openai',
+      model: 'gpt-5',
+      configured: false,
+    });
+    render(<App />);
+
+    expect(await screen.findByRole('button', { name: '当前模型：未配置模型' })).toBeInTheDocument();
+    await userEvent.type(screen.getByRole('textbox'), '不会提交');
+    await userEvent.click(screen.getByRole('button', { name: '发送' }));
+
+    expect(createRun).not.toHaveBeenCalled();
+    const dialog = screen.getByRole('alertdialog', { name: '大模型尚未配置' });
+    expect(dialog).toHaveTextContent('请先在模型管理中启用供应商并配置模型');
   });
 
   it('submits a goal and renders the result', async () => {
@@ -988,7 +1028,7 @@ describe('App', () => {
     render(<App />);
     await userEvent.click(screen.getByRole('switch', { name: '快速响应' }));
     await userEvent.type(screen.getByRole('textbox'), '分析复杂问题');
-    await userEvent.click(screen.getByRole('button', { name: '当前模型：gpt-5' }));
+    await userEvent.click(await screen.findByRole('button', { name: '当前模型：gpt-5' }));
     await userEvent.click(screen.getByRole('button', { name: '深入' }));
     expect(screen.queryByRole('slider', { name: '工具调用上限' })).not.toBeInTheDocument();
     expect(screen.getByText('不限')).toBeInTheDocument();
@@ -1018,7 +1058,7 @@ describe('App', () => {
     await waitFor(() => expect(screen.getByRole('button', { name: '当前模型：gpt-5' })).toHaveTextContent('快速策略 · 工具按需'));
     expect(screen.getByRole('switch', { name: '快速响应' })).toHaveAttribute('aria-checked', 'false');
     await userEvent.click(screen.getByRole('switch', { name: '快速响应' }));
-    await userEvent.click(screen.getByRole('button', { name: '当前模型：gpt-5' }));
+    await userEvent.click(await screen.findByRole('button', { name: '当前模型：gpt-5' }));
     expect(screen.getByRole('button', { name: '深入' })).toHaveClass('active');
     expect(screen.getByRole('button', { name: '每轮' })).toHaveClass('active');
 
@@ -1247,7 +1287,7 @@ describe('App', () => {
     expect(screen.getByRole('heading', { name: '工具' })).toBeInTheDocument();
     expect(screen.getByText('Web Fetch')).toBeInTheDocument();
     expect(screen.getByText('Chart Render')).toBeInTheDocument();
-    expect(screen.getByText('需要先启用 Docker 沙箱。')).toBeInTheDocument();
+    expect(screen.getByText('需要先启用安全运行环境。')).toBeInTheDocument();
     const searchSwitch = screen.getByRole('switch', { name: /Web Search/ });
     await userEvent.click(searchSwitch);
     await waitFor(() => expect(updateToolSettings).toHaveBeenCalled());
@@ -1256,6 +1296,7 @@ describe('App', () => {
   });
 
   it('manages model providers and keeps API credentials masked by default', async () => {
+    window.localStorage.removeItem('astra.model-providers.v1');
     render(<App />);
     await userEvent.click(screen.getByRole('button', { name: /设置/ }));
     await userEvent.click(screen.getByRole('button', { name: '模型管理' }));
@@ -1306,7 +1347,7 @@ describe('App', () => {
           { id: 'gpt-5', contextMode: 'manual', contextWindowTokens: 160000, maxOutputTokens: 64000 },
           'gpt-5-mini',
         ],
-        apiKey: '',
+        apiKey: 'unit-test-key',
       },
     ]));
     render(<App />);
@@ -1335,6 +1376,7 @@ describe('App', () => {
     await userEvent.click(screen.getByRole('button', { name: '发送' }));
     await screen.findByText('已完成查询');
     await userEvent.click(screen.getByRole('button', { name: /设置/ }));
+    await userEvent.clear(screen.getByPlaceholderText('sk-...'));
     await userEvent.type(screen.getByPlaceholderText('sk-...'), 'persisted-secret');
 
     cleanup();
@@ -1400,6 +1442,7 @@ describe('App', () => {
     await userEvent.click(screen.getByRole('button', { name: '模型管理' }));
     await userEvent.click(screen.getByRole('button', { name: /DeepSeek/ }));
     await userEvent.click(screen.getByRole('switch'));
+    await userEvent.type(screen.getByPlaceholderText('sk-...'), 'deepseek-test-key');
     await userEvent.click(screen.getByRole('button', { name: '关闭设置' }));
     await userEvent.click(screen.getByRole('button', { name: /当前模型/ }));
 
@@ -1413,8 +1456,8 @@ describe('App', () => {
     await userEvent.click(screen.getByRole('button', { name: /设置/ }));
     await userEvent.click(screen.getByRole('button', { name: '运行时' }));
 
-    expect(screen.getByRole('heading', { name: 'Docker 运行时' })).toBeInTheDocument();
-    expect(screen.getByText('Docker · 已就绪')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: '安全运行环境' })).toBeInTheDocument();
+    expect(screen.getByText('隔离环境 · 已就绪')).toBeInTheDocument();
     expect(screen.getByText('尚未添加自定义依赖')).toBeInTheDocument();
     expect(screen.getByText('numpy')).toBeInTheDocument();
     expect(screen.getByLabelText('numpy 已锁定')).toBeInTheDocument();
@@ -1572,7 +1615,7 @@ describe('App', () => {
     render(<App />);
 
     await userEvent.click(screen.getByRole('switch', { name: '快速响应' }));
-    await userEvent.click(screen.getByRole('button', { name: '当前模型：gpt-5' }));
+    await userEvent.click(await screen.findByRole('button', { name: '当前模型：gpt-5' }));
 
     expect(screen.queryByText('规划策略')).not.toBeInTheDocument();
     expect(screen.getByText('触发方式')).toBeInTheDocument();
@@ -1599,7 +1642,7 @@ describe('App', () => {
     expect(screen.queryByText('当前深度可能显著增加首字和总响应延迟，但不会启用可信模式。')).not.toBeInTheDocument();
 
     await userEvent.click(screen.getByRole('switch', { name: '快速响应' }));
-    await userEvent.click(screen.getByRole('button', { name: '当前模型：gpt-5' }));
+    await userEvent.click(await screen.findByRole('button', { name: '当前模型：gpt-5' }));
     expect(screen.getByRole('button', { name: '高' })).toHaveClass('active');
     expect(screen.queryByText('当前深度将用于本次运行的多次模型调用，可能增加耗时与用量。')).not.toBeInTheDocument();
     expect(document.querySelector('.model-thinking-impact')).not.toBeInTheDocument();
@@ -1729,7 +1772,7 @@ describe('App', () => {
     vi.mocked(resolveModelThinkingCapabilities).mockRejectedValueOnce(new Error('offline'));
     render(<App />);
 
-    await userEvent.click(screen.getByRole('button', { name: '当前模型：gpt-5' }));
+    await userEvent.click(await screen.findByRole('button', { name: '当前模型：gpt-5' }));
     expect(await screen.findByText('暂时无法读取模型思考能力，当前设置不可调整。')).toBeInTheDocument();
     expect(screen.queryByRole('switch', { name: '模型思考' })).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: '重试' }));
@@ -1751,7 +1794,7 @@ describe('App', () => {
     }]);
     render(<App />);
 
-    await userEvent.click(screen.getByRole('button', { name: '当前模型：gpt-5' }));
+    await userEvent.click(await screen.findByRole('button', { name: '当前模型：gpt-5' }));
     expect(await screen.findByText('当前模型不支持可配置的思考参数。')).toBeInTheDocument();
     expect(screen.queryByRole('switch', { name: '模型思考' })).not.toBeInTheDocument();
   });
@@ -1829,7 +1872,7 @@ describe('App', () => {
     }]);
     render(<App />);
 
-    await userEvent.click(screen.getByRole('button', { name: '当前模型：gpt-5' }));
+    await userEvent.click(await screen.findByRole('button', { name: '当前模型：gpt-5' }));
     await userEvent.click(await screen.findByRole('button', { name: '最高' }));
     expect(screen.getByRole('button', { name: '最高' })).toHaveAttribute('aria-pressed', 'true');
     expect(screen.getByRole('button', { name: '当前模型：gpt-5' })).toHaveAccessibleDescription(/模型思考 · 最高/);
@@ -1917,7 +1960,7 @@ describe('App', () => {
     const trustedSwitch = screen.getByRole('switch', { name: '快速响应' });
     expect(trustedSwitch).toHaveAttribute('aria-checked', 'false');
     expect(trustedSwitch).toHaveTextContent('快速响应');
-    await userEvent.click(screen.getByRole('button', { name: '当前模型：gpt-5' }));
+    await userEvent.click(await screen.findByRole('button', { name: '当前模型：gpt-5' }));
     expect(screen.getByText('开启可信执行后会先生成完整计划并进行结果校验。')).toBeInTheDocument();
 
     await userEvent.click(trustedSwitch);
@@ -2110,7 +2153,7 @@ describe('App', () => {
   it('keeps plan auto-execution out of the quick-mode model menu', async () => {
     render(<App />);
 
-    await userEvent.click(screen.getByRole('button', { name: '当前模型：gpt-5' }));
+    await userEvent.click(await screen.findByRole('button', { name: '当前模型：gpt-5' }));
     expect(screen.queryByRole('switch', { name: '计划生成后直接执行' })).not.toBeInTheDocument();
   });
 
@@ -2204,7 +2247,7 @@ describe('App', () => {
         planVersion: 7,
         stateVersion: 3,
       },
-      undefined,
+      expect.objectContaining({ provider: 'openai', name: 'gpt-5' }),
     );
     await waitFor(() => expect(screen.queryByText('计划已生成，等待执行确认')).not.toBeInTheDocument());
     vi.mocked(getRun).mockResolvedValue(completed);
@@ -2239,6 +2282,7 @@ describe('App', () => {
     await userEvent.type(screen.getByRole('textbox'), '第一轮图谱节点');
     await userEvent.click(screen.getByRole('button', { name: '发送' }));
     expect((await screen.findAllByText('第一轮图谱节点')).length).toBeGreaterThan(0);
+    await screen.findByRole('button', { name: '发送' });
 
     await userEvent.type(screen.getByRole('textbox'), '第二轮图谱节点');
     await userEvent.click(screen.getByRole('button', { name: '发送' }));
@@ -2315,7 +2359,7 @@ describe('App', () => {
         planVersion: 4,
         stateVersion: 4,
       },
-      undefined,
+      expect.objectContaining({ provider: 'openai', name: 'gpt-5' }),
     ));
     await waitFor(() => expect(screen.getByText('v5')).toBeInTheDocument());
     vi.mocked(getRun).mockResolvedValue(completed);
@@ -2400,7 +2444,13 @@ describe('App', () => {
     expect(screen.getByRole('textbox')).toBeDisabled();
     await userEvent.click(screen.getByRole('button', { name: '当前运行内允许' }));
 
-    expect(decideToolApproval).toHaveBeenCalledWith('run-1', 'approval-1', 'allow_similar', 'continue-1', undefined);
+    expect(decideToolApproval).toHaveBeenCalledWith(
+      'run-1',
+      'approval-1',
+      'allow_similar',
+      'continue-1',
+      expect.objectContaining({ provider: 'openai', name: 'gpt-5' }),
+    );
     await waitFor(() => expect(screen.queryByRole('group', { name: '需要你的确认' })).not.toBeInTheDocument());
   });
 

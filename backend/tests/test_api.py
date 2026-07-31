@@ -8,6 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.api import runs as runs_api
+from app.api.models import get_runtime_default_model
 from app.core.config import Settings, get_settings
 from app.db.models import Base, RunRecord, TaskRecord, utc_now
 from app.db.session import get_session
@@ -74,6 +75,31 @@ async def test_create_run_rejects_empty_goal(app_client):
     assert error["code"] == "GOAL_REQUIRED"
     assert error["type"] == "validation.input_invalid"
     assert error["trace_id"].startswith("req_")
+
+
+async def test_runtime_default_model_reports_whether_it_is_runnable():
+    missing_key = await get_runtime_default_model(
+        Settings(model_provider="openai", model_name="gpt-5", model_api_key="")
+    )
+    assert missing_key.model_dump() == {
+        "provider": "openai",
+        "model": "gpt-5",
+        "configured": False,
+    }
+
+    local_model = await get_runtime_default_model(
+        Settings(
+            model_provider="ollama",
+            model_name="qwen3",
+            model_base_url="http://127.0.0.1:11434/v1",
+        )
+    )
+    assert local_model.configured is True
+
+    mock_model = await get_runtime_default_model(
+        Settings(model_provider="mock", model_name="mock")
+    )
+    assert mock_model.configured is True
 
 
 async def test_memory_management_api_lists_details_and_revokes_with_cas(app_client):
@@ -200,6 +226,14 @@ async def test_context_status_and_registered_commands_preserve_history(app_clien
     assert catalog.json()[2]["argument_mode"] == "required"
     assert catalog.json()[2]["usage"].startswith("/schedule ")
     assert catalog.json()[2]["side_effect"] == "mixed"
+
+    default_model = await app_client.get("/api/models/default")
+    assert default_model.status_code == 200
+    assert default_model.json() == {
+        "provider": app_client._astra_settings.model_provider,
+        "model": app_client._astra_settings.model_name,
+        "configured": True,
+    }
 
     capabilities = await app_client.post(
         "/api/models/context-capabilities/resolve",

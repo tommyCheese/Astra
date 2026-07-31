@@ -71,7 +71,7 @@ class RuntimeProfileService:
         build.update(
             status="cancelled",
             phase="构建已中断",
-            log="后端服务重启，原构建任务已停止",
+            log="Astra 已重新启动，原构建任务已停止",
             image=None,
         )
         self.write(state)
@@ -166,7 +166,7 @@ class RuntimeProfileService:
                 build_id,
                 status="cancelled",
                 phase="已取消",
-                log="构建状态已取消；后台任务已不在当前进程中",
+                log="构建状态已取消；原构建任务已结束",
                 image=None,
             )
         task.cancel()
@@ -323,7 +323,7 @@ class RuntimeProfileService:
             status="building",
             phase="准备构建环境",
             progress=5,
-            log="正在解析依赖并生成 Docker build context",
+            log="正在解析依赖并准备隔离环境",
         )
         has_unpinned = any(not item["version"] for item in deps)
         staging_image = f"astra-data-viz:build-{build_id}"
@@ -377,7 +377,7 @@ class RuntimeProfileService:
                     build_id,
                     phase="验证依赖导入",
                     progress=85,
-                    log="镜像构建完成，正在断网验证依赖",
+                    log="环境构建完成，正在验证依赖",
                 )
                 verification_output = await self._run_with_progress(
                     build_id,

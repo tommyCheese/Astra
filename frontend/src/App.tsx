@@ -1,5 +1,5 @@
 import { Component, CSSProperties, FormEvent, KeyboardEvent as ReactKeyboardEvent, lazy, MouseEvent, PointerEvent as ReactPointerEvent, ReactNode, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { AstraApiError, ApiErrorPayload, buildRuntime, cancelRun, cancelRuntimeBuild, confirmPlanExecution, createConversationShare, createRun, decideToolApproval, deleteConversation, executeConversationCommand, getConversation, getConversationContext, getConversationStrategy, getPermissionCenter, getRun, getRuntimeProfile, getToolSettings, listConversationShares, listConversations, listLibraryFiles, listRuns, listSkills, listSystemCommands, resolveModelContextCapabilities, resolveModelThinkingCapabilities, resumeRun, revisePlan, revokeConversationShare, revokePermissionGrant, streamRunEvents, takeCreatedRunStream, updateConversation, updateConversationStrategy, updateToolSettings, type ContextWindowStatus, type ConversationStrategyPreferences, type LibraryFile, type ModelContextCapability, type ModelThinkingCapability, type ModelThinkingDepth, type ModelThinkingSelection, type PermissionCenterView, type RunModelConfig, type RunStreamEvent, type RunStreamHandle, type SkillSummary, type SlashSystemCommand, type ToolSetting } from './api';
+import { AstraApiError, ApiErrorPayload, buildRuntime, cancelRun, cancelRuntimeBuild, confirmPlanExecution, createConversationShare, createRun, decideToolApproval, deleteConversation, executeConversationCommand, getConversation, getConversationContext, getConversationStrategy, getPermissionCenter, getRun, getRuntimeDefaultModel, getRuntimeProfile, getToolSettings, listConversationShares, listConversations, listLibraryFiles, listRuns, listSkills, listSystemCommands, resolveModelContextCapabilities, resolveModelThinkingCapabilities, resumeRun, revisePlan, revokeConversationShare, revokePermissionGrant, streamRunEvents, takeCreatedRunStream, updateConversation, updateConversationStrategy, updateToolSettings, type ContextWindowStatus, type ConversationStrategyPreferences, type LibraryFile, type ModelContextCapability, type ModelThinkingCapability, type ModelThinkingDepth, type ModelThinkingSelection, type PermissionCenterView, type RunModelConfig, type RunStreamEvent, type RunStreamHandle, type RuntimeDefaultModel, type SkillSummary, type SlashSystemCommand, type ToolSetting } from './api';
 import { buildAuditLog } from './auditPresentation';
 import { I18nProvider, useI18n } from './i18n';
 import { ThemeProvider, useTheme } from './theme';
@@ -322,7 +322,9 @@ function AppContent() {
   const [executionMode, setExecutionMode] = useState<'default' | 'bypass'>('default');
   const [bypassConfirmOpen, setBypassConfirmOpen] = useState(false);
   const [providerConfigs, setProviderConfigs] = useState<ModelProviderConfig[]>(loadProviderConfigs);
-  const [selectedModelKey, setSelectedModelKey] = useState(() => readLocalString(STORAGE_KEYS.selectedModel) || 'openai:gpt-5');
+  const [selectedModelKey, setSelectedModelKey] = useState(() => readLocalString(STORAGE_KEYS.selectedModel) || 'runtime:default');
+  const [runtimeDefaultModel, setRuntimeDefaultModel] = useState<RuntimeDefaultModel | null>(null);
+  const [runtimeDefaultReady, setRuntimeDefaultReady] = useState(false);
   const [thinkingCapabilities, setThinkingCapabilities] = useState<Record<string, ModelThinkingCapability>>({});
   const [thinkingCapabilitiesLoading, setThinkingCapabilitiesLoading] = useState(true);
   const [thinkingCapabilitiesFailed, setThinkingCapabilitiesFailed] = useState(false);
@@ -373,17 +375,28 @@ function AppContent() {
   const slashSuppressedStartRef = useRef<number>();
   const composerIsComposingRef = useRef(false);
   streamingAnswerRef.current = streamingAnswer;
-  const availableModels = useMemo(() => providerConfigs
-    .filter((provider) => provider.enabled)
-    .flatMap((provider) => provider.models
-      .filter((profile) => profile.id.trim())
-      .map((profile) => ({
-        key: `${provider.id}:${profile.id}`,
-        model: profile.id,
-        profile,
-        providerId: provider.id,
-        providerName: provider.name,
-      }))), [providerConfigs]);
+  const availableModels = useMemo(() => [
+    ...(runtimeDefaultModel?.configured ? [{
+      key: 'runtime:default',
+      model: runtimeDefaultModel.model,
+      profile: { id: runtimeDefaultModel.model },
+      providerId: runtimeDefaultModel.provider,
+      providerName: t('Astra 当前运行模型'),
+      runtimeDefault: true,
+    }] : []),
+    ...providerConfigs
+      .filter(isRunnableProviderConfig)
+      .flatMap((provider) => provider.models
+        .filter((profile) => profile.id.trim())
+        .map((profile) => ({
+          key: `${provider.id}:${profile.id}`,
+          model: profile.id,
+          profile,
+          providerId: provider.id,
+          providerName: provider.name,
+          runtimeDefault: false,
+        }))),
+  ], [providerConfigs, runtimeDefaultModel, t]);
   const modelCapabilityRequestKey = availableModels
     .map((item) => `${item.providerId}:${item.model}`)
     .join('\n');
@@ -489,6 +502,18 @@ function AppContent() {
 
   useEffect(() => {
     const controller = new AbortController();
+    void getRuntimeDefaultModel(controller.signal).then((model) => {
+      if (!controller.signal.aborted) setRuntimeDefaultModel(model);
+    }).catch(() => {
+      if (!controller.signal.aborted) setRuntimeDefaultModel(null);
+    }).finally(() => {
+      if (!controller.signal.aborted) setRuntimeDefaultReady(true);
+    });
+    return () => controller.abort();
+  }, []);
+
+  useEffect(() => {
+    const controller = new AbortController();
     if (!availableModels.length) {
       setThinkingCapabilities({});
       setThinkingCapabilitiesLoading(false);
@@ -502,9 +527,10 @@ function AppContent() {
       controller.signal,
     ).then((capabilities) => {
       if (controller.signal.aborted) return;
-      const resolved = Object.fromEntries(
-        capabilities.map((capability) => [`${capability.provider}:${capability.model}`, capability]),
-      );
+      const resolved = Object.fromEntries(availableModels.flatMap((option) => {
+        const capability = capabilities.find((item) => item.provider === option.providerId && item.model === option.model);
+        return capability ? [[option.key, capability]] : [];
+      }));
       setThinkingCapabilities(resolved);
       setThinkingPreferences((preferences) => {
         let changed = false;
@@ -545,9 +571,10 @@ function AppContent() {
       controller.signal,
     ).then((capabilities) => {
       if (controller.signal.aborted) return;
-      setContextCapabilities(Object.fromEntries(
-        capabilities.map((capability) => [`${capability.provider}:${capability.model}`, capability]),
-      ));
+      setContextCapabilities(Object.fromEntries(availableModels.flatMap((option) => {
+        const capability = capabilities.find((item) => item.provider === option.providerId && item.model === option.model);
+        return capability ? [[option.key, capability]] : [];
+      })));
     }).catch(() => {
       if (!controller.signal.aborted) setContextCapabilities({});
     });
@@ -583,16 +610,11 @@ function AppContent() {
       setContextStatus(null);
       return;
     }
-    const provider = providerConfigs.find((item) => item.id === selectedModelOption.providerId);
-    if (!provider) {
-      setContextStatus(null);
-      return;
-    }
     const controller = new AbortController();
     const timer = window.setTimeout(() => {
       void getConversationContext(
         activeConversationId,
-        provider.id,
+        selectedModelOption.providerId,
         selectedModelOption.model,
         goal,
         controller.signal,
@@ -602,7 +624,7 @@ function AppContent() {
       window.clearTimeout(timer);
       controller.abort();
     };
-  }, [activeConversationId, goal, providerConfigs, run?.status, selectedModelKey]);
+  }, [activeConversationId, goal, run?.status, selectedModelKey]);
 
   useEffect(() => () => {
     if (jumpResetTimerRef.current !== undefined) window.clearTimeout(jumpResetTimerRef.current);
@@ -640,12 +662,13 @@ function AppContent() {
   }, []);
 
   useEffect(() => {
+    if (!runtimeDefaultReady) return;
     if (availableModels.length && !availableModels.some((item) => item.key === selectedModelKey)) {
       setSelectedModelKey(availableModels[0].key);
     } else if (!availableModels.length && selectedModelKey) {
       setSelectedModelKey('');
     }
-  }, [availableModels, selectedModelKey]);
+  }, [availableModels, runtimeDefaultReady, selectedModelKey]);
 
   useEffect(() => {
     if (!attachOpen && !modelOpen && !contextOpen && !executionMenuOpen) {
@@ -798,8 +821,6 @@ function AppContent() {
       });
       return;
     }
-    const provider = providerConfigs.find((item) => item.id === selectedModelOption.providerId);
-    if (!provider) return;
     const submittedGoal = goal;
     const commandRange = slashCommand;
     const caret = commandRange?.start ?? 0;
@@ -815,13 +836,13 @@ function AppContent() {
         ? await executeConversationCommand(
           activeConversationId,
           command.name,
-          provider.id,
+          selectedModelOption.providerId,
           selectedModelOption.model,
         )
         : await executeConversationCommand(
           activeConversationId,
           command.name,
-          provider.id,
+          selectedModelOption.providerId,
           selectedModelOption.model,
           options.argumentsText,
         );
@@ -1040,6 +1061,16 @@ function AppContent() {
     }
     if (loading || run?.pending_approval || (run && !terminalStatuses.has(run.status))) return;
     if (run?.status !== 'waiting_user' && thinkingCapabilitiesLoading) return;
+    if (run?.status !== 'waiting_user' && !selectedModelOption) {
+      setError({
+        type: 'configuration.model',
+        code: 'MODEL_CONFIGURATION_REQUIRED',
+        message: t('请先在模型管理中启用供应商并配置模型'),
+        retryable: false,
+        trace_id: 'local',
+      });
+      return;
+    }
     window.performance.clearMarks(QUESTION_SUBMIT_MARK);
     window.performance.clearMarks(FIRST_TOKEN_COMMIT_MARK);
     window.performance.mark(QUESTION_SUBMIT_MARK);
@@ -1176,6 +1207,7 @@ function AppContent() {
   }
 
   function selectedRunModel(targetRun?: RunView): RunModelConfig | undefined {
+    if (!targetRun && selectedModelOption?.runtimeDefault) return undefined;
     const policy = targetRun?.model_policy ?? {};
     const providerId = typeof policy.provider === 'string'
       ? policy.provider
@@ -2729,9 +2761,9 @@ function RuntimeSettings() {
   const buildStatus = profile?.build?.status ?? 'ready';
   const buildStatusLabel: Record<string, string> = { ready: '已就绪', queued: '等待构建', building: '构建中', succeeded: '构建成功', failed: '构建失败', cancelled: '已取消' };
   const buildProgress = Math.min(100, Math.max(0, profile?.build?.progress ?? (buildStatus === 'queued' ? 0 : 5)));
-  return <SettingsGroup title="Docker 运行时" description="管理绘图工具使用的隔离镜像与 Python 依赖。只有构建阶段联网，工具执行始终断网。">
-    <section className="runtime-overview" aria-label={t('Docker 运行状态')}>
-      <div className="runtime-engine"><div><span>{t('运行引擎')}</span><strong><span className="runtime-health-dot" aria-hidden="true" />Docker · {t('已就绪')}</strong><small>{t('一次性强化容器')}</small></div><span className={`runtime-status-badge runtime-status-${buildStatus}`}>{t(buildStatusLabel[buildStatus] ?? buildStatus)}</span></div>
+  return <SettingsGroup title="安全运行环境" description="管理数据处理与绘图所需的隔离环境和扩展依赖。">
+    <section className="runtime-overview" aria-label={t('安全运行环境状态')}>
+      <div className="runtime-engine"><div><span>{t('运行引擎')}</span><strong><span className="runtime-health-dot" aria-hidden="true" />{t('隔离环境')} · {t('已就绪')}</strong><small>{t('按任务自动创建')}</small></div><span className={`runtime-status-badge runtime-status-${buildStatus}`}>{t(buildStatusLabel[buildStatus] ?? buildStatus)}</span></div>
       <div className="runtime-security-strip"><span>{t('断网执行')}</span><span>{t('只读根目录')}</span><span>{t('非 root')}</span><span>{t('资源受限')}</span></div>
     </section>
     <section className="runtime-dependencies" aria-labelledby="runtime-dependencies-title">
@@ -2848,6 +2880,13 @@ const initialProviderConfigs: ModelProviderConfig[] = modelProviders.map((provid
   models: parseModelIds(providerDefaults[provider.id].models).map(makeModelProfile),
   apiKey: '',
 }));
+
+function isRunnableProviderConfig(provider: ModelProviderConfig): boolean {
+  const keyOptional = ['ollama', 'lmstudio', 'vllm', 'localai', 'compatible'].includes(provider.id);
+  return provider.enabled
+    && Boolean(provider.endpoint.trim())
+    && (keyOptional || Boolean(provider.apiKey.trim()));
+}
 
 function localStorageOrNull(): Storage | null {
   try {
@@ -3516,7 +3555,7 @@ function ContextCapacityPanel({ status, selectedSkills, actionLabel }: {
 function ModelMenu({ selectedModelKey, onModelChange, modelOptions, thinkingCapability, thinkingSelection, thinkingLoading, thinkingFailed, onThinkingRetry, onThinkingEnabledChange, onThinkingDepthChange, trusted, reasoningEffort, onReasoningEffortChange, toolCallLimit, onToolCallLimitChange, reflectionEnabled, onReflectionChange, reflectionTrigger, onReflectionTriggerChange, planExecution, onPlanExecutionChange, onOpenStrategyHelp }: {
   selectedModelKey: string;
   onModelChange: (modelKey: string) => void;
-  modelOptions: Array<{ key: string; model: string; profile: ModelProfileConfig; providerId: ModelProviderId; providerName: string }>;
+  modelOptions: Array<{ key: string; model: string; profile: ModelProfileConfig; providerId: string; providerName: string; runtimeDefault: boolean }>;
   thinkingCapability?: ModelThinkingCapability;
   thinkingSelection?: ModelThinkingSelection;
   thinkingLoading: boolean;
@@ -3538,10 +3577,11 @@ function ModelMenu({ selectedModelKey, onModelChange, modelOptions, thinkingCapa
   onOpenStrategyHelp: () => void;
 }) {
   const { t } = useI18n();
-  const groups = modelOptions.reduce<Array<{ providerId: ModelProviderId; providerName: string; models: Array<{ key: string; model: string; profile: ModelProfileConfig }> }>>((result, option) => {
-    const group = result.find((item) => item.providerId === option.providerId);
+  const groups = modelOptions.reduce<Array<{ key: string; providerId: string; providerName: string; runtimeDefault: boolean; models: Array<{ key: string; model: string; profile: ModelProfileConfig }> }>>((result, option) => {
+    const groupKey = `${option.runtimeDefault ? 'runtime' : 'provider'}:${option.providerId}`;
+    const group = result.find((item) => item.key === groupKey);
     if (group) group.models.push({ key: option.key, model: option.model, profile: option.profile });
-    else result.push({ providerId: option.providerId, providerName: option.providerName, models: [{ key: option.key, model: option.model, profile: option.profile }] });
+    else result.push({ key: groupKey, providerId: option.providerId, providerName: option.providerName, runtimeDefault: option.runtimeDefault, models: [{ key: option.key, model: option.model, profile: option.profile }] });
     return result;
   }, []);
   const effort = reasoningEffortValue(reasoningEffort);
@@ -3549,8 +3589,8 @@ function ModelMenu({ selectedModelKey, onModelChange, modelOptions, thinkingCapa
   const thinkingDepthOptions = thinkingCapability?.depths.map((item) => thinkingDepthLabel(item.id)) ?? [];
   return <div className="floating-menu model-menu">
     <div className="model-menu-title"><div><strong>{t('选择模型')}</strong><small>{t('思考深度随模型单独保存')}</small></div></div>
-    {groups.length ? groups.map((group) => <div className="model-provider-group" key={group.providerId}>
-      <div className="model-provider-heading"><span className={`provider-mark provider-${group.providerId}`}>{modelProviders.find((provider) => provider.id === group.providerId)?.mark}</span><span>{group.providerName}</span></div>
+    {groups.length ? groups.map((group) => <div className="model-provider-group" key={group.key}>
+      <div className="model-provider-heading"><span className={`provider-mark provider-${group.runtimeDefault ? 'runtime' : group.providerId}`}>{group.runtimeDefault ? 'A' : modelProviders.find((provider) => provider.id === group.providerId)?.mark}</span><span>{group.providerName}</span></div>
       {group.models.map((item) => <div className={`model-choice-row ${selectedModelKey === item.key ? 'selected' : ''}`} key={item.key}>
         <button className="model-option" type="button" onClick={() => onModelChange(item.key)}>
           <div><strong>{item.model}</strong><small>{group.providerName}</small></div>

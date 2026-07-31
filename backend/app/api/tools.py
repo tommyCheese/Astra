@@ -34,15 +34,15 @@ def _tool_settings(settings: Settings, states: dict[str, bool]) -> ToolSettingsR
     sandbox_ready = settings.sandbox_enabled and sandbox_available(settings)
     unavailable_reason = None
     if not settings.sandbox_enabled:
-        unavailable_reason = "需要先启用 Docker 沙箱。"
+        unavailable_reason = "需要先启用安全运行环境。"
     elif not sandbox_ready:
-        unavailable_reason = "Docker 当前不可用。"
+        unavailable_reason = "安全运行环境当前不可用。"
     return ToolSettingsResponse(
         tools=[
             ToolToggle(
                 name="web_search",
                 label="Web Search",
-                description="在隔离的 Docker 运行时中搜索公开网页",
+                description="搜索公开网页",
                 enabled=states["web_search"],
                 available=sandbox_ready,
                 unavailable_reason=unavailable_reason,
@@ -50,7 +50,7 @@ def _tool_settings(settings: Settings, states: dict[str, bool]) -> ToolSettingsR
             ToolToggle(
                 name="web_fetch",
                 label="Web Fetch",
-                description="在隔离的 Docker 运行时中提取页面主要内容",
+                description="提取页面主要内容",
                 enabled=states["web_fetch"],
                 available=sandbox_ready,
                 unavailable_reason=unavailable_reason,
@@ -58,7 +58,7 @@ def _tool_settings(settings: Settings, states: dict[str, bool]) -> ToolSettingsR
             ToolToggle(
                 name="chart_render",
                 label="Chart Render",
-                description="在隔离的 Docker 运行时中生成图表",
+                description="生成图表",
                 enabled=states["chart_render"],
                 available=sandbox_ready,
                 unavailable_reason=unavailable_reason,
@@ -66,7 +66,7 @@ def _tool_settings(settings: Settings, states: dict[str, bool]) -> ToolSettingsR
             ToolToggle(
                 name="bash_execute",
                 label="Bash Execute",
-                description="在无网络、无工作区挂载的一次性 Docker 容器中执行命令",
+                description="在受保护的临时环境中执行命令",
                 enabled=states["bash_execute"],
                 available=sandbox_ready,
                 unavailable_reason=unavailable_reason,

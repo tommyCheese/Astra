@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends
 
 from app.conversation_context import resolve_context_window
 from app.core.config import Settings, get_settings
+from app.model_providers import API_KEY_OPTIONAL_MODEL_PROVIDERS, SUPPORTED_MODEL_PROVIDERS
 from app.runner.model_reasoning import model_thinking_capability
 from app.schemas.models import (
     ModelContextCapabilitiesRequest,
@@ -9,9 +10,32 @@ from app.schemas.models import (
     ModelContextCapability,
     ModelThinkingCapabilitiesRequest,
     ModelThinkingCapabilitiesResponse,
+    RuntimeDefaultModelResponse,
 )
 
 router = APIRouter(prefix="/api/models", tags=["models"])
+
+
+@router.get("/default", response_model=RuntimeDefaultModelResponse)
+async def get_runtime_default_model(
+    settings: Settings = Depends(get_settings),
+) -> RuntimeDefaultModelResponse:
+    return RuntimeDefaultModelResponse(
+        provider=settings.model_provider,
+        model=settings.model_name,
+        configured=(
+            settings.model_provider == "mock"
+            or (
+                settings.model_provider in SUPPORTED_MODEL_PROVIDERS
+                and bool(settings.model_name.strip())
+                and bool(settings.model_base_url.strip())
+                and (
+                    settings.model_provider in API_KEY_OPTIONAL_MODEL_PROVIDERS
+                    or bool(settings.model_api_key.strip())
+                )
+            )
+        ),
+    )
 
 
 @router.post(
