@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from app.agent_profile import AgentProfileConfigurationError
 from app.core.config import Settings
 from app.runtime_profiles import CORE_DEPENDENCIES, RuntimeProfileService, normalize_dependencies
 
@@ -47,6 +48,46 @@ def test_runtime_profile_exposes_locked_core_dependency_versions(tmp_path):
     ).read_text()
     for item in CORE_DEPENDENCIES:
         assert f"{item['name']}=={item['version']}" in runtime_project
+
+
+def test_runtime_profile_exposes_updates_and_resets_agent_profile(tmp_path):
+    profile_path = tmp_path / "profile.json"
+    service = RuntimeProfileService(Settings(runtime_profile_path=str(profile_path)))
+    initial = service.read()["agent_profile"]
+    assert initial["source"] == "default"
+    assert set(initial["documents"]) == {"identity", "soul", "memory", "autodream"}
+
+    documents = dict(initial["documents"])
+    documents["identity"] = documents["identity"].replace(
+        "Astra 是面向真实任务执行的通用 AI Agent",
+        "Astra 是可由本机用户定制的通用 AI Agent",
+    )
+    updated = service.update_agent_profile(documents)
+
+    assert updated["source"] == "user"
+    assert updated["version"] != initial["version"]
+    assert service.active_agent_profile().manifest.version == updated["version"]
+    persisted = json.loads(profile_path.read_text())["agent_profile"]
+    assert set(persisted) == {"documents"}
+
+    restored = service.reset_agent_profile()
+    assert restored["source"] == "default"
+    assert restored["version"] == initial["version"]
+    assert "agent_profile" not in json.loads(profile_path.read_text())
+
+
+def test_invalid_agent_profile_update_is_atomic(tmp_path):
+    profile_path = tmp_path / "profile.json"
+    service = RuntimeProfileService(Settings(runtime_profile_path=str(profile_path)))
+    initial = service.read()["agent_profile"]
+    documents = dict(initial["documents"])
+    documents["identity"] = "invalid"
+
+    with pytest.raises(AgentProfileConfigurationError):
+        service.update_agent_profile(documents)
+
+    assert service.read()["agent_profile"] == initial
+    assert not profile_path.exists()
 
 
 @pytest.mark.parametrize(

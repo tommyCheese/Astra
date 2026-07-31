@@ -6,6 +6,7 @@ from app.agent_profile.profile import (
     AgentProfileLoader,
     AgentProfileManifest,
     ModelOperation,
+    configure_agent_profile_resolver,
     load_agent_profile,
 )
 
@@ -17,5 +18,6 @@ __all__ = [
     "AgentProfileManifest",
     "ModelOperation",
     "SYNCHRONOUS_MODEL_OPERATIONS",
+    "configure_agent_profile_resolver",
     "load_agent_profile",
 ]

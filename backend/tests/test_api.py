@@ -54,6 +54,7 @@ async def app_client(monkeypatch, tmp_path):
         model_provider="mock",
         artifact_store_path=str(tmp_path / "artifacts"),
         task_workspace_store_path=str(tmp_path / "workspaces"),
+        runtime_profile_path=str(tmp_path / "runtime-profile.json"),
     )
     app = create_app(settings)
     app.dependency_overrides[get_session] = override_session
@@ -976,6 +977,43 @@ async def test_create_run_rejects_invalid_agent_profile_as_configuration_error(
     assert response.status_code == 503
     assert response.json()["error"]["code"] == "AGENT_PROFILE_INVALID"
     assert "invalid test profile" not in response.text
+
+
+async def test_runtime_agent_profile_update_is_used_by_new_runs_and_can_reset(app_client):
+    loaded = await app_client.get("/api/runtime")
+    assert loaded.status_code == 200
+    original = loaded.json()["agent_profile"]
+    assert original["source"] == "default"
+
+    documents = dict(original["documents"])
+    marker = "Astra Runtime Profile API test"
+    documents["identity"] = documents["identity"].replace(
+        "# Astra Identity", f"# Astra Identity\n\n{marker}"
+    )
+    updated = await app_client.put(
+        "/api/runtime/agent-profile", json={"documents": documents}
+    )
+    assert updated.status_code == 200
+    assert updated.json()["source"] == "user"
+    assert updated.json()["version"] != original["version"]
+
+    created = await app_client.post("/api/runs", json={"goal": "Profile 快照测试"})
+    async with app_client._astra_session() as session:
+        run = await session.get(RunRecord, created.json()["run_id"])
+        assert marker in run.agent_profile_snapshot["documents"]["identity"]["content"]
+
+    invalid_documents = dict(documents)
+    invalid_documents["identity"] = "invalid"
+    rejected = await app_client.put(
+        "/api/runtime/agent-profile", json={"documents": invalid_documents}
+    )
+    assert rejected.status_code == 422
+    assert (await app_client.get("/api/runtime")).json()["agent_profile"]["version"] == updated.json()["version"]
+
+    reset = await app_client.post("/api/runtime/agent-profile/reset")
+    assert reset.status_code == 200
+    assert reset.json()["source"] == "default"
+    assert reset.json()["version"] == original["version"]
 
 
 async def test_tool_settings_can_be_read_and_updated(app_client):

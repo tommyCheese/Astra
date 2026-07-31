@@ -10,6 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy.exc import SQLAlchemyError
 
+from app.agent_profile import configure_agent_profile_resolver
 from app.api.conversations import router as conversations_router
 from app.api.evolution import router as evolution_router
 from app.api.memories import recall_router as memory_recall_router
@@ -97,6 +98,9 @@ def create_app(settings: Settings | None = None, *, session_factory=SessionLocal
     app.state.runtime_profile_service = RuntimeProfileService(
         settings,
         recover_interrupted=True,
+    )
+    configure_agent_profile_resolver(
+        app.state.runtime_profile_service.active_agent_profile
     )
     app.state.conversation_retention_service = ConversationRetentionService(
         settings,

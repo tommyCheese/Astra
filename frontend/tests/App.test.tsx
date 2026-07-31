@@ -2,7 +2,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { App } from '../src/App';
-import { buildRuntime, cancelRun, cancelRuntimeBuild, confirmPlanExecution, createConversationShare, createRun, decideToolApproval, deleteConversation, executeConversationCommand, getConversation, getConversationContext, getConversationStrategy, getRun, getRuntimeDefaultModel, getRuntimeProfile, listConversationShares, listConversations, listLibraryFiles, listRuns, listSkills, listSystemCommands, resolveModelContextCapabilities, resolveModelThinkingCapabilities, resumeRun, revisePlan, revokeConversationShare, streamRunEvents, takeCreatedRunStream, updateConversation, updateConversationStrategy, updateToolSettings, type ModelThinkingCapability, type RunStreamEvent, type SkillSummary } from '../src/api';
+import { buildRuntime, cancelRun, cancelRuntimeBuild, confirmPlanExecution, createConversationShare, createRun, decideToolApproval, deleteConversation, executeConversationCommand, getConversation, getConversationContext, getConversationStrategy, getRun, getRuntimeDefaultModel, getRuntimeProfile, listConversationShares, listConversations, listLibraryFiles, listRuns, listSkills, listSystemCommands, resetRuntimeAgentProfile, resolveModelContextCapabilities, resolveModelThinkingCapabilities, resumeRun, revisePlan, revokeConversationShare, streamRunEvents, takeCreatedRunStream, updateConversation, updateConversationStrategy, updateRuntimeAgentProfile, updateToolSettings, type ModelThinkingCapability, type RunStreamEvent, type SkillSummary } from '../src/api';
 
 vi.mock('../src/api', () => ({
   AstraApiError: class AstraApiError extends Error {
@@ -45,7 +45,9 @@ vi.mock('../src/api', () => ({
     { name: 'bash_execute', label: 'Bash Execute', description: '在隔离容器中执行命令', enabled: false, available: true },
   ] })),
   updateToolSettings: vi.fn(async (tools) => ({ tools })),
-  getRuntimeProfile: vi.fn(async () => ({ dependencies: [], core_dependencies: [{ name: 'numpy', version: '2.2.6' }, { name: 'matplotlib', version: '3.10.3' }], active_image: 'astra-data-viz:0.1.0', dependency_digest: 'base', build: null })),
+  getRuntimeProfile: vi.fn(async () => ({ dependencies: [], core_dependencies: [{ name: 'numpy', version: '2.2.6' }, { name: 'matplotlib', version: '3.10.3' }], active_image: 'astra-data-viz:0.1.0', dependency_digest: 'base', build: null, agent_profile: { source: 'default', version: 'profile-default', documents: { identity: '# Astra Identity\n\n## Identity\nDefault', soul: '# Astra Soul', memory: '# Astra Memory Protocol', autodream: '# Astra AutoDream Protocol' } } })),
+  updateRuntimeAgentProfile: vi.fn(async (documents) => ({ source: 'user', version: 'profile-user', documents })),
+  resetRuntimeAgentProfile: vi.fn(async () => ({ source: 'default', version: 'profile-default', documents: { identity: '# Astra Identity\n\n## Identity\nDefault', soul: '# Astra Soul', memory: '# Astra Memory Protocol', autodream: '# Astra AutoDream Protocol' } })),
   buildRuntime: vi.fn(async () => ({ dependencies: [{ name: 'polars', version: '' }], core_dependencies: [], active_image: 'astra-data-viz:0.1.0', dependency_digest: 'base', build: { id: 'build-1', status: 'queued', phase: '等待构建', progress: 0, log: '等待构建' } })),
   cancelRuntimeBuild: vi.fn(async () => ({ dependencies: [{ name: 'polars', version: '' }], core_dependencies: [], active_image: 'astra-data-viz:0.1.0', dependency_digest: 'base', build: { id: 'build-1', status: 'cancelled', phase: '已取消', progress: 12, log: '构建已由用户取消' } })),
   streamRunEvents: vi.fn(() => () => undefined),
@@ -410,6 +412,7 @@ describe('App', () => {
     expect(screen.getByRole('navigation', { name: '问题导航' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '跳转到问题 1' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '跳转到问题 1' })).toHaveAttribute('aria-current', 'true');
+    expect(screen.getByRole('button', { name: '跳转到问题 1' })).toHaveClass('wave-distance-0');
     const completedProcessTitle = screen.getByText('思考完成');
     expect(completedProcessTitle).toBeInTheDocument();
     expect(completedProcessTitle.closest('summary')?.querySelector('.process-thinking-dots')).not.toBeInTheDocument();
@@ -1481,6 +1484,42 @@ describe('App', () => {
     expect(screen.queryByText('工具失败重试')).not.toBeInTheDocument();
     expect(screen.queryByText('命令执行确认')).not.toBeInTheDocument();
     expect(screen.queryByText('当前镜像')).not.toBeInTheDocument();
+  });
+
+  it('edits, saves, and restores the runtime Agent Profile', async () => {
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    render(<App />);
+
+    await userEvent.click(screen.getByRole('button', { name: /设置/ }));
+    await userEvent.click(screen.getByRole('button', { name: '运行时' }));
+    const identity = await screen.findByLabelText('IDENTITY.md');
+    fireEvent.change(identity, { target: { value: '# Astra Identity\n\n## Identity\nCustomized' } });
+
+    expect(screen.getByText('有未保存修改')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: '保存 Agent Profile' }));
+    await waitFor(() => expect(updateRuntimeAgentProfile).toHaveBeenCalledWith(expect.objectContaining({ identity: expect.stringContaining('Customized') })));
+    expect(await screen.findByText('用户配置')).toBeInTheDocument();
+    expect(screen.getByText('Agent Profile 已保存，将应用于之后新建的任务。')).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: '恢复内置默认' }));
+    expect(confirm).toHaveBeenCalled();
+    await waitFor(() => expect(resetRuntimeAgentProfile).toHaveBeenCalled());
+    expect((identity as HTMLTextAreaElement).value).toContain('Default');
+  });
+
+  it('preserves unsaved Agent Profile text when validation fails', async () => {
+    vi.mocked(updateRuntimeAgentProfile).mockRejectedValueOnce(new Error('IDENTITY.md 缺少必需章节'));
+    render(<App />);
+
+    await userEvent.click(screen.getByRole('button', { name: /设置/ }));
+    await userEvent.click(screen.getByRole('button', { name: '运行时' }));
+    const identity = await screen.findByLabelText('IDENTITY.md');
+    fireEvent.change(identity, { target: { value: 'invalid profile text' } });
+    await userEvent.click(screen.getByRole('button', { name: '保存 Agent Profile' }));
+
+    expect(await screen.findByRole('status')).toHaveTextContent('IDENTITY.md 缺少必需章节');
+    expect(identity).toHaveValue('invalid profile text');
+    expect(screen.getByRole('button', { name: '保存 Agent Profile' })).toBeEnabled();
   });
 
   it('shows live runtime build progress and supports cancellation', async () => {

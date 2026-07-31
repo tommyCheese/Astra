@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from enum import StrEnum
 from functools import lru_cache
@@ -389,5 +389,22 @@ def _profile_version(
 
 
 @lru_cache(maxsize=1)
-def load_agent_profile() -> AgentProfile:
+def _load_packaged_agent_profile() -> AgentProfile:
     return AgentProfileLoader().load()
+
+
+_runtime_profile_resolver: Callable[[], AgentProfile] | None = None
+
+
+def configure_agent_profile_resolver(
+    resolver: Callable[[], AgentProfile] | None,
+) -> None:
+    """Bind the process-wide active Profile source used by new runtime work."""
+
+    global _runtime_profile_resolver
+    _runtime_profile_resolver = resolver
+
+
+def load_agent_profile() -> AgentProfile:
+    resolver = _runtime_profile_resolver
+    return resolver() if resolver is not None else _load_packaged_agent_profile()

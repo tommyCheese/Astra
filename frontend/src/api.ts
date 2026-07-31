@@ -158,6 +158,8 @@ export async function resolveModelContextCapabilities(
   return body.capabilities;
 }
 export type RuntimeDependency = { name: string; version: string };
+export type AgentProfileDocuments = { identity: string; soul: string; memory: string; autodream: string };
+export type RuntimeAgentProfile = { source: 'default' | 'user'; version: string; documents: AgentProfileDocuments };
 type RuntimeImage = { image: string; dependency_digest: string; dependencies: RuntimeDependency[]; activated_at: string | null };
 type RuntimeBuildStatus = 'queued' | 'building' | 'succeeded' | 'failed' | 'cancelled';
 type RuntimeBuild = {
@@ -174,6 +176,7 @@ export type RuntimeProfile = {
   active_image: string;
   dependency_digest: string;
   build: RuntimeBuild | null;
+  agent_profile?: RuntimeAgentProfile;
   images?: RuntimeImage[];
   image_policy?: { keep_recent: number; retention_days: number };
 };
@@ -424,6 +427,18 @@ export async function buildRuntime(dependencies: RuntimeDependency[]): Promise<R
 
 export async function cancelRuntimeBuild(buildId: string): Promise<RuntimeProfile> {
   const response = await fetch('/api/runtime/build/cancel', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ build_id: buildId }) });
+  if (!response.ok) throw await responseError(response);
+  return response.json();
+}
+
+export async function updateRuntimeAgentProfile(documents: AgentProfileDocuments): Promise<RuntimeAgentProfile> {
+  const response = await fetch('/api/runtime/agent-profile', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ documents }) });
+  if (!response.ok) throw await responseError(response);
+  return response.json();
+}
+
+export async function resetRuntimeAgentProfile(): Promise<RuntimeAgentProfile> {
+  const response = await fetch('/api/runtime/agent-profile/reset', { method: 'POST' });
   if (!response.ok) throw await responseError(response);
   return response.json();
 }

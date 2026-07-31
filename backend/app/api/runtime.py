@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, Field
 
+from app.agent_profile import AgentProfileConfigurationError
 from app.core.errors import StateError, ValidationError
 from app.runtime_profiles import RuntimeProfileService
 
@@ -22,6 +23,17 @@ class BuildRequest(BaseModel):
 
 class CancelBuildRequest(BaseModel):
     build_id: str
+
+
+class AgentProfileDocuments(BaseModel):
+    identity: str = Field(max_length=16_384)
+    soul: str = Field(max_length=16_384)
+    memory: str = Field(max_length=16_384)
+    autodream: str = Field(max_length=16_384)
+
+
+class AgentProfileUpdateRequest(BaseModel):
+    documents: AgentProfileDocuments
 
 
 @router.get("")
@@ -51,3 +63,21 @@ async def cancel_runtime_build(
         return await service.cancel(request.build_id)
     except RuntimeError as exc:
         raise StateError("RUNTIME_BUILD_NOT_CANCELLABLE", str(exc)) from exc
+
+
+@router.put("/agent-profile")
+async def update_runtime_agent_profile(
+    request: AgentProfileUpdateRequest,
+    service: RuntimeProfileService = Depends(get_runtime_profile_service),
+):
+    try:
+        return service.update_agent_profile(request.documents.model_dump())
+    except AgentProfileConfigurationError as exc:
+        raise ValidationError("AGENT_PROFILE_INVALID", str(exc)) from exc
+
+
+@router.post("/agent-profile/reset")
+async def reset_runtime_agent_profile(
+    service: RuntimeProfileService = Depends(get_runtime_profile_service),
+):
+    return service.reset_agent_profile()

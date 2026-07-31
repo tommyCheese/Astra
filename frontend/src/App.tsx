@@ -1,5 +1,5 @@
 import { Component, CSSProperties, FormEvent, KeyboardEvent as ReactKeyboardEvent, lazy, MouseEvent, PointerEvent as ReactPointerEvent, ReactNode, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { AstraApiError, ApiErrorPayload, buildRuntime, cancelRun, cancelRuntimeBuild, confirmPlanExecution, createConversationShare, createRun, decideToolApproval, deleteConversation, executeConversationCommand, getConversation, getConversationContext, getConversationStrategy, getPermissionCenter, getRun, getRuntimeDefaultModel, getRuntimeProfile, getToolSettings, listConversationShares, listConversations, listLibraryFiles, listRuns, listSkills, listSystemCommands, resolveModelContextCapabilities, resolveModelThinkingCapabilities, resumeRun, revisePlan, revokeConversationShare, revokePermissionGrant, streamRunEvents, takeCreatedRunStream, updateConversation, updateConversationStrategy, updateToolSettings, type ContextWindowStatus, type ConversationStrategyPreferences, type LibraryFile, type ModelContextCapability, type ModelThinkingCapability, type ModelThinkingDepth, type ModelThinkingSelection, type PermissionCenterView, type RunModelConfig, type RunStreamEvent, type RunStreamHandle, type RuntimeDefaultModel, type SkillSummary, type SlashSystemCommand, type ToolSetting } from './api';
+import { AstraApiError, ApiErrorPayload, buildRuntime, cancelRun, cancelRuntimeBuild, confirmPlanExecution, createConversationShare, createRun, decideToolApproval, deleteConversation, executeConversationCommand, getConversation, getConversationContext, getConversationStrategy, getPermissionCenter, getRun, getRuntimeDefaultModel, getRuntimeProfile, getToolSettings, listConversationShares, listConversations, listLibraryFiles, listRuns, listSkills, listSystemCommands, resetRuntimeAgentProfile, resolveModelContextCapabilities, resolveModelThinkingCapabilities, resumeRun, revisePlan, revokeConversationShare, revokePermissionGrant, streamRunEvents, takeCreatedRunStream, updateConversation, updateConversationStrategy, updateRuntimeAgentProfile, updateToolSettings, type AgentProfileDocuments, type ContextWindowStatus, type ConversationStrategyPreferences, type LibraryFile, type ModelContextCapability, type ModelThinkingCapability, type ModelThinkingDepth, type ModelThinkingSelection, type PermissionCenterView, type RunModelConfig, type RunStreamEvent, type RunStreamHandle, type RuntimeDefaultModel, type SkillSummary, type SlashSystemCommand, type ToolSetting } from './api';
 import { buildAuditLog } from './auditPresentation';
 import { I18nProvider, useI18n } from './i18n';
 import { ThemeProvider, useTheme } from './theme';
@@ -2514,13 +2514,19 @@ function QuestionRail({ messages }: { messages: ChatMessage[] }) {
   const questions = messages.filter((message) => message.role === 'user');
   const latestQuestionId = questions.length ? questions[questions.length - 1].id : null;
   const [activeQuestionId, setActiveQuestionId] = useState<string | null>(latestQuestionId);
+  const [hoveredQuestionIndex, setHoveredQuestionIndex] = useState<number | null>(null);
   useEffect(() => { setActiveQuestionId(latestQuestionId); }, [latestQuestionId]);
   if (!questions.length) return null;
-  return <nav className="question-rail" aria-label={t('问题导航')}>{questions.map((question, index) => <button className={question.id === activeQuestionId ? 'active' : ''} type="button" key={question.id} aria-current={question.id === activeQuestionId ? 'true' : undefined} aria-label={`${t('跳转到问题')} ${index + 1}`} onClick={() => {
+  const activeQuestionIndex = Math.max(0, questions.findIndex((question) => question.id === activeQuestionId));
+  const waveCenterIndex = hoveredQuestionIndex ?? activeQuestionIndex;
+  return <nav className="question-rail" aria-label={t('问题导航')} onMouseLeave={() => setHoveredQuestionIndex(null)}>{questions.map((question, index) => {
+    const waveDistance = Math.min(Math.abs(index - waveCenterIndex), 4);
+    return <button className={`${question.id === activeQuestionId ? 'active ' : ''}wave-distance-${waveDistance}`} type="button" key={question.id} aria-current={question.id === activeQuestionId ? 'true' : undefined} aria-label={`${t('跳转到问题')} ${index + 1}`} onMouseEnter={() => setHoveredQuestionIndex(index)} onFocus={() => setHoveredQuestionIndex(index)} onBlur={() => setHoveredQuestionIndex(null)} onClick={() => {
     setActiveQuestionId(question.id);
     const target = document.getElementById(`message-${question.id}`);
     if (typeof target?.scrollIntoView === 'function') target.scrollIntoView({ behavior: 'smooth', block: 'center' });
-  }}><span /><div className="question-preview"><p>{question.content}</p></div></button>)}</nav>;
+  }}><span /><div className="question-preview"><p>{question.content}</p></div></button>;
+  })}</nav>;
 }
 
 function CapabilityItem({ tool, busy, onChange }: { tool: ToolSetting; busy: boolean; onChange: (enabled: boolean) => void }) {
@@ -2684,9 +2690,16 @@ function RuntimeSettings() {
   const [message, setMessage] = useState('');
   const [dirty, setDirty] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [agentDocuments, setAgentDocuments] = useState<AgentProfileDocuments | null>(null);
+  const [agentProfileDirty, setAgentProfileDirty] = useState(false);
+  const [agentProfileBusy, setAgentProfileBusy] = useState(false);
+  const [agentProfileMessage, setAgentProfileMessage] = useState('');
+  const [agentProfileError, setAgentProfileError] = useState(false);
   const nextDependencyId = useRef(0);
   const dirtyRef = useRef(dirty);
   dirtyRef.current = dirty;
+  const agentProfileDirtyRef = useRef(agentProfileDirty);
+  agentProfileDirtyRef.current = agentProfileDirty;
   const building = profile?.build?.status === 'queued' || profile?.build?.status === 'building';
   const controlsDisabled = building || submitting;
   const makeDependency = (name = '', version = '') => ({ id: `dependency-${nextDependencyId.current++}`, name, version });
@@ -2703,6 +2716,7 @@ function RuntimeSettings() {
         if (!dirtyRef.current) {
           setDependencies(value.dependencies.map((item) => ({ id: `saved-${item.name}`, name: item.name, version: item.version ?? '' })));
         }
+        if (!agentProfileDirtyRef.current && value.agent_profile) setAgentDocuments(value.agent_profile.documents);
         if (value.build?.status === 'failed') setDirty(true);
       } catch (error) {
         if (!active || (error instanceof DOMException && error.name === 'AbortError')) return;
@@ -2763,6 +2777,48 @@ function RuntimeSettings() {
       setProfile(await cancelRuntimeBuild(profile.build.id));
     } catch (error) { setMessage(error instanceof Error ? error.message : '取消构建失败'); }
   }
+  function editAgentDocument(name: keyof AgentProfileDocuments, value: string) {
+    setAgentDocuments((current) => current ? { ...current, [name]: value } : current);
+    setAgentProfileDirty(true);
+    setAgentProfileMessage('');
+    setAgentProfileError(false);
+  }
+  async function saveAgentProfile() {
+    if (!agentDocuments) return;
+    try {
+      setAgentProfileBusy(true);
+      setAgentProfileMessage('');
+      setAgentProfileError(false);
+      const saved = await updateRuntimeAgentProfile(agentDocuments);
+      setProfile((current) => current ? { ...current, agent_profile: saved } : current);
+      setAgentDocuments(saved.documents);
+      setAgentProfileDirty(false);
+      setAgentProfileMessage('Agent Profile 已保存，将应用于之后新建的任务。');
+    } catch (error) {
+      setAgentProfileError(true);
+      setAgentProfileMessage(error instanceof Error ? error.message : '保存 Agent Profile 失败');
+    } finally {
+      setAgentProfileBusy(false);
+    }
+  }
+  async function restoreAgentProfile() {
+    if (!window.confirm(t('恢复内置 Agent Profile？你的自定义内容将被替换。'))) return;
+    try {
+      setAgentProfileBusy(true);
+      setAgentProfileMessage('');
+      setAgentProfileError(false);
+      const restored = await resetRuntimeAgentProfile();
+      setProfile((current) => current ? { ...current, agent_profile: restored } : current);
+      setAgentDocuments(restored.documents);
+      setAgentProfileDirty(false);
+      setAgentProfileMessage('已恢复内置 Agent Profile。');
+    } catch (error) {
+      setAgentProfileError(true);
+      setAgentProfileMessage(error instanceof Error ? error.message : '恢复 Agent Profile 失败');
+    } finally {
+      setAgentProfileBusy(false);
+    }
+  }
   const buildStatus = profile?.build?.status ?? 'ready';
   const buildStatusLabel: Record<string, string> = { ready: '已就绪', queued: '等待构建', building: '构建中', succeeded: '构建成功', failed: '构建失败', cancelled: '已取消' };
   const buildProgress = Math.min(100, Math.max(0, profile?.build?.progress ?? (buildStatus === 'queued' ? 0 : 5)));
@@ -2770,6 +2826,28 @@ function RuntimeSettings() {
     <section className="runtime-overview" aria-label={t('安全运行环境状态')}>
       <div className="runtime-engine"><div><span>{t('运行引擎')}</span><strong><span className="runtime-health-dot" aria-hidden="true" />{t('隔离环境')} · {t('已就绪')}</strong><small>{t('按任务自动创建')}</small></div><span className={`runtime-status-badge runtime-status-${buildStatus}`}>{t(buildStatusLabel[buildStatus] ?? buildStatus)}</span></div>
       <div className="runtime-security-strip"><span>{t('断网执行')}</span><span>{t('只读根目录')}</span><span>{t('非 root')}</span><span>{t('资源受限')}</span></div>
+    </section>
+    <section className="runtime-agent-profile" aria-labelledby="runtime-agent-profile-title">
+      <div className="runtime-agent-profile-heading">
+        <div><strong id="runtime-agent-profile-title">{t('Agent Profile')}</strong><span>{t('自定义 Astra 的身份、表达方式和记忆治理。修改只影响之后新建的任务。')}</span></div>
+        <div><span className={`runtime-profile-source source-${profile?.agent_profile?.source ?? 'default'}`}>{t(profile?.agent_profile?.source === 'user' ? '用户配置' : '内置默认')}</span><code title={profile?.agent_profile?.version}>{profile?.agent_profile?.version?.slice(0, 20) ?? '—'}</code></div>
+      </div>
+      {agentDocuments ? <div className="runtime-agent-profile-editors">
+        {([
+          ['identity', 'IDENTITY.md', '身份、使命、目标与边界'],
+          ['soul', 'SOUL.md', '人格、沟通方式与协作原则'],
+          ['memory', 'MEMORY.md', '记忆写入、召回与遗忘治理'],
+          ['autodream', 'AUTODREAM.md', '后台记忆整理治理协议'],
+        ] as const).map(([name, filename, description]) => <details key={name} open={name === 'identity'}>
+          <summary><span><strong>{filename}</strong><small>{t(description)}</small></span><span aria-hidden="true">⌄</span></summary>
+          <textarea aria-label={filename} value={agentDocuments[name]} onChange={(event) => editAgentDocument(name, event.target.value)} disabled={agentProfileBusy} spellCheck={false} />
+        </details>)}
+      </div> : <p className="runtime-agent-profile-loading">{t('正在读取 Agent Profile…')}</p>}
+      <div className="runtime-agent-profile-actions">
+        <span>{agentProfileDirty ? t('有未保存修改') : t('配置已同步')}</span>
+        <div><button type="button" className="secondary-button" disabled={agentProfileBusy || profile?.agent_profile?.source !== 'user'} onClick={() => void restoreAgentProfile()}>{t('恢复内置默认')}</button><button type="button" className="primary-button" disabled={!agentProfileDirty || agentProfileBusy || !agentDocuments} onClick={() => void saveAgentProfile()}>{t(agentProfileBusy ? '正在保存…' : '保存 Agent Profile')}</button></div>
+      </div>
+      {agentProfileMessage && <p className={agentProfileError ? 'runtime-build-error' : 'runtime-agent-profile-success'} role="status">{t(agentProfileMessage)}</p>}
     </section>
     <section className="runtime-dependencies" aria-labelledby="runtime-dependencies-title">
       <div className="runtime-dependency-heading"><div><strong id="runtime-dependencies-title">{t('Python 依赖管理')}</strong><span>{t('版本可留空，构建时将安装最新版本。核心绘图库由基础镜像锁定。')}</span></div></div>

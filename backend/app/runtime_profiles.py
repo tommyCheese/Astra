@@ -9,6 +9,7 @@ from collections import deque
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from app.agent_profile import AgentProfile, AgentProfileLoader
 from app.sandbox.runtime import sanitize_log
 
 NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
@@ -50,8 +51,60 @@ class RuntimeProfileService:
     def __init__(self, settings, *, recover_interrupted: bool = False):
         self.settings, self.path, self.tasks = settings, Path(settings.runtime_profile_path), {}
         self.recovered_staging_images = []
+        self._packaged_agent_profile = AgentProfileLoader().load()
+        self._active_agent_profile = self._load_agent_profile(self._read_persisted())
         if recover_interrupted:
             self._recover_interrupted_build()
+
+    def _read_persisted(self):
+        if not self.path.exists():
+            return {}
+        return json.loads(self.path.read_text())
+
+    def _load_agent_profile(self, state) -> AgentProfile:
+        value = state.get("agent_profile")
+        if value is None:
+            return self._packaged_agent_profile
+        documents = value.get("documents") if isinstance(value, dict) else None
+        if not isinstance(documents, dict):
+            raise ValueError("Agent Profile 运行时配置无效")
+        return AgentProfileLoader().load(documents)
+
+    @staticmethod
+    def _agent_profile_documents(profile: AgentProfile):
+        return {
+            document.name: document.content
+            for document in profile.manifest.documents
+        }
+
+    def _agent_profile_view(self, state):
+        source = "user" if state.get("agent_profile") is not None else "default"
+        profile = self._active_agent_profile
+        return {
+            "source": source,
+            "version": profile.manifest.version,
+            "documents": self._agent_profile_documents(profile),
+        }
+
+    def active_agent_profile(self) -> AgentProfile:
+        return self._active_agent_profile
+
+    def update_agent_profile(self, documents):
+        profile = AgentProfileLoader().load(documents)
+        state = self._read_persisted()
+        state["agent_profile"] = {
+            "documents": self._agent_profile_documents(profile),
+        }
+        self.write(state)
+        self._active_agent_profile = profile
+        return self._agent_profile_view(state)
+
+    def reset_agent_profile(self):
+        state = self._read_persisted()
+        state.pop("agent_profile", None)
+        self.write(state)
+        self._active_agent_profile = self._packaged_agent_profile
+        return self._agent_profile_view(state)
 
     def _recover_interrupted_build(self):
         if not self.path.exists():
@@ -85,16 +138,12 @@ class RuntimeProfileService:
         await self._prune_images(cleanup_id)
 
     def read(self):
-        if self.path.exists():
-            state = json.loads(self.path.read_text())
-        else:
-            state = {
-                "dependencies": [],
-                "active_image": self.settings.sandbox_runtime_image,
-                "dependency_digest": self.settings.sandbox_runtime_lock_digest,
-                "build": None,
-                "images": [],
-            }
+        state = self._read_persisted()
+        state.setdefault("dependencies", [])
+        state.setdefault("active_image", self.settings.sandbox_runtime_image)
+        state.setdefault("dependency_digest", self.settings.sandbox_runtime_lock_digest)
+        state.setdefault("build", None)
+        state.setdefault("images", [])
         images = state.setdefault("images", [])
         active_image = state.get("active_image", self.settings.sandbox_runtime_image)
         if active_image.startswith("astra-data-viz:custom-") and not any(
@@ -113,6 +162,7 @@ class RuntimeProfileService:
             "keep_recent": max(0, self.settings.runtime_image_keep_recent),
             "retention_days": max(0, self.settings.runtime_image_retention_days),
         }
+        state["agent_profile"] = self._agent_profile_view(state)
         return state
 
     def write(self, value):
@@ -123,6 +173,14 @@ class RuntimeProfileService:
             for key, item in value.items()
             if key not in {"core_dependencies", "image_policy"}
         }
+        agent_profile = persisted.get("agent_profile")
+        if isinstance(agent_profile, dict) and "source" in agent_profile:
+            if agent_profile.get("source") == "user":
+                persisted["agent_profile"] = {
+                    "documents": agent_profile.get("documents", {}),
+                }
+            else:
+                persisted.pop("agent_profile", None)
         temporary.write_text(json.dumps(persisted, ensure_ascii=False, indent=2))
         temporary.replace(self.path)
 
