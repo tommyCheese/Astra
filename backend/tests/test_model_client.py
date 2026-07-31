@@ -99,6 +99,39 @@ async def test_mock_model_client_agent_decisions():
     assert final.decision_type == "finalize"
 
 
+async def test_mock_model_client_does_not_retry_failed_fetch_url():
+    client = MockModelClient()
+    context = {
+        "observations": [
+            {
+                "kind": "tool_result",
+                "status": "succeeded",
+                "data": {
+                    "tool_name": "web_search",
+                    "candidates": [
+                        {"url": "https://example.com/fails", "snippet": "bad"},
+                        {"url": "https://example.com/next", "snippet": "next"},
+                    ],
+                },
+            },
+            {
+                "kind": "tool_error",
+                "status": "failed",
+                "data": {
+                    "tool_name": "web_fetch",
+                    "url": "https://example.com/fails",
+                },
+            },
+        ]
+    }
+
+    decision = await client.decide("查询 Astra", context)
+
+    assert decision.decision_type == "call_tool"
+    assert decision.tool_name == "web_fetch"
+    assert decision.tool_input["url"] == "https://example.com/next"
+
+
 async def test_mock_model_reflection_and_memory_candidates():
     client = MockModelClient()
     reflection = await client.reflect("查询 Astra", {"last_observation": {"status": "failed"}})

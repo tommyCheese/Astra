@@ -256,6 +256,11 @@ class RunEngine:
             return
 
         if run.state_version and run.agent_state:
+            # Skill/profile binding can append audit events above. The trusted
+            # coordinator executes claimed nodes through independent sessions,
+            # so release this session's SQLite writer before those sessions
+            # begin their CAS updates.
+            await repo.session.commit()
             await self._execute_trusted_runtime(repo, run_id, goal)
             return
 

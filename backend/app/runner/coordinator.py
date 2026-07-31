@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.db.models import (
     NodeExecutionRecord,
     PlanNodeRecord,
+    PlanRecord,
     RunRecord,
     RunSkillSnapshotRecord,
     utc_now,
@@ -28,6 +29,7 @@ from app.schemas.agent import (
     NodeExecutionPhase,
     NodeExecutionStatus,
     PlanNodeStatus,
+    PlanStatus,
 )
 
 
@@ -517,6 +519,35 @@ class RunCoordinator:
             )
             if changed.rowcount != 1:
                 raise NodeExecutionStateError("Plan node changed before result commit")
+            if target_node_status in {
+                PlanNodeStatus.completed.value,
+                PlanNodeStatus.skipped.value,
+            }:
+                unfinished_node = await session.scalar(
+                    select(PlanNodeRecord.id)
+                    .where(
+                        PlanNodeRecord.plan_id == execution.plan_id,
+                        PlanNodeRecord.status.not_in(
+                            {
+                                PlanNodeStatus.completed.value,
+                                PlanNodeStatus.skipped.value,
+                            }
+                        ),
+                    )
+                    .limit(1)
+                )
+                if unfinished_node is None:
+                    await session.execute(
+                        update(PlanRecord)
+                        .where(
+                            PlanRecord.id == execution.plan_id,
+                            PlanRecord.status == PlanStatus.active.value,
+                        )
+                        .values(
+                            status=PlanStatus.completed.value,
+                            completed_at=utc_now(),
+                        )
+                    )
             await execution_repository.settle_budgets(
                 execution.id,
                 consumed=result.budget_consumed,

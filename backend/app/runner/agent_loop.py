@@ -2602,15 +2602,20 @@ class AgentLoop:
                 retry_counts[decision.tool_name or "unknown"] = (
                     retry_counts.get(decision.tool_name or "unknown", 0) + 1
                 )
+                failure_data = {
+                    "tool_name": decision.tool_name,
+                    "retry_count": retry_counts[decision.tool_name or "unknown"],
+                }
+                if decision.tool_name == "web_fetch":
+                    attempted_url = decision.tool_input.get("url")
+                    if isinstance(attempted_url, str) and attempted_url:
+                        failure_data["url"] = attempted_url
                 observation = AgentObservation(
                     kind="tool_error",
                     status="failed",
                     summary=f"{decision.tool_name} failed",
                     error=exc.to_payload(),
-                    data={
-                        "tool_name": decision.tool_name,
-                        "retry_count": retry_counts[decision.tool_name or "unknown"],
-                    },
+                    data=failure_data,
                 )
                 observation.data["failure_fingerprint"] = fingerprint
                 observations.append(observation.model_dump())

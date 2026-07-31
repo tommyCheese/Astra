@@ -709,6 +709,10 @@ async def test_plan_revision_creates_new_waiting_version_and_rejects_replay(app_
     assert run["waiting_state"]["plan_id"] == run["plan_graph"]["id"]
     assert run["waiting_state"]["continuation_token"] != payload["continuation_token"]
     assert [item["status"] for item in versions.json()] == ["superseded", "planned"]
+    revised_intent = run["plan_graph"]["nodes"][0]["intent"]
+    assert run["task_contract"]["original_goal"] in revised_intent
+    assert "revision_request" not in revised_intent
+    assert "validation_constraints" not in revised_intent
 
     confirmed = await app_client.post(
         f"/api/runs/{run_id}/resume",

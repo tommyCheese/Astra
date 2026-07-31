@@ -325,7 +325,7 @@ async def test_engine_completes_mock_web_query(session):
     assert loaded.steps == []
     canonical_plan = await PlanRepository(session).active_for_run(run.id)
     assert canonical_plan is not None
-    assert canonical_plan.status == "active"
+    assert canonical_plan.status == "completed"
     execution_node = next(node for node in canonical_plan.nodes if node.required_capabilities)
     assert execution_node.required_capabilities == [
         "information.search",
@@ -425,6 +425,7 @@ async def test_weather_plan_executes_nodes_in_dependency_order(session):
     plan = await PlanRepository(session).active_for_run(run.id)
     assert loaded.status == "completed"
     assert plan is not None
+    assert plan.status == "completed"
     assert [node.status for node in plan.nodes] == ["completed"] * 4
     call = next(item for item in loaded.tool_calls if item.tool_name == "weather_lookup")
     assert call.plan_node_id == plan.nodes[1].id

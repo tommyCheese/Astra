@@ -190,7 +190,22 @@ class MockModelClient(ModelClient):
         contract: TaskContract,
     ) -> PlanDraft:
         criterion_ids = [item.id for item in contract.success_criteria]
-        normalized_goal = goal.casefold()
+        public_goal = goal
+        planning_request = goal
+        try:
+            revision_context = json.loads(goal)
+        except (TypeError, ValueError):
+            revision_context = None
+        if isinstance(revision_context, dict):
+            original_goal = revision_context.get("original_goal")
+            revision_request = revision_context.get("revision_request")
+            if isinstance(original_goal, str) and original_goal.strip():
+                public_goal = original_goal.strip()
+            if isinstance(revision_request, str) and revision_request.strip():
+                planning_request = f"{public_goal}\n{revision_request.strip()}"
+            else:
+                planning_request = public_goal
+        normalized_goal = planning_request.casefold()
         if any(
             marker in normalized_goal
             for marker in (
@@ -223,7 +238,7 @@ class MockModelClient(ModelClient):
         definitions = [
             {
                 "title": "分析目标与约束",
-                "intent": f"明确用户目标、交付物和成功条件：{goal}",
+                "intent": f"明确用户目标、交付物和成功条件：{public_goal}",
                 "required_capabilities": [],
                 "depends_on": [],
             },
@@ -380,11 +395,12 @@ class MockModelClient(ModelClient):
                 reasoning_summary="计划节点已经完成，可以生成最终回复。",
                 expected_observation="最终答案包含结果、限制和验证备注。",
             )
-        fetched_urls = {
+        attempted_urls = {
             observation.get("data", {}).get("url")
             for observation in observations
-            if observation.get("kind") == "tool_result"
+            if observation.get("kind") in {"tool_result", "tool_error"}
             and observation.get("data", {}).get("tool_name") == "web_fetch"
+            and observation.get("data", {}).get("url")
         }
         search_observation = next(
             (
@@ -442,7 +458,7 @@ class MockModelClient(ModelClient):
         )
         for candidate in candidates:
             url = candidate.get("url")
-            if url and url not in fetched_urls and read_tools:
+            if url and url not in attempted_urls and read_tools:
                 return AgentDecision(
                     decision_type="call_tool",
                     reasoning_summary="抓取候选来源正文，用于构造证据包和最终回答。",

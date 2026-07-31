@@ -1416,6 +1416,11 @@ function AppContent() {
         if (!active) return;
         setRun(next);
         setProcessState((state) => reconcileProcessSnapshot(state, next));
+        setPlanGraphState((state) => {
+          const graph = reconcilePlanGraphSnapshot(state, next);
+          planGraphStateRef.current = graph;
+          return graph;
+        });
         rememberConversation(next);
         if (terminalStatuses.has(next.status) && next.result) {
           if (!streamingAnswerRef.current) setAnswerSettling(false);
