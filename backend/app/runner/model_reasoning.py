@@ -27,7 +27,7 @@ class ModelReasoningConfig:
     request_params: dict[str, Any] = field(default_factory=dict)
     include_json_mode: bool = True
     reason: str | None = None
-    source: str = "legacy_reasoning_policy"
+    source: str = "model_default"
     enabled: bool = False
     depth: ModelThinkingDepth | None = None
     intrinsic: bool = False
@@ -53,18 +53,6 @@ class ModelReasoningConfig:
             "adjustments": self.adjustments,
         }
 
-
-_ASTRA_TO_OPENAI_LEGACY: dict[ReasoningEffort, ModelThinkingDepth] = {
-    ReasoningEffort.fast: "minimal",
-    ReasoningEffort.balanced: "low",
-    ReasoningEffort.deep: "high",
-}
-
-_ASTRA_TO_STANDARD_EFFORT: dict[ReasoningEffort, ModelThinkingDepth] = {
-    ReasoningEffort.fast: "low",
-    ReasoningEffort.balanced: "medium",
-    ReasoningEffort.deep: "high",
-}
 
 _QWEN_THINKING_BUDGET: dict[ModelThinkingDepth, int] = {
     "low": 1024,
@@ -103,7 +91,7 @@ def model_thinking_capability(*, provider: str, model: str) -> ModelThinkingCapa
             adapter="openai-responses-required",
             reason="responses_api_required_for_pro_model",
         )
-    if normalized_provider == "openai" and _is_legacy_gpt5(normalized_model):
+    if normalized_provider == "openai" and _is_openai_gpt5_base_family(normalized_model):
         return _capability(
             provider,
             model,
@@ -112,9 +100,7 @@ def model_thinking_capability(*, provider: str, model: str) -> ModelThinkingCapa
             default_depth="medium",
             adapter="openai-gpt5",
         )
-    if normalized_provider == "openai" and _is_openai_family(
-        normalized_model, ("gpt-5.1",)
-    ):
+    if normalized_provider == "openai" and _is_openai_family(normalized_model, ("gpt-5.1",)):
         return _capability(
             provider,
             model,
@@ -137,9 +123,7 @@ def model_thinking_capability(*, provider: str, model: str) -> ModelThinkingCapa
             default_enabled=False,
             adapter="openai-gpt5-modern",
         )
-    if normalized_provider == "openai" and _is_openai_family(
-        normalized_model, ("gpt-5.5",)
-    ):
+    if normalized_provider == "openai" and _is_openai_family(normalized_model, ("gpt-5.5",)):
         return _capability(
             provider,
             model,
@@ -182,9 +166,7 @@ def model_thinking_capability(*, provider: str, model: str) -> ModelThinkingCapa
             adapter=adapter,
         )
 
-    if normalized_provider == "qwen" and _is_qwen_thinking_only(
-        normalized_model
-    ):
+    if normalized_provider == "qwen" and _is_qwen_thinking_only(normalized_model):
         return _capability(
             provider,
             model,
@@ -205,9 +187,7 @@ def model_thinking_capability(*, provider: str, model: str) -> ModelThinkingCapa
             reason="thinking_only_model_has_no_confirmed_budget_control",
         )
     qwen_default = (
-        _qwen_hybrid_default_enabled(normalized_model)
-        if normalized_provider == "qwen"
-        else None
+        _qwen_hybrid_default_enabled(normalized_model) if normalized_provider == "qwen" else None
     )
     if qwen_default is not None:
         return _capability(
@@ -254,10 +234,8 @@ def normalize_model_thinking(
     provider: str,
     model: str,
     selection: ModelThinkingSelection | dict[str, Any] | None,
-    legacy_effort: ReasoningEffort | str = ReasoningEffort.balanced,
 ) -> ModelThinkingSnapshot:
     capability = model_thinking_capability(provider=provider, model=model)
-    normalized_effort = ReasoningEffort(legacy_effort)
     requested = (
         selection
         if isinstance(selection, ModelThinkingSelection)
@@ -265,11 +243,7 @@ def normalize_model_thinking(
         if selection is not None
         else None
     )
-    source = (
-        "explicit_model_control"
-        if requested is not None
-        else "legacy_reasoning_policy"
-    )
+    source = "explicit_model_control" if requested is not None else "model_default"
     adjustments: list[ModelThinkingAdjustment] = []
 
     if not capability.supported:
@@ -293,11 +267,8 @@ def normalize_model_thinking(
 
     supported_depths = [item.id for item in capability.depths]
     if requested is None:
-        enabled, depth = _legacy_effective_selection(
-            capability,
-            normalized_effort,
-            supported_depths,
-        )
+        enabled = capability.default_enabled
+        depth = capability.default_depth if enabled else None
     else:
         enabled = requested.enabled
         depth = requested.depth if requested.enabled else None
@@ -356,12 +327,7 @@ def resolve_model_reasoning(
         if isinstance(thinking, ModelThinkingSnapshot)
         else ModelThinkingSnapshot.model_validate(thinking)
         if thinking is not None
-        else normalize_model_thinking(
-            provider=provider,
-            model=model,
-            selection=None,
-            legacy_effort=normalized_effort,
-        )
+        else normalize_model_thinking(provider=provider, model=model, selection=None)
     )
     effective = snapshot.effective
     adapter = snapshot.adapter
@@ -374,9 +340,7 @@ def resolve_model_reasoning(
         "source": snapshot.source,
         "enabled": effective.enabled,
         "depth": effective.depth,
-        "adjustments": [
-            item.model_dump(mode="json") for item in snapshot.adjustments
-        ],
+        "adjustments": [item.model_dump(mode="json") for item in snapshot.adjustments],
     }
 
     if adapter in {"openai-gpt5", "openai-gpt5-modern"} and effective.enabled:
@@ -398,22 +362,6 @@ def resolve_model_reasoning(
             reason=adjustment_reason,
         )
     if adapter == "anthropic-adaptive-thinking":
-        if snapshot.source == "legacy_reasoning_policy":
-            request_params = (
-                {
-                    "output_config": {
-                        "effort": _legacy_depth(capability, normalized_effort)
-                    }
-                }
-                if _anthropic_had_legacy_effort(model.strip().lower())
-                else {}
-            )
-            return ModelReasoningConfig(
-                **common,
-                request_params=request_params,
-                intrinsic=capability.default_enabled,
-                reason=adjustment_reason or "provider_default_thinking_preserved",
-            )
         if not effective.enabled:
             return ModelReasoningConfig(
                 **common,
@@ -432,21 +380,6 @@ def resolve_model_reasoning(
         "anthropic-manual-thinking",
         "anthropic-manual-thinking-effort",
     }:
-        if snapshot.source == "legacy_reasoning_policy":
-            request_params = (
-                {
-                    "output_config": {
-                        "effort": _legacy_depth(capability, normalized_effort)
-                    }
-                }
-                if adapter == "anthropic-manual-thinking-effort"
-                else {}
-            )
-            return ModelReasoningConfig(
-                **common,
-                request_params=request_params,
-                reason=adjustment_reason or "legacy_thinking_mode_preserved",
-            )
         if not effective.enabled:
             return ModelReasoningConfig(
                 **common,
@@ -470,15 +403,6 @@ def resolve_model_reasoning(
             reason=adjustment_reason,
         )
     if adapter == "qwen-hybrid-thinking":
-        if (
-            snapshot.source == "legacy_reasoning_policy"
-            and not _qwen_had_legacy_adapter(model.strip().lower())
-        ):
-            return ModelReasoningConfig(
-                **common,
-                intrinsic=capability.default_enabled,
-                reason="legacy_client_preserves_provider_default",
-            )
         if not effective.enabled:
             return ModelReasoningConfig(
                 **common,
@@ -489,46 +413,26 @@ def resolve_model_reasoning(
             **common,
             request_params={
                 "enable_thinking": True,
-                "thinking_budget": _QWEN_THINKING_BUDGET[
-                    effective.depth or "medium"
-                ],
+                "thinking_budget": _QWEN_THINKING_BUDGET[effective.depth or "medium"],
             },
             include_json_mode=False,
             reason=adjustment_reason or "thinking_mode_uses_prompt_enforced_json",
         )
     if adapter == "deepseek-v4-thinking":
-        if snapshot.source == "legacy_reasoning_policy":
-            return ModelReasoningConfig(
-                **common,
-                intrinsic=capability.default_enabled,
-                reason="legacy_client_preserves_provider_default",
-            )
         request_params: dict[str, Any] = {
             "thinking": {"type": "enabled" if effective.enabled else "disabled"}
         }
         if effective.enabled:
-            request_params["reasoning_effort"] = (
-                "max" if effective.depth == "xhigh" else "high"
-            )
+            request_params["reasoning_effort"] = "max" if effective.depth == "xhigh" else "high"
         return ModelReasoningConfig(
             **common,
             request_params=request_params,
             reason=adjustment_reason,
         )
     if adapter == "qwen-thinking-only-budget":
-        if snapshot.source == "legacy_reasoning_policy":
-            return ModelReasoningConfig(
-                **common,
-                intrinsic=True,
-                reason="thinking_only_model_uses_provider_default_budget",
-            )
         return ModelReasoningConfig(
             **common,
-            request_params={
-                "thinking_budget": _QWEN_THINKING_BUDGET[
-                    effective.depth or "medium"
-                ]
-            },
+            request_params={"thinking_budget": _QWEN_THINKING_BUDGET[effective.depth or "medium"]},
             include_json_mode=False,
             intrinsic=True,
             reason=adjustment_reason or "thinking_only_model_cannot_be_disabled",
@@ -607,46 +511,10 @@ def _unavailable_capability(
     )
 
 
-def _legacy_effective_selection(
-    capability: ModelThinkingCapability,
-    effort: ReasoningEffort,
-    supported_depths: list[ModelThinkingDepth],
-) -> tuple[bool, ModelThinkingDepth | None]:
-    if capability.adapter == "qwen-hybrid-thinking":
-        if not _qwen_had_legacy_adapter(capability.model.strip().lower()):
-            enabled = capability.default_enabled
-            return enabled, capability.default_depth if enabled else None
-        if effort == ReasoningEffort.fast:
-            return False, None
-    if capability.adapter == "anthropic-adaptive-thinking":
-        enabled = capability.default_enabled
-        return (
-            enabled,
-            _legacy_depth(capability, effort) if enabled else None,
-        )
-    if capability.adapter.startswith("anthropic-manual-thinking"):
-        return False, None
-    return True, _legacy_depth(capability, effort)
-
-
-def _legacy_depth(
-    capability: ModelThinkingCapability,
-    effort: ReasoningEffort,
-) -> ModelThinkingDepth:
-    supported_depths = [item.id for item in capability.depths]
-    preferred = (
-        _ASTRA_TO_OPENAI_LEGACY[effort]
-        if capability.adapter == "openai-gpt5"
-        else _ASTRA_TO_STANDARD_EFFORT[effort]
-    )
-    return preferred if preferred in supported_depths else capability.default_depth or supported_depths[0]
-
-
 def _is_openai_family(model: str, bases: tuple[str, ...]) -> bool:
     return any(
         model == base
-        or re.fullmatch(rf"{re.escape(base)}-\d{{4}}-\d{{2}}-\d{{2}}", model)
-        is not None
+        or re.fullmatch(rf"{re.escape(base)}-\d{{4}}-\d{{2}}-\d{{2}}", model) is not None
         for base in bases
     )
 
@@ -723,28 +591,15 @@ def _is_claude_45_model(model: str, family: str) -> bool:
     return model == base or re.fullmatch(rf"{base}-\d{{8}}", model) is not None
 
 
-def _anthropic_had_legacy_effort(model: str) -> bool:
-    return (
-        model
-        in {
-            "claude-fable-5",
-            "claude-mythos-5",
-            "claude-mythos-preview",
-            "claude-opus-4-6",
-            "claude-opus-4-7",
-            "claude-opus-4-8",
-            "claude-sonnet-4-6",
-            "claude-sonnet-5",
-        }
-        or _is_claude_45_model(model, "opus")
-    )
-
-
 def _is_qwen_thinking_only(model: str) -> bool:
-    return model in _QWEN_THINKING_ONLY_MODELS or re.fullmatch(
-        r"qwen3-(?:next-80b-a3b|235b-a22b|30b-a3b)-thinking(?:-\d{4})?",
-        model,
-    ) is not None
+    return (
+        model in _QWEN_THINKING_ONLY_MODELS
+        or re.fullmatch(
+            r"qwen3-(?:next-80b-a3b|235b-a22b|30b-a3b)-thinking(?:-\d{4})?",
+            model,
+        )
+        is not None
+    )
 
 
 def _qwen_hybrid_default_enabled(model: str) -> bool | None:
@@ -789,10 +644,6 @@ def _qwen_hybrid_default_enabled(model: str) -> bool | None:
     return None
 
 
-def _qwen_had_legacy_adapter(model: str) -> bool:
-    return model.startswith(("qwen3", "qwen-plus"))
-
-
 def _unsupported_reason(provider: str) -> str:
     if provider == "google":
         return "native_generate_content_transport_not_implemented"
@@ -815,7 +666,7 @@ def _first_adjustment_reason(snapshot: ModelThinkingSnapshot) -> str | None:
     return snapshot.adjustments[0].reason if snapshot.adjustments else None
 
 
-def _is_legacy_gpt5(model: str) -> bool:
+def _is_openai_gpt5_base_family(model: str) -> bool:
     return _is_openai_family(
         model,
         ("gpt-5", "gpt-5-mini", "gpt-5-nano"),

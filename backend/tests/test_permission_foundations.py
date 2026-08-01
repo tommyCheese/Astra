@@ -68,8 +68,15 @@ def test_permission_and_effect_schemas_preserve_identity_and_integrity_fields():
 def test_workspace_paths_reject_escape_and_shell_ambiguous_names():
     assert validate_workspace_path("reports/summary.md") == "reports/summary.md"
     for unsafe in (
-        "../secret", "/etc/passwd", "-rf", "dir/-rf", "dir\\file", "a/../b",
-        "bad\nname", "report\u202etxt", "trailing. ",
+        "../secret",
+        "/etc/passwd",
+        "-rf",
+        "dir/-rf",
+        "dir\\file",
+        "a/../b",
+        "bad\nname",
+        "report\u202etxt",
+        "trailing. ",
     ):
         with pytest.raises(ValueError):
             validate_workspace_path(unsafe)
@@ -176,15 +183,17 @@ async def test_permission_repository_persists_identity_delegation_catalog_and_da
         },
         policies=PermissionPolicySet(
             version="delegation-test",
-            rules=[PermissionRule(
-                id="allow-delegation",
-                source="test",
-                tier="run",
-                decision="allow",
-                actions=["delegation_create"],
-                resources=[f"identity://{child.id}"],
-                reason_code="test_delegation_allow",
-            )],
+            rules=[
+                PermissionRule(
+                    id="allow-delegation",
+                    source="test",
+                    tier="run",
+                    decision="allow",
+                    actions=["delegation_create"],
+                    resources=[f"identity://{child.id}"],
+                    reason_code="test_delegation_allow",
+                )
+            ],
         ),
     )
     snapshot = await repository.freeze_tool_catalog(

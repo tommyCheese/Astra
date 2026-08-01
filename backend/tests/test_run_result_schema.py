@@ -1,7 +1,10 @@
+import pytest
+from pydantic import ValidationError
+
 from app.schemas.agent import RunResult, RunView
 
 
-def test_verification_report_defaults_validation_outcomes_for_legacy_results():
+def test_verification_report_defaults_optional_validation_outcomes():
     result = RunResult.model_validate(
         {
             "summary": "legacy",
@@ -13,40 +16,35 @@ def test_verification_report_defaults_validation_outcomes_for_legacy_results():
     assert result.verification_report.validation_outcomes == []
 
 
-def test_run_result_normalizes_legacy_payload_and_omits_unknown_fields():
-    result = RunResult.model_validate(
-        {
-            "summary": "legacy",
-            "findings": "one finding",
-            "sources": ["https://example.com", None, {}],
-            "failed_sources": [None, "bad", {"url": "https://bad.example", "message": "no"}],
-            "source_quality": [None, {"url": "https://example.com", "quality_score": 0.8}],
-            "conflicts": "not-a-record",
-            "caveats": "legacy caveat",
-            "verification_notes": None,
-            "memory_references": [None, {"id": "memory-1", "confidence": "invalid"}],
-            "audit_refs": "invalid",
-            "verification_report": {"notes": []},
-            "completion_decision": {"state": "unknown"},
-            "internal_debug_payload": {"secret": True},
-        }
-    )
-
-    payload = result.model_dump(mode="json")
-    assert payload["findings"] == [{"text": "one finding", "source_urls": [], "artifact_ids": []}]
-    assert [source["url"] for source in payload["sources"]] == ["https://example.com"]
-    assert payload["failed_sources"][0]["url"] == "https://bad.example"
-    assert payload["source_quality"][0]["quality_score"] == 0.8
-    assert payload["conflicts"] == []
-    assert payload["caveats"] == ["legacy caveat"]
-    assert payload["claims"] == []
-    assert payload["citations"] == []
-    assert payload["memory_references"] == []
-    assert payload["audit_refs"]["referenced_artifact_ids"] == []
-    assert payload["audit_refs"]["evidence_record_count"] == 0
-    assert payload["verification_report"] is None
-    assert payload["completion_decision"] is None
-    assert "internal_debug_payload" not in payload
+def test_run_result_rejects_obsolete_payload():
+    with pytest.raises(ValidationError):
+        RunResult.model_validate(
+            {
+                "summary": "obsolete",
+                "findings": "one finding",
+                "sources": ["https://example.com", None, {}],
+                "failed_sources": [
+                    None,
+                    "bad",
+                    {"url": "https://bad.example", "message": "no"},
+                ],
+                "source_quality": [
+                    None,
+                    {"url": "https://example.com", "quality_score": 0.8},
+                ],
+                "conflicts": "not-a-record",
+                "caveats": "obsolete caveat",
+                "verification_notes": None,
+                "memory_references": [
+                    None,
+                    {"id": "memory-1", "confidence": "invalid"},
+                ],
+                "audit_refs": "invalid",
+                "verification_report": {"notes": []},
+                "completion_decision": {"state": "unknown"},
+                "internal_debug_payload": {"secret": True},
+            }
+        )
 
 
 def test_run_result_preserves_grounding_claims_citations_and_audit_refs():

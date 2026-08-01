@@ -133,8 +133,7 @@ def active_plan_node_id(state: dict[str, Any]) -> str | None:
             ),
         )
         return selected.get("plan_node_id")
-    legacy = state.get("active_node_id")
-    return str(legacy) if legacy else None
+    return None
 
 
 def active_node_execution_id(
@@ -368,12 +367,10 @@ class ContextAssembler:
             ).encode("utf-8")
         ).hexdigest()
         ranked_by_id = {item.candidate.id: item for item in result.ranked}
-        shadow = self.settings.agent_memory_cross_session_shadow
         recall = await memory_repo.record_recall_event(
             run_id=run_id,
             query_hash=query_fingerprint,
             policy_version=self.settings.agent_memory_retrieval_policy_version,
-            shadow=shadow,
             namespace_manifest=namespace_manifest,
             candidates=[
                 {
@@ -437,24 +434,15 @@ class ContextAssembler:
         memory_scores: dict[str, dict[str, float | None]] = {}
         recall_event_id: str | None = None
         cross_session_active = bool(
-            self.settings
-            and (
-                self.settings.agent_memory_cross_session_enabled
-                or self.settings.agent_memory_cross_session_shadow
-            )
+            self.settings and self.settings.agent_memory_cross_session_enabled
         )
         if cross_session_active:
             selected, recall_event_id = await self._retrieve_cross_session(
                 run_id=run_id,
                 goal=goal,
             )
-            if (
-                self.settings is not None
-                and self.settings.agent_memory_cross_session_enabled
-                and not self.settings.agent_memory_cross_session_shadow
-            ):
-                memories = [item.candidate for item in selected]
-                memory_scores = {item.candidate.id: item.score.as_dict() for item in selected}
+            memories = [item.candidate for item in selected]
+            memory_scores = {item.candidate.id: item.score.as_dict() for item in selected}
         plan = (
             None
             if run.answer_mode == AnswerMode.standard.value
@@ -547,9 +535,7 @@ class ContextAssembler:
         if recall_event_id is not None:
             context["memory_recall"] = {
                 "event_id": recall_event_id,
-                "mode": "shadow"
-                if self.settings and self.settings.agent_memory_cross_session_shadow
-                else "active",
+                "mode": "active",
                 "policy_version": self.settings.agent_memory_retrieval_policy_version
                 if self.settings
                 else None,

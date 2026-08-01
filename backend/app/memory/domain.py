@@ -25,7 +25,7 @@ class MemoryStatus(str, Enum):
 class MemoryNamespaceType(str, Enum):
     run = "run"
     task = "task"
-    workspace = "workspace"
+    session = "session"
     user = "user"
 
 
@@ -87,31 +87,15 @@ MEMORY_LIFECYCLE_TRANSITIONS: dict[MemoryStatus, frozenset[MemoryStatus]] = {
     MemoryStatus.expired: frozenset(),
 }
 
-_LEGACY_KIND_ALIASES: dict[str, MemoryKind] = {
-    "fact": MemoryKind.semantic_fact,
-    "preference": MemoryKind.user_preference,
-    "source_summary": MemoryKind.episodic_experience,
-    "observation": MemoryKind.episodic_experience,
-    "experience": MemoryKind.episodic_experience,
-    "strategy": MemoryKind.procedure,
-    "failure": MemoryKind.failure_pattern,
-    "feedback": MemoryKind.evaluation_feedback,
-    "evaluation": MemoryKind.evaluation_feedback,
-}
 
-
-def normalize_memory_kind(
-    value: str | MemoryKind,
-    *,
-    allow_legacy_alias: bool = True,
-) -> MemoryKind | None:
+def normalize_memory_kind(value: str | MemoryKind) -> MemoryKind | None:
     if isinstance(value, MemoryKind):
         return value
     normalized = str(value or "").strip().lower().replace("-", "_")
     try:
         return MemoryKind(normalized)
     except ValueError:
-        return _LEGACY_KIND_ALIASES.get(normalized) if allow_legacy_alias else None
+        return None
 
 
 def validate_memory_transition(
@@ -122,7 +106,6 @@ def validate_memory_transition(
     target_status = MemoryStatus(target)
     if target_status not in MEMORY_LIFECYCLE_TRANSITIONS[current_status]:
         raise ValueError(
-            f"Invalid Memory lifecycle transition: "
-            f"{current_status.value} -> {target_status.value}"
+            f"Invalid Memory lifecycle transition: {current_status.value} -> {target_status.value}"
         )
     return current_status, target_status

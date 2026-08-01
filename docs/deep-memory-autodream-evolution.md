@@ -33,10 +33,10 @@ Memory、AutoDream 输出和 evolution candidate 都是非授权数据。它们�
 |---|---|---|
 | `run` | Run ID | 仅当前 Run 可见 |
 | `task` | Task/Conversation ID | 同一 Conversation 的后续 Run 可见 |
-| `workspace` | 明确的 Workspace ID | 只有携带相同非空 Workspace 身份的 Run 可见 |
+| `session` | 明确的 Session ID | 同一 Session 中的不同 Task 可见 |
 | `user` | 明确的创建者 ID | 只有携带相同非空用户身份的 Run 可见 |
 
-缺失 Workspace 或用户身份时，系统拒绝相应持久化写入，不会退化到共享的空命名空间。旧数据迁移时，无法安全映射的记录保留为隔离的 Run Memory。
+缺失 Session 或用户身份时，系统拒绝相应持久化写入，不会退化到共享的空命名空间。
 
 支持的类型为 `semantic_fact`、`user_preference`、`episodic_experience`、`procedure`、`failure_pattern` 和 `evaluation_feedback`。生命周期为：
 
@@ -62,16 +62,15 @@ quarantined → candidate | revoked
 6. 可选的批量 semantic scorer；
 7. 稳定排序以及 item、字符和 token 完整条目预算。
 
-注入模型的 `memory_context` 被明确标为 `untrusted_memory_data`、`authority: none`。AgentTurn 只审计 Memory ID、版本、命名空间和分数组件，不复制原始内容。召回事件保存查询 SHA-256 指纹、policy version、候选/选择/排除原因和 shadow 标志，不保存查询明文。
+注入模型的 `memory_context` 被明确标为 `untrusted_memory_data`、`authority: none`。AgentTurn 只审计 Memory ID、版本、命名空间和分数组件，不复制原始内容。召回事件保存查询 SHA-256 指纹、policy version、候选/选择/排除原因，不保存查询明文。
 
-## 3. Rollout flags
+## 3. Runtime settings
 
-默认配置保持旧读取路径，不开启跨 Session 注入，也不启动 AutoDream：
+默认不开启跨 Task 的持久记忆注入，也不启动 AutoDream：
 
 ```text
 AGENT_MEMORY_WRITE_ENABLED=true
 AGENT_MEMORY_CROSS_SESSION_ENABLED=false
-AGENT_MEMORY_CROSS_SESSION_SHADOW=false
 AGENT_MEMORY_RETRIEVAL_POLICY_VERSION=memory-retrieval-v1
 AGENT_MEMORY_RETRIEVAL_CANDIDATE_LIMIT=100
 AGENT_MEMORY_RETRIEVAL_MAX_ITEMS=8
@@ -81,21 +80,14 @@ AGENT_MEMORY_RETRIEVAL_MIN_CONFIDENCE=0.2
 AGENT_MEMORY_RETRIEVAL_MIN_SCORE=0.05
 ```
 
-本机用户也可以在“设置 → 记忆 → 记忆设置”中修改其中具有稳定产品含义的参数。保存后的覆盖写入 Runtime Profile，并立即用于之后新建的 Run；环境变量仍提供没有用户覆盖时的启动默认值。跨 Session 的两个底层布尔开关在界面中合并为三种互斥模式：
+本机用户也可以在“设置 → 记忆 → 记忆设置”中修改参数。保存后的覆盖写入 Runtime Profile，并用于之后新建的 Run；环境变量仍提供没有用户覆盖时的启动默认值。召回只有两种状态：
 
-- `关闭`：不跨任务查找或注入 Memory；
-- `仅评估`（shadow）：执行候选选择并记录审计，但不把结果注入模型；
+- `关闭`：不查找或注入持久 Memory；
 - `开启`：把通过过滤和预算限制的 Memory 注入后续 Run。
 
 “记忆设置”是后端强制执行的运行策略；Agent Profile 中的 `MEMORY.md` 只是模型应遵循的记忆治理指令，不能打开写入、跨任务召回或扩大预算。
 
-推荐发布顺序：
-
-1. 保持两个 cross-session flag 关闭，只写新 schema 与审计；
-2. 设置 `AGENT_MEMORY_CROSS_SESSION_SHADOW=true`，计算并记录选择但不注入；
-3. 检查 namespace leakage、stale use、negative transfer、token/latency；
-4. 关闭 shadow 并设置 `AGENT_MEMORY_CROSS_SESSION_ENABLED=true`；
-5. 出现回归时立即关闭 enabled；数据和审计无需回滚。
+开启前应检查 namespace leakage、stale use、negative transfer 和 token/latency；出现回归时立即关闭召回，数据和审计无需回滚。
 
 ## 4. AutoDream consolidation
 
@@ -173,11 +165,10 @@ Conversation 删除在删除 Run/Turn/Artifact 之前解析 `memory_sources` 和
 固定夹具位于 `backend/tests/fixtures/deep_memory_retrieval_cases.json`，同时比较：
 
 - `no_memory`
-- `legacy_recency`
 - `cross_session`
 - `consolidation`
 
-报告记录 precision/recall、task success、token cost、latency、stale use、harmful feedback 和 namespace leakage。启用 active recall 前至少要求 namespace leakage 为零，且 task success/relevance 相比 legacy 有稳定改善；任何删除传播失败、安全回归或显著 negative transfer 都应关闭 active flag。
+报告记录 precision/recall、task success、token cost、latency、stale use、harmful feedback 和 namespace leakage。启用 active recall 前至少要求 namespace leakage 为零，且 task success/relevance 相比 no-memory 基线有稳定改善；任何删除传播失败、安全回归或显著 negative transfer 都应关闭 active flag。
 
 数据库升级：
 
@@ -187,7 +178,7 @@ alembic upgrade head
 alembic heads
 ```
 
-回滚服务行为优先使用 feature flag 和 Job rollback，不建议直接 downgrade 已写入新 Memory 的数据库。迁移是 additive 的，保留旧 Run 读取兼容。
+数据库只支持当前基线，不支持 downgrade 或旧 Run 读取。AutoDream 的 Job rollback 只撤销该整理作业的发布结果。
 
 ## 9. 当前延期项
 
@@ -195,7 +186,7 @@ alembic heads
 
 - embedding 生成、向量索引和语义召回实现；
 - Graph Memory 节点/边投影与图查询；
-- 跨用户、跨 Workspace 或组织级共享；
+- 跨用户或组织级共享；
 - 自动执行 approved evolution candidate；
 - 在线训练、模型权重更新或服务内自改写；
 - 自动 Shadow/Canary/production promotion。

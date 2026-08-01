@@ -98,9 +98,7 @@ async def _run_event_stream(
             if published is None:
                 async with SessionLocal() as stream_session:
                     stream_repo = RunRepository(stream_session)
-                    events, status = await stream_repo.list_events_with_status(
-                        run_id, last_id
-                    )
+                    events, status = await stream_repo.list_events_with_status(run_id, last_id)
                     payloads = [
                         {
                             "id": event.id,
@@ -155,9 +153,7 @@ def _streaming_response(stream: AsyncIterator[str]) -> StreamingResponse:
     )
 
 
-def _apply_model_config(
-    settings: Settings, model: RunModelConfig | dict | None
-) -> Settings:
+def _apply_model_config(settings: Settings, model: RunModelConfig | dict | None) -> Settings:
     if not model:
         return settings
     if not isinstance(model, RunModelConfig):
@@ -363,13 +359,9 @@ async def _create_run(
         permission_bundle = None
         if payload.permission_bundle is not None:
             try:
-                permission_bundle = PermissionBundle.model_validate(
-                    payload.permission_bundle
-                )
+                permission_bundle = PermissionBundle.model_validate(payload.permission_bundle)
             except ValueError as exc:
-                raise ValidationError(
-                    "PERMISSION_BUNDLE_INVALID", "权限包格式无效。"
-                ) from exc
+                raise ValidationError("PERMISSION_BUNDLE_INVALID", "权限包格式无效。") from exc
             if not verify_permission_bundle(
                 permission_bundle, settings.permission_bundle_signing_secret
             ):
@@ -381,7 +373,6 @@ async def _create_run(
             provider=run_settings.model_provider,
             model=run_settings.model_name,
             selection=payload.model.thinking if payload.model else None,
-            legacy_effort=policy.effective.reasoning_effort,
         )
         profile = profile.model_copy(
             update={
@@ -404,6 +395,7 @@ async def _create_run(
             answer_mode=profile.answer_mode.value,
             execution_profile=execution_profile,
             agent_profile_snapshot=load_agent_profile().snapshot(),
+            session_id=payload.session_id,
             commit=False,
         )
         if run_settings.skills_enabled:
@@ -717,7 +709,9 @@ async def decide_tool_approval(
         if "already been decided" in message:
             raise StateError("APPROVAL_ALREADY_DECIDED", "该工具调用已经处理。") from exc
         if "not available" in message:
-            raise StateError("SIMILAR_APPROVAL_UNAVAILABLE", "该命令不能使用相似命令授权。") from exc
+            raise StateError(
+                "SIMILAR_APPROVAL_UNAVAILABLE", "该命令不能使用相似命令授权。"
+            ) from exc
         raise StateError("APPROVAL_CONFLICT", "该批准请求当前无法处理。") from exc
     run = await repo.require_run(run_id)
     _schedule_run(run_id, run_settings)

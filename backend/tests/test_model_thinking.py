@@ -157,9 +157,7 @@ def test_normalize_model_thinking_keeps_forced_model_enabled():
 
     assert snapshot.effective.enabled is True
     assert snapshot.effective.depth == "medium"
-    assert [item.reason for item in snapshot.adjustments] == [
-        "model_thinking_always_on"
-    ]
+    assert [item.reason for item in snapshot.adjustments] == ["model_thinking_always_on"]
 
 
 def test_disabled_qwen_thinking_maps_to_provider_switch():
@@ -187,12 +185,8 @@ def test_disabled_qwen_thinking_maps_to_provider_switch():
 def test_optional_models_keep_provider_specific_defaults():
     qwen = model_thinking_capability(provider="qwen", model="qwen-plus")
     openai = model_thinking_capability(provider="openai", model="gpt-5.1")
-    openai_latest = model_thinking_capability(
-        provider="openai", model="gpt-5.6"
-    )
-    anthropic = model_thinking_capability(
-        provider="anthropic", model="claude-sonnet-4-6"
-    )
+    openai_latest = model_thinking_capability(provider="openai", model="gpt-5.6")
+    anthropic = model_thinking_capability(provider="anthropic", model="claude-sonnet-4-6")
 
     assert qwen.default_enabled is False
     assert openai.default_enabled is False
@@ -253,9 +247,7 @@ def test_optional_models_keep_provider_specific_defaults():
         ),
     ],
 )
-def test_optional_thinking_maps_to_provider_native_fields(
-    provider, model, depth, expected
-):
+def test_optional_thinking_maps_to_provider_native_fields(provider, model, depth, expected):
     selection = {
         "enabled": depth is not None,
         "depth": depth,
@@ -287,7 +279,6 @@ def test_explicit_depth_is_independent_of_agent_effort():
         provider="openai",
         model="gpt-5.2",
         selection=selection,
-        legacy_effort="deep",
     )
     config = resolve_model_reasoning(
         provider="openai",

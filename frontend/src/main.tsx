@@ -1,9 +1,10 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
-import { App } from './App';
+import { App, DocumentationPage } from './App';
 import './styles.css';
 
 const shareMatch = window.location.pathname.match(/^\/share\/([^/]+)\/?$/);
+const documentationPage = /^\/help\/?$/.test(window.location.pathname);
 const SharedConversationPage = shareMatch
   ? React.lazy(() => import('./SharedConversationPage').then((module) => ({
     default: module.SharedConversationPage,
@@ -24,7 +25,9 @@ ReactDOM.createRoot(document.getElementById('root') as HTMLElement).render(
       ? <React.Suspense fallback={null}><ComplexDagPaneVerificationPage /></React.Suspense>
       : ComplexDagVerificationPage
       ? <React.Suspense fallback={null}><ComplexDagVerificationPage /></React.Suspense>
-      : shareMatch && SharedConversationPage
+      : documentationPage
+        ? <DocumentationPage />
+        : shareMatch && SharedConversationPage
         ? <React.Suspense fallback={null}><SharedConversationPage token={decodeURIComponent(shareMatch[1])} /></React.Suspense>
         : <App />}
   </React.StrictMode>,

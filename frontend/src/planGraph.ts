@@ -61,7 +61,7 @@ export function reducePlanGraphEvent(
     : state.seenEventIds;
   if (event.type === 'plan.graph.snapshot') {
     const graph = event.payload.graph as PlanGraphSnapshot | undefined;
-    if (!graph?.id || ![1, 2].includes(graph.schema_version)) {
+    if (!graph?.id || graph.schema_version !== 2) {
       return { ...state, seenEventIds, needsRefresh: true };
     }
     if (state.current && graph.version < state.current.version) {

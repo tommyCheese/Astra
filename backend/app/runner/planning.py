@@ -685,7 +685,6 @@ class PlanScheduler:
             for execution in executions
         ]
         state["active_executions"] = [*existing, *summaries]
-        state.pop("active_node_id", None)
         state["schema_version"] = 2
         state["version"] = max(
             int(state.get("version", 0)) + 1,
@@ -804,8 +803,7 @@ class PlanScheduler:
         state = dict(run.agent_state or {})
         previous = list(state.get("active_executions", []))
         active = [item for item in previous if item.get("plan_node_id") != node_id]
-        if state.get("active_node_id") == node_id or len(active) != len(previous):
-            state.pop("active_node_id", None)
+        if len(active) != len(previous):
             state["active_executions"] = active
             state["version"] = int(state.get("version", run.state_version or 0)) + 1
             run.agent_state = state

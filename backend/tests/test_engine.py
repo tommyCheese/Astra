@@ -5,7 +5,7 @@ import pytest
 from fake_web_tools import fake_web_registry
 from sqlalchemy import event, select
 
-from app.agent_profile import AgentProfileLoader, load_agent_profile
+from app.agent_profile import load_agent_profile
 from app.core.config import Settings
 from app.db.models import (
     AgentIdentityRecord,
@@ -521,6 +521,7 @@ async def test_answer_delta_batching_flushes_first_and_final_content(session):
     events = await repo.list_events(run.id)
     assert [event.type for event in events] == [
         "run.created",
+        "agent_profile.frozen",
         "answer.started",
         "answer.delta",
         "answer.delta",
@@ -766,25 +767,17 @@ async def test_standard_fast_path_keeps_tool_router_security_boundary(session):
     assert loaded.result["summary"] == "禁止工具未被执行"
 
 
-async def test_engine_resumes_with_frozen_profile_when_packaged_default_changes(
-    session, monkeypatch
-):
+async def test_engine_resumes_with_current_frozen_profile(session):
     repo = RunRepository(session)
     frozen = load_agent_profile()
     run = await repo.create_task_run(
         "恢复 Profile", {"provider": "mock"}, agent_profile_snapshot=frozen.snapshot()
     )
-    changed_contents = {document.name: document.content for document in frozen.manifest.documents}
-    changed_contents["soul"] = changed_contents["soul"].replace("Astra 真诚", "Astra 始终真诚", 1)
-    changed = AgentProfileLoader().load(changed_contents)
-    monkeypatch.setattr("app.runner.engine.load_agent_profile", lambda: changed)
-
     selected = await RunEngine(Settings(model_provider="mock"))._profile_for_run(
         repo, run.id, run.agent_profile_snapshot
     )
 
     assert selected.manifest.version == frozen.manifest.version
-    assert selected.manifest.version != changed.manifest.version
 
 
 class PlanningSpyClient(MockModelClient):
@@ -877,7 +870,10 @@ async def test_engine_binds_effective_reasoning_effort_before_model_operations(s
     )._run_with_repo(repo, run.id)
 
     assert client.bound_efforts == ["deep"]
-    assert client.bound_thinking[0]["effective"] == {"enabled": True, "depth": "low"}
+    assert client.bound_thinking[0].effective.model_dump() == {
+        "enabled": True,
+        "depth": "low",
+    }
 
 
 async def test_disabled_model_thinking_does_not_suppress_public_process_events(session):

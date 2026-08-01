@@ -13,14 +13,12 @@ from app.memory.retrieval import (
     MemoryRetrievalCandidate,
     MemoryRetrievalPolicy,
     MemoryRetrievalQuery,
-    as_utc,
     estimate_text_tokens,
     retrieve_memories,
 )
 
 EVALUATION_STRATEGIES = (
     "no_memory",
-    "legacy_recency",
     "cross_session",
     "consolidation",
 )
@@ -62,7 +60,6 @@ class MemoryEvaluationFixture:
     query: str
     as_of: datetime
     namespaces: frozenset[MemoryNamespace]
-    legacy_run_id: str
     candidates: tuple[MemoryRetrievalCandidate, ...]
     consolidated_candidates: tuple[MemoryRetrievalCandidate, ...]
     relevant_ids: frozenset[str]
@@ -80,16 +77,12 @@ class MemoryEvaluationFixture:
             for item in value["namespaces"]
         )
         candidates = tuple(_candidate(item) for item in value.get("candidates", []))
-        consolidated = tuple(
-            _candidate(item)
-            for item in value.get("consolidated_candidates", [])
-        )
+        consolidated = tuple(_candidate(item) for item in value.get("consolidated_candidates", []))
         return cls(
             case_id=str(value["case_id"]),
             query=str(value["query"]),
             as_of=_datetime(value["as_of"]),
             namespaces=namespaces,
-            legacy_run_id=str(value["legacy_run_id"]),
             candidates=candidates,
             consolidated_candidates=consolidated or candidates,
             relevant_ids=frozenset(map(str, value.get("relevant_ids", []))),
@@ -155,45 +148,6 @@ def load_evaluation_fixtures(path: str | Path) -> tuple[MemoryEvaluationFixture,
     return fixtures
 
 
-def _legacy_selection(
-    fixture: MemoryEvaluationFixture,
-    budget: MemoryRetrievalBudget,
-) -> tuple[MemoryRetrievalCandidate, ...]:
-    candidates = [
-        item
-        for item in fixture.candidates
-        if item.namespace_type == MemoryNamespaceType.run.value
-        and item.namespace_id == fixture.legacy_run_id
-        and item.status == MemoryStatus.active.value
-        and (item.expires_at is None or as_utc(item.expires_at) > as_utc(fixture.as_of))
-        and (item.valid_to is None or as_utc(item.valid_to) > as_utc(fixture.as_of))
-    ]
-    candidates.sort(key=lambda item: item.id)
-    candidates.sort(
-        key=lambda item: as_utc(item.updated_at or item.observed_at or fixture.as_of),
-        reverse=True,
-    )
-    selected: list[MemoryRetrievalCandidate] = []
-    used_tokens = 0
-    used_characters = 0
-    for candidate in candidates:
-        token_cost = estimate_text_tokens(candidate.content) + budget.per_item_token_overhead
-        character_cost = len(candidate.content) + budget.per_item_character_overhead
-        if len(selected) >= budget.max_items:
-            break
-        if budget.max_tokens is not None and used_tokens + token_cost > budget.max_tokens:
-            continue
-        if (
-            budget.max_characters is not None
-            and used_characters + character_cost > budget.max_characters
-        ):
-            continue
-        selected.append(candidate)
-        used_tokens += token_cost
-        used_characters += character_cost
-    return tuple(selected)
-
-
 def _observe(
     fixture: MemoryEvaluationFixture,
     strategy: str,
@@ -202,9 +156,7 @@ def _observe(
 ) -> MemoryEvaluationObservation:
     selected_ids = tuple(item.id for item in selected)
     selected_set = set(selected_ids)
-    allowed_namespaces = {
-        (namespace.type.value, namespace.id) for namespace in fixture.namespaces
-    }
+    allowed_namespaces = {(namespace.type.value, namespace.id) for namespace in fixture.namespaces}
     relevant_selected = len(selected_set & fixture.relevant_ids)
     return MemoryEvaluationObservation(
         case_id=fixture.case_id,
@@ -218,8 +170,7 @@ def _observe(
         stale_use_count=len(selected_set & fixture.stale_ids),
         harmful_feedback_count=len(selected_set & fixture.harmful_ids),
         namespace_leakage_count=sum(
-            (item.namespace_type, item.namespace_id) not in allowed_namespaces
-            for item in selected
+            (item.namespace_type, item.namespace_id) not in allowed_namespaces for item in selected
         ),
     )
 
@@ -238,8 +189,6 @@ def evaluate_memory_strategies(
             started = time.perf_counter()
             if strategy == "no_memory":
                 selected: tuple[MemoryRetrievalCandidate, ...] = ()
-            elif strategy == "legacy_recency":
-                selected = _legacy_selection(fixture, effective_budget)
             else:
                 candidates = (
                     fixture.candidates
@@ -278,13 +227,9 @@ def evaluate_memory_strategies(
             selected_count=selected_count,
             precision=relevant_selected / selected_count if selected_count else 0.0,
             recall=relevant_selected / relevant_total if relevant_total else 0.0,
-            task_success_rate=sum(item.task_success for item in rows) / len(rows)
-            if rows
-            else 0.0,
+            task_success_rate=sum(item.task_success for item in rows) / len(rows) if rows else 0.0,
             token_cost=sum(item.token_cost for item in rows),
-            mean_latency_ms=sum(item.latency_ms for item in rows) / len(rows)
-            if rows
-            else 0.0,
+            mean_latency_ms=sum(item.latency_ms for item in rows) / len(rows) if rows else 0.0,
             stale_use_count=sum(item.stale_use_count for item in rows),
             harmful_feedback_count=sum(item.harmful_feedback_count for item in rows),
             namespace_leakage_count=sum(item.namespace_leakage_count for item in rows),

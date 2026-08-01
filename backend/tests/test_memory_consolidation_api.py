@@ -35,10 +35,10 @@ async def consolidation_client():
         for index, key in enumerate(("Project DB", "project-db")):
             await repository.create(
                 namespace=MemoryNamespace(
-                    MemoryNamespaceType.workspace,
-                    "workspace-1",
+                    MemoryNamespaceType.session,
+                    "session-1",
                 ),
-                scope="workspace",
+                scope="session",
                 kind="semantic_fact",
                 memory_key=key,
                 content="Astra uses PostgreSQL.",
@@ -60,8 +60,8 @@ async def test_trigger_list_detail_publish_and_rollback(consolidation_client):
     triggered = await consolidation_client.post(
         "/api/memory/consolidation/jobs",
         json={
-            "namespace_type": "workspace",
-            "namespace_id": "workspace-1",
+            "namespace_type": "session",
+            "namespace_id": "session-1",
             "idempotency_key": "api:test",
         },
     )
@@ -74,8 +74,8 @@ async def test_trigger_list_detail_publish_and_rollback(consolidation_client):
     duplicate = await consolidation_client.post(
         "/api/memory/consolidation/jobs",
         json={
-            "namespace_type": "workspace",
-            "namespace_id": "workspace-1",
+            "namespace_type": "session",
+            "namespace_id": "session-1",
             "idempotency_key": "api:test",
         },
     )
@@ -84,15 +84,13 @@ async def test_trigger_list_detail_publish_and_rollback(consolidation_client):
     listed = await consolidation_client.get(
         "/api/memory/consolidation/jobs",
         params={
-            "namespace_type": "workspace",
-            "namespace_id": "workspace-1",
+            "namespace_type": "session",
+            "namespace_id": "session-1",
         },
     )
     assert [job["id"] for job in listed.json()["jobs"]] == [proposed["id"]]
 
-    detail = await consolidation_client.get(
-        f"/api/memory/consolidation/jobs/{proposed['id']}"
-    )
+    detail = await consolidation_client.get(f"/api/memory/consolidation/jobs/{proposed['id']}")
     assert detail.status_code == 200
     assert detail.json()["input_hash"] == proposed["input_hash"]
 
@@ -133,8 +131,8 @@ async def test_api_rejects_cross_namespace_idempotency_reuse(
     first = await consolidation_client.post(
         "/api/memory/consolidation/jobs",
         json={
-            "namespace_type": "workspace",
-            "namespace_id": "workspace-1",
+            "namespace_type": "session",
+            "namespace_id": "session-1",
             "idempotency_key": "api:shared",
         },
     )
@@ -143,10 +141,21 @@ async def test_api_rejects_cross_namespace_idempotency_reuse(
     conflict = await consolidation_client.post(
         "/api/memory/consolidation/jobs",
         json={
-            "namespace_type": "workspace",
-            "namespace_id": "workspace-2",
+            "namespace_type": "session",
+            "namespace_id": "session-2",
             "idempotency_key": "api:shared",
         },
     )
     assert conflict.status_code == 409
 
+
+async def test_api_rejects_new_workspace_consolidation(consolidation_client):
+    response = await consolidation_client.post(
+        "/api/memory/consolidation/jobs",
+        json={
+            "namespace_type": "workspace",
+            "namespace_id": "legacy-workspace",
+            "idempotency_key": "api:legacy-workspace",
+        },
+    )
+    assert response.status_code == 422

@@ -230,7 +230,6 @@ class MemoryRetrievalPolicy:
     allowed_kinds: frozenset[str] | None = None
     require_provenance: bool = True
     require_accessible_source: bool = True
-    allow_legacy_run_kinds: bool = True
     recency_half_life_days: float = 30.0
     utility_bound: float = 1.0
     minimum_score: float = 0.0
@@ -378,20 +377,15 @@ def evaluate_memory_eligibility(
         reasons.append("revoked")
 
     raw_kind = _string_value(candidate.kind)
-    canonical_kind = normalize_memory_kind(raw_kind, allow_legacy_alias=False)
-    normalized_kind = canonical_kind
-    if canonical_kind is None:
-        if namespace_type == "run" and policy.allow_legacy_run_kinds:
-            normalized_kind = normalize_memory_kind(raw_kind, allow_legacy_alias=True)
-        else:
-            reasons.append("unsupported_kind")
+    normalized_kind = normalize_memory_kind(raw_kind)
+    if normalized_kind is None:
+        reasons.append("unsupported_kind")
 
     normalized_allowed_kinds = (
         {
             kind.value
             for raw_allowed_kind in policy.allowed_kinds
-            if (kind := normalize_memory_kind(raw_allowed_kind, allow_legacy_alias=False))
-            is not None
+            if (kind := normalize_memory_kind(raw_allowed_kind)) is not None
         }
         if policy.allowed_kinds is not None
         else None
@@ -431,7 +425,7 @@ def evaluate_memory_eligibility(
 def _normalized_kind_affinities(query: MemoryRetrievalQuery) -> dict[str, float]:
     affinities: dict[str, float] = {}
     for raw_kind, affinity in query.kind_affinities.items():
-        kind = normalize_memory_kind(raw_kind, allow_legacy_alias=False)
+        kind = normalize_memory_kind(raw_kind)
         if kind is not None:
             affinities[kind.value] = _clamp(affinity, 0.0, 1.0)
     return affinities

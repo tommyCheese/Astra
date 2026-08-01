@@ -40,7 +40,6 @@ class MemoryRecallView(BaseModel):
     turn_id: str | None = None
     query_fingerprint: str
     policy_version: str
-    shadow: bool
     selected: bool
     exclusion_reason: str | None = None
     scores: dict[str, float | None] = Field(default_factory=dict)
@@ -53,7 +52,6 @@ class MemoryView(BaseModel):
 
     id: str
     run_id: str | None = None
-    workspace_id: str | None = None
     created_by: str | None = None
     memory_key: str
     namespace_type: str

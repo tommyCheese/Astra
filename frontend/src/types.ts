@@ -134,7 +134,7 @@ type ParallelismSummary = {
 };
 
 export type PlanGraphSnapshot = {
-  schema_version: 1 | 2;
+  schema_version: 2;
   id: string;
   run_id: string;
   version: number;
@@ -147,23 +147,6 @@ export type PlanGraphSnapshot = {
   completed_at?: string | null;
   active_executions?: NodeExecution[];
   parallelism?: ParallelismSummary | null;
-};
-
-type LegacyPlanGraph = {
-  id: string;
-  run_id?: string;
-  version?: number;
-  status?: PlanGraphSnapshot['status'];
-  nodes?: Array<{
-    id: string;
-    node_key: string;
-    index: number;
-    title: string;
-    intent: string;
-    status: string;
-    depends_on: string[];
-  }>;
-  edges?: PlanGraphEdge[];
 };
 
 export type PlanVersionSummary = {
@@ -452,7 +435,7 @@ export type RunView = {
   model_policy?: Record<string, unknown>;
   reasoning_policy?: Record<string, unknown>;
   task_contract?: Record<string, unknown>;
-  plan_graph?: PlanGraphSnapshot | LegacyPlanGraph | Record<string, never>;
+  plan_graph?: PlanGraphSnapshot | Record<string, never>;
   plan_versions?: PlanVersionSummary[];
   agent_state?: Record<string, unknown>;
   state_version?: number;

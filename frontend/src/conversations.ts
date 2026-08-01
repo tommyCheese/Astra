@@ -36,35 +36,10 @@ export function normalizeRunView(run: RunView): RunView {
       evidence_ledger_artifact_id: run.result.audit_refs?.evidence_ledger_artifact_id,
     },
   } : run.result;
-  const rawGraph = run.answer_mode === 'trusted' && run.plan_graph && 'id' in run.plan_graph
+  const rawGraph = run.answer_mode === 'trusted' && run.plan_graph && 'id' in run.plan_graph && run.plan_graph.schema_version === 2
     ? run.plan_graph
     : null;
-  const planGraph: PlanGraphSnapshot | Record<string, never> = rawGraph ? {
-    schema_version: 'schema_version' in rawGraph && rawGraph.schema_version === 2 ? 2 : 1,
-    id: rawGraph.id,
-    run_id: rawGraph.run_id ?? run.id,
-    version: rawGraph.version ?? 1,
-    status: rawGraph.status ?? 'planned',
-    supersedes_plan_id: 'supersedes_plan_id' in rawGraph ? rawGraph.supersedes_plan_id : null,
-    nodes: (rawGraph.nodes ?? []).map((node) => ({
-      ...node,
-      plan_id: 'plan_id' in node ? String(node.plan_id) : rawGraph.id,
-      plan_version: 'plan_version' in node ? Number(node.plan_version) : rawGraph.version ?? 1,
-      status: ['pending', 'running', 'completed', 'failed', 'blocked', 'skipped'].includes(node.status)
-        ? node.status as 'pending' | 'running' | 'completed' | 'failed' | 'blocked' | 'skipped'
-        : 'pending',
-      required_capabilities: 'required_capabilities' in node && Array.isArray(node.required_capabilities) ? node.required_capabilities : [],
-      success_criteria_refs: 'success_criteria_refs' in node && Array.isArray(node.success_criteria_refs) ? node.success_criteria_refs : [],
-      risk_level: 'risk_level' in node ? String(node.risk_level) : 'low',
-      optional: 'optional' in node ? Boolean(node.optional) : false,
-      evidence_refs: 'evidence_refs' in node && Array.isArray(node.evidence_refs) ? node.evidence_refs : [],
-    })),
-    edges: rawGraph.edges ?? [],
-    active_executions: 'active_executions' in rawGraph && Array.isArray(rawGraph.active_executions)
-      ? rawGraph.active_executions
-      : run.node_executions?.filter((execution) => ['active', 'waiting'].includes(execution.status)) ?? [],
-    parallelism: 'parallelism' in rawGraph ? rawGraph.parallelism : run.parallelism ?? null,
-  } : {};
+  const planGraph: PlanGraphSnapshot | Record<string, never> = rawGraph ?? {};
   return {
     ...run,
     answer_mode: run.answer_mode ?? 'trusted',
@@ -89,34 +64,7 @@ export function normalizeRunView(run: RunView): RunView {
 
 function buildConversation(run: RunView | null): ChatMessage[] {
   if (!run) return [];
-  if (run.chat_messages?.length) return run.chat_messages;
-
-  const messages: ChatMessage[] = [{
-    id: `${run.id}-user`,
-    role: 'user',
-    content: run.summary || '提交了一个任务',
-    status: 'completed',
-    metadata: {},
-  }];
-  for (const call of run.tool_calls) {
-    messages.push({
-      id: call.id,
-      role: 'tool',
-      content: call.tool_name,
-      status: call.status,
-      metadata: { selected_tool: call.tool_name, output: call.output },
-    });
-  }
-  if (run.result) {
-    messages.push({
-      id: `${run.id}-answer`,
-      role: 'assistant',
-      content: run.result.summary,
-      status: run.status,
-      metadata: {},
-    });
-  }
-  return messages;
+  return run.chat_messages ?? [];
 }
 
 export function buildPresentation(run: RunView | null): ChatMessage[] {

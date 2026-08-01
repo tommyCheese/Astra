@@ -55,7 +55,6 @@ class Settings(BaseSettings):
     agent_node_max_safe_retries: int = 1
     agent_memory_write_enabled: bool = True
     agent_memory_cross_session_enabled: bool = False
-    agent_memory_cross_session_shadow: bool = False
     agent_memory_retrieval_policy_version: str = "memory-retrieval-v1"
     agent_memory_retrieval_candidate_limit: int = Field(default=100, ge=1, le=1_000)
     agent_memory_retrieval_max_items: int = Field(default=8, ge=0, le=50)
@@ -64,20 +63,12 @@ class Settings(BaseSettings):
     agent_memory_retrieval_min_confidence: float = Field(default=0.2, ge=0.0, le=1.0)
     agent_memory_retrieval_min_score: float = Field(default=0.05, ge=0.0, le=1.0)
     agent_memory_autodream_enabled: bool = False
-    agent_memory_autodream_scan_seconds: int = Field(
-        default=3_600, ge=60, le=604_800
-    )
-    agent_memory_autodream_cooldown_seconds: int = Field(
-        default=86_400, ge=0, le=2_592_000
-    )
+    agent_memory_autodream_scan_seconds: int = Field(default=3_600, ge=60, le=604_800)
+    agent_memory_autodream_cooldown_seconds: int = Field(default=86_400, ge=0, le=2_592_000)
     agent_memory_autodream_min_candidates: int = Field(default=2, ge=2, le=100)
-    agent_memory_autodream_max_records_per_job: int = Field(
-        default=100, ge=2, le=100
-    )
+    agent_memory_autodream_max_records_per_job: int = Field(default=100, ge=2, le=100)
     agent_memory_autodream_max_model_calls: int = Field(default=0, ge=0, le=8)
-    agent_memory_autodream_lease_seconds: int = Field(
-        default=120, ge=30, le=3_600
-    )
+    agent_memory_autodream_lease_seconds: int = Field(default=120, ge=30, le=3_600)
     agent_memory_autodream_batch_size: int = Field(default=4, ge=1, le=32)
     agent_use_general_runtime: bool = True
     allow_network_read: bool = True
@@ -95,12 +86,8 @@ class Settings(BaseSettings):
     scheduler_batch_size: int = Field(default=20, ge=1, le=500)
     scheduler_max_dispatch_concurrency: int = Field(default=4, ge=1, le=64)
     scheduler_history_retention_days: int = Field(default=90, ge=1, le=36_500)
-    scheduler_default_misfire_grace_seconds: int = Field(
-        default=300, ge=0, le=604_800
-    )
-    scheduler_heartbeat_min_interval_seconds: int = Field(
-        default=300, ge=60, le=86_400
-    )
+    scheduler_default_misfire_grace_seconds: int = Field(default=300, ge=0, le=604_800)
+    scheduler_heartbeat_min_interval_seconds: int = Field(default=300, ge=60, le=86_400)
     context_window_fallback_tokens: int = Field(default=131_072, ge=16_384)
     context_system_reserve_tokens: int = Field(default=4_096, ge=1_024)
     context_output_reserve_tokens: int = Field(default=8_192, ge=1_024)
@@ -152,9 +139,7 @@ class Settings(BaseSettings):
             self.agent_memory_autodream_min_candidates
             > self.agent_memory_autodream_max_records_per_job
         ):
-            raise ValueError(
-                "AutoDream minimum candidates cannot exceed records per job"
-            )
+            raise ValueError("AutoDream minimum candidates cannot exceed records per job")
         return self
 
     @property

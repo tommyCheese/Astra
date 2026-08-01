@@ -43,26 +43,20 @@ def parallel_plan() -> PlanDraft:
                 node_key="root-a",
                 title="Root A",
                 intent="Execute A",
-                expected_outcome=ExpectedObservation(
-                    kind="result", success_condition="A complete"
-                ),
+                expected_outcome=ExpectedObservation(kind="result", success_condition="A complete"),
             ),
             PlanNodeDraft(
                 node_key="root-b",
                 title="Root B",
                 intent="Execute B",
-                expected_outcome=ExpectedObservation(
-                    kind="result", success_condition="B complete"
-                ),
+                expected_outcome=ExpectedObservation(kind="result", success_condition="B complete"),
             ),
             PlanNodeDraft(
                 node_key="join",
                 title="Join",
                 intent="Join A and B",
                 depends_on=["root-a", "root-b"],
-                expected_outcome=ExpectedObservation(
-                    kind="result", success_condition="joined"
-                ),
+                expected_outcome=ExpectedObservation(kind="result", success_condition="joined"),
             ),
         ]
     )
@@ -106,9 +100,10 @@ async def test_execution_lease_budget_round_trip_and_run_projection(session):
 
     projected = run_to_view(await RunRepository(session).require_run(run.id))
     assert projected["node_executions"][0]["execution_id"] == execution.id
-    assert projected["node_executions"][0]["resource_leases"][0][
-        "resource_summary"
-    ] == "workspace file"
+    assert (
+        projected["node_executions"][0]["resource_leases"][0]["resource_summary"]
+        == "workspace file"
+    )
     assert projected["parallelism"]["active_count"] == 1
 
 
@@ -183,35 +178,16 @@ async def test_execution_transition_uses_state_version_compare_and_swap(session)
         )
 
 
-def test_legacy_active_node_migrates_to_active_execution_summary():
-    state = AgentState.model_validate(
-        {
-            "version": 1,
-            "task_contract": {"original_goal": "legacy"},
-            "active_plan_version": 4,
-            "active_node_id": "node-legacy",
-        }
-    )
-    payload = state.model_dump(mode="json")
-    assert state.version == 1
-    assert payload["schema_version"] == 2
-    assert payload.get("active_node_id") is None
-    assert payload["active_executions"] == [
-        {
-            "execution_id": None,
-            "plan_node_id": "node-legacy",
-            "plan_version": 4,
-            "attempt": 1,
-            "dispatch_batch_id": None,
-            "slot_index": None,
-            "phase": "running",
-            "status": "active",
-            "state_version": 1,
-            "wait_reason": None,
-            "started_at": None,
-            "heartbeat_at": None,
-        }
-    ]
+def test_obsolete_active_node_field_is_rejected():
+    with pytest.raises(ValueError, match="active_node_id"):
+        AgentState.model_validate(
+            {
+                "version": 1,
+                "task_contract": {"original_goal": "obsolete"},
+                "active_plan_version": 4,
+                "active_node_id": "node-obsolete",
+            }
+        )
 
 
 async def test_scheduler_claims_independent_nodes_as_one_batch(session):
@@ -302,9 +278,7 @@ async def test_scheduler_respects_budget_and_capability_limits(session):
     loaded_plan = await PlanRepository(session).active_for_run(run.id)
     assert loaded_plan is not None
     next(
-        node
-        for node in loaded_plan.nodes
-        if node.id == second.executions[0].plan_node_id
+        node for node in loaded_plan.nodes if node.id == second.executions[0].plan_node_id
     ).status = "completed"
     await session.commit()
     assert await scheduler.claim_ready_batch(run.id) is None
@@ -317,9 +291,7 @@ async def test_coordinator_workers_overlap_and_keep_execution_ownership(tmp_path
         await connection.run_sync(Base.metadata.create_all)
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
     async with session_factory() as setup_session:
-        run = await RunRepository(setup_session).create_task_run(
-            "overlap", {"provider": "mock"}
-        )
+        run = await RunRepository(setup_session).create_task_run("overlap", {"provider": "mock"})
         await PlanRepository(setup_session).create(run.id, parallel_plan())
         run_id = run.id
         await setup_session.commit()
@@ -365,9 +337,7 @@ async def test_coordinator_workers_overlap_and_keep_execution_ownership(tmp_path
         heartbeat_seconds=0.05,
     )
     started = time.monotonic()
-    coordinator_task = asyncio.create_task(
-        coordinator.run(run_id, controlled_executor)
-    )
+    coordinator_task = asyncio.create_task(coordinator.run(run_id, controlled_executor))
     started_task = asyncio.create_task(first_batch_started.wait())
     done, _ = await asyncio.wait(
         {coordinator_task, started_task},
@@ -388,14 +358,12 @@ async def test_coordinator_workers_overlap_and_keep_execution_ownership(tmp_path
     assert elapsed < 1
     async with session_factory() as verification_session:
         loaded = await RunRepository(verification_session).require_run(run_id)
-        assert {node.status for plan in loaded.plans for node in plan.nodes} == {
-            "completed"
-        }
+        assert {node.status for plan in loaded.plans for node in plan.nodes} == {"completed"}
         assert len(loaded.node_executions) == 3
         assert all(item.status == "completed" for item in loaded.node_executions)
-        assert {
-            turn.node_execution_id for turn in loaded.turns
-        } == {item.id for item in loaded.node_executions}
+        assert {turn.node_execution_id for turn in loaded.turns} == {
+            item.id for item in loaded.node_executions
+        }
     await engine.dispose()
 
 
@@ -506,9 +474,7 @@ async def test_run_cancellation_terminates_executions_and_releases_reservations(
     assert loaded.budget_reservations[0].status == "cancelled"
     cancelled_run = await RunRepository(session).require_run(run.id)
     cancelled_event = next(
-        event
-        for event in cancelled_run.events
-        if event.type == "plan.node.execution_cancelled"
+        event for event in cancelled_run.events if event.type == "plan.node.execution_cancelled"
     )
     assert cancelled_event.payload["node_execution_id"] == execution.id
     assert cancelled_event.payload["attempt"] == 1
@@ -526,27 +492,21 @@ async def test_failure_blocks_all_descendants_but_not_unrelated_branch(tmp_path)
                 node_key="failed-root",
                 title="Root",
                 intent="fail",
-                expected_outcome=ExpectedObservation(
-                    kind="result", success_condition="root"
-                ),
+                expected_outcome=ExpectedObservation(kind="result", success_condition="root"),
             ),
             PlanNodeDraft(
                 node_key="child",
                 title="Child",
                 intent="blocked",
                 depends_on=["failed-root"],
-                expected_outcome=ExpectedObservation(
-                    kind="result", success_condition="child"
-                ),
+                expected_outcome=ExpectedObservation(kind="result", success_condition="child"),
             ),
             PlanNodeDraft(
                 node_key="grandchild",
                 title="Grandchild",
                 intent="also blocked",
                 depends_on=["child"],
-                expected_outcome=ExpectedObservation(
-                    kind="result", success_condition="grandchild"
-                ),
+                expected_outcome=ExpectedObservation(kind="result", success_condition="grandchild"),
             ),
             PlanNodeDraft(
                 node_key="independent",
@@ -559,9 +519,7 @@ async def test_failure_blocks_all_descendants_but_not_unrelated_branch(tmp_path)
         ]
     )
     async with session_factory() as session:
-        run = await RunRepository(session).create_task_run(
-            "failure scope", {"provider": "mock"}
-        )
+        run = await RunRepository(session).create_task_run("failure scope", {"provider": "mock"})
         await PlanRepository(session).create(run.id, draft)
         run_id = run.id
         await session.commit()
@@ -574,11 +532,7 @@ async def test_failure_blocks_all_descendants_but_not_unrelated_branch(tmp_path)
             plan_node_id=context.plan_node_id,
             plan_version=context.plan_version,
             attempt=context.attempt,
-            status=(
-                NodeExecutionStatus.failed
-                if failed
-                else NodeExecutionStatus.completed
-            ),
+            status=(NodeExecutionStatus.failed if failed else NodeExecutionStatus.completed),
             failure={"category": "permanent"} if failed else None,
         )
 
@@ -603,9 +557,7 @@ async def test_safe_timeout_creates_one_new_attempt_and_reuses_dag_position(tmp_
         await connection.run_sync(Base.metadata.create_all)
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
     async with session_factory() as session:
-        run = await RunRepository(session).create_task_run(
-            "retry", {"provider": "mock"}
-        )
+        run = await RunRepository(session).create_task_run("retry", {"provider": "mock"})
         await PlanRepository(session).create(
             run.id,
             PlanDraft(
@@ -658,9 +610,7 @@ async def test_recovery_classifies_resume_replay_and_unknown_outcomes(tmp_path):
         await connection.run_sync(Base.metadata.create_all)
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
     async with session_factory() as session:
-        run = await RunRepository(session).create_task_run(
-            "recover", {"provider": "mock"}
-        )
+        run = await RunRepository(session).create_task_run("recover", {"provider": "mock"})
         plan = await PlanRepository(session).create(run.id, parallel_plan())
         repository = NodeExecutionRepository(session)
         resume = await repository.create_claim(
@@ -717,9 +667,7 @@ async def test_concurrent_schedulers_cannot_overclaim_run_slots(tmp_path):
         await connection.run_sync(Base.metadata.create_all)
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
     async with session_factory() as session:
-        run = await RunRepository(session).create_task_run(
-            "race", {"provider": "mock"}
-        )
+        run = await RunRepository(session).create_task_run("race", {"provider": "mock"})
         await PlanRepository(session).create(run.id, parallel_plan())
         run_id = run.id
         await session.commit()
@@ -735,10 +683,7 @@ async def test_concurrent_schedulers_cannot_overclaim_run_slots(tmp_path):
 
     batches = await asyncio.gather(claim(), claim())
     claimed = [
-        execution.id
-        for batch in batches
-        if batch is not None
-        for execution in batch.executions
+        execution.id for batch in batches if batch is not None for execution in batch.executions
     ]
     assert len(claimed) == 1
     async with session_factory() as session:
@@ -749,9 +694,7 @@ async def test_concurrent_schedulers_cannot_overclaim_run_slots(tmp_path):
 
 
 async def test_replan_drains_owned_attempt_before_activating_new_version(session):
-    run = await RunRepository(session).create_task_run(
-        "replan drain", {"provider": "mock"}
-    )
+    run = await RunRepository(session).create_task_run("replan drain", {"provider": "mock"})
     repository = PlanRepository(session)
     plan = await repository.create(run.id, parallel_plan())
     selected = await PlanScheduler(

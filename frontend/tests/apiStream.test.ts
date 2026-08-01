@@ -39,6 +39,9 @@ describe('createRun streaming fast path', () => {
     });
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(fetchMock.mock.calls[0][0]).toBe('/api/runs/stream');
+    const requestBody = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
+    expect(requestBody.session_id).toEqual(expect.any(String));
+    expect(requestBody.session_id.length).toBeGreaterThan(0);
     expect(events.map((event) => event.type)).toEqual([
       'stream.ready',
       'answer.delta',

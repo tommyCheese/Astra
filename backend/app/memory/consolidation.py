@@ -92,9 +92,7 @@ def _normalize_json(value: Any) -> Any:
         if not math.isfinite(value):
             raise ConsolidationValidationError("JSON numbers must be finite")
         return value
-    raise ConsolidationValidationError(
-        f"Value is not JSON serializable: {type(value).__name__}"
-    )
+    raise ConsolidationValidationError(f"Value is not JSON serializable: {type(value).__name__}")
 
 
 def canonical_json(value: Any) -> str:
@@ -144,9 +142,7 @@ def _bounded_string(value: Any, *, label: str, maximum: int) -> str:
     if not normalized:
         raise ConsolidationValidationError(f"{label} must be non-empty")
     if len(normalized) > maximum:
-        raise ConsolidationValidationError(
-            f"{label} exceeds the {maximum} character limit"
-        )
+        raise ConsolidationValidationError(f"{label} exceeds the {maximum} character limit")
     return normalized
 
 
@@ -167,9 +163,7 @@ def _bounded_number(
         raise ConsolidationValidationError(f"{label} must be a number")
     normalized = float(value)
     if not math.isfinite(normalized) or not minimum <= normalized <= maximum:
-        raise ConsolidationValidationError(
-            f"{label} must be between {minimum} and {maximum}"
-        )
+        raise ConsolidationValidationError(f"{label} must be between {minimum} and {maximum}")
     return normalized
 
 
@@ -187,9 +181,7 @@ def _bounded_ids(
         raise ConsolidationValidationError(
             f"{label} exceeds the {MAX_OPERATION_SOURCES} item limit"
         )
-    normalized = tuple(
-        _bounded_string(item, label=f"{label} item", maximum=120) for item in value
-    )
+    normalized = tuple(_bounded_string(item, label=f"{label} item", maximum=120) for item in value)
     if len(normalized) != len(set(normalized)):
         raise ConsolidationValidationError(f"{label} contains duplicate IDs")
     return tuple(sorted(normalized))
@@ -250,19 +242,11 @@ class FrozenSourceReference:
             label="Frozen source reference",
         )
         if not isinstance(value["accessible"], bool):
-            raise ConsolidationValidationError(
-                "Frozen source accessibility must be a boolean"
-            )
+            raise ConsolidationValidationError("Frozen source accessibility must be a boolean")
         return cls(
-            source_kind=_bounded_string(
-                value["source_kind"], label="Source kind", maximum=40
-            ),
-            source_ref=_bounded_string(
-                value["source_ref"], label="Source reference", maximum=320
-            ),
-            source_hash=_bounded_string(
-                value["source_hash"], label="Source hash", maximum=128
-            ),
+            source_kind=_bounded_string(value["source_kind"], label="Source kind", maximum=40),
+            source_ref=_bounded_string(value["source_ref"], label="Source reference", maximum=320),
+            source_hash=_bounded_string(value["source_hash"], label="Source hash", maximum=128),
             accessible=value["accessible"],
             run_id=_optional_string(value.get("run_id"), label="Run ID", maximum=120),
             turn_id=_optional_string(value.get("turn_id"), label="Turn ID", maximum=120),
@@ -293,7 +277,6 @@ class FrozenMemoryInput:
     importance: float
     utility_score: float
     run_id: str | None
-    workspace_id: str | None
     created_by: str | None
     observed_at: str
     valid_from: str
@@ -330,7 +313,6 @@ class FrozenMemoryInput:
             "importance": self.importance,
             "utility_score": self.utility_score,
             "run_id": self.run_id,
-            "workspace_id": self.workspace_id,
             "created_by": self.created_by,
             "observed_at": self.observed_at,
             "valid_from": self.valid_from,
@@ -376,7 +358,6 @@ class FrozenMemoryInput:
             importance=float(memory.importance),
             utility_score=float(memory.utility_score),
             run_id=memory.run_id,
-            workspace_id=memory.workspace_id,
             created_by=memory.created_by,
             observed_at=_normalize_datetime(memory.observed_at),
             valid_from=_normalize_datetime(memory.valid_from),
@@ -384,9 +365,7 @@ class FrozenMemoryInput:
                 _normalize_datetime(memory.valid_to) if memory.valid_to is not None else None
             ),
             expires_at=(
-                _normalize_datetime(memory.expires_at)
-                if memory.expires_at is not None
-                else None
+                _normalize_datetime(memory.expires_at) if memory.expires_at is not None else None
             ),
             consolidation_generation=int(memory.consolidation_generation),
             sources=sources,
@@ -414,7 +393,6 @@ class FrozenMemoryInput:
             "importance",
             "utility_score",
             "run_id",
-            "workspace_id",
             "created_by",
             "observed_at",
             "valid_from",
@@ -434,9 +412,7 @@ class FrozenMemoryInput:
         integer_fields = ("version", "state_version", "consolidation_generation")
         for field in integer_fields:
             if isinstance(value[field], bool) or not isinstance(value[field], int):
-                raise ConsolidationValidationError(
-                    f"Frozen Memory {field} must be an integer"
-                )
+                raise ConsolidationValidationError(f"Frozen Memory {field} must be an integer")
         if not isinstance(value["sources"], list):
             raise ConsolidationValidationError("Frozen Memory sources must be a list")
         sources = tuple(
@@ -454,9 +430,7 @@ class FrozenMemoryInput:
             )
         )
         if len(sources) != len(value["sources"]):
-            raise ConsolidationValidationError(
-                "Frozen Memory source entries must be objects"
-            )
+            raise ConsolidationValidationError("Frozen Memory source entries must be objects")
         content = _bounded_string(
             value["content"],
             label="Frozen Memory content",
@@ -470,29 +444,19 @@ class FrozenMemoryInput:
         if hashlib.sha256(content.encode("utf-8")).hexdigest() != content_hash:
             raise ConsolidationValidationError("Frozen Memory content hash mismatch")
         if not isinstance(value["structured_data"], Mapping):
-            raise ConsolidationValidationError(
-                "Frozen Memory structured_data must be an object"
-            )
+            raise ConsolidationValidationError("Frozen Memory structured_data must be an object")
         if not isinstance(value["provenance"], Mapping):
-            raise ConsolidationValidationError(
-                "Frozen Memory provenance must be an object"
-            )
+            raise ConsolidationValidationError("Frozen Memory provenance must be an object")
         candidate = cls(
             id=_bounded_string(value["id"], label="Memory ID", maximum=120),
-            memory_key=_bounded_string(
-                value["memory_key"], label="Memory key", maximum=240
-            ),
+            memory_key=_bounded_string(value["memory_key"], label="Memory key", maximum=240),
             version=value["version"],
             state_version=value["state_version"],
-            status=_bounded_string(
-                value["status"], label="Memory status", maximum=40
-            ),
+            status=_bounded_string(value["status"], label="Memory status", maximum=40),
             namespace_type=_bounded_string(
                 value["namespace_type"], label="Namespace type", maximum=40
             ),
-            namespace_id=_bounded_string(
-                value["namespace_id"], label="Namespace ID", maximum=120
-            ),
+            namespace_id=_bounded_string(value["namespace_id"], label="Namespace ID", maximum=120),
             scope=_bounded_string(value["scope"], label="Memory scope", maximum=40),
             kind=_bounded_string(value["kind"], label="Memory kind", maximum=80),
             content=content,
@@ -517,24 +481,11 @@ class FrozenMemoryInput:
                 maximum=1.0,
             ),
             run_id=_optional_string(value["run_id"], label="Run ID", maximum=120),
-            workspace_id=_optional_string(
-                value["workspace_id"], label="Workspace ID", maximum=120
-            ),
-            created_by=_optional_string(
-                value["created_by"], label="Creator ID", maximum=120
-            ),
-            observed_at=_bounded_string(
-                value["observed_at"], label="Observed time", maximum=80
-            ),
-            valid_from=_bounded_string(
-                value["valid_from"], label="Valid-from time", maximum=80
-            ),
-            valid_to=_optional_string(
-                value["valid_to"], label="Valid-to time", maximum=80
-            ),
-            expires_at=_optional_string(
-                value["expires_at"], label="Expiration time", maximum=80
-            ),
+            created_by=_optional_string(value["created_by"], label="Creator ID", maximum=120),
+            observed_at=_bounded_string(value["observed_at"], label="Observed time", maximum=80),
+            valid_from=_bounded_string(value["valid_from"], label="Valid-from time", maximum=80),
+            valid_to=_optional_string(value["valid_to"], label="Valid-to time", maximum=80),
+            expires_at=_optional_string(value["expires_at"], label="Expiration time", maximum=80),
             consolidation_generation=value["consolidation_generation"],
             sources=sources,
             content_hash=content_hash,
@@ -587,31 +538,18 @@ class ConsolidationInputManifest:
             )
         )
         if not normalized_items:
-            raise ConsolidationValidationError(
-                "Consolidation input manifest must be non-empty"
-            )
+            raise ConsolidationValidationError("Consolidation input manifest must be non-empty")
         if len(normalized_items) > MAX_CONSOLIDATION_INPUTS:
             raise ConsolidationValidationError(
                 f"Consolidation input exceeds the {MAX_CONSOLIDATION_INPUTS} item limit"
             )
         if len({item.id for item in normalized_items}) != len(normalized_items):
-            raise ConsolidationValidationError(
-                "Consolidation input contains duplicate Memory IDs"
-            )
-        normalized_type = _bounded_string(
-            namespace_type, label="Namespace type", maximum=40
-        )
-        normalized_id = _bounded_string(
-            namespace_id, label="Namespace ID", maximum=120
-        )
+            raise ConsolidationValidationError("Consolidation input contains duplicate Memory IDs")
+        normalized_type = _bounded_string(namespace_type, label="Namespace type", maximum=40)
+        normalized_id = _bounded_string(namespace_id, label="Namespace ID", maximum=120)
         for item in normalized_items:
-            if (
-                item.namespace_type != normalized_type
-                or item.namespace_id != normalized_id
-            ):
-                raise ConsolidationValidationError(
-                    "Consolidation input cannot cross namespaces"
-                )
+            if item.namespace_type != normalized_type or item.namespace_id != normalized_id:
+                raise ConsolidationValidationError("Consolidation input cannot cross namespaces")
         base = cls(
             namespace_type=normalized_type,
             namespace_id=normalized_id,
@@ -634,9 +572,7 @@ class ConsolidationInputManifest:
             label="Consolidation input manifest",
         )
         if value["schema_version"] != INPUT_MANIFEST_SCHEMA_VERSION:
-            raise ConsolidationValidationError(
-                "Unsupported consolidation input manifest schema"
-            )
+            raise ConsolidationValidationError("Unsupported consolidation input manifest schema")
         namespace = value["namespace"]
         if not isinstance(namespace, Mapping):
             raise ConsolidationValidationError("Manifest namespace must be an object")
@@ -656,9 +592,7 @@ class ConsolidationInputManifest:
             namespace_id=str(namespace["id"]),
             items=(FrozenMemoryInput.from_dict(item) for item in raw_items),
         )
-        stored_hash = _bounded_string(
-            value["input_hash"], label="Input manifest hash", maximum=128
-        )
+        stored_hash = _bounded_string(value["input_hash"], label="Input manifest hash", maximum=128)
         if candidate.input_hash != stored_hash:
             raise ConsolidationValidationError("Input manifest hash mismatch")
         return candidate
@@ -766,9 +700,7 @@ class ConsolidationProposal:
         producer: str,
         operations: Iterable[ConsolidationOperation],
     ) -> ConsolidationProposal:
-        normalized_producer = _bounded_string(
-            producer, label="Proposal producer", maximum=40
-        )
+        normalized_producer = _bounded_string(producer, label="Proposal producer", maximum=40)
         normalized_operations = tuple(
             sorted(operations, key=lambda operation: operation.operation_id)
         )
@@ -776,13 +708,9 @@ class ConsolidationProposal:
             raise ConsolidationValidationError(
                 f"Proposal exceeds the {MAX_PROPOSAL_OPERATIONS} operation limit"
             )
-        operation_ids = [
-            operation.operation_id for operation in normalized_operations
-        ]
+        operation_ids = [operation.operation_id for operation in normalized_operations]
         if len(operation_ids) != len(set(operation_ids)):
-            raise ConsolidationValidationError(
-                "Proposal contains duplicate normalized operations"
-            )
+            raise ConsolidationValidationError("Proposal contains duplicate normalized operations")
         base = cls(
             producer=normalized_producer,
             operations=normalized_operations,
@@ -817,9 +745,7 @@ class ConsolidationProposal:
             "operations": value["operations"],
         }
         proposal = normalize_model_output(raw, producer=str(value["producer"]))
-        stored_hash = _bounded_string(
-            value["proposal_hash"], label="Proposal hash", maximum=128
-        )
+        stored_hash = _bounded_string(value["proposal_hash"], label="Proposal hash", maximum=128)
         if proposal.proposal_hash != stored_hash:
             raise ConsolidationValidationError("Consolidation proposal hash mismatch")
         return proposal
@@ -842,13 +768,9 @@ def normalize_model_output(
     elif isinstance(raw_output, Mapping):
         decoded = dict(raw_output)
     else:
-        raise ConsolidationValidationError(
-            "Model consolidation output must be a JSON object"
-        )
+        raise ConsolidationValidationError("Model consolidation output must be a JSON object")
     if not isinstance(decoded, Mapping):
-        raise ConsolidationValidationError(
-            "Model consolidation output must be a JSON object"
-        )
+        raise ConsolidationValidationError("Model consolidation output must be a JSON object")
     if len(canonical_json(decoded).encode("utf-8")) > MAX_MODEL_OUTPUT_BYTES:
         raise ConsolidationValidationError("Model consolidation output is too large")
     _strict_fields(
@@ -858,9 +780,7 @@ def normalize_model_output(
         label="Model consolidation output",
     )
     if decoded["schema_version"] != CONSOLIDATION_PROPOSAL_SCHEMA_VERSION:
-        raise ConsolidationValidationError(
-            "Unsupported consolidation proposal schema"
-        )
+        raise ConsolidationValidationError("Unsupported consolidation proposal schema")
     raw_operations = decoded["operations"]
     if not isinstance(raw_operations, list):
         raise ConsolidationValidationError("Proposal operations must be a list")
@@ -873,9 +793,7 @@ def normalize_model_output(
     replaced_ids: set[str] = set()
     for index, raw_operation in enumerate(raw_operations):
         if not isinstance(raw_operation, Mapping):
-            raise ConsolidationValidationError(
-                f"Proposal operation {index} must be an object"
-            )
+            raise ConsolidationValidationError(f"Proposal operation {index} must be an object")
         allowed = {
             "action",
             "memory_key",
@@ -921,7 +839,6 @@ def normalize_model_output(
         )
         normalized_kind = normalize_memory_kind(
             raw_kind,
-            allow_legacy_alias=False,
         )
         if not isinstance(normalized_kind, MemoryKind):
             raise ConsolidationValidationError(
@@ -932,7 +849,7 @@ def normalize_model_output(
             label=f"Proposal operation {index} scope",
             maximum=40,
         )
-        if scope not in {"run", "task", "workspace", "user"}:
+        if scope not in {"run", "task", "session", "user"}:
             raise ConsolidationValidationError(
                 f"Proposal operation {index} has an unsupported Memory scope"
             )
@@ -943,9 +860,7 @@ def normalize_model_output(
         )
         total_content_chars += len(content)
         if total_content_chars > MAX_TOTAL_PROPOSAL_CONTENT_CHARS:
-            raise ConsolidationValidationError(
-                "Proposal exceeds the total content character limit"
-            )
+            raise ConsolidationValidationError("Proposal exceeds the total content character limit")
         structured_data = raw_operation.get("structured_data", {})
         if not isinstance(structured_data, Mapping):
             raise ConsolidationValidationError(
@@ -1192,8 +1107,7 @@ def validate_proposal(
                     ConsolidationValidationIssue(
                         code="namespace_isolation",
                         detail=(
-                            "A consolidation source is outside the frozen namespace "
-                            "working region"
+                            "A consolidation source is outside the frozen namespace working region"
                         ),
                         operation_id=operation.operation_id,
                         memory_id=source_id,
@@ -1245,8 +1159,7 @@ def validate_proposal(
                     ConsolidationValidationIssue(
                         code="type_isolation",
                         detail=(
-                            "A replacement cannot change the Memory kind or scope of "
-                            "its input"
+                            "A replacement cannot change the Memory kind or scope of its input"
                         ),
                         operation_id=operation.operation_id,
                         memory_id=replacement_id,

@@ -8,11 +8,12 @@ from app.memory.domain import (
 )
 
 
-def test_memory_kind_normalization_supports_typed_and_legacy_values():
+def test_memory_kind_normalization_accepts_only_current_values():
     assert normalize_memory_kind("semantic_fact") == MemoryKind.semantic_fact
-    assert normalize_memory_kind("source-summary") == MemoryKind.episodic_experience
+    assert normalize_memory_kind("episodic_experience") == MemoryKind.episodic_experience
+    assert normalize_memory_kind("source-summary") is None
     assert normalize_memory_kind("unknown") is None
-    assert normalize_memory_kind("source_summary", allow_legacy_alias=False) is None
+    assert normalize_memory_kind("source_summary") is None
 
 
 @pytest.mark.parametrize(

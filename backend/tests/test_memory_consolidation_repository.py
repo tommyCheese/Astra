@@ -23,7 +23,7 @@ from app.repositories.memory_consolidation import (
 async def create_duplicate_memories(
     session,
     *,
-    namespace_id: str = "workspace-1",
+    namespace_id: str = "session-1",
     count: int = 2,
 ) -> list[MemoryRecord]:
     repository = MemoryRepository(session)
@@ -33,10 +33,10 @@ async def create_duplicate_memories(
         records.append(
             await repository.create(
                 namespace=MemoryNamespace(
-                    MemoryNamespaceType.workspace,
+                    MemoryNamespaceType.session,
                     namespace_id,
                 ),
-                scope="workspace",
+                scope="session",
                 kind="semantic_fact",
                 memory_key=keys[index],
                 content="Astra uses PostgreSQL.",
@@ -66,8 +66,8 @@ async def test_prepare_publish_and_audited_rollback_are_atomic(session):
     input_ids = [memory.id for memory in inputs]
     repository = MemoryConsolidationRepository(session)
     job = await repository.create_job(
-        namespace_type="workspace",
-        namespace_id="workspace-1",
+        namespace_type="session",
+        namespace_id="session-1",
         idempotency_key="test:publish",
     )
 
@@ -110,19 +110,12 @@ async def test_prepare_publish_and_audited_rollback_are_atomic(session):
     assert rollback.rollback_of_id == published_id
     session.expire_all()
     assert (await session.get(MemoryRecord, output_id)).status == "revoked"
-    assert {
-        (await session.get(MemoryRecord, memory_id)).status
-        for memory_id in input_ids
-    } == {"active"}
+    assert {(await session.get(MemoryRecord, memory_id)).status for memory_id in input_ids} == {
+        "active"
+    }
     original = await session.get(MemoryConsolidationJobRecord, published_id)
     assert original.status == "rolled_back"
-    audit_types = set(
-        (
-            await session.scalars(
-                select(MemoryAuditRecord.event_type)
-            )
-        ).all()
-    )
+    audit_types = set((await session.scalars(select(MemoryAuditRecord.event_type))).all())
     assert {
         "consolidation_published",
         "consolidation_superseded",
@@ -136,8 +129,8 @@ async def test_publication_conflict_changes_no_memory_projection(session):
     input_ids = [memory.id for memory in inputs]
     repository = MemoryConsolidationRepository(session)
     job = await repository.create_job(
-        namespace_type="workspace",
-        namespace_id="workspace-1",
+        namespace_type="session",
+        namespace_id="session-1",
         idempotency_key="test:conflict",
     )
     proposed = await AutoDreamProcessor(autodream_settings()).prepare_job(
@@ -164,11 +157,7 @@ async def test_publication_conflict_changes_no_memory_projection(session):
     conflicted = await session.get(MemoryConsolidationJobRecord, proposed_id)
     assert conflicted.status == "conflict"
     records = (
-        await session.scalars(
-            select(MemoryRecord).where(
-                MemoryRecord.namespace_id == "workspace-1"
-            )
-        )
+        await session.scalars(select(MemoryRecord).where(MemoryRecord.namespace_id == "session-1"))
     ).all()
     assert len(records) == 2
     assert {record.status for record in records} == {"active"}
@@ -179,8 +168,8 @@ async def test_rollback_fails_atomically_when_source_support_is_revoked(session)
     input_ids = [memory.id for memory in inputs]
     repository = MemoryConsolidationRepository(session)
     job = await repository.create_job(
-        namespace_type="workspace",
-        namespace_id="workspace-1",
+        namespace_type="session",
+        namespace_id="session-1",
         idempotency_key="test:rollback-source",
     )
     proposed = await AutoDreamProcessor(autodream_settings()).prepare_job(
@@ -199,9 +188,7 @@ async def test_rollback_fails_atomically_when_source_support_is_revoked(session)
     output_id = published.publish_result["outputs"][0]["memory_id"]
     sources = (
         await session.scalars(
-            select(MemorySourceRecord).where(
-                MemorySourceRecord.memory_id == input_ids[0]
-            )
+            select(MemorySourceRecord).where(MemorySourceRecord.memory_id == input_ids[0])
         )
     ).all()
     for source in sources:
@@ -219,23 +206,22 @@ async def test_rollback_fails_atomically_when_source_support_is_revoked(session)
 
     session.expire_all()
     assert (await session.get(MemoryRecord, output_id)).status == "active"
-    assert {
-        (await session.get(MemoryRecord, memory_id)).status
-        for memory_id in input_ids
-    } == {"superseded"}
+    assert {(await session.get(MemoryRecord, memory_id)).status for memory_id in input_ids} == {
+        "superseded"
+    }
 
 
 async def test_job_idempotency_bounded_input_and_duplicate_prevention(session):
     await create_duplicate_memories(session, count=3)
     repository = MemoryConsolidationRepository(session)
     first = await repository.create_job(
-        namespace_type="workspace",
-        namespace_id="workspace-1",
+        namespace_type="session",
+        namespace_id="session-1",
         idempotency_key="test:idempotent",
     )
     duplicate = await repository.create_job(
-        namespace_type="workspace",
-        namespace_id="workspace-1",
+        namespace_type="session",
+        namespace_id="session-1",
         idempotency_key="test:idempotent",
     )
     assert duplicate.id == first.id
@@ -275,8 +261,8 @@ async def test_processor_marks_too_small_working_region_without_side_effects(
     await create_duplicate_memories(session, count=2)
     repository = MemoryConsolidationRepository(session)
     job = await repository.create_job(
-        namespace_type="workspace",
-        namespace_id="workspace-1",
+        namespace_type="session",
+        namespace_id="session-1",
         idempotency_key="test:minimum",
     )
     result = await AutoDreamProcessor(
@@ -288,9 +274,6 @@ async def test_processor_marks_too_small_working_region_without_side_effects(
     )
     assert result.status == "insufficient_input"
     assert result.input_manifest == {}
-    assert {
-        memory.status
-        for memory in (
-            await session.scalars(select(MemoryRecord))
-        ).all()
-    } == {"active"}
+    assert {memory.status for memory in (await session.scalars(select(MemoryRecord))).all()} == {
+        "active"
+    }

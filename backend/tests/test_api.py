@@ -98,9 +98,7 @@ async def test_runtime_default_model_reports_whether_it_is_runnable():
     )
     assert local_model.configured is True
 
-    mock_model = await get_runtime_default_model(
-        Settings(model_provider="mock", model_name="mock")
-    )
+    mock_model = await get_runtime_default_model(Settings(model_provider="mock", model_name="mock"))
     assert mock_model.configured is True
 
 
@@ -201,18 +199,19 @@ async def test_context_status_and_registered_commands_preserve_history(app_clien
     async with app_client._astra_session() as session:
         session.add(task)
         await session.flush()
+        repository = RunRepository(session)
         for index in range(6):
-            session.add(
-                RunRecord(
-                    task_id=task.id,
-                    status="completed",
-                    mode="web_agent",
-                    answer_mode="standard",
-                    model_policy={"conversation_goal": f"问题 {index}"},
-                    summary=f"回答 {index}",
-                    created_at=now,
-                    updated_at=now,
-                )
+            run = await repository.create_task_run(
+                f"问题 {index}",
+                app_client._astra_settings.model_policy,
+                task_id=task.id,
+                commit=False,
+            )
+            await repository.update_run_status(
+                run.id,
+                "completed",
+                summary=f"回答 {index}",
+                result={"summary": f"回答 {index}"},
             )
         await session.commit()
         task_id = task.id
@@ -991,9 +990,7 @@ async def test_runtime_agent_profile_update_is_used_by_new_runs_and_can_reset(ap
     documents["identity"] = documents["identity"].replace(
         "# Astra Identity", f"# Astra Identity\n\n{marker}"
     )
-    updated = await app_client.put(
-        "/api/runtime/agent-profile", json={"documents": documents}
-    )
+    updated = await app_client.put("/api/runtime/agent-profile", json={"documents": documents})
     assert updated.status_code == 200
     assert updated.json()["source"] == "user"
     assert updated.json()["version"] != original["version"]
@@ -1009,7 +1006,9 @@ async def test_runtime_agent_profile_update_is_used_by_new_runs_and_can_reset(ap
         "/api/runtime/agent-profile", json={"documents": invalid_documents}
     )
     assert rejected.status_code == 422
-    assert (await app_client.get("/api/runtime")).json()["agent_profile"]["version"] == updated.json()["version"]
+    assert (await app_client.get("/api/runtime")).json()["agent_profile"][
+        "version"
+    ] == updated.json()["version"]
 
     reset = await app_client.post("/api/runtime/agent-profile/reset")
     assert reset.status_code == 200
@@ -1031,7 +1030,7 @@ async def test_runtime_memory_settings_update_controls_autodream(app_client, mon
     monkeypatch.setattr(app_client._astra_autodream_service, "shutdown", shutdown)
     enabled = {
         **initial,
-        "cross_session_mode": "shadow",
+        "recall_enabled": True,
         "retrieval_max_items": 4,
         "autodream_enabled": True,
     }
@@ -1039,7 +1038,7 @@ async def test_runtime_memory_settings_update_controls_autodream(app_client, mon
     assert response.status_code == 200
     assert response.json() == enabled
     assert calls == ["startup"]
-    assert app_client._astra_settings.agent_memory_cross_session_shadow is True
+    assert app_client._astra_settings.agent_memory_cross_session_enabled is True
 
     disabled = {**enabled, "autodream_enabled": False}
     response = await app_client.put("/api/runtime/memory-settings", json=disabled)
@@ -1051,6 +1050,12 @@ async def test_runtime_memory_settings_update_controls_autodream(app_client, mon
         json={**disabled, "retrieval_min_confidence": 2},
     )
     assert invalid.status_code == 422
+    assert app_client._astra_runtime_service.memory_settings() == disabled
+
+    legacy = {**disabled, "cross_session_mode": "on"}
+    legacy.pop("recall_enabled")
+    rejected = await app_client.put("/api/runtime/memory-settings", json=legacy)
+    assert rejected.status_code == 422
     assert app_client._astra_runtime_service.memory_settings() == disabled
 
 
@@ -2093,7 +2098,7 @@ async def test_create_run_persists_explicit_model_thinking_snapshot(app_client):
             "qwen",
             "qwen3.7-plus",
             None,
-            "legacy_reasoning_policy",
+            "model_default",
             True,
             "medium",
         ),

@@ -83,10 +83,6 @@ class InvocationAuthorizationResult:
     decisions: tuple[PermissionDecision, ...]
     grant_ids: tuple[str, ...] = ()
 
-    @property
-    def grant_id(self) -> str | None:
-        """Backward-compatible single-lease view for audit consumers."""
-        return self.grant_ids[0] if len(self.grant_ids) == 1 else None
 
 class LeaseValidator:
     def matches(
@@ -253,8 +249,7 @@ class PermissionEngine:
         )
         grant_list = tuple(grants)
         decisions = tuple(
-            self.evaluate(request, policies, grant_list, now=now)
-            for request in requests
+            self.evaluate(request, policies, grant_list, now=now) for request in requests
         )
         aggregate = max(
             decisions,
@@ -269,11 +264,15 @@ class PermissionEngine:
             None,
         )
         if decisive_match is not None:
-            aggregate = aggregate.model_copy(update={
-                "explanation": aggregate.explanation.model_copy(update={
-                    "reason_code": decisive_match.reason_code,
-                })
-            })
+            aggregate = aggregate.model_copy(
+                update={
+                    "explanation": aggregate.explanation.model_copy(
+                        update={
+                            "reason_code": decisive_match.reason_code,
+                        }
+                    )
+                }
+            )
         if unattended and aggregate.decision == PermissionDecisionKind.ask:
             aggregate = self._decision(
                 PermissionDecisionKind.deny,
@@ -329,22 +328,17 @@ class PermissionEngine:
                     else None
                 ),
                 data_labels=sorted(
-                    set(effect.data_labels)
-                    | set(getattr(data_flow, "data_labels", []) or [])
+                    set(effect.data_labels) | set(getattr(data_flow, "data_labels", []) or [])
                 ),
             ),
             effect_plan_hash=effect_plan_hash,
             context={
-                "effect_kinds": sorted(
-                    {item.kind.value for item in effect_plan.effects}
-                ),
+                "effect_kinds": sorted({item.kind.value for item in effect_plan.effects}),
                 "tool_input": tool_input,
                 "analyzer_digest": effect_plan.analyzer_digest,
                 "persistent": effect.persistent,
                 "risk": effect.risk,
-                "trust_sources": list(
-                    getattr(data_flow, "trust_sources", []) or []
-                ),
+                "trust_sources": list(getattr(data_flow, "trust_sources", []) or []),
             },
         )
 
@@ -363,43 +357,47 @@ class PermissionEngine:
 
         rules: list[PermissionRule] = list(base_policies.rules if base_policies else [])
         if effect_plan.network_scope.get("mode") == "blocked":
-            rules.append(PermissionRule(
-                id="platform.network.blocked",
-                source="astra.platform",
-                tier=PolicyTier.platform,
-                decision=PermissionDecisionKind.deny,
-                actions=["network_write"],
-                resources=["*"],
-                reason_code="platform_network_denied",
-            ))
+            rules.append(
+                PermissionRule(
+                    id="platform.network.blocked",
+                    source="astra.platform",
+                    tier=PolicyTier.platform,
+                    decision=PermissionDecisionKind.deny,
+                    actions=["network_write"],
+                    resources=["*"],
+                    reason_code="platform_network_denied",
+                )
+            )
 
         side_effecting = is_side_effecting(effect_plan)
         if once_approved:
-            rules.append(PermissionRule(
-                id="once.user-approved",
-                source="user.approval",
-                tier=PolicyTier.once,
-                decision=PermissionDecisionKind.allow,
-                actions=["*"],
-                resources=["*"],
-                reason_code="once_approved",
-            ))
+            rules.append(
+                PermissionRule(
+                    id="once.user-approved",
+                    source="user.approval",
+                    tier=PolicyTier.once,
+                    decision=PermissionDecisionKind.allow,
+                    actions=["*"],
+                    resources=["*"],
+                    reason_code="once_approved",
+                )
+            )
         elif execution_mode == ExecutionMode.auto_approval or not side_effecting:
-            rules.append(PermissionRule(
-                id=(
-                    "run.mode.auto-approval"
-                    if execution_mode == ExecutionMode.auto_approval
-                    else "platform.safe-action"
-                ),
-                source="run.execution_mode",
-                tier=PolicyTier.run,
-                decision=PermissionDecisionKind.allow,
-                actions=["*"],
-                resources=["*"],
-                reason_code=(
-                    "auto_approval" if side_effecting else "safe_action"
-                ),
-            ))
+            rules.append(
+                PermissionRule(
+                    id=(
+                        "run.mode.auto-approval"
+                        if execution_mode == ExecutionMode.auto_approval
+                        else "platform.safe-action"
+                    ),
+                    source="run.execution_mode",
+                    tier=PolicyTier.run,
+                    decision=PermissionDecisionKind.allow,
+                    actions=["*"],
+                    resources=["*"],
+                    reason_code=("auto_approval" if side_effecting else "safe_action"),
+                )
+            )
 
         if data_flow is not None:
             rules.extend(self._data_flow_rules(requests, data_flow))
@@ -421,8 +419,7 @@ class PermissionEngine:
         from app.schemas.permissions import PermissionRule
 
         external = [
-            request for request in requests
-            if request.action in {"network_write", "external_write"}
+            request for request in requests if request.action in {"network_write", "external_write"}
         ]
         if not external:
             return []
@@ -435,43 +432,47 @@ class PermissionEngine:
             labels = accumulated_labels | set(request.conditions.data_labels)
             destination = request.conditions.network_destination or request.resource
             if any(fnmatchcase(destination, pattern) for pattern in prohibited):
-                rules.append(PermissionRule(
-                    id=f"data-flow.prohibited.{index}",
-                    source="run.data_flow",
-                    tier=PolicyTier.run,
-                    decision=PermissionDecisionKind.deny,
-                    actions=[request.action],
-                    resources=[request.resource],
-                    reason_code="data_egress_prohibited",
-                ))
+                rules.append(
+                    PermissionRule(
+                        id=f"data-flow.prohibited.{index}",
+                        source="run.data_flow",
+                        tier=PolicyTier.run,
+                        decision=PermissionDecisionKind.deny,
+                        actions=[request.action],
+                        resources=[request.resource],
+                        reason_code="data_egress_prohibited",
+                    )
+                )
                 continue
-            destination_allowed = any(
-                fnmatchcase(destination, pattern) for pattern in allowed
-            )
+            destination_allowed = any(fnmatchcase(destination, pattern) for pattern in allowed)
             sensitive = bool(labels & SENSITIVE_DATA_LABELS)
             if sensitive and not destination_allowed:
-                rules.append(PermissionRule(
-                    id=f"data-flow.sensitive.{index}",
-                    source="run.data_flow",
-                    tier=PolicyTier.run,
-                    decision=PermissionDecisionKind.deny,
-                    actions=[request.action],
-                    resources=[request.resource],
-                    reason_code="sensitive_data_egress_denied",
-                ))
-            elif any(
-                source.startswith(("workspace:", "web:", "external:"))
-                for source in sources
-            ) and not destination_allowed:
-                rules.append(PermissionRule(
-                    id=f"data-flow.untrusted.{index}",
-                    source="run.data_flow",
-                    tier=PolicyTier.run,
-                    decision=PermissionDecisionKind.ask,
-                    actions=[request.action],
-                    resources=[request.resource],
-                    reason_code="untrusted_data_external_write",
-                ))
+                rules.append(
+                    PermissionRule(
+                        id=f"data-flow.sensitive.{index}",
+                        source="run.data_flow",
+                        tier=PolicyTier.run,
+                        decision=PermissionDecisionKind.deny,
+                        actions=[request.action],
+                        resources=[request.resource],
+                        reason_code="sensitive_data_egress_denied",
+                    )
+                )
+            elif (
+                any(source.startswith(("workspace:", "web:", "external:")) for source in sources)
+                and not destination_allowed
+            ):
+                rules.append(
+                    PermissionRule(
+                        id=f"data-flow.untrusted.{index}",
+                        source="run.data_flow",
+                        tier=PolicyTier.run,
+                        decision=PermissionDecisionKind.ask,
+                        actions=[request.action],
+                        resources=[request.resource],
+                        reason_code="untrusted_data_external_write",
+                    )
+                )
         return rules
 
     @staticmethod
@@ -514,11 +515,7 @@ class PermissionEngine:
                 decided_at=now,
             )
 
-        matches = [
-            rule
-            for rule in policies.rules
-            if _rule_matches(rule, request, now=now)
-        ]
+        matches = [rule for rule in policies.rules if _rule_matches(rule, request, now=now)]
         matches.sort(key=lambda rule: (TIER_ORDER[rule.tier], rule.id))
         policy_matches = [
             PolicyMatch(
@@ -608,8 +605,7 @@ class PermissionEngine:
                 summary=summary,
                 matched_policies=matches,
                 trace=[
-                    f"{match.tier}:{match.policy_id}:{match.decision.value}"
-                    for match in matches
+                    f"{match.tier}:{match.policy_id}:{match.decision.value}" for match in matches
                 ],
             ),
             decided_at=now,

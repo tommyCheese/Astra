@@ -1,6 +1,6 @@
 export type JsonObject = Record<string, unknown>;
 
-export type MemoryNamespaceType = 'run' | 'task' | 'workspace' | 'user';
+export type MemoryNamespaceType = 'run' | 'task' | 'session' | 'user';
 export type MemoryLifecycleStatus =
   | 'candidate'
   | 'active'
@@ -49,7 +49,6 @@ export type MemoryRecallAudit = {
   turn_id?: string | null;
   query_fingerprint?: string | null;
   policy_version?: string | null;
-  shadow: boolean;
   selected: boolean;
   exclusion_reason?: string | null;
   scores: RecallScoreComponents;
@@ -69,7 +68,6 @@ export type MemoryAuditEvent = {
 export type MemoryRecord = {
   id: string;
   run_id?: string | null;
-  workspace_id?: string | null;
   created_by?: string | null;
   memory_key: string;
   namespace_type: MemoryNamespaceType | string;

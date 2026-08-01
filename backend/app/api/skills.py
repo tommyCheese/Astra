@@ -176,12 +176,17 @@ def _git_diff(
         elif status == "removed":
             header.append("deleted file mode 100644\n")
         try:
-            patch = "".join(header + list(difflib.unified_diff(
-                [] if before is None else before.decode("utf-8").splitlines(keepends=True),
-                [] if after is None else after.decode("utf-8").splitlines(keepends=True),
-                fromfile="/dev/null" if before is None else f"a/{path}",
-                tofile="/dev/null" if after is None else f"b/{path}",
-            )))
+            patch = "".join(
+                header
+                + list(
+                    difflib.unified_diff(
+                        [] if before is None else before.decode("utf-8").splitlines(keepends=True),
+                        [] if after is None else after.decode("utf-8").splitlines(keepends=True),
+                        fromfile="/dev/null" if before is None else f"a/{path}",
+                        tofile="/dev/null" if after is None else f"b/{path}",
+                    )
+                )
+            )
         except UnicodeDecodeError:
             patch = "".join(header) + f"Binary files a/{path} and b/{path} differ\n"
         patches.append(patch)
@@ -226,9 +231,7 @@ async def import_skill(
     except ValueError as exc:
         raise ValidationError("SKILL_ARCHIVE_ENCODING_INVALID", "Skill 压缩包编码无效。") from exc
     try:
-        skill = await SkillService(session, settings).import_zip(
-            archive, filename=payload.filename
-        )
+        skill = await SkillService(session, settings).import_zip(archive, filename=payload.filename)
         await session.commit()
         return await _detail(session, settings, skill)
     except (SkillPackageError, SkillStorageError) as exc:
@@ -292,15 +295,11 @@ async def list_skill_files(
         return SkillDraftFilesView(
             skill_id=skill.id,
             revision_token=(
-                skill.draft.revision_token
-                if skill.draft
-                else str(skill.active_revision_id or "")
+                skill.draft.revision_token if skill.draft else str(skill.active_revision_id or "")
             ),
             readonly=skill.origin == "builtin",
             files=[_file_view(skill, item) for _, item in sorted(files.items())],
-            diagnostics=_diagnostics(
-                skill.draft.validation_report if skill.draft else {}
-            ),
+            diagnostics=_diagnostics(skill.draft.validation_report if skill.draft else {}),
         )
     except SkillStorageError as exc:
         _raise_skill_error(exc)
@@ -389,9 +388,7 @@ async def publish_skill(
     settings: Settings = Depends(get_settings),
 ) -> SkillRevisionView:
     try:
-        revision = await SkillService(session, settings).publish(
-            skill_id, payload.revision_token
-        )
+        revision = await SkillService(session, settings).publish(skill_id, payload.revision_token)
         await session.commit()
         result = await _revision_view(session, revision.id)
         assert result is not None
@@ -450,10 +447,7 @@ async def get_skill_revision(
             revoked_at=revision.revoked_at.isoformat() if revision.revoked_at else None,
             test_only=revision.test_only,
             diagnostics=_diagnostics(revision.validation_report),
-            files=[
-                _revision_file_view(skill, revision, item)
-                for _, item in sorted(files.items())
-            ],
+            files=[_revision_file_view(skill, revision, item) for _, item in sorted(files.items())],
         )
     except SkillStorageError as exc:
         _raise_skill_error(exc)
@@ -478,9 +472,13 @@ async def read_skill_revision_file(
         item = (revision.manifest.get("files", {}) or {}).get(normalized)
         if item is None:
             raise SkillStorageError("SKILL_FILE_NOT_FOUND", "找不到 Skill 历史文件。")
-        content = (await service.materialize_manifest({
-            "files": {normalized: item},
-        }))[normalized]
+        content = (
+            await service.materialize_manifest(
+                {
+                    "files": {normalized: item},
+                }
+            )
+        )[normalized]
         view = _revision_file_view(skill, revision, item)
         return SkillFileContentView(
             path=normalized,
@@ -618,18 +616,24 @@ async def diff_skill(
         for path in paths:
             before = active_files.get(path)
             after = draft_files.get(path)
-            status = "added" if before is None else "removed" if after is None else (
-                "unchanged" if before == after else "modified"
+            status = (
+                "added"
+                if before is None
+                else "removed"
+                if after is None
+                else ("unchanged" if before == after else "modified")
             )
             patch = None
             if status == "modified":
                 try:
-                    patch = "".join(difflib.unified_diff(
-                        before.decode("utf-8").splitlines(keepends=True),
-                        after.decode("utf-8").splitlines(keepends=True),
-                        fromfile=f"published/{path}",
-                        tofile=f"draft/{path}",
-                    ))
+                    patch = "".join(
+                        difflib.unified_diff(
+                            before.decode("utf-8").splitlines(keepends=True),
+                            after.decode("utf-8").splitlines(keepends=True),
+                            fromfile=f"published/{path}",
+                            tofile=f"draft/{path}",
+                        )
+                    )
                 except UnicodeDecodeError:
                     patch = None
             changes.append({"path": path, "status": status, "patch": patch})
@@ -689,9 +693,7 @@ async def update_skill_state(
     settings: Settings = Depends(get_settings),
 ) -> SkillSummaryView:
     try:
-        skill = await SkillService(session, settings).set_enabled(
-            skill_id, payload.enabled
-        )
+        skill = await SkillService(session, settings).set_enabled(skill_id, payload.enabled)
         await session.commit()
         return await _summary(session, skill)
     except SkillStorageError as exc:
@@ -726,21 +728,16 @@ async def create_skill_test_run(
 ) -> CreateRunResponse:
     service = SkillService(session, settings)
     try:
-        test_revision = await service.create_test_revision(
-            skill_id, payload.revision_token
-        )
+        test_revision = await service.create_test_revision(skill_id, payload.revision_token)
         profile = RunProfileResolver().resolve(
             payload.answer_mode,
             RequestedReasoningPolicy(),
-            plan_execution=(
-                PlanExecution.auto if payload.answer_mode.value == "trusted" else None
-            ),
+            plan_execution=(PlanExecution.auto if payload.answer_mode.value == "trusted" else None),
         )
         thinking = normalize_model_thinking(
             provider=settings.model_provider,
             model=settings.model_name,
             selection=None,
-            legacy_effort=profile.reasoning_policy.effective.reasoning_effort,
         )
         run = await RunRepository(session).create_task_run(
             payload.goal.strip(),
@@ -816,16 +813,18 @@ async def get_run_skills(
     )
     if snapshot is None:
         raise ResourceError("RUN_SKILLS_NOT_FOUND", "该 Run 没有 Skill 快照。")
-    events = list((await session.scalars(
-        select(RunEventRecord)
-        .where(
-            RunEventRecord.run_id == run_id,
-            RunEventRecord.type.in_(
-                ["skill.attributed_action", "skill.plan_bound"]
-            ),
-        )
-        .order_by(RunEventRecord.id)
-    )).all())
+    events = list(
+        (
+            await session.scalars(
+                select(RunEventRecord)
+                .where(
+                    RunEventRecord.run_id == run_id,
+                    RunEventRecord.type.in_(["skill.attributed_action", "skill.plan_bound"]),
+                )
+                .order_by(RunEventRecord.id)
+            )
+        ).all()
+    )
     return RunSkillsView(
         run_id=run_id,
         catalog_digest=snapshot.catalog_digest,
@@ -837,9 +836,7 @@ async def get_run_skills(
         attributed_actions=[
             event.payload for event in events if event.type == "skill.attributed_action"
         ],
-        plan_bindings=[
-            event.payload for event in events if event.type == "skill.plan_bound"
-        ],
+        plan_bindings=[event.payload for event in events if event.type == "skill.plan_bound"],
     )
 
 
@@ -851,12 +848,16 @@ async def get_skill_audit(
     settings: Settings = Depends(get_settings),
 ) -> list[dict[str, Any]]:
     await SkillService(session, settings).require_skill(skill_id)
-    events = list((await session.scalars(
-        select(SkillAuditRecord)
-        .where(SkillAuditRecord.skill_id == skill_id)
-        .order_by(SkillAuditRecord.id.desc())
-        .limit(limit)
-    )).all())
+    events = list(
+        (
+            await session.scalars(
+                select(SkillAuditRecord)
+                .where(SkillAuditRecord.skill_id == skill_id)
+                .order_by(SkillAuditRecord.id.desc())
+                .limit(limit)
+            )
+        ).all()
+    )
     return [
         {
             "id": event.id,
@@ -890,15 +891,11 @@ async def get_skill_metrics(
         or 0
     )
     snapshots = int(
-        await session.scalar(select(func.count()).select_from(RunSkillSnapshotRecord))
-        or 0
+        await session.scalar(select(func.count()).select_from(RunSkillSnapshotRecord)) or 0
     )
-    snapshot_rows = list(
-        (await session.scalars(select(RunSkillSnapshotRecord))).all()
-    )
+    snapshot_rows = list((await session.scalars(select(RunSkillSnapshotRecord))).all())
     catalog_chars = [
-        len(json.dumps(item.catalog, ensure_ascii=False, sort_keys=True))
-        for item in snapshot_rows
+        len(json.dumps(item.catalog, ensure_ascii=False, sort_keys=True)) for item in snapshot_rows
     ]
     mode_counts = {
         mode: sum(item.answer_mode == mode for item in snapshot_rows)
@@ -936,16 +933,10 @@ async def get_skill_metrics(
         "draft_tests": draft_tests,
         "run_snapshots": snapshots,
         "catalog_entries": int(
-            sum(
-                len(items)
-                for items in (item.catalog for item in snapshot_rows)
-            )
+            sum(len(items) for items in (item.catalog for item in snapshot_rows))
         ),
         "activations": int(
-            sum(
-                len(items)
-                for items in (item.activations for item in snapshot_rows)
-            )
+            sum(len(items) for items in (item.activations for item in snapshot_rows))
         ),
         "resource_bytes": int(
             sum(
@@ -966,18 +957,12 @@ async def get_skill_metrics(
             }
             for mode, values in startup_ms.items()
         },
-        "activation_conflicts": int(
-            event_counts.get("skill.activation_conflict", 0)
-        ),
-        "attributed_actions": int(
-            event_counts.get("skill.attributed_action", 0)
-        ),
+        "activation_conflicts": int(event_counts.get("skill.activation_conflict", 0)),
+        "attributed_actions": int(event_counts.get("skill.attributed_action", 0)),
     }
 
 
-async def _detail(
-    session: AsyncSession, settings: Settings, skill: SkillRecord
-) -> SkillDetailView:
+async def _detail(session: AsyncSession, settings: Settings, skill: SkillRecord) -> SkillDetailView:
     service = SkillService(session, settings)
     summary = await _summary(session, skill)
     files = await service.draft_files(skill)

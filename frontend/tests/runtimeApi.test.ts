@@ -4,7 +4,7 @@ import { updateRuntimeMemorySettings, type MemoryRuntimeSettings } from '../src/
 
 const settings: MemoryRuntimeSettings = {
   write_enabled: true,
-  cross_session_mode: 'shadow',
+  recall_enabled: true,
   retrieval_max_items: 5,
   retrieval_max_tokens: 1800,
   retrieval_min_confidence: 0.3,

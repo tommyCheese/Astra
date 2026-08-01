@@ -1,8 +1,9 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { App } from '../src/App';
+import { App, DocumentationPage } from '../src/App';
 import { buildRuntime, cancelRun, cancelRuntimeBuild, confirmPlanExecution, createConversationShare, createRun, decideToolApproval, deleteConversation, executeConversationCommand, getConversation, getConversationContext, getConversationStrategy, getRun, getRuntimeDefaultModel, getRuntimeProfile, listConversationShares, listConversations, listLibraryFiles, listRuns, listSkills, listSystemCommands, resetRuntimeAgentProfile, resolveModelContextCapabilities, resolveModelThinkingCapabilities, resumeRun, revisePlan, revokeConversationShare, streamRunEvents, takeCreatedRunStream, updateConversation, updateConversationStrategy, updateRuntimeAgentProfile, updateRuntimeMemorySettings, updateToolSettings, type ModelThinkingCapability, type RunStreamEvent, type SkillSummary } from '../src/api';
+import type { PlanGraphSnapshot, RunView } from '../src/types';
 
 vi.mock('../src/api', () => ({
   AstraApiError: class AstraApiError extends Error {
@@ -45,7 +46,7 @@ vi.mock('../src/api', () => ({
     { name: 'bash_execute', label: 'Bash Execute', description: '在隔离容器中执行命令', enabled: false, available: true },
   ] })),
   updateToolSettings: vi.fn(async (tools) => ({ tools })),
-  getRuntimeProfile: vi.fn(async () => ({ dependencies: [], core_dependencies: [{ name: 'numpy', version: '2.2.6' }, { name: 'matplotlib', version: '3.10.3' }], active_image: 'astra-data-viz:0.1.0', dependency_digest: 'base', build: null, agent_profile: { source: 'default', version: 'profile-default', documents: { identity: '# Astra Identity\n\n## Identity\nDefault', soul: '# Astra Soul', memory: '# Astra Memory Protocol', autodream: '# Astra AutoDream Protocol' } }, memory_settings: { write_enabled: true, cross_session_mode: 'off', retrieval_max_items: 8, retrieval_max_tokens: 2000, retrieval_min_confidence: 0.2, retrieval_min_score: 0.05, autodream_enabled: false, autodream_scan_seconds: 3600, autodream_min_candidates: 2 } })),
+  getRuntimeProfile: vi.fn(async () => ({ dependencies: [], core_dependencies: [{ name: 'numpy', version: '2.2.6' }, { name: 'matplotlib', version: '3.10.3' }], active_image: 'astra-data-viz:0.1.0', dependency_digest: 'base', build: null, agent_profile: { source: 'default', version: 'profile-default', documents: { identity: '# Astra Identity\n\n## Identity\nDefault', soul: '# Astra Soul', memory: '# Astra Memory Protocol', autodream: '# Astra AutoDream Protocol' } }, memory_settings: { write_enabled: true, recall_enabled: false, retrieval_max_items: 8, retrieval_max_tokens: 2000, retrieval_min_confidence: 0.2, retrieval_min_score: 0.05, autodream_enabled: false, autodream_scan_seconds: 3600, autodream_min_candidates: 2 } })),
   updateRuntimeAgentProfile: vi.fn(async (documents) => ({ source: 'user', version: 'profile-user', documents })),
   resetRuntimeAgentProfile: vi.fn(async () => ({ source: 'default', version: 'profile-default', documents: { identity: '# Astra Identity\n\n## Identity\nDefault', soul: '# Astra Soul', memory: '# Astra Memory Protocol', autodream: '# Astra AutoDream Protocol' } })),
   updateRuntimeMemorySettings: vi.fn(async (settings) => settings),
@@ -240,7 +241,15 @@ vi.mock('../src/api', () => ({
     events: [{ id: 1, type: 'run.created', payload: { status: 'created' }, created_at: 'now' }],
     reasoning_policy: { effective: { reasoning_effort: 'balanced', execution_mode: 'request_approval' }, adjustments: [] },
     task_contract: { success_criteria: [{ id: 'criterion-result', description: '完成查询', status: 'satisfied' }] },
-    plan_graph: { id: 'plan-1', version: 1, nodes: [] },
+    plan_graph: {
+      schema_version: 2,
+      id: 'plan-1',
+      run_id: 'run-1',
+      version: 1,
+      status: 'completed',
+      nodes: [],
+      edges: [],
+    },
     state_version: 2,
   })),
 }));
@@ -290,7 +299,7 @@ describe('App', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     const values = new Map<string, string>([[
-      'astra.model-providers.v1',
+      'astra.model-providers.v2',
       JSON.stringify([{
         id: 'openai',
         name: 'OpenAI',
@@ -320,6 +329,29 @@ describe('App', () => {
     delete document.documentElement.dataset.theme;
     delete document.documentElement.dataset.astraQuestionToFirstTokenMs;
     document.documentElement.style.colorScheme = '';
+  });
+
+  it('opens the documentation center in a new standalone page', async () => {
+    const open = vi.spyOn(window, 'open').mockImplementation(() => null);
+    render(<App />);
+
+    const helpEntry = screen.getByRole('button', { name: '帮助文档' });
+    await userEvent.click(helpEntry);
+
+    expect(open).toHaveBeenCalledWith('/help', '_blank', 'noopener,noreferrer');
+    expect(screen.queryByRole('heading', { name: 'Astra 文档中心' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '新对话' })).toBeInTheDocument();
+    open.mockRestore();
+  });
+
+  it('renders documentation as a page without the main application frame', async () => {
+    render(<DocumentationPage />);
+
+    expect(await screen.findByRole('heading', { name: 'Astra 文档中心' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /生产、召回、范围与整理/ })).toHaveAttribute('aria-current', 'page');
+    expect(screen.getByText('什么时候真正生效？')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '新对话' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '设置' })).not.toBeInTheDocument();
   });
 
   it('shows the standalone context capacity control before the first conversation exists', async () => {
@@ -367,7 +399,7 @@ describe('App', () => {
   });
 
   it('shows a local configuration error before submitting when no runnable model exists', async () => {
-    window.localStorage.removeItem('astra.model-providers.v1');
+    window.localStorage.removeItem('astra.model-providers.v2');
     vi.mocked(getRuntimeDefaultModel).mockResolvedValueOnce({
       provider: 'openai',
       model: 'gpt-5',
@@ -728,7 +760,7 @@ describe('App', () => {
     fireEvent.keyDown(resizeHandle, { key: 'ArrowRight' });
     expect(resizeHandle).toHaveAttribute('aria-valuenow', '276');
     expect(layout.style.getPropertyValue('--sidebar-width')).toBe('276px');
-    await waitFor(() => expect(window.localStorage.getItem('astra.sidebar-width.v1')).toBe('276'));
+    await waitFor(() => expect(window.localStorage.getItem('astra.sidebar-width.v2')).toBe('276'));
 
     await userEvent.click(screen.getByRole('button', { name: '收起侧边栏' }));
     expect(layout).toHaveClass('sidebar-collapsed');
@@ -739,7 +771,7 @@ describe('App', () => {
     expect(screen.getByRole('button', { name: '已分享对话' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '用量统计' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '设置' })).toBeInTheDocument();
-    await waitFor(() => expect(window.localStorage.getItem('astra.sidebar-collapsed.v1')).toBe('true'));
+    await waitFor(() => expect(window.localStorage.getItem('astra.sidebar-collapsed.v2')).toBe('true'));
 
     await userEvent.click(screen.getByRole('button', { name: '展开侧边栏' }));
     expect(layout).not.toHaveClass('sidebar-collapsed');
@@ -938,7 +970,7 @@ describe('App', () => {
 
     await userEvent.click(summary);
     expect(panel).toHaveAttribute('open');
-    await waitFor(() => expect(JSON.parse(window.localStorage.getItem('astra.process-panel-default-open.v1') ?? 'false')).toBe(true));
+    await waitFor(() => expect(JSON.parse(window.localStorage.getItem('astra.process-panel-default-open.v2') ?? 'false')).toBe(true));
 
     act(() => {
       emit?.({ id: 10, type: 'reasoning.phase.started', payload: { phase: 'selecting_action', turn_index: 1 } });
@@ -974,7 +1006,7 @@ describe('App', () => {
     act(() => emit?.({ id: 16, type: 'reasoning.summary.delta', payload: { turn_index: 1, delta: '并继续验证' } }));
     await waitFor(() => expect(panel?.querySelector('summary .process-live-preview')).toHaveTextContent('正在选择可靠来源并继续验证'));
     expect(panel).not.toHaveAttribute('open');
-    await waitFor(() => expect(JSON.parse(window.localStorage.getItem('astra.process-panel-default-open.v1') ?? 'true')).toBe(false));
+    await waitFor(() => expect(JSON.parse(window.localStorage.getItem('astra.process-panel-default-open.v2') ?? 'true')).toBe(false));
 
     vi.mocked(getRun).mockResolvedValue(finalSnapshot);
     vi.mocked(streamRunEvents).mockImplementation(() => () => undefined);
@@ -1300,7 +1332,7 @@ describe('App', () => {
   });
 
   it('manages model providers and keeps API credentials masked by default', async () => {
-    window.localStorage.removeItem('astra.model-providers.v1');
+    window.localStorage.removeItem('astra.model-providers.v2');
     render(<App />);
     await userEvent.click(screen.getByRole('button', { name: /设置/ }));
     await userEvent.click(screen.getByRole('button', { name: '模型管理' }));
@@ -1330,7 +1362,7 @@ describe('App', () => {
     );
     expect(resolveModelContextCapabilities).toHaveBeenCalled();
     await waitFor(() => {
-      const saved = JSON.parse(window.localStorage.getItem('astra.model-providers.v1') ?? '[]');
+      const saved = JSON.parse(window.localStorage.getItem('astra.model-providers.v2') ?? '[]');
       expect(saved.find((item: { id: string }) => item.id === 'openai').models[0]).toEqual({ id: 'gpt-5' });
     });
 
@@ -1340,8 +1372,8 @@ describe('App', () => {
     expect(screen.getByText('更改会自动保存到当前浏览器。')).toBeInTheDocument();
   });
 
-  it('migrates legacy manual model profiles and never sends context overrides', async () => {
-    window.localStorage.setItem('astra.model-providers.v1', JSON.stringify([
+  it('rejects obsolete model profile entries and never sends removed context overrides', async () => {
+    window.localStorage.setItem('astra.model-providers.v2', JSON.stringify([
       {
         id: 'openai',
         name: 'OpenAI',
@@ -1366,10 +1398,9 @@ describe('App', () => {
     await userEvent.click(screen.getByRole('button', { name: '模型管理' }));
     expect(screen.queryByText('手动上限')).not.toBeInTheDocument();
     await waitFor(() => {
-      const saved = JSON.parse(window.localStorage.getItem('astra.model-providers.v1') ?? '[]');
+      const saved = JSON.parse(window.localStorage.getItem('astra.model-providers.v2') ?? '[]');
       expect(saved.find((item: { id: string }) => item.id === 'openai').models).toEqual([
         { id: 'gpt-5' },
-        { id: 'gpt-5-mini' },
       ]);
     });
   });
@@ -1552,11 +1583,11 @@ describe('App', () => {
     await userEvent.click(screen.getByRole('button', { name: /设置/ }));
     await userEvent.click(screen.getByRole('button', { name: '记忆' }));
 
-    const recallMode = await screen.findByLabelText('跨任务召回');
-    await userEvent.selectOptions(recallMode, 'shadow');
+    const recallToggle = await screen.findByRole('switch', { name: '持久记忆召回' });
+    await userEvent.click(recallToggle);
     fireEvent.change(screen.getByLabelText('每次最多召回'), { target: { value: '5' } });
     await userEvent.click(screen.getByRole('button', { name: '保存记忆设置' }));
-    await waitFor(() => expect(updateRuntimeMemorySettings).toHaveBeenCalledWith(expect.objectContaining({ cross_session_mode: 'shadow', retrieval_max_items: 5 })));
+    await waitFor(() => expect(updateRuntimeMemorySettings).toHaveBeenCalledWith(expect.objectContaining({ recall_enabled: true, retrieval_max_items: 5 })));
     expect(screen.getByText('记忆设置已保存，将应用于之后新建的任务。')).toBeInTheDocument();
 
     vi.mocked(updateRuntimeMemorySettings).mockRejectedValueOnce(new Error('最低相关度无效'));
@@ -1583,7 +1614,7 @@ describe('App', () => {
     expect(screen.queryByText('正在读取记忆设置…')).not.toBeInTheDocument();
 
     await userEvent.click(screen.getByRole('button', { name: '重试' }));
-    expect(await screen.findByLabelText('跨任务召回')).toBeInTheDocument();
+    expect(await screen.findByRole('switch', { name: '持久记忆召回' })).toBeInTheDocument();
   });
 
   it('shows live runtime build progress and supports cancellation', async () => {
@@ -1771,12 +1802,12 @@ describe('App', () => {
   });
 
   it('persists optional model thinking per model and sends it independently from agent effort', async () => {
-    window.localStorage.setItem('astra.model-providers.v1', JSON.stringify([
-      { id: 'openai', name: 'OpenAI', enabled: false, endpoint: 'https://api.openai.com/v1', models: 'gpt-5', apiKey: '' },
-      { id: 'qwen', name: '通义千问', enabled: true, endpoint: 'https://example.test/v1', models: 'qwen3.7-plus, qwen-plus', apiKey: 'secret' },
+    window.localStorage.setItem('astra.model-providers.v2', JSON.stringify([
+      { id: 'openai', name: 'OpenAI', enabled: false, endpoint: 'https://api.openai.com/v1', models: [{ id: 'gpt-5' }], apiKey: '' },
+      { id: 'qwen', name: '通义千问', enabled: true, endpoint: 'https://example.test/v1', models: [{ id: 'qwen3.7-plus' }, { id: 'qwen-plus' }], apiKey: 'secret' },
     ]));
-    window.localStorage.setItem('astra.selected-model.v1', 'qwen:qwen3.7-plus');
-    window.localStorage.setItem('astra.model-thinking-preferences.v1', JSON.stringify({
+    window.localStorage.setItem('astra.selected-model.v2', 'qwen:qwen3.7-plus');
+    window.localStorage.setItem('astra.model-thinking-preferences.v2', JSON.stringify({
       'qwen:qwen3.7-plus': { enabled: true, depth: 'xhigh', capability_version: 99 },
     }));
     vi.mocked(resolveModelThinkingCapabilities).mockResolvedValueOnce([
@@ -1837,13 +1868,13 @@ describe('App', () => {
   });
 
   it('keeps the public process summary when provider model thinking is off', async () => {
-    window.localStorage.setItem('astra.model-providers.v1', JSON.stringify([
+    window.localStorage.setItem('astra.model-providers.v2', JSON.stringify([
       {
         id: 'openai',
         name: 'OpenAI',
         enabled: false,
         endpoint: 'https://api.openai.com/v1',
-        models: 'gpt-5',
+        models: [{ id: 'gpt-5' }],
         apiKey: '',
       },
       {
@@ -1851,12 +1882,12 @@ describe('App', () => {
         name: '通义千问',
         enabled: true,
         endpoint: 'https://example.test/v1',
-        models: 'qwen-plus',
+        models: [{ id: 'qwen-plus' }],
         apiKey: 'secret',
       },
     ]));
-    window.localStorage.setItem('astra.selected-model.v1', 'qwen:qwen-plus');
-    window.localStorage.setItem('astra.model-thinking-preferences.v1', JSON.stringify({
+    window.localStorage.setItem('astra.selected-model.v2', 'qwen:qwen-plus');
+    window.localStorage.setItem('astra.model-thinking-preferences.v2', JSON.stringify({
       'qwen:qwen-plus': { enabled: false, depth: null, capability_version: 2 },
     }));
     vi.mocked(resolveModelThinkingCapabilities).mockResolvedValueOnce([{
@@ -1964,13 +1995,13 @@ describe('App', () => {
   });
 
   it('repairs invalid stored model thinking preferences to provider defaults', async () => {
-    window.localStorage.setItem('astra.model-thinking-preferences.v1', JSON.stringify({
+    window.localStorage.setItem('astra.model-thinking-preferences.v2', JSON.stringify({
       'openai:gpt-5': { enabled: true, depth: 'not-a-depth', capability_version: 'stale' },
     }));
     render(<App />);
 
     await waitFor(() => {
-      const saved = JSON.parse(window.localStorage.getItem('astra.model-thinking-preferences.v1') ?? '{}');
+      const saved = JSON.parse(window.localStorage.getItem('astra.model-thinking-preferences.v2') ?? '{}');
       expect(saved['openai:gpt-5']).toEqual({
         enabled: true,
         depth: 'medium',
@@ -2001,18 +2032,18 @@ describe('App', () => {
   });
 
   it('resumes a waiting run with its frozen effective thinking snapshot', async () => {
-    window.localStorage.setItem('astra.model-providers.v1', JSON.stringify([
+    window.localStorage.setItem('astra.model-providers.v2', JSON.stringify([
       {
         id: 'openai',
         name: 'OpenAI',
         enabled: true,
         endpoint: 'https://api.openai.com/v1',
-        models: 'gpt-5',
+        models: [{ id: 'gpt-5' }],
         apiKey: 'runtime-secret',
       },
     ]));
     const completed = await vi.mocked(getRun)('fixture');
-    const waiting = {
+    const waiting: RunView = {
       ...completed,
       status: 'waiting_user',
       result: null,
@@ -2282,7 +2313,7 @@ describe('App', () => {
 
   it('renders the waiting DAG and confirms its bound plan version', async () => {
     const completed = await vi.mocked(getRun)('fixture');
-    const waiting = {
+    const waiting: RunView = {
       ...completed,
       id: 'run-plan',
       task_id: 'task-plan',
@@ -2299,13 +2330,22 @@ describe('App', () => {
         }],
       },
       plan_graph: {
+        schema_version: 2 as const,
         id: 'plan-7',
+        run_id: 'run-plan',
         version: 7,
         status: 'planned' as const,
         nodes: [
-          { id: 'node-1', node_key: 'inspect', index: 1, title: '检查输入', intent: '确认范围', status: 'pending', depends_on: [] },
-          { id: 'node-2', node_key: 'execute', index: 2, title: '执行任务', intent: '完成目标', status: 'pending', depends_on: ['inspect'] },
+          { id: 'node-1', plan_id: 'plan-7', plan_version: 7, node_key: 'inspect', index: 1, title: '检查输入', intent: '确认范围', status: 'pending', depends_on: [], required_capabilities: [], success_criteria_refs: [], risk_level: 'low', optional: false, evidence_refs: [] },
+          { id: 'node-2', plan_id: 'plan-7', plan_version: 7, node_key: 'execute', index: 2, title: '执行任务', intent: '完成目标', status: 'pending', depends_on: ['inspect'], required_capabilities: [], success_criteria_refs: [], risk_level: 'low', optional: false, evidence_refs: [] },
         ],
+        edges: [{
+          id: 'edge-1',
+          plan_id: 'plan-7',
+          predecessor_node_id: 'node-1',
+          successor_node_id: 'node-2',
+          dependency_type: 'hard',
+        }],
       },
       waiting_state: {
         kind: 'plan_confirmation' as const,
@@ -2323,7 +2363,7 @@ describe('App', () => {
       ...waiting,
       status: 'executing',
       waiting_state: null,
-      plan_graph: { ...waiting.plan_graph, status: 'active' },
+      plan_graph: { ...(waiting.plan_graph as PlanGraphSnapshot), status: 'active' },
     });
 
     render(<App />);
@@ -2353,7 +2393,7 @@ describe('App', () => {
     expect(screen.getAllByText('检查输入').length).toBeGreaterThan(0);
     expect(screen.getAllByText('执行任务').length).toBeGreaterThan(0);
     expect(screen.getByRole('button', {
-      name: '节点 2：执行任务，可执行，依赖 inspect',
+      name: '节点 2：执行任务，等待依赖，依赖 inspect',
     })).toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: '收起图谱' }));
     expect(screen.queryByRole('complementary', { name: '执行图谱窗格' })).not.toBeInTheDocument();
@@ -2378,17 +2418,20 @@ describe('App', () => {
 
   it('keeps prior trusted graphs on their turns while the floating pane follows the latest run', async () => {
     const completed = await vi.mocked(getRun)('fixture');
-    const trustedRun = (id: string, nodeTitle: string) => ({
+    const trustedRun = (id: string, nodeTitle: string): RunView => ({
       ...completed,
       id,
       task_id: 'task-graph-history',
       answer_mode: 'trusted' as const,
       summary: nodeTitle,
       plan_graph: {
+        schema_version: 2 as const,
         id: `plan-${id}`,
+        run_id: id,
         version: 1,
         status: 'completed' as const,
-        nodes: [{ id: `node-${id}`, node_key: `node-${id}`, index: 1, title: nodeTitle, intent: nodeTitle, status: 'completed', depends_on: [] }],
+        nodes: [{ id: `node-${id}`, plan_id: `plan-${id}`, plan_version: 1, node_key: `node-${id}`, index: 1, title: nodeTitle, intent: nodeTitle, status: 'completed', depends_on: [], required_capabilities: [], success_criteria_refs: [], risk_level: 'low', optional: false, evidence_refs: [] }],
+        edges: [],
       },
       chat_messages: [{ id: `user-${id}`, role: 'user' as const, content: nodeTitle, status: 'completed', metadata: {} }],
     });
@@ -2425,7 +2468,7 @@ describe('App', () => {
 
   it('submits a natural-language revision bound to the waiting plan version', async () => {
     const completed = await vi.mocked(getRun)('fixture');
-    const waiting = {
+    const waiting: RunView = {
       ...completed,
       id: 'run-revision',
       task_id: 'task-revision',
@@ -2434,10 +2477,13 @@ describe('App', () => {
       result: null,
       state_version: 4,
       plan_graph: {
+        schema_version: 2 as const,
         id: 'plan-4',
+        run_id: 'run-revision',
         version: 4,
         status: 'planned' as const,
-        nodes: [{ id: 'node-4', node_key: 'work', index: 1, title: '执行任务', intent: '完成目标', status: 'pending', depends_on: [] }],
+        nodes: [{ id: 'node-4', plan_id: 'plan-4', plan_version: 4, node_key: 'work', index: 1, title: '执行任务', intent: '完成目标', status: 'pending', depends_on: [], required_capabilities: [], success_criteria_refs: [], risk_level: 'low', optional: false, evidence_refs: [] }],
+        edges: [],
       },
       waiting_state: {
         kind: 'plan_confirmation' as const,
@@ -2448,10 +2494,10 @@ describe('App', () => {
         request: '确认执行',
       },
     };
-    const revised = {
+    const revised: RunView = {
       ...waiting,
       state_version: 5,
-      plan_graph: { ...waiting.plan_graph, id: 'plan-5', version: 5 },
+      plan_graph: { ...(waiting.plan_graph as PlanGraphSnapshot), id: 'plan-5', version: 5 },
       waiting_state: {
         ...waiting.waiting_state,
         continuation_token: 'revision-token-2',
@@ -2490,7 +2536,7 @@ describe('App', () => {
 
   it('keeps the waiting plan visible when confirmation is rejected as stale', async () => {
     const completed = await vi.mocked(getRun)('fixture');
-    const waiting = {
+    const waiting: RunView = {
       ...completed,
       id: 'run-stale',
       task_id: 'task-stale',
@@ -2499,10 +2545,13 @@ describe('App', () => {
       result: null,
       state_version: 2,
       plan_graph: {
+        schema_version: 2 as const,
         id: 'plan-stale',
+        run_id: 'run-stale',
         version: 2,
         status: 'planned' as const,
-        nodes: [{ id: 'node-stale', node_key: 'work', index: 1, title: '执行任务', intent: '完成目标', status: 'pending', depends_on: [] }],
+        nodes: [{ id: 'node-stale', plan_id: 'plan-stale', plan_version: 2, node_key: 'work', index: 1, title: '执行任务', intent: '完成目标', status: 'pending', depends_on: [], required_capabilities: [], success_criteria_refs: [], risk_level: 'low', optional: false, evidence_refs: [] }],
+        edges: [],
       },
       waiting_state: {
         kind: 'plan_confirmation' as const,

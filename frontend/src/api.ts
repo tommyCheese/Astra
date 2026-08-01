@@ -162,7 +162,7 @@ export type AgentProfileDocuments = { identity: string; soul: string; memory: st
 export type RuntimeAgentProfile = { source: 'default' | 'user'; version: string; documents: AgentProfileDocuments };
 export type MemoryRuntimeSettings = {
   write_enabled: boolean;
-  cross_session_mode: 'off' | 'shadow' | 'on';
+  recall_enabled: boolean;
   retrieval_max_items: number;
   retrieval_max_tokens: number;
   retrieval_min_confidence: number;
@@ -463,9 +463,22 @@ export async function updateRuntimeMemorySettings(settings: MemoryRuntimeSetting
 
 export type CreatedRun = { run_id: string; task_id: string; status: string; answer_mode?: 'standard' | 'trusted' };
 const createdRunStreams = new Map<string, RunStreamHandle>();
+const MEMORY_SESSION_STORAGE_KEY = 'astra.memory-session-id.v1';
+
+function memorySessionId(): string {
+  try {
+    const existing = globalThis.sessionStorage?.getItem(MEMORY_SESSION_STORAGE_KEY);
+    if (existing) return existing;
+    const generated = globalThis.crypto?.randomUUID?.() ?? `session-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    globalThis.sessionStorage?.setItem(MEMORY_SESSION_STORAGE_KEY, generated);
+    return generated;
+  } catch {
+    return `session-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  }
+}
 
 function createRunBody(goal: string, taskId: string | undefined, answerMode: 'standard' | 'trusted', reasoningPolicy?: ReasoningPolicyRequest, model?: RunModelConfig, planExecution?: 'auto' | 'confirm', skillIds: string[] = []): string {
-  return JSON.stringify({ goal, task_id: taskId, answer_mode: answerMode, reasoning_policy: reasoningPolicy, model, skill_ids: skillIds, ...(answerMode === 'trusted' ? { plan_execution: planExecution ?? 'confirm' } : {}) });
+  return JSON.stringify({ goal, task_id: taskId, session_id: memorySessionId(), answer_mode: answerMode, reasoning_policy: reasoningPolicy, model, skill_ids: skillIds, ...(answerMode === 'trusted' ? { plan_execution: planExecution ?? 'confirm' } : {}) });
 }
 
 export async function createRun(goal: string, taskId: string | undefined, answerMode: 'standard' | 'trusted', reasoningPolicy?: ReasoningPolicyRequest, model?: RunModelConfig, planExecution?: 'auto' | 'confirm', skillIds: string[] = []): Promise<CreatedRun> {

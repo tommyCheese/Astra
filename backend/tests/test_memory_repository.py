@@ -17,15 +17,15 @@ from app.repositories.runs import RunRepository
 async def _run_with_identity(
     session,
     *,
-    workspace_id: str | None = None,
+    memory_session_id: str | None = None,
     created_by: str | None = None,
 ):
     run = await RunRepository(session).create_task_run(
         "Memory repository test",
         {"provider": "mock", "model": "mock"},
+        session_id=memory_session_id,
     )
     task = await session.get(TaskRecord, run.task_id)
-    task.workspace_id = workspace_id
     task.created_by = created_by
     await session.commit()
     return run
@@ -36,7 +36,7 @@ async def test_namespace_derivation_never_shares_missing_identities(session):
     isolated_run = await _run_with_identity(session)
     identified_run = await _run_with_identity(
         session,
-        workspace_id="workspace-a",
+        memory_session_id="session-a",
         created_by="user-a",
     )
 
@@ -47,18 +47,26 @@ async def test_namespace_derivation_never_shares_missing_identities(session):
         ("run", isolated_run.id),
         ("task", isolated_run.task_id),
     ]
-    assert ("workspace", "workspace-a") in [
-        (item.type.value, item.id) for item in identified
-    ]
+    assert ("session", "session-a") in [(item.type.value, item.id) for item in identified]
     assert ("user", "user-a") in [(item.type.value, item.id) for item in identified]
 
-    with pytest.raises(MemoryValidationError, match="workspace identity"):
+    with pytest.raises(MemoryValidationError, match="session identity"):
         await repository.create(
             run_id=isolated_run.id,
-            scope="workspace",
+            scope="session",
             kind="semantic_fact",
             content="Never shared",
             provenance={"run_id": isolated_run.id},
+            confidence=0.8,
+        )
+
+    with pytest.raises(MemoryValidationError, match="Unsupported Memory scope"):
+        await repository.create(
+            run_id=identified_run.id,
+            scope="workspace",
+            kind="semantic_fact",
+            content="Unsupported workspace memory",
+            provenance={"run_id": identified_run.id},
             confidence=0.8,
         )
 
@@ -84,9 +92,7 @@ async def test_candidate_transition_uses_sources_and_optimistic_version(session)
     )
     assert active.status == "active"
     assert active.state_version == 2
-    assert [(item.source_kind, item.source_ref) for item in active.sources] == [
-        ("run", run.id)
-    ]
+    assert [(item.source_kind, item.source_ref) for item in active.sources] == [("run", run.id)]
 
     with pytest.raises(MemoryConflictError, match="state version"):
         await repository.transition(
@@ -113,11 +119,11 @@ async def test_candidate_transition_uses_sources_and_optimistic_version(session)
 
 
 async def test_create_version_supersedes_without_overwriting_history(session):
-    run = await _run_with_identity(session, workspace_id="workspace-a")
+    run = await _run_with_identity(session, memory_session_id="session-a")
     repository = MemoryRepository(session)
     original = await repository.create(
         run_id=run.id,
-        scope="workspace",
+        scope="session",
         kind="semantic_fact",
         memory_key="project.runtime",
         content="The project uses Python 3.10",
@@ -142,7 +148,7 @@ async def test_create_version_supersedes_without_overwriting_history(session):
     assert replacement.content == "The project uses Python 3.12"
 
     history = await repository.history(
-        namespace=MemoryNamespace(MemoryNamespaceType.workspace, "workspace-a"),
+        namespace=MemoryNamespace(MemoryNamespaceType.session, "session-a"),
         memory_key="project.runtime",
     )
     assert [(item.version, item.status) for item in history] == [
@@ -152,12 +158,12 @@ async def test_create_version_supersedes_without_overwriting_history(session):
 
 
 async def test_list_filters_expired_inactive_and_other_namespaces(session):
-    run_a = await _run_with_identity(session, workspace_id="workspace-a")
-    run_b = await _run_with_identity(session, workspace_id="workspace-b")
+    run_a = await _run_with_identity(session, memory_session_id="session-a")
+    run_b = await _run_with_identity(session, memory_session_id="session-b")
     repository = MemoryRepository(session)
     active = await repository.create(
         run_id=run_a.id,
-        scope="workspace",
+        scope="session",
         kind="semantic_fact",
         content="Workspace A fact",
         provenance={"run_id": run_a.id},
@@ -165,7 +171,7 @@ async def test_list_filters_expired_inactive_and_other_namespaces(session):
     )
     await repository.create(
         run_id=run_a.id,
-        scope="workspace",
+        scope="session",
         kind="semantic_fact",
         content="Expired fact",
         provenance={"run_id": run_a.id},
@@ -174,7 +180,7 @@ async def test_list_filters_expired_inactive_and_other_namespaces(session):
     )
     await repository.create(
         run_id=run_b.id,
-        scope="workspace",
+        scope="session",
         kind="semantic_fact",
         content="Workspace B fact",
         provenance={"run_id": run_b.id},
@@ -182,9 +188,7 @@ async def test_list_filters_expired_inactive_and_other_namespaces(session):
     )
 
     records = await repository.list_records(
-        namespaces=[
-            MemoryNamespace(MemoryNamespaceType.workspace, "workspace-a")
-        ],
+        namespaces=[MemoryNamespace(MemoryNamespaceType.session, "session-a")],
         statuses=[MemoryStatus.active],
         include_expired=False,
     )
@@ -207,12 +211,12 @@ async def test_provenance_reference_must_exist_in_source_run(session):
 
 
 async def test_memory_links_cannot_cross_namespaces(session):
-    run_a = await _run_with_identity(session, workspace_id="workspace-a")
-    run_b = await _run_with_identity(session, workspace_id="workspace-b")
+    run_a = await _run_with_identity(session, memory_session_id="session-a")
+    run_b = await _run_with_identity(session, memory_session_id="session-b")
     repository = MemoryRepository(session)
     memory_a = await repository.create(
         run_id=run_a.id,
-        scope="workspace",
+        scope="session",
         kind="semantic_fact",
         content="A",
         provenance={"run_id": run_a.id},
@@ -220,7 +224,7 @@ async def test_memory_links_cannot_cross_namespaces(session):
     )
     memory_b = await repository.create(
         run_id=run_b.id,
-        scope="workspace",
+        scope="session",
         kind="semantic_fact",
         content="B",
         provenance={"run_id": run_b.id},
@@ -248,11 +252,14 @@ async def test_expiration_is_query_time_safe_before_bounded_materialization(sess
         expires_at=utc_now() - timedelta(seconds=1),
     )
 
-    assert await repository.list_records(
-        run_id=run.id,
-        statuses=[MemoryStatus.active],
-        include_expired=False,
-    ) == []
+    assert (
+        await repository.list_records(
+            run_id=run.id,
+            statuses=[MemoryStatus.active],
+            include_expired=False,
+        )
+        == []
+    )
     assert await repository.materialize_expired(limit=0) == 0
     assert (await repository.require(expired.id)).status == "active"
 

@@ -76,8 +76,6 @@ class CapabilityToolResolution:
     satisfied_capabilities: tuple[str, ...]
     unresolved_capabilities: tuple[str, ...]
     capability_gaps: tuple[str, ...]
-    legacy_tool_binding: bool
-    legacy_tool_names: tuple[str, ...]
     plan_node_id: str | None
     require_read_only: bool
     require_idempotent: bool
@@ -96,8 +94,6 @@ class CapabilityToolResolution:
             "satisfied_capabilities": list(self.satisfied_capabilities),
             "unresolved_capabilities": list(self.unresolved_capabilities),
             "capability_gaps": list(self.capability_gaps),
-            "legacy_tool_binding": self.legacy_tool_binding,
-            "legacy_tool_names": list(self.legacy_tool_names),
             "candidate_names": list(self.candidate_names),
             "candidates": [
                 {
@@ -150,16 +146,11 @@ class CapabilityToolResolver:
         excluded = frozenset(_normalized_values(excluded_tools))
         all_specs = self.router.registry.specs()
         eligible_specs, unavailable = self.router.eligible_specs()
-        all_tool_names = frozenset(all_specs)
-        legacy_names = tuple(sorted(set(required) & all_tool_names))
-        legacy_name_set = frozenset(legacy_names)
-
         satisfied = self._satisfied_capabilities(
             required,
             observations,
             plan_node_id=plan_node_id,
             specs=all_specs,
-            legacy_names=legacy_name_set,
         )
         unresolved = tuple(sorted(set(required) - set(satisfied)))
         unresolved_set = frozenset(unresolved)
@@ -172,7 +163,6 @@ class CapabilityToolResolver:
                 spec,
                 required=required,
                 unresolved=unresolved_set,
-                legacy_names=legacy_name_set,
             )
             if required and not matched:
                 continue
@@ -208,7 +198,6 @@ class CapabilityToolResolver:
                 spec,
                 required=required,
                 unresolved=unresolved_set,
-                legacy_names=legacy_name_set,
             )
             if required and not matched:
                 continue
@@ -256,8 +245,6 @@ class CapabilityToolResolver:
             satisfied_capabilities=satisfied,
             unresolved_capabilities=unresolved,
             capability_gaps=gaps,
-            legacy_tool_binding=bool(legacy_names),
-            legacy_tool_names=legacy_names,
             plan_node_id=plan_node_id,
             require_read_only=require_read_only,
             require_idempotent=require_idempotent,
@@ -272,13 +259,10 @@ class CapabilityToolResolver:
         *,
         required: tuple[str, ...],
         unresolved: frozenset[str],
-        legacy_names: frozenset[str],
     ) -> tuple[str, ...]:
         if not required:
             return _normalized_values(spec.task_capabilities)
-        matched = set(spec.task_capabilities) & (unresolved - legacy_names)
-        if tool_name in unresolved and tool_name in legacy_names:
-            matched.add(tool_name)
+        matched = set(spec.task_capabilities) & unresolved
         return tuple(sorted(matched))
 
     @staticmethod
@@ -288,7 +272,6 @@ class CapabilityToolResolver:
         *,
         plan_node_id: str | None,
         specs: Mapping[str, ToolSpec],
-        legacy_names: frozenset[str],
     ) -> tuple[str, ...]:
         if not required:
             return ()
@@ -314,6 +297,4 @@ class CapabilityToolResolver:
             if spec is None:
                 continue
             satisfied.update(required_set & set(spec.task_capabilities))
-            if tool_name in legacy_names:
-                satisfied.add(tool_name)
         return tuple(sorted(satisfied))

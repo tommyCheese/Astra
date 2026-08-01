@@ -1,7 +1,5 @@
-from typing import Literal
-
 from fastapi import APIRouter, Depends, Request
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.agent_profile import AgentProfileConfigurationError
 from app.core.errors import StateError, ValidationError
@@ -39,8 +37,10 @@ class AgentProfileUpdateRequest(BaseModel):
 
 
 class MemorySettingsUpdateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     write_enabled: bool
-    cross_session_mode: Literal["off", "shadow", "on"]
+    recall_enabled: bool
     retrieval_max_items: int = Field(ge=0, le=50)
     retrieval_max_tokens: int = Field(ge=0, le=32_000)
     retrieval_min_confidence: float = Field(ge=0.0, le=1.0)

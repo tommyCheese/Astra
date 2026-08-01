@@ -257,7 +257,6 @@ def test_multi_effect_authorization_returns_every_consumed_lease():
 
     assert result.decision.decision == PermissionDecisionKind.allow
     assert result.grant_ids == ("grant-artifact", "grant-workspace")
-    assert result.grant_id is None
 
 
 async def test_permission_lease_consumption_revocation_and_integrity_invalidation(session):
@@ -396,12 +395,8 @@ async def test_multiple_approval_grants_are_consumed_together(session):
     session.add_all(grants)
     await session.commit()
 
-    consumed = await repository.consume_approval_grants(
-        tuple(grant.id for grant in grants)
-    )
+    consumed = await repository.consume_approval_grants(tuple(grant.id for grant in grants))
     assert [grant.use_count for grant in consumed] == [1, 1]
     with pytest.raises(ValueError, match="exhausted"):
-        await repository.consume_approval_grants(
-            tuple(grant.id for grant in grants)
-        )
+        await repository.consume_approval_grants(tuple(grant.id for grant in grants))
     assert [grant.use_count for grant in grants] == [1, 1]

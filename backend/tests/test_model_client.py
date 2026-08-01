@@ -448,7 +448,7 @@ def test_memory_normalization_is_bounded_typed_and_drops_empty_content():
         {
             "content": " 用户询问口腔溃疡 ",
             "scope": "unknown",
-            "kind": "fact",
+            "kind": "semantic_fact",
             "provenance": "conversation",
             "confidence": 2,
             "importance": -1,

@@ -54,7 +54,6 @@ def _recall_view(event: MemoryRecallEventRecord, memory_id: str) -> MemoryRecall
         turn_id=event.turn_id,
         query_fingerprint=event.query_hash,
         policy_version=event.policy_version,
-        shadow=event.shadow,
         selected=selected is not None,
         exclusion_reason=", ".join(str(item) for item in reasons)
         if isinstance(reasons, list)
@@ -147,9 +146,7 @@ async def list_memories(
     namespaces = None
     if namespace_type and namespace_id:
         try:
-            namespaces = [
-                MemoryNamespace(MemoryNamespaceType(namespace_type), namespace_id)
-            ]
+            namespaces = [MemoryNamespace(MemoryNamespaceType(namespace_type), namespace_id)]
         except ValueError as exc:
             raise ValidationError(
                 "MEMORY_NAMESPACE_INVALID",

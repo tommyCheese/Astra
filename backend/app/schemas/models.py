@@ -129,7 +129,7 @@ class ModelThinkingSnapshot(BaseModel):
 
     requested: ModelThinkingSelection | None = None
     effective: EffectiveModelThinking
-    source: Literal["explicit_model_control", "legacy_reasoning_policy"]
+    source: Literal["explicit_model_control", "model_default"]
     adapter: str
     adjustments: list[ModelThinkingAdjustment] = Field(default_factory=list)
     capability_version: int = Field(

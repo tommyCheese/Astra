@@ -60,7 +60,6 @@ const memory: MemoryDetail = {
     turn_id: 'turn-2',
     query_fingerprint: 'sha256:query',
     policy_version: 'memory-retrieval-v1',
-    shadow: false,
     selected: true,
     exclusion_reason: null,
     scores: {

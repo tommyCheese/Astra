@@ -82,7 +82,6 @@ const candidateStatusLabels: Record<string, string> = {
   evaluating: '评估中',
   rejected: '已拒绝',
   approved: '已批准',
-  shadow: '影子',
   canary: '灰度',
   promoted: '已晋升',
   rolled_back: '已回滚',
@@ -541,7 +540,7 @@ function MemoryInspector({ memory, language, onRevoke }: {
         <InspectorSection title={t('召回审计')} count={memory.recall_events.length}>
           {memory.recall_events.length ? memory.recall_events.map((event) => <div className="memory-recall-card" key={event.event_id}>
             <header>
-              <div><strong>{event.shadow ? t('影子召回') : event.selected ? t('已注入上下文') : t('未选中')}</strong><small>{safeDate(event.created_at, language)}</small></div>
+              <div><strong>{event.selected ? t('已注入上下文') : t('未选中')}</strong><small>{safeDate(event.created_at, language)}</small></div>
               <code>{shortId(event.query_fingerprint)}</code>
             </header>
             <ScoreBreakdown scores={event.scores} />

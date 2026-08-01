@@ -6,6 +6,7 @@ from sqlalchemy import and_, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload, selectinload
 
+from app.agent_profile import AgentProfile
 from app.db.models import (
     AgentTurnRecord,
     ApprovalGrantRecord,
@@ -30,8 +31,6 @@ from app.db.models import (
 from app.schemas.agent import (
     AgentState,
     AnswerMode,
-    AssuranceLevel,
-    ContractMode,
     PlanExecution,
     PlanGraphSnapshotEvent,
     PlanRevisionEvent,
@@ -53,9 +52,7 @@ def run_detail_options():
         selectinload(RunRecord.sandbox_jobs),
         selectinload(RunRecord.approval_requests),
         selectinload(RunRecord.approval_grants),
-        selectinload(RunRecord.node_executions).selectinload(
-            NodeExecutionRecord.resource_leases
-        ),
+        selectinload(RunRecord.node_executions).selectinload(NodeExecutionRecord.resource_leases),
         selectinload(RunRecord.node_executions).selectinload(
             NodeExecutionRecord.budget_reservations
         ),
@@ -89,21 +86,60 @@ class RunRepository:
         answer_mode: str = "standard",
         execution_profile: dict[str, Any] | None = None,
         agent_profile_snapshot: dict[str, Any] | None = None,
+        session_id: str | None = None,
         commit: bool = True,
     ) -> RunRecord:
         now = utc_now()
-        if execution_profile is None and reasoning_policy:
-            snapshot = ReasoningPolicySnapshot.model_validate(reasoning_policy)
-            generated_profile = RunExecutionProfile(
-                answer_mode=AnswerMode.trusted,
-                contract_mode=ContractMode.model,
-                assurance_level=AssuranceLevel.full,
-                reasoning_policy=snapshot,
-                plan_execution=PlanExecution.auto,
-                validators=["task_adapter", "artifact_reference"],
+        if execution_profile is None:
+            from app.runner.reasoning import RunProfileResolver
+            from app.schemas.agent import RequestedReasoningPolicy
+
+            resolved_answer_mode = (
+                AnswerMode.trusted if reasoning_policy is not None else AnswerMode(answer_mode)
             )
-            answer_mode = AnswerMode.trusted.value
+            generated_profile = RunProfileResolver().resolve(
+                resolved_answer_mode,
+                RequestedReasoningPolicy(),
+                plan_execution=(
+                    PlanExecution.auto
+                    if resolved_answer_mode == AnswerMode.trusted
+                    else None
+                ),
+            )
+            answer_mode = resolved_answer_mode.value
+            if reasoning_policy is not None:
+                generated_profile = generated_profile.model_copy(
+                    update={
+                        "reasoning_policy": ReasoningPolicySnapshot.model_validate(reasoning_policy)
+                    }
+                )
             execution_profile = generated_profile.model_dump(mode="json")
+        else:
+            generated_profile = RunExecutionProfile.model_validate(execution_profile)
+            answer_mode = generated_profile.answer_mode.value
+        reasoning_policy = (
+            ReasoningPolicySnapshot.model_validate(reasoning_policy).model_dump(mode="json")
+            if reasoning_policy is not None
+            else generated_profile.reasoning_policy.model_dump(mode="json")
+        )
+        if agent_profile_snapshot is None:
+            from app.agent_profile import load_agent_profile
+
+            agent_profile_snapshot = load_agent_profile().snapshot()
+        else:
+            AgentProfile.from_snapshot(agent_profile_snapshot)
+
+        if not isinstance(model_policy.get("thinking"), dict):
+            from app.runner.model_reasoning import normalize_model_thinking
+
+            model_policy = {
+                **model_policy,
+                "thinking": normalize_model_thinking(
+                    provider=str(model_policy.get("provider") or "mock"),
+                    model=str(model_policy.get("model") or "mock"),
+                    selection=None,
+                ).model_dump(mode="json"),
+            }
         task = await self.session.get(TaskRecord, task_id) if task_id else None
         if task_id and task is None:
             raise ValueError(f"Task not found: {task_id}")
@@ -127,6 +163,7 @@ class RunRepository:
         }
         run = RunRecord(
             task=task,
+            memory_session_id=session_id,
             status="created",
             mode="web_agent",
             answer_mode=answer_mode,
@@ -311,9 +348,7 @@ class RunRepository:
             or plan.status != "planned"
         ):
             raise ValueError("Invalid or stale plan confirmation")
-        plan = await plan_repository.activate(
-            plan_id, expected_version=expected_plan_version
-        )
+        plan = await plan_repository.activate(plan_id, expected_version=expected_plan_version)
         state = AgentState.model_validate(run.agent_state)
         state.active_plan_id = plan.id
         state.active_plan_version = plan.version
@@ -617,9 +652,7 @@ class RunRepository:
         if not rows:
             raise ValueError(f"Run not found: {run_id}")
         run = rows[0][0]
-        memories = list(
-            dict.fromkeys(memory for _, memory, _ in rows if memory is not None)
-        )
+        memories = list(dict.fromkeys(memory for _, memory, _ in rows if memory is not None))
         skill_snapshot = next(
             (snapshot for _, _, snapshot in rows if snapshot is not None),
             None,
@@ -812,10 +845,7 @@ class RunRepository:
         run.waiting_state = None
         agent_state = dict(run.agent_state or {})
         agent_state["active_executions"] = []
-        agent_state.pop("active_node_id", None)
-        agent_state["version"] = int(
-            agent_state.get("version", run.state_version or 0)
-        ) + 1
+        agent_state["version"] = int(agent_state.get("version", run.state_version or 0)) + 1
         run.agent_state = agent_state
         run.state_version = agent_state["version"]
         run.completed_at = now
@@ -1069,7 +1099,10 @@ class RunRepository:
         if decision in {"allow_similar", "allow_task"} and request.similar_matcher is None:
             raise ValueError("Similar approval is not available")
         if reviewer_identity and reviewer_identity.get("identity_type") in {
-            "main_agent", "subagent", "tool_runtime", "external_provider"
+            "main_agent",
+            "subagent",
+            "tool_runtime",
+            "external_provider",
         }:
             raise ValueError("Agent identities cannot approve their own actions")
         decided_at = utc_now()
@@ -1176,8 +1209,7 @@ class RunRepository:
                 ApprovalGrantRecord.revoked_at.is_(None),
                 (ApprovalGrantRecord.expires_at.is_(None) | (ApprovalGrantRecord.expires_at > now)),
                 (
-                    (ApprovalGrantRecord.scope == "run")
-                    & (ApprovalGrantRecord.run_id == run_id)
+                    (ApprovalGrantRecord.scope == "run") & (ApprovalGrantRecord.run_id == run_id)
                     | (ApprovalGrantRecord.scope == "task")
                     & (ApprovalGrantRecord.task_id == run.task_id)
                 ),
@@ -1262,8 +1294,7 @@ class RunRepository:
                 ApprovalGrantRecord.tool_name == tool_name,
                 ApprovalGrantRecord.status == "active",
                 (
-                    (ApprovalGrantRecord.scope == "run")
-                    & (ApprovalGrantRecord.run_id == run_id)
+                    (ApprovalGrantRecord.scope == "run") & (ApprovalGrantRecord.run_id == run_id)
                     | (ApprovalGrantRecord.scope == "task")
                     & (ApprovalGrantRecord.task_id == run.task_id)
                 ),
@@ -1554,7 +1585,6 @@ class RunRepository:
         provenance: dict[str, Any],
         confidence: float,
         run_id: str | None = None,
-        workspace_id: str | None = None,
         created_by: str | None = None,
         structured_data: dict[str, Any] | None = None,
         memory_key: str | None = None,
@@ -1576,9 +1606,7 @@ class RunRepository:
 
         namespace = None
         if run_id is None:
-            if scope == "workspace" and workspace_id:
-                namespace = MemoryNamespace(MemoryNamespaceType.workspace, workspace_id)
-            elif scope == "user" and created_by:
+            if scope == "user" and created_by:
                 namespace = MemoryNamespace(MemoryNamespaceType.user, created_by)
             else:
                 namespace = MemoryNamespace(MemoryNamespaceType.run, str(uuid.uuid4()))
@@ -1740,9 +1768,11 @@ def run_to_view(run: RunRecord) -> dict[str, Any]:
         raw_result = dict(run.result) if isinstance(run.result, dict) else {}
         raw_result.setdefault("summary", run.summary or "")
         result_payload = RunResult.model_validate(raw_result).model_dump(mode="json")
-    active_plan = next(
-        (plan for plan in getattr(run, "plans", []) if plan.id == run.active_plan_id), None
-    ) if trusted else None
+    active_plan = (
+        next((plan for plan in getattr(run, "plans", []) if plan.id == run.active_plan_id), None)
+        if trusted
+        else None
+    )
     plan_view = plan_to_view(active_plan) if active_plan is not None else None
     canonical_steps = (
         [
@@ -1782,18 +1812,14 @@ def run_to_view(run: RunRecord) -> dict[str, Any]:
     pending = next(
         (item for item in reversed(run.approval_requests) if item.status == "pending"), None
     )
-    execution_payloads = [
-        _node_execution_payload(execution) for execution in run.node_executions
-    ]
+    execution_payloads = [_node_execution_payload(execution) for execution in run.node_executions]
     parallelism = _parallelism_summary(run)
     plan_payload = plan_view.model_dump(mode="json") if plan_view else run.plan_graph or {}
     if trusted and plan_view:
         plan_payload = {
             **plan_payload,
             "active_executions": [
-                item
-                for item in execution_payloads
-                if item["status"] in {"active", "waiting"}
+                item for item in execution_payloads if item["status"] in {"active", "waiting"}
             ],
             "parallelism": parallelism,
         }
@@ -2006,11 +2032,7 @@ def run_to_view(run: RunRecord) -> dict[str, Any]:
             ),
             "reviewer_identity": pending.reviewer_identity,
             "decisions": ["approve_once"]
-            + (
-                ["allow_similar", "allow_task"]
-                if pending.similar_matcher is not None
-                else []
-            )
+            + (["allow_similar", "allow_task"] if pending.similar_matcher is not None else [])
             + ["reject"],
             "created_at": pending.created_at,
         }
@@ -2152,24 +2174,7 @@ def _parallelism_summary(run: RunRecord) -> dict[str, int]:
 
 
 def safe_agent_profile_manifest(snapshot: dict[str, Any]) -> dict[str, Any]:
-    documents = snapshot.get("documents")
-    safe_documents: dict[str, dict[str, Any]] = {}
-    if isinstance(documents, dict):
-        for name, value in documents.items():
-            if not isinstance(value, dict):
-                continue
-            safe_documents[str(name)] = {
-                key: value[key]
-                for key in ("filename", "sha256", "size_bytes", "status")
-                if key in value
-            }
-    role_documents = snapshot.get("role_documents")
-    return {
-        "version": str(snapshot.get("version") or "unfrozen"),
-        "composition_schema_version": int(snapshot.get("composition_schema_version") or 0),
-        "documents": safe_documents,
-        "role_documents": role_documents if isinstance(role_documents, dict) else {},
-    }
+    return AgentProfile.from_snapshot(snapshot).manifest.safe_dict()
 
 
 def build_chat_messages(run: RunRecord) -> list[dict[str, Any]]:

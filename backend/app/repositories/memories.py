@@ -76,10 +76,8 @@ class MemoryRepository:
             MemoryNamespace(MemoryNamespaceType.run, run.id),
             MemoryNamespace(MemoryNamespaceType.task, task.id),
         ]
-        if task.workspace_id and task.workspace_id.strip():
-            namespaces.append(
-                MemoryNamespace(MemoryNamespaceType.workspace, task.workspace_id)
-            )
+        if run.memory_session_id and run.memory_session_id.strip():
+            namespaces.append(MemoryNamespace(MemoryNamespaceType.session, run.memory_session_id))
         if task.created_by and task.created_by.strip():
             namespaces.append(MemoryNamespace(MemoryNamespaceType.user, task.created_by))
         return namespaces
@@ -95,13 +93,13 @@ class MemoryRepository:
             return MemoryNamespace(MemoryNamespaceType.run, run.id), task
         if scope == "task":
             return MemoryNamespace(MemoryNamespaceType.task, task.id), task
-        if scope == "workspace":
-            if not task.workspace_id or not task.workspace_id.strip():
+        if scope == "session":
+            if not run.memory_session_id or not run.memory_session_id.strip():
                 raise MemoryValidationError(
-                    "Workspace Memory requires a non-empty Task workspace identity"
+                    "Session Memory requires a non-empty Run session identity"
                 )
             return (
-                MemoryNamespace(MemoryNamespaceType.workspace, task.workspace_id),
+                MemoryNamespace(MemoryNamespaceType.session, run.memory_session_id),
                 task,
             )
         if scope == "user":
@@ -126,9 +124,7 @@ class MemoryRepository:
         if owner_run_id is None:
             raise MemoryValidationError(f"Memory provenance {label} not found: {reference_id}")
         if owner_run_id != run_id:
-            raise MemoryValidationError(
-                f"Memory provenance {label} belongs to another Run"
-            )
+            raise MemoryValidationError(f"Memory provenance {label} belongs to another Run")
 
     async def _source_specs(
         self,
@@ -225,10 +221,8 @@ class MemoryRepository:
         except ValueError as exc:
             raise MemoryValidationError(f"Unsupported Memory status: {status}") from exc
         if initial_status not in {MemoryStatus.candidate, MemoryStatus.active}:
-            raise MemoryValidationError(
-                "New Memory must start in candidate or active state"
-            )
-        if scope in {"task", "workspace", "user"} and not provenance:
+            raise MemoryValidationError("New Memory must start in candidate or active state")
+        if scope in {"task", "session", "user"} and not provenance:
             raise MemoryValidationError("Persistent Memory requires provenance")
 
         task: TaskRecord | None = None
@@ -254,13 +248,12 @@ class MemoryRepository:
             raise MemoryValidationError(f"Unsupported cross-Session Memory kind: {kind}")
         stored_kind = normalized_kind.value if normalize_kind and normalized_kind else kind
         source_specs = await self._source_specs(run_id=run_id, provenance=provenance)
-        if scope in {"task", "workspace", "user"} and not source_specs:
+        if scope in {"task", "session", "user"} and not source_specs:
             raise MemoryValidationError("Persistent Memory requires a valid source reference")
 
         now = utc_now()
         record = MemoryRecord(
             run_id=run_id,
-            workspace_id=task.workspace_id if task else None,
             created_by=created_by or (task.created_by if task else None),
             memory_key=memory_key or uuid_str(),
             namespace_type=namespace.type.value,
@@ -438,7 +431,6 @@ class MemoryRepository:
         now = utc_now()
         replacement = MemoryRecord(
             run_id=current.run_id,
-            workspace_id=current.workspace_id,
             created_by=current.created_by,
             memory_key=current.memory_key,
             namespace_type=current.namespace_type,
@@ -662,7 +654,6 @@ class MemoryRepository:
         run_id: str,
         query_hash: str,
         policy_version: str,
-        shadow: bool,
         namespace_manifest: list[dict[str, str]],
         candidates: list[dict[str, Any]],
         selected: list[dict[str, Any]],
@@ -678,7 +669,6 @@ class MemoryRepository:
             turn_id=turn_id,
             query_hash=query_hash,
             policy_version=str(policy_version or "").strip(),
-            shadow=shadow,
             namespace_manifest=namespace_manifest,
             candidates=candidates,
             selected=selected,
@@ -772,9 +762,7 @@ class MemoryRepository:
                     actor="memory-retention",
                     reason="expires_at_elapsed",
                     payload={
-                        "expires_at": memory.expires_at.isoformat()
-                        if memory.expires_at
-                        else None
+                        "expires_at": memory.expires_at.isoformat() if memory.expires_at else None
                     },
                     created_at=instant,
                 )

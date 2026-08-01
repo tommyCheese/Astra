@@ -1,4 +1,5 @@
 import pytest
+from pydantic import ValidationError
 from sqlalchemy import event as sqlalchemy_event
 
 from app.agent_profile import load_agent_profile
@@ -46,15 +47,11 @@ async def test_committed_tool_settings_cache_avoids_database_reads(session):
         if statement.lstrip().upper().startswith("SELECT"):
             statements.append(statement)
 
-    sqlalchemy_event.listen(
-        session.bind.sync_engine, "before_cursor_execute", count_selects
-    )
+    sqlalchemy_event.listen(session.bind.sync_engine, "before_cursor_execute", count_selects)
     try:
         assert await ToolSettingsRepository(session).get_or_create(defaults) == defaults
     finally:
-        sqlalchemy_event.remove(
-            session.bind.sync_engine, "before_cursor_execute", count_selects
-        )
+        sqlalchemy_event.remove(session.bind.sync_engine, "before_cursor_execute", count_selects)
 
     assert statements == []
 
@@ -109,7 +106,8 @@ async def test_run_lifecycle_persistence(session):
 
     assert view["status"] == "completed_with_warnings"
     assert view["answer_mode"] == "standard"
-    assert view["execution_profile"] == {}
+    assert view["execution_profile"]["version"] == 2
+    assert view["execution_profile"]["answer_mode"] == "standard"
     assert len(view["steps"]) == 1
     assert len(view["tool_calls"]) == 1
     assert view["tool_calls"][0]["status"] == "succeeded"
@@ -159,7 +157,9 @@ async def test_cancel_run_is_idempotent_and_preserves_partial_answer(session):
 async def test_cancel_run_does_not_overwrite_a_natural_completion(session):
     repo = RunRepository(session)
     run = await repo.create_task_run("快速完成", {"provider": "mock"})
-    await repo.update_run_status(run.id, "completed", summary="自然完成", result={"summary": "自然完成"})
+    await repo.update_run_status(
+        run.id, "completed", summary="自然完成", result={"summary": "自然完成"}
+    )
 
     unchanged = await repo.cancel_run(run.id)
 
@@ -168,7 +168,7 @@ async def test_cancel_run_does_not_overwrite_a_natural_completion(session):
     assert not any(event.type == "run.cancelled" for event in unchanged.events)
 
 
-async def test_run_view_normalizes_persisted_result_contract(session):
+async def test_run_view_rejects_obsolete_persisted_result_contract(session):
     repo = RunRepository(session)
     run = await repo.create_task_run("兼容旧结果", {"provider": "mock"})
     await repo.update_run_status(
@@ -187,14 +187,8 @@ async def test_run_view_normalizes_persisted_result_contract(session):
     )
 
     loaded = await repo.require_run(run.id)
-    payload = run_to_view(loaded)
-    view = RunView.model_validate(payload).model_dump(mode="json")
-
-    assert view["result"]["summary"] == "fallback summary"
-    assert view["result"]["findings"][0]["text"] == "legacy finding"
-    assert "private_runner_state" not in view["result"]
-    assert view["result"]["verification_report"]["status"] == "completed_with_warnings"
-    assert "verification_report" not in view
+    with pytest.raises(ValidationError):
+        run_to_view(loaded)
 
 
 async def test_follow_up_run_reuses_task(session):
@@ -255,9 +249,7 @@ async def test_list_events_with_status_uses_one_query_for_all_result_shapes(sess
         if statement.lstrip().upper().startswith("SELECT"):
             statements.append(statement)
 
-    sqlalchemy_event.listen(
-        session.bind.sync_engine, "before_cursor_execute", count_selects
-    )
+    sqlalchemy_event.listen(session.bind.sync_engine, "before_cursor_execute", count_selects)
     try:
         events, status = await repo.list_events_with_status(run.id, first.id)
         assert [item.id for item in events] == [second.id, terminal.id]
@@ -276,9 +268,7 @@ async def test_list_events_with_status_uses_one_query_for_all_result_shapes(sess
         assert status is None
         assert len(statements) == 1
     finally:
-        sqlalchemy_event.remove(
-            session.bind.sync_engine, "before_cursor_execute", count_selects
-        )
+        sqlalchemy_event.remove(session.bind.sync_engine, "before_cursor_execute", count_selects)
 
 
 async def test_initial_run_view_uses_one_query_and_terminal_falls_back_to_full(session):
@@ -297,9 +287,7 @@ async def test_initial_run_view_uses_one_query_and_terminal_falls_back_to_full(s
         if statement.lstrip().upper().startswith("SELECT"):
             statements.append(statement)
 
-    sqlalchemy_event.listen(
-        session.bind.sync_engine, "before_cursor_execute", count_selects
-    )
+    sqlalchemy_event.listen(session.bind.sync_engine, "before_cursor_execute", count_selects)
     try:
         loaded, loaded_full = await repo.get_run_initial(run_id)
         assert loaded is not None
@@ -309,9 +297,7 @@ async def test_initial_run_view_uses_one_query_and_terminal_falls_back_to_full(s
         assert view.events == []
         assert len(statements) == 1
     finally:
-        sqlalchemy_event.remove(
-            session.bind.sync_engine, "before_cursor_execute", count_selects
-        )
+        sqlalchemy_event.remove(session.bind.sync_engine, "before_cursor_execute", count_selects)
 
     await repo.update_run_status(
         run_id,
@@ -342,15 +328,11 @@ async def test_runtime_resume_context_loads_in_two_queries(session):
         if statement.lstrip().upper().startswith("SELECT"):
             statements.append(statement)
 
-    sqlalchemy_event.listen(
-        session.bind.sync_engine, "before_cursor_execute", count_selects
-    )
+    sqlalchemy_event.listen(session.bind.sync_engine, "before_cursor_execute", count_selects)
     try:
         loaded = await repo.require_run_runtime(run_id)
     finally:
-        sqlalchemy_event.remove(
-            session.bind.sync_engine, "before_cursor_execute", count_selects
-        )
+        sqlalchemy_event.remove(session.bind.sync_engine, "before_cursor_execute", count_selects)
 
     assert loaded.turns == []
     assert loaded.tool_calls == []
@@ -386,7 +368,7 @@ async def test_agent_turn_and_memory_persistence(session):
     memory = await repo.create_memory(
         run_id=run.id,
         scope="run",
-        kind="source_summary",
+        kind="episodic_experience",
         content="本次任务找到一个来源。",
         provenance={"run_id": run.id, "turn_id": turn.id},
         confidence=0.8,
@@ -414,7 +396,7 @@ async def test_persistent_memory_requires_provenance(session):
         await repo.create_memory(
             run_id=run.id,
             scope="user",
-            kind="preference",
+            kind="user_preference",
             content="始终使用中文。",
             provenance={},
             confidence=0.9,

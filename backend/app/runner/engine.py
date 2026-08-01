@@ -12,7 +12,6 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 from app.agent_profile import (
     AgentProfile,
     AgentProfileConfigurationError,
-    load_agent_profile,
 )
 from app.conversation_context import ConversationContextManager
 from app.core.config import Settings
@@ -50,6 +49,7 @@ from app.schemas.agent import (
     SuccessCriterion,
     TaskContract,
 )
+from app.schemas.models import ModelThinkingSnapshot
 from app.skills.catalog import SkillActivationService
 from app.tools.base import ToolRegistry
 from app.tools.registry import build_tool_registry
@@ -466,14 +466,9 @@ class RunEngine:
 
     def _bind_model_thinking(self, run: RunRecord) -> None:
         thinking = (run.model_policy or {}).get("thinking")
-        try:
-            self.model_client.bind_model_thinking(thinking if isinstance(thinking, dict) else None)
-        except ValueError:
-            logger.warning(
-                "run.model_thinking.invalid run_id=%s fallback=legacy",
-                run.id,
-            )
-            self.model_client.bind_model_thinking(None)
+        if not isinstance(thinking, dict):
+            raise ValueError(f"Run {run.id} is missing the current model thinking snapshot")
+        self.model_client.bind_model_thinking(ModelThinkingSnapshot.model_validate(thinking))
 
     async def _prepare_plan(
         self,
@@ -811,12 +806,7 @@ class RunEngine:
         run_id: str,
         snapshot: dict[str, Any],
     ) -> AgentProfile:
-        if snapshot and snapshot.get("version") != "legacy-unversioned":
-            return AgentProfile.from_snapshot(snapshot)
-        profile = load_agent_profile()
-        if not snapshot:
-            await repo.freeze_agent_profile_snapshot(run_id, profile.snapshot())
-        return profile
+        return AgentProfile.from_snapshot(snapshot)
 
     async def _emit_answer_stream(self, repo: RunRepository, run_id: str, content: str) -> None:
         await self._start_answer_stream(repo, run_id)

@@ -27,8 +27,6 @@ def test_fixed_memory_evaluation_compares_all_rollout_strategies_and_metrics():
     assert all(metric.case_count == 2 for metric in report.values())
     assert report["no_memory"].selected_count == 0
     assert report["no_memory"].task_success_rate == 0
-    assert report["legacy_recency"].stale_use_count == 1
-    assert report["legacy_recency"].harmful_feedback_count == 1
     assert report["cross_session"].task_success_rate == 1
     assert report["cross_session"].recall == 1
     assert report["consolidation"].task_success_rate == 1

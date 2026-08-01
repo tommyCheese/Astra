@@ -70,9 +70,7 @@ def test_effect_matrix_classifies_safe_mutating_forbidden_and_artifact_actions()
         "artifact_write",
         "temporary_compute",
     }
-    assert set(bash_artifact.required_permissions) <= set(
-        BashExecuteTool.spec.permissions
-    )
+    assert set(bash_artifact.required_permissions) <= set(BashExecuteTool.spec.permissions)
     assert create.approval_required is True
     assert create.summary == "创建或修改任务工作区文件"
     assert set(create.required_permissions) <= set(BashExecuteTool.spec.permissions)
@@ -83,9 +81,7 @@ def test_effect_matrix_classifies_safe_mutating_forbidden_and_artifact_actions()
     assert modify.approval_required is True
     assert {item.kind.value for item in delete.effects} == {"workspace_delete"}
     assert forbidden.network_scope["mode"] == "blocked"
-    assert {item.kind.value for item in artifact.effects} >= {
-        "temporary_compute", "artifact_write"
-    }
+    assert {item.kind.value for item in artifact.effects} >= {"temporary_compute", "artifact_write"}
     assert artifact.approval_required is True
 
 
@@ -106,9 +102,7 @@ def test_bash_analysis_fails_closed_for_ambiguous_and_multi_target_commands():
         "workspace_write",
     }
     for plan in (disguised, substitution, find_exec, chained):
-        assert {item.kind.value for item in plan.effects} == {
-            "process_execute_unknown"
-        }
+        assert {item.kind.value for item in plan.effects} == {"process_execute_unknown"}
         assert plan.approval_required is True
 
 
@@ -194,11 +188,13 @@ def test_unified_authorization_uses_task_lease_across_runs_and_data_flow_rules()
         tool_name="external.send",
         tool_version="1",
         summary="send",
-        effects=[EffectItem(
-            kind="external_write",
-            resource="https://example.com/upload",
-            persistent=True,
-        )],
+        effects=[
+            EffectItem(
+                kind="external_write",
+                resource="https://example.com/upload",
+                persistent=True,
+            )
+        ],
         required_permissions=["external_write"],
         analyzer_version="1",
         analyzer_digest="digest",
@@ -225,7 +221,7 @@ def test_unified_authorization_uses_task_lease_across_runs_and_data_flow_rules()
     )
 
     assert allowed.decision.decision == PermissionDecisionKind.allow
-    assert allowed.grant_id == grant.id
+    assert allowed.grant_ids == (grant.id,)
     assert denied.decision.decision == PermissionDecisionKind.deny
     assert denied.decision.explanation.reason_code == "sensitive_data_egress_denied"
 
@@ -235,12 +231,14 @@ def test_sensitive_label_alias_and_invocation_labels_block_external_egress():
         tool_name="external.send",
         tool_version="1",
         summary="send sensitive output",
-        effects=[EffectItem(
-            kind="external_write",
-            resource="https://example.com/upload",
-            persistent=True,
-            data_labels=["sensitive"],
-        )],
+        effects=[
+            EffectItem(
+                kind="external_write",
+                resource="https://example.com/upload",
+                persistent=True,
+                data_labels=["sensitive"],
+            )
+        ],
         required_permissions=["external_write"],
         analyzer_version="1",
     )
@@ -268,15 +266,17 @@ def test_unified_authorization_does_not_let_auto_or_once_override_managed_deny()
     plan = bash_plan("touch report.txt")
     policies = PermissionPolicySet(
         version="managed-1",
-        rules=[PermissionRule(
-            id="managed.workspace-write-deny",
-            source="organization",
-            tier="managed",
-            decision="deny",
-            actions=["workspace_write"],
-            resources=["task://*/workspace/**"],
-            reason_code="managed_workspace_write_denied",
-        )],
+        rules=[
+            PermissionRule(
+                id="managed.workspace-write-deny",
+                source="organization",
+                tier="managed",
+                decision="deny",
+                actions=["workspace_write"],
+                resources=["task://*/workspace/**"],
+                reason_code="managed_workspace_write_denied",
+            )
+        ],
     )
 
     result = PermissionEngine().authorize_invocation(
@@ -325,22 +325,22 @@ def test_unattended_permission_bundle_fails_closed_and_enforces_identity_budget(
         max_tool_calls=1,
         digest="pending",
     )
-    bundle = bundle.model_copy(
-        update={"digest": permission_bundle_digest(bundle, secret)}
+    bundle = bundle.model_copy(update={"digest": permission_bundle_digest(bundle, secret)})
+    assert evaluator.validate(None, plan, tool_identity=allowed_identity, unattended=True) == (
+        False,
+        "permission_bundle_required",
     )
-    assert evaluator.validate(
-        None, plan, tool_identity=allowed_identity, unattended=True
-    ) == (False, "permission_bundle_required")
-    assert evaluator.validate(
-        bundle, plan, tool_identity=allowed_identity, unattended=True
-    )[0] is True
+    assert (
+        evaluator.validate(bundle, plan, tool_identity=allowed_identity, unattended=True)[0] is True
+    )
     assert evaluator.validate(
         bundle, plan, tool_identity=allowed_identity, unattended=True, tool_call_count=1
     ) == (False, "permission_bundle_budget_exhausted")
     tampered = bundle.model_copy(update={"allowed_resources": ["*"]})
-    assert evaluator.validate(
-        tampered, plan, tool_identity=allowed_identity, unattended=True
-    ) == (False, "permission_bundle_signature_invalid")
+    assert evaluator.validate(tampered, plan, tool_identity=allowed_identity, unattended=True) == (
+        False,
+        "permission_bundle_signature_invalid",
+    )
     runtime_limited = bundle.model_copy(update={"max_runtime_seconds": 1, "digest": "pending"})
     runtime_limited = runtime_limited.model_copy(
         update={"digest": permission_bundle_digest(runtime_limited, secret)}
@@ -371,15 +371,17 @@ async def test_credential_broker_scopes_redacts_and_revokes(session):
     )
     policies = PermissionPolicySet(
         version="credential-test",
-        rules=[PermissionRule(
-            id="allow-records",
-            source="test",
-            tier="run",
-            decision="allow",
-            actions=["credential_use"],
-            resources=["credential://records"],
-            reason_code="test_credential_allow",
-        )],
+        rules=[
+            PermissionRule(
+                id="allow-records",
+                source="test",
+                tier="run",
+                decision="allow",
+                actions=["credential_use"],
+                resources=["credential://records"],
+                reason_code="test_credential_allow",
+            )
+        ],
     )
     with pytest.raises(PermissionError, match="not authorized"):
         await broker.issue(
@@ -451,8 +453,14 @@ async def test_delegation_attenuation_and_self_approval_are_rejected(session):
         run.id, 1, "call_tool", "write", selected_tool="file_write", phase="prepared"
     )
     call = await repository.start_tool_call(
-        run.id, None, "file_write", "1", {"path": "x"}, "workspace_write",
-        "persistent_side_effect", status="awaiting_approval"
+        run.id,
+        None,
+        "file_write",
+        "1",
+        {"path": "x"},
+        "workspace_write",
+        "persistent_side_effect",
+        status="awaiting_approval",
     )
     approval = await repository.create_approval_request(
         run_id=run.id,
@@ -489,8 +497,14 @@ async def test_task_grant_crosses_runs_but_never_crosses_tasks(session):
         first.id, 1, "call_tool", "write", selected_tool="file_write", phase="prepared"
     )
     call = await repository.start_tool_call(
-        first.id, None, "file_write", "1", {"path": "report.txt"},
-        "workspace_write", "persistent_side_effect", status="awaiting_approval"
+        first.id,
+        None,
+        "file_write",
+        "1",
+        {"path": "report.txt"},
+        "workspace_write",
+        "persistent_side_effect",
+        status="awaiting_approval",
     )
     approval = await repository.create_approval_request(
         run_id=first.id,
@@ -504,16 +518,16 @@ async def test_task_grant_crosses_runs_but_never_crosses_tasks(session):
         permission="workspace_write",
         impact="moderate",
         frozen_effect_plan={
-            "effects": [{
-                "kind": "workspace_write",
-                "resource": f"task://{first.task_id}/workspace/report.txt",
-            }]
+            "effects": [
+                {
+                    "kind": "workspace_write",
+                    "resource": f"task://{first.task_id}/workspace/report.txt",
+                }
+            ]
         },
         similar_matcher={
             "effect_kinds": ["workspace_write"],
-            "resource_matcher": {
-                "exact": f"task://{first.task_id}/workspace/report.txt"
-            },
+            "resource_matcher": {"exact": f"task://{first.task_id}/workspace/report.txt"},
             "invocation_constraints": {"tool_name": "file_write", "tool_version": "1"},
         },
     )
@@ -544,9 +558,12 @@ def test_extension_allowlist_detects_provider_and_supply_chain_drift():
         provider_digest="sha256:one",
         trust_level="managed",
     ).model_dump(mode="json")
-    assert policy.validate_catalog_entry(
-        entry, allowed_providers={"plugin.example": {"sha256:one"}}
-    )[0] is True
+    assert (
+        policy.validate_catalog_entry(entry, allowed_providers={"plugin.example": {"sha256:one"}})[
+            0
+        ]
+        is True
+    )
     assert policy.validate_catalog_entry(
         {**entry, "provider_digest": "sha256:changed"},
         allowed_providers={"plugin.example": {"sha256:one"}},

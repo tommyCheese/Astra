@@ -4,6 +4,7 @@ import { resolve } from 'node:path';
 const sourceFiles = [
   'src/App.tsx',
   'src/CloseButton.tsx',
+  'src/DocumentationCenter.tsx',
   'src/GraphPaneWindowActions.tsx',
   'src/TrustedExecutionGraph.tsx',
   'src/UsageDashboard.tsx',

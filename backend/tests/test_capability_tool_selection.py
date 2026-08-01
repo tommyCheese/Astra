@@ -85,17 +85,15 @@ def test_semantic_resolution_uses_router_eligibility_and_stable_ordering():
     assert resolution.capability_gaps == ()
 
 
-def test_historical_exact_tool_name_is_a_legacy_binding_not_a_semantic_authority():
+def test_exact_tool_name_is_not_accepted_as_a_semantic_capability():
     tools = registry(
         StaticTool("legacy.search", ["information.search"]),
         StaticTool("replacement.search", ["information.search"]),
     )
     resolution = CapabilityToolResolver(ToolRouter(tools)).resolve(["legacy.search"])
 
-    assert resolution.legacy_tool_binding is True
-    assert resolution.legacy_tool_names == ("legacy.search",)
-    assert resolution.candidate_names == ("legacy.search",)
-    assert resolution.candidates[0].matched_capabilities == ("legacy.search",)
+    assert resolution.candidate_names == ()
+    assert resolution.capability_gaps == ("legacy.search",)
 
 
 def test_successful_observations_accumulate_only_within_the_selected_plan_node():

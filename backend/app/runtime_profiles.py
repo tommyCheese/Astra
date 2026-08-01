@@ -83,10 +83,7 @@ class RuntimeProfileService:
 
     @staticmethod
     def _agent_profile_documents(profile: AgentProfile):
-        return {
-            document.name: document.content
-            for document in profile.manifest.documents
-        }
+        return {document.name: document.content for document in profile.manifest.documents}
 
     def _agent_profile_view(self, state):
         source = "user" if state.get("agent_profile") is not None else "default"
@@ -118,14 +115,9 @@ class RuntimeProfileService:
         return self._agent_profile_view(state)
 
     def memory_settings(self):
-        mode = "off"
-        if self.settings.agent_memory_cross_session_shadow:
-            mode = "shadow"
-        elif self.settings.agent_memory_cross_session_enabled:
-            mode = "on"
         return {
             "write_enabled": self.settings.agent_memory_write_enabled,
-            "cross_session_mode": mode,
+            "recall_enabled": self.settings.agent_memory_cross_session_enabled,
             "retrieval_max_items": self.settings.agent_memory_retrieval_max_items,
             "retrieval_max_tokens": self.settings.agent_memory_retrieval_max_tokens,
             "retrieval_min_confidence": self.settings.agent_memory_retrieval_min_confidence,
@@ -138,19 +130,18 @@ class RuntimeProfileService:
     def _normalize_memory_settings(self, value):
         if not isinstance(value, dict):
             raise ValueError("记忆运行设置必须是对象")
+        value = dict(value)
         required = set(self.memory_settings())
         if set(value) != required:
             raise ValueError("记忆运行设置字段不完整")
-        if not isinstance(value["write_enabled"], bool) or not isinstance(
-            value["autodream_enabled"], bool
+        if any(
+            not isinstance(value[field], bool)
+            for field in ("write_enabled", "recall_enabled", "autodream_enabled")
         ):
             raise ValueError("记忆运行开关必须是布尔值")
-        mode = value["cross_session_mode"]
-        if mode not in {"off", "shadow", "on"}:
-            raise ValueError("跨任务召回模式无效")
         normalized = {
             "write_enabled": value["write_enabled"],
-            "cross_session_mode": mode,
+            "recall_enabled": value["recall_enabled"],
             "autodream_enabled": value["autodream_enabled"],
         }
         integer_fields = {
@@ -172,23 +163,15 @@ class RuntimeProfileService:
         return normalized
 
     def _apply_memory_settings(self, value):
-        mode = value["cross_session_mode"]
         self.settings.agent_memory_write_enabled = value["write_enabled"]
-        self.settings.agent_memory_cross_session_enabled = mode == "on"
-        self.settings.agent_memory_cross_session_shadow = mode == "shadow"
+        self.settings.agent_memory_cross_session_enabled = value["recall_enabled"]
         self.settings.agent_memory_retrieval_max_items = value["retrieval_max_items"]
         self.settings.agent_memory_retrieval_max_tokens = value["retrieval_max_tokens"]
-        self.settings.agent_memory_retrieval_min_confidence = value[
-            "retrieval_min_confidence"
-        ]
+        self.settings.agent_memory_retrieval_min_confidence = value["retrieval_min_confidence"]
         self.settings.agent_memory_retrieval_min_score = value["retrieval_min_score"]
         self.settings.agent_memory_autodream_enabled = value["autodream_enabled"]
-        self.settings.agent_memory_autodream_scan_seconds = value[
-            "autodream_scan_seconds"
-        ]
-        self.settings.agent_memory_autodream_min_candidates = value[
-            "autodream_min_candidates"
-        ]
+        self.settings.agent_memory_autodream_scan_seconds = value["autodream_scan_seconds"]
+        self.settings.agent_memory_autodream_min_candidates = value["autodream_min_candidates"]
 
     def update_memory_settings(self, value):
         normalized = self._normalize_memory_settings(value)
@@ -210,9 +193,7 @@ class RuntimeProfileService:
             return
         build_id = build.get("id")
         if build_id:
-            self.recovered_staging_images.append(
-                (build_id, f"astra-data-viz:build-{build_id}")
-            )
+            self.recovered_staging_images.append((build_id, f"astra-data-viz:build-{build_id}"))
         build.update(
             status="cancelled",
             phase="构建已中断",
@@ -274,10 +255,7 @@ class RuntimeProfileService:
                 }
             else:
                 persisted.pop("agent_profile", None)
-        if (
-            not persist_memory_settings
-            and "memory_settings" not in self._read_persisted()
-        ):
+        if not persist_memory_settings and "memory_settings" not in self._read_persisted():
             persisted.pop("memory_settings", None)
         temporary.write_text(json.dumps(persisted, ensure_ascii=False, indent=2))
         temporary.replace(self.path)
@@ -526,9 +504,7 @@ class RuntimeProfileService:
                         "for name in names}, sort_keys=True))"
                     )
                 else:
-                    smoke_code = (
-                        f"import importlib.metadata as m; [m.version(name) for name in {package_names}]"
-                    )
+                    smoke_code = f"import importlib.metadata as m; [m.version(name) for name in {package_names}]"
                 self._update_build(
                     build_id,
                     phase="验证依赖导入",
@@ -595,9 +571,7 @@ class RuntimeProfileService:
                     "dependencies": resolved_dependencies,
                     "activated_at": datetime.now(timezone.utc).isoformat(),
                 }
-                images = [
-                    item for item in state.get("images", []) if item.get("image") != image
-                ]
+                images = [item for item in state.get("images", []) if item.get("image") != image]
                 state.update(
                     dependencies=resolved_dependencies,
                     active_image=image,

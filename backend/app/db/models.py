@@ -59,15 +59,13 @@ class ConversationStrategyPreferenceRecord(Base):
 
 class TaskRecord(Base):
     __tablename__ = "tasks"
-    __table_args__ = (
-        Index("ix_tasks_retention_scan", "pinned_at", "updated_at"),
-    )
+    __table_args__ = (Index("ix_tasks_retention_scan", "pinned_at", "updated_at"),)
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_str)
     title: Mapped[str] = mapped_column(String(240))
     description: Mapped[str] = mapped_column(Text)
-    created_by: Mapped[str | None] = mapped_column(String(120), nullable=True)
     workspace_id: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    created_by: Mapped[str | None] = mapped_column(String(120), nullable=True)
     status: Mapped[str] = mapped_column(String(40), default="created")
     priority: Mapped[str | None] = mapped_column(String(40), nullable=True)
     risk_level: Mapped[str | None] = mapped_column(String(40), nullable=True)
@@ -114,10 +112,12 @@ class RunRecord(Base):
     __tablename__ = "runs"
     __table_args__ = (
         Index("ix_runs_task_status", "task_id", "status"),
+        Index("ix_runs_memory_session_id", "memory_session_id"),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_str)
     task_id: Mapped[str] = mapped_column(ForeignKey("tasks.id"))
+    memory_session_id: Mapped[str | None] = mapped_column(String(120), nullable=True)
     status: Mapped[str] = mapped_column(String(40), default="created")
     mode: Mapped[str] = mapped_column(String(80), default="web_data_query")
     answer_mode: Mapped[str] = mapped_column(String(40), nullable=False, default="standard")
@@ -225,9 +225,7 @@ class SkillAuditRecord(Base):
     __table_args__ = (Index("ix_skill_audit_skill_created", "skill_id", "created_at"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    skill_id: Mapped[str | None] = mapped_column(
-        ForeignKey("skills.id"), nullable=True
-    )
+    skill_id: Mapped[str | None] = mapped_column(ForeignKey("skills.id"), nullable=True)
     type: Mapped[str] = mapped_column(String(120))
     payload: Mapped[dict] = mapped_column(JsonType, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
@@ -263,9 +261,7 @@ class SkillRecord(Base):
 class SkillDraftRecord(Base):
     __tablename__ = "skill_drafts"
 
-    skill_id: Mapped[str] = mapped_column(
-        ForeignKey("skills.id"), primary_key=True
-    )
+    skill_id: Mapped[str] = mapped_column(ForeignKey("skills.id"), primary_key=True)
     revision_token: Mapped[str] = mapped_column(String(36), default=uuid_str)
     files: Mapped[dict] = mapped_column(JsonType, default=dict)
     validation_report: Mapped[dict] = mapped_column(JsonType, default=dict)
@@ -440,9 +436,7 @@ class NodeExecutionRecord(Base):
     worker_id: Mapped[str | None] = mapped_column(String(120), nullable=True)
     phase: Mapped[str] = mapped_column(String(40), default="claimed")
     status: Mapped[str] = mapped_column(String(40), default="active")
-    current_slot: Mapped[str | None] = mapped_column(
-        String(16), nullable=True, default="current"
-    )
+    current_slot: Mapped[str | None] = mapped_column(String(16), nullable=True, default="current")
     slot_index: Mapped[int | None] = mapped_column(Integer, nullable=True)
     state_version: Mapped[int] = mapped_column(Integer, default=1)
     wait_reason: Mapped[str | None] = mapped_column(String(80), nullable=True)
@@ -458,9 +452,7 @@ class NodeExecutionRecord(Base):
     run: Mapped[RunRecord] = relationship(back_populates="node_executions")
     plan: Mapped[PlanRecord] = relationship(back_populates="executions")
     plan_node: Mapped[PlanNodeRecord] = relationship(back_populates="executions")
-    tool_calls: Mapped[list["ToolCallRecord"]] = relationship(
-        back_populates="node_execution"
-    )
+    tool_calls: Mapped[list["ToolCallRecord"]] = relationship(back_populates="node_execution")
     turns: Mapped[list["AgentTurnRecord"]] = relationship(back_populates="node_execution")
     approval_requests: Mapped[list["ApprovalRequestRecord"]] = relationship(
         back_populates="node_execution"
@@ -500,9 +492,7 @@ class ResourceLeaseRecord(Base):
     release_reason: Mapped[str | None] = mapped_column(String(80), nullable=True)
 
     run: Mapped[RunRecord] = relationship(back_populates="resource_leases")
-    node_execution: Mapped[NodeExecutionRecord] = relationship(
-        back_populates="resource_leases"
-    )
+    node_execution: Mapped[NodeExecutionRecord] = relationship(back_populates="resource_leases")
 
 
 class BudgetReservationRecord(Base):
@@ -527,9 +517,7 @@ class BudgetReservationRecord(Base):
     settled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     run: Mapped[RunRecord] = relationship(back_populates="budget_reservations")
-    node_execution: Mapped[NodeExecutionRecord] = relationship(
-        back_populates="budget_reservations"
-    )
+    node_execution: Mapped[NodeExecutionRecord] = relationship(back_populates="budget_reservations")
 
 
 class ModelInvocationRecord(Base):
@@ -609,9 +597,7 @@ class ToolCallRecord(Base):
     run: Mapped[RunRecord] = relationship(back_populates="tool_calls")
     step: Mapped[StepRecord | None] = relationship(back_populates="tool_calls")
     plan_node: Mapped[PlanNodeRecord | None] = relationship(back_populates="tool_calls")
-    node_execution: Mapped[NodeExecutionRecord | None] = relationship(
-        back_populates="tool_calls"
-    )
+    node_execution: Mapped[NodeExecutionRecord | None] = relationship(back_populates="tool_calls")
     approval_request: Mapped["ApprovalRequestRecord | None"] = relationship(
         back_populates="tool_call", uselist=False
     )
@@ -632,9 +618,7 @@ class ApprovalRequestRecord(Base):
         ForeignKey("node_executions.id"), nullable=True
     )
     execution_attempt: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    expected_execution_state_version: Mapped[int | None] = mapped_column(
-        Integer, nullable=True
-    )
+    expected_execution_state_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
     tool_name: Mapped[str] = mapped_column(String(120))
     tool_version: Mapped[str] = mapped_column(String(40))
     frozen_input: Mapped[dict] = mapped_column(JsonType)
@@ -972,9 +956,7 @@ class AgentTurnRecord(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
     run: Mapped[RunRecord] = relationship(back_populates="turns")
-    node_execution: Mapped[NodeExecutionRecord | None] = relationship(
-        back_populates="turns"
-    )
+    node_execution: Mapped[NodeExecutionRecord | None] = relationship(back_populates="turns")
 
 
 class MemoryRecord(Base):
@@ -1001,7 +983,6 @@ class MemoryRecord(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_str)
     run_id: Mapped[str | None] = mapped_column(ForeignKey("runs.id"), nullable=True)
-    workspace_id: Mapped[str | None] = mapped_column(String(120), nullable=True)
     created_by: Mapped[str | None] = mapped_column(String(120), nullable=True)
     memory_key: Mapped[str] = mapped_column(String(240), default=uuid_str)
     namespace_type: Mapped[str] = mapped_column(String(40), default="run")
@@ -1021,9 +1002,7 @@ class MemoryRecord(Base):
     observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     valid_from: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     valid_to: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    supersedes_id: Mapped[str | None] = mapped_column(
-        ForeignKey("memories.id"), nullable=True
-    )
+    supersedes_id: Mapped[str | None] = mapped_column(ForeignKey("memories.id"), nullable=True)
     consolidation_generation: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
@@ -1074,18 +1053,14 @@ class MemorySourceRecord(Base):
     source_hash: Mapped[str] = mapped_column(String(64))
     run_id: Mapped[str | None] = mapped_column(ForeignKey("runs.id"), nullable=True)
     turn_id: Mapped[str | None] = mapped_column(ForeignKey("agent_turns.id"), nullable=True)
-    tool_call_id: Mapped[str | None] = mapped_column(
-        ForeignKey("tool_calls.id"), nullable=True
-    )
+    tool_call_id: Mapped[str | None] = mapped_column(ForeignKey("tool_calls.id"), nullable=True)
     artifact_id: Mapped[str | None] = mapped_column(ForeignKey("artifacts.id"), nullable=True)
     source_data: Mapped[dict] = mapped_column(JsonType, default=dict)
     accessible: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
-    memory: Mapped[MemoryRecord] = relationship(
-        back_populates="sources", foreign_keys=[memory_id]
-    )
+    memory: Mapped[MemoryRecord] = relationship(back_populates="sources", foreign_keys=[memory_id])
 
 
 class MemoryLinkRecord(Base):
@@ -1120,7 +1095,6 @@ class MemoryRecallEventRecord(Base):
     turn_id: Mapped[str | None] = mapped_column(ForeignKey("agent_turns.id"), nullable=True)
     query_hash: Mapped[str] = mapped_column(String(64))
     policy_version: Mapped[str] = mapped_column(String(40))
-    shadow: Mapped[bool] = mapped_column(Boolean, default=False)
     namespace_manifest: Mapped[list] = mapped_column(JsonType, default=list)
     candidates: Mapped[list] = mapped_column(JsonType, default=list)
     selected: Mapped[list] = mapped_column(JsonType, default=list)
@@ -1132,9 +1106,7 @@ class MemoryRecallEventRecord(Base):
 
 class MemoryAuditRecord(Base):
     __tablename__ = "memory_audit_events"
-    __table_args__ = (
-        Index("ix_memory_audit_memory_created", "memory_id", "created_at"),
-    )
+    __table_args__ = (Index("ix_memory_audit_memory_created", "memory_id", "created_at"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     memory_id: Mapped[str] = mapped_column(ForeignKey("memories.id"))
@@ -1273,9 +1245,7 @@ class AgentEvolutionSourceRecord(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
-    candidate: Mapped[AgentEvolutionCandidateRecord] = relationship(
-        back_populates="sources"
-    )
+    candidate: Mapped[AgentEvolutionCandidateRecord] = relationship(back_populates="sources")
 
 
 class AgentEvolutionEvaluationRecord(Base):
@@ -1299,9 +1269,7 @@ class AgentEvolutionEvaluationRecord(Base):
     verdict: Mapped[str] = mapped_column(String(40))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
-    candidate: Mapped[AgentEvolutionCandidateRecord] = relationship(
-        back_populates="evaluations"
-    )
+    candidate: Mapped[AgentEvolutionCandidateRecord] = relationship(back_populates="evaluations")
 
 
 class AgentEvolutionAuditRecord(Base):
@@ -1320,9 +1288,7 @@ class AgentEvolutionAuditRecord(Base):
     payload: Mapped[dict] = mapped_column(JsonType, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
-    candidate: Mapped[AgentEvolutionCandidateRecord] = relationship(
-        back_populates="audit_events"
-    )
+    candidate: Mapped[AgentEvolutionCandidateRecord] = relationship(back_populates="audit_events")
 
 
 class ScheduledJobRecord(Base):
@@ -1345,9 +1311,7 @@ class ScheduledJobRecord(Base):
     system_key: Mapped[str | None] = mapped_column(String(320), nullable=True)
     system_managed: Mapped[bool] = mapped_column(Boolean, default=False)
     owner_principal: Mapped[str | None] = mapped_column(String(240), nullable=True)
-    target_task_id: Mapped[str | None] = mapped_column(
-        ForeignKey("tasks.id"), nullable=True
-    )
+    target_task_id: Mapped[str | None] = mapped_column(ForeignKey("tasks.id"), nullable=True)
     prompt: Mapped[str] = mapped_column(Text)
     schedule_type: Mapped[str] = mapped_column(String(40))
     schedule: Mapped[dict] = mapped_column(JsonType, default=dict)
@@ -1358,12 +1322,8 @@ class ScheduledJobRecord(Base):
     overlap_policy: Mapped[str] = mapped_column(String(40), default="skip")
     execution: Mapped[dict] = mapped_column(JsonType, default=dict)
     heartbeat: Mapped[dict] = mapped_column(JsonType, default=dict)
-    next_fire_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
-    last_fire_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
+    next_fire_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_fire_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     lease_owner: Mapped[str | None] = mapped_column(String(240), nullable=True)
     lease_expires_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
@@ -1371,9 +1331,7 @@ class ScheduledJobRecord(Base):
     version: Mapped[int] = mapped_column(Integer, default=1)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
-    deleted_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class ScheduledJobRunRecord(Base):
@@ -1399,17 +1357,11 @@ class ScheduledJobRunRecord(Base):
     trigger_type: Mapped[str] = mapped_column(String(40), default="scheduled")
     status: Mapped[str] = mapped_column(String(40), default="claimed")
     claimed_by: Mapped[str | None] = mapped_column(String(240), nullable=True)
-    claimed_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
+    claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     task_id: Mapped[str | None] = mapped_column(ForeignKey("tasks.id"), nullable=True)
     run_id: Mapped[str | None] = mapped_column(ForeignKey("runs.id"), nullable=True)
     outcome: Mapped[dict] = mapped_column(JsonType, default=dict)
-    started_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
-    completed_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)

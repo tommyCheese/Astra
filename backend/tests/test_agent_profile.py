@@ -96,30 +96,12 @@ def test_snapshot_reconstructs_exact_profile_without_exposing_content_in_manifes
     assert snapshot["documents"]["identity"]["content"]
 
 
-def test_schema_v1_snapshot_reconstructs_with_disabled_autodream_and_legacy_roles():
-    contents = profile_contents()
-    contents["autodream"] = contents["autodream"].replace(
-        "status: active", "status: disabled", 1
-    )
-    current = load_agent_profile()
-    legacy_roles = {
-        operation: names
-        for operation, names in current.manifest.role_documents
-        if operation != ModelOperation.AUTODREAM.value
-    }
-    legacy = AgentProfileLoader().load(
-        contents,
-        composition_schema_version=1,
-        role_documents=legacy_roles,
-    )
-
-    reconstructed = AgentProfile.from_snapshot(legacy.snapshot())
-
-    assert reconstructed.manifest.version == legacy.manifest.version
-    assert reconstructed.manifest.composition_schema_version == 1
-    assert reconstructed.document("autodream").status == "disabled"
-    with pytest.raises(AgentProfileConfigurationError, match="Unsupported"):
-        reconstructed.documents_for(ModelOperation.AUTODREAM)
+def test_obsolete_composition_schema_is_rejected():
+    with pytest.raises(AgentProfileConfigurationError, match="unsupported"):
+        AgentProfileLoader().load(
+            profile_contents(),
+            composition_schema_version=1,
+        )
 
 
 def test_synchronous_model_operations_never_select_autodream():
@@ -132,19 +114,13 @@ def test_synchronous_model_operations_never_select_autodream():
 
 def test_profile_rejects_unsafe_autodream_role_composition():
     profile = load_agent_profile()
-    roles = {
-        operation: list(names)
-        for operation, names in profile.manifest.role_documents
-    }
+    roles = {operation: list(names) for operation, names in profile.manifest.role_documents}
     roles[ModelOperation.DECISION.value].append("autodream")
 
     with pytest.raises(AgentProfileConfigurationError, match="selection is unsafe"):
         AgentProfileLoader().load(profile_contents(), role_documents=roles)
 
-    roles = {
-        operation: list(names)
-        for operation, names in profile.manifest.role_documents
-    }
+    roles = {operation: list(names) for operation, names in profile.manifest.role_documents}
     roles[ModelOperation.AUTODREAM.value] = ["memory", "autodream"]
 
     with pytest.raises(
@@ -266,9 +242,7 @@ def test_skill_prompt_blocks_are_ordered_bounded_and_operation_filtered():
     assert "revision-a" in prompt
     assert "sha256:a" in prompt
     assert "custom:zeta" not in prompt
-    assert prompt.index("## Trusted role protocol") < prompt.index(
-        "## Active Skill instructions"
-    )
+    assert prompt.index("## Trusted role protocol") < prompt.index("## Active Skill instructions")
     assert prompt.index("## Active Skill instructions") < prompt.index(
         "## Trust and capability boundary"
     )

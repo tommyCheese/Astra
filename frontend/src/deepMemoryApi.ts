@@ -76,35 +76,6 @@ function booleanValue(value: unknown, fallback = false): boolean {
   return typeof value === 'boolean' ? value : fallback;
 }
 
-function envelopeRecord(body: unknown, keys: string[]): JsonObject {
-  const root = objectValue(body);
-  for (const key of keys) {
-    const direct = objectValue(root[key]);
-    if (Object.keys(direct).length) return direct;
-  }
-  const data = objectValue(root.data);
-  for (const key of keys) {
-    const nested = objectValue(data[key]);
-    if (Object.keys(nested).length) return nested;
-  }
-  return Object.keys(data).length ? data : root;
-}
-
-function envelopeItems(body: unknown, keys: string[]): { items: unknown[]; envelope: JsonObject } {
-  if (Array.isArray(body)) return { items: body, envelope: {} };
-  const root = objectValue(body);
-  const data = root.data;
-  const candidates: unknown[] = [
-    root.items,
-    ...keys.map((key) => root[key]),
-    data,
-  ];
-  const dataObject = objectValue(data);
-  candidates.push(dataObject.items, ...keys.map((key) => dataObject[key]));
-  const items = candidates.find(Array.isArray);
-  return { items: arrayValue(items), envelope: Object.keys(dataObject).length ? { ...root, ...dataObject } : root };
-}
-
 async function apiJson(input: RequestInfo | URL, init: RequestInit = {}): Promise<unknown> {
   const response = await fetch(input, {
     ...init,
@@ -177,12 +148,11 @@ function normalizeRecall(value: unknown): MemoryRecallAudit {
     event_id: stringValue(item.event_id, stringValue(item.id)),
     run_id: optionalString(item.run_id),
     turn_id: optionalString(item.turn_id),
-    query_fingerprint: optionalString(item.query_fingerprint ?? item.query_hash),
+    query_fingerprint: optionalString(item.query_fingerprint),
     policy_version: optionalString(item.policy_version),
-    shadow: booleanValue(item.shadow),
     selected: booleanValue(item.selected, true),
     exclusion_reason: optionalString(item.exclusion_reason),
-    scores: normalizeScore(item.scores ?? item.score_components ?? item.score),
+    scores: normalizeScore(item.scores),
     feedback: objectValue(item.feedback),
     created_at: optionalString(item.created_at),
   };
@@ -205,7 +175,6 @@ export function normalizeMemory(value: unknown): MemoryRecord {
   return {
     id: stringValue(item.id),
     run_id: optionalString(item.run_id),
-    workspace_id: optionalString(item.workspace_id),
     created_by: optionalString(item.created_by),
     memory_key: stringValue(item.memory_key),
     namespace_type: stringValue(item.namespace_type, 'run'),
@@ -237,49 +206,42 @@ export function normalizeMemory(value: unknown): MemoryRecord {
 }
 
 export function normalizeMemoryDetail(value: unknown): MemoryDetail {
-  const item = envelopeRecord(value, ['memory']);
+  const item = objectValue(value);
   const base = normalizeMemory(item);
   return {
     ...base,
     sources: arrayValue(item.sources).map(normalizeSource),
-    recall_events: arrayValue(item.recall_events ?? item.recalls).map(normalizeRecall),
-    audit_events: arrayValue(item.audit_events ?? item.events).map(normalizeAudit),
-    history: arrayValue(item.history ?? item.versions).map(normalizeMemory),
+    recall_events: arrayValue(item.recall_events).map(normalizeRecall),
+    audit_events: arrayValue(item.audit_events).map(normalizeAudit),
+    history: arrayValue(item.history).map(normalizeMemory),
   };
 }
 
 function normalizeOperation(value: unknown): ConsolidationProposalOperation {
   const item = objectValue(value);
   return {
-    operation: stringValue(item.operation, stringValue(item.action, stringValue(item.type, 'unknown'))),
+    operation: stringValue(item.operation, 'unknown'),
     memory_id: optionalString(item.memory_id),
     memory_key: optionalString(item.memory_key),
     content: optionalString(item.content),
-    source_memory_ids: arrayValue(item.source_memory_ids ?? item.sources).map((source) => stringValue(source)).filter(Boolean),
+    source_memory_ids: arrayValue(item.source_memory_ids).map((source) => stringValue(source)).filter(Boolean),
     details: objectValue(item.details),
   };
 }
 
 function proposalOperations(proposal: JsonObject): ConsolidationProposalOperation[] {
-  const direct = arrayValue(proposal.operations);
-  if (direct.length) return direct.map(normalizeOperation);
-  return ['additions', 'replacements', 'supersessions', 'links'].flatMap((key) =>
-    arrayValue(proposal[key]).map((operation) => normalizeOperation({
-      ...objectValue(operation),
-      operation: objectValue(operation).operation ?? key.replace(/s$/, ''),
-    })),
-  );
+  return arrayValue(proposal.operations).map(normalizeOperation);
 }
 
 function normalizeValidation(value: unknown): ConsolidationValidation {
   const item = objectValue(value);
   return {
-    passed: booleanValue(item.passed ?? item.valid),
+    passed: booleanValue(item.passed),
     issues: arrayValue(item.issues).map((issue) => {
       const detail = objectValue(issue);
       return {
         code: stringValue(detail.code, 'VALIDATION_ISSUE'),
-        message: stringValue(detail.message, stringValue(detail.detail)),
+        message: stringValue(detail.message),
         severity: stringValue(detail.severity, 'error'),
       };
     }),
@@ -288,7 +250,7 @@ function normalizeValidation(value: unknown): ConsolidationValidation {
 }
 
 export function normalizeConsolidationJob(value: unknown): ConsolidationJob {
-  const item = envelopeRecord(value, ['job', 'consolidation_job']);
+  const item = objectValue(value);
   const proposal = objectValue(item.proposal);
   return {
     id: stringValue(item.id),
@@ -365,22 +327,7 @@ function normalizeEvolutionAudit(value: unknown): EvolutionAuditEvent {
 }
 
 export function normalizeEvolutionCandidate(value: unknown): EvolutionCandidate {
-  const root = objectValue(value);
-  const data = objectValue(root.data);
-  const wrapped = objectValue(root.evolution_candidate);
-  const dataWrapped = objectValue(data.evolution_candidate ?? data.candidate);
-  const rootCandidateEnvelope = objectValue(root.candidate);
-  const item = stringValue(root.id)
-    ? root
-    : Object.keys(wrapped).length
-      ? wrapped
-      : stringValue(rootCandidateEnvelope.id)
-        ? rootCandidateEnvelope
-        : Object.keys(dataWrapped).length
-          ? dataWrapped
-          : Object.keys(data).length
-            ? data
-            : root;
+  const item = objectValue(value);
   const nested = objectValue(item.candidate);
   const candidate = Object.keys(nested).length ? nested : item;
   const rawContent = candidate.content;
@@ -393,14 +340,14 @@ export function normalizeEvolutionCandidate(value: unknown): EvolutionCandidate 
     revision: numberValue(candidate.revision, 1),
     supersedes_id: optionalString(candidate.supersedes_id),
     candidate_type: stringValue(candidate.candidate_type, 'procedure'),
-    target_component: stringValue(candidate.target_component, stringValue(candidate.target)),
+    target_component: stringValue(candidate.target),
     title: stringValue(candidate.title),
     namespace_type: stringValue(item.namespace_type, 'run'),
     namespace_id: stringValue(item.namespace_id),
     status: stringValue(item.status, 'draft'),
     state_version: numberValue(item.state_version, 1),
     content,
-    content_digest: optionalString(item.content_digest ?? item.candidate_digest),
+    content_digest: optionalString(item.candidate_digest),
     environment_constraints: arrayValue(candidate.environment_constraints).map(objectValue),
     required_tools: arrayValue(candidate.required_tools).map((tool) => stringValue(tool)).filter(Boolean),
     parameter_changes: arrayValue(candidate.parameter_changes).map(objectValue),
@@ -432,7 +379,8 @@ function appendQuery(path: string, query: Record<string, string | number | boole
 export async function listMemories(query: MemoryListQuery = {}, signal?: AbortSignal): Promise<MemoryListResult> {
   const path = appendQuery(DEEP_MEMORY_API_PATHS.memories, query);
   const body = await apiJson(path, { signal });
-  const { items, envelope } = envelopeItems(body, ['memories']);
+  const envelope = objectValue(body);
+  const items = arrayValue(envelope.items);
   return {
     items: items.map(normalizeMemory),
     total: numberValue(envelope.total, items.length),
@@ -457,7 +405,8 @@ export async function listConsolidationJobs(
   signal?: AbortSignal,
 ): Promise<ConsolidationJobListResult> {
   const body = await apiJson(appendQuery(DEEP_MEMORY_API_PATHS.consolidationJobs, query), { signal });
-  const { items, envelope } = envelopeItems(body, ['jobs', 'consolidation_jobs']);
+  const envelope = objectValue(body);
+  const items = arrayValue(envelope.jobs);
   return {
     items: items.map(normalizeConsolidationJob),
     total: numberValue(envelope.total, items.length),
@@ -498,11 +447,11 @@ export async function listEvolutionCandidates(
   signal?: AbortSignal,
 ): Promise<EvolutionCandidateListResult> {
   const body = await apiJson(appendQuery(DEEP_MEMORY_API_PATHS.evolutionCandidates, query), { signal });
-  const { items, envelope } = envelopeItems(body, ['candidates', 'evolution_candidates']);
+  const items = arrayValue(body);
   return {
     items: items.map(normalizeEvolutionCandidate),
-    total: numberValue(envelope.total, items.length),
-    next_cursor: optionalString(envelope.next_cursor),
+    total: items.length,
+    next_cursor: null,
     // The initial rollout is fail-closed even if an unexpected server field says otherwise.
     production_promotion_enabled: false,
   };

@@ -20,8 +20,8 @@ from app.memory.retrieval import (
 )
 
 NOW = datetime(2026, 7, 30, 12, tzinfo=timezone.utc)
-WORKSPACE = MemoryNamespace(MemoryNamespaceType.workspace, "workspace-a")
-OTHER_WORKSPACE = MemoryNamespace(MemoryNamespaceType.workspace, "workspace-b")
+SESSION = MemoryNamespace(MemoryNamespaceType.session, "session-a")
+OTHER_SESSION = MemoryNamespace(MemoryNamespaceType.session, "session-b")
 RUN = MemoryNamespace(MemoryNamespaceType.run, "run-a")
 
 
@@ -29,7 +29,7 @@ def candidate(
     memory_id: str,
     content: str,
     *,
-    namespace: MemoryNamespace = WORKSPACE,
+    namespace: MemoryNamespace = SESSION,
     kind: str = "semantic_fact",
     status: str = "active",
     confidence: float = 0.8,
@@ -70,7 +70,7 @@ def candidate(
 def query(
     text: str = "请用中文回答 memory retrieval",
     *,
-    namespaces=frozenset({WORKSPACE}),
+    namespaces=frozenset({SESSION}),
     **updates,
 ) -> MemoryRetrievalQuery:
     return MemoryRetrievalQuery(
@@ -135,7 +135,7 @@ def test_eligibility_filters_namespace_lifecycle_time_kind_and_sources():
         allowed_kinds=frozenset({"semantic_fact"}),
     )
     cases = {
-        "wrong-namespace": candidate("wrong-namespace", "memory", namespace=OTHER_WORKSPACE),
+        "wrong-namespace": candidate("wrong-namespace", "memory", namespace=OTHER_SESSION),
         "candidate": candidate("candidate", "memory", status="candidate"),
         "future": candidate("future", "memory", valid_from=NOW + timedelta(seconds=1)),
         "ended": candidate("ended", "memory", valid_to=NOW),
@@ -170,35 +170,34 @@ def test_eligibility_filters_namespace_lifecycle_time_kind_and_sources():
     )
 
 
-def test_legacy_kind_is_only_eligible_inside_explicit_run_namespace():
-    legacy_run = candidate(
-        "legacy-run",
-        "legacy",
+def test_obsolete_kind_is_rejected_in_every_namespace():
+    obsolete_run = candidate(
+        "obsolete-run",
+        "obsolete",
         namespace=RUN,
         kind="source_summary",
     )
-    legacy_workspace = candidate(
-        "legacy-workspace",
-        "legacy",
-        namespace=WORKSPACE,
+    obsolete_session = candidate(
+        "obsolete-session",
+        "obsolete",
+        namespace=SESSION,
         kind="source_summary",
     )
     policy = MemoryRetrievalPolicy()
 
     run_decision = evaluate_memory_eligibility(
-        legacy_run,
+        obsolete_run,
         query(namespaces=frozenset({RUN})),
         policy,
     )
-    workspace_decision = evaluate_memory_eligibility(
-        legacy_workspace,
+    session_decision = evaluate_memory_eligibility(
+        obsolete_session,
         query(),
         policy,
     )
 
-    assert run_decision.eligible
-    assert run_decision.normalized_kind == "episodic_experience"
-    assert workspace_decision.reasons == ("unsupported_kind",)
+    assert run_decision.reasons == ("unsupported_kind",)
+    assert session_decision.reasons == ("unsupported_kind",)
 
 
 def test_required_tags_are_hard_filters_and_affinity_tags_are_score_components():

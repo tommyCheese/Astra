@@ -60,9 +60,7 @@ def _validate_namespace(namespace_type: str, namespace_id: str) -> tuple[str, st
         ) from exc
     normalized_id = str(namespace_id or "").strip()
     if not normalized_id:
-        raise ConsolidationValidationError(
-            "Consolidation namespace identity must be non-empty"
-        )
+        raise ConsolidationValidationError("Consolidation namespace identity must be non-empty")
     if len(normalized_id) > 120:
         raise ConsolidationValidationError(
             "Consolidation namespace identity exceeds 120 characters"
@@ -73,13 +71,9 @@ def _validate_namespace(namespace_type: str, namespace_id: str) -> tuple[str, st
 def _idempotency_key(value: str) -> str:
     normalized = str(value or "").strip()
     if not normalized:
-        raise ConsolidationValidationError(
-            "Consolidation idempotency key must be non-empty"
-        )
+        raise ConsolidationValidationError("Consolidation idempotency key must be non-empty")
     if len(normalized) > 160:
-        raise ConsolidationValidationError(
-            "Consolidation idempotency key exceeds 160 characters"
-        )
+        raise ConsolidationValidationError("Consolidation idempotency key exceeds 160 characters")
     return normalized
 
 
@@ -104,9 +98,7 @@ class MemoryConsolidationRepository:
         else:
             job = await self.session.get(MemoryConsolidationJobRecord, job_id)
         if job is None:
-            raise ConsolidationValidationError(
-                f"Memory consolidation job not found: {job_id}"
-            )
+            raise ConsolidationValidationError(f"Memory consolidation job not found: {job_id}")
         return job
 
     async def list_jobs(
@@ -127,9 +119,7 @@ class MemoryConsolidationRepository:
                 raise ConsolidationValidationError(
                     "Both namespace_type and namespace_id are required"
                 )
-            normalized_type, normalized_id = _validate_namespace(
-                namespace_type, namespace_id
-            )
+            normalized_type, normalized_id = _validate_namespace(namespace_type, namespace_id)
             query = query.where(
                 MemoryConsolidationJobRecord.namespace_type == normalized_type,
                 MemoryConsolidationJobRecord.namespace_id == normalized_id,
@@ -140,9 +130,7 @@ class MemoryConsolidationRepository:
                 raise ConsolidationValidationError(
                     f"Unsupported consolidation job status: {status}"
                 )
-            query = query.where(
-                MemoryConsolidationJobRecord.status == normalized_status
-            )
+            query = query.where(MemoryConsolidationJobRecord.status == normalized_status)
         query = query.order_by(
             MemoryConsolidationJobRecord.created_at.desc(),
             MemoryConsolidationJobRecord.id,
@@ -157,9 +145,7 @@ class MemoryConsolidationRepository:
         idempotency_key: str,
         rollback_of_id: str | None = None,
     ) -> MemoryConsolidationJobRecord:
-        normalized_type, normalized_id = _validate_namespace(
-            namespace_type, namespace_id
-        )
+        normalized_type, normalized_id = _validate_namespace(namespace_type, namespace_id)
         normalized_key = _idempotency_key(idempotency_key)
         existing = await self.session.scalar(
             select(MemoryConsolidationJobRecord).where(
@@ -167,10 +153,7 @@ class MemoryConsolidationRepository:
             )
         )
         if existing is not None:
-            if (
-                existing.namespace_type != normalized_type
-                or existing.namespace_id != normalized_id
-            ):
+            if existing.namespace_type != normalized_type or existing.namespace_id != normalized_id:
                 raise ConsolidationConflictError(
                     "Consolidation idempotency key belongs to another namespace"
                 )
@@ -244,9 +227,7 @@ class MemoryConsolidationRepository:
     ) -> MemoryConsolidationJobRecord | None:
         normalized_owner = str(owner or "").strip()
         if not normalized_owner or len(normalized_owner) > 120:
-            raise ConsolidationValidationError(
-                "Consolidation lease owner must be 1-120 characters"
-            )
+            raise ConsolidationValidationError("Consolidation lease owner must be 1-120 characters")
         if not 30 <= lease_seconds <= 3_600:
             raise ConsolidationValidationError(
                 "Consolidation lease must be between 30 and 3600 seconds"
@@ -346,9 +327,7 @@ class MemoryConsolidationRepository:
         error: dict[str, Any] | None = None,
     ) -> MemoryConsolidationJobRecord:
         if status not in {"proposed", "insufficient_input", "failed", "conflict"}:
-            raise ConsolidationValidationError(
-                f"Unsupported proposal completion status: {status}"
-            )
+            raise ConsolidationValidationError(f"Unsupported proposal completion status: {status}")
         values: dict[str, Any] = {
             "status": status,
             "state_version": expected_state_version + 1,
@@ -368,16 +347,13 @@ class MemoryConsolidationRepository:
             .where(
                 MemoryConsolidationJobRecord.id == job_id,
                 MemoryConsolidationJobRecord.status == "running",
-                MemoryConsolidationJobRecord.state_version
-                == expected_state_version,
+                MemoryConsolidationJobRecord.state_version == expected_state_version,
             )
             .values(**values)
         )
         if result.rowcount != 1:
             await self.session.rollback()
-            raise ConsolidationConflictError(
-                "Consolidation job changed while storing its proposal"
-            )
+            raise ConsolidationConflictError("Consolidation job changed while storing its proposal")
         await self.session.commit()
         return await self.require(job_id, refresh=True)
 
@@ -394,8 +370,7 @@ class MemoryConsolidationRepository:
             .where(
                 MemoryConsolidationJobRecord.id == job_id,
                 MemoryConsolidationJobRecord.status == "running",
-                MemoryConsolidationJobRecord.state_version
-                == expected_state_version,
+                MemoryConsolidationJobRecord.state_version == expected_state_version,
             )
             .values(
                 status="failed",
@@ -418,9 +393,7 @@ class MemoryConsolidationRepository:
         namespace_id: str,
         limit: int,
     ) -> list[MemoryRecord]:
-        normalized_type, normalized_id = _validate_namespace(
-            namespace_type, namespace_id
-        )
+        normalized_type, normalized_id = _validate_namespace(namespace_type, namespace_id)
         if not 2 <= limit <= 100:
             raise ConsolidationValidationError(
                 "Consolidation input limit must be between 2 and 100"
@@ -466,9 +439,7 @@ class MemoryConsolidationRepository:
                     "Only proposed consolidation jobs can be published"
                 )
             if job.state_version != expected_state_version:
-                raise ConsolidationConflictError(
-                    "Consolidation job state version changed"
-                )
+                raise ConsolidationConflictError("Consolidation job state version changed")
             manifest = ConsolidationInputManifest.from_dict(job.input_manifest)
             proposal = ConsolidationProposal.from_dict(job.proposal)
             stored_validation = dict(job.validation or {})
@@ -490,12 +461,10 @@ class MemoryConsolidationRepository:
             source_by_id = {record.id: record for record in source_records}
             for operation in proposal.operations:
                 source_memories = [
-                    source_by_id[source_id]
-                    for source_id in operation.source_memory_ids
+                    source_by_id[source_id] for source_id in operation.source_memory_ids
                 ]
                 replacement_memories = [
-                    source_by_id[memory_id]
-                    for memory_id in operation.replace_memory_ids
+                    source_by_id[memory_id] for memory_id in operation.replace_memory_ids
                 ]
                 next_version = (
                     await self.session.scalar(
@@ -506,23 +475,14 @@ class MemoryConsolidationRepository:
                         )
                     )
                 ) + 1
-                run_ids = {
-                    memory.run_id for memory in source_memories if memory.run_id
-                }
+                run_ids = {memory.run_id for memory in source_memories if memory.run_id}
                 run_id = next(iter(run_ids)) if len(run_ids) == 1 else None
                 output_id = uuid_str()
                 output = MemoryRecord(
                     id=output_id,
                     run_id=run_id,
-                    workspace_id=(
-                        manifest.namespace_id
-                        if manifest.namespace_type == "workspace"
-                        else None
-                    ),
                     created_by=(
-                        manifest.namespace_id
-                        if manifest.namespace_type == "user"
-                        else actor
+                        manifest.namespace_id if manifest.namespace_type == "user" else actor
                     ),
                     memory_key=operation.memory_key,
                     namespace_type=manifest.namespace_type,
@@ -546,9 +506,7 @@ class MemoryConsolidationRepository:
                         sum(memory.utility_score for memory in source_memories)
                         / len(source_memories)
                     ),
-                    observed_at=max(
-                        memory.observed_at for memory in source_memories
-                    ),
+                    observed_at=max(memory.observed_at for memory in source_memories),
                     valid_from=now,
                     consolidation_generation=job.generation,
                     created_at=now,
@@ -608,9 +566,7 @@ class MemoryConsolidationRepository:
                             "job_id": job.id,
                             "generation": job.generation,
                             "operation_id": operation.operation_id,
-                            "source_memory_ids": list(
-                                operation.source_memory_ids
-                            ),
+                            "source_memory_ids": list(operation.source_memory_ids),
                         },
                         created_at=now,
                     )
@@ -671,8 +627,7 @@ class MemoryConsolidationRepository:
                 .where(
                     MemoryConsolidationJobRecord.id == job.id,
                     MemoryConsolidationJobRecord.status == "proposed",
-                    MemoryConsolidationJobRecord.state_version
-                    == expected_state_version,
+                    MemoryConsolidationJobRecord.state_version == expected_state_version,
                 )
                 .values(
                     status="published",
@@ -689,9 +644,7 @@ class MemoryConsolidationRepository:
                 )
             )
             if result.rowcount != 1:
-                raise ConsolidationConflictError(
-                    "Consolidation job changed during publication"
-                )
+                raise ConsolidationConflictError("Consolidation job changed during publication")
             await self.session.commit()
             return await self.require(job.id, refresh=True)
         except (ConsolidationConflictError, IntegrityError) as exc:
@@ -733,9 +686,7 @@ class MemoryConsolidationRepository:
                 "Only published consolidation jobs can be rolled back"
             )
         if original.state_version != expected_state_version:
-            raise ConsolidationConflictError(
-                "Consolidation job state version changed"
-            )
+            raise ConsolidationConflictError("Consolidation job state version changed")
         result_manifest = dict(original.publish_result or {})
         outputs = list(result_manifest.get("outputs") or [])
         replacements = list(result_manifest.get("replacements") or [])
@@ -793,8 +744,7 @@ class MemoryConsolidationRepository:
                 )
                 if not accessible_sources:
                     raise ConsolidationConflictError(
-                        "Superseded Memory lost its supporting source before "
-                        f"rollback: {memory_id}"
+                        f"Superseded Memory lost its supporting source before rollback: {memory_id}"
                     )
                 expected = int(item.get("state_version_after", 0))
                 result = await self.session.execute(
@@ -848,9 +798,7 @@ class MemoryConsolidationRepository:
                 model_usage={"attempts": 0, "calls": 0, "provider": "rollback"},
                 publish_result={
                     "rolled_back_job_id": original.id,
-                    "revoked_output_ids": [
-                        str(item.get("memory_id")) for item in outputs
-                    ],
+                    "revoked_output_ids": [str(item.get("memory_id")) for item in outputs],
                     "restored_memory_ids": sorted(restored_ids),
                 },
                 rollback_of_id=original.id,
@@ -865,8 +813,7 @@ class MemoryConsolidationRepository:
                 .where(
                     MemoryConsolidationJobRecord.id == original.id,
                     MemoryConsolidationJobRecord.status == "published",
-                    MemoryConsolidationJobRecord.state_version
-                    == expected_state_version,
+                    MemoryConsolidationJobRecord.state_version == expected_state_version,
                 )
                 .values(
                     status="rolled_back",
@@ -876,9 +823,7 @@ class MemoryConsolidationRepository:
                 )
             )
             if result.rowcount != 1:
-                raise ConsolidationConflictError(
-                    "Consolidation job changed during rollback"
-                )
+                raise ConsolidationConflictError("Consolidation job changed during rollback")
             await self.session.commit()
             return await self.require(rollback_id, refresh=True)
         except IntegrityError as exc:
@@ -925,9 +870,7 @@ class MemoryConsolidationRepository:
                 "AutoDream minimum candidate count must be between 2 and 100"
             )
         if not 1 <= limit <= 32:
-            raise ConsolidationValidationError(
-                "AutoDream namespace batch must be between 1 and 32"
-            )
+            raise ConsolidationValidationError("AutoDream namespace batch must be between 1 and 32")
         now = utc_now()
         rows = (
             await self.session.execute(
@@ -990,9 +933,7 @@ class MemoryConsolidationRepository:
 
     async def queued_job_ids(self, *, limit: int) -> list[str]:
         if not 1 <= limit <= 32:
-            raise ConsolidationValidationError(
-                "AutoDream worker batch must be between 1 and 32"
-            )
+            raise ConsolidationValidationError("AutoDream worker batch must be between 1 and 32")
         return list(
             (
                 await self.session.scalars(
@@ -1025,9 +966,7 @@ class MemoryConsolidationRepository:
         for frozen in manifest.items:
             current = by_id.get(frozen.id)
             if current is None:
-                raise ConsolidationConflictError(
-                    f"Frozen Memory no longer exists: {frozen.id}"
-                )
+                raise ConsolidationConflictError(f"Frozen Memory no longer exists: {frozen.id}")
             current_frozen = FrozenMemoryInput.from_record(current)
             if current_frozen.memory_hash != frozen.memory_hash:
                 raise ConsolidationConflictError(
@@ -1047,8 +986,7 @@ class MemoryConsolidationRepository:
             .where(
                 MemoryConsolidationJobRecord.id == job_id,
                 MemoryConsolidationJobRecord.status == "proposed",
-                MemoryConsolidationJobRecord.state_version
-                == expected_state_version,
+                MemoryConsolidationJobRecord.state_version == expected_state_version,
             )
             .values(
                 status="conflict",
@@ -1103,9 +1041,7 @@ def cooldown_elapsed(
     if latest is None or cooldown_seconds == 0:
         return True
     created_at = _as_utc(latest.created_at)
-    return created_at is None or created_at + timedelta(
-        seconds=cooldown_seconds
-    ) <= _as_utc(now)
+    return created_at is None or created_at + timedelta(seconds=cooldown_seconds) <= _as_utc(now)
 
 
 def model_usage_for_job(

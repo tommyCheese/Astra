@@ -25,11 +25,7 @@ class ModelOperation(StrEnum):
     AUTODREAM = "autodream"
 
 
-LEGACY_COMPOSITION_SCHEMA_VERSION = 1
 COMPOSITION_SCHEMA_VERSION = 2
-SUPPORTED_COMPOSITION_SCHEMA_VERSIONS = frozenset(
-    {LEGACY_COMPOSITION_SCHEMA_VERSION, COMPOSITION_SCHEMA_VERSION}
-)
 MAX_DOCUMENT_BYTES = 16 * 1024
 DOCUMENT_FILES = MappingProxyType(
     {
@@ -42,9 +38,29 @@ DOCUMENT_FILES = MappingProxyType(
 REQUIRED_HEADINGS = MappingProxyType(
     {
         "identity": ("# Astra Identity", "## Identity", "## Mission", "## Goals", "## Boundaries"),
-        "soul": ("# Astra Soul", "## Character", "## Communication", "## Epistemics", "## Collaboration"),
-        "memory": ("# Astra Memory Protocol", "## Purpose", "## Scope", "## Write Policy", "## Recall Policy", "## Conflict and Forgetting"),
-        "autodream": ("# Astra AutoDream Protocol", "## Status", "## Purpose", "## Allowed Work", "## Prohibited Work", "## Future Execution Contract"),
+        "soul": (
+            "# Astra Soul",
+            "## Character",
+            "## Communication",
+            "## Epistemics",
+            "## Collaboration",
+        ),
+        "memory": (
+            "# Astra Memory Protocol",
+            "## Purpose",
+            "## Scope",
+            "## Write Policy",
+            "## Recall Policy",
+            "## Conflict and Forgetting",
+        ),
+        "autodream": (
+            "# Astra AutoDream Protocol",
+            "## Status",
+            "## Purpose",
+            "## Allowed Work",
+            "## Prohibited Work",
+            "## Future Execution Contract",
+        ),
     }
 )
 ROLE_DOCUMENTS = MappingProxyType(
@@ -57,13 +73,6 @@ ROLE_DOCUMENTS = MappingProxyType(
         ModelOperation.REFLECTION: ("identity", "memory"),
         ModelOperation.MEMORY: ("memory",),
         ModelOperation.AUTODREAM: ("identity", "memory", "autodream"),
-    }
-)
-LEGACY_ROLE_DOCUMENTS = MappingProxyType(
-    {
-        operation: names
-        for operation, names in ROLE_DOCUMENTS.items()
-        if operation != ModelOperation.AUTODREAM
     }
 )
 SYNCHRONOUS_MODEL_OPERATIONS = frozenset(
@@ -144,10 +153,6 @@ class AgentProfile:
 
     @classmethod
     def from_snapshot(cls, snapshot: Mapping[str, object]) -> AgentProfile:
-        if snapshot.get("version") == "legacy-unversioned":
-            raise AgentProfileConfigurationError(
-                "Legacy Run does not contain a reconstructable Agent Profile"
-            )
         raw_documents = snapshot.get("documents")
         if not isinstance(raw_documents, Mapping):
             raise AgentProfileConfigurationError("Agent Profile snapshot has no documents")
@@ -190,7 +195,7 @@ class AgentProfileLoader:
         composition_schema_version: int = COMPOSITION_SCHEMA_VERSION,
         role_documents: Mapping[object, object] | None = None,
     ) -> AgentProfile:
-        if composition_schema_version not in SUPPORTED_COMPOSITION_SCHEMA_VERSIONS:
+        if composition_schema_version != COMPOSITION_SCHEMA_VERSION:
             raise AgentProfileConfigurationError(
                 "Agent Profile composition schema version is unsupported: "
                 f"{composition_schema_version}"
@@ -210,18 +215,12 @@ class AgentProfileLoader:
                     composition_schema_version=composition_schema_version,
                 )
             )
-        selected_roles = (
-            role_documents
-            if role_documents is not None
-            else _default_role_documents(composition_schema_version)
-        )
+        selected_roles = role_documents if role_documents is not None else ROLE_DOCUMENTS
         normalized_roles = _normalize_role_documents(
             selected_roles,
             composition_schema_version=composition_schema_version,
         )
-        version = _profile_version(
-            tuple(documents), composition_schema_version, normalized_roles
-        )
+        version = _profile_version(tuple(documents), composition_schema_version, normalized_roles)
         return AgentProfile(
             AgentProfileManifest(
                 version=version,
@@ -255,17 +254,8 @@ class AgentProfileLoader:
             )
         metadata = parse_frontmatter(normalized, filename)
         if metadata.get("schema_version") != "1" or metadata.get("document") != name:
-            raise AgentProfileConfigurationError(
-                f"Agent Profile metadata is invalid: {filename}"
-            )
-        expected_status = (
-            "disabled"
-            if (
-                composition_schema_version == LEGACY_COMPOSITION_SCHEMA_VERSION
-                and name == "autodream"
-            )
-            else "active"
-        )
+            raise AgentProfileConfigurationError(f"Agent Profile metadata is invalid: {filename}")
+        expected_status = "active"
         if metadata.get("status") != expected_status:
             raise AgentProfileConfigurationError(
                 f"Agent Profile status must be {expected_status}: {filename}"
@@ -318,10 +308,7 @@ def _normalize_role_documents(
     *,
     composition_schema_version: int,
 ) -> tuple[tuple[str, tuple[str, ...]], ...]:
-    expected_operations = {
-        operation.value
-        for operation in _default_role_documents(composition_schema_version)
-    }
+    expected_operations = {operation.value for operation in ROLE_DOCUMENTS}
     normalized = []
     for raw_operation, raw_names in role_documents.items():
         operation = (
@@ -336,8 +323,10 @@ def _normalize_role_documents(
                 f"Agent Profile role document selection is invalid: {operation}"
             )
         names = tuple(str(name) for name in raw_names)
-        if not names or len(names) != len(set(names)) or any(
-            name not in DOCUMENT_FILES for name in names
+        if (
+            not names
+            or len(names) != len(set(names))
+            or any(name not in DOCUMENT_FILES for name in names)
         ):
             raise AgentProfileConfigurationError(
                 f"Agent Profile role document selection is unsafe: {operation}"
@@ -355,19 +344,6 @@ def _normalize_role_documents(
     if {operation for operation, _ in normalized} != expected_operations:
         raise AgentProfileConfigurationError("Agent Profile role matrix is incomplete")
     return tuple(sorted(normalized))
-
-
-def _default_role_documents(
-    composition_schema_version: int,
-) -> Mapping[ModelOperation, tuple[str, ...]]:
-    if composition_schema_version == LEGACY_COMPOSITION_SCHEMA_VERSION:
-        return LEGACY_ROLE_DOCUMENTS
-    if composition_schema_version == COMPOSITION_SCHEMA_VERSION:
-        return ROLE_DOCUMENTS
-    raise AgentProfileConfigurationError(
-        "Agent Profile composition schema version is unsupported: "
-        f"{composition_schema_version}"
-    )
 
 
 def _profile_version(

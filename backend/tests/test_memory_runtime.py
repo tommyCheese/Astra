@@ -41,7 +41,6 @@ async def test_cross_session_retrieval_injects_task_memory_and_persists_safe_aud
     )
     settings = Settings(
         agent_memory_cross_session_enabled=True,
-        agent_memory_cross_session_shadow=False,
         agent_memory_retrieval_min_score=0,
     )
 
@@ -68,9 +67,7 @@ async def test_cross_session_retrieval_injects_task_memory_and_persists_safe_aud
     assert context["memory_recall"]["mode"] == "active"
 
     recall = await session.scalar(
-        select(MemoryRecallEventRecord).where(
-            MemoryRecallEventRecord.run_id == target_run.id
-        )
+        select(MemoryRecallEventRecord).where(MemoryRecallEventRecord.run_id == target_run.id)
     )
     assert recall is not None
     assert recall.query_hash != "项目使用什么数据库？"
@@ -79,20 +76,21 @@ async def test_cross_session_retrieval_injects_task_memory_and_persists_safe_aud
     assert "content" not in recall.selected[0]
 
 
-async def test_shadow_retrieval_records_selection_without_injecting_it(session):
+async def test_session_retrieval_crosses_tasks_with_matching_identity(session):
     run_repo = RunRepository(session)
     source_run = await run_repo.create_task_run(
         "记住偏好",
         {"provider": "mock", "model": "mock"},
+        session_id="browser-session-a",
     )
     target_run = await run_repo.create_task_run(
         "用户有什么偏好？",
         {"provider": "mock", "model": "mock"},
-        task_id=source_run.task_id,
+        session_id="browser-session-a",
     )
     memory = await MemoryRepository(session).create(
         run_id=source_run.id,
-        scope="task",
+        scope="session",
         kind="user_preference",
         memory_key="preference:language",
         content="用户偏好中文回答。",
@@ -103,8 +101,7 @@ async def test_shadow_retrieval_records_selection_without_injecting_it(session):
     context = await ContextAssembler(
         run_repo,
         settings=Settings(
-            agent_memory_cross_session_enabled=False,
-            agent_memory_cross_session_shadow=True,
+            agent_memory_cross_session_enabled=True,
             agent_memory_retrieval_min_score=0,
         ),
         skills_enabled=False,
@@ -117,17 +114,35 @@ async def test_shadow_retrieval_records_selection_without_injecting_it(session):
         initial_run=target_run,
     )
 
-    assert context["memory_reads"] == []
-    assert context["memory_context"] == []
-    assert context["memory_recall"]["mode"] == "shadow"
+    assert context["memory_context"][0]["content"] == memory.content
+    assert context["memory_recall"]["mode"] == "active"
     recall = await session.scalar(
-        select(MemoryRecallEventRecord).where(
-            MemoryRecallEventRecord.run_id == target_run.id
-        )
+        select(MemoryRecallEventRecord).where(MemoryRecallEventRecord.run_id == target_run.id)
     )
     assert recall is not None
-    assert recall.shadow is True
     assert recall.selected[0]["id"] == memory.id
+
+    isolated_run = await run_repo.create_task_run(
+        "用户有什么偏好？",
+        {"provider": "mock", "model": "mock"},
+        session_id="browser-session-b",
+    )
+    isolated_context = await ContextAssembler(
+        run_repo,
+        settings=Settings(
+            agent_memory_cross_session_enabled=True,
+            agent_memory_retrieval_min_score=0,
+        ),
+        skills_enabled=False,
+    ).assemble(
+        run_id=isolated_run.id,
+        goal="用户有什么偏好？",
+        tool_registry=ToolRegistry(),
+        observations=[],
+        quick_mode=True,
+        initial_run=isolated_run,
+    )
+    assert isolated_context["memory_context"] == []
 
 
 async def test_memory_manager_activates_safe_candidate_and_isolates_rejections(session):
@@ -171,11 +186,7 @@ async def test_memory_manager_activates_safe_candidate_and_isolates_rejections(s
     assert second[0]["id"] == first[0]["id"]
     assert "content" not in first[0]
     events = list(
-        (
-            await session.execute(
-                select(RunEventRecord).where(RunEventRecord.run_id == run.id)
-            )
-        )
+        (await session.execute(select(RunEventRecord).where(RunEventRecord.run_id == run.id)))
         .scalars()
         .all()
     )
@@ -193,7 +204,6 @@ async def test_recall_feedback_is_bounded_and_audit_safe(session):
         run_id=run.id,
         query_hash="a" * 64,
         policy_version="v1",
-        shadow=False,
         namespace_manifest=[{"type": "run", "id": run.id}],
         candidates=[],
         selected=[],

@@ -33,7 +33,7 @@ const rawMemory = {
   version: 1,
   state_version: 2,
   content: '<script>inert</script>',
-  structured_data: null,
+  structured_data: {},
   provenance: { run_id: 'run-1' },
   confidence: 0.9,
   importance: 0.8,
@@ -44,14 +44,14 @@ const rawMemory = {
 
 const rawJob = {
   id: 'job-1',
-  namespace_type: 'workspace',
-  namespace_id: 'workspace-1',
+  namespace_type: 'session',
+  namespace_id: 'session-1',
   status: 'conflict',
   state_version: 3,
   generation: 2,
   input_manifest: {},
-  proposal: { operations: [{ action: 'add', memory_key: 'fact.two', sources: ['memory-1'] }] },
-  validation: { passed: false, issues: [{ code: 'STALE_INPUT', detail: 'stale', severity: 'error' }] },
+  proposal: { operations: [{ operation: 'add', memory_key: 'fact.two', source_memory_ids: ['memory-1'] }] },
+  validation: { passed: false, issues: [{ code: 'STALE_INPUT', message: 'stale', severity: 'error' }] },
   profile_snapshot: {},
   model_usage: {},
   publish_result: {},
@@ -138,7 +138,7 @@ describe('deepMemoryApi', () => {
   it('normalizes consolidation audit data and calls canonical trigger and rollback routes', async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(jsonResponse({ jobs: [rawJob], total: 1 }))
-      .mockResolvedValueOnce(jsonResponse({ job: { ...rawJob, status: 'queued' } }))
+      .mockResolvedValueOnce(jsonResponse({ ...rawJob, status: 'queued' }))
       .mockResolvedValueOnce(jsonResponse({ ...rawJob, status: 'rolled_back', state_version: 4 }));
     vi.stubGlobal('fetch', fetchMock);
 
@@ -156,14 +156,14 @@ describe('deepMemoryApi', () => {
     expect(listed.items[0]?.validation.issues[0]?.message).toBe('stale');
 
     await triggerConsolidation({
-      namespace_type: 'workspace',
-      namespace_id: 'workspace-1',
+      namespace_type: 'session',
+      namespace_id: 'session-1',
       idempotency_key: 'manual-one',
     });
     expect(fetchMock.mock.calls[1]?.[0]).toBe(DEEP_MEMORY_API_PATHS.consolidationJobs);
     expect(JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body))).toEqual({
-      namespace_type: 'workspace',
-      namespace_id: 'workspace-1',
+      namespace_type: 'session',
+      namespace_id: 'session-1',
       idempotency_key: 'manual-one',
     });
 
@@ -208,11 +208,7 @@ describe('deepMemoryApi', () => {
       rollback_metadata: null,
     };
     const fetchMock = vi.fn()
-      .mockResolvedValueOnce(jsonResponse({
-        items: [rawCandidate],
-        total: 1,
-        production_promotion_enabled: true,
-      }))
+      .mockResolvedValueOnce(jsonResponse([rawCandidate]))
       .mockResolvedValueOnce(jsonResponse(detail))
       .mockResolvedValueOnce(jsonResponse(detail))
       .mockResolvedValueOnce(jsonResponse(detail));

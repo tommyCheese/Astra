@@ -1,10 +1,10 @@
 from logging.config import fileConfig
 
-from alembic import context
-from sqlalchemy import pool
+from sqlalchemy import inspect, pool, text
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
+from alembic import context
 from app.core.config import get_settings
 from app.db.base import Base
 
@@ -13,6 +13,7 @@ if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
 target_metadata = Base.metadata
+CURRENT_BASELINE_REVISION = "0001_current_baseline"
 
 
 def get_url() -> str:
@@ -31,6 +32,15 @@ def run_migrations_offline() -> None:
 
 
 def do_run_migrations(connection: Connection) -> None:
+    if "alembic_version" in inspect(connection).get_table_names():
+        revision = connection.execute(
+            text("SELECT version_num FROM alembic_version LIMIT 1")
+        ).scalar_one_or_none()
+        if revision not in {None, CURRENT_BASELINE_REVISION}:
+            raise RuntimeError(
+                "This database uses an obsolete Astra revision "
+                f"({revision}); reset the database before starting Astra."
+            )
     context.configure(connection=connection, target_metadata=target_metadata)
     with context.begin_transaction():
         context.run_migrations()
@@ -44,7 +54,7 @@ async def run_async_migrations() -> None:
         prefix="sqlalchemy.",
         poolclass=pool.NullPool,
     )
-    async with connectable.connect() as connection:
+    async with connectable.begin() as connection:
         await connection.run_sync(do_run_migrations)
     await connectable.dispose()
 

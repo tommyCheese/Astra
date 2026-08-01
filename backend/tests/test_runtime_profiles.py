@@ -95,12 +95,12 @@ def test_memory_settings_are_applied_and_survive_service_restart(tmp_path):
     settings = Settings(runtime_profile_path=str(profile_path))
     service = RuntimeProfileService(settings)
     defaults = service.read()["memory_settings"]
-    assert defaults["cross_session_mode"] == "off"
+    assert defaults["recall_enabled"] is False
     assert defaults["write_enabled"] is True
 
     updated = {
         **defaults,
-        "cross_session_mode": "shadow",
+        "recall_enabled": True,
         "retrieval_max_items": 5,
         "retrieval_max_tokens": 1200,
         "retrieval_min_confidence": 0.4,
@@ -110,13 +110,25 @@ def test_memory_settings_are_applied_and_survive_service_restart(tmp_path):
         "autodream_min_candidates": 4,
     }
     assert service.update_memory_settings(updated) == updated
-    assert settings.agent_memory_cross_session_shadow is True
-    assert settings.agent_memory_cross_session_enabled is False
+    assert settings.agent_memory_cross_session_enabled is True
 
     restarted_settings = Settings(runtime_profile_path=str(profile_path))
     restarted = RuntimeProfileService(restarted_settings)
     assert restarted.memory_settings() == updated
     assert restarted_settings.agent_memory_autodream_enabled is True
+
+
+def test_obsolete_shadow_memory_settings_are_rejected(tmp_path):
+    profile_path = tmp_path / "profile.json"
+    defaults = RuntimeProfileService(
+        Settings(runtime_profile_path=str(tmp_path / "defaults.json"))
+    ).memory_settings()
+    legacy = {**defaults, "cross_session_mode": "shadow"}
+    legacy.pop("recall_enabled")
+    profile_path.write_text(json.dumps({"memory_settings": legacy}))
+
+    with pytest.raises(ValueError, match="字段不完整"):
+        RuntimeProfileService(Settings(runtime_profile_path=str(profile_path)))
 
 
 def test_invalid_memory_settings_update_is_atomic(tmp_path):
@@ -378,10 +390,7 @@ async def test_failed_runtime_image_cleanup_keeps_history_for_retry(tmp_path, mo
     monkeypatch.setattr(service, "_remove_managed_image", cannot_remove)
 
     assert await service._prune_images("build-1") is True
-    assert any(
-        item["image"] == "astra-data-viz:custom-in-use"
-        for item in service.read()["images"]
-    )
+    assert any(item["image"] == "astra-data-viz:custom-in-use" for item in service.read()["images"])
 
 
 async def test_runtime_image_cleanup_rejects_non_astra_tags(tmp_path, monkeypatch):

@@ -48,10 +48,10 @@ async def test_enabled_worker_scans_and_processes_bounded_namespace():
         for index, key in enumerate(("Project DB", "project-db", "project_db")):
             await repository.create(
                 namespace=MemoryNamespace(
-                    MemoryNamespaceType.workspace,
-                    "workspace-1",
+                    MemoryNamespaceType.session,
+                    "session-1",
                 ),
-                scope="workspace",
+                scope="session",
                 kind="semantic_fact",
                 memory_key=key,
                 content="Astra uses PostgreSQL.",
@@ -95,21 +95,19 @@ async def test_worker_isolates_one_failed_job_and_continues(monkeypatch):
     sessions = async_sessionmaker(engine, expire_on_commit=False)
     async with sessions() as session:
         repository = MemoryRepository(session)
-        for namespace_id in ("workspace-a", "workspace-b"):
+        for namespace_id in ("session-a", "session-b"):
             for index, key in enumerate(("Project DB", "project-db")):
                 await repository.create(
                     namespace=MemoryNamespace(
-                        MemoryNamespaceType.workspace,
+                        MemoryNamespaceType.session,
                         namespace_id,
                     ),
-                    scope="workspace",
+                    scope="session",
                     kind="semantic_fact",
                     memory_key=key,
                     content="Astra uses PostgreSQL.",
                     provenance={
-                        "url": (
-                            f"https://example.test/{namespace_id}/{index}"
-                        ),
+                        "url": (f"https://example.test/{namespace_id}/{index}"),
                     },
                     confidence=0.9,
                 )

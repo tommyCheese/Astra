@@ -33,7 +33,6 @@ from app.core.errors import (
     ValidationError,
     run_error_from_exception,
 )
-from app.db.mode_upgrade import validate_mode_upgrade
 from app.db.session import SessionLocal
 from app.memory.autodream import AutoDreamService
 from app.repositories.tool_settings import (
@@ -71,7 +70,6 @@ def create_app(settings: Settings | None = None, *, session_factory=SessionLocal
             shared_model_http_client(settings)
             await app.state.runtime_profile_service.startup()
             async with session_factory() as session:
-                await validate_mode_upgrade(session)
                 await ensure_builtin_skills(session, settings)
                 tool_states = await ToolSettingsRepository(session).get_or_create(
                     default_tool_states(settings)
@@ -99,9 +97,7 @@ def create_app(settings: Settings | None = None, *, session_factory=SessionLocal
         settings,
         recover_interrupted=True,
     )
-    configure_agent_profile_resolver(
-        app.state.runtime_profile_service.active_agent_profile
-    )
+    configure_agent_profile_resolver(app.state.runtime_profile_service.active_agent_profile)
     app.state.conversation_retention_service = ConversationRetentionService(
         settings,
         session_factory,
@@ -135,19 +131,19 @@ def create_app(settings: Settings | None = None, *, session_factory=SessionLocal
             try:
                 address = ip_address(client_host)
                 mapped = getattr(address, "ipv4_mapped", None)
-                is_loopback = address.is_loopback or (
-                    mapped is not None and mapped.is_loopback
-                )
+                is_loopback = address.is_loopback or (mapped is not None and mapped.is_loopback)
             except ValueError:
                 is_loopback = client_host in {"localhost", "testclient"}
             if not is_loopback:
-                payload = ErrorEnvelope.model_validate({
-                    "error": {
-                        "type": "policy.remote_api_denied",
-                        "code": "REMOTE_API_DENIED",
-                        "message": "Astra API 默认仅允许本机访问。",
+                payload = ErrorEnvelope.model_validate(
+                    {
+                        "error": {
+                            "type": "policy.remote_api_denied",
+                            "code": "REMOTE_API_DENIED",
+                            "message": "Astra API 默认仅允许本机访问。",
+                        }
                     }
-                })
+                )
                 return JSONResponse(
                     status_code=403,
                     content=payload.model_dump(mode="json"),

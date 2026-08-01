@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 
-from app.agent_profile import AgentProfile, load_agent_profile
+from app.agent_profile import AgentProfile
 from app.core.config import Settings
 from app.repositories.plans import PlanRepository
 from app.repositories.runs import RunRepository
@@ -53,12 +53,7 @@ async def revise_waiting_plan(
         client = build_model_client(settings)
         if hasattr(client, "usage_recorder"):
             client.usage_recorder = DatabaseUsageRecorder(run_id)
-        profile = (
-            AgentProfile.from_snapshot(run.agent_profile_snapshot)
-            if run.agent_profile_snapshot
-            and run.agent_profile_snapshot.get("version") != "legacy-unversioned"
-            else load_agent_profile()
-        )
+        profile = AgentProfile.from_snapshot(run.agent_profile_snapshot)
         client.bind_agent_profile(profile)
         client.bind_reasoning_effort(policy.effective.reasoning_effort)
         client.bind_model_thinking((run.model_policy or {}).get("thinking"))

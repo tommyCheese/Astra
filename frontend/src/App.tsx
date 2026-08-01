@@ -24,7 +24,12 @@ const SkillWorkbench = lazy(() => import('./SkillWorkbench').then((module) => ({
 const MemoryWorkbench = lazy(() => import('./MemoryWorkbench').then((module) => ({
   default: module.MemoryWorkbench,
 })));
+const DocumentationCenter = lazy(() => import('./DocumentationCenter').then((module) => ({
+  default: module.DocumentationCenter,
+})));
 const MarkdownRenderer = lazy(() => import('./MarkdownRenderer'));
+
+type AppView = 'chat' | 'settings' | 'shares' | 'library' | 'skills';
 
 class GraphErrorBoundary extends Component<{ children: ReactNode; fallback: ReactNode }, { failed: boolean }> {
   state = { failed: false };
@@ -40,13 +45,13 @@ class GraphErrorBoundary extends Component<{ children: ReactNode; fallback: Reac
 
 const terminalStatuses = new Set(['completed', 'completed_with_warnings', 'failed', 'blocked', 'waiting_user', 'cancelled']);
 const STORAGE_KEYS = {
-  conversations: 'astra.conversations.v1',
-  processPanelDefaultOpen: 'astra.process-panel-default-open.v1',
-  modelProviders: 'astra.model-providers.v1',
-  selectedModel: 'astra.selected-model.v1',
-  modelThinkingPreferences: 'astra.model-thinking-preferences.v1',
-  sidebarCollapsed: 'astra.sidebar-collapsed.v1',
-  sidebarWidth: 'astra.sidebar-width.v1',
+  conversations: 'astra.conversations.v2',
+  processPanelDefaultOpen: 'astra.process-panel-default-open.v2',
+  modelProviders: 'astra.model-providers.v2',
+  selectedModel: 'astra.selected-model.v2',
+  modelThinkingPreferences: 'astra.model-thinking-preferences.v2',
+  sidebarCollapsed: 'astra.sidebar-collapsed.v2',
+  sidebarWidth: 'astra.sidebar-width.v2',
 };
 const SIDEBAR_DEFAULT_WIDTH = 260;
 const SIDEBAR_MIN_WIDTH = 220;
@@ -275,6 +280,26 @@ export function App() {
   return <I18nProvider><ThemeProvider><AppContent /></ThemeProvider></I18nProvider>;
 }
 
+export function DocumentationPage() {
+  return <I18nProvider><ThemeProvider><StandaloneDocumentation /></ThemeProvider></I18nProvider>;
+}
+
+function StandaloneDocumentation() {
+  const { t } = useI18n();
+
+  useEffect(() => {
+    const previousTitle = document.title;
+    document.title = `${t('帮助文档')} · Astra`;
+    return () => { document.title = previousTitle; };
+  }, [t]);
+
+  return <main className="documentation-page">
+    <Suspense fallback={<div className="documentation-loading">{t('正在加载帮助文档…')}</div>}>
+      <DocumentationCenter onClose={() => window.close()} />
+    </Suspense>
+  </main>;
+}
+
 function AppContent() {
   const { language, t } = useI18n();
   const [goal, setGoal] = useState('');
@@ -298,7 +323,7 @@ function AppContent() {
   const [graphPaneExpanded, setGraphPaneExpanded] = useState(false);
   const [showJumpToLatest, setShowJumpToLatest] = useState(false);
   const [error, setError] = useState<ApiErrorPayload | null>(null);
-  const [view, setView] = useState<'chat' | 'settings' | 'shares' | 'library' | 'skills'>('chat');
+  const [view, setView] = useState<AppView>('chat');
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => readLocalJson<boolean>(STORAGE_KEYS.sidebarCollapsed) ?? false);
   const [sidebarWidth, setSidebarWidth] = useState(loadSidebarWidth);
@@ -1600,8 +1625,13 @@ function AppContent() {
     jumpResetTimerRef.current = window.setTimeout(() => { jumpingToLatestRef.current = false; }, 450);
   }
 
-  function changeView(nextView: 'chat' | 'settings' | 'shares' | 'library' | 'skills') {
+  function changeView(nextView: AppView) {
     setView(nextView);
+  }
+
+  function openDocumentation() {
+    setSidebarOpen(false);
+    window.open('/help', '_blank', 'noopener,noreferrer');
   }
 
   function startNewChat() {
@@ -1679,6 +1709,7 @@ function AppContent() {
         onOpenShares={() => { setSidebarOpen(false); changeView('shares'); }}
         onOpenLibrary={() => { setSidebarOpen(false); changeView('library'); }}
         onOpenSkills={() => { setSidebarOpen(false); changeView('skills'); }}
+        onOpenDocumentation={openDocumentation}
         onOpenUsage={() => { setSidebarOpen(false); setUsageOpen(true); }}
         onClose={() => setSidebarOpen(false)}
         collapsed={sidebarCollapsed}
@@ -2025,7 +2056,7 @@ function AppContent() {
               }}>
                 <span>{selectedModel || t('未配置模型')}</span>
                 <small>{answerMode === 'trusted' ? `${t(reasoningEffort)} · ${toolCallLimit === null ? t('工具不限') : t('{count} 次工具').replace('{count}', String(toolCallLimit))} · ${reflectionEnabled ? `${t(reflectionTrigger)} ${t('反思')}` : t('反思关闭')}` : t('快速策略 · 工具按需')} · {modelThinkingSummary}</small>
-                {displayedContextStatus && <span className="legacy-model-context-indicator"><ContextUsageRing status={displayedContextStatus} actionLabel={contextActionLabel} /></span>}
+                {displayedContextStatus && <span className="compact-model-context-indicator"><ContextUsageRing status={displayedContextStatus} actionLabel={contextActionLabel} /></span>}
                 <b>⌄</b>
               </button>
               <span className="sr-only" id="model-thinking-summary-description">{modelThinkingSummary}</span>
@@ -2092,14 +2123,14 @@ function AppContent() {
   );
 }
 
-function Sidebar({ open, collapsed, width, run, activeConversationId, conversations, activeView, onNewChat, onSelectConversation, onConversationAction, onTogglePin, onOpenSettings, onOpenShares, onOpenLibrary, onOpenSkills, onOpenUsage, onClose, onCollapse, onExpand, onWidthChange }: {
+function Sidebar({ open, collapsed, width, run, activeConversationId, conversations, activeView, onNewChat, onSelectConversation, onConversationAction, onTogglePin, onOpenSettings, onOpenShares, onOpenLibrary, onOpenSkills, onOpenDocumentation, onOpenUsage, onClose, onCollapse, onExpand, onWidthChange }: {
   open: boolean;
   collapsed: boolean;
   width: number;
   run: RunView | null;
   activeConversationId: string | null;
   conversations: ConversationEntry[];
-  activeView: 'chat' | 'settings' | 'shares' | 'library' | 'skills';
+  activeView: AppView;
   onNewChat: () => void;
   onSelectConversation: (conversation: ConversationEntry) => void;
   onConversationAction: (kind: 'rename' | 'share' | 'delete', conversation: ConversationEntry) => void;
@@ -2108,6 +2139,7 @@ function Sidebar({ open, collapsed, width, run, activeConversationId, conversati
   onOpenShares: () => void;
   onOpenLibrary: () => void;
   onOpenSkills: () => void;
+  onOpenDocumentation: () => void;
   onOpenUsage: () => void;
   onClose: () => void;
   onCollapse: () => void;
@@ -2248,6 +2280,11 @@ function Sidebar({ open, collapsed, width, run, activeConversationId, conversati
           <Icon name="chart" />
           <span>{t('用量统计')}</span>
           <small>{t('{count} 次调用').replace('{count}', String(run?.tool_calls.length ?? 0))}</small>
+        </button>
+        <button className="side-action sidebar-documentation-action" type="button" aria-label={t('帮助文档')} title={collapsed ? t('帮助文档') : undefined} onClick={onOpenDocumentation}>
+          <Icon name="info" />
+          <span>{t('帮助文档')}</span>
+          <small>{t('指南')}</small>
         </button>
         <button className={`side-action sidebar-settings-action ${activeView === 'settings' ? 'active' : ''}`} type="button" aria-label={t('设置')} title={collapsed ? t('设置') : undefined} onClick={onOpenSettings}>
           <Icon name="settings" />
@@ -2925,11 +2962,7 @@ function MemoryRuntimeSettings() {
   </div>;
   return <div className="memory-runtime-settings" data-setting-search-key="记忆设置">
     <SettingRow title="保存新记忆" description="允许 Agent 在任务结束后提取并保存有来源的记忆候选"><Toggle checked={settings.write_enabled} disabled={saving} label={t('保存新记忆')} onChange={(value) => change('write_enabled', value)} /></SettingRow>
-    <SettingRow title="跨任务召回" description="控制其他任务中的记忆是否参与当前任务">
-      <select aria-label={t('跨任务召回')} value={settings.cross_session_mode} disabled={saving} onChange={(event) => change('cross_session_mode', event.currentTarget.value as MemoryRuntimeSettings['cross_session_mode'])}>
-        <option value="off">{t('关闭')}</option><option value="shadow">{t('仅评估，不影响回答')}</option><option value="on">{t('开启并注入上下文')}</option>
-      </select>
-    </SettingRow>
+    <SettingRow title="持久记忆召回" description="允许当前运行召回符合范围的 Task、Session 或用户记忆"><Toggle checked={settings.recall_enabled} disabled={saving} label={t('持久记忆召回')} onChange={(value) => change('recall_enabled', value)} /></SettingRow>
     <SettingRow title="每次最多召回" description="限制一次上下文组装最多使用的记忆条数"><label className="memory-setting-number"><input aria-label={t('每次最多召回')} type="number" min={0} max={50} value={settings.retrieval_max_items} disabled={saving} onChange={(event) => change('retrieval_max_items', Number(event.currentTarget.value))} /><span>{t('条')}</span></label></SettingRow>
     <SettingRow title="记忆上下文预算" description="限制召回记忆占用的模型上下文 Token"><label className="memory-setting-number"><input aria-label={t('记忆上下文预算')} type="number" min={0} max={32000} step={100} value={settings.retrieval_max_tokens} disabled={saving} onChange={(event) => change('retrieval_max_tokens', Number(event.currentTarget.value))} /><span>tokens</span></label></SettingRow>
     <SettingRow title="最低置信度" description="低于此可靠度的记忆不会进入最终召回"><input aria-label={t('最低置信度')} type="number" min={0} max={1} step={0.05} value={settings.retrieval_min_confidence} disabled={saving} onChange={(event) => change('retrieval_min_confidence', Number(event.currentTarget.value))} /></SettingRow>
@@ -3354,17 +3387,13 @@ function makeModelProfile(id: string): ModelProfileConfig {
 }
 
 function normalizeModelProfiles(value: unknown): ModelProfileConfig[] {
-  const candidates = typeof value === 'string'
-    ? parseModelIds(value)
-    : Array.isArray(value) ? value : [];
+  const candidates = Array.isArray(value) ? value : [];
   const seen = new Set<string>();
   const profiles: ModelProfileConfig[] = [];
   for (const candidate of candidates) {
-    const raw = typeof candidate === 'string'
-      ? { id: candidate }
-      : candidate && typeof candidate === 'object'
-        ? candidate as Record<string, unknown>
-        : null;
+    const raw = candidate && typeof candidate === 'object'
+      ? candidate as Record<string, unknown>
+      : null;
     const id = typeof raw?.id === 'string' ? raw.id.trim() : '';
     if (!id || seen.has(id)) continue;
     seen.add(id);
@@ -3798,14 +3827,13 @@ function ControlCenterDialog({ run, onClose }: { run: RunView; onClose: () => vo
                 <div className="permission-grant-main">
                   <div className="permission-grant-icon" aria-hidden="true">✓</div>
                   <div><strong>{effects.length ? t('{tool}可以{effects}').replace('{tool}', t(permissionToolLabel(grant.tool_name))).replace('{effects}', effects.join(language === 'en' ? ', ' : '、')) : t('{tool}的有限操作').replace('{tool}', t(permissionToolLabel(grant.tool_name)))}</strong>
-                    <div className="permission-grant-badges"><span>{t(permissionScopeLabel(grant.scope))}</span>{grant.effect_kinds.length === 0 && <span className="legacy-note">{t('兼容旧授权')}</span>}</div>
+                    <div className="permission-grant-badges"><span>{t(permissionScopeLabel(grant.scope))}</span></div>
                   </div>
                 </div>
                 <div className="permission-grant-details">
                   {resource && <span><b>{t('适用范围')}</b>{language === 'en' ? ': ' : ''}{resource}</span>}
                   <span><b>{t('使用情况')}</b>{language === 'en' ? ': ' : ''}{t('已使用 {count} 次').replace('{count}', String(grant.use_count))}{grant.max_uses ? ` / ${grant.max_uses}` : ''}</span>
                   {grant.expires_at && <span><b>{t('有效期')}</b>{language === 'en' ? ': ' : ''}{new Date(grant.expires_at).toLocaleString(language)}</span>}
-                  {!grant.effect_kinds.length && <p>{t('这条授权来自旧版本；范围不明确时 Astra 仍会再次询问。')}</p>}
                 </div>
                 <button className="permission-revoke-button" type="button" onClick={async () => { await revokePermissionGrant(grant.id); await refresh(); }}>{t('撤销授权')}</button>
               </article>;

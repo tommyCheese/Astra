@@ -42,9 +42,7 @@ class DirectFinalizeSkillClient(MockModelClient):
     def __init__(self):
         self.blocks_seen_at_first_decision: list[dict] = []
 
-    async def decide_with_answer(
-        self, goal, context, *, on_delta=None, on_reasoning_delta=None
-    ):
+    async def decide_with_answer(self, goal, context, *, on_delta=None, on_reasoning_delta=None):
         self.blocks_seen_at_first_decision = list(self.skill_blocks)
         return AgentDecision(
             decision_type="finalize",
@@ -210,9 +208,7 @@ async def test_catalog_snapshot_activation_and_resource_verification(session, tm
 
     run = await RunRepository(session).create_task_run("research", {})
     catalog = await SkillCatalogBuilder(session).build(goal="research")
-    snapshot = await SkillCatalogBuilder(session).freeze(
-        run.id, "standard", catalog
-    )
+    snapshot = await SkillCatalogBuilder(session).freeze(run.id, "standard", catalog)
     activation = SkillActivationService(session, max_active=2, max_resource_bytes=100)
     result = await activation.activate(
         run.id,
@@ -221,12 +217,11 @@ async def test_catalog_snapshot_activation_and_resource_verification(session, tm
         reason="matched goal",
     )
     assert result["instructions"] == "Follow the workflow."
-    assert "references/checklist.md" in {
-        item["path"] for item in result["resources"]
-    }
-    assert await activation.read_resource(
-        run.id, "custom:research-notes", "references/checklist.md"
-    ) == b"# Checklist\n"
+    assert "references/checklist.md" in {item["path"] for item in result["resources"]}
+    assert (
+        await activation.read_resource(run.id, "custom:research-notes", "references/checklist.md")
+        == b"# Checklist\n"
+    )
     blocks = await activation.prompt_blocks(run.id)
     assert blocks[0]["digest"] == catalog.entries[0].digest
     assert snapshot.catalog_digest == catalog.digest
@@ -249,13 +244,9 @@ async def test_catalog_snapshot_activation_and_resource_verification(session, tm
     assert script.read_text() == "print('ready')\n"
     assert script.stat().st_mode & 0o222 == 0
     with pytest.raises(ValueError):
-        await activation.read_resource(
-            run.id, "custom:research-notes", "../outside.md"
-        )
+        await activation.read_resource(run.id, "custom:research-notes", "../outside.md")
     script_resource = next(
-        item
-        for item in catalog.entries[0].resources
-        if item.path == "scripts/prepare.py"
+        item for item in catalog.entries[0].resources if item.path == "scripts/prepare.py"
     )
     script_blob = await session.get(SkillBlobRecord, script_resource.digest)
     assert script_blob is not None
@@ -284,15 +275,11 @@ async def test_new_run_catalog_freeze_avoids_existence_read(session):
         if statement.lstrip().upper().startswith("SELECT"):
             statements.append(statement)
 
-    sqlalchemy_event.listen(
-        session.bind.sync_engine, "before_cursor_execute", count_selects
-    )
+    sqlalchemy_event.listen(session.bind.sync_engine, "before_cursor_execute", count_selects)
     try:
         await builder.freeze(run.id, "standard", catalog, new_run=True)
     finally:
-        sqlalchemy_event.remove(
-            session.bind.sync_engine, "before_cursor_execute", count_selects
-        )
+        sqlalchemy_event.remove(session.bind.sync_engine, "before_cursor_execute", count_selects)
 
     assert statements == []
 
@@ -330,9 +317,7 @@ async def test_catalog_is_deterministic_shortlisted_and_capability_filtered(sess
         explicit_identities=["custom:beta-notes"],
     )
     assert short.truncated is True
-    assert "custom:beta-notes" in {
-        item.qualified_identity for item in short.entries
-    }
+    assert "custom:beta-notes" in {item.qualified_identity for item in short.entries}
 
 
 async def test_frozen_catalog_survives_republish_and_rejects_drift(session):
@@ -368,9 +353,7 @@ async def test_frozen_catalog_survives_republish_and_rejects_drift(session):
         reason="snapshot test",
     )
     assert (
-        await activation.read_resource(
-            run.id, "custom:snapshot-notes", "references/data.md"
-        )
+        await activation.read_resource(run.id, "custom:snapshot-notes", "references/data.md")
         == b"first"
     )
 
@@ -401,19 +384,13 @@ async def test_activation_quota_deactivation_and_revocation(session):
     builder = SkillCatalogBuilder(session)
     await builder.freeze(run.id, "standard", await builder.build())
     activation = SkillActivationService(session, max_active=1)
-    await activation.activate(
-        run.id, "custom:quota-one", initiator="explicit", reason="selected"
-    )
+    await activation.activate(run.id, "custom:quota-one", initiator="explicit", reason="selected")
     with pytest.raises(ValueError, match="activation_budget_exceeded"):
-        await activation.activate(
-            run.id, "custom:quota-two", initiator="model", reason="automatic"
-        )
+        await activation.activate(run.id, "custom:quota-two", initiator="model", reason="automatic")
     await activation.deactivate(run.id, "custom:quota-one", reason="finished")
     revisions[1].revoked_at = revisions[1].published_at
     with pytest.raises(ValueError, match="revision_revoked"):
-        await activation.activate(
-            run.id, "custom:quota-two", initiator="model", reason="automatic"
-        )
+        await activation.activate(run.id, "custom:quota-two", initiator="model", reason="automatic")
     snapshot = await session.scalar(
         select(RunSkillSnapshotRecord).where(RunSkillSnapshotRecord.run_id == run.id)
     )
@@ -453,9 +430,9 @@ async def test_explicit_skill_is_bound_before_a_direct_finalize(session):
     )
     client = DirectFinalizeSkillClient()
 
-    await RunEngine(
-        settings, model_client=client, tool_registry=ToolRegistry()
-    )._run_with_repo(repo, run.id)
+    await RunEngine(settings, model_client=client, tool_registry=ToolRegistry())._run_with_repo(
+        repo, run.id
+    )
 
     assert len(client.blocks_seen_at_first_decision) == 1
     bound = client.blocks_seen_at_first_decision[0]
@@ -496,9 +473,7 @@ async def skill_client(monkeypatch, tmp_path):
     async with session_factory() as session:
         await ensure_builtin_skills(session, settings)
         await session.commit()
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         client.schedule_calls = scheduled_runs
         yield client
     await engine.dispose()
@@ -580,18 +555,14 @@ async def test_skill_api_authoring_publish_and_run_selection(skill_client):
         },
     )
     assert draft_test.status_code == 200, draft_test.text
-    test_audit = await skill_client.get(
-        f"/api/runs/{draft_test.json()['run_id']}/skills"
-    )
+    test_audit = await skill_client.get(f"/api/runs/{draft_test.json()['run_id']}/skills")
     assert test_audit.status_code == 200
     assert test_audit.json()["draft_test"] is True
     assert test_audit.json()["answer_mode"] == "standard"
     test_digest = test_audit.json()["catalog"][0]["digest"]
     test_view = await skill_client.get(f"/api/runs/{draft_test.json()['run_id']}")
     assert test_view.json()["steps"] == []
-    assert test_view.json()["model_policy"]["thinking"]["source"] == (
-        "legacy_reasoning_policy"
-    )
+    assert test_view.json()["model_policy"]["thinking"]["source"] == "model_default"
     assert test_view.json()["model_policy"]["thinking"]["capability_version"] == 2
     ordinary_catalog = await skill_client.get("/api/skills/catalog")
     published_entry = next(
@@ -614,9 +585,7 @@ async def test_skill_api_authoring_publish_and_run_selection(skill_client):
         },
     )
     assert edited_again.status_code == 200
-    frozen_again = await skill_client.get(
-        f"/api/runs/{draft_test.json()['run_id']}/skills"
-    )
+    frozen_again = await skill_client.get(f"/api/runs/{draft_test.json()['run_id']}/skills")
     assert frozen_again.json()["catalog"][0]["digest"] == test_digest
     trusted_test = await skill_client.post(
         f"/api/skills/{skill['id']}/test-runs",
@@ -627,9 +596,7 @@ async def test_skill_api_authoring_publish_and_run_selection(skill_client):
         },
     )
     assert trusted_test.status_code == 200
-    trusted_audit = await skill_client.get(
-        f"/api/runs/{trusted_test.json()['run_id']}/skills"
-    )
+    trusted_audit = await skill_client.get(f"/api/runs/{trusted_test.json()['run_id']}/skills")
     assert trusted_audit.json()["draft_test"] is True
     assert trusted_audit.json()["answer_mode"] == "trusted"
     metrics = await skill_client.get("/api/skills/metrics/summary")
@@ -692,9 +659,9 @@ async def test_run_skill_selection_validation_and_atomic_activation(skill_client
     )
     assert created.status_code == 200, created.text
     audit = await skill_client.get(f"/api/runs/{created.json()['run_id']}/skills")
-    assert {
-        item["qualified_identity"] for item in audit.json()["activations"]
-    } == set(identities[:2])
+    assert {item["qualified_identity"] for item in audit.json()["activations"]} == set(
+        identities[:2]
+    )
     assert all(item["initiator"] == "explicit" for item in audit.json()["activations"])
     assert skill_client.schedule_calls == [created.json()["run_id"]]
 
@@ -742,9 +709,7 @@ async def test_skill_api_stale_write_preview_and_history(skill_client):
                 {
                     "action": "write",
                     "path": "SKILL.md",
-                    "content": skill_md(
-                        "editor-check", "<script>alert(1)</script>safe"
-                    ),
+                    "content": skill_md("editor-check", "<script>alert(1)</script>safe"),
                 }
             ],
         },
@@ -797,9 +762,7 @@ async def test_skill_api_stale_write_preview_and_history(skill_client):
     assert history.status_code == 200
     assert history.json()[0]["digest"] == publish.json()["digest"]
     revision_id = history.json()[0]["id"]
-    revision_detail = await skill_client.get(
-        f"/api/skills/{created['id']}/revisions/{revision_id}"
-    )
+    revision_detail = await skill_client.get(f"/api/skills/{created['id']}/revisions/{revision_id}")
     assert revision_detail.status_code == 200
     assert revision_detail.json()["files"][0]["readonly"] is True
     historical_file = await skill_client.get(
@@ -816,10 +779,10 @@ async def test_skill_api_stale_write_preview_and_history(skill_client):
         json={
             "revision_token": current_detail.json()["draft_revision_token"],
             "operations": [
-                    {
-                        "action": "write",
-                        "path": "SKILL.md",
-                        "content": skill_md("editor-check", "second revision"),
+                {
+                    "action": "write",
+                    "path": "SKILL.md",
+                    "content": skill_md("editor-check", "second revision"),
                 }
             ],
         },

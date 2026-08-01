@@ -495,6 +495,8 @@ class FailureFingerprint(BaseModel):
 
 
 class AgentState(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     schema_version: Literal[2] = 2
     version: int = 1
     task_contract: TaskContract
@@ -502,7 +504,6 @@ class AgentState(BaseModel):
     active_plan_id: str | None = None
     active_plan_version: int = 0
     active_executions: list[ActiveExecutionSummary] = Field(default_factory=list)
-    active_node_id: str | None = Field(default=None, exclude=True)
     accepted_facts: list[AcceptedFact] = Field(default_factory=list)
     open_questions: list[str] = Field(default_factory=list)
     observations: list[dict[str, Any]] = Field(default_factory=list)
@@ -510,18 +511,6 @@ class AgentState(BaseModel):
     failures: list[FailureFingerprint] = Field(default_factory=list)
     budget_usage: dict[str, int] = Field(default_factory=dict)
     terminal_intent: str | None = None
-
-    @model_validator(mode="after")
-    def migrate_legacy_active_node(self) -> AgentState:
-        if self.active_node_id and not self.active_executions:
-            self.active_executions = [
-                ActiveExecutionSummary(
-                    plan_node_id=self.active_node_id,
-                    plan_version=self.active_plan_version,
-                )
-            ]
-        self.active_node_id = None
-        return self
 
 
 class Evaluation(BaseModel):
@@ -578,6 +567,7 @@ class CreateRunRequest(BaseModel):
 
     goal: str = Field(min_length=1, max_length=4000)
     task_id: str | None = None
+    session_id: str | None = Field(default=None, min_length=1, max_length=120)
     answer_mode: AnswerMode = AnswerMode.standard
     plan_execution: PlanExecution | None = None
     reasoning_policy: RequestedReasoningPolicy = Field(default_factory=RequestedReasoningPolicy)
@@ -866,7 +856,7 @@ class RunError(BaseModel):
 class RunResult(BaseModel):
     """Stable API boundary for persisted runner result JSON."""
 
-    model_config = ConfigDict(extra="ignore")
+    model_config = ConfigDict(extra="forbid")
 
     summary: str = ""
     answer_mode: AnswerMode = AnswerMode.trusted
@@ -885,94 +875,6 @@ class RunResult(BaseModel):
     verification_report: VerificationReport | None = None
     completion_decision: CompletionDecision | None = None
     error: RunError | None = None
-
-    @model_validator(mode="before")
-    @classmethod
-    def normalize_legacy_result(cls, value: Any) -> dict[str, Any]:
-        if not isinstance(value, dict):
-            return {"summary": str(value) if value is not None else ""}
-
-        normalized = dict(value)
-        summary = normalized.get("summary")
-        normalized["summary"] = summary if isinstance(summary, str) else str(summary or "")
-        normalized["findings"] = _validated_records(
-            normalized.get("findings"), Finding, scalar_field="text"
-        )
-        normalized["claims"] = _validated_records(
-            normalized.get("claims"), GroundingClaim, scalar_field="text"
-        )
-        normalized["citations"] = _validated_records(
-            normalized.get("citations"), GroundingCitation
-        )
-        normalized["sources"] = _validated_records(
-            normalized.get("sources"), SourceReference, scalar_field="url"
-        )
-        normalized["failed_sources"] = _validated_records(
-            normalized.get("failed_sources"), FailedSource
-        )
-        normalized["source_quality"] = _validated_records(
-            normalized.get("source_quality"), SourceQuality
-        )
-        normalized["conflicts"] = _validated_records(normalized.get("conflicts"), ConflictRecord)
-        normalized["memory_references"] = _validated_records(
-            normalized.get("memory_references"), ResultMemoryReference
-        )
-        for field_name in ("caveats", "verification_notes"):
-            items = _as_list(normalized.get(field_name))
-            normalized[field_name] = [str(item) for item in items if item is not None]
-        normalized["audit_refs"] = _validated_value(
-            normalized.get("audit_refs"), AuditReferences, default=AuditReferences()
-        )
-        normalized["verification_report"] = _validated_value(
-            normalized.get("verification_report"), VerificationReport
-        )
-        normalized["completion_decision"] = _validated_value(
-            normalized.get("completion_decision"), CompletionDecision
-        )
-        normalized["error"] = _validated_value(normalized.get("error"), RunError)
-        return normalized
-
-
-def _as_list(value: Any) -> list[Any]:
-    if value is None:
-        return []
-    return value if isinstance(value, list) else [value]
-
-
-def _validated_records(
-    value: Any,
-    model: type[BaseModel],
-    *,
-    scalar_field: str | None = None,
-) -> list[BaseModel]:
-    records: list[BaseModel] = []
-    for item in _as_list(value):
-        if item is None:
-            continue
-        candidate = (
-            {scalar_field: str(item)} if scalar_field and not isinstance(item, dict) else item
-        )
-        if not isinstance(candidate, dict):
-            continue
-        try:
-            records.append(model.model_validate(candidate))
-        except (TypeError, ValueError):
-            continue
-    return records
-
-
-def _validated_value(
-    value: Any,
-    model: type[BaseModel],
-    *,
-    default: BaseModel | None = None,
-) -> BaseModel | None:
-    if not isinstance(value, dict):
-        return default
-    try:
-        return model.model_validate(value)
-    except (TypeError, ValueError):
-        return default
 
 
 class StepView(BaseModel):

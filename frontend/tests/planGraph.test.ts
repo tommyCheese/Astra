@@ -34,7 +34,7 @@ function node(id: string, index: number, depends_on: string[] = []): PlanGraphNo
 
 function graph(): PlanGraphSnapshot {
   return {
-    schema_version: 1,
+    schema_version: 2,
     id: 'plan-1',
     run_id: 'run-1',
     version: 1,

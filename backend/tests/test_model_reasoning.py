@@ -6,9 +6,9 @@ from app.runner.model_reasoning import attach_reasoning_usage, resolve_model_rea
 
 @pytest.mark.parametrize(
     ("effort", "expected"),
-    [("fast", "minimal"), ("balanced", "low"), ("deep", "high")],
+    [("fast", "medium"), ("balanced", "medium"), ("deep", "medium")],
 )
-def test_openai_gpt5_maps_astra_effort(effort, expected):
+def test_openai_gpt5_uses_model_default_independently_of_agent_effort(effort, expected):
     config = resolve_model_reasoning(
         provider="openai",
         model="gpt-5",
@@ -35,16 +35,16 @@ def test_modern_openai_gpt_uses_standard_effort_levels():
 @pytest.mark.parametrize(
     ("effort", "expected_params", "json_mode"),
     [
-        ("fast", {"enable_thinking": False}, True),
+        ("fast", {"enable_thinking": True, "thinking_budget": 2048}, False),
         (
             "balanced",
             {"enable_thinking": True, "thinking_budget": 2048},
             False,
         ),
-        ("deep", {"enable_thinking": True, "thinking_budget": 8192}, False),
+        ("deep", {"enable_thinking": True, "thinking_budget": 2048}, False),
     ],
 )
-def test_qwen_hybrid_thinking_maps_switch_budget_and_json_compatibility(
+def test_qwen_hybrid_thinking_uses_model_default_independently_of_agent_effort(
     effort, expected_params, json_mode
 ):
     config = resolve_model_reasoning(
@@ -66,7 +66,7 @@ def test_anthropic_supported_model_maps_output_effort():
         operation=ModelOperation.SYNTHESIS,
     )
 
-    assert config.request_params == {"output_config": {"effort": "low"}}
+    assert config.request_params == {"thinking": {"type": "disabled"}}
 
 
 @pytest.mark.parametrize(
@@ -106,6 +106,6 @@ def test_usage_metadata_preserves_provider_usage_without_sensitive_content():
     usage = attach_reasoning_usage({"total_tokens": 12}, config)
 
     assert usage["total_tokens"] == 12
-    assert usage["astra_reasoning"]["request_params"] == {"reasoning_effort": "minimal"}
+    assert usage["astra_reasoning"]["request_params"] == {"reasoning_effort": "medium"}
     assert "messages" not in usage["astra_reasoning"]
     assert "api_key" not in usage["astra_reasoning"]

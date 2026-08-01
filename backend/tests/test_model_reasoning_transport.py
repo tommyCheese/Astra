@@ -79,12 +79,12 @@ class FakeOpenAIAsyncClient:
 @pytest.mark.parametrize(
     ("provider", "model", "effort", "expected", "has_json_mode"),
     [
-        ("openai", "gpt-5", "fast", {"reasoning_effort": "minimal"}, True),
+        ("openai", "gpt-5", "fast", {"reasoning_effort": "medium"}, True),
         (
             "qwen",
             "qwen3.7-plus",
             "deep",
-            {"enable_thinking": True, "thinking_budget": 8192},
+            {"enable_thinking": True, "thinking_budget": 2048},
             False,
         ),
         ("deepseek", "deepseek-reasoner", "deep", {}, True),

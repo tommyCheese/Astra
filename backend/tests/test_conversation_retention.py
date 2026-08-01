@@ -97,9 +97,7 @@ async def test_candidate_selection_protects_recent_pinned_shared_active_and_empt
     newer = await create_conversation(
         retention_database, goal="newer", updated_at=now - timedelta(days=60)
     )
-    await create_conversation(
-        retention_database, goal="recent", updated_at=now - timedelta(days=5)
-    )
+    await create_conversation(retention_database, goal="recent", updated_at=now - timedelta(days=5))
     await create_conversation(
         retention_database,
         goal="pinned",
@@ -154,9 +152,7 @@ async def test_terminal_run_transition_refreshes_conversation_activity(
         assert task.updated_at > old + timedelta(days=1)
 
 
-async def test_lifecycle_deletes_database_artifact_and_workspace(
-    retention_database, tmp_path
-):
+async def test_lifecycle_deletes_database_artifact_and_workspace(retention_database, tmp_path):
     now = datetime.now(timezone.utc)
     conversation_id = await create_conversation(
         retention_database, goal="cleanup", updated_at=now - timedelta(days=90)
@@ -201,10 +197,12 @@ async def test_lifecycle_revalidates_memory_and_evolution_sources_before_deletio
         deleted_run = await runs.create_task_run(
             "待删除来源",
             {"provider": "mock"},
+            session_id="session-shared",
         )
         retained_run = await runs.create_task_run(
             "独立来源",
             {"provider": "mock"},
+            session_id="session-shared",
         )
         deleted_task = await session.get(TaskRecord, deleted_run.task_id)
         retained_task = await session.get(TaskRecord, retained_run.task_id)
@@ -218,9 +216,9 @@ async def test_lifecycle_revalidates_memory_and_evolution_sources_before_deletio
         memories = MemoryRepository(session)
         supported = await memories.create(
             run_id=deleted_run.id,
-            scope="workspace",
+            scope="session",
             kind="semantic_fact",
-            memory_key="workspace:supported",
+            memory_key="session:supported",
             content="仍有独立证据支持。",
             provenance={"run_id": deleted_run.id},
             confidence=0.9,
@@ -238,9 +236,9 @@ async def test_lifecycle_revalidates_memory_and_evolution_sources_before_deletio
         )
         unsupported = await memories.create(
             run_id=deleted_run.id,
-            scope="workspace",
+            scope="session",
             kind="semantic_fact",
-            memory_key="workspace:unsupported",
+            memory_key="session:unsupported",
             content="只有待删除来源支持。",
             provenance={"run_id": deleted_run.id},
             confidence=0.9,
@@ -326,34 +324,48 @@ async def test_lifecycle_revalidates_memory_and_evolution_sources_before_deletio
         assert supported_candidate.status == "draft"
         assert unsupported_candidate.status == "rejected"
         assert unsupported_candidate.state_version == 3
-        assert await session.scalar(
-            select(func.count(MemorySourceRecord.id)).where(
-                MemorySourceRecord.memory_id == supported.id
+        assert (
+            await session.scalar(
+                select(func.count(MemorySourceRecord.id)).where(
+                    MemorySourceRecord.memory_id == supported.id
+                )
             )
-        ) == 1
-        assert await session.scalar(
-            select(func.count(MemorySourceRecord.id)).where(
-                MemorySourceRecord.memory_id == unsupported.id
+            == 1
+        )
+        assert (
+            await session.scalar(
+                select(func.count(MemorySourceRecord.id)).where(
+                    MemorySourceRecord.memory_id == unsupported.id
+                )
             )
-        ) == 0
-        assert await session.scalar(
-            select(func.count(AgentEvolutionSourceRecord.id)).where(
-                AgentEvolutionSourceRecord.candidate_id == supported_candidate.id
+            == 0
+        )
+        assert (
+            await session.scalar(
+                select(func.count(AgentEvolutionSourceRecord.id)).where(
+                    AgentEvolutionSourceRecord.candidate_id == supported_candidate.id
+                )
             )
-        ) == 1
-        assert await session.scalar(
-            select(func.count(MemoryAuditRecord.id)).where(
-                MemoryAuditRecord.memory_id == unsupported.id,
-                MemoryAuditRecord.event_type == "revoked_by_source_deletion",
+            == 1
+        )
+        assert (
+            await session.scalar(
+                select(func.count(MemoryAuditRecord.id)).where(
+                    MemoryAuditRecord.memory_id == unsupported.id,
+                    MemoryAuditRecord.event_type == "revoked_by_source_deletion",
+                )
             )
-        ) == 1
-        assert await session.scalar(
-            select(func.count(AgentEvolutionAuditRecord.id)).where(
-                AgentEvolutionAuditRecord.candidate_id == unsupported_candidate.id,
-                AgentEvolutionAuditRecord.event_type
-                == "rejected_by_source_deletion",
+            == 1
+        )
+        assert (
+            await session.scalar(
+                select(func.count(AgentEvolutionAuditRecord.id)).where(
+                    AgentEvolutionAuditRecord.candidate_id == unsupported_candidate.id,
+                    AgentEvolutionAuditRecord.event_type == "rejected_by_source_deletion",
+                )
             )
-        ) == 1
+            == 1
+        )
 
 
 async def test_lifecycle_rejects_escaped_workspace_and_isolates_artifact_failure(
@@ -377,17 +389,15 @@ async def test_lifecycle_rejects_escaped_workspace_and_isolates_artifact_failure
         description="unsafe",
         status="created",
     )
-    outcome = await ConversationLifecycleService(
-        settings, artifact_store=BrokenStore()
-    ).delete(FakeRepo(), task)
+    outcome = await ConversationLifecycleService(settings, artifact_store=BrokenStore()).delete(
+        FakeRepo(), task
+    )
 
     assert outcome.cleanup_failures == 2
     assert (outside_path / "keep.txt").read_text() == "keep"
 
 
-async def test_retention_sweep_is_bounded_and_deletes_oldest(
-    retention_database, tmp_path
-):
+async def test_retention_sweep_is_bounded_and_deletes_oldest(retention_database, tmp_path):
     now = datetime.now(timezone.utc)
     oldest = await create_conversation(
         retention_database, goal="oldest", updated_at=now - timedelta(days=90)
@@ -418,12 +428,8 @@ async def test_retention_revalidates_candidates_and_counts_race_skip(
     async def no_longer_eligible(self, candidate_id, *, cutoff):
         return False
 
-    monkeypatch.setattr(
-        ConversationRepository, "is_retention_eligible", no_longer_eligible
-    )
-    service = ConversationRetentionService(
-        retention_settings(tmp_path), retention_database
-    )
+    monkeypatch.setattr(ConversationRepository, "is_retention_eligible", no_longer_eligible)
+    service = ConversationRetentionService(retention_settings(tmp_path), retention_database)
     result = await service.sweep(now=now)
 
     assert result.selected == result.skipped == 1
@@ -432,9 +438,7 @@ async def test_retention_revalidates_candidates_and_counts_race_skip(
         assert await session.get(TaskRecord, conversation_id) is not None
 
 
-async def test_retention_isolates_deletion_failure(
-    retention_database, tmp_path
-):
+async def test_retention_isolates_deletion_failure(retention_database, tmp_path):
     now = datetime.now(timezone.utc)
     failing_id = await create_conversation(
         retention_database, goal="failing", updated_at=now - timedelta(days=90)
@@ -468,16 +472,12 @@ async def test_retention_isolates_deletion_failure(
 async def test_disabled_startup_creates_no_worker_and_enabled_shutdown_is_prompt(
     retention_database, tmp_path
 ):
-    disabled = retention_settings(
-        tmp_path, conversation_retention_enabled=False
-    )
+    disabled = retention_settings(tmp_path, conversation_retention_enabled=False)
     disabled_service = ConversationRetentionService(disabled, retention_database)
     await disabled_service.startup()
     assert disabled_service._task is None
 
-    enabled_service = ConversationRetentionService(
-        retention_settings(tmp_path), retention_database
-    )
+    enabled_service = ConversationRetentionService(retention_settings(tmp_path), retention_database)
     await enabled_service.startup()
     assert enabled_service._task is not None
     await enabled_service.shutdown()
