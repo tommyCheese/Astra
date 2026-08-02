@@ -90,6 +90,12 @@ heartbeat prompt 的默认契约是检查未完成事项并在没有需用户注
 
 替代方案是为每个 subcommand 注册独立 slash 项，选项会迅速膨胀且难以表达参数；让模型解析自然语言则会把控制面变成非确定行为，并弱化权限边界。
 
+### 9. 制品是按执行归属的可交付结果集合
+
+定时任务详情把每次 schedule run 的持久化输出统一呈现为“制品”，但不新增第二套文件存储。没有文件的 Run 使用已持久化的最终 `Run.result.summary`/`Run.summary` 形成结果制品，因此简单文本、命令输出摘要或查询结论也有稳定的可见结果；产生文件的 Run 则从该 Run 的 workspace change 和 Artifact 记录中收集已通过安全检查的可交付文件。
+
+制品必须带 `schedule_run_id`、`run_id` 和 `task_id` 来源，文件继续保存在目标对话的 workspace 或既有 Artifact store 中。列表只收录本次 Run 产生/修改的文件，不把目标对话工作空间中的历史文件全部归入当前定时任务；结果制品导航回目标对话，文件制品使用受校验的内容接口打开。
+
 ## Risks / Trade-offs
 
 - [SQLite 在高并发下写锁竞争] → scanner 小批量、短事务、已有 WAL/busy timeout；后续 PostgreSQL 可使用 `FOR UPDATE SKIP LOCKED` 优化。

@@ -21,3 +21,6 @@
 - [x] 4.2 Update frontend tests for quick/trusted `/subagent` routing and compact quick Subagent rendering
 - [x] 4.3 Update governed Subagent documentation with lightweight quick-mode semantics and shared-runtime boundaries
 - [x] 4.4 Run focused backend/frontend tests and strict OpenSpec validation
+- [x] 4.5 Add a standalone in-app help chapter for quick and trusted mode definitions, differences, Subagent behavior and selection guidance, with navigation and rendering tests
+- [x] 4.6 Add an About Astra help chapter covering creation motivation, mission, principles, and repository-grounded copyright and Apache-2.0 license information
+- [x] 4.7 Move each help article's table of contents into a responsive sticky side navigation with rendering coverage

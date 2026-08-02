@@ -55,6 +55,14 @@ Composer 消费命令前缀并保留参数为 goal。当前为 standard 时创�
 
 现有 `SubagentPanel` 已由 `subagent_summary.total` 驱动，与 answer mode 无关，可直接用于快速 Run。standard 的 `plan_graph` 保持空，因此不会挂载可信右侧图谱。只补充快速模式测试和必要的文案，不复制树组件。
 
+### 7. 回答模式说明作为独立帮助主题
+
+应用内 `DocumentationCenter` 使用既有 topic 导航增加“快速模式与可信模式”，并复用通用 Article、Section、表格、卡片和 FAQ 样式。页内目录作为正文之外的共享导航：桌面端固定在正文右侧并随阅读位置保持可用，窄屏端退化为粘性横向导航。内容以当前可执行合同为准，明确两种模式共享同一 Agent/Tool/Subagent 安全运行时，差异集中在 TaskContract、Plan DAG、验证与完成门槛；文档不得把可信模式表述为绝对正确保证。
+
+### 8. 关于 Astra 使用可验证的项目与版权信息
+
+帮助中心增加“关于 Astra”主题，创建动机和使命以根目录 README 的项目定位为依据；版权信息以根目录 Apache License 2.0 为依据。仓库未声明单一版权主体，因此页面仅说明版权归各自权利人和贡献者所有，不推断组织、个人或年份。许可证摘要同时链接到完整许可证并明确摘要不替代许可证原文。
+
 ## Risks / Trade-offs
 
 - [快速请求因模型误用 fan-out 增加延迟和成本] → 默认 `auto`，使用紧预算和收益提示；显式命令才使用 `required`。

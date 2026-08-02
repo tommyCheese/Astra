@@ -8,6 +8,7 @@ import {
   deleteScheduledTask,
   disableHeartbeat,
   listConversations,
+  listScheduledDeliverables,
   listScheduledTaskRuns,
   listScheduledTasks,
   runScheduledTask,
@@ -15,6 +16,7 @@ import {
   updateHeartbeat,
   updateScheduledTask,
   type ScheduledTask,
+  type ScheduledDeliverable,
   type ScheduledTaskRun,
 } from './api';
 import { useI18n } from './i18n';
@@ -75,6 +77,13 @@ function displayTime(value: string | null) {
   return value ? new Date(value).toLocaleString() : '—';
 }
 
+function displayFileSize(value: number | null) {
+  if (value === null) return '—';
+  if (value < 1024) return `${value} B`;
+  if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`;
+  return `${(value / 1024 / 1024).toFixed(1)} MB`;
+}
+
 function statusLabel(status: string) {
   const labels: Record<string, string> = {
     claimed: '已排队', running: '运行中', completed: '已完成', failed: '失败', blocked: '已阻塞',
@@ -102,6 +111,7 @@ export function ScheduledTasksView({ onClose, onOpenConversation }: Props) {
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [runs, setRuns] = useState<ScheduledTaskRun[]>([]);
+  const [deliverables, setDeliverables] = useState<ScheduledDeliverable[]>([]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
@@ -130,9 +140,15 @@ export function ScheduledTasksView({ onClose, onOpenConversation }: Props) {
 
   useEffect(() => { void refresh(); }, []);
   useEffect(() => {
-    if (!selectedId) { setRuns([]); return; }
+    if (!selectedId) { setRuns([]); setDeliverables([]); return; }
     const controller = new AbortController();
-    void listScheduledTaskRuns(selectedId, controller.signal).then(setRuns).catch((error) => {
+    void Promise.all([
+      listScheduledTaskRuns(selectedId, controller.signal),
+      listScheduledDeliverables(selectedId, controller.signal),
+    ]).then(([nextRuns, nextDeliverables]) => {
+      setRuns(nextRuns);
+      setDeliverables(nextDeliverables);
+    }).catch((error) => {
       if (!(error instanceof DOMException && error.name === 'AbortError')) setMessage(error instanceof Error ? error.message : '无法读取运行历史');
     });
     return () => controller.abort();
@@ -246,6 +262,19 @@ export function ScheduledTasksView({ onClose, onOpenConversation }: Props) {
           {selected.kind === 'heartbeat'
             ? <HeartbeatEditor task={selected} conversations={conversations} busy={busy} onSave={(payload) => perform(() => updateHeartbeat(payload), 'Heartbeat 设置已保存。')} />
             : <ScheduleEditor task={selected} conversations={conversations} busy={busy} onSave={(payload) => perform(() => updateScheduledTask(selected.id, payload), '任务设置已保存。')} />}
+          <section className="scheduled-deliverables">
+            <header><div><h3>{t('制品')}</h3><p>{t('每次执行的最终结果和生成文件都会保存在这里；没有文件时也会保留结果文本。')}</p></div><span>{deliverables.length}</span></header>
+            <div className="scheduled-deliverable-grid">
+              {deliverables.map((deliverable) => <article className={deliverable.kind} key={deliverable.id}>
+                <i aria-hidden="true">{deliverable.kind === 'file' ? '↧' : 'Aa'}</i>
+                <div><strong>{deliverable.title}</strong>{deliverable.summary && <p>{deliverable.summary}</p>}<small>{displayTime(deliverable.created_at)}{deliverable.kind === 'file' ? ` · ${displayFileSize(deliverable.size_bytes)}` : ''}</small></div>
+                {deliverable.kind === 'file' && deliverable.content_url
+                  ? <a href={deliverable.content_url} target="_blank" rel="noreferrer">{t('打开文件')}</a>
+                  : <button type="button" onClick={() => onOpenConversation(deliverable.task_id, conversationById.get(deliverable.task_id)?.title ?? t('结果对话'))}>{t('查看结果')}</button>}
+              </article>)}
+            </div>
+            {!deliverables.length && <div className="scheduled-task-empty">{t('任务运行后，结果文本和生成文件会出现在这里。')}</div>}
+          </section>
           <section className="scheduled-run-history">
             <header><div><h3>{t('运行历史')}</h3><p>{t('手动与计划触发会显示在同一条时间线上。')}</p></div><span>{runs.length}</span></header>
             {runs.map((run) => <article key={run.id}>

@@ -2,13 +2,15 @@ import { ReactNode, useState } from 'react';
 import { CloseButton } from './CloseButton';
 import { useI18n } from './i18n';
 
-type DocumentationTopic = 'memory';
+type DocumentationTopic = 'memory' | 'answer-modes' | 'about';
 
 const topics: Array<{ id: DocumentationTopic; label: string; description: string }> = [
   { id: 'memory', label: '记忆', description: '生产、召回、范围与整理' },
+  { id: 'answer-modes', label: '快速模式与可信模式', description: '定义、差异与选择建议' },
+  { id: 'about', label: '关于 Astra', description: '创建动机、使命与版权信息' },
 ];
 
-const sections = [
+const memorySections = [
   ['memory-background', '为什么需要记忆'],
   ['memory-boundaries', '四个容易混淆的概念'],
   ['memory-lifecycle', '记忆如何产生并生效'],
@@ -18,9 +20,33 @@ const sections = [
   ['memory-faq', '常见问题'],
 ] as const;
 
+const answerModeSections = [
+  ['answer-mode-definitions', '两种模式的定义'],
+  ['answer-mode-shared', '共享的运行时基础'],
+  ['answer-mode-lifecycle', '执行流程'],
+  ['answer-mode-comparison', '完整差异对比'],
+  ['answer-mode-subagents', 'Subagent 的行为差异'],
+  ['answer-mode-choose', '如何选择'],
+  ['answer-mode-faq', '常见问题'],
+] as const;
+
+const aboutSections = [
+  ['about-origin', '为什么创建 Astra'],
+  ['about-mission', '我们的使命'],
+  ['about-principles', '核心原则'],
+  ['about-boundary', 'Astra 是什么'],
+  ['about-copyright', '版权与许可证'],
+  ['about-accuracy', '信息与版本'],
+] as const;
+
 export function DocumentationCenter({ onClose }: { onClose: () => void }) {
   const { t } = useI18n();
   const [topic, setTopic] = useState<DocumentationTopic>('memory');
+  const sections = topic === 'memory'
+    ? memorySections
+    : topic === 'answer-modes'
+      ? answerModeSections
+      : aboutSections;
 
   return <section className="documentation-center" aria-labelledby="documentation-center-title">
     <header className="documentation-header">
@@ -54,10 +80,23 @@ export function DocumentationCenter({ onClose }: { onClose: () => void }) {
       </aside>
 
       <div className="documentation-content">
-        {topic === 'memory' && <MemoryArticle />}
+        <div className="documentation-content-frame">
+          <DocumentationToc sections={sections} />
+          {topic === 'memory' && <MemoryArticle />}
+          {topic === 'answer-modes' && <AnswerModesArticle />}
+          {topic === 'about' && <AboutArticle />}
+        </div>
       </div>
     </div>
   </section>;
+}
+
+function DocumentationToc({ sections }: { sections: ReadonlyArray<readonly [string, string]> }) {
+  const { t } = useI18n();
+  return <nav className="documentation-page-toc" aria-label={t('本页目录')}>
+    <span>{t('本页目录')}</span>
+    <div>{sections.map(([id, label]) => <a href={`#${id}`} key={id}>{t(label)}</a>)}</div>
+  </nav>;
 }
 
 function MemoryArticle() {
@@ -73,11 +112,6 @@ function MemoryArticle() {
         <div><span>03</span><strong>{t('受预算约束')}</strong><small>{t('相关度、置信度和上下文预算共同决定是否注入')}</small></div>
       </div>
     </div>
-
-    <nav className="documentation-toc" aria-label={t('本页目录')}>
-      <span>{t('本页目录')}</span>
-      <div>{sections.map(([id, label]) => <a href={`#${id}`} key={id}>{t(label)}</a>)}</div>
-    </nav>
 
     <DocumentSection id="memory-background" eyebrow="Background" title="为什么需要记忆">
       <p>{t('模型的单次上下文是有限的。新任务开始后，之前对话中的偏好、项目约定和已验证事实不会天然出现；反复让用户重新说明既低效，也容易产生不一致。')}</p>
@@ -154,6 +188,177 @@ function MemoryArticle() {
         <details><summary>{t('生产晋升关闭是什么意思？')}</summary><p>{t('表示后台整理产出的候选不会自动晋升为正式 active 记忆。候选和评估仍可被记录，但不会在未经批准的情况下改变生产召回结果。')}</p></details>
         <details><summary>{t('修改设置会立刻改变正在运行的任务吗？')}</summary><p>{t('不会。记忆运行时设置在创建任务时固化，修改会应用于之后新建的任务；已有任务继续使用创建时的配置。')}</p></details>
       </div>
+    </DocumentSection>
+  </article>;
+}
+
+function AnswerModesArticle() {
+  const { t } = useI18n();
+  return <article className="documentation-article" aria-labelledby="answer-modes-document-title">
+    <div className="documentation-hero">
+      <span className="documentation-kicker">Answer modes</span>
+      <h2 id="answer-modes-document-title">{t('快速模式与可信模式')}</h2>
+      <p>{t('Astra 只提供快速模式和可信模式两种回答模式。两者使用同一套 Agent、工具和安全运行时；核心区别是任务是否进入规范计划、严格验证与完整完成门槛。')}</p>
+      <div className="documentation-summary-grid">
+        <div><span>01</span><strong>{t('快速模式')}</strong><small>{t('直接进入 Agent Loop，按需使用工具和轻量 Subagent')}</small></div>
+        <div><span>02</span><strong>{t('可信模式')}</strong><small>{t('先建立任务契约和 Plan DAG，再执行、验证和收敛')}</small></div>
+        <div><span>03</span><strong>{t('共享安全边界')}</strong><small>{t('权限、审批、工具路由、Supervisor 和取消恢复保持一致')}</small></div>
+      </div>
+    </div>
+
+    <DocumentSection id="answer-mode-definitions" eyebrow="Definitions" title="两种模式的定义">
+      <div className="documentation-mode-grid">
+        <div className="active"><span>standard</span><strong>{t('快速模式')}</strong><p>{t('面向日常问答、检索、总结和低风险工具任务。Run 不创建完整 TaskContract、规范 Plan DAG 或可信 AgentState，而是直接进入共享 Agent Loop，以基础验证尽快给出可用结果。')}</p></div>
+        <div><span>trusted</span><strong>{t('可信模式')}</strong><p>{t('面向多阶段、高风险、需要审计或明确交付标准的任务。Run 先创建完整 TaskContract 和版本化 Plan DAG，再按依赖执行节点、验证结果并通过 Completion Gate。')}</p></div>
+      </div>
+      <aside className="documentation-callout"><strong>{t('可信不等于绝对正确')}</strong><p>{t('可信模式提高计划透明度、验证覆盖和失败可见性，但不能保证模型结论绝对正确。重要决策仍应检查来源、产物和验证状态。')}</p></aside>
+    </DocumentSection>
+
+    <DocumentSection id="answer-mode-shared" eyebrow="Shared runtime" title="共享的运行时基础">
+      <p>{t('两种模式不是两套互不相干的 Agent。它们共享模型选择、模型思考设置、Agent Loop、ToolRouter、权限与审批、Workspace、Artifact、记忆、流式事件、取消以及历史会话。')}</p>
+      <ol className="documentation-checklist">
+        <li>{t('工具调用都必须经过同一输入校验、权限门、效果分析和执行后端。')}</li>
+        <li>{t('文件和产物都使用相同的 Workspace、Artifact 与安全交付边界。')}</li>
+        <li>{t('Subagent 都使用相同的 Supervisor、独立身份、衰减权限、预算、Join、取消和恢复机制。')}</li>
+        <li>{t('切换回答模式不会自动更换模型，也不会绕过执行审批或部署安全上限。')}</li>
+      </ol>
+    </DocumentSection>
+
+    <DocumentSection id="answer-mode-lifecycle" eyebrow="Lifecycle" title="执行流程">
+      <h3>{t('快速模式')}</h3>
+      <ol className="documentation-timeline">
+        <TimelineStep number="1" title="直接理解请求" description="根 Agent 使用当前对话目标和可用能力进入快速决策，不等待规范计划生成。" />
+        <TimelineStep number="2" title="按需行动" description="Agent 可以直接回答、调用工具，或在收益足够时创建轻量 Subagent。" />
+        <TimelineStep number="3" title="基础完成检查" description="运行检查工具结果、Artifact 引用、必需 Subagent Join 和阻塞问题后输出答案。" />
+      </ol>
+      <h3>{t('可信模式')}</h3>
+      <ol className="documentation-timeline">
+        <TimelineStep number="1" title="建立任务契约" description="提取交付物、约束、风险和可验证的成功标准。" />
+        <TimelineStep number="2" title="生成规范计划" description="创建完整且经过校验的版本化 Plan DAG；根据设置等待确认或自动执行。" />
+        <TimelineStep number="3" title="按依赖执行与验证" description="节点经过调度、工具选择、观察评估、失败恢复或重新规划。" />
+        <TimelineStep number="4" title="通过完整完成门槛" description="检查 Plan、成功标准、验证、审批、预算、Subagent 和 Join 后才允许成功完成。" />
+      </ol>
+    </DocumentSection>
+
+    <DocumentSection id="answer-mode-comparison" eyebrow="Comparison" title="完整差异对比">
+      <div className="documentation-table-wrap"><table>
+        <thead><tr><th>{t('维度')}</th><th>{t('快速模式')}</th><th>{t('可信模式')}</th></tr></thead>
+        <tbody>
+          <tr><td>{t('启动方式')}</td><td>{t('直接进入快速 Agent Loop')}</td><td>{t('先建立 TaskContract 和 Plan')}</td></tr>
+          <tr><td>{t('规范计划')}</td><td>{t('不创建 Plan DAG')}</td><td>{t('创建、持久化并版本化 Plan DAG')}</td></tr>
+          <tr><td>{t('计划控制')}</td><td>{t('无需确认')}</td><td>{t('支持确认后执行或自动执行')}</td></tr>
+          <tr><td>{t('推理策略')}</td><td>{t('快速、轻量、关闭反思循环')}</td><td>{t('可配置推理强度、工具预算和反思')}</td></tr>
+          <tr><td>{t('验证等级')}</td><td>{t('基础验证')}</td><td>{t('严格验证和成功标准覆盖')}</td></tr>
+          <tr><td>{t('完成条件')}</td><td>{t('基础安全检查与必需 Join 收敛')}</td><td>{t('Plan、验证、审批、预算和完整 Completion Gate')}</td></tr>
+          <tr><td>{t('失败处理')}</td><td>{t('在快速循环内重试、替代或阻塞')}</td><td>{t('节点失败、反思、重规划和版本 lineage')}</td></tr>
+          <tr><td>{t('过程界面')}</td><td>{t('轻量时间线和紧凑 Subagent 面板')}</td><td>{t('可信执行图谱、节点检查和 Agent 树')}</td></tr>
+          <tr><td>{t('典型成本')}</td><td>{t('延迟和用量通常较低')}</td><td>{t('规划与验证会增加延迟和用量')}</td></tr>
+          <tr><td>{t('适用任务')}</td><td>{t('日常问答、检索、总结和低风险操作')}</td><td>{t('复杂交付、高风险操作、长流程和严格审计')}</td></tr>
+        </tbody>
+      </table></div>
+    </DocumentSection>
+
+    <DocumentSection id="answer-mode-subagents" eyebrow="Subagents" title="Subagent 的行为差异">
+      <p>{t('快速与可信 Subagent 共享同一个受治理运行时。Supervisor 负责 child 创建、并发调度、独立执行上下文、heartbeat、Join、取消和恢复；模式不会改变这些安全职责。')}</p>
+      <div className="documentation-problem-grid">
+        <div><strong>{t('快速 Subagent')}</strong><p>{t('根 Agent 在没有规范根 DAG 的快速循环中直接调用 swarm。普通请求可以自适应委派；快速模式下使用 /subagent 会要求至少创建一个受治理 group。')}</p></div>
+        <div><strong>{t('可信 Subagent')}</strong><p>{t('根 Agent 在 TaskContract 和 Plan DAG 约束下调用 swarm，委派目标可以关联当前计划节点、成功标准和严格完成门槛。')}</p></div>
+        <div><strong>{t('共同边界')}</strong><p>{t('child 都使用独立 ContextManifest，不共享完整聊天、隐藏推理或可变主 Agent 状态；结果通过结构化 SubagentResult 和 Join 返回。')}</p></div>
+      </div>
+      <aside className="documentation-callout neutral"><strong>{t('快速 Subagent 的轻量预算')}</strong><p>{t('当前快速策略保持只读、深度 1，最多 2 个 child、2 路并发、120 秒、8K Token、4 次模型调用和 6 次工具调用；部署策略可以进一步收紧这些上限。')}</p></aside>
+    </DocumentSection>
+
+    <DocumentSection id="answer-mode-choose" eyebrow="Choosing a mode" title="如何选择">
+      <div className="documentation-boundary-list">
+        <Boundary term={t('选择快速模式')} title="结果容易检查" description="问题范围清晰、失败影响低，希望更快获得答案，并且你能够直接判断结果是否可用。" />
+        <Boundary term={t('选择快速模式')} title="轻量并行研究" description="需要并发比较或独立检索，但不需要正式计划、节点审计和严格成功标准。" />
+        <Boundary term={t('选择可信模式')} title="交付物和步骤复杂" description="任务包含多个依赖步骤、文件产物、明确成功标准，或失败后需要重规划。" />
+        <Boundary term={t('选择可信模式')} title="风险或审计要求高" description="结果将用于重要决策、受控操作或需要解释执行路径、证据和验证状态。" />
+      </div>
+      <aside className="documentation-callout emphasis"><strong>{t('一个实用判断')}</strong><p>{t('如果你只关心“尽快得到可检查的答案”，优先快速模式；如果你还关心“系统按什么计划完成、如何证明完成以及失败在哪里”，选择可信模式。')}</p></aside>
+    </DocumentSection>
+
+    <DocumentSection id="answer-mode-faq" eyebrow="FAQ" title="常见问题">
+      <div className="documentation-faq">
+        <details open><summary>{t('可信模式一定使用 Subagent 吗？')}</summary><p>{t('不一定。可信模式一定生成规范计划，但只有任务适合独立并发且策略允许时才创建 Subagent；显式 /subagent 命令除外。')}</p></details>
+        <details><summary>{t('快速模式可以使用工具和文件吗？')}</summary><p>{t('可以。快速模式共享相同的工具、审批、Workspace 和 Artifact 管线，只是跳过可信计划和严格完成验证。')}</p></details>
+        <details><summary>{t('切换模式会修改当前正在运行的任务吗？')}</summary><p>{t('不会。回答模式在 Run 创建时固化；开关影响之后创建的 Run，当前运行继续使用原模式。')}</p></details>
+        <details><summary>{t('模型思考深度等于回答模式吗？')}</summary><p>{t('不等于。思考深度是模型级设置，回答模式决定规划、编排和验证生命周期；调整思考深度不会自动启用或关闭可信模式。')}</p></details>
+      </div>
+    </DocumentSection>
+  </article>;
+}
+
+function AboutArticle() {
+  const { t } = useI18n();
+  return <article className="documentation-article" aria-labelledby="about-document-title">
+    <div className="documentation-hero">
+      <span className="documentation-kicker">About Astra</span>
+      <h2 id="about-document-title">{t('关于 Astra')}</h2>
+      <p>{t('Astra 是一个 AI 原生的通用 Agent 平台。它希望把前沿模型的理解与推理能力，连接到可持续执行、真实工具操作、结果验证和长期记忆。')}</p>
+      <div className="documentation-summary-grid">
+        <div><span>01</span><strong>{t('从回答走向完成')}</strong><small>{t('不仅提供建议，也能在受控边界内执行真实任务')}</small></div>
+        <div><span>02</span><strong>{t('通用而非单一场景')}</strong><small>{t('围绕用户目标组织模型、工具、工作空间与知识')}</small></div>
+        <div><span>03</span><strong>{t('可治理地长期演进')}</strong><small>{t('让计划、权限、证据、记忆和改进保持可见与可控')}</small></div>
+      </div>
+    </div>
+
+    <DocumentSection id="about-origin" eyebrow="Motivation" title="为什么创建 Astra">
+      <p>{t('大模型已经能够理解复杂请求、生成内容和调用工具，但普通聊天通常停留在一次回复：上下文会消失，计划难以持续，真实操作缺少统一权限边界，结果也不一定经过验证。用户仍需自己在模型、文件、工具和外部系统之间搬运信息并检查完成情况。')}</p>
+      <div className="documentation-problem-grid">
+        <div><strong>{t('任务不能止于建议')}</strong><p>{t('真实目标往往需要多步骤执行、工具操作、文件交付和失败恢复。')}</p></div>
+        <div><strong>{t('能力需要统一治理')}</strong><p>{t('模型能力、工具权限、审批、预算和运行环境必须由确定性系统共同约束。')}</p></div>
+        <div><strong>{t('经验需要可靠延续')}</strong><p>{t('任务、证据、产物和长期记忆应当可恢复、可审计，并在明确范围内复用。')}</p></div>
+      </div>
+      <aside className="documentation-callout"><strong>{t('创建 Astra 的出发点')}</strong><p>{t('在前沿模型之上构建一层通用任务操作系统，让 AI 从“给出下一步建议”走向“在用户控制下可靠地完成目标”。')}</p></aside>
+    </DocumentSection>
+
+    <DocumentSection id="about-mission" eyebrow="Mission" title="我们的使命">
+      <p>{t('Astra 的使命是让个人和团队能够安全地把目标交给 Agent：系统理解目标与环境，形成适当计划，调用真实能力完成工作，验证交付结果，并在不削弱隐私、权限和用户控制的前提下持续积累经验。')}</p>
+      <ol className="documentation-timeline">
+        <TimelineStep number="1" title="理解目标与环境" description="理解用户意图、当前对话、工作空间、知识来源和可用系统。" />
+        <TimelineStep number="2" title="组织可执行工作" description="根据任务复杂度选择快速循环或可信计划，并在需要时协调工具与 Subagent。" />
+        <TimelineStep number="3" title="完成并验证交付" description="产生真实操作、文件和证据，检查成功标准并诚实呈现失败与不确定性。" />
+        <TimelineStep number="4" title="在治理中持续学习" description="通过有来源的记忆、审计和离线评估积累经验，而不是未经允许改变生产行为。" />
+      </ol>
+    </DocumentSection>
+
+    <DocumentSection id="about-principles" eyebrow="Principles" title="核心原则">
+      <div className="documentation-boundary-list">
+        <Boundary term="General" title="通用目标优先" description="Astra 不局限于代码或单一工具，而是围绕用户目标组合合适的模型、能力和工作流。" />
+        <Boundary term="Governed" title="能力必须受治理" description="模型不能自行扩大权限；工具、审批、预算、凭据、工作空间和网络访问由运行时控制。" />
+        <Boundary term="Durable" title="执行必须可恢复" description="Run、计划、行动、Subagent、产物和等待状态以持久化记录为准，不依赖一次进程生命周期。" />
+        <Boundary term="Verifiable" title="结果需要可检查" description="重要结论应连接到来源、Evidence、Artifact 和验证状态，失败与警告不能伪装成成功。" />
+        <Boundary term="Human control" title="用户保持最终控制" description="高影响操作需要审批，记忆与改进需要治理，最终决定和责任不被 Agent 取代。" />
+      </div>
+    </DocumentSection>
+
+    <DocumentSection id="about-boundary" eyebrow="Identity" title="Astra 是什么">
+      <div className="documentation-mode-grid">
+        <div className="active"><span>{t('Astra 是')}</span><strong>{t('通用 Agent 运行平台')}</strong><p>{t('它把模型推理、任务状态、工具、权限、工作空间、证据、记忆和多 Agent 协作组织在一个可恢复运行时中。')}</p></div>
+        <div><span>{t('Astra 不是')}</span><strong>{t('只会对话的模型外壳')}</strong><p>{t('它不把提示词约定当作安全边界，也不把单次模型输出当作已完成且已验证的真实任务。')}</p></div>
+      </div>
+      <aside className="documentation-callout neutral"><strong>{t('关于“我们”')}</strong><p>{t('这里的“我们”指 Astra 项目及其贡献者。项目文档不推断或声明仓库元数据中不存在的组织、团队或个人身份。')}</p></aside>
+    </DocumentSection>
+
+    <DocumentSection id="about-copyright" eyebrow="Copyright" title="版权与许可证">
+      <p>{t('Astra 源代码与文档的版权归各自权利人和贡献者所有。当前仓库没有声明单一、排他的版权主体，因此本页不推断个人、组织或版权年份。')}</p>
+      <div className="documentation-table-wrap"><table>
+        <thead><tr><th>{t('项目')}</th><th>{t('说明')}</th></tr></thead>
+        <tbody>
+          <tr><td>{t('开源许可证')}</td><td><strong>Apache License 2.0</strong></td></tr>
+          <tr><td>{t('允许')}</td><td>{t('在遵守许可证条件的前提下使用、复制、修改和分发源码或衍生作品。')}</td></tr>
+          <tr><td>{t('需要')}</td><td>{t('随分发保留许可证和适用的版权、专利、商标与归属声明，并对修改过的文件作出显著说明。')}</td></tr>
+          <tr><td>{t('免责声明')}</td><td>{t('软件按“原样”提供，不附带明示或默示保证；适用责任限制以许可证原文为准。')}</td></tr>
+          <tr><td>{t('名称与标识')}</td><td>{t('Apache License 2.0 不自动授予使用项目名称、商标或产品标识进行背书的权利。')}</td></tr>
+        </tbody>
+      </table></div>
+      <aside className="documentation-callout emphasis"><strong>{t('许可证摘要不是法律文本')}</strong><p>{t('本节用于帮助理解，不替代完整许可证。使用、修改或分发 Astra 前，请阅读 Apache License 2.0 原文。')}</p><a href="https://www.apache.org/licenses/LICENSE-2.0" target="_blank" rel="noreferrer">{t('阅读 Apache License 2.0 完整原文')}</a></aside>
+    </DocumentSection>
+
+    <DocumentSection id="about-accuracy" eyebrow="Versioning" title="信息与版本">
+      <p>{t('帮助文档描述当前安装版本的产品行为。Astra 持续演进时，功能、界面和运行边界可能变化；应用内实际行为、发行说明、仓库 VERSION 文件和完整 LICENSE 是对应信息的权威来源。')}</p>
+      <aside className="documentation-callout"><strong>{t('文档也属于产品')}</strong><p>{t('如果实现与帮助说明不一致，应将其视为需要修复的产品问题：安全边界以运行时强制规则为准，随后同步更新文档和测试。')}</p></aside>
     </DocumentSection>
   </article>;
 }

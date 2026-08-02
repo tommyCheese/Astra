@@ -30,6 +30,11 @@
 - **WHEN** 用户从运行历史选择一个已创建 Astra Run 的执行
 - **THEN** 普通定时任务 UI 导航到绑定的结果对话及完整审计 timeline，生成文件同时进入现有 Artifact/资料库链路；heartbeat UI 导航到其目标对话
 
+#### Scenario: 查看定时任务制品
+- **WHEN** 用户打开已产生执行结果的定时任务详情
+- **THEN** UI 在“制品”区域按执行展示最终结果文本和该次执行产生的可交付文件
+- **THEN** 没有文件的简单输出仍显示为结果制品，并可导航到目标对话查看完整内容
+
 ### Requirement: 用户可以配置低噪音 heartbeat
 系统 SHALL 在 Chat UI 提供 heartbeat 启停、周期、活动时间窗、时区和 prompt 配置，并解释静默确认语义。
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import Enum
+from typing import Any, Literal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from croniter import croniter
@@ -231,4 +232,22 @@ class ScheduledJobRunView(BaseModel):
     claimed_at: datetime | None
     started_at: datetime | None
     completed_at: datetime | None
+    created_at: datetime
+
+
+class ScheduledDeliverableView(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    job_id: str
+    schedule_run_id: str
+    run_id: str
+    task_id: str
+    kind: Literal["result", "file"]
+    title: str
+    summary: str | None = None
+    mime_type: str | None = None
+    size_bytes: int | None = None
+    content_url: str | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
     created_at: datetime

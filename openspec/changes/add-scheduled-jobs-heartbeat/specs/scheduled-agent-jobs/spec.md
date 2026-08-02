@@ -88,6 +88,11 @@
 - **WHEN** 用户查询某定时任务的执行历史
 - **THEN** 系统按时间倒序返回终态、耗时、关联 Run 和错误摘要
 
+#### Scenario: 查询任务制品
+- **WHEN** 用户查询定时任务的制品
+- **THEN** 系统返回带 schedule run、Run 和目标 Task 来源的最终结果文本及安全可交付文件
+- **THEN** 文件来自对应 Run 的工作空间变更或 Artifact 记录，不包含目标对话中无关的历史文件
+
 ### Requirement: 用户可以通过 schedule 系统命令管理任务
 系统 SHALL 注册参数化 `/schedule` host command，并通过确定性 subcommand 调用与 HTTP API 相同的定时任务应用服务。
 

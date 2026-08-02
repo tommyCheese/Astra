@@ -185,6 +185,22 @@ export type ScheduledTaskRun = {
   created_at: string;
 };
 
+export type ScheduledDeliverable = {
+  id: string;
+  job_id: string;
+  schedule_run_id: string;
+  run_id: string;
+  task_id: string;
+  kind: 'result' | 'file';
+  title: string;
+  summary: string | null;
+  mime_type: string | null;
+  size_bytes: number | null;
+  content_url: string | null;
+  metadata: Record<string, unknown>;
+  created_at: string;
+};
+
 export async function listScheduledTasks(signal?: AbortSignal): Promise<ScheduledTask[]> {
   const response = await fetchWithTimeout('/api/schedules', { signal });
   if (!response.ok) throw await responseError(response);
@@ -237,6 +253,12 @@ export async function listScheduledTaskRuns(id: string, signal?: AbortSignal): P
   const response = await fetchWithTimeout(`/api/schedules/${id}/runs`, { signal });
   if (!response.ok) throw await responseError(response);
   return response.json() as Promise<ScheduledTaskRun[]>;
+}
+
+export async function listScheduledDeliverables(id: string, signal?: AbortSignal): Promise<ScheduledDeliverable[]> {
+  const response = await fetchWithTimeout(`/api/schedules/${id}/deliverables`, { signal });
+  if (!response.ok) throw await responseError(response);
+  return response.json() as Promise<ScheduledDeliverable[]>;
 }
 
 export async function updateHeartbeat(payload: Record<string, unknown>): Promise<ScheduledTask> {

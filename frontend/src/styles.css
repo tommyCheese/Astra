@@ -386,7 +386,8 @@ p {
 .documentation-sidebar-note p { color: var(--app-muted); font-size: 10px; line-height: 1.55; margin: 6px 0 0; }
 
 .documentation-content { min-height: 0; overflow: auto; scroll-behavior: smooth; }
-.documentation-article { margin: 0 auto; max-width: 900px; padding: 50px 54px 100px; }
+.documentation-content-frame { align-items: start; display: grid; grid-template-columns: minmax(0, 900px) minmax(140px, 170px); margin: 0 auto; max-width: 1080px; }
+.documentation-article { box-sizing: border-box; grid-column: 1; grid-row: 1; margin: 0; max-width: 900px; padding: 50px 54px 100px; width: 100%; }
 .documentation-hero { padding-bottom: 36px; }
 .documentation-hero h2 { color: var(--app-text); font-size: clamp(38px, 5vw, 58px); letter-spacing: -.045em; line-height: 1; margin: 12px 0 20px; }
 .documentation-hero > p { color: color-mix(in srgb, var(--app-text) 76%, var(--app-muted)); font-size: 17px; line-height: 1.8; margin: 0; max-width: 760px; }
@@ -396,11 +397,11 @@ p {
 .documentation-summary-grid strong { color: var(--app-text); font-size: 14px; }
 .documentation-summary-grid small { color: var(--app-muted); font-size: 11px; line-height: 1.55; }
 
-.documentation-toc { align-items: flex-start; border-bottom: 1px solid var(--app-line); border-top: 1px solid var(--app-line); display: grid; gap: 20px; grid-template-columns: 74px minmax(0, 1fr); padding: 18px 0; }
-.documentation-toc > span { color: var(--app-muted); font-size: 11px; font-weight: 700; }
-.documentation-toc div { display: flex; flex-wrap: wrap; gap: 8px 20px; }
-.documentation-toc a { color: var(--app-text); font-size: 12px; text-decoration: none; }
-.documentation-toc a:hover { color: var(--astra-mint); text-decoration: underline; text-underline-offset: 3px; }
+.documentation-page-toc { border-left: 1px solid var(--app-line); display: grid; gap: 14px; grid-column: 2; grid-row: 1; margin-top: 50px; max-height: calc(100dvh - 190px); overflow-y: auto; padding: 2px 8px 4px 20px; position: sticky; top: 28px; }
+.documentation-page-toc > span { color: var(--app-muted); font-size: 10px; font-weight: 720; letter-spacing: .08em; text-transform: uppercase; }
+.documentation-page-toc div { display: grid; gap: 10px; }
+.documentation-page-toc a { color: var(--app-muted); font-size: 11px; line-height: 1.45; text-decoration: none; }
+.documentation-page-toc a:hover { color: var(--astra-mint); }
 
 .documentation-section { border-bottom: 1px solid var(--app-line); padding: 64px 0; scroll-margin-top: 20px; }
 .documentation-section:last-child { border-bottom: 0; }
@@ -461,10 +462,21 @@ p {
 .documentation-faq p { border-top: 1px solid var(--app-line); color: var(--app-muted); font-size: 12px; line-height: 1.7; margin: 0; padding: 14px 2px 16px; }
 .documentation-loading { align-items: center; color: var(--app-muted); display: flex; height: 100%; justify-content: center; }
 
-@media (max-width: 960px) {
+@media (max-width: 1120px) {
   .documentation-layout { grid-template-columns: 188px minmax(0, 1fr); }
   .documentation-sidebar { padding-right: 14px; }
+  .documentation-content-frame { grid-template-columns: minmax(0, 1fr) 140px; }
   .documentation-article { padding-inline: 34px; }
+  .documentation-page-toc { padding-left: 14px; }
+}
+
+@media (max-width: 900px) {
+  .documentation-content { scroll-padding-top: 48px; }
+  .documentation-content-frame { display: block; }
+  .documentation-page-toc { align-items: center; background: color-mix(in srgb, var(--app-canvas) 94%, transparent); border-bottom: 1px solid var(--app-line); border-left: 0; display: flex; gap: 14px; margin: 0; max-height: none; overflow-x: auto; padding: 10px 8px; position: sticky; top: 0; z-index: 2; }
+  .documentation-page-toc > span { flex: 0 0 auto; }
+  .documentation-page-toc div { display: flex; gap: 16px; }
+  .documentation-page-toc a { flex: 0 0 auto; white-space: nowrap; }
 }
 
 @media (max-width: 720px) {
@@ -1133,7 +1145,7 @@ html[data-theme="dark"] .history-menu, html[data-theme="dark"] .conversation-act
 .scheduled-tasks-header-copy { min-width: 0; }
 .scheduled-tasks-header-actions { align-items: center; display: flex; flex: 0 0 auto; gap: 8px; position: relative; z-index: 1; }
 .scheduled-task-create-button { align-items: center; display: inline-flex; justify-content: center; min-width: 68px; white-space: nowrap; }
-.scheduled-tasks-header > div:last-child > button:not(.ui-close-button), .scheduled-task-actions button, .scheduled-task-editor footer button, .scheduled-run-history article button { background: var(--app-panel); border: 1px solid var(--app-line); border-radius: 9px; color: var(--app-text); cursor: pointer; min-height: 34px; padding: 0 12px; }
+.scheduled-tasks-header > div:last-child > button:not(.ui-close-button), .scheduled-task-actions button, .scheduled-task-editor footer button, .scheduled-run-history article button, .scheduled-deliverables article button, .scheduled-deliverables article a { align-items: center; background: var(--app-panel); border: 1px solid var(--app-line); border-radius: 9px; color: var(--app-text); cursor: pointer; display: inline-flex; justify-content: center; min-height: 34px; padding: 0 12px; text-decoration: none; }
 .scheduled-tasks-layout { display: grid; grid-template-columns: minmax(250px, 310px) minmax(0, 1fr); min-height: 0; }
 .scheduled-task-list { border-right: 1px solid var(--app-line); min-height: 0; overflow-y: auto; padding: 14px; }
 .scheduled-task-list-summary { align-items: baseline; display: flex; gap: 5px; padding: 8px 8px 16px; }
@@ -1167,9 +1179,9 @@ html[data-theme="dark"] .history-menu, html[data-theme="dark"] .conversation-act
 .scheduled-task-facts > div { background: var(--app-panel); border: 1px solid var(--app-line); border-radius: 12px; display: grid; gap: 5px; min-width: 0; padding: 13px; }
 .scheduled-task-facts span { color: var(--app-muted); font-size: 10px; }
 .scheduled-task-facts strong { font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.scheduled-task-editor, .scheduled-run-history { background: var(--app-panel); border: 1px solid var(--app-line); border-radius: 14px; margin-top: 14px; padding: 18px; }
-.scheduled-task-editor header h3, .scheduled-run-history h3 { font-size: 15px; margin: 0; }
-.scheduled-task-editor header p, .scheduled-run-history header p { color: var(--app-muted); font-size: 11px; margin: 4px 0 0; }
+.scheduled-task-editor, .scheduled-run-history, .scheduled-deliverables { background: var(--app-panel); border: 1px solid var(--app-line); border-radius: 14px; margin-top: 14px; padding: 18px; }
+.scheduled-task-editor header h3, .scheduled-run-history h3, .scheduled-deliverables h3 { font-size: 15px; margin: 0; }
+.scheduled-task-editor header p, .scheduled-run-history header p, .scheduled-deliverables header p { color: var(--app-muted); font-size: 11px; margin: 4px 0 0; }
 .scheduled-editor-grid { display: grid; gap: 14px; grid-template-columns: 1fr 1fr; margin-top: 18px; }
 .scheduled-editor-grid label { display: grid; gap: 6px; }
 .scheduled-editor-grid label.wide { grid-column: 1 / -1; }
@@ -1198,8 +1210,16 @@ html[data-theme="dark"] .history-menu, html[data-theme="dark"] .conversation-act
 }
 .scheduled-task-editor footer button.primary:hover:not(:disabled),
 .scheduled-tasks-header button.primary:hover:not(:disabled) { background: #287b64 !important; border-color: #287b64 !important; }
-.scheduled-run-history > header { align-items: center; display: flex; justify-content: space-between; margin-bottom: 10px; }
-.scheduled-run-history > header > span { background: var(--app-hover); border-radius: 999px; color: var(--app-muted); font-size: 10px; padding: 4px 8px; }
+.scheduled-run-history > header, .scheduled-deliverables > header { align-items: center; display: flex; justify-content: space-between; margin-bottom: 10px; }
+.scheduled-run-history > header > span, .scheduled-deliverables > header > span { background: var(--app-hover); border-radius: 999px; color: var(--app-muted); font-size: 10px; padding: 4px 8px; }
+.scheduled-deliverable-grid { display: grid; gap: 9px; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); }
+.scheduled-deliverables article { align-items: center; background: var(--app-bg); border: 1px solid var(--app-line); border-radius: 12px; display: grid; gap: 11px; grid-template-columns: 34px minmax(0, 1fr) auto; min-width: 0; padding: 12px; }
+.scheduled-deliverables article > i { align-items: center; background: color-mix(in srgb, var(--app-accent) 10%, transparent); border-radius: 9px; color: var(--app-accent); display: flex; font-size: 11px; font-style: normal; font-weight: 700; height: 34px; justify-content: center; }
+.scheduled-deliverables article.file > i { font-size: 18px; }
+.scheduled-deliverables article > div { display: grid; gap: 3px; min-width: 0; }
+.scheduled-deliverables article strong { font-size: 12px; }
+.scheduled-deliverables article p { color: var(--app-text); display: -webkit-box; font-size: 11px; line-height: 1.45; margin: 0; overflow: hidden; -webkit-box-orient: vertical; -webkit-line-clamp: 3; }
+.scheduled-deliverables article.file p, .scheduled-deliverables article small { color: var(--app-muted); font-size: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .scheduled-run-history article { align-items: center; border-top: 1px solid var(--app-line); display: grid; gap: 10px; grid-template-columns: 10px minmax(0, 1fr) auto; padding: 12px 2px; }
 .scheduled-run-history article > div { display: grid; gap: 3px; }
 .scheduled-run-history article strong { font-size: 12px; }

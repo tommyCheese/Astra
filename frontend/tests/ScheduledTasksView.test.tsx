@@ -12,6 +12,7 @@ vi.mock('../src/api', async (importOriginal) => {
     listScheduledTasks: vi.fn(),
     createScheduledTask: vi.fn(),
     createConversation: vi.fn(),
+    listScheduledDeliverables: vi.fn(),
     listScheduledTaskRuns: vi.fn(),
     listConversations: vi.fn(),
     setScheduledTaskEnabled: vi.fn(),
@@ -37,6 +38,10 @@ describe('ScheduledTasksView', () => {
   beforeEach(() => {
     vi.mocked(api.listScheduledTasks).mockResolvedValue([task]);
     vi.mocked(api.listScheduledTaskRuns).mockResolvedValue([{ id: 'scheduled-run-1', job_id: task.id, scheduled_for: '2026-08-02T01:00:00Z', trigger_type: 'manual', status: 'completed', task_id: 'task-1', run_id: 'run-1', outcome: {}, claimed_at: null, started_at: null, completed_at: null, created_at: '2026-08-02T01:00:00Z' }]);
+    vi.mocked(api.listScheduledDeliverables).mockResolvedValue([
+      { id: 'result:scheduled-run-1', job_id: task.id, schedule_run_id: 'scheduled-run-1', run_id: 'run-1', task_id: 'task-1', kind: 'result', title: '执行结果', summary: '日报生成完成', mime_type: null, size_bytes: null, content_url: null, metadata: {}, created_at: '2026-08-02T01:00:00Z' },
+      { id: 'workspace-file:file-1:scheduled-run-1', job_id: task.id, schedule_run_id: 'scheduled-run-1', run_id: 'run-1', task_id: 'task-1', kind: 'file', title: 'daily.txt', summary: 'reports/daily.txt', mime_type: 'text/plain', size_bytes: 1024, content_url: '/api/tasks/task-1/workspace/files/file-1/content', metadata: {}, created_at: '2026-08-02T01:00:00Z' },
+    ]);
     vi.mocked(api.listConversations).mockResolvedValue([{ id: 'task-1', title: '日报会话', title_source: 'auto', pinned_at: null, created_at: '', updated_at: '', last_run_status: 'completed', last_message_preview: '', has_active_share: false }]);
   });
 
@@ -53,6 +58,9 @@ describe('ScheduledTasksView', () => {
     expect(screen.getByText('尚未配置 Heartbeat')).toBeInTheDocument();
     expect((await screen.findAllByText('日报会话')).length).toBeGreaterThan(0);
     expect(screen.getByText('复用目标对话')).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: '制品' })).toBeInTheDocument();
+    expect(screen.getByText('日报生成完成')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: '打开文件' })).toHaveAttribute('href', '/api/tasks/task-1/workspace/files/file-1/content');
     expect(await screen.findByText('已完成')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: '查看结果对话' }));
     expect(openConversation).toHaveBeenCalledWith('task-1', '日报会话');
