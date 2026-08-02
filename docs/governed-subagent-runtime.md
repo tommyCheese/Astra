@@ -50,11 +50,12 @@ An adapter missing any invariant is incompatible even if its protocol calls the 
 
 ## Configuration and rollout
 
-Settings are disabled/conservative by default and frozen in each Run policy snapshot.
+Settings are conservative by default and frozen in each Run policy snapshot.
 
 | Setting family | Purpose |
 | --- | --- |
-| `agent_subagent_execution_enabled`, `agent_subagent_kill_switch` | Global enable and emergency stop |
+| `tool_swarm_enabled` | Persisted user-facing product enablement switch |
+| `agent_subagent_kill_switch` | Server-side emergency stop |
 | `agent_subagent_rollout_cohort` | Shadow, administrator canary, trusted read-only, or later cohort |
 | child/parent/depth/parallel settings | Fan-out and recursion bounds |
 | parent token/model/tool/cost reserves | Capacity retained for root completion |
@@ -63,10 +64,9 @@ Settings are disabled/conservative by default and frozen in each Run policy snap
 
 Rollout order is shadow decisions without execution, administrator-only canary, trusted read-only, then staged general availability. Promotion requires deterministic protocol tests, behavior evals, and paired single-/multi-Agent quality, p50/p95 latency, token, cost, failure, recovery, cancellation, and safety gates. Safety failures or a doubled failure threshold activate the kill switch. Rollback returns to shadow and drains/fences children.
 
-To enable the current trusted read-only production slice for newly created Runs, set at minimum:
+The trusted read-only production slice is the default rollout cohort. Operators may still override its safety envelope; for example:
 
 ```text
-AGENT_SUBAGENT_EXECUTION_ENABLED=true
 AGENT_SUBAGENT_KILL_SWITCH=false
 AGENT_SUBAGENT_ROLLOUT_COHORT=trusted_read_only
 AGENT_SUBAGENT_MAX_DEPTH=1
@@ -75,9 +75,17 @@ AGENT_SUBAGENT_MAX_PARALLEL_CHILDREN=2
 
 Existing Runs keep their frozen policy snapshot. Restart the backend after changing deployment settings. `max_children_total` and `max_children_per_parent` cap cumulative creation; `max_parallel_children` caps simultaneous siblings; `max_depth=1` prevents children from creating grandchildren. The `swarm` manifest is excluded from child catalogs.
 
+Users enable or disable **Swarm / 子 Agent** under Settings → Tools. This is the only product enablement switch; there is no separate deployment execution toggle. The UI switch cannot override the rollout cohort or emergency kill switch. Turning it off immediately makes `/subagent` unavailable, removes `swarm` from subsequent root decision contexts, and makes the Supervisor reject new fan-out from an already-running Run. Existing children are not implicitly cancelled.
+
 ## `/subagent` command
 
-`/subagent <task>` is a Run-creation command, not a host-side context mutation. The UI removes the command prefix, creates a trusted Run with automatic plan execution and `subagent_mode=required`, and preserves the original draft if validation or Run creation fails. A required-subagent Run cannot complete until it has created at least one governed Swarm group. The command remains visible but unavailable when execution is disabled, killed, shadow-only, or outside an executable rollout cohort.
+`/subagent <task>` is a Run-creation command, not a host-side context mutation. The UI removes the command prefix, preserves the current answer mode, freezes `subagent_mode=required`, and preserves the original draft if validation or Run creation fails. In quick mode it creates a standard Run without a canonical Plan or DAG. In trusted mode it creates a trusted Run with automatic Plan execution. A required-subagent Run in either mode cannot complete until it has created at least one governed Swarm group. The command remains visible but unavailable when Swarm is disabled, killed, shadow-only, or outside an executable rollout cohort.
+
+## Lightweight quick Subagents
+
+Eligible standard Runs can expose the same `swarm` built-in directly inside the quick Agent Loop. Quick Runs remain planless: they do not create a `TaskContract`, canonical Plan, trusted `AgentState`, or execution-graph placeholder. `subagent_mode=auto` keeps delegation opportunistic, while the explicit `/subagent` command makes at least one governed group mandatory.
+
+Quick and trusted Runs share `SubagentSupervisor`, durable Agent executions, attenuated read-only catalogs, hierarchical budgets, Join reconciliation, cancellation, recovery, and sanitized result consumption. Quick mode applies a smaller depth-one budget envelope and basic final verification; trusted mode additionally uses its versioned Plan DAG, node evaluation, evidence requirements, and full Completion Gate. Do not add a quick-only child executor or Join implementation.
 
 ## Operations and troubleshooting
 

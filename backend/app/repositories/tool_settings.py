@@ -13,6 +13,7 @@ TOOL_SETTING_FIELDS = {
     "web_fetch": "tool_web_fetch_enabled",
     "chart_render": "tool_chart_render_enabled",
     "bash_execute": "tool_bash_execute_enabled",
+    "swarm": "tool_swarm_enabled",
 }
 PENDING_TOOL_SETTINGS_CACHE = "astra_pending_tool_settings_cache"
 _TOOL_SETTINGS_CACHE: WeakKeyDictionary[Engine, dict[str, bool]] = WeakKeyDictionary()

@@ -29,7 +29,7 @@ Astra 目前只能由用户即时发起 Run，无法可靠地在指定时间执�
 
 - 后端：新增调度/heartbeat 数据模型、Alembic 迁移、Repository、后台调度服务、API schema/router，并接入 FastAPI lifespan 与现有 RunEngine。
 - 命令系统：扩展命令注册元数据、参数解析、执行请求和结果契约；自动化命令调用同一应用服务，不复制调度逻辑。
-- 前端：增加全局“已安排任务”一级入口、计划编辑器、运行历史和 heartbeat 设置；从任意会话创建的任务都在此统一管理。
+- 前端：增加全局“已安排任务”一级入口、计划编辑器、运行历史和 heartbeat 设置；普通定时任务在工作区全局管理，但必须绑定一个用于交付文本、文件与运行状态的目标对话。
 - 数据库：新增 schedules、schedule_runs 与 heartbeat desired-state 相关字段/索引；SQLite 和 PostgreSQL 均需支持。
 - 运维：新增调度轮询、租约、运行超时与历史保留配置和日志指标；不引入独立队列服务作为首版强依赖。
 - 安全：自动化执行不绕过现有审批；创建与修改自动化属于显式用户操作，系统托管 heartbeat 不允许通过普通 schedule API 篡改。

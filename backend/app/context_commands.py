@@ -52,7 +52,7 @@ SYSTEM_COMMANDS = (
     ),
     SystemCommandDefinition(
         name="schedule",
-        description="创建、查看或管理当前对话的定时任务",
+        description="创建、查看或管理工作区独立定时任务",
         effect="manage_schedules",
         argument_mode="required",
         usage="/schedule list|show|create|pause|resume|run|delete …",
@@ -73,10 +73,20 @@ def list_system_commands(settings: Settings | None = None) -> list[dict[str, obj
     commands = list(SYSTEM_COMMANDS)
     enabled = bool(
         settings
-        and settings.agent_subagent_execution_enabled
+        and settings.tool_swarm_enabled
         and not settings.agent_subagent_kill_switch
         and settings.agent_subagent_rollout_cohort in EXECUTABLE_SUBAGENT_COHORTS
     )
+    if settings is None:
+        subagent_unavailable_reason = "无法读取 Swarm / 子 Agent 工具状态。"
+    elif not settings.tool_swarm_enabled:
+        subagent_unavailable_reason = "Swarm / 子 Agent 工具已由用户关闭。"
+    elif settings.agent_subagent_kill_switch:
+        subagent_unavailable_reason = "子 Agent 已被紧急停止开关禁用。"
+    elif settings.agent_subagent_rollout_cohort not in EXECUTABLE_SUBAGENT_COHORTS:
+        subagent_unavailable_reason = "当前发布批次不允许执行子 Agent。"
+    else:
+        subagent_unavailable_reason = None
     commands.append(
         SystemCommandDefinition(
             name="subagent",
@@ -87,9 +97,7 @@ def list_system_commands(settings: Settings | None = None) -> list[dict[str, obj
             side_effect="write",
             execution_mode="run",
             available=enabled,
-            unavailable_reason=(
-                None if enabled else "当前部署尚未启用受治理子 Agent 执行。"
-            ),
+            unavailable_reason=subagent_unavailable_reason,
         )
     )
     return [definition.view() for definition in commands]

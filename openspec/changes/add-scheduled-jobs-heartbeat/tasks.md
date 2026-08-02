@@ -2,14 +2,14 @@
 
 - [x] 1.1 增加调度器配置、cron 计算依赖和安全默认值
 - [x] 1.2 新增 scheduled_jobs 与 scheduled_job_runs ORM 模型、约束和索引
-- [x] 1.3 新增 Alembic migration，并验证 SQLite/PostgreSQL upgrade 与 downgrade 定义
+- [x] 1.3 新增 Alembic migration、保留普通任务结果对话绑定，并验证 SQLite/PostgreSQL upgrade 与 downgrade 定义
 - [x] 1.4 增加 schedule/heartbeat Pydantic schema、枚举和边界校验
 
 ## 2. 计划计算与 Repository
 
 - [x] 2.1 实现 once、interval、cron 的 aware UTC 下次触发计算及 IANA 时区/DST 测试
 - [x] 2.2 实现 schedule CRUD、版本化更新、暂停/恢复和 system-managed 保护
-- [ ] 2.3 实现到期任务 CAS 领取、租约、唯一 fire record 和下一触发推进
+- [x] 2.3 实现到期任务 CAS 领取、租约、唯一 fire record 和下一触发推进
 - [ ] 2.4 实现 misfire skip/fire_once、overlap skip 和重启 claimed 记录恢复
 - [ ] 2.5 实现幂等手动触发、运行历史查询和历史保留清理
 
@@ -17,8 +17,8 @@
 
 - [ ] 3.1 从 HTTP 创建流程提取可复用 Run 创建应用服务
 - [ ] 3.2 将 schedule trigger 元数据和内部 principal 持久化到 Run 审计链路
-- [ ] 3.3 触发时重新校验权限包，并将无效权限收敛为 blocked schedule run
-- [ ] 3.4 实现有并发上限的 SchedulerService scanner/dispatcher/reconciler 与优雅关闭
+- [x] 3.3 触发时重新校验权限包，并将无效权限收敛为 blocked schedule run
+- [x] 3.4 实现有并发上限的 SchedulerService scanner/dispatcher/reconciler 与优雅关闭
 - [ ] 3.5 在 FastAPI lifespan 注册服务，并暴露扫描健康/就绪状态
 
 ## 4. 定时任务 API
@@ -37,13 +37,13 @@
 
 ## 6. Chat UI 自动化管理
 
-- [x] 6.0 将会话命令创建的 schedule 与 heartbeat 控制面改为全局，并兼容收敛旧 heartbeat 稳定键
+- [x] 6.0 将 schedule 与 heartbeat 控制面改为全局、保留结果对话投递，并兼容收敛旧 heartbeat 稳定键
 
 - [x] 6.1 增加前端 schedule/heartbeat 类型与 API client
-- [x] 6.2 增加自动化列表、状态摘要、下一触发和运行历史界面
-- [x] 6.3 增加计划编辑器、时区/策略校验、暂停恢复与手动运行交互
+- [x] 6.2 增加 heartbeat/定时任务独立分区与计数、状态摘要、下一触发和运行历史界面
+- [x] 6.3 增加统一“新建”入口与类型选择、已有/新建结果对话绑定、可视化重复计划轮盘、工作区无人值守执行配置、时区/策略校验、暂停恢复与手动运行交互
 - [x] 6.4 增加 heartbeat 周期、活动时间窗、prompt 和静默语义设置
-- [x] 6.5 从 schedule run 历史导航到关联对话与审计 timeline
+- [x] 6.5 从 schedule run 历史导航到绑定的结果对话、生成文件或 heartbeat 目标对话及审计 timeline
 
 ## 7. 命令系统集成
 

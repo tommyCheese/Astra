@@ -1106,8 +1106,7 @@ function AppContent() {
           return;
         }
         submissionGoal = argumentsText;
-        submissionAnswerMode = 'trusted';
-        submissionPlanExecution = 'auto';
+        if (submissionAnswerMode === 'trusted') submissionPlanExecution = 'auto';
         submissionSubagentMode = 'required';
       } else {
         await runSlashSystemCommand(registeredCommand, {
@@ -1154,7 +1153,7 @@ function AppContent() {
             reflection_trigger: conversationStrategyRef.current.reflection_trigger,
             execution_mode: executionMode === 'bypass' ? 'auto_approval' : 'request_approval',
             verification_level: 'standard',
-          }, modelConfig, submissionPlanExecution,
+          }, modelConfig, submissionAnswerMode === 'trusted' ? submissionPlanExecution : undefined,
           explicitSkillIds.length ? explicitSkillIds : undefined, 'required')
           : explicitSkillIds.length
             ? await createRun(submissionGoal, run?.task_id, submissionAnswerMode, {
@@ -2739,6 +2738,7 @@ const settingSearchItems: SettingSearchEntry[] = [
   { category: '工具', title: '网页读取', description: '管理 Agent 的网页读取能力', target: '网页读取', keywords: 'web fetch', type: 'setting' },
   { category: '工具', title: '图表工具', description: '管理图表生成能力', target: '图表工具', keywords: 'chart render', type: 'setting' },
   { category: '工具', title: '命令工具', description: '管理命令执行能力', target: '命令工具', keywords: 'bash execute terminal', type: 'setting' },
+  { category: '工具', title: 'Swarm / 子 Agent', description: '管理并发子 Agent 创建能力', target: 'Swarm / 子 Agent', keywords: 'swarm subagent 子 Agent 并发 委派', type: 'setting' },
   { category: '运行时', title: '安全运行环境', description: '隔离环境、状态和安全限制', target: '安全运行环境', keywords: 'sandbox runtime', type: 'setting' },
   { category: 'Agent', title: 'Agent Profile', description: '身份、表达方式和记忆治理', target: 'Agent Profile', keywords: 'identity soul memory autodream', type: 'setting' },
   { category: '运行时', title: '自定义依赖', description: '添加 Python 包并构建运行环境', target: '自定义依赖', keywords: 'python package dependency 依赖', type: 'setting' },
@@ -2940,7 +2940,6 @@ function ToolSettings() {
     try {
       const saved = await updateToolSettings(next);
       setTools(saved.tools);
-      setMessage(enabled ? '工具已启用，将用于之后新建的任务。' : '工具已停用，之后新建的任务不会调用它。');
     } catch {
       setTools(previous);
       setMessage('保存工具配置失败，已恢复原状态。');
@@ -2954,7 +2953,6 @@ function ToolSettings() {
       {!tools.length && <p className="tool-settings-message">{t(message)}</p>}
     </div>
     {tools.length > 0 && message && <p className="tool-settings-message" role="status">{t(message)}</p>}
-    <p className="tool-settings-note">{t('设置已保存，并会应用于之后创建的任务。')}</p>
   </SettingsGroup>;
 }
 

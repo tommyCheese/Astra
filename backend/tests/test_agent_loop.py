@@ -6,6 +6,7 @@ from fake_web_tools import fake_web_registry
 from app.agent_profile import ModelOperation, load_agent_profile
 from app.agent_profile.prompts import PromptComposer
 from app.core.config import Settings
+from app.repositories.agent_executions import AgentExecutionRepository
 from app.repositories.plans import PlanRepository, plan_to_view
 from app.repositories.runs import RunRepository
 from app.runner.agent_loop import (
@@ -22,6 +23,7 @@ from app.runner.reasoning import (
     PolicyCompiler,
     RunProfileResolver,
     build_default_contract,
+    compile_subagent_policy,
 )
 from app.schemas.agent import (
     AcceptedFact,
@@ -37,6 +39,7 @@ from app.schemas.agent import (
     ValidationOutcome,
 )
 from app.tools.base import ToolExecutionError
+from app.tools.runtime import SwarmTool
 from app.tools.web import build_web_registry
 
 
@@ -430,6 +433,20 @@ class DirectFinalizeClient(MockModelClient):
         ), FinalAnswer(summary="可信模式运行正常")
 
 
+class ContextRecordingFinalizeClient(DirectFinalizeClient):
+    def __init__(self):
+        self.contexts = []
+
+    async def decide_with_answer(self, goal, context, *, on_delta=None, on_reasoning_delta=None):
+        self.contexts.append(context)
+        return await super().decide_with_answer(
+            goal,
+            context,
+            on_delta=on_delta,
+            on_reasoning_delta=on_reasoning_delta,
+        )
+
+
 class TransactionInspectingClient(MockModelClient):
     def __init__(self, session):
         self.session = session
@@ -598,6 +615,77 @@ async def test_standard_mode_releases_read_transaction_before_model_wait(session
     ).run(repo, run.id, run.task.description)
 
     assert client.transaction_states == [False]
+
+
+async def test_standard_mode_reuses_swarm_supervisor_without_creating_a_dag(session):
+    settings = Settings(model_provider="mock", tool_swarm_enabled=True)
+    profile = RunProfileResolver().resolve(
+        AnswerMode.standard,
+        RequestedReasoningPolicy(execution_mode="auto_approval"),
+        subagent_policy=compile_subagent_policy(settings),
+    )
+    repo = RunRepository(session)
+    run = await repo.create_task_run(
+        "快速并发能力检查",
+        settings.model_policy,
+        reasoning_policy=profile.reasoning_policy.model_dump(mode="json"),
+        answer_mode=profile.answer_mode.value,
+        execution_profile=profile.model_dump(mode="json"),
+    )
+    registry = fake_web_registry()
+    registry.register(SwarmTool())
+    client = ContextRecordingFinalizeClient()
+
+    result = await AgentLoop(settings, model_client=client, tool_registry=registry).run(
+        repo, run.id, run.task.description
+    )
+
+    root = await AgentExecutionRepository(session).root_for_run(run.id)
+    loaded = await repo.require_run(run.id)
+    assert result["status"] == "completed"
+    assert "swarm" in client.contexts[0]["tool_manifests"]
+    assert root is not None and root.identity_id is not None
+    assert loaded.task_contract == {}
+    assert loaded.plan_graph == {}
+    assert loaded.agent_state == {}
+    assert loaded.state_version == 0
+
+
+async def test_required_standard_mode_cannot_finalize_without_a_swarm_group(session):
+    settings = Settings(
+        model_provider="mock",
+        tool_swarm_enabled=True,
+        agent_max_turns=2,
+    )
+    profile = RunProfileResolver().resolve(
+        AnswerMode.standard,
+        RequestedReasoningPolicy(execution_mode="auto_approval"),
+        subagent_policy=compile_subagent_policy(settings),
+        subagent_mode="required",
+    )
+    repo = RunRepository(session)
+    run = await repo.create_task_run(
+        "必须快速并发",
+        settings.model_policy,
+        reasoning_policy=profile.reasoning_policy.model_dump(mode="json"),
+        answer_mode=profile.answer_mode.value,
+        execution_profile=profile.model_dump(mode="json"),
+    )
+    registry = fake_web_registry()
+    registry.register(SwarmTool())
+
+    result = await AgentLoop(
+        settings,
+        model_client=DirectFinalizeClient(),
+        tool_registry=registry,
+    ).run(repo, run.id, run.task.description)
+
+    loaded = await repo.require_run(run.id)
+    assert result["status"] == "blocked"
+    assert any(
+        (turn.observation or {}).get("kind") == "subagent_required"
+        for turn in loaded.turns
+    )
 
 
 async def test_standard_mode_uses_deployment_tool_limit(session):

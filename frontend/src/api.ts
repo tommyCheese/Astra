@@ -134,29 +134,42 @@ export type ScheduleSpec =
   | { type: 'once'; at: string }
   | { type: 'interval'; interval_seconds: number; anchor_at?: string | null }
   | { type: 'cron'; expression: string };
-export type ScheduledTask = {
+type ScheduledTaskBase = {
   id: string;
   name: string;
-  kind: 'agent' | 'heartbeat';
-  system_managed: boolean;
   owner_principal: string | null;
-  target_task_id: string | null;
   prompt: string;
-  schedule_type: 'once' | 'interval' | 'cron';
-  schedule: ScheduleSpec;
   timezone: string;
   enabled: boolean;
   misfire_policy: 'skip' | 'fire_once';
   misfire_grace_seconds: number;
   overlap_policy: 'skip';
   execution: Record<string, unknown>;
-  heartbeat: { active_hours?: { start: string; end: string } | null; prompt?: string };
   next_fire_at: string | null;
   last_fire_at: string | null;
   version: number;
   created_at: string;
   updated_at: string;
 };
+type HeartbeatSettings = { active_hours?: { start: string; end: string } | null; prompt?: string };
+export type ScheduledTask = ScheduledTaskBase & (
+  | {
+    kind: 'agent';
+    system_managed: false;
+    schedule_type: 'once' | 'interval' | 'cron';
+    schedule: ScheduleSpec;
+    heartbeat: Record<string, never>;
+    target_task_id: string | null;
+  }
+  | {
+    kind: 'heartbeat';
+    system_managed: true;
+    schedule_type: 'interval';
+    schedule: Extract<ScheduleSpec, { type: 'interval' }>;
+    heartbeat: HeartbeatSettings;
+    target_task_id: string | null;
+  }
+);
 export type ScheduledTaskRun = {
   id: string;
   job_id: string;
@@ -176,6 +189,16 @@ export async function listScheduledTasks(signal?: AbortSignal): Promise<Schedule
   const response = await fetchWithTimeout('/api/schedules', { signal });
   if (!response.ok) throw await responseError(response);
   return response.json() as Promise<ScheduledTask[]>;
+}
+
+export async function createScheduledTask(
+  payload: Record<string, unknown>,
+): Promise<ScheduledTask> {
+  const response = await fetchWithTimeout('/api/schedules', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+  });
+  if (!response.ok) throw await responseError(response);
+  return response.json() as Promise<ScheduledTask>;
 }
 
 export async function updateScheduledTask(
@@ -323,7 +346,7 @@ export type RuntimeProfile = {
 };
 
 export type ToolSetting = {
-  name: 'web_search' | 'web_fetch' | 'chart_render' | 'bash_execute';
+  name: 'web_search' | 'web_fetch' | 'chart_render' | 'bash_execute' | 'swarm';
   label: string;
   description: string;
   enabled: boolean;
@@ -708,6 +731,19 @@ export async function listRuns(limit = 100): Promise<RunView[]> {
 
 export async function listConversations(limit = 100): Promise<ConversationSummary[]> {
   const response = await fetch(`/api/conversations?limit=${limit}`);
+  if (!response.ok) throw await responseError(response);
+  return response.json();
+}
+
+export async function createConversation(
+  title: string,
+  preferredAnswerMode: 'standard' | 'trusted' = 'standard',
+): Promise<ConversationSummary> {
+  const response = await fetch('/api/conversations', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ title, preferred_answer_mode: preferredAnswerMode }),
+  });
   if (!response.ok) throw await responseError(response);
   return response.json();
 }

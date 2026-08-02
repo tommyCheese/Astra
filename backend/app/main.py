@@ -48,6 +48,7 @@ from app.runner.engine import (
     shared_tool_registry,
 )
 from app.runtime_profiles import RuntimeProfileService
+from app.scheduling.service import SchedulerService
 from app.skills.storage import ensure_builtin_skills
 
 logger = logging.getLogger("astra.http")
@@ -82,8 +83,10 @@ def create_app(settings: Settings | None = None, *, session_factory=SessionLocal
                     logger.warning("usage.reconciled_interrupted count=%s", interrupted)
             await app.state.conversation_retention_service.startup()
             await app.state.autodream_service.startup()
+            await app.state.scheduler_service.startup()
             yield
         finally:
+            await app.state.scheduler_service.shutdown()
             await app.state.autodream_service.shutdown()
             await app.state.conversation_retention_service.shutdown()
             await app.state.runtime_profile_service.shutdown()
@@ -94,6 +97,7 @@ def create_app(settings: Settings | None = None, *, session_factory=SessionLocal
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
     )
     app = FastAPI(title="Astra", version=application_version(), lifespan=lifespan)
+    app.state.session_factory = session_factory
     app.state.runtime_profile_service = RuntimeProfileService(
         settings,
         recover_interrupted=True,
@@ -104,6 +108,7 @@ def create_app(settings: Settings | None = None, *, session_factory=SessionLocal
         session_factory,
     )
     app.state.autodream_service = AutoDreamService(settings, session_factory)
+    app.state.scheduler_service = SchedulerService(settings, session_factory)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origin_list,

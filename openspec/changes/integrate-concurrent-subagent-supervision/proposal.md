@@ -6,6 +6,7 @@ The governed subagent runtime currently stops at a disabled-by-default, single-a
 
 - Replace the phase-one "one active child per parent" rule with policy-bounded concurrent fan-out enforced by cumulative, active, budget, provider, and deployment limits.
 - Add an Astra `swarm` runtime built-in that lets the root Agent atomically create a bounded group of child executions and its durable join through the existing Tool-selection surface without becoming a third-party or sandbox Tool.
+- List `swarm` in the persisted Tool settings UI as the only product enablement switch; runtime eligibility also remains subject to server-enforced cohort policy and the emergency kill switch.
 - Add `/subagent <task>` to the registered slash-command system as a Run-creation command that starts a trusted Run with required subagent execution while keeping the command text out of conversation messages.
 - Add a Run-scoped subagent supervisor that dispatches queued children concurrently through independent database sessions and model-client execution contexts while the root continues unrelated work.
 - Automatically validate, join, merge, and explicitly promote verified child results into parent observations exactly once.

@@ -30,8 +30,6 @@ from app.runner.plan_revision import PlanRevisionError, revise_waiting_plan
 from app.runner.reasoning import RunProfileResolver, compile_subagent_policy
 from app.runtime_events import run_event_broker
 from app.schemas.agent import (
-    EXECUTABLE_SUBAGENT_COHORTS,
-    AnswerMode,
     ApprovalDecisionRequest,
     ContinuationAction,
     ContinueRunRequest,
@@ -45,6 +43,7 @@ from app.schemas.agent import (
 from app.schemas.models import RunModelConfig
 from app.schemas.permissions import PermissionBundle
 from app.skills.catalog import SkillActivationService, SkillCatalogBuilder
+from app.subagents.eligibility import subagent_execution_eligibility
 from app.subagents.lifecycle import SubagentCancellationService
 from app.subagents.observability import SubagentTelemetryRepository
 
@@ -238,7 +237,7 @@ def _configured_skill_capabilities(settings: Settings) -> set[str]:
     }
 
 
-def _schedule_run(run_id: str, settings: Settings) -> None:
+def _schedule_run(run_id: str, settings: Settings) -> asyncio.Task[None]:
     """Keep a strong reference to in-process runs until they finish."""
     task = asyncio.create_task(
         start_run_in_process(run_id, settings),
@@ -247,6 +246,7 @@ def _schedule_run(run_id: str, settings: Settings) -> None:
     _background_tasks.add(task)
     _background_tasks_by_run[run_id] = task
     task.add_done_callback(lambda completed: _finish_background_task(run_id, completed))
+    return task
 
 
 def _finish_background_task(run_id: str, task: asyncio.Task[None]) -> None:
@@ -375,12 +375,11 @@ async def _create_run(
         )
         if payload.subagent_mode == "required":
             subagent_policy = profile.reasoning_policy.effective.subagents
-            if (
-                profile.answer_mode != AnswerMode.trusted
-                or not subagent_policy.enabled
-                or subagent_policy.kill_switch
-                or subagent_policy.rollout_cohort not in EXECUTABLE_SUBAGENT_COHORTS
-            ):
+            eligibility = subagent_execution_eligibility(
+                subagent_policy,
+                live_swarm_enabled=bool(run_settings.tool_swarm_enabled),
+            )
+            if not eligibility.executable:
                 raise ValidationError(
                     "SUBAGENT_COMMAND_UNAVAILABLE",
                     "当前策略不允许创建必需子 Agent 运行。",

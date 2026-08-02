@@ -41,6 +41,7 @@ from app.repositories.memories import MemoryRepository
 from app.repositories.permissions import PermissionRepository
 from app.repositories.plans import PlanRepository, plan_to_view
 from app.repositories.runs import RunRepository
+from app.repositories.tool_settings import ToolSettingsRepository, default_tool_states
 from app.repositories.workspaces import WorkspaceRepository
 from app.runner.adapters import ChartTaskAdapter, ProcessorRegistry, WebTaskAdapter
 from app.runner.approvals import input_hash, safe_preview, similar_matcher
@@ -58,13 +59,13 @@ from app.runner.runtime import LoopOrchestrator, NoProgressDetector
 from app.sandbox.docker_provider import build_sandbox_provider
 from app.sandbox.runtime import SandboxJobService, SandboxSupervisor
 from app.schemas.agent import (
-    EXECUTABLE_SUBAGENT_COHORTS,
     AgentDecision,
     AgentObservation,
     AgentState,
     AnswerMode,
     AssuranceLevel,
     CompletionDecision,
+    EffectiveSubagentPolicy,
     EvaluationOutcome,
     ExpectedObservation,
     FailureFingerprint,
@@ -88,6 +89,7 @@ from app.schemas.permissions import (
     PermissionSubject,
 )
 from app.skills.catalog import SkillActivationService
+from app.subagents.eligibility import subagent_execution_eligibility
 from app.subagents.supervisor import SubagentSupervisor
 from app.tools.base import (
     ToolExecutionContext,
@@ -478,13 +480,19 @@ class ContextAssembler:
         raw_subagent_policy = (
             ((run.reasoning_policy or {}).get("effective") or {}).get("subagents") or {}
         )
-        subagent_eligible = bool(
-            run.answer_mode == AnswerMode.trusted.value
-            and raw_subagent_policy.get("enabled")
-            and not raw_subagent_policy.get("kill_switch")
-            and raw_subagent_policy.get("rollout_cohort") in EXECUTABLE_SUBAGENT_COHORTS
+        live_tool_states = (
+            await ToolSettingsRepository(self.repo.session).get_or_create(
+                default_tool_states(self.settings)
+            )
+            if self.settings is not None
+            else {}
         )
-        if not subagent_eligible:
+        subagent_policy = EffectiveSubagentPolicy.model_validate(raw_subagent_policy)
+        subagent_eligible = subagent_execution_eligibility(
+            subagent_policy,
+            live_swarm_enabled=bool(live_tool_states.get("swarm", False)),
+        )
+        if not subagent_eligible.executable:
             specs.pop("swarm", None)
         _, unavailable = tool_router.eligible_specs()
         if self.skills_enabled and not quick_mode:
@@ -549,7 +557,7 @@ class ContextAssembler:
             "active_skills": active_skills,
             "subagent_mode": raw_profile.get("subagent_mode", "auto"),
         }
-        if subagent_eligible:
+        if subagent_eligible.executable:
             root_execution = await AgentExecutionRepository(self.repo.session).root_for_run(run_id)
             descendants = (
                 await AgentExecutionRepository(self.repo.session).descendants(root_execution.id)
@@ -1032,12 +1040,14 @@ class AgentLoop:
         )
         policy = policy_snapshot.effective
         subagent_supervisor: SubagentSupervisor | None = None
-        if (
-            not quick_mode
-            and policy.subagents.enabled
-            and not policy.subagents.kill_switch
-            and policy.subagents.rollout_cohort in EXECUTABLE_SUBAGENT_COHORTS
-        ):
+        live_tool_states = await ToolSettingsRepository(repo.session).get_or_create(
+            default_tool_states(self.settings)
+        )
+        subagent_eligibility = subagent_execution_eligibility(
+            policy.subagents,
+            live_swarm_enabled=bool(live_tool_states.get("swarm", False)),
+        )
+        if subagent_eligibility.executable:
             await ensure_permission_runtime()
             assert main_identity is not None
             execution_repository = AgentExecutionRepository(repo.session)
@@ -1120,6 +1130,7 @@ class AgentLoop:
         terminal_override: str | None = None
         terminal_summary: str | None = None
         streamed_final_answer: FinalAnswer | None = None
+        required_subagent_missing = False
         reflection_count = 0
         replan_count = 0
         active_node = None
@@ -1982,6 +1993,7 @@ class AgentLoop:
                         ).all()
                     )
                     if profile.subagent_mode == "required" and not root_joins:
+                        required_subagent_missing = True
                         observation = AgentObservation(
                             kind="subagent_required",
                             status="failed",
@@ -1997,6 +2009,7 @@ class AgentLoop:
                         )
                         await repo.session.commit()
                         continue
+                    required_subagent_missing = False
                     if await subagent_supervisor.has_pending():
                         await repo.update_agent_turn(
                             turn.id,
@@ -2834,6 +2847,12 @@ class AgentLoop:
                         },
                     )
                 await repo.session.commit()
+
+        if required_subagent_missing and terminal_override is None:
+            terminal_override = TerminalState.blocked.value
+            terminal_summary = (
+                "The Run could not complete because no governed Swarm group was created."
+            )
 
         evidence_pack = self.adapter.build_evidence(goal, self.adapter.attempted)
         artifact = None

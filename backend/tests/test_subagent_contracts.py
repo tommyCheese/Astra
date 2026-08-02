@@ -19,6 +19,7 @@ from app.schemas.subagents import (
     SubagentQuestion,
     SubagentResult,
 )
+from app.subagents.eligibility import subagent_execution_eligibility
 
 
 def delegation_request(**updates) -> DelegationRequest:
@@ -145,10 +146,11 @@ def test_subagent_result_status_contract_is_total():
         )
 
 
-def test_subagent_settings_are_disabled_and_conservative_by_default():
+def test_subagent_settings_are_governed_and_conservative_by_default():
     settings = Settings()
 
-    assert settings.agent_subagent_execution_enabled is False
+    assert settings.tool_swarm_enabled is True
+    assert settings.agent_subagent_rollout_cohort == "trusted_read_only"
     assert settings.agent_subagent_max_depth == 1
     assert settings.agent_subagent_read_only is True
     assert settings.agent_subagent_max_parallel_children <= 2
@@ -164,7 +166,6 @@ def test_policy_compiler_freezes_effective_subagent_limits():
     settings = Settings(
         model_provider="mock",
         model_name="mock-agent",
-        agent_subagent_execution_enabled=True,
         agent_subagent_rollout_cohort="admin-canary",
         agent_subagent_max_children_total=3,
         agent_subagent_max_children_per_parent=2,
@@ -183,8 +184,17 @@ def test_policy_compiler_freezes_effective_subagent_limits():
     ]
 
 
-def test_standard_profile_cannot_enable_subagents_but_trusted_profile_can():
-    policy = compile_subagent_policy(Settings(agent_subagent_execution_enabled=True))
+def test_swarm_tool_switch_is_the_product_enablement_gate():
+    user_enabled = compile_subagent_policy(Settings(tool_swarm_enabled=True))
+    user_disabled = compile_subagent_policy(Settings(tool_swarm_enabled=False))
+
+    assert user_enabled.enabled is True
+    assert user_disabled.enabled is False
+    assert user_disabled.budgets.max_parallel_children == 0
+
+
+def test_standard_profile_uses_a_clamped_shared_subagent_policy():
+    policy = compile_subagent_policy(Settings(tool_swarm_enabled=True))
 
     standard = RunProfileResolver().resolve(
         AnswerMode.standard,
@@ -198,8 +208,28 @@ def test_standard_profile_cannot_enable_subagents_but_trusted_profile_can():
         subagent_policy=policy,
     )
 
-    assert standard.reasoning_policy.effective.subagents.enabled is False
+    quick_policy = standard.reasoning_policy.effective.subagents
+    trusted_policy = trusted.reasoning_policy.effective.subagents
+
+    assert quick_policy.enabled is True
+    assert quick_policy.read_only is True
+    assert quick_policy.budgets.max_depth == 1
+    assert quick_policy.budgets.max_children_total == 2
+    assert quick_policy.budgets.max_tokens == 8_000
+    assert quick_policy.budgets.max_wall_time_seconds == 120
+    assert quick_policy.model_routing.max_reasoning_effort.value == "fast"
     assert trusted.reasoning_policy.effective.subagents.enabled is True
+    assert trusted_policy.budgets.max_children_total == 4
+    assert trusted_policy.budgets.max_tokens == 16_000
+
+
+def test_subagent_execution_eligibility_is_shared_across_answer_modes():
+    policy = compile_subagent_policy(Settings(tool_swarm_enabled=True))
+
+    assert subagent_execution_eligibility(policy, live_swarm_enabled=True).executable
+    disabled = subagent_execution_eligibility(policy, live_swarm_enabled=False)
+    assert disabled.executable is False
+    assert disabled.reason == "swarm_disabled"
 
 
 def test_historical_reasoning_snapshot_defaults_to_disabled_subagents():

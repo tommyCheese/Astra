@@ -41,7 +41,7 @@ An ordinary third-party Tool was rejected because delegation controls identity, 
 
 The command catalog will distinguish host commands from Run-creation commands. `/subagent <task>` consumes its command text and creates a trusted Run with `subagent_mode = required`, auto plan execution, and the original task text as the user goal. The root remains the supervisor and invokes `swarm`; the command does not create an orphan child without a root Run.
 
-The command is unavailable when subagent execution is disabled, killed, or in shadow-only policy. Failed creation preserves the draft and arguments. The server revalidates the mode and policy so a client cannot force delegation outside eligibility.
+The command is unavailable when the user disables Swarm, the emergency kill switch is active, or rollout policy is shadow-only. Failed creation preserves the draft and arguments. The server revalidates the mode and policy so a client cannot force delegation outside eligibility.
 
 ### 4. Add a Run-scoped `SubagentSupervisor`
 
@@ -73,6 +73,12 @@ Trusted root completion requires mandatory descendants to be terminal, required 
 
 Rollout cohort eligibility will be enforced, not merely recorded. Initial execution is trusted, read-only, depth-one, and allowlisted; `shadow` records decisions without creating children. The kill switch blocks new groups and drains or fences existing workers according to cancellation policy.
 
+### 9. Persist Swarm in the ordinary Tool settings surface
+
+`swarm` will appear beside other built-in tools with a persisted user-controlled switch. It is the only product enablement switch: effective execution requires the stored `tool_swarm_enabled` value, an executable server rollout cohort, and an inactive emergency kill switch. There is no second deployment execution toggle for users to discover or coordinate. Turning Swarm off removes `/subagent` availability, freezes a disabled subagent policy for new Runs, removes `swarm` from subsequent root decision contexts, and adds a live runtime denial so an already-running root cannot create additional children. Existing children keep their frozen contracts and are not implicitly cancelled.
+
+Treating the UI toggle as permission to bypass rollout or emergency controls was rejected. A separate ordinary execution flag was also rejected because it creates an enabled-looking but unusable product control. Hiding only the UI entry was rejected because guessed API/tool calls would still create children.
+
 ## Risks / Trade-offs
 
 - **Concurrent model attribution can cross execution boundaries** → construct per-child model wrappers and usage recorders; test simultaneous calls with distinct execution IDs.
@@ -87,7 +93,7 @@ Rollout cohort eligibility will be enforced, not merely recorded. Initial execut
 ## Migration Plan
 
 1. Add schemas and persistence for fan-out group identity and exactly-once join consumption while keeping existing rows readable.
-2. Add the supervisor and child runtime factory behind the disabled feature flag; run protocol and concurrency tests with `max_parallel_children = 2`.
+2. Add the supervisor and child runtime factory behind the persisted Swarm switch and emergency kill switch; run protocol and concurrency tests with `max_parallel_children = 2`.
 3. Integrate `delegate_tasks`, dependency-scoped join barriers, reconciliation, and Completion Gate checks for trusted Runs.
 4. Run shadow evaluation, then an allowlisted trusted read-only canary with depth one and bounded total/per-parent limits.
 5. Promote by policy after quality, latency, cost, failure, cancellation, recovery, and safety gates pass.

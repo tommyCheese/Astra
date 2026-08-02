@@ -23,6 +23,11 @@ class ConversationView(ConversationSummary):
     runs: list[RunView] = Field(default_factory=list)
 
 
+class ConversationCreateRequest(BaseModel):
+    title: str = Field(min_length=1, max_length=240)
+    preferred_answer_mode: Literal["standard", "trusted"] = "standard"
+
+
 class ConversationUpdateRequest(BaseModel):
     title: str | None = Field(default=None, max_length=240)
     pinned: bool | None = None

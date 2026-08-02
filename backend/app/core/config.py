@@ -25,6 +25,7 @@ class Settings(BaseSettings):
     tool_web_fetch_enabled: bool = True
     tool_chart_render_enabled: bool = True
     tool_bash_execute_enabled: bool = False
+    tool_swarm_enabled: bool = True
     trusted_tool_providers: str = (
         "astra.builtin=builtin,astra.web=builtin,astra.chart=builtin,astra.shell=builtin"
     )
@@ -53,9 +54,8 @@ class Settings(BaseSettings):
     agent_execution_stale_seconds: int = 45
     agent_node_attempt_timeout_seconds: int = 120
     agent_node_max_safe_retries: int = 1
-    agent_subagent_execution_enabled: bool = False
     agent_subagent_kill_switch: bool = False
-    agent_subagent_rollout_cohort: str = "disabled"
+    agent_subagent_rollout_cohort: str = "trusted_read_only"
     agent_subagent_read_only: bool = True
     agent_subagent_max_children_total: int = Field(default=4, ge=1, le=64)
     agent_subagent_max_children_per_parent: int = Field(default=2, ge=1, le=16)
@@ -98,7 +98,7 @@ class Settings(BaseSettings):
     conversation_retention_days: int = Field(default=180, ge=1, le=36_500)
     conversation_retention_sweep_seconds: int = Field(default=86_400, ge=60, le=2_592_000)
     conversation_retention_batch_size: int = Field(default=100, ge=1, le=1_000)
-    scheduler_enabled: bool = False
+    scheduler_enabled: bool = True
     scheduler_poll_seconds: float = Field(default=1.0, ge=0.1, le=60.0)
     scheduler_lease_seconds: int = Field(default=30, ge=5, le=3_600)
     scheduler_batch_size: int = Field(default=20, ge=1, le=500)

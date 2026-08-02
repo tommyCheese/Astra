@@ -1,20 +1,18 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime
 
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings
 from app.core.errors import ResourceError, StateError, ValidationError
-from app.db.models import RunRecord, ScheduledJobRecord, TaskRecord
-from app.permissions.governance import verify_permission_bundle
+from app.db.models import ScheduledJobRecord, TaskRecord
 from app.repositories.schedules import (
     ScheduleNotFoundError,
     ScheduleRepository,
     ScheduleVersionConflictError,
 )
-from app.schemas.permissions import PermissionBundle
+from app.scheduling.execution import ScheduledExecutionResolver
 from app.schemas.schedules import (
     ActiveHours,
     HeartbeatConfig,
@@ -112,8 +110,8 @@ class AutomationCommandService:
             try:
                 payload = ScheduledJobCreate(
                     name=(command.name or command.prompt[:80]),
-                    prompt=command.prompt,
                     target_task_id=task.id,
+                    prompt=command.prompt,
                     schedule=command.schedule,
                     timezone=command.timezone,
                     execution=execution,
@@ -164,9 +162,7 @@ class AutomationCommandService:
         if command.action == "delete":
             assert command.version is not None
             job = await self.repo.delete(job.id, version=command.version)
-            return "已删除定时任务并保留运行历史。", {
-                "job": self._job_view(job)
-            }
+            return "已删除定时任务并保留运行历史。", {"job": self._job_view(job)}
         if not job.enabled:
             raise StateError(
                 "SCHEDULE_DISABLED",
@@ -177,9 +173,7 @@ class AutomationCommandService:
             idempotency_key=command.idempotency_key,
             claimed_by="system-command",
         )
-        return "已排队手动运行。", {
-            "schedule_run": self._schedule_run_view(schedule_run)
-        }
+        return "已排队手动运行。", {"schedule_run": self._schedule_run_view(schedule_run)}
 
     async def _execute_heartbeat(
         self,
@@ -198,43 +192,32 @@ class AutomationCommandService:
                 f"时区 {heartbeat.timezone} · "
                 f"下次 {self._display_time(heartbeat.next_fire_at)}",
                 {
-                "heartbeat": {
-                    "configured": True,
-                    **self._job_view(heartbeat),
-                }
+                    "heartbeat": {
+                        "configured": True,
+                        **self._job_view(heartbeat),
+                    }
                 },
             )
         if command.action == "on":
             assert command.interval_seconds is not None
-            if (
-                command.interval_seconds
-                < self.settings.scheduler_heartbeat_min_interval_seconds
-            ):
+            if command.interval_seconds < self.settings.scheduler_heartbeat_min_interval_seconds:
                 raise ValidationError(
                     "HEARTBEAT_INTERVAL_TOO_SHORT",
                     "heartbeat 周期低于系统允许的最小值。",
-                    {
-                        "minimum_seconds": (
-                            self.settings.scheduler_heartbeat_min_interval_seconds
-                        )
-                    },
+                    {"minimum_seconds": (self.settings.scheduler_heartbeat_min_interval_seconds)},
                 )
             execution = await self._current_execution(task.id)
             existing_active = (heartbeat.heartbeat or {}).get("active_hours") if heartbeat else None
             active_hours = command.active_hours
             if active_hours is None and existing_active:
                 active_hours = ActiveHours.model_validate(existing_active)
-            current_prompt = (
-                command.prompt
-                or (heartbeat.prompt if heartbeat is not None else None)
-            )
+            current_prompt = command.prompt or (heartbeat.prompt if heartbeat is not None else None)
             payload_values = {
                 "target_task_id": task.id,
                 "enabled": True,
                 "interval_seconds": command.interval_seconds,
                 "timezone": (
-                    command.timezone
-                    or (heartbeat.timezone if heartbeat is not None else "UTC")
+                    command.timezone or (heartbeat.timezone if heartbeat is not None else "UTC")
                 ),
                 "active_hours": active_hours,
                 "execution": execution,
@@ -279,50 +262,7 @@ class AutomationCommandService:
         }
 
     async def _current_execution(self, task_id: str) -> ScheduledExecutionConfig:
-        runs = list(
-            (
-                await self.session.scalars(
-                    select(RunRecord)
-                    .where(RunRecord.task_id == task_id)
-                    .order_by(RunRecord.created_at.desc())
-                    .limit(20)
-                )
-            ).all()
-        )
-        now = datetime.now(timezone.utc)
-        for run in runs:
-            raw_bundle = (run.execution_profile or {}).get("permission_bundle")
-            if not raw_bundle:
-                continue
-            try:
-                bundle = PermissionBundle.model_validate(raw_bundle)
-            except ValueError:
-                continue
-            expires_at = bundle.expires_at
-            if expires_at is not None:
-                if expires_at.tzinfo is None:
-                    expires_at = expires_at.replace(tzinfo=timezone.utc)
-                if expires_at.astimezone(timezone.utc) <= now:
-                    continue
-            if not verify_permission_bundle(
-                bundle,
-                self.settings.permission_bundle_signing_secret,
-            ):
-                continue
-            model = {
-                key: run.model_policy.get(key)
-                for key in ("provider", "model", "base_url", "thinking")
-                if run.model_policy.get(key) is not None
-            }
-            return ScheduledExecutionConfig(
-                answer_mode=run.answer_mode,
-                model=model or None,
-                permission_bundle=bundle.model_dump(mode="json"),
-            )
-        raise ValidationError(
-            "AUTOMATION_PERMISSION_BUNDLE_REQUIRED",
-            "创建自动化需要当前对话中仍有效的无人值守权限包。",
-        )
+        return await ScheduledExecutionResolver(self.session, self.settings).from_task(task_id)
 
     async def _require_global_job(
         self,
@@ -344,12 +284,8 @@ class AutomationCommandService:
             "enabled": job.enabled,
             "schedule": job.schedule,
             "timezone": job.timezone,
-            "next_fire_at": (
-                job.next_fire_at.isoformat() if job.next_fire_at else None
-            ),
-            "last_fire_at": (
-                job.last_fire_at.isoformat() if job.last_fire_at else None
-            ),
+            "next_fire_at": (job.next_fire_at.isoformat() if job.next_fire_at else None),
+            "last_fire_at": (job.last_fire_at.isoformat() if job.last_fire_at else None),
             "version": job.version,
             "heartbeat": job.heartbeat,
         }

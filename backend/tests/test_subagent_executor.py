@@ -5,7 +5,9 @@ from datetime import datetime, timezone
 
 import pytest
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import async_sessionmaker
 
+from app.core.config import Settings
 from app.db.models import (
     AgentTurnRecord,
     NodeExecutionRecord,
@@ -15,6 +17,10 @@ from app.db.models import (
 from app.repositories.agent_executions import AgentExecutionRepository
 from app.repositories.permissions import PermissionRepository
 from app.repositories.runs import RunRepository
+from app.repositories.tool_settings import (
+    ToolSettingsRepository,
+    default_tool_states,
+)
 from app.runner.model_client import MockModelClient
 from app.schemas.agent import (
     AgentDecision,
@@ -43,6 +49,7 @@ from app.schemas.subagents import (
 from app.subagents.executor import AgentExecutorRuntime, LocalAstraAgentExecutor
 from app.subagents.governance import FrozenChildCatalog
 from app.subagents.runtime import SubagentRuntimeOperations
+from app.subagents.supervisor import SubagentSupervisor
 from app.tools.base import (
     ArtifactRef,
     Tool,
@@ -674,6 +681,48 @@ async def test_runtime_fanout_creates_two_children_and_one_idempotent_join(sessi
     assert replay.join_id == accepted.join_id
     assert replay.idempotent_replay is True
     assert len(await AgentExecutionRepository(session).descendants(root.id)) == 2
+
+
+async def test_live_swarm_switch_blocks_new_children_for_running_supervisor(session):
+    run, root, parent, operations, request, registry = await _operations_runtime(session)
+    settings = Settings(
+        model_provider="mock",
+        agent_subagent_rollout_cohort="trusted_read_only",
+    )
+    tool_settings = ToolSettingsRepository(session)
+    await tool_settings.get_or_create(default_tool_states(settings))
+    await tool_settings.set_all({"swarm": False}, default_tool_states(settings))
+    await session.commit()
+    supervisor = SubagentSupervisor(
+        settings=settings,
+        session=session,
+        session_factory=async_sessionmaker(
+            session.bind,
+            expire_on_commit=False,
+            class_=type(session),
+        ),
+        run_id=run.id,
+        parent_execution_id=root.id,
+        parent_identity_id=parent.id,
+        policy=operations.policy.model_copy(
+            update={"rollout_cohort": "trusted_read_only"}
+        ),
+        tool_registry=registry,
+        model_client_factory=MockModelClient,
+    )
+    fanout = SubagentFanoutRequest(
+        group_id="group:disabled-live",
+        tasks=[request],
+        join=SubagentJoinSpec(
+            key="join:disabled-live",
+            policy=SubagentJoinPolicy.required,
+        ),
+    )
+
+    with pytest.raises(ValueError, match="disabled by the user"):
+        await supervisor.delegate_tasks(fanout)
+
+    assert await AgentExecutionRepository(session).descendants(root.id) == []
 
 
 async def test_runtime_operations_delegate_inspect_continue_collect_and_cancel(session):

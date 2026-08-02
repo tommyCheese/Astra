@@ -38,6 +38,24 @@
 - **THEN** Swarm ToolCall 返回 accepted handles 并进入 completed
 - **THEN** child AgentExecution 在后台继续且 Join 结果稍后自动注入 parent Observation
 
+### Requirement: Swarm 服从持久化用户工具开关
+系统 SHALL 将 `swarm` 注册到持久化 Tool settings catalog，并 SHALL 以该用户开关作为唯一产品启用开关；可执行性仍 MUST 服从服务端 rollout policy 与紧急 kill switch。关闭开关 MUST 立即阻止任何 Run 创建新的子 Agent，但不得隐式取消已经创建的 child。
+
+#### Scenario: 用户关闭 Swarm
+- **WHEN** 用户在工具设置中关闭 `swarm`
+- **THEN** 后续新建 Run 的冻结 subagent policy 为 disabled，运行中根 Agent 的后续 Tool Catalog 也不包含 `swarm`
+- **THEN** `/subagent` Run 创建和任何构造的委派请求均不能创建 child
+
+#### Scenario: 用户开启但服务端安全策略禁止
+- **WHEN** 用户开关为 enabled 但 kill switch active 或 cohort 不可执行
+- **THEN** 设置界面显示稳定的 unavailable reason
+- **THEN** 运行时仍拒绝创建 child
+
+#### Scenario: 不存在第二个普通执行开关
+- **WHEN** 用户开启 `swarm` 且服务端安全策略允许执行
+- **THEN** 新建 trusted Run 冻结可执行 subagent policy
+- **THEN** 系统不再要求额外启用不可由前台控制的 execution flag
+
 ### Requirement: 并发 child 使用隔离的运行时上下文
 系统 SHALL 为每个并发 child 使用独立数据库 Session、服务实例、模型执行绑定和用量记录上下文；系统 MAY 共享不可变 Catalog 和底层网络连接池，但 MUST NOT 共享可变 AgentExecution 归属。
 

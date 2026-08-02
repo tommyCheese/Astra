@@ -12,7 +12,8 @@ from app.core.config import Settings
 from app.db.models import AgentExecutionRecord
 from app.repositories.agent_executions import AgentExecutionRepository
 from app.repositories.runs import RunRepository
-from app.schemas.agent import EXECUTABLE_SUBAGENT_COHORTS, EffectiveSubagentPolicy
+from app.repositories.tool_settings import ToolSettingsRepository, default_tool_states
+from app.schemas.agent import EffectiveSubagentPolicy
 from app.schemas.subagents import (
     DelegationContract,
     SubagentContextManifest,
@@ -21,6 +22,7 @@ from app.schemas.subagents import (
     SubagentFanoutResult,
 )
 from app.subagents.coordinator import AgentCoordinator, HierarchicalSemaphoreRegistry
+from app.subagents.eligibility import subagent_execution_eligibility
 from app.subagents.executor import LocalAstraAgentExecutor
 from app.subagents.fan_in import SubagentJoinService, SubagentResultMerger
 from app.subagents.runtime import SubagentRuntimeOperations
@@ -76,10 +78,15 @@ class SubagentSupervisor:
     async def delegate_tasks(self, fanout: SubagentFanoutRequest) -> SubagentFanoutResult:
         if self._closed:
             raise ValueError("Subagent supervisor is closed")
-        if not self.policy.enabled or self.policy.kill_switch:
-            raise ValueError("Subagent execution is disabled by the frozen Run policy")
-        if self.policy.rollout_cohort not in EXECUTABLE_SUBAGENT_COHORTS:
-            raise ValueError("Subagent execution is unavailable for this rollout cohort")
+        live_tool_states = await ToolSettingsRepository(self.session).get_or_create(
+            default_tool_states(self.settings)
+        )
+        eligibility = subagent_execution_eligibility(
+            self.policy,
+            live_swarm_enabled=bool(live_tool_states.get("swarm", False)),
+        )
+        if not eligibility.executable:
+            raise ValueError(eligibility.message)
         result = await self.operations.delegate_tasks(
             parent_execution_id=self.parent_execution_id,
             parent_identity_id=self.parent_identity_id,

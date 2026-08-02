@@ -1,18 +1,23 @@
-from fastapi import APIRouter, Depends, Query, Response
+from fastapi import APIRouter, Depends, Query, Request, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings, get_settings
 from app.core.errors import ResourceError, StateError, ValidationError
 from app.db.session import get_session
+from app.repositories.conversations import ConversationRepository
 from app.repositories.schedules import (
     ScheduleNotFoundError,
     ScheduleRepository,
     ScheduleVersionConflictError,
     SystemManagedScheduleError,
 )
+from app.scheduling.dispatcher import ScheduledRunDispatcher
+from app.scheduling.execution import ScheduledExecutionResolver
 from app.schemas.schedules import (
     HeartbeatConfig,
+    HeartbeatConfigRequest,
     ScheduledJobCreate,
+    ScheduledJobCreateRequest,
     ScheduledJobKind,
     ScheduledJobManualRunRequest,
     ScheduledJobRunView,
@@ -63,10 +68,19 @@ async def list_schedules(
 
 @router.post("/schedules", response_model=ScheduledJobView, status_code=201)
 async def create_schedule(
-    payload: ScheduledJobCreate,
+    payload: ScheduledJobCreateRequest,
     session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings),
 ):
-    return await ScheduleRepository(session).create(payload, owner_principal="local-user")
+    if await ConversationRepository(session).get(payload.target_task_id) is None:
+        raise ResourceError("CONVERSATION_NOT_FOUND", "找不到定时任务的目标对话。")
+    execution = payload.execution or await ScheduledExecutionResolver(
+        session, settings
+    ).from_task_or_workspace(payload.target_task_id)
+    resolved = ScheduledJobCreate.model_validate(
+        {**payload.model_dump(exclude={"execution"}), "execution": execution}
+    )
+    return await ScheduleRepository(session).create(resolved, owner_principal="local-user")
 
 
 @router.get("/schedules/{job_id}", response_model=ScheduledJobView)
@@ -82,7 +96,18 @@ async def update_schedule(
     job_id: str,
     payload: ScheduledJobUpdate,
     session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings),
 ):
+    if "target_task_id" in payload.model_fields_set:
+        if payload.target_task_id is None:
+            raise ValidationError("SCHEDULE_TARGET_REQUIRED", "定时任务必须绑定结果对话。")
+        if await ConversationRepository(session).get(payload.target_task_id) is None:
+            raise ResourceError("CONVERSATION_NOT_FOUND", "找不到定时任务的目标对话。")
+        if payload.execution is None:
+            execution = await ScheduledExecutionResolver(
+                session, settings
+            ).from_task_or_workspace(payload.target_task_id)
+            payload = payload.model_copy(update={"execution": execution})
     try:
         return await ScheduleRepository(session).update(job_id, payload)
     except Exception as exc:
@@ -141,18 +166,24 @@ async def resume_schedule(
 async def run_schedule(
     job_id: str,
     payload: ScheduledJobManualRunRequest,
+    request: Request,
     session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings),
 ):
     repo = ScheduleRepository(session)
     try:
         job = await repo.require(job_id)
         if not job.enabled:
             raise StateError("SCHEDULE_DISABLED", "已安排任务当前处于暂停状态。")
-        return await repo.manual_trigger(
+        schedule_run = await repo.manual_trigger(
             job,
             idempotency_key=payload.idempotency_key,
             claimed_by="scheduled-tasks-api",
         )
+        return await ScheduledRunDispatcher(
+            settings,
+            request.app.state.session_factory,
+        ).dispatch(schedule_run.id)
     except Exception as exc:
         _raise_schedule_error(exc)
 
@@ -176,7 +207,7 @@ async def get_heartbeat(session: AsyncSession = Depends(get_session)):
 
 @router.put("/heartbeat", response_model=ScheduledJobView)
 async def put_heartbeat(
-    payload: HeartbeatConfig,
+    payload: HeartbeatConfigRequest,
     session: AsyncSession = Depends(get_session),
     settings: Settings = Depends(get_settings),
 ):
@@ -186,8 +217,14 @@ async def put_heartbeat(
             "heartbeat 周期低于系统允许的最小值。",
             {"minimum_seconds": settings.scheduler_heartbeat_min_interval_seconds},
         )
+    execution = payload.execution or await ScheduledExecutionResolver(session, settings).from_task(
+        payload.target_task_id
+    )
+    resolved = HeartbeatConfig.model_validate(
+        {**payload.model_dump(exclude={"execution"}), "execution": execution}
+    )
     return await ScheduleRepository(session).upsert_heartbeat(
-        payload,
+        resolved,
         owner_principal="local-user",
     )
 

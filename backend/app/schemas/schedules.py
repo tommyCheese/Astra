@@ -58,10 +58,7 @@ class ScheduleSpec(BaseModel):
             expression = (self.expression or "").strip()
             if len(expression.split()) != 5 or not croniter.is_valid(expression):
                 raise ValueError("cron expression 必须是有效的标准五字段表达式")
-            if any(
-                value is not None
-                for value in (self.at, self.interval_seconds, self.anchor_at)
-            ):
+            if any(value is not None for value in (self.at, self.interval_seconds, self.anchor_at)):
                 raise ValueError("cron 计划只能提供 expression")
             self.expression = expression
         return self
@@ -100,8 +97,8 @@ class ScheduledJobCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     name: str = Field(min_length=1, max_length=240)
+    target_task_id: str = Field(min_length=1, max_length=36)
     prompt: str = Field(min_length=1, max_length=40_000)
-    target_task_id: str | None = Field(default=None, max_length=36)
     schedule: ScheduleSpec
     timezone: str = Field(default="UTC", max_length=120)
     enabled: bool = True
@@ -128,13 +125,17 @@ class ScheduledJobCreate(BaseModel):
         return value
 
 
+class ScheduledJobCreateRequest(ScheduledJobCreate):
+    execution: ScheduledExecutionConfig | None = None
+
+
 class ScheduledJobUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     version: int = Field(ge=1)
+    target_task_id: str | None = Field(default=None, min_length=1, max_length=36)
     name: str | None = Field(default=None, min_length=1, max_length=240)
     prompt: str | None = Field(default=None, min_length=1, max_length=40_000)
-    target_task_id: str | None = Field(default=None, max_length=36)
     schedule: ScheduleSpec | None = None
     timezone: str | None = Field(default=None, max_length=120)
     misfire_policy: MisfirePolicy | None = None
@@ -184,6 +185,10 @@ class HeartbeatConfig(BaseModel):
     @classmethod
     def validate_timezone(cls, value: str) -> str:
         return ScheduledJobCreate.validate_timezone(value)
+
+
+class HeartbeatConfigRequest(HeartbeatConfig):
+    execution: ScheduledExecutionConfig | None = None
 
 
 class ScheduledJobView(BaseModel):

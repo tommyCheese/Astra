@@ -83,6 +83,29 @@ class ConversationRepository:
             task.runs = runs
         return task
 
+    async def create(
+        self,
+        *,
+        title: str,
+        preferred_answer_mode: str = "standard",
+    ) -> TaskRecord:
+        now = utc_now()
+        task = TaskRecord(
+            title=title,
+            description=title,
+            status="created",
+            risk_level="low",
+            preferred_answer_mode=preferred_answer_mode,
+            title_source="user",
+            created_at=now,
+            updated_at=now,
+        )
+        self.session.add(task)
+        await self.session.commit()
+        created = await self.get(task.id)
+        assert created is not None
+        return created
+
     async def _load_run(self, run_id: str) -> RunRecord | None:
         result = await self.session.execute(
             select(RunRecord).where(RunRecord.id == run_id).options(*run_detail_options())

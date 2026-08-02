@@ -57,7 +57,7 @@ async def app_client(monkeypatch, tmp_path):
         task_workspace_store_path=str(tmp_path / "workspaces"),
         runtime_profile_path=str(tmp_path / "runtime-profile.json"),
     )
-    app = create_app(settings)
+    app = create_app(settings, session_factory=Session)
     app.dependency_overrides[get_session] = override_session
     app.dependency_overrides[get_settings] = lambda: settings
 
@@ -104,26 +104,17 @@ async def test_runtime_default_model_reports_whether_it_is_runnable():
 
 
 async def test_scheduled_tasks_api_is_global_and_versioned(app_client):
-    now = utc_now()
-    async with app_client._astra_session() as session:
-        task = TaskRecord(
-            title="Scheduled target",
-            description="Scheduled target",
-            status="created",
-            preferred_answer_mode="standard",
-            created_at=now,
-            updated_at=now,
-        )
-        session.add(task)
-        await session.commit()
-        task_id = task.id
-
+    target = await app_client.post(
+        "/api/conversations",
+        json={"title": "Daily brief results"},
+    )
+    assert target.status_code == 201
     created = await app_client.post(
         "/api/schedules",
         json={
             "name": "Daily brief",
+            "target_task_id": target.json()["id"],
             "prompt": "Summarize updates",
-            "target_task_id": task_id,
             "schedule": {"type": "cron", "expression": "0 9 * * *"},
             "timezone": "Asia/Shanghai",
             "execution": {"permission_bundle": {"token": "signed"}},
@@ -134,7 +125,13 @@ async def test_scheduled_tasks_api_is_global_and_versioned(app_client):
 
     listed = await app_client.get("/api/schedules")
     assert [item["id"] for item in listed.json()] == [job["id"]]
-    assert listed.json()[0]["target_task_id"] == task_id
+    assert listed.json()[0]["target_task_id"] == target.json()["id"]
+
+    protected_target = await app_client.delete(
+        f"/api/conversations/{target.json()['id']}"
+    )
+    assert protected_target.status_code == 409
+    assert protected_target.json()["error"]["code"] == "CONVERSATION_HAS_AUTOMATIONS"
 
     paused = await app_client.post(
         f"/api/schedules/{job['id']}/pause",
@@ -149,6 +146,83 @@ async def test_scheduled_tasks_api_is_global_and_versioned(app_client):
     )
     assert stale.status_code == 409
     assert stale.json()["error"]["code"] == "SCHEDULE_VERSION_CONFLICT"
+
+
+async def test_scheduled_tasks_api_binds_result_conversation_and_resolves_execution(
+    app_client, monkeypatch
+):
+    from app.scheduling.execution import ScheduledExecutionResolver
+    from app.schemas.schedules import ScheduledExecutionConfig
+
+    now = utc_now()
+    async with app_client._astra_session() as session:
+        task = TaskRecord(
+            title="Management page target",
+            description="Management page target",
+            status="created",
+            preferred_answer_mode="standard",
+            created_at=now,
+            updated_at=now,
+        )
+        session.add(task)
+        await session.commit()
+        task_id = task.id
+
+    resolved_sources = []
+
+    async def resolve_execution(self, target_task_id):
+        resolved_sources.append(("task", target_task_id))
+        return ScheduledExecutionConfig(permission_bundle={"token": "signed"})
+
+    async def resolve_workspace_execution(self):
+        resolved_sources.append(("workspace", None))
+        return ScheduledExecutionConfig(permission_bundle={"token": "signed"})
+
+    monkeypatch.setattr(ScheduledExecutionResolver, "from_task", resolve_execution)
+    monkeypatch.setattr(
+        ScheduledExecutionResolver, "from_workspace", resolve_workspace_execution
+    )
+    created = await app_client.post(
+        "/api/schedules",
+        json={
+            "name": "Created in management page",
+            "target_task_id": task_id,
+            "prompt": "Summarize updates",
+            "schedule": {"type": "cron", "expression": "0 9 * * *"},
+            "timezone": "Asia/Shanghai",
+        },
+    )
+
+    assert created.status_code == 201
+    assert created.json()["target_task_id"] == task_id
+    assert created.json()["execution"]["permission_bundle"] == {"token": "signed"}
+    heartbeat = await app_client.put(
+        "/api/heartbeat",
+        json={
+            "target_task_id": task_id,
+            "enabled": True,
+            "interval_seconds": 1800,
+            "timezone": "Asia/Shanghai",
+        },
+    )
+    assert heartbeat.status_code == 200
+    assert heartbeat.json()["kind"] == "heartbeat"
+    assert heartbeat.json()["execution"]["permission_bundle"] == {"token": "signed"}
+    assert resolved_sources == [("task", task_id), ("task", task_id)]
+
+    rejected_binding = await app_client.post(
+        "/api/schedules",
+        json={
+            "name": "Missing result conversation",
+            "prompt": "Should be rejected",
+            "target_task_id": "missing-task",
+            "schedule": {"type": "cron", "expression": "0 9 * * *"},
+            "timezone": "Asia/Shanghai",
+            "execution": {"permission_bundle": {"token": "signed"}},
+        },
+    )
+    assert rejected_binding.status_code == 404
+    assert rejected_binding.json()["error"]["code"] == "CONVERSATION_NOT_FOUND"
 
 
 async def test_heartbeat_api_uses_one_global_desired_state(app_client):
@@ -176,12 +250,8 @@ async def test_heartbeat_api_uses_one_global_desired_state(app_client):
         "prompt": "Check explicit pending work; otherwise HEARTBEAT_OK",
         "execution": {"permission_bundle": {"token": "signed"}},
     }
-    first = await app_client.put(
-        "/api/heartbeat", json={**base, "target_task_id": task_ids[0]}
-    )
-    second = await app_client.put(
-        "/api/heartbeat", json={**base, "target_task_id": task_ids[1]}
-    )
+    first = await app_client.put("/api/heartbeat", json={**base, "target_task_id": task_ids[0]})
+    second = await app_client.put("/api/heartbeat", json={**base, "target_task_id": task_ids[1]})
     assert first.status_code == 200
     assert second.status_code == 200
     assert second.json()["id"] == first.json()["id"]
@@ -360,7 +430,7 @@ async def test_context_status_and_registered_commands_preserve_history(app_clien
     assert catalog.json()[2]["side_effect"] == "mixed"
     assert catalog.json()[4]["execution_mode"] == "run"
     assert catalog.json()[4]["argument_mode"] == "required"
-    assert catalog.json()[4]["available"] is False
+    assert catalog.json()[4]["available"] is True
 
     default_model = await app_client.get("/api/models/default")
     assert default_model.status_code == 200
@@ -1201,7 +1271,11 @@ async def test_tool_settings_can_be_read_and_updated(app_client):
         "web_fetch",
         "chart_render",
         "bash_execute",
+        "swarm",
     }
+    initial_swarm = next(tool for tool in loaded.json()["tools"] if tool["name"] == "swarm")
+    assert initial_swarm["available"] is True
+    assert initial_swarm["unavailable_reason"] is None
 
     updated = await app_client.put(
         "/api/tools",
@@ -1210,6 +1284,7 @@ async def test_tool_settings_can_be_read_and_updated(app_client):
             "web_fetch": True,
             "chart_render": False,
             "bash_execute": True,
+            "swarm": False,
         },
     )
     assert updated.status_code == 200
@@ -1219,10 +1294,78 @@ async def test_tool_settings_can_be_read_and_updated(app_client):
         "web_fetch": True,
         "chart_render": False,
         "bash_execute": True,
+        "swarm": False,
     }
     reloaded = await app_client.get("/api/tools")
     persisted = {tool["name"]: tool["enabled"] for tool in reloaded.json()["tools"]}
     assert persisted == states
+
+
+async def test_disabling_swarm_hides_command_and_freezes_subagents_off(app_client):
+    settings = app_client._astra_settings
+    settings.agent_subagent_rollout_cohort = "trusted_read_only"
+
+    enabled_catalog = await app_client.get("/api/system-commands")
+    enabled_command = next(item for item in enabled_catalog.json() if item["name"] == "subagent")
+    assert enabled_command["available"] is True
+
+    updated = await app_client.put(
+        "/api/tools",
+        json={
+            "web_search": True,
+            "web_fetch": True,
+            "chart_render": True,
+            "bash_execute": False,
+            "swarm": False,
+        },
+    )
+    swarm = next(item for item in updated.json()["tools"] if item["name"] == "swarm")
+    assert swarm["enabled"] is False
+    assert swarm["available"] is True
+
+    disabled_catalog = await app_client.get("/api/system-commands")
+    disabled_command = next(item for item in disabled_catalog.json() if item["name"] == "subagent")
+    assert disabled_command["available"] is False
+    assert disabled_command["unavailable_reason"] == "Swarm / 子 Agent 工具已由用户关闭。"
+
+    required = await app_client.post(
+        "/api/runs",
+        json={
+            "goal": "必须使用子 Agent",
+            "answer_mode": "trusted",
+            "plan_execution": "auto",
+            "subagent_mode": "required",
+        },
+    )
+    assert required.status_code == 422
+    assert required.json()["error"]["code"] == "SUBAGENT_COMMAND_UNAVAILABLE"
+
+    ordinary = await app_client.post(
+        "/api/runs",
+        json={"goal": "普通可信运行", "answer_mode": "trusted"},
+    )
+    assert ordinary.status_code == 200
+    snapshot = (await app_client.get(f"/api/runs/{ordinary.json()['run_id']}")).json()
+    assert snapshot["reasoning_policy"]["effective"]["subagents"]["enabled"] is False
+
+    reenabled = await app_client.put("/api/tools", json={"swarm": True})
+    assert reenabled.status_code == 200
+    reenabled_catalog = await app_client.get("/api/system-commands")
+    reenabled_command = next(
+        item for item in reenabled_catalog.json() if item["name"] == "subagent"
+    )
+    assert reenabled_command["available"] is True
+
+    required_after_enable = await app_client.post(
+        "/api/runs",
+        json={
+            "goal": "重新启用子 Agent",
+            "answer_mode": "trusted",
+            "plan_execution": "auto",
+            "subagent_mode": "required",
+        },
+    )
+    assert required_after_enable.status_code == 200
 
 
 async def test_conversation_strategy_can_be_restored_and_updated(app_client):
@@ -1924,7 +2067,37 @@ async def test_create_run_defaults_to_standard_profile(app_client):
     assert body["reasoning_policy"]["effective"]["budgets"]["max_turns"] is None
 
 
-async def test_required_subagent_run_fails_closed_when_execution_is_disabled(app_client):
+async def test_required_subagent_run_can_use_the_standard_no_dag_profile(app_client):
+    created = await app_client.post(
+        "/api/runs",
+        json={
+            "goal": "快速并发比较两个方案",
+            "answer_mode": "standard",
+            "subagent_mode": "required",
+        },
+    )
+
+    assert created.status_code == 200
+    body = (await app_client.get(f"/api/runs/{created.json()['run_id']}")).json()
+    assert body["answer_mode"] == "standard"
+    assert body["execution_profile"]["subagent_mode"] == "required"
+    assert body["execution_profile"]["plan_execution"] is None
+    assert body["reasoning_policy"]["effective"]["subagents"]["enabled"] is True
+    assert body["reasoning_policy"]["effective"]["subagents"]["budgets"][
+        "max_children_total"
+    ] == 2
+    assert body["task_contract"] == {}
+    assert body["plan_graph"] == {}
+    assert body["state_version"] == 0
+
+
+async def test_required_subagent_run_fails_closed_when_swarm_is_disabled(app_client):
+    updated = await app_client.put(
+        "/api/tools",
+        json={"swarm": False},
+    )
+    assert updated.status_code == 200
+
     response = await app_client.post(
         "/api/runs",
         json={

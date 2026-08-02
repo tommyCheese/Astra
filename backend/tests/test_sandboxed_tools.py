@@ -44,12 +44,20 @@ def test_application_registry_exposes_only_container_tools():
         Settings(sandbox_enabled=True, sandbox_skip_availability_check=True)
     )
 
-    assert {"web_search", "web_fetch", "chart.render"} == set(registry.specs())
-    assert all(spec.execution_backend == "sandbox.remote" for spec in registry.specs().values())
+    assert {"web_search", "web_fetch", "chart.render", "swarm"} == set(registry.specs())
+    assert registry.specs()["swarm"].execution_backend == "astra.runtime"
+    assert all(
+        spec.execution_backend == "sandbox.remote"
+        for name, spec in registry.specs().items()
+        if name != "swarm"
+    )
 
 
 def test_registry_exposes_no_tools_when_sandbox_is_disabled():
-    assert not build_tool_registry(Settings(sandbox_enabled=False)).specs()
+    registry = build_tool_registry(Settings(sandbox_enabled=False))
+
+    assert set(registry.specs()) == {"swarm"}
+    assert registry.specs()["swarm"].execution_backend == "astra.runtime"
 
 
 def test_web_runtime_config_is_an_explicit_host_secret_allowlist():

@@ -1,14 +1,14 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import select, update
+from sqlalchemy import or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import ScheduledJobRecord, ScheduledJobRunRecord, utc_now
-from app.scheduling.calculations import initial_fire_time
+from app.scheduling.calculations import initial_fire_time, next_fire_time
 from app.schemas.schedules import (
     HeartbeatConfig,
     ScheduledJobCreate,
@@ -303,6 +303,164 @@ class ScheduleRepository:
                 raise
             return existing
         return schedule_run
+
+    async def claim_due(
+        self,
+        *,
+        claimed_by: str,
+        lease_seconds: int,
+        batch_size: int,
+        now: datetime | None = None,
+    ) -> list[ScheduledJobRunRecord]:
+        reference = (now or utc_now()).astimezone(timezone.utc)
+        candidates = list(
+            (
+                await self.session.scalars(
+                    select(ScheduledJobRecord)
+                    .where(
+                        ScheduledJobRecord.enabled.is_(True),
+                        ScheduledJobRecord.deleted_at.is_(None),
+                        ScheduledJobRecord.next_fire_at.is_not(None),
+                        ScheduledJobRecord.next_fire_at <= reference,
+                        or_(
+                            ScheduledJobRecord.lease_expires_at.is_(None),
+                            ScheduledJobRecord.lease_expires_at < reference,
+                        ),
+                    )
+                    .order_by(ScheduledJobRecord.next_fire_at.asc())
+                    .limit(batch_size)
+                )
+            ).all()
+        )
+        claimed: list[ScheduledJobRunRecord] = []
+        for job in candidates:
+            scheduled_for = job.next_fire_at
+            if scheduled_for is None:
+                continue
+            if scheduled_for.tzinfo is None:
+                scheduled_for = scheduled_for.replace(tzinfo=timezone.utc)
+            lease_until = reference + timedelta(seconds=lease_seconds)
+            result = await self.session.execute(
+                update(ScheduledJobRecord)
+                .where(
+                    ScheduledJobRecord.id == job.id,
+                    ScheduledJobRecord.enabled.is_(True),
+                    ScheduledJobRecord.next_fire_at == job.next_fire_at,
+                    or_(
+                        ScheduledJobRecord.lease_expires_at.is_(None),
+                        ScheduledJobRecord.lease_expires_at < reference,
+                    ),
+                )
+                .values(
+                    lease_owner=claimed_by,
+                    lease_expires_at=lease_until,
+                    updated_at=reference,
+                )
+            )
+            if result.rowcount != 1:
+                continue
+            key = f"scheduled:{job.id}:{scheduled_for.isoformat()}"
+            next_fire = next_fire_time(
+                self._schedule_from_record(job),
+                job.timezone,
+                after=scheduled_for,
+            )
+            existing = await self.session.scalar(
+                select(ScheduledJobRunRecord).where(
+                    ScheduledJobRunRecord.idempotency_key == key
+                )
+            )
+            if existing is not None:
+                await self.session.execute(
+                    update(ScheduledJobRecord)
+                    .where(ScheduledJobRecord.id == job.id)
+                    .values(
+                        enabled=next_fire is not None,
+                        last_fire_at=scheduled_for,
+                        next_fire_at=next_fire,
+                        lease_owner=None,
+                        lease_expires_at=None,
+                        updated_at=reference,
+                    )
+                )
+                if existing.status == "claimed" and existing.run_id is None:
+                    existing.claimed_by = claimed_by
+                    existing.claimed_at = reference
+                    existing.updated_at = reference
+                    claimed.append(existing)
+                continue
+            schedule_run = ScheduledJobRunRecord(
+                job_id=job.id,
+                scheduled_for=scheduled_for,
+                idempotency_key=key,
+                trigger_type="scheduled",
+                status="claimed",
+                claimed_by=claimed_by,
+                claimed_at=reference,
+                created_at=reference,
+                updated_at=reference,
+            )
+            self.session.add(schedule_run)
+            await self.session.execute(
+                update(ScheduledJobRecord)
+                .where(ScheduledJobRecord.id == job.id)
+                .values(
+                    enabled=next_fire is not None,
+                    last_fire_at=scheduled_for,
+                    next_fire_at=next_fire,
+                    lease_owner=None,
+                    lease_expires_at=None,
+                    updated_at=reference,
+                )
+            )
+            claimed.append(schedule_run)
+        await self.session.commit()
+        return claimed
+
+    async def recover_claimed(
+        self,
+        *,
+        claimed_by: str,
+        stale_after_seconds: int,
+        batch_size: int,
+        now: datetime | None = None,
+    ) -> list[ScheduledJobRunRecord]:
+        reference = (now or utc_now()).astimezone(timezone.utc)
+        stale_before = reference - timedelta(seconds=stale_after_seconds)
+        candidates = list(
+            (
+                await self.session.scalars(
+                    select(ScheduledJobRunRecord)
+                    .where(
+                        ScheduledJobRunRecord.status == "claimed",
+                        ScheduledJobRunRecord.run_id.is_(None),
+                        ScheduledJobRunRecord.claimed_at <= stale_before,
+                    )
+                    .order_by(ScheduledJobRunRecord.claimed_at.asc())
+                    .limit(batch_size)
+                )
+            ).all()
+        )
+        recovered: list[ScheduledJobRunRecord] = []
+        for schedule_run in candidates:
+            result = await self.session.execute(
+                update(ScheduledJobRunRecord)
+                .where(
+                    ScheduledJobRunRecord.id == schedule_run.id,
+                    ScheduledJobRunRecord.status == "claimed",
+                    ScheduledJobRunRecord.run_id.is_(None),
+                    ScheduledJobRunRecord.claimed_at == schedule_run.claimed_at,
+                )
+                .values(
+                    claimed_by=claimed_by,
+                    claimed_at=reference,
+                    updated_at=reference,
+                )
+            )
+            if result.rowcount == 1:
+                recovered.append(schedule_run)
+        await self.session.commit()
+        return recovered
 
     async def list_runs(
         self,

@@ -12,8 +12,15 @@ from app.repositories.conversations import (
     conversation_summary,
     conversation_view,
 )
+from app.repositories.schedules import ScheduleRepository
+from app.repositories.tool_settings import (
+    ToolSettingsRepository,
+    apply_tool_states,
+    default_tool_states,
+)
 from app.schemas.conversations import (
     ContextWindowStatus,
+    ConversationCreateRequest,
     ConversationShareSummary,
     ConversationShareView,
     ConversationSummary,
@@ -43,6 +50,21 @@ async def list_conversations(
     return [conversation_summary(item) for item in await ConversationRepository(session).list(limit)]
 
 
+@router.post("/conversations", response_model=ConversationSummary, status_code=201)
+async def create_conversation(
+    payload: ConversationCreateRequest,
+    session: AsyncSession = Depends(get_session),
+):
+    title = payload.title.strip()
+    if not title:
+        raise ValidationError("CONVERSATION_TITLE_REQUIRED", "对话标题不能为空。")
+    task = await ConversationRepository(session).create(
+        title=title,
+        preferred_answer_mode=payload.preferred_answer_mode,
+    )
+    return conversation_summary(task)
+
+
 @router.get("/conversations/{conversation_id}", response_model=ConversationView)
 async def get_conversation(conversation_id: str, session: AsyncSession = Depends(get_session)):
     task = await require_conversation(ConversationRepository(session), conversation_id, detailed=True)
@@ -50,8 +72,15 @@ async def get_conversation(conversation_id: str, session: AsyncSession = Depends
 
 
 @router.get("/system-commands", response_model=list[SlashSystemCommand])
-async def get_system_commands(settings: Settings = Depends(get_settings)):
-    return list_system_commands(settings)
+async def get_system_commands(
+    settings: Settings = Depends(get_settings),
+    session: AsyncSession = Depends(get_session),
+):
+    states = await ToolSettingsRepository(session).get_or_create(
+        default_tool_states(settings)
+    )
+    await session.commit()
+    return list_system_commands(apply_tool_states(settings, states))
 
 
 @router.get(
@@ -139,6 +168,12 @@ async def delete_conversation(
 ):
     repo = ConversationRepository(session)
     task = await require_conversation(repo, conversation_id)
+    bound_jobs = await ScheduleRepository(session).list(target_task_id=conversation_id, limit=1)
+    if bound_jobs:
+        raise StateError(
+            "CONVERSATION_HAS_AUTOMATIONS",
+            "该对话仍绑定定时任务或 Heartbeat，请先更换结果对话或删除任务。",
+        )
     try:
         await ConversationLifecycleService(settings).delete(repo, task)
     except RuntimeError as exc:

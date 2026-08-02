@@ -266,8 +266,6 @@ class RunExecutionProfile(BaseModel):
             raise ValueError("plan_execution is only valid for trusted runs")
         if self.answer_mode == AnswerMode.trusted and self.plan_execution is None:
             raise ValueError("trusted runs require plan_execution")
-        if self.answer_mode == AnswerMode.standard and self.subagent_mode == "required":
-            raise ValueError("required subagent mode is only valid for trusted runs")
         return self
 
 
@@ -643,8 +641,6 @@ class CreateRunRequest(BaseModel):
     def validate_plan_execution(self) -> CreateRunRequest:
         if self.answer_mode == AnswerMode.standard and self.plan_execution is not None:
             raise ValueError("plan_execution is only valid for trusted runs")
-        if self.answer_mode == AnswerMode.standard and self.subagent_mode == "required":
-            raise ValueError("required subagent mode is only valid for trusted runs")
         return self
 
 

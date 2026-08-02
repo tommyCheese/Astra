@@ -59,13 +59,17 @@ OpenClaw 的最新架构把 heartbeat 实现为系统托管 cron job：heartbeat
 
 ### 5. 自动化通过专用 Run 创建服务复用安全入口
 
-从现有 `_create_run` 提取可复用的应用服务，HTTP 与 scheduler 均调用它。schedule 保存创建时的目标、answer mode、模型选择、skill IDs 和签名 permission bundle 快照。触发时再次验证权限包的签名和有效期；失效则把 schedule run 标为 `blocked`，不降级为交互执行。
+HTTP 与 scheduler 复用同一套 Run 创建和执行入口。普通 schedule 保存目标对话，并保存 answer mode、模型选择、skill IDs 和签名 permission bundle 快照；每次触发都使用目标对话的 `task_id` 创建新 Run。由于 Task 与 `TaskWorkspaceRecord` 是一对一关系，dispatcher 会先解析该 Task 已有的 workspace，并把 workspace id 写入 trigger 元数据，禁止为自动化创建独立 Task 或 workspace。这样文本、生成文件、持久化副作用摘要和审计状态都落在目标对话原有工作空间。触发时再次验证权限包的签名和有效期；失效则把 schedule run 标为 `blocked`，不降级为交互执行。
 
-Run 的 `execution_profile`/事件记录 `trigger={type, job_id, scheduled_for, schedule_run_id}`，便于审计和避免把自动消息误计为用户活跃。
+从对话命令创建 schedule 时，当前对话同时作为无人值守权限包来源和默认结果对话。从全局管理页创建时，用户必须选择已有对话或创建一个新的专用结果对话；若目标对话尚无有效权限包，可使用工作区最近仍有效的无人值守执行配置。任务仍在工作区全局管理，绑定不形成管理权限边界。
+
+Run 的 `execution_profile`/事件记录 `trigger={type, job_id, scheduled_for, schedule_run_id, target_task_id, workspace_id}`，便于审计、验证工作空间绑定，并避免把自动消息误计为用户活跃。
 
 ### 6. Heartbeat 是全局且受保护的系统托管 schedule
 
 工作区最多一个 `kind=heartbeat` job，稳定键为 `heartbeat:global`。heartbeat API 写入 desired state，并记录当前选定的目标主会话；从其他会话重新配置时更新该目标，而不是创建第二个 heartbeat。普通 schedule CRUD 对该记录返回冲突。升级时旧的 `heartbeat:<task-id>` 记录按最近更新时间收敛为全局记录，其余记录停用并保留历史。
+
+将 heartbeat 物化到共享调度表只是持久化实现细节，不代表它与普通定时任务是同一种产品类型。API、命令和 UI 必须保持独立入口与模型：heartbeat 固定使用 interval 表示系统检查周期，并具有活动时间窗、繁忙延后和静默确认；普通定时任务按 once、interval 或 cron 执行用户明确配置的任务指令，不得继承 heartbeat 的检查或静默语义。
 
 heartbeat prompt 的默认契约是检查未完成事项并在没有需用户注意的内容时返回 `HEARTBEAT_OK`。纯确认结果不生成用户可见消息，但运行历史仍记录 `silent_ok`。活动时间窗在配置时区判断；agent 同一会话有活动 Run 或队列时将本次标为 `deferred_busy`，且不会与明确 cron 工作抢占同一会话。
 
@@ -82,7 +86,7 @@ heartbeat prompt 的默认契约是检查未完成事项并在没有需用户注
 - `/schedule list|show|create|pause|resume|run|delete`
 - `/heartbeat status|on|off|run`
 
-命令处理器调用 schedule/heartbeat 应用服务，绝不把命令文本交给模型。创建命令使用当前 conversation 作为执行目标，但任务的 ownership 与管理范围是全局的；从任意会话执行 `list/show/pause/resume/run/delete` 都操作同一工作区清单。无人值守权限配置必须来自显式参数或创建任务的会话中可复用且仍有效的签名 permission bundle，否则 fail closed 并引导用户打开自动化设置。查询命令只读；暂停、恢复、删除、启停和手动运行在注册表中标记为写副作用并写审计日志。
+命令处理器调用 schedule/heartbeat 应用服务，绝不把命令文本交给模型。创建命令使用当前 conversation 作为结果对话并从其中获取有效的签名 permission bundle；从任意会话执行 `list/show/pause/resume/run/delete` 仍操作同一工作区清单。无人值守权限配置必须来自显式参数或仍有效的签名 permission bundle，否则 fail closed 并引导用户打开自动化设置。查询命令只读；暂停、恢复、删除、启停和手动运行在注册表中标记为写副作用并写审计日志。
 
 替代方案是为每个 subcommand 注册独立 slash 项，选项会迅速膨胀且难以表达参数；让模型解析自然语言则会把控制面变成非确定行为，并弱化权限边界。
 
@@ -98,7 +102,7 @@ heartbeat prompt 的默认契约是检查未完成事项并在没有需用户注
 
 ## Migration Plan
 
-1. 增加表、索引和配置，默认 `scheduler_enabled=false`，部署不会自动执行任务。
+1. 增加表、索引和配置；在执行链路与恢复测试完成后默认启用 scheduler，使已启用任务在应用重启后继续运行。
 2. 交付 Repository、计划计算器、API 与单元测试，再启用 scanner 的 dry/无任务路径。
 3. 接入 Run 创建服务和执行记录收敛；在 SQLite 上验证重启、并发领取、misfire 与重复触发。
 4. 增加 heartbeat desired-state 与主会话静默/繁忙逻辑。

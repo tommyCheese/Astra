@@ -128,8 +128,9 @@ class PolicyCompiler:
 
 def compile_subagent_policy(settings: Any) -> EffectiveSubagentPolicy:
     """Freeze deployment settings into a Run-scoped, non-escalating subagent policy."""
-    enabled = bool(settings.agent_subagent_execution_enabled) and not bool(
-        settings.agent_subagent_kill_switch
+    enabled = (
+        bool(settings.tool_swarm_enabled)
+        and not bool(settings.agent_subagent_kill_switch)
     )
     return EffectiveSubagentPolicy(
         enabled=enabled,
@@ -167,6 +168,33 @@ def compile_subagent_policy(settings: Any) -> EffectiveSubagentPolicy:
     )
 
 
+def quick_subagent_policy(policy: EffectiveSubagentPolicy) -> EffectiveSubagentPolicy:
+    """Clamp the shared deployment policy to the lightweight quick-mode envelope."""
+    budgets = policy.budgets
+    return policy.model_copy(
+        update={
+            "read_only": True,
+            "budgets": budgets.model_copy(
+                update={
+                    "max_children_total": min(budgets.max_children_total, 2),
+                    "max_children_per_parent": min(budgets.max_children_per_parent, 2),
+                    "max_parallel_children": min(budgets.max_parallel_children, 2),
+                    "max_depth": 1,
+                    "max_parent_round_trips": min(budgets.max_parent_round_trips, 1),
+                    "max_wall_time_seconds": min(budgets.max_wall_time_seconds, 120),
+                    "max_tokens": min(budgets.max_tokens, 8_000),
+                    "max_model_calls": min(budgets.max_model_calls, 4),
+                    "max_tool_calls": min(budgets.max_tool_calls, 6),
+                    "max_cost_usd": min(budgets.max_cost_usd, 1.0),
+                }
+            ),
+            "model_routing": policy.model_routing.model_copy(
+                update={"max_reasoning_effort": ReasoningEffort.fast}
+            ),
+        }
+    )
+
+
 class RunProfileResolver:
     """Resolve product answer modes into immutable runtime facts."""
 
@@ -198,7 +226,9 @@ class RunProfileResolver:
             assurance_level = AssuranceLevel.basic
             validators = self.STANDARD_VALIDATORS
             resolved_plan_execution = None
-            effective_subagent_policy = EffectiveSubagentPolicy()
+            effective_subagent_policy = quick_subagent_policy(
+                subagent_policy or EffectiveSubagentPolicy()
+            )
         else:
             effective_request = requested.model_copy(
                 update={"verification_level": VerificationLevel.strict}

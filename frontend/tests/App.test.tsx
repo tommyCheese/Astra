@@ -52,6 +52,7 @@ vi.mock('../src/api', () => ({
     { name: 'web_fetch', label: 'Web Fetch', description: '自适应提取页面主要内容', enabled: true, available: true },
     { name: 'chart_render', label: 'Chart Render', description: '生成图表', enabled: true, available: false, unavailable_reason: '需要先启用安全运行环境。' },
     { name: 'bash_execute', label: 'Bash Execute', description: '在隔离容器中执行命令', enabled: false, available: true },
+    { name: 'swarm', label: 'Swarm / 子 Agent', description: '并发创建受治理的子 Agent 并自动汇合结果', enabled: true, available: true, unavailable_reason: null },
   ] })),
   updateToolSettings: vi.fn(async (tools) => ({ tools })),
   getRuntimeProfile: vi.fn(async () => ({ dependencies: [], core_dependencies: [{ name: 'numpy', version: '2.2.6' }, { name: 'matplotlib', version: '3.10.3' }], active_image: 'astra-data-viz:0.1.0', dependency_digest: 'base', build: null, agent_profile: { source: 'default', version: 'profile-default', documents: { identity: '# Astra Identity\n\n## Identity\nDefault', soul: '# Astra Soul', memory: '# Astra Memory Protocol', autodream: '# Astra AutoDream Protocol' } }, memory_settings: { write_enabled: true, recall_enabled: false, retrieval_max_items: 8, retrieval_max_tokens: 2000, retrieval_min_confidence: 0.2, retrieval_min_score: 0.05, autodream_enabled: false, autodream_scan_seconds: 3600, autodream_min_candidates: 2 } })),
@@ -633,7 +634,7 @@ describe('App', () => {
     expect(vi.mocked(createRun).mock.calls).toHaveLength(runCalls);
   });
 
-  it('routes /subagent to a trusted required-subagent Run and preserves arguments on failure', async () => {
+  it('routes /subagent to a quick required-subagent Run and preserves arguments on failure', async () => {
     vi.mocked(listSystemCommands).mockResolvedValueOnce([
       {
         name: 'subagent',
@@ -658,6 +659,42 @@ describe('App', () => {
     await waitFor(() => expect(createRun).toHaveBeenCalledWith(
       '调研三个独立方案',
       undefined,
+      'standard',
+      expect.any(Object),
+      expect.any(Object),
+      undefined,
+      undefined,
+      'required',
+    ));
+    expect(executeConversationCommand).not.toHaveBeenCalled();
+    expect(textbox).toHaveValue('/subagent 调研三个独立方案');
+  });
+
+  it('keeps trusted /subagent on automatic trusted Plan execution', async () => {
+    vi.mocked(listSystemCommands).mockResolvedValueOnce([
+      {
+        name: 'subagent',
+        command: '/subagent',
+        description: '使用 Astra Swarm 并发子 Agent 完成指定任务',
+        effect: 'start_subagent_run',
+        argument_mode: 'required',
+        usage: '/subagent <任务>',
+        side_effect: 'write',
+        execution_mode: 'run',
+        unavailable_reason: null,
+        available: true,
+      },
+    ]);
+    render(<App />);
+    await userEvent.click(screen.getByRole('switch', { name: '快速响应' }));
+    const textbox = screen.getByRole('textbox');
+
+    await userEvent.type(textbox, '/subagent 调研三个独立方案');
+    await userEvent.click(screen.getByRole('button', { name: '发送' }));
+
+    await waitFor(() => expect(createRun).toHaveBeenCalledWith(
+      '调研三个独立方案',
+      undefined,
       'trusted',
       expect.any(Object),
       expect.any(Object),
@@ -665,8 +702,75 @@ describe('App', () => {
       undefined,
       'required',
     ));
-    expect(executeConversationCommand).not.toHaveBeenCalled();
-    expect(textbox).toHaveValue('/subagent 调研三个独立方案');
+  });
+
+  it('renders quick Subagents in the compact panel without a trusted graph', async () => {
+    const base = await getRun('run-1');
+    const child = {
+      id: 'agent-child-1',
+      parent_execution_id: 'agent-root',
+      execution_type: 'child',
+      identity_id: 'identity-child-1',
+      delegation_id: 'delegation-1',
+      request_id: 'compare-a',
+      depth: 1,
+      ordinal: 0,
+      objective: '比较方案 A',
+      creation_reason: '并行比较独立候选',
+      required: true,
+      status: 'running',
+      phase: 'executing',
+      wait_reason: null,
+      budget_envelope: {},
+      budget_usage: { tokens: 120 },
+      permissions: ['network_read'],
+      capabilities: ['information.search'],
+      artifact_ids: [],
+      result_summary: null,
+      open_issues: [],
+      error: null,
+      created_at: 'now',
+      updated_at: 'now',
+      finished_at: null,
+      plan: null,
+      children: [],
+    };
+    vi.mocked(getRun).mockResolvedValue({
+      ...base,
+      answer_mode: 'standard',
+      plan_graph: {},
+      agent_executions: [{
+        ...child,
+        id: 'agent-root',
+        parent_execution_id: null,
+        execution_type: 'root',
+        identity_id: 'identity-root',
+        delegation_id: null,
+        request_id: 'root',
+        depth: 0,
+        objective: '快速比较',
+        status: 'running',
+        children: [child],
+      }],
+      subagent_summary: {
+        total: 1,
+        running: 1,
+        waiting: 0,
+        completed: 0,
+        failed: 0,
+        cancelled: 0,
+        budget_usage: { tokens: 120 },
+        key_wait_reason: null,
+      },
+    });
+    render(<App />);
+
+    await userEvent.type(screen.getByRole('textbox'), '快速并发比较');
+    await userEvent.click(screen.getByRole('button', { name: '发送' }));
+
+    expect(await screen.findByText('子系统')).toBeInTheDocument();
+    expect(screen.getByText('1 运行 · 0 等待 · 0 完成')).toBeInTheDocument();
+    expect(screen.queryByRole('region', { name: '可信执行图谱' })).not.toBeInTheDocument();
   });
 
   it('refreshes published Skills after returning from the Skill library', async () => {
@@ -1385,12 +1489,23 @@ describe('App', () => {
     expect(screen.getByRole('heading', { name: '工具' })).toBeInTheDocument();
     expect(screen.getByText('Web Fetch')).toBeInTheDocument();
     expect(screen.getByText('Chart Render')).toBeInTheDocument();
+    expect(screen.getByText('Swarm / 子 Agent')).toBeInTheDocument();
+    expect(screen.queryByText('需要先启用受治理子 Agent 执行。')).not.toBeInTheDocument();
+    expect(screen.queryByText('关闭 Swarm 会立即阻止创建新的子 Agent，但不会取消已经创建的子 Agent。')).not.toBeInTheDocument();
     expect(screen.getByText('需要先启用安全运行环境。')).toBeInTheDocument();
     const searchSwitch = screen.getByRole('switch', { name: /Web Search/ });
     await userEvent.click(searchSwitch);
     await waitFor(() => expect(updateToolSettings).toHaveBeenCalled());
     expect(searchSwitch).toHaveAttribute('aria-checked', 'false');
-    expect(screen.getByText('工具已停用，之后新建的任务不会调用它。')).toBeInTheDocument();
+    expect(screen.queryByText('工具已启用，将用于之后新建的任务。')).not.toBeInTheDocument();
+    expect(screen.queryByText('工具已停用，之后新建的任务不会调用它。')).not.toBeInTheDocument();
+    expect(screen.queryByText('设置已保存，并会应用于之后创建的任务。')).not.toBeInTheDocument();
+    const swarmSwitch = screen.getByRole('switch', { name: /Swarm \/ 子 Agent/ });
+    await userEvent.click(swarmSwitch);
+    await waitFor(() => expect(updateToolSettings).toHaveBeenLastCalledWith(
+      expect.arrayContaining([expect.objectContaining({ name: 'swarm', enabled: false })]),
+    ));
+    expect(swarmSwitch).toHaveAttribute('aria-checked', 'false');
   });
 
   it('manages model providers and keeps API credentials masked by default', async () => {
@@ -1796,6 +1911,11 @@ describe('App', () => {
 
     await userEvent.type(search, '主题模时');
     expect(screen.getByRole('option', { name: /主题模式.*界面/ })).toBeInTheDocument();
+    await userEvent.clear(search);
+    await userEvent.type(search, '子 Agent');
+    await userEvent.click(screen.getByRole('option', { name: /Swarm \/ 子 Agent.*工具/ }));
+    expect(screen.getByRole('button', { name: '工具' })).toHaveAttribute('aria-current', 'page');
+    expect(await screen.findByText('Swarm / 子 Agent')).toBeInTheDocument();
     await userEvent.clear(search);
     await userEvent.type(search, '运行时');
     await userEvent.click(screen.getByRole('option', { name: /运行时.*Tab/ }));

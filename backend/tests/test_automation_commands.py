@@ -70,6 +70,8 @@ async def test_schedule_commands_create_in_conversation_and_manage_globally(sess
     job = created["job"]
     assert job["name"] == "摘要"
     assert job["version"] == 1
+    stored_job = await service.repo.require(job["id"])
+    assert stored_job.target_task_id == task.id
 
     _, listed = await service.execute_schedule(task, "list")
     assert [item["id"] for item in listed["jobs"]] == [job["id"]]

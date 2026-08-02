@@ -42,6 +42,8 @@
 - [x] 5.4 Dispatch `swarm` calls from AgentLoop to the Supervisor, complete the ToolCall after group acceptance, and record typed handles without waiting for children
 - [x] 5.5 Exclude `swarm` from standard Runs, child Catalogs, ineligible cohorts, disabled policy, kill switch, and depth-one children
 - [ ] 5.6 Add behavior tests for beneficial independent fan-out, simple/sequential rejection, duplicate/overlap avoidance, runtime dispatch, and no plugin/Sandbox bypass
+- [x] 5.7 Add persisted `swarm` Tool settings state and enforce its non-escalating enablement across policy compilation, Run creation, slash availability, root catalogs, and runtime dispatch
+- [x] 5.8 Make the persisted Swarm switch the sole product enablement control and remove the inaccessible deployment execution toggle from ordinary eligibility
 
 ## 6. Join Reconciliation and Exactly-once Merge
 
@@ -70,6 +72,9 @@
 - [ ] 8.4 Preserve per-Run/per-Agent cursor ordering and authoritative snapshot reconciliation under overlapping child events
 - [ ] 8.5 Extend telemetry with attempted/accepted fan-out width, achieved overlap, queue latency, merge retries, attribution failures, and quota rejections
 - [ ] 8.6 Add frontend tests for two running children, mixed waiting/completed siblings, Join merging, cancellation, responsive layout, and accessibility
+- [x] 8.7 Show `swarm` in Tool settings with a keyboard-accessible persisted switch, availability reason, search metadata, and future-Run feedback
+- [x] 8.8 Remove non-actionable deployment enablement and existing-child lifecycle notices from the Swarm settings UI
+- [x] 8.9 Make successful Tool setting changes silent while retaining loading and failure feedback
 
 ## 9. Subagent Slash Command
 
@@ -78,7 +83,7 @@
 - [x] 9.3 Route `/subagent <task>` submission to trusted auto-plan Run creation without persisting the slash text
 - [x] 9.4 Require at least one governed Swarm group before a required-subagent Run can complete successfully
 - [x] 9.5 Preserve the command arguments on validation or Run-creation failure and keep Skill slash behavior unchanged
-- [ ] 9.6 Add backend and frontend tests for catalog availability, argument validation, successful Run creation, unavailable policy, draft recovery, keyboard operation, and accessibility
+- [x] 9.6 Add backend and frontend tests for catalog availability, argument validation, successful Run creation, unavailable policy, draft recovery, keyboard operation, and accessibility
 
 ## 10. Verification and Release Readiness
 

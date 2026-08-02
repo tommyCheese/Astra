@@ -8,7 +8,7 @@
 - **THEN** Composer 插入 `/subagent ` 并保留焦点以输入必需任务文本
 
 #### Scenario: Subagent 功能不可用
-- **WHEN** subagent execution disabled、kill switch active 或策略仅允许 shadow
+- **WHEN** 用户关闭 `swarm`、kill switch active 或策略仅允许 shadow
 - **THEN** catalog 将 `/subagent` 标记为 unavailable 并提供稳定原因
 
 ### Requirement: Subagent 命令创建必需委派 Run

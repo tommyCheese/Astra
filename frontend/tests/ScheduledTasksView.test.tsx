@@ -10,6 +10,8 @@ vi.mock('../src/api', async (importOriginal) => {
   return {
     ...actual,
     listScheduledTasks: vi.fn(),
+    createScheduledTask: vi.fn(),
+    createConversation: vi.fn(),
     listScheduledTaskRuns: vi.fn(),
     listConversations: vi.fn(),
     setScheduledTaskEnabled: vi.fn(),
@@ -27,6 +29,7 @@ const task: api.ScheduledTask = {
   misfire_policy: 'skip', misfire_grace_seconds: 300, overlap_policy: 'skip', execution: {}, heartbeat: {},
   next_fire_at: '2026-08-03T01:00:00Z', last_fire_at: null, version: 1, created_at: '2026-08-02T00:00:00Z', updated_at: '2026-08-02T00:00:00Z',
 };
+const heartbeat: api.ScheduledTask = { ...task, id: 'heartbeat-1', name: 'Heartbeat', kind: 'heartbeat', system_managed: true, target_task_id: 'task-1', schedule_type: 'interval', schedule: { type: 'interval', interval_seconds: 1800 }, heartbeat: { active_hours: { start: '09:00', end: '22:00' } } };
 
 describe('ScheduledTasksView', () => {
   afterEach(cleanup);
@@ -42,9 +45,16 @@ describe('ScheduledTasksView', () => {
     render(<I18nProvider><ScheduledTasksView onClose={() => undefined} onOpenConversation={openConversation} /></I18nProvider>);
 
     expect(await screen.findByRole('heading', { name: '已安排任务' })).toBeInTheDocument();
+    const createButton = screen.getByRole('button', { name: '新建' });
+    expect(createButton).toBeVisible();
+    expect(createButton.closest('.scheduled-tasks-header-actions')).not.toBeNull();
+    expect(screen.getAllByText('1').length).toBeGreaterThan(0);
+    expect(screen.getByText('个定时任务')).toBeInTheDocument();
+    expect(screen.getByText('尚未配置 Heartbeat')).toBeInTheDocument();
     expect((await screen.findAllByText('日报会话')).length).toBeGreaterThan(0);
+    expect(screen.getByText('复用目标对话')).toBeInTheDocument();
     expect(await screen.findByText('已完成')).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: '查看对话' }));
+    fireEvent.click(screen.getByRole('button', { name: '查看结果对话' }));
     expect(openConversation).toHaveBeenCalledWith('task-1', '日报会话');
   });
 
@@ -54,5 +64,83 @@ describe('ScheduledTasksView', () => {
 
     fireEvent.click(await screen.findByRole('button', { name: '暂停' }));
     await waitFor(() => expect(api.setScheduledTaskEnabled).toHaveBeenCalledWith(task, false));
+  });
+
+  it('keeps heartbeat separate from the scheduled-task count', async () => {
+    vi.mocked(api.listScheduledTasks).mockResolvedValue([heartbeat, task]);
+    const { container } = render(<I18nProvider><ScheduledTasksView onClose={() => undefined} onOpenConversation={() => undefined} /></I18nProvider>);
+
+    await screen.findByText(/固定间隔系统检查/);
+    expect(screen.getByText(/按计划执行指令/)).toBeInTheDocument();
+    expect(container.querySelector('.scheduled-task-list-summary strong')).toHaveTextContent('1');
+  });
+
+  it('creates a scheduled task from the management page without constructing a permission bundle', async () => {
+    vi.mocked(api.createScheduledTask).mockResolvedValue(task);
+    render(<I18nProvider><ScheduledTasksView onClose={() => undefined} onOpenConversation={() => undefined} /></I18nProvider>);
+
+    fireEvent.click(await screen.findByRole('button', { name: '新建' }));
+    expect(screen.getByText(/直接使用结果对话的工作空间和工具权限/)).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText('名称'), { target: { value: '晨间摘要' } });
+    fireEvent.change(screen.getByLabelText('任务指令'), { target: { value: '整理今天的重点' } });
+    fireEvent.click(screen.getByRole('button', { name: '创建并启用' }));
+
+    await waitFor(() => expect(api.createScheduledTask).toHaveBeenCalled());
+    const payload = vi.mocked(api.createScheduledTask).mock.calls[0][0];
+    expect(payload).toMatchObject({ name: '晨间摘要', target_task_id: 'task-1', prompt: '整理今天的重点', schedule: { type: 'cron', expression: '0 9 * * *' } });
+    expect(payload).not.toHaveProperty('execution');
+  });
+
+  it('builds a weekly schedule with visual wheels instead of a cron text field', async () => {
+    vi.mocked(api.createScheduledTask).mockResolvedValue(task);
+    render(<I18nProvider><ScheduledTasksView onClose={() => undefined} onOpenConversation={() => undefined} /></I18nProvider>);
+
+    fireEvent.click(await screen.findByRole('button', { name: '新建' }));
+    expect(screen.queryByLabelText('Cron')).not.toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText('名称'), { target: { value: '周报' } });
+    fireEvent.change(screen.getByLabelText('重复方式'), { target: { value: 'weekly' } });
+    fireEvent.change(screen.getByLabelText('星期'), { target: { value: '5' } });
+    fireEvent.change(screen.getByLabelText('小时'), { target: { value: '18' } });
+    fireEvent.change(screen.getByLabelText('分钟'), { target: { value: '30' } });
+    fireEvent.change(screen.getByLabelText('任务指令'), { target: { value: '生成本周总结' } });
+    fireEvent.click(screen.getByRole('button', { name: '创建并启用' }));
+
+    await waitFor(() => expect(api.createScheduledTask).toHaveBeenCalledWith(expect.objectContaining({ schedule: { type: 'cron', expression: '30 18 * * 5' } })));
+  });
+
+  it('creates and binds a new result conversation for a scheduled task', async () => {
+    vi.mocked(api.listConversations).mockResolvedValue([]);
+    vi.mocked(api.createConversation).mockResolvedValue({ id: 'task-new', title: '自动化产出', title_source: 'user', pinned_at: null, created_at: '', updated_at: '', last_run_status: null, last_message_preview: '', has_active_share: false });
+    vi.mocked(api.createScheduledTask).mockResolvedValue({ ...task, target_task_id: 'task-new' });
+    render(<I18nProvider><ScheduledTasksView onClose={() => undefined} onOpenConversation={() => undefined} /></I18nProvider>);
+
+    fireEvent.click(await screen.findByRole('button', { name: '新建' }));
+    fireEvent.change(screen.getByLabelText('名称'), { target: { value: '归档报告' } });
+    fireEvent.change(screen.getByLabelText('新对话名称'), { target: { value: '自动化产出' } });
+    fireEvent.change(screen.getByLabelText('任务指令'), { target: { value: '生成报告文件' } });
+    fireEvent.click(screen.getByRole('button', { name: '创建并启用' }));
+
+    await waitFor(() => expect(api.createConversation).toHaveBeenCalledWith('自动化产出'));
+    expect(api.createScheduledTask).toHaveBeenCalledWith(expect.objectContaining({ target_task_id: 'task-new' }));
+  });
+
+  it('creates the workspace heartbeat from the management page', async () => {
+    vi.mocked(api.updateHeartbeat).mockResolvedValue(heartbeat);
+    render(<I18nProvider><ScheduledTasksView onClose={() => undefined} onOpenConversation={() => undefined} /></I18nProvider>);
+
+    fireEvent.click(await screen.findByRole('button', { name: '新建' }));
+    fireEvent.change(screen.getByLabelText('类型'), { target: { value: 'heartbeat' } });
+    expect(screen.getByText('可设置为 5 分钟到 24 小时。')).toBeInTheDocument();
+    const intervalInput = screen.getByRole('spinbutton', { name: /周期（分钟）/ });
+    fireEvent.change(intervalInput, { target: { value: '2' } });
+    expect(screen.getByRole('alert')).toHaveTextContent('检查间隔不能少于 5 分钟，请调大后再继续。');
+    expect(screen.getByRole('button', { name: '创建并启用' })).toBeDisabled();
+    fireEvent.change(intervalInput, { target: { value: '30' } });
+    fireEvent.click(screen.getByRole('button', { name: '创建并启用' }));
+
+    await waitFor(() => expect(api.updateHeartbeat).toHaveBeenCalled());
+    const payload = vi.mocked(api.updateHeartbeat).mock.calls[0][0];
+    expect(payload).toMatchObject({ target_task_id: 'task-1', enabled: true, interval_seconds: 1800, active_hours: { start: '09:00', end: '22:00' } });
+    expect(payload).not.toHaveProperty('execution');
   });
 });
