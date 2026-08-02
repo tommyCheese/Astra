@@ -29,39 +29,45 @@ The runtime will reject creation only when the direct parent's active-child coun
 
 The alternative of keeping a single active child during production integration was rejected because it makes the target architecture serial and prevents representative testing of attribution, scheduling, joins, cancellation, and recovery.
 
-### 2. Expose delegation as a first-class root decision
+### 2. Expose delegation as the Astra `swarm` runtime built-in
 
-The trusted controller will gain a `delegate_tasks` decision containing one bounded fan-out group, one to `max_parallel_children` typed `DelegationRequest` values, and one immutable join specification. Delegation remains a runtime semantic capability and will not be registered as a third-party Tool.
+The trusted root controller will see an Astra-owned `swarm` Tool manifest containing one bounded fan-out group, one to `max_parallel_children` typed task requests, and one immutable join specification. `swarm` uses provider `astra.builtin`, permission/capability `delegation_create`, and a dedicated `astra.runtime` execution backend. It is dispatched to `SubagentSupervisor`, never to a plugin or sandbox.
 
-The existing singular `delegate_task` operation remains the internal primitive for inspection and compatibility. A new batch orchestration method will preflight all requests, reserve all quotas and budgets, create all children, and create the join in one transaction. Partial groups are not observable when preflight or persistence fails.
+The existing singular `delegate_task` operation remains the internal primitive for inspection and compatibility. `swarm` calls a batch orchestration method that preflights all requests, reserves all quotas and budgets, creates all children, and creates the join in one transaction. Partial groups are not observable when preflight or persistence fails. The ToolCall completes after the group is accepted; children continue asynchronously and their consumed Join result is injected later as a parent Observation.
 
-Sequential singular model decisions were rejected as the primary fan-out interface because they spend extra root turns, can expose half-created groups, and make join membership ambiguous.
+An ordinary third-party Tool was rejected because delegation controls identity, budget, and lifecycle. A bespoke model decision was rejected in favor of the built-in facade because Astra can reuse Tool selection, schema validation, audit, and event UX while retaining a privileged runtime dispatcher.
 
-### 3. Add a Run-scoped `SubagentSupervisor`
+### 3. Register `/subagent <task>` as a Run-creation command
+
+The command catalog will distinguish host commands from Run-creation commands. `/subagent <task>` consumes its command text and creates a trusted Run with `subagent_mode = required`, auto plan execution, and the original task text as the user goal. The root remains the supervisor and invokes `swarm`; the command does not create an orphan child without a root Run.
+
+The command is unavailable when subagent execution is disabled, killed, or in shadow-only policy. Failed creation preserves the draft and arguments. The server revalidates the mode and policy so a client cannot force delegation outside eligibility.
+
+### 4. Add a Run-scoped `SubagentSupervisor`
 
 `RunEngine` will own a structured `SubagentSupervisor` for the duration of a trusted Run. The supervisor composes runtime operations, `AgentCoordinator`, a child runtime factory, join reconciliation, result validation/merge, and shutdown/cancellation. `AgentLoop` submits delegation intent and consumes sanitized observations; it does not own worker tasks or heartbeats.
 
 Directly awaiting a child inside `AgentLoop` was rejected because it blocks unrelated root work. Letting `AgentLoop` manage raw `asyncio.Task` objects was rejected because lifecycle, recovery, and cancellation would become process-local rather than durable.
 
-### 4. Isolate mutable child execution context
+### 5. Isolate mutable child execution context
 
 Every concurrent child receives a separate database session, repository/service graph, usage recorder, and model-client wrapper bound to its own `agent_execution_id`. Children may share immutable Tool Registry snapshots and the underlying HTTP connection pool, but MUST NOT share mutable model attribution or transaction state.
 
 This is required because the current model-client binding is mutable; sharing one wrapper across concurrent children could attribute usage and events to the wrong execution.
 
-### 5. Reconcile joins before each root decision
+### 6. Reconcile joins before each root decision
 
 Before assembling each trusted root decision context, the supervisor evaluates joins whose members changed. Successful results pass schema, completion, provenance, Artifact, Evidence, and lineage validation, then the merger detects duplicates and conflicts. Verified facts and Artifacts are explicitly promoted through the exchange service.
 
 Joins gain an exactly-once consumption lifecycle (`waiting`, `ready`, `merging`, `consumed`, `blocked`) or equivalent CAS-protected consumption metadata. The parent observation records the join, sources, facts, claims, evidence, conflicts, warnings, and open issues but never child hidden reasoning or private scratchpads.
 
-### 6. Make join waiting dependency-scoped
+### 7. Make join waiting dependency-scoped
 
 `consumer_plan_node_id` becomes an executable scheduling barrier. A waiting join prevents only its consumer node from completing or releasing dependent nodes. Other ready root nodes remain schedulable. A blocked required join blocks its consumer branch; an optional failure produces a warning according to policy; a first-success join becomes ready after the first validated success and cancels only safe losers.
 
 Globally pausing the Run for every child was rejected because it removes the benefit of supervision and violates the existing barrier-free design.
 
-### 7. Strengthen root completion and rollout eligibility
+### 8. Strengthen root completion and rollout eligibility
 
 Trusted root completion requires mandatory descendants to be terminal, required and first-success joins to be consumed, child budget reservations to be settled, required approvals to be resolved, and blocking merge conflicts to be handled. Standard Runs cannot delegate in this change because their basic completion path does not enforce these barriers.
 

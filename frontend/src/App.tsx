@@ -15,6 +15,7 @@ import { createOptimisticProcessState, isDecisionGroup, reconcileProcessSnapshot
 import { createPlanGraphStreamState, reconcilePlanGraphSnapshot, reducePlanGraphEvent, type PlanGraphStreamState } from './planGraph';
 import { detectSlashSkillCommand, filterSlashCommandOptions, normalizeSelectedSkillIds, type SlashSkillCommand } from './composerSkills';
 import { citationsForClaim, sourceAnchor, validatedCitations, type PresentedCitation } from './groundingPresentation';
+import { ScheduledTasksView } from './ScheduledTasksView';
 
 const QUESTION_SUBMIT_MARK = 'astra.question.submit';
 const FIRST_TOKEN_COMMIT_MARK = 'astra.answer.first_token_commit';
@@ -32,7 +33,7 @@ const DocumentationCenter = lazy(() => import('./DocumentationCenter').then((mod
 })));
 const MarkdownRenderer = lazy(() => import('./MarkdownRenderer'));
 
-type AppView = 'chat' | 'settings' | 'shares' | 'library' | 'skills';
+type AppView = 'chat' | 'settings' | 'shares' | 'library' | 'skills' | 'scheduled';
 
 class GraphErrorBoundary extends Component<{ children: ReactNode; fallback: ReactNode }, { failed: boolean }> {
   state = { failed: false };
@@ -1077,6 +1078,10 @@ function AppContent() {
     const registeredCommand = commandMatch
       ? systemCommands.find((item) => item.name === commandMatch[1])
       : undefined;
+    let submissionGoal = trimmedGoal;
+    let submissionAnswerMode = answerMode;
+    let submissionPlanExecution = planExecution;
+    let submissionSubagentMode: 'auto' | 'required' = 'auto';
     if (registeredCommand) {
       if (!registeredCommand.available) {
         setError({
@@ -1088,11 +1093,29 @@ function AppContent() {
         });
         return;
       }
-      await runSlashSystemCommand(registeredCommand, {
-        argumentsText: commandMatch?.[2] ?? '',
-        clearFullDraft: true,
-      });
-      return;
+      if (registeredCommand.execution_mode === 'run') {
+        const argumentsText = (commandMatch?.[2] ?? '').trim();
+        if (!argumentsText) {
+          setError({
+            type: 'validation.command_arguments',
+            code: 'SYSTEM_COMMAND_ARGUMENTS_REQUIRED',
+            message: t(`此命令需要参数。用法：${registeredCommand.usage}`),
+            retryable: false,
+            trace_id: 'local',
+          });
+          return;
+        }
+        submissionGoal = argumentsText;
+        submissionAnswerMode = 'trusted';
+        submissionPlanExecution = 'auto';
+        submissionSubagentMode = 'required';
+      } else {
+        await runSlashSystemCommand(registeredCommand, {
+          argumentsText: commandMatch?.[2] ?? '',
+          clearFullDraft: true,
+        });
+        return;
+      }
     }
     if (loading || run?.pending_approval || (run && !terminalStatuses.has(run.status))) return;
     if (run?.status !== 'waiting_user' && thinkingCapabilitiesLoading) return;
@@ -1123,15 +1146,34 @@ function AppContent() {
       const modelConfig = selectedRunModel(run?.status === 'waiting_user' ? run : undefined);
       const created = run?.status === 'waiting_user'
         ? await resumeRun(run.id, trimmedGoal, typeof run.waiting_state?.continuation_token === 'string' ? run.waiting_state.continuation_token : undefined, modelConfig)
-        : await createRun(trimmedGoal, run?.task_id, answerMode, {
-        reasoning_effort: conversationStrategyRef.current.reasoning_effort,
-        max_tool_calls: conversationStrategyRef.current.max_tool_calls,
-        reflection_enabled: conversationStrategyRef.current.reflection_enabled,
-        reflection_trigger: conversationStrategyRef.current.reflection_trigger,
-        execution_mode: executionMode === 'bypass' ? 'auto_approval' : 'request_approval',
-        verification_level: 'standard',
-        }, modelConfig, answerMode === 'trusted' ? planExecution : undefined,
-        ...(explicitSkillIds.length ? [explicitSkillIds] : []));
+        : submissionSubagentMode === 'required'
+          ? await createRun(submissionGoal, run?.task_id, submissionAnswerMode, {
+            reasoning_effort: conversationStrategyRef.current.reasoning_effort,
+            max_tool_calls: conversationStrategyRef.current.max_tool_calls,
+            reflection_enabled: conversationStrategyRef.current.reflection_enabled,
+            reflection_trigger: conversationStrategyRef.current.reflection_trigger,
+            execution_mode: executionMode === 'bypass' ? 'auto_approval' : 'request_approval',
+            verification_level: 'standard',
+          }, modelConfig, submissionPlanExecution,
+          explicitSkillIds.length ? explicitSkillIds : undefined, 'required')
+          : explicitSkillIds.length
+            ? await createRun(submissionGoal, run?.task_id, submissionAnswerMode, {
+              reasoning_effort: conversationStrategyRef.current.reasoning_effort,
+              max_tool_calls: conversationStrategyRef.current.max_tool_calls,
+              reflection_enabled: conversationStrategyRef.current.reflection_enabled,
+              reflection_trigger: conversationStrategyRef.current.reflection_trigger,
+              execution_mode: executionMode === 'bypass' ? 'auto_approval' : 'request_approval',
+              verification_level: 'standard',
+            }, modelConfig, submissionAnswerMode === 'trusted' ? submissionPlanExecution : undefined,
+            explicitSkillIds)
+            : await createRun(submissionGoal, run?.task_id, submissionAnswerMode, {
+              reasoning_effort: conversationStrategyRef.current.reasoning_effort,
+              max_tool_calls: conversationStrategyRef.current.max_tool_calls,
+              reflection_enabled: conversationStrategyRef.current.reflection_enabled,
+              reflection_trigger: conversationStrategyRef.current.reflection_trigger,
+              execution_mode: executionMode === 'bypass' ? 'auto_approval' : 'request_approval',
+              verification_level: 'standard',
+            }, modelConfig, submissionAnswerMode === 'trusted' ? submissionPlanExecution : undefined);
       const fastStream = takeCreatedRunStream(created.run_id);
       if (fastStream) {
         preconnectedRunStreamRef.current?.stream.close();
@@ -1146,7 +1188,7 @@ function AppContent() {
         task_id: created.task_id,
         status: created.status,
         mode: 'general-agent',
-        answer_mode: createdAnswerMode ?? answerMode,
+        answer_mode: createdAnswerMode ?? submissionAnswerMode,
         model_policy: modelConfig ? {
           provider: modelConfig.provider,
           model: modelConfig.name,
@@ -1158,11 +1200,11 @@ function AppContent() {
         } : {},
         result: null,
         steps: [], tool_calls: [], artifacts: [], events: [], turns: [], memories: [],
-        chat_messages: [{ id: `optimistic-${created.run_id}`, role: 'user', content: trimmedGoal, status: 'completed', metadata: {} }],
+        chat_messages: [{ id: `optimistic-${created.run_id}`, role: 'user', content: submissionGoal, status: 'completed', metadata: {} }],
       } as RunView);
       setPriorMessages(previousMessages);
       setRun(current);
-      setProcessState(createOptimisticProcessState(created.run_id, createdAnswerMode ?? answerMode));
+      setProcessState(createOptimisticProcessState(created.run_id, createdAnswerMode ?? submissionAnswerMode));
       rememberConversation(current, previousMessages);
       setGoal('');
       closeSlashCommand();
@@ -1715,6 +1757,7 @@ function AppContent() {
         onOpenShares={() => { setSidebarOpen(false); changeView('shares'); }}
         onOpenLibrary={() => { setSidebarOpen(false); changeView('library'); }}
         onOpenSkills={() => { setSidebarOpen(false); changeView('skills'); }}
+        onOpenScheduled={() => { setSidebarOpen(false); changeView('scheduled'); }}
         onOpenDocumentation={openDocumentation}
         onOpenUsage={() => { setSidebarOpen(false); setUsageOpen(true); }}
         onClose={() => setSidebarOpen(false)}
@@ -1747,6 +1790,11 @@ function AppContent() {
             onClose={() => changeView('chat')}
             onOpenConversation={(id, title) => { void openConversation({ id, title, priorMessages: [], has_active_share: true }); }}
             onShareChanged={(ids, active) => setConversationHistory((items) => items.map((item) => ids.includes(item.id) ? { ...item, has_active_share: active } : item))}
+          />
+        ) : view === 'scheduled' ? (
+          <ScheduledTasksView
+            onClose={() => changeView('chat')}
+            onOpenConversation={(id, title) => { changeView('chat'); void openConversation({ id, title, priorMessages: [] }); }}
           />
         ) : view === 'settings' ? (
           <SettingsView
@@ -2129,7 +2177,7 @@ function AppContent() {
   );
 }
 
-function Sidebar({ open, collapsed, width, run, activeConversationId, conversations, activeView, onNewChat, onSelectConversation, onConversationAction, onTogglePin, onOpenSettings, onOpenShares, onOpenLibrary, onOpenSkills, onOpenDocumentation, onOpenUsage, onClose, onCollapse, onExpand, onWidthChange }: {
+function Sidebar({ open, collapsed, width, run, activeConversationId, conversations, activeView, onNewChat, onSelectConversation, onConversationAction, onTogglePin, onOpenSettings, onOpenShares, onOpenLibrary, onOpenSkills, onOpenScheduled, onOpenDocumentation, onOpenUsage, onClose, onCollapse, onExpand, onWidthChange }: {
   open: boolean;
   collapsed: boolean;
   width: number;
@@ -2145,6 +2193,7 @@ function Sidebar({ open, collapsed, width, run, activeConversationId, conversati
   onOpenShares: () => void;
   onOpenLibrary: () => void;
   onOpenSkills: () => void;
+  onOpenScheduled: () => void;
   onOpenDocumentation: () => void;
   onOpenUsage: () => void;
   onClose: () => void;
@@ -2293,6 +2342,11 @@ function Sidebar({ open, collapsed, width, run, activeConversationId, conversati
       </nav>
 
       <div className="sidebar-bottom">
+        <button className={`side-action sidebar-scheduled-action ${activeView === 'scheduled' ? 'active' : ''}`} type="button" aria-label={t('已安排任务')} title={collapsed ? t('已安排任务') : undefined} onClick={onOpenScheduled}>
+          <Icon name="clock" />
+          <span>{t('已安排任务')}</span>
+          <small>{t('全局')}</small>
+        </button>
         <button className={`side-action sidebar-skills-action ${activeView === 'skills' ? 'active' : ''}`} type="button" aria-label={t('Skills')} title={collapsed ? t('Skills') : undefined} onClick={onOpenSkills}>
           <Icon name="library" />
           <span>{t('Skills')}</span>
@@ -4160,7 +4214,7 @@ function ErrorDialog({ error, onClose, onRetry }: { error: ApiErrorPayload; onCl
   return <div className="modal-backdrop" role="presentation" onMouseDown={onClose}><section className="confirmation-modal error-dialog" role="alertdialog" aria-modal="true" aria-labelledby="error-title" onMouseDown={(event) => event.stopPropagation()}><div className="warning-mark">!</div><h2 id="error-title">{t(title)}</h2><p>{error.message}</p><div className="confirmation-actions">{onRetry && <button className="secondary-button" type="button" onClick={onRetry}>{t('重试')}</button>}<button className="danger-confirm-button" type="button" onClick={onClose}>{t('知道了')}</button></div></section></div>;
 }
 
-type IconName = 'plus' | 'message' | 'link' | 'library' | 'chart' | 'settings' | 'sparkle' | 'tools' | 'terminal' | 'brain' | 'palette' | 'lock' | 'token' | 'check' | 'info' | 'route' | 'refresh' | 'requestApprove' | 'autoApprove';
+type IconName = 'plus' | 'message' | 'link' | 'library' | 'chart' | 'clock' | 'settings' | 'sparkle' | 'tools' | 'terminal' | 'brain' | 'palette' | 'lock' | 'token' | 'check' | 'info' | 'route' | 'refresh' | 'requestApprove' | 'autoApprove';
 
 function Icon({ name }: { name: IconName }) {
   const paths: Record<IconName, ReactNode> = {
@@ -4169,6 +4223,7 @@ function Icon({ name }: { name: IconName }) {
     link: <><path d="M10 13a5 5 0 0 0 7.54.54l2-2a5 5 0 0 0-7.07-7.07l-1.15 1.15" /><path d="M14 11a5 5 0 0 0-7.54-.54l-2 2a5 5 0 0 0 7.07 7.07l1.15-1.15" /></>,
     library: <><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H9l2 2h6.5A2.5 2.5 0 0 1 20 7.5v9A2.5 2.5 0 0 1 17.5 19h-11A2.5 2.5 0 0 1 4 16.5v-11Z" /><path d="M4 8h16" /></>,
     chart: <><path d="M4 19V5M4 19h16" /><path d="m7 15 3-3 3 2 5-6" /></>,
+    clock: <><circle cx="12" cy="12" r="8.5" /><path d="M12 7v5l3.5 2" /></>,
     settings: <><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.06 2.06-.06-.06a1.7 1.7 0 0 0-1.88-.34 1.7 1.7 0 0 0-1 1.55V20h-2.9v-.09a1.7 1.7 0 0 0-1-1.55 1.7 1.7 0 0 0-1.88.34l-.06.06-2.06-2.06.06-.06A1.7 1.7 0 0 0 7.3 14.8a1.7 1.7 0 0 0-1.55-1H5.7v-2.9h.09a1.7 1.7 0 0 0 1.55-1 1.7 1.7 0 0 0-.34-1.88l-.06-.06L9 5.9l.06.06a1.7 1.7 0 0 0 1.88.34 1.7 1.7 0 0 0 1-1.55V4.7h2.9v.09a1.7 1.7 0 0 0 1 1.55 1.7 1.7 0 0 0 1.88-.34l.06-.06 2.06 2.06-.06.06a1.7 1.7 0 0 0-.34 1.88 1.7 1.7 0 0 0 1.55 1h.09v2.9h-.09a1.7 1.7 0 0 0-1.55 1Z" /></>,
     sparkle: <path d="m12 3 .9 5.1L18 9l-5.1.9L12 15l-.9-5.1L6 9l5.1-.9L12 3Zm6 12 .45 2.55L21 18l-2.55.45L18 21l-.45-2.55L15 18l2.55-.45L18 15Z" />,
     tools: <><path d="M14 6a4 4 0 0 0-5.48 5.48L3.5 16.5a2.12 2.12 0 0 0 3 3l5.02-5.02A4 4 0 0 0 17 9l-3 1-2-2 1-3Z" /><path d="m15 15 4 4" /></>,

@@ -88,6 +88,9 @@ class HierarchicalBudgetManager:
             raise HierarchicalBudgetError("Budget reservation must follow Agent lineage")
         if child.depth != parent.depth + 1:
             raise HierarchicalBudgetError("Child budget depth is invalid")
+        # A previous reservation in the same fan-out transaction may have
+        # advanced the parent's CAS version through a SQL UPDATE.
+        await self.session.refresh(parent)
         run_children = int(
             await self.session.scalar(
                 select(func.count(AgentExecutionRecord.id)).where(

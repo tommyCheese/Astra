@@ -112,14 +112,16 @@ export type ContextWindowStatus = {
   last_action_at: string | null;
 };
 export type SlashSystemCommand = {
-  name: 'compact' | 'clear' | 'schedule' | 'heartbeat';
+  name: 'compact' | 'clear' | 'schedule' | 'heartbeat' | 'subagent';
   command: string;
   description: string;
-  effect: 'compact_context' | 'clear_context' | 'manage_schedules' | 'manage_heartbeat';
+  effect: 'compact_context' | 'clear_context' | 'manage_schedules' | 'manage_heartbeat' | 'start_subagent_run';
   argument_mode: 'none' | 'required';
   usage: string;
   side_effect: 'read' | 'write' | 'mixed';
   available: boolean;
+  execution_mode?: 'host' | 'run';
+  unavailable_reason?: string | null;
 };
 export type SlashCommandResult = {
   command: string;
@@ -127,6 +129,106 @@ export type SlashCommandResult = {
   context: ContextWindowStatus;
   details: Record<string, unknown>;
 };
+
+export type ScheduleSpec =
+  | { type: 'once'; at: string }
+  | { type: 'interval'; interval_seconds: number; anchor_at?: string | null }
+  | { type: 'cron'; expression: string };
+export type ScheduledTask = {
+  id: string;
+  name: string;
+  kind: 'agent' | 'heartbeat';
+  system_managed: boolean;
+  owner_principal: string | null;
+  target_task_id: string | null;
+  prompt: string;
+  schedule_type: 'once' | 'interval' | 'cron';
+  schedule: ScheduleSpec;
+  timezone: string;
+  enabled: boolean;
+  misfire_policy: 'skip' | 'fire_once';
+  misfire_grace_seconds: number;
+  overlap_policy: 'skip';
+  execution: Record<string, unknown>;
+  heartbeat: { active_hours?: { start: string; end: string } | null; prompt?: string };
+  next_fire_at: string | null;
+  last_fire_at: string | null;
+  version: number;
+  created_at: string;
+  updated_at: string;
+};
+export type ScheduledTaskRun = {
+  id: string;
+  job_id: string;
+  scheduled_for: string;
+  trigger_type: string;
+  status: string;
+  task_id: string | null;
+  run_id: string | null;
+  outcome: Record<string, unknown>;
+  claimed_at: string | null;
+  started_at: string | null;
+  completed_at: string | null;
+  created_at: string;
+};
+
+export async function listScheduledTasks(signal?: AbortSignal): Promise<ScheduledTask[]> {
+  const response = await fetchWithTimeout('/api/schedules', { signal });
+  if (!response.ok) throw await responseError(response);
+  return response.json() as Promise<ScheduledTask[]>;
+}
+
+export async function updateScheduledTask(
+  id: string,
+  payload: Record<string, unknown>,
+): Promise<ScheduledTask> {
+  const response = await fetchWithTimeout(`/api/schedules/${id}`, {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+  });
+  if (!response.ok) throw await responseError(response);
+  return response.json() as Promise<ScheduledTask>;
+}
+
+export async function setScheduledTaskEnabled(task: ScheduledTask, enabled: boolean): Promise<ScheduledTask> {
+  const response = await fetchWithTimeout(`/api/schedules/${task.id}/${enabled ? 'resume' : 'pause'}`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ version: task.version }),
+  });
+  if (!response.ok) throw await responseError(response);
+  return response.json() as Promise<ScheduledTask>;
+}
+
+export async function deleteScheduledTask(task: ScheduledTask): Promise<void> {
+  const response = await fetchWithTimeout(`/api/schedules/${task.id}?version=${task.version}`, { method: 'DELETE' });
+  if (!response.ok) throw await responseError(response);
+}
+
+export async function runScheduledTask(id: string): Promise<ScheduledTaskRun> {
+  const response = await fetchWithTimeout(`/api/schedules/${id}/run`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}),
+  });
+  if (!response.ok) throw await responseError(response);
+  return response.json() as Promise<ScheduledTaskRun>;
+}
+
+export async function listScheduledTaskRuns(id: string, signal?: AbortSignal): Promise<ScheduledTaskRun[]> {
+  const response = await fetchWithTimeout(`/api/schedules/${id}/runs`, { signal });
+  if (!response.ok) throw await responseError(response);
+  return response.json() as Promise<ScheduledTaskRun[]>;
+}
+
+export async function updateHeartbeat(payload: Record<string, unknown>): Promise<ScheduledTask> {
+  const response = await fetchWithTimeout('/api/heartbeat', {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+  });
+  if (!response.ok) throw await responseError(response);
+  return response.json() as Promise<ScheduledTask>;
+}
+
+export async function disableHeartbeat(): Promise<ScheduledTask> {
+  const response = await fetchWithTimeout('/api/heartbeat/disable', { method: 'POST' });
+  if (!response.ok) throw await responseError(response);
+  return response.json() as Promise<ScheduledTask>;
+}
 
 export async function getRuntimeDefaultModel(signal?: AbortSignal): Promise<RuntimeDefaultModel> {
   const response = await fetchWithTimeout('/api/models/default', { signal });
@@ -504,12 +606,12 @@ function memorySessionId(): string {
   }
 }
 
-function createRunBody(goal: string, taskId: string | undefined, answerMode: 'standard' | 'trusted', reasoningPolicy?: ReasoningPolicyRequest, model?: RunModelConfig, planExecution?: 'auto' | 'confirm', skillIds: string[] = []): string {
-  return JSON.stringify({ goal, task_id: taskId, session_id: memorySessionId(), answer_mode: answerMode, reasoning_policy: reasoningPolicy, model, skill_ids: skillIds, ...(answerMode === 'trusted' ? { plan_execution: planExecution ?? 'confirm' } : {}) });
+function createRunBody(goal: string, taskId: string | undefined, answerMode: 'standard' | 'trusted', reasoningPolicy?: ReasoningPolicyRequest, model?: RunModelConfig, planExecution?: 'auto' | 'confirm', skillIds: string[] | undefined = [], subagentMode: 'auto' | 'required' = 'auto'): string {
+  return JSON.stringify({ goal, task_id: taskId, session_id: memorySessionId(), answer_mode: answerMode, reasoning_policy: reasoningPolicy, model, skill_ids: skillIds ?? [], subagent_mode: subagentMode, ...(answerMode === 'trusted' ? { plan_execution: planExecution ?? 'confirm' } : {}) });
 }
 
-export async function createRun(goal: string, taskId: string | undefined, answerMode: 'standard' | 'trusted', reasoningPolicy?: ReasoningPolicyRequest, model?: RunModelConfig, planExecution?: 'auto' | 'confirm', skillIds: string[] = []): Promise<CreatedRun> {
-  const stream = createRunStream(goal, taskId, answerMode, reasoningPolicy, model, planExecution, skillIds);
+export async function createRun(goal: string, taskId: string | undefined, answerMode: 'standard' | 'trusted', reasoningPolicy?: ReasoningPolicyRequest, model?: RunModelConfig, planExecution?: 'auto' | 'confirm', skillIds: string[] | undefined = [], subagentMode: 'auto' | 'required' = 'auto'): Promise<CreatedRun> {
+  const stream = createRunStream(goal, taskId, answerMode, reasoningPolicy, model, planExecution, skillIds, subagentMode);
   try {
     const created = await stream.created;
     createdRunStreams.set(created.run_id, stream);
@@ -740,7 +842,7 @@ async function consumeSse(
   }
 }
 
-export function createRunStream(goal: string, taskId: string | undefined, answerMode: 'standard' | 'trusted', reasoningPolicy?: ReasoningPolicyRequest, model?: RunModelConfig, planExecution?: 'auto' | 'confirm', skillIds: string[] = []): RunStreamHandle {
+export function createRunStream(goal: string, taskId: string | undefined, answerMode: 'standard' | 'trusted', reasoningPolicy?: ReasoningPolicyRequest, model?: RunModelConfig, planExecution?: 'auto' | 'confirm', skillIds: string[] | undefined = [], subagentMode: 'auto' | 'required' = 'auto'): RunStreamHandle {
   const controller = new AbortController();
   const readyTimer = window.setTimeout(() => controller.abort(), 15000);
   const queued: RunStreamEvent[] = [];
@@ -761,7 +863,7 @@ export function createRunStream(goal: string, taskId: string | undefined, answer
       const response = await fetch('/api/runs/stream', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
-        body: createRunBody(goal, taskId, answerMode, reasoningPolicy, model, planExecution, skillIds),
+        body: createRunBody(goal, taskId, answerMode, reasoningPolicy, model, planExecution, skillIds, subagentMode),
         signal: controller.signal,
       });
       if (!response.ok) throw await responseError(response);

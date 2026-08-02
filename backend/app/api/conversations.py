@@ -50,8 +50,8 @@ async def get_conversation(conversation_id: str, session: AsyncSession = Depends
 
 
 @router.get("/system-commands", response_model=list[SlashSystemCommand])
-async def get_system_commands():
-    return list_system_commands()
+async def get_system_commands(settings: Settings = Depends(get_settings)):
+    return list_system_commands(settings)
 
 
 @router.get(

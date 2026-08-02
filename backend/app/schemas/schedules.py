@@ -150,6 +150,18 @@ class ScheduledJobUpdate(BaseModel):
         return ScheduledJobCreate.validate_timezone(value)
 
 
+class ScheduledJobVersionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    version: int = Field(ge=1)
+
+
+class ScheduledJobManualRunRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    idempotency_key: str | None = Field(default=None, min_length=1, max_length=240)
+
+
 class HeartbeatConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -181,6 +193,7 @@ class ScheduledJobView(BaseModel):
     name: str
     kind: ScheduledJobKind
     system_managed: bool
+    owner_principal: str | None
     target_task_id: str | None
     prompt: str
     schedule_type: ScheduleType

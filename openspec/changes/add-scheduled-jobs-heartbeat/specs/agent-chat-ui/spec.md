@@ -1,7 +1,7 @@
 ## ADDED Requirements
 
 ### Requirement: 用户可以在 Chat UI 管理自动化
-系统 SHALL 提供自动化管理入口，展示定时任务和 heartbeat 的启用状态、计划摘要、下一次运行、最近结果与历史。
+系统 SHALL 提供全局“已安排任务”管理入口，展示所有会话创建的定时任务和唯一 heartbeat 的启用状态、目标会话、计划摘要、下一次运行、最近结果与历史。
 
 #### Scenario: 查看自动化列表
 - **WHEN** 用户打开自动化管理界面

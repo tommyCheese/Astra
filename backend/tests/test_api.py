@@ -103,6 +103,95 @@ async def test_runtime_default_model_reports_whether_it_is_runnable():
     assert mock_model.configured is True
 
 
+async def test_scheduled_tasks_api_is_global_and_versioned(app_client):
+    now = utc_now()
+    async with app_client._astra_session() as session:
+        task = TaskRecord(
+            title="Scheduled target",
+            description="Scheduled target",
+            status="created",
+            preferred_answer_mode="standard",
+            created_at=now,
+            updated_at=now,
+        )
+        session.add(task)
+        await session.commit()
+        task_id = task.id
+
+    created = await app_client.post(
+        "/api/schedules",
+        json={
+            "name": "Daily brief",
+            "prompt": "Summarize updates",
+            "target_task_id": task_id,
+            "schedule": {"type": "cron", "expression": "0 9 * * *"},
+            "timezone": "Asia/Shanghai",
+            "execution": {"permission_bundle": {"token": "signed"}},
+        },
+    )
+    assert created.status_code == 201
+    job = created.json()
+
+    listed = await app_client.get("/api/schedules")
+    assert [item["id"] for item in listed.json()] == [job["id"]]
+    assert listed.json()[0]["target_task_id"] == task_id
+
+    paused = await app_client.post(
+        f"/api/schedules/{job['id']}/pause",
+        json={"version": job["version"]},
+    )
+    assert paused.status_code == 200
+    assert paused.json()["enabled"] is False
+
+    stale = await app_client.patch(
+        f"/api/schedules/{job['id']}",
+        json={"version": job["version"], "name": "Stale"},
+    )
+    assert stale.status_code == 409
+    assert stale.json()["error"]["code"] == "SCHEDULE_VERSION_CONFLICT"
+
+
+async def test_heartbeat_api_uses_one_global_desired_state(app_client):
+    now = utc_now()
+    async with app_client._astra_session() as session:
+        tasks = [
+            TaskRecord(
+                title=f"Heartbeat target {index}",
+                description="Heartbeat target",
+                status="created",
+                preferred_answer_mode="standard",
+                created_at=now,
+                updated_at=now,
+            )
+            for index in range(2)
+        ]
+        session.add_all(tasks)
+        await session.commit()
+        task_ids = [task.id for task in tasks]
+
+    base = {
+        "enabled": True,
+        "interval_seconds": 1800,
+        "timezone": "Asia/Shanghai",
+        "prompt": "Check explicit pending work; otherwise HEARTBEAT_OK",
+        "execution": {"permission_bundle": {"token": "signed"}},
+    }
+    first = await app_client.put(
+        "/api/heartbeat", json={**base, "target_task_id": task_ids[0]}
+    )
+    second = await app_client.put(
+        "/api/heartbeat", json={**base, "target_task_id": task_ids[1]}
+    )
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert second.json()["id"] == first.json()["id"]
+    assert second.json()["target_task_id"] == task_ids[1]
+
+    listed = await app_client.get("/api/schedules?kind=heartbeat")
+    assert len(listed.json()) == 1
+    assert listed.json()[0]["system_managed"] is True
+
+
 async def test_memory_management_api_lists_details_and_revokes_with_cas(app_client):
     async with app_client._astra_session() as session:
         run_repo = RunRepository(session)
@@ -264,10 +353,14 @@ async def test_context_status_and_registered_commands_preserve_history(app_clien
         "/clear",
         "/schedule",
         "/heartbeat",
+        "/subagent",
     ]
     assert catalog.json()[2]["argument_mode"] == "required"
     assert catalog.json()[2]["usage"].startswith("/schedule ")
     assert catalog.json()[2]["side_effect"] == "mixed"
+    assert catalog.json()[4]["execution_mode"] == "run"
+    assert catalog.json()[4]["argument_mode"] == "required"
+    assert catalog.json()[4]["available"] is False
 
     default_model = await app_client.get("/api/models/default")
     assert default_model.status_code == 200
@@ -1829,6 +1922,21 @@ async def test_create_run_defaults_to_standard_profile(app_client):
     assert body["reasoning_policy"]["effective"]["reflection_enabled"] is False
     assert body["reasoning_policy"]["effective"]["budgets"]["max_tool_calls"] is None
     assert body["reasoning_policy"]["effective"]["budgets"]["max_turns"] is None
+
+
+async def test_required_subagent_run_fails_closed_when_execution_is_disabled(app_client):
+    response = await app_client.post(
+        "/api/runs",
+        json={
+            "goal": "并发调研两个独立方案",
+            "answer_mode": "trusted",
+            "plan_execution": "auto",
+            "subagent_mode": "required",
+        },
+    )
+
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "SUBAGENT_COMMAND_UNAVAILABLE"
 
 
 async def test_tool_approval_decision_api_consumes_token_once(app_client):

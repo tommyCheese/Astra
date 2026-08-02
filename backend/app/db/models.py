@@ -942,6 +942,11 @@ class AgentJoinRecord(Base):
             "join_key",
             name="uq_agent_joins_parent_key",
         ),
+        UniqueConstraint(
+            "parent_execution_id",
+            "group_id",
+            name="uq_agent_joins_parent_group",
+        ),
         Index("ix_agent_joins_run_status", "run_id", "status"),
         Index("ix_agent_joins_parent_status", "parent_execution_id", "status"),
     )
@@ -953,12 +958,16 @@ class AgentJoinRecord(Base):
         ForeignKey("plan_nodes.id"), nullable=True
     )
     join_key: Mapped[str] = mapped_column(String(160))
+    group_id: Mapped[str | None] = mapped_column(String(160), nullable=True)
     policy: Mapped[str] = mapped_column(String(40))
     child_execution_ids: Mapped[list] = mapped_column(JsonType, default=list)
     required_execution_ids: Mapped[list] = mapped_column(JsonType, default=list)
     optional_execution_ids: Mapped[list] = mapped_column(JsonType, default=list)
     status: Mapped[str] = mapped_column(String(40), default="waiting")
     result: Mapped[dict] = mapped_column(JsonType, default=dict)
+    consumed_parent_state_version: Mapped[int | None] = mapped_column(
+        Integer, nullable=True
+    )
     state_version: Mapped[int] = mapped_column(Integer, default=1)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

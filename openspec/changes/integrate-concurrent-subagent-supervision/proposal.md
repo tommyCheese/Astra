@@ -5,7 +5,8 @@ The governed subagent runtime currently stops at a disabled-by-default, single-a
 ## What Changes
 
 - Replace the phase-one "one active child per parent" rule with policy-bounded concurrent fan-out enforced by cumulative, active, budget, provider, and deployment limits.
-- Add a first-class root-Agent delegation decision that can atomically create a bounded group of child executions and its durable join without representing delegation as an ordinary third-party Tool.
+- Add an Astra `swarm` runtime built-in that lets the root Agent atomically create a bounded group of child executions and its durable join through the existing Tool-selection surface without becoming a third-party or sandbox Tool.
+- Add `/subagent <task>` to the registered slash-command system as a Run-creation command that starts a trusted Run with required subagent execution while keeping the command text out of conversation messages.
 - Add a Run-scoped subagent supervisor that dispatches queued children concurrently through independent database sessions and model-client execution contexts while the root continues unrelated work.
 - Automatically validate, join, merge, and explicitly promote verified child results into parent observations exactly once.
 - Make Plan scheduling wait only at the node consuming a child join, and make root completion require all mandatory descendant and join barriers to be consumed.
@@ -25,10 +26,11 @@ The governed subagent runtime currently stops at a disabled-by-default, single-a
 - `completion-gate`: Prevent successful root completion until mandatory concurrent child results are terminal, joined, consumed, and conflict-safe.
 - `task-runner`: Own the concurrent subagent supervisor lifecycle, dispatch, recovery, cancellation, and shutdown behavior.
 - `agent-chat-ui`: Present simultaneous child execution, join, wait, budget, and cancellation state without implying serial execution.
+- `slash-system-commands`: Register the parameterized `/subagent <task>` Run-creation command and preserve command/Skill coexistence and submission recovery.
 
 ## Impact
 
-- Backend decision schemas and model prompting, `AgentLoop`, `RunEngine`, Plan scheduling, completion evaluation, subagent runtime/coordinator/fan-in services, policy compilation, events, recovery, and telemetry.
+- Backend runtime built-in registration/dispatch, `AgentLoop`, `RunEngine`, Run creation, Plan scheduling, completion evaluation, subagent runtime/coordinator/fan-in services, policy compilation, slash-command catalog, events, recovery, and telemetry.
 - A new supervisor/orchestration boundary and per-child model-client/runtime factory; the shared HTTP transport and immutable Tool Registry may still be reused.
 - Run API and frontend Agent-tree projections gain join-consumption and concurrent-progress metadata while remaining backward compatible for root-only Runs.
 - Existing governed-subagent tables remain usable; schema changes may be needed for explicit join merge/consumption state and atomic fan-out group identity.

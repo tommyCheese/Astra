@@ -21,6 +21,7 @@ from app.api.permissions import router as permissions_router
 from app.api.preferences import router as preferences_router
 from app.api.runs import router as runs_router
 from app.api.runtime import router as runtime_router
+from app.api.schedules import router as schedules_router
 from app.api.skills import router as skills_router
 from app.api.tools import router as tools_router
 from app.api.usage import router as usage_router
@@ -120,6 +121,7 @@ def create_app(settings: Settings | None = None, *, session_factory=SessionLocal
     app.include_router(preferences_router)
     app.include_router(permissions_router)
     app.include_router(runtime_router)
+    app.include_router(schedules_router)
     app.include_router(tools_router)
     app.include_router(usage_router)
     app.include_router(skills_router)

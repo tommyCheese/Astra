@@ -23,9 +23,9 @@
 
 ## 4. 定时任务 API
 
-- [ ] 4.1 实现 schedule 创建、列表、详情、版本化更新和受保护删除 API
-- [ ] 4.2 实现 pause、resume、manual-run API 及幂等键
-- [ ] 4.3 实现 schedule run 历史与关联 Astra Run 查询 API
+- [x] 4.1 实现 schedule 创建、列表、详情、版本化更新和受保护删除 API
+- [x] 4.2 实现 pause、resume、manual-run API 及幂等键
+- [x] 4.3 实现 schedule run 历史与关联 Astra Run 查询 API
 - [ ] 4.4 补充本机 API 边界、结构化错误和审计日志
 
 ## 5. Heartbeat
@@ -37,11 +37,13 @@
 
 ## 6. Chat UI 自动化管理
 
-- [ ] 6.1 增加前端 schedule/heartbeat 类型与 API client
-- [ ] 6.2 增加自动化列表、状态摘要、下一触发和运行历史界面
-- [ ] 6.3 增加计划编辑器、时区/策略校验、暂停恢复与手动运行交互
-- [ ] 6.4 增加 heartbeat 周期、活动时间窗、prompt 和静默语义设置
-- [ ] 6.5 从 schedule run 历史导航到关联对话与审计 timeline
+- [x] 6.0 将会话命令创建的 schedule 与 heartbeat 控制面改为全局，并兼容收敛旧 heartbeat 稳定键
+
+- [x] 6.1 增加前端 schedule/heartbeat 类型与 API client
+- [x] 6.2 增加自动化列表、状态摘要、下一触发和运行历史界面
+- [x] 6.3 增加计划编辑器、时区/策略校验、暂停恢复与手动运行交互
+- [x] 6.4 增加 heartbeat 周期、活动时间窗、prompt 和静默语义设置
+- [x] 6.5 从 schedule run 历史导航到关联对话与审计 timeline
 
 ## 7. 命令系统集成
 
@@ -55,6 +57,6 @@
 
 - [ ] 8.1 增加 Repository 并发领取、重启恢复、misfire、overlap 和幂等测试
 - [ ] 8.2 增加 API、Run 派发、权限过期和 heartbeat 静默/繁忙测试
-- [ ] 8.3 增加前端自动化与 heartbeat 交互测试、类型检查和生产构建
+- [x] 8.3 增加前端自动化与 heartbeat 交互测试、类型检查和生产构建
 - [ ] 8.4 更新部署配置、健康检查、运维文档和自动化安全说明
 - [ ] 8.5 运行后端完整测试、ruff、前端测试与 build，并记录验证结果

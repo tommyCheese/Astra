@@ -72,6 +72,14 @@ vi.mock('../src/api', () => ({
     steps: [], tool_calls: [], artifacts: [], events: [{ id: 1, type: 'run.cancelled', payload: { category: 'user_cancelled' }, created_at: '2026-07-14T00:00:00Z' }], turns: [], memories: [], chat_messages: [{ id: 'run-1-terminal', role: 'assistant', content: '已终止本次运行。', status: 'completed', metadata: { terminal_status: 'cancelled' } }],
   })),
   listConversations: vi.fn(async () => []),
+  listScheduledTasks: vi.fn(async () => []),
+  listScheduledTaskRuns: vi.fn(async () => []),
+  setScheduledTaskEnabled: vi.fn(),
+  runScheduledTask: vi.fn(),
+  updateScheduledTask: vi.fn(),
+  updateHeartbeat: vi.fn(),
+  disableHeartbeat: vi.fn(),
+  deleteScheduledTask: vi.fn(),
   getConversation: vi.fn(async (id) => ({ id, title: '对话', title_source: 'auto', pinned_at: null, created_at: new Date().toISOString(), updated_at: new Date().toISOString(), last_run_status: null, last_message_preview: '', has_active_share: false, runs: [] })),
   updateConversation: vi.fn(async (id, patch) => ({ id, title: patch.title ?? '对话', title_source: patch.title ? 'user' : 'auto', pinned_at: patch.pinned ? new Date().toISOString() : null, created_at: new Date().toISOString(), updated_at: new Date().toISOString(), last_run_status: 'completed', last_message_preview: '', has_active_share: false })),
   deleteConversation: vi.fn(async () => undefined),
@@ -530,8 +538,8 @@ describe('App', () => {
 
   it('executes preset slash commands without submitting a model message and refreshes context status', async () => {
     vi.mocked(listSystemCommands).mockResolvedValueOnce([
-      { name: 'compact', command: '/compact', description: '整理较早的对话，保留近期内容和完整记录', effect: 'compact_context', argument_mode: 'none', usage: '/compact', side_effect: 'write', available: true },
-      { name: 'clear', command: '/clear', description: '让模型从当前消息重新开始，完整记录仍会保留', effect: 'clear_context', argument_mode: 'none', usage: '/clear', side_effect: 'write', available: true },
+      { name: 'compact', command: '/compact', description: '整理较早的对话，保留近期内容和完整记录', effect: 'compact_context', argument_mode: 'none', usage: '/compact', side_effect: 'write', available: true, execution_mode: 'host', unavailable_reason: null },
+      { name: 'clear', command: '/clear', description: '让模型从当前消息重新开始，完整记录仍会保留', effect: 'clear_context', argument_mode: 'none', usage: '/clear', side_effect: 'write', available: true, execution_mode: 'host', unavailable_reason: null },
     ]);
     render(<App />);
     const textbox = screen.getByRole('textbox');
@@ -586,6 +594,8 @@ describe('App', () => {
         usage: '/schedule list|show|create|pause|resume|run|delete …',
         side_effect: 'mixed',
         available: true,
+        execution_mode: 'host',
+        unavailable_reason: null,
       },
     ]);
     render(<App />);
@@ -621,6 +631,42 @@ describe('App', () => {
     await waitFor(() => expect(screen.getByText('操作执行失败，输入内容已保留，可稍后重试。')).toBeInTheDocument());
     expect(textbox).toHaveValue('/schedule list');
     expect(vi.mocked(createRun).mock.calls).toHaveLength(runCalls);
+  });
+
+  it('routes /subagent to a trusted required-subagent Run and preserves arguments on failure', async () => {
+    vi.mocked(listSystemCommands).mockResolvedValueOnce([
+      {
+        name: 'subagent',
+        command: '/subagent',
+        description: '使用 Astra Swarm 并发子 Agent 完成指定任务',
+        effect: 'start_subagent_run',
+        argument_mode: 'required',
+        usage: '/subagent <任务>',
+        side_effect: 'write',
+        execution_mode: 'run',
+        unavailable_reason: null,
+        available: true,
+      },
+    ]);
+    vi.mocked(createRun).mockRejectedValueOnce(new Error('temporarily unavailable'));
+    render(<App />);
+    const textbox = screen.getByRole('textbox');
+
+    await userEvent.type(textbox, '/subagent 调研三个独立方案');
+    await userEvent.click(screen.getByRole('button', { name: '发送' }));
+
+    await waitFor(() => expect(createRun).toHaveBeenCalledWith(
+      '调研三个独立方案',
+      undefined,
+      'trusted',
+      expect.any(Object),
+      expect.any(Object),
+      'auto',
+      undefined,
+      'required',
+    ));
+    expect(executeConversationCommand).not.toHaveBeenCalled();
+    expect(textbox).toHaveValue('/subagent 调研三个独立方案');
   });
 
   it('refreshes published Skills after returning from the Skill library', async () => {

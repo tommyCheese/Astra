@@ -85,7 +85,7 @@ describe('normalizeSelectedSkillIds', () => {
 describe('filterSlashCommandOptions', () => {
   it('places matching registered system commands before Skill options', () => {
     const options = filterSlashCommandOptions(
-      [{ name: 'compact', command: '/compact', description: '压缩上下文', effect: 'compact_context', argument_mode: 'none', usage: '/compact', side_effect: 'write', available: true }],
+      [{ name: 'compact', command: '/compact', description: '压缩上下文', effect: 'compact_context', argument_mode: 'none', usage: '/compact', side_effect: 'write', available: true, execution_mode: 'host', unavailable_reason: null }],
       [skill({ name: 'compact-helper', qualified_identity: 'custom:compact-helper' })],
       'comp',
       [],

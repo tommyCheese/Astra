@@ -55,7 +55,7 @@ class AutomationCommandService:
         except ScheduleNotFoundError as exc:
             raise ResourceError(
                 "SCHEDULE_NOT_FOUND",
-                "找不到当前对话中的指定定时任务。",
+                "找不到工作区中的指定定时任务。",
             ) from exc
         except ScheduleVersionConflictError as exc:
             raise StateError(
@@ -81,7 +81,7 @@ class AutomationCommandService:
         except ScheduleNotFoundError as exc:
             raise ResourceError(
                 "HEARTBEAT_NOT_CONFIGURED",
-                "当前对话尚未配置 heartbeat。",
+                "工作区尚未配置 heartbeat。",
             ) from exc
 
     async def _execute_schedule(
@@ -91,7 +91,6 @@ class AutomationCommandService:
     ) -> tuple[str, dict[str, object]]:
         if command.action == "list":
             jobs = await self.repo.list(
-                target_task_id=task.id,
                 kind=ScheduledJobKind.agent,
             )
             if jobs:
@@ -100,9 +99,9 @@ class AutomationCommandService:
                     f"{job.id} · 下次 {self._display_time(job.next_fire_at)}"
                     for job in jobs
                 )
-                message = f"当前对话共有 {len(jobs)} 个定时任务：\n{summary}"
+                message = f"工作区共有 {len(jobs)} 个定时任务：\n{summary}"
             else:
-                message = "当前对话还没有定时任务。"
+                message = "工作区还没有定时任务。"
             return (
                 message,
                 {"jobs": [self._job_view(job) for job in jobs]},
@@ -136,8 +135,7 @@ class AutomationCommandService:
             )
 
         assert command.job_id is not None
-        job = await self._require_scoped_job(
-            task.id,
+        job = await self._require_global_job(
             command.job_id,
             kind=ScheduledJobKind.agent,
         )
@@ -188,10 +186,10 @@ class AutomationCommandService:
         task: TaskRecord,
         command: HeartbeatCommand,
     ) -> tuple[str, dict[str, object]]:
-        heartbeat = await self.repo.get_heartbeat(task.id)
+        heartbeat = await self.repo.get_heartbeat()
         if command.action == "status":
             if heartbeat is None:
-                return "当前对话尚未配置 heartbeat。", {
+                return "工作区尚未配置 heartbeat。", {
                     "heartbeat": {"configured": False, "enabled": False}
                 }
             return (
@@ -262,7 +260,7 @@ class AutomationCommandService:
                 }
             }
         if command.action == "off":
-            heartbeat = await self.repo.disable_heartbeat(task.id)
+            heartbeat = await self.repo.disable_heartbeat()
             return "已关闭 heartbeat，配置和历史仍保留。", {
                 "heartbeat": {
                     "configured": True,
@@ -270,7 +268,7 @@ class AutomationCommandService:
                 }
             }
         if heartbeat is None:
-            raise ScheduleNotFoundError(f"heartbeat:{task.id}")
+            raise ScheduleNotFoundError("heartbeat:global")
         schedule_run = await self.repo.manual_trigger(
             heartbeat,
             idempotency_key=command.idempotency_key,
@@ -326,15 +324,14 @@ class AutomationCommandService:
             "创建自动化需要当前对话中仍有效的无人值守权限包。",
         )
 
-    async def _require_scoped_job(
+    async def _require_global_job(
         self,
-        task_id: str,
         job_id: str,
         *,
         kind: ScheduledJobKind,
     ) -> ScheduledJobRecord:
         job = await self.repo.require(job_id)
-        if job.target_task_id != task_id or job.kind != kind.value:
+        if job.kind != kind.value:
             raise ScheduleNotFoundError(job_id)
         return job
 

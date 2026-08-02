@@ -30,6 +30,8 @@ from app.runner.plan_revision import PlanRevisionError, revise_waiting_plan
 from app.runner.reasoning import RunProfileResolver, compile_subagent_policy
 from app.runtime_events import run_event_broker
 from app.schemas.agent import (
+    EXECUTABLE_SUBAGENT_COHORTS,
+    AnswerMode,
     ApprovalDecisionRequest,
     ContinuationAction,
     ContinueRunRequest,
@@ -369,7 +371,20 @@ async def _create_run(
             payload.reasoning_policy,
             plan_execution=payload.plan_execution,
             subagent_policy=compile_subagent_policy(run_settings),
+            subagent_mode=payload.subagent_mode,
         )
+        if payload.subagent_mode == "required":
+            subagent_policy = profile.reasoning_policy.effective.subagents
+            if (
+                profile.answer_mode != AnswerMode.trusted
+                or not subagent_policy.enabled
+                or subagent_policy.kill_switch
+                or subagent_policy.rollout_cohort not in EXECUTABLE_SUBAGENT_COHORTS
+            ):
+                raise ValidationError(
+                    "SUBAGENT_COMMAND_UNAVAILABLE",
+                    "当前策略不允许创建必需子 Agent 运行。",
+                )
         if not payload.interactive and payload.permission_bundle is None:
             raise ValidationError(
                 "PERMISSION_BUNDLE_REQUIRED",

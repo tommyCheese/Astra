@@ -30,6 +30,8 @@ class SystemManagedScheduleError(RuntimeError):
 
 
 class ScheduleRepository:
+    GLOBAL_HEARTBEAT_KEY = "heartbeat:global"
+
     def __init__(self, session: AsyncSession):
         self.session = session
 
@@ -128,7 +130,10 @@ class ScheduleRepository:
         current = await self.require(job_id)
         self._ensure_user_managed(current)
         reference = (now or utc_now()).astimezone(timezone.utc)
-        values = payload.model_dump(exclude_unset=True)
+        values = {
+            key: getattr(payload, key)
+            for key in payload.model_fields_set
+        }
         values.pop("version")
 
         schedule = payload.schedule or self._schedule_from_record(current)
@@ -299,16 +304,52 @@ class ScheduleRepository:
             return existing
         return schedule_run
 
+    async def list_runs(
+        self,
+        job_id: str,
+        *,
+        limit: int = 50,
+    ) -> list[ScheduledJobRunRecord]:
+        await self.require(job_id)
+        query = (
+            select(ScheduledJobRunRecord)
+            .where(ScheduledJobRunRecord.job_id == job_id)
+            .order_by(
+                ScheduledJobRunRecord.created_at.desc(),
+                ScheduledJobRunRecord.id.desc(),
+            )
+            .limit(limit)
+        )
+        return list((await self.session.scalars(query)).all())
+
     async def get_heartbeat(
         self,
-        target_task_id: str,
+        target_task_id: str | None = None,
     ) -> ScheduledJobRecord | None:
-        return (
+        global_job = (
             await self.session.execute(
                 select(ScheduledJobRecord).where(
-                    ScheduledJobRecord.system_key == f"heartbeat:{target_task_id}",
+                    ScheduledJobRecord.system_key == self.GLOBAL_HEARTBEAT_KEY,
                     ScheduledJobRecord.deleted_at.is_(None),
                 )
+            )
+        ).scalar_one_or_none()
+        if global_job is not None:
+            return global_job
+        # Compatibility with the original conversation-scoped implementation.
+        # The next write adopts the newest legacy record as the global desired state.
+        return (
+            await self.session.execute(
+                select(ScheduledJobRecord)
+                .where(
+                    ScheduledJobRecord.kind == ScheduledJobKind.heartbeat.value,
+                    ScheduledJobRecord.deleted_at.is_(None),
+                )
+                .order_by(
+                    ScheduledJobRecord.updated_at.desc(),
+                    ScheduledJobRecord.created_at.desc(),
+                )
+                .limit(1)
             )
         ).scalar_one_or_none()
 
@@ -320,7 +361,7 @@ class ScheduleRepository:
         now: datetime | None = None,
     ) -> ScheduledJobRecord:
         reference = (now or utc_now()).astimezone(timezone.utc)
-        job = await self.get_heartbeat(payload.target_task_id)
+        job = await self.get_heartbeat()
         schedule = {
             "type": "interval",
             "interval_seconds": payload.interval_seconds,
@@ -346,7 +387,7 @@ class ScheduleRepository:
             job = ScheduledJobRecord(
                 name="Heartbeat",
                 kind=ScheduledJobKind.heartbeat.value,
-                system_key=f"heartbeat:{payload.target_task_id}",
+                system_key=self.GLOBAL_HEARTBEAT_KEY,
                 system_managed=True,
                 owner_principal=owner_principal,
                 target_task_id=payload.target_task_id,
@@ -367,6 +408,8 @@ class ScheduleRepository:
             )
             self.session.add(job)
         else:
+            job.system_key = self.GLOBAL_HEARTBEAT_KEY
+            job.target_task_id = payload.target_task_id
             job.prompt = payload.prompt
             job.schedule_type = "interval"
             job.schedule = schedule
@@ -380,18 +423,38 @@ class ScheduleRepository:
             job.lease_expires_at = None
             job.version += 1
             job.updated_at = reference
+        await self.session.flush()
+        legacy_jobs = list(
+            (
+                await self.session.scalars(
+                    select(ScheduledJobRecord).where(
+                        ScheduledJobRecord.kind == ScheduledJobKind.heartbeat.value,
+                        ScheduledJobRecord.id != job.id,
+                        ScheduledJobRecord.deleted_at.is_(None),
+                    )
+                )
+            ).all()
+        )
+        for legacy in legacy_jobs:
+            legacy.enabled = False
+            legacy.next_fire_at = None
+            legacy.lease_owner = None
+            legacy.lease_expires_at = None
+            legacy.deleted_at = reference
+            legacy.updated_at = reference
+            legacy.version += 1
         await self.session.commit()
         return job
 
     async def disable_heartbeat(
         self,
-        target_task_id: str,
+        target_task_id: str | None = None,
         *,
         now: datetime | None = None,
     ) -> ScheduledJobRecord:
-        job = await self.get_heartbeat(target_task_id)
+        job = await self.get_heartbeat()
         if job is None:
-            raise ScheduleNotFoundError(f"heartbeat:{target_task_id}")
+            raise ScheduleNotFoundError(self.GLOBAL_HEARTBEAT_KEY)
         reference = (now or utc_now()).astimezone(timezone.utc)
         job.enabled = False
         job.next_fire_at = None

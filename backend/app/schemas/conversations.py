@@ -91,7 +91,7 @@ class ContextWindowStatus(BaseModel):
 
 
 class SlashSystemCommand(BaseModel):
-    name: Literal["compact", "clear", "schedule", "heartbeat"]
+    name: Literal["compact", "clear", "schedule", "heartbeat", "subagent"]
     command: str
     description: str
     effect: Literal[
@@ -99,11 +99,14 @@ class SlashSystemCommand(BaseModel):
         "clear_context",
         "manage_schedules",
         "manage_heartbeat",
+        "start_subagent_run",
     ]
     argument_mode: Literal["none", "required"]
     usage: str
     side_effect: Literal["read", "write", "mixed"]
     available: bool = True
+    execution_mode: Literal["host", "run"] = "host"
+    unavailable_reason: str | None = None
 
 
 class SlashCommandRequest(BaseModel):

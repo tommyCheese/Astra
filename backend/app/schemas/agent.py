@@ -149,6 +149,9 @@ class TerminalState(str, Enum):
     failed = "failed"
 
 
+EXECUTABLE_SUBAGENT_COHORTS = frozenset({"trusted_read_only"})
+
+
 class RunBudgets(BaseModel):
     max_plan_depth: int = 6
     max_candidate_strategies: int = 2
@@ -254,6 +257,7 @@ class RunExecutionProfile(BaseModel):
     validators: list[str] = Field(default_factory=list)
     interactive: bool = True
     permission_bundle: dict[str, Any] | None = None
+    subagent_mode: Literal["auto", "required"] = "auto"
     version: Literal[2] = 2
 
     @model_validator(mode="after")
@@ -262,6 +266,8 @@ class RunExecutionProfile(BaseModel):
             raise ValueError("plan_execution is only valid for trusted runs")
         if self.answer_mode == AnswerMode.trusted and self.plan_execution is None:
             raise ValueError("trusted runs require plan_execution")
+        if self.answer_mode == AnswerMode.standard and self.subagent_mode == "required":
+            raise ValueError("required subagent mode is only valid for trusted runs")
         return self
 
 
@@ -619,6 +625,7 @@ class CreateRunRequest(BaseModel):
     interactive: bool = True
     permission_bundle: dict[str, Any] | None = None
     skill_ids: list[str] = Field(default_factory=list, max_length=8)
+    subagent_mode: Literal["auto", "required"] = "auto"
 
     @field_validator("skill_ids")
     @classmethod
@@ -636,6 +643,8 @@ class CreateRunRequest(BaseModel):
     def validate_plan_execution(self) -> CreateRunRequest:
         if self.answer_mode == AnswerMode.standard and self.plan_execution is not None:
             raise ValueError("plan_execution is only valid for trusted runs")
+        if self.answer_mode == AnswerMode.standard and self.subagent_mode == "required":
+            raise ValueError("required subagent mode is only valid for trusted runs")
         return self
 
 

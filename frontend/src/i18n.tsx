@@ -21,7 +21,7 @@ const english: Record<string, string> = {
   '未命名对话': 'Untitled chat',
   '最多显示最近 {count} 个会话': 'Shows up to {count} recent chats',
   '问题导航': 'Question navigation', '跳转到问题': 'Jump to question', '问题': 'Question', '回到最新': 'Jump to latest',
-  '用量统计': 'Usage', '帮助文档': 'Help', '指南': 'Guides', '正在加载帮助文档…': 'Loading help…', '设置': 'Settings', '本地配置': 'Local preferences', '工作区': 'Workspace', '关闭设置': 'Close settings', '设置类别': 'Settings categories',
+  '用量统计': 'Usage', '帮助文档': 'Help', '指南': 'Guides', '正在加载帮助文档…': 'Loading help…', '设置': 'Settings', '本地配置': 'Local preferences', '工作区': 'Workspace', '全局': 'Global', '已安排任务': 'Scheduled tasks', '关闭设置': 'Close settings', '设置类别': 'Settings categories',
   '模型管理': 'Model providers', '工具': 'Tools', '运行时': 'Runtime', '记忆': 'Memory', '界面': 'Interface', '数据与隐私': 'Data & privacy',
   '配置模型供应商连接、凭据和 Agent 可选模型。': 'Configure model provider connections, credentials, and models available to the agent.',
   '模型供应商': 'Model providers', '供应商': 'Providers', '添加供应商': 'Add provider', 'OpenAI 兼容': 'OpenAI compatible',

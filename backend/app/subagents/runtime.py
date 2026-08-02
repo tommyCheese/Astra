@@ -24,11 +24,14 @@ from app.schemas.subagents import (
     SubagentContextCheckpoint,
     SubagentContinuationAnswer,
     SubagentExecutionStatus,
+    SubagentFanoutRequest,
+    SubagentFanoutResult,
     SubagentQuestion,
 )
 from app.subagents.budget import (
     AdaptiveDelegationGate,
     DelegationGateInput,
+    HierarchicalBudgetError,
     HierarchicalBudgetManager,
 )
 from app.subagents.context import (
@@ -36,6 +39,7 @@ from app.subagents.context import (
     SubagentContinuationService,
 )
 from app.subagents.executor import AgentExecutorRuntime
+from app.subagents.fan_in import SubagentJoinService
 from app.subagents.governance import (
     DelegationAuthorizationError,
     DelegationContractService,
@@ -90,7 +94,16 @@ class SubagentRuntimeOperations:
         profile_layers: list[dict[str, Any]] | None = None,
         selected_facts: dict[str, Any] | None = None,
         permission_check=None,
+        commit: bool = True,
     ) -> AgentExecutionRecord:
+        if (
+            not self.policy.enabled
+            or self.policy.kill_switch
+        ):
+            raise DelegationAuthorizationError(
+                DelegationRejectionCode.feature_disabled,
+                "Subagent execution is disabled by the frozen Run policy.",
+            )
         if self.policy.enabled and not self.policy.kill_switch:
             gate = self.delegation_gate.evaluate(self._gate_input(request))
             if not gate.allowed:
@@ -105,7 +118,10 @@ class SubagentRuntimeOperations:
                     },
                     agent_execution_id=parent.id,
                 )
-                await self.session.commit()
+                if commit:
+                    await self.session.commit()
+                else:
+                    await self.session.flush()
                 raise DelegationAuthorizationError(
                     DelegationRejectionCode.not_beneficial,
                     "Delegation did not pass the deterministic benefit gate.",
@@ -128,7 +144,10 @@ class SubagentRuntimeOperations:
                     },
                     agent_execution_id=parent.id,
                 )
-                await self.session.commit()
+                if commit:
+                    await self.session.commit()
+                else:
+                    await self.session.flush()
                 raise DelegationAuthorizationError(
                     DelegationRejectionCode.feature_disabled,
                     "Shadow cohort records delegation decisions without execution.",
@@ -139,11 +158,12 @@ class SubagentRuntimeOperations:
             for item in await self.executions.active_descendants(parent_execution_id)
             if item.parent_execution_id == parent_execution_id
         ]
-        # Phase-one rollout deliberately exposes a single read-only worker.
-        if active:
+        parallel_limit = self.policy.budgets.max_parallel_children
+        if len(active) >= parallel_limit:
             raise DelegationAuthorizationError(
                 DelegationRejectionCode.budget_rejected,
-                "The initial subagent slice allows one active child per parent.",
+                "The parent reached its active child limit.",
+                details={"active_children": len(active), "maximum": parallel_limit},
             )
         async def reserve(child: AgentExecutionRecord) -> None:
             await self.budgets.reserve(
@@ -162,7 +182,14 @@ class SubagentRuntimeOperations:
                 parent_identity_id=parent_identity_id,
                 request=request,
                 on_child_created=reserve,
+                commit=commit,
             )
+        except HierarchicalBudgetError as exc:
+            raise DelegationAuthorizationError(
+                DelegationRejectionCode.budget_rejected,
+                "The parent cannot reserve the requested child budget.",
+                details={"reason": str(exc)},
+            ) from exc
         except DelegationAuthorizationError as exc:
             parent = await self.executions.require(parent_execution_id)
             await RunRepository(self.session).add_event(
@@ -174,7 +201,10 @@ class SubagentRuntimeOperations:
                 },
                 agent_execution_id=parent.id,
             )
-            await self.session.commit()
+            if commit:
+                await self.session.commit()
+            else:
+                await self.session.flush()
             raise
         contract = DelegationContract.model_validate(child.contract)
         identity = await self.session.get(AgentIdentityRecord, child.identity_id)
@@ -243,8 +273,100 @@ class SubagentRuntimeOperations:
             },
             agent_execution_id=parent_execution_id,
         )
-        await self.session.commit()
+        if commit:
+            await self.session.commit()
+        else:
+            await self.session.flush()
         return child
+
+    async def delegate_tasks(
+        self,
+        *,
+        parent_execution_id: str,
+        parent_identity_id: str,
+        fanout: SubagentFanoutRequest,
+        profile_layers: list[dict[str, Any]] | None = None,
+        selected_facts: dict[str, Any] | None = None,
+        permission_check=None,
+    ) -> SubagentFanoutResult:
+        """Atomically create one bounded Swarm group and its durable Join."""
+        if len(fanout.tasks) > self.policy.budgets.max_parallel_children:
+            raise DelegationAuthorizationError(
+                DelegationRejectionCode.fanout_too_large,
+                "Swarm fan-out exceeds the frozen parallel child limit.",
+                details={
+                    "requested": len(fanout.tasks),
+                    "maximum": self.policy.budgets.max_parallel_children,
+                },
+            )
+        joins = SubagentJoinService(self.session)
+        existing = await joins.for_group(parent_execution_id, fanout.group_id)
+        if existing is not None:
+            children = list(
+                (
+                    await self.session.scalars(
+                        select(AgentExecutionRecord).where(
+                            AgentExecutionRecord.id.in_(existing.child_execution_ids)
+                        )
+                    )
+                ).all()
+            )
+            expected = [item.request_id for item in fanout.tasks]
+            actual = [item.request_id for item in sorted(children, key=lambda row: row.ordinal)]
+            if existing.join_key != fanout.join.key or actual != expected:
+                raise DelegationAuthorizationError(
+                    DelegationRejectionCode.fanout_conflict,
+                    "Swarm group id already exists with different frozen requests.",
+                )
+            return SubagentFanoutResult(
+                group_id=fanout.group_id,
+                join_id=existing.id,
+                child_execution_ids=tuple(existing.child_execution_ids),
+                idempotent_replay=True,
+            )
+        children: list[AgentExecutionRecord] = []
+        try:
+            for request in fanout.tasks:
+                children.append(
+                    await self.delegate_task(
+                        parent_execution_id=parent_execution_id,
+                        parent_identity_id=parent_identity_id,
+                        request=request,
+                        profile_layers=profile_layers,
+                        selected_facts=selected_facts,
+                        permission_check=permission_check,
+                        commit=False,
+                    )
+                )
+            join = await joins.create(
+                parent_execution_id=parent_execution_id,
+                join_key=fanout.join.key,
+                group_id=fanout.group_id,
+                child_execution_ids=[item.id for item in children],
+                policy=fanout.join.policy,
+                consumer_plan_node_id=fanout.join.consumer_plan_node_id,
+                commit=False,
+            )
+            await RunRepository(self.session).add_event(
+                children[0].run_id,
+                "subagent.fanout.accepted",
+                {
+                    "group_id": fanout.group_id,
+                    "join_id": join.id,
+                    "child_execution_ids": [item.id for item in children],
+                    "width": len(children),
+                },
+                agent_execution_id=parent_execution_id,
+            )
+            await self.session.commit()
+        except Exception:
+            await self.session.rollback()
+            raise
+        return SubagentFanoutResult(
+            group_id=fanout.group_id,
+            join_id=join.id,
+            child_execution_ids=tuple(item.id for item in children),
+        )
 
     async def inspect_delegation(self, execution_id: str) -> dict[str, Any]:
         execution = await self.executions.require(execution_id)

@@ -1,11 +1,15 @@
 ## ADDED Requirements
 
 ### Requirement: Heartbeat 是系统托管的持久化计划
-系统 SHALL 为每个目标 agent 主会话维护至多一个 heartbeat desired state，并将其物化为受保护的系统托管定时任务。
+系统 SHALL 为工作区维护至多一个全局 heartbeat desired state，并将其物化为受保护的系统托管定时任务；desired state 保存当前目标主会话。
 
 #### Scenario: 启用 heartbeat
 - **WHEN** 用户为目标主会话配置有效周期并启用 heartbeat
-- **THEN** 系统 upsert 一个稳定标识的 system-managed schedule 并计算下一触发
+- **THEN** 系统 upsert 稳定标识 `heartbeat:global` 的 system-managed schedule、更新目标主会话并计算下一触发
+
+#### Scenario: 从另一会话重新配置
+- **WHEN** 用户已在会话 A 启用 heartbeat，随后从会话 B 更新 heartbeat
+- **THEN** 系统更新同一全局 heartbeat 并将目标切换为会话 B，不创建第二条 heartbeat
 
 #### Scenario: 普通 API 尝试修改 heartbeat
 - **WHEN** 客户端通过普通 schedule 更新或删除 heartbeat 记录

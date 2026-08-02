@@ -63,9 +63,9 @@ OpenClaw 的最新架构把 heartbeat 实现为系统托管 cron job：heartbeat
 
 Run 的 `execution_profile`/事件记录 `trigger={type, job_id, scheduled_for, schedule_run_id}`，便于审计和避免把自动消息误计为用户活跃。
 
-### 6. Heartbeat 是受保护的系统托管 schedule
+### 6. Heartbeat 是全局且受保护的系统托管 schedule
 
-每个目标 agent/主会话最多一个 `kind=heartbeat` job。heartbeat API 写入 desired state，并 upsert 相同稳定键的 system-managed schedule；普通 schedule CRUD 对该记录返回冲突。
+工作区最多一个 `kind=heartbeat` job，稳定键为 `heartbeat:global`。heartbeat API 写入 desired state，并记录当前选定的目标主会话；从其他会话重新配置时更新该目标，而不是创建第二个 heartbeat。普通 schedule CRUD 对该记录返回冲突。升级时旧的 `heartbeat:<task-id>` 记录按最近更新时间收敛为全局记录，其余记录停用并保留历史。
 
 heartbeat prompt 的默认契约是检查未完成事项并在没有需用户注意的内容时返回 `HEARTBEAT_OK`。纯确认结果不生成用户可见消息，但运行历史仍记录 `silent_ok`。活动时间窗在配置时区判断；agent 同一会话有活动 Run 或队列时将本次标为 `deferred_busy`，且不会与明确 cron 工作抢占同一会话。
 
@@ -82,7 +82,7 @@ heartbeat prompt 的默认契约是检查未完成事项并在没有需用户注
 - `/schedule list|show|create|pause|resume|run|delete`
 - `/heartbeat status|on|off|run`
 
-命令处理器调用 schedule/heartbeat 应用服务，绝不把命令文本交给模型。创建命令默认绑定当前 conversation；无人值守权限配置必须来自显式参数或当前会话可复用且仍有效的签名 permission bundle，否则 fail closed 并引导用户打开自动化设置。查询命令只读；暂停、恢复、删除、启停和手动运行在注册表中标记为写副作用并写审计日志。
+命令处理器调用 schedule/heartbeat 应用服务，绝不把命令文本交给模型。创建命令使用当前 conversation 作为执行目标，但任务的 ownership 与管理范围是全局的；从任意会话执行 `list/show/pause/resume/run/delete` 都操作同一工作区清单。无人值守权限配置必须来自显式参数或创建任务的会话中可复用且仍有效的签名 permission bundle，否则 fail closed 并引导用户打开自动化设置。查询命令只读；暂停、恢复、删除、启停和手动运行在注册表中标记为写副作用并写审计日志。
 
 替代方案是为每个 subcommand 注册独立 slash 项，选项会迅速膨胀且难以表达参数；让模型解析自然语言则会把控制面变成非确定行为，并弱化权限边界。
 

@@ -25,6 +25,19 @@
 - **THEN** 系统返回原有 children 和 Join
 - **THEN** 不创建新的 AgentExecution 或重复扣减预算
 
+### Requirement: Swarm 是 Astra runtime built-in
+系统 SHALL 以稳定 `swarm` Tool manifest 向 eligible trusted 根 Agent 暴露并发委派，SHALL 使用 `astra.runtime` backend 和 `delegation_create` 权限执行，并 MUST NOT 依赖 Sandbox 可用性或进入 child Tool Catalog。
+
+#### Scenario: Sandbox 不可用但 Swarm 策略允许
+- **WHEN**应用 Sandbox 不可用而 trusted Run 的冻结 subagent policy 允许执行
+- **THEN** `swarm` 仍可作为 Astra runtime built-in 候选出现
+- **THEN** child 只能使用其自身衰减后且实际可用的只读 Catalog
+
+#### Scenario: Swarm 工作组被接受
+- **WHEN** `swarm` 请求通过治理并原子提交 group、children 和 Join
+- **THEN** Swarm ToolCall 返回 accepted handles 并进入 completed
+- **THEN** child AgentExecution 在后台继续且 Join 结果稍后自动注入 parent Observation
+
 ### Requirement: 并发 child 使用隔离的运行时上下文
 系统 SHALL 为每个并发 child 使用独立数据库 Session、服务实例、模型执行绑定和用量记录上下文；系统 MAY 共享不可变 Catalog 和底层网络连接池，但 MUST NOT 共享可变 AgentExecution 归属。
 

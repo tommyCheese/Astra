@@ -195,6 +195,7 @@ class DelegationContractService:
         request: DelegationRequest,
         parent_node_execution_id: str | None = None,
         on_child_created: Callable[[AgentExecutionRecord], Awaitable[None]] | None = None,
+        commit: bool = True,
     ) -> AgentExecutionRecord:
         self._validate_policy(request)
         parent_execution = await self.executions.require(parent_execution_id)
@@ -264,7 +265,10 @@ class DelegationContractService:
             )
             if on_child_created is not None:
                 await on_child_created(child)
-            await self.session.commit()
+            if commit:
+                await self.session.commit()
+            else:
+                await self.session.flush()
             return child
         except Exception:
             await self.session.rollback()
@@ -321,6 +325,8 @@ class DelegationContractService:
         for item in (tool_snapshot.catalog if tool_snapshot else []):
             name = str(item.get("name", ""))
             if name not in requested_tools or name not in allowed_tools:
+                continue
+            if item.get("execution_backend") == "astra.runtime" or name == "swarm":
                 continue
             if self.policy.read_only and self._tool_is_side_effecting(item):
                 continue

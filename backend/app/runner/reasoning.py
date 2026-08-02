@@ -1,7 +1,7 @@
 import hashlib
 import json
 from collections.abc import Iterable
-from typing import Any, ClassVar
+from typing import Any, ClassVar, Literal
 
 from app.schemas.agent import (
     AgentObservation,
@@ -182,6 +182,7 @@ class RunProfileResolver:
         risk_level: str = "low",
         complexity: str = "normal",
         subagent_policy: EffectiveSubagentPolicy | None = None,
+        subagent_mode: Literal["auto", "required"] = "auto",
     ) -> RunExecutionProfile:
         if answer_mode == AnswerMode.standard:
             effective_request = requested.model_copy(
@@ -229,6 +230,7 @@ class RunProfileResolver:
             reasoning_policy=policy,
             plan_execution=resolved_plan_execution,
             validators=list(validators),
+            subagent_mode=subagent_mode,
         )
 
 

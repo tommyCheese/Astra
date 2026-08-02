@@ -56,7 +56,7 @@ async def conversation_with_permission_bundle(session, *, secret="test-secret"):
 
 
 @pytest.mark.asyncio
-async def test_schedule_commands_use_repository_and_scope_to_conversation(session):
+async def test_schedule_commands_create_in_conversation_and_manage_globally(session):
     task = await conversation_with_permission_bundle(session)
     service = AutomationCommandService(
         session,
@@ -74,8 +74,16 @@ async def test_schedule_commands_use_repository_and_scope_to_conversation(sessio
     _, listed = await service.execute_schedule(task, "list")
     assert [item["id"] for item in listed["jobs"]] == [job["id"]]
 
-    _, paused = await service.execute_schedule(
-        task,
+    other_task = await conversation_with_permission_bundle(session)
+    other_service = AutomationCommandService(
+        session,
+        Settings(permission_bundle_signing_secret="test-secret"),
+    )
+    _, global_list = await other_service.execute_schedule(other_task, "list")
+    assert [item["id"] for item in global_list["jobs"]] == [job["id"]]
+
+    _, paused = await other_service.execute_schedule(
+        other_task,
         f"pause {job['id']} --version 1",
     )
     assert paused["job"]["enabled"] is False
@@ -116,6 +124,14 @@ async def test_heartbeat_commands_upsert_stable_system_schedule(session):
         "start": "09:00",
         "end": "22:00",
     }
+
+    other_task = await conversation_with_permission_bundle(session)
+    _, moved = await service.execute_heartbeat(other_task, "on --every 2h")
+    assert moved["heartbeat"]["id"] == heartbeat_id
+    stored = await service.repo.get_heartbeat()
+    assert stored is not None
+    assert stored.system_key == "heartbeat:global"
+    assert stored.target_task_id == other_task.id
 
     _, disabled = await service.execute_heartbeat(task, "off")
     assert disabled["heartbeat"]["enabled"] is False

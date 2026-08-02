@@ -4,7 +4,7 @@ from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any
 
-from sqlalchemy import or_, select
+from sqlalchemy import or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import (
@@ -159,6 +159,8 @@ class SubagentJoinService:
         required_execution_ids: list[str] | None = None,
         optional_execution_ids: list[str] | None = None,
         consumer_plan_node_id: str | None = None,
+        group_id: str | None = None,
+        commit: bool = True,
     ) -> AgentJoinRecord:
         existing = await self.session.scalar(
             select(AgentJoinRecord).where(
@@ -208,6 +210,7 @@ class SubagentJoinService:
             parent_execution_id=parent.id,
             consumer_plan_node_id=consumer_plan_node_id,
             join_key=join_key,
+            group_id=group_id,
             policy=policy.value,
             child_execution_ids=child_ids,
             required_execution_ids=required,
@@ -216,7 +219,88 @@ class SubagentJoinService:
             result={},
         )
         self.session.add(join)
-        await self.session.commit()
+        if commit:
+            await self.session.commit()
+        else:
+            await self.session.flush()
+        return join
+
+    async def for_group(
+        self, parent_execution_id: str, group_id: str
+    ) -> AgentJoinRecord | None:
+        return await self.session.scalar(
+            select(AgentJoinRecord).where(
+                AgentJoinRecord.parent_execution_id == parent_execution_id,
+                AgentJoinRecord.group_id == group_id,
+            )
+        )
+
+    async def ready_for_parent(self, parent_execution_id: str) -> list[AgentJoinRecord]:
+        return list(
+            (
+                await self.session.scalars(
+                    select(AgentJoinRecord)
+                    .where(
+                        AgentJoinRecord.parent_execution_id == parent_execution_id,
+                        AgentJoinRecord.status.in_(["waiting", "ready", "merging", "blocked"]),
+                    )
+                    .order_by(AgentJoinRecord.created_at)
+                )
+            ).all()
+        )
+
+    async def begin_merge(self, join_id: str, *, expected_version: int) -> AgentJoinRecord:
+        outcome = await self.session.execute(
+            update(AgentJoinRecord)
+            .where(
+                AgentJoinRecord.id == join_id,
+                AgentJoinRecord.state_version == expected_version,
+                AgentJoinRecord.status == "ready",
+            )
+            .values(
+                status="merging",
+                state_version=expected_version + 1,
+                updated_at=utc_now(),
+            )
+        )
+        if outcome.rowcount != 1:
+            raise ValueError("Agent join merge claim is stale")
+        await self.session.flush()
+        join = await self.session.get(AgentJoinRecord, join_id)
+        assert join is not None
+        await self.session.refresh(join)
+        return join
+
+    async def mark_consumed(
+        self,
+        join_id: str,
+        *,
+        expected_version: int,
+        parent_state_version: int,
+        result: dict[str, Any],
+    ) -> AgentJoinRecord:
+        outcome = await self.session.execute(
+            update(AgentJoinRecord)
+            .where(
+                AgentJoinRecord.id == join_id,
+                AgentJoinRecord.state_version == expected_version,
+                AgentJoinRecord.status == "merging",
+            )
+            .values(
+                status="consumed",
+                result=deepcopy(result),
+                consumed_parent_state_version=parent_state_version,
+                state_version=expected_version + 1,
+                completed_at=utc_now(),
+                updated_at=utc_now(),
+            )
+        )
+        if outcome.rowcount != 1:
+            raise ValueError("Agent join consumption is stale")
+        await self.session.flush()
+        join = await self.session.get(AgentJoinRecord, join_id)
+        assert join is not None
+        await self.session.refresh(join)
         return join
 
     async def evaluate(self, join_id: str) -> JoinEvaluation:

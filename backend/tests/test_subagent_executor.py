@@ -36,6 +36,9 @@ from app.schemas.subagents import (
     SubagentContextManifest,
     SubagentContinuationAnswer,
     SubagentExecutionStatus,
+    SubagentFanoutRequest,
+    SubagentJoinPolicy,
+    SubagentJoinSpec,
 )
 from app.subagents.executor import AgentExecutorRuntime, LocalAstraAgentExecutor
 from app.subagents.governance import FrozenChildCatalog
@@ -621,6 +624,58 @@ async def _operations_runtime(session, *, enabled: bool = True):
     return run, root, parent, operations, request, registry
 
 
+async def test_runtime_fanout_creates_two_children_and_one_idempotent_join(session):
+    _, root, parent, operations, request, _ = await _operations_runtime(session)
+    policy = operations.policy.model_copy(
+        update={
+            "rollout_cohort": "trusted_read_only",
+            "budgets": operations.policy.budgets.model_copy(
+                update={"max_parallel_children": 2}
+            ),
+        }
+    )
+    operations = SubagentRuntimeOperations(
+        session,
+        policy=policy,
+        permission_policies=_allow_delegation(),
+        task_policy_scope=parent.attributes["permission_scope"],
+    )
+    fanout = SubagentFanoutRequest(
+        group_id="group:research",
+        tasks=[
+            request,
+            request.model_copy(
+                update={
+                    "request_id": "ops-child-2",
+                    "dedupe_key": "ops:child:2",
+                    "scope": DelegationScope(included=["subject:ops:second"]),
+                }
+            ),
+        ],
+        join=SubagentJoinSpec(
+            key="join:research",
+            policy=SubagentJoinPolicy.required,
+        ),
+    )
+
+    accepted = await operations.delegate_tasks(
+        parent_execution_id=root.id,
+        parent_identity_id=parent.id,
+        fanout=fanout,
+    )
+    replay = await operations.delegate_tasks(
+        parent_execution_id=root.id,
+        parent_identity_id=parent.id,
+        fanout=fanout,
+    )
+
+    assert len(accepted.child_execution_ids) == 2
+    assert replay.child_execution_ids == accepted.child_execution_ids
+    assert replay.join_id == accepted.join_id
+    assert replay.idempotent_replay is True
+    assert len(await AgentExecutionRepository(session).descendants(root.id)) == 2
+
+
 async def test_runtime_operations_delegate_inspect_continue_collect_and_cancel(session):
     _, root, parent, operations, request, registry = await _operations_runtime(session)
     child = await operations.delegate_task(
@@ -630,7 +685,7 @@ async def test_runtime_operations_delegate_inspect_continue_collect_and_cancel(s
     )
     inspected = await operations.inspect_delegation(child.id)
     assert inspected["status"] == "queued"
-    with pytest.raises(Exception, match="one active child"):
+    with pytest.raises(Exception, match="active child limit"):
         await operations.delegate_task(
             parent_execution_id=root.id,
             parent_identity_id=parent.id,

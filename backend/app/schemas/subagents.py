@@ -24,6 +24,8 @@ class DelegationRejectionCode(str, Enum):
     catalog_drift = "delegation_catalog_drift"
     context_dropped = "delegation_execution_context_dropped"
     identity_overlap = "delegation_identity_overlap"
+    fanout_too_large = "delegation_fanout_too_large"
+    fanout_conflict = "delegation_fanout_conflict"
 
 
 class DelegationValidationIssue(BaseModel):
@@ -191,6 +193,44 @@ class DelegationRequest(BaseModel):
         if self.deadline_at is not None and self.deadline_at.tzinfo is None:
             raise ValueError("delegation deadline_at must include a timezone")
         return self
+
+
+class SubagentJoinSpec(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    key: str = Field(min_length=1, max_length=160)
+    policy: SubagentJoinPolicy = SubagentJoinPolicy.required
+    consumer_plan_node_id: str | None = Field(default=None, max_length=160)
+
+
+class SubagentFanoutRequest(BaseModel):
+    """One idempotent Swarm request containing a bounded child group."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    group_id: str = Field(min_length=1, max_length=160)
+    tasks: list[DelegationRequest] = Field(min_length=1, max_length=16)
+    join: SubagentJoinSpec
+
+    @model_validator(mode="after")
+    def validate_group(self) -> SubagentFanoutRequest:
+        request_ids = [item.request_id for item in self.tasks]
+        dedupe_keys = [item.dedupe_key for item in self.tasks]
+        if len(request_ids) != len(set(request_ids)):
+            raise ValueError("fan-out request ids must be unique")
+        if len(dedupe_keys) != len(set(dedupe_keys)):
+            raise ValueError("fan-out dedupe keys must be unique")
+        return self
+
+
+class SubagentFanoutResult(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    status: Literal["accepted"] = "accepted"
+    group_id: str
+    join_id: str
+    child_execution_ids: tuple[str, ...]
+    idempotent_replay: bool = False
 
 
 class DelegationContract(BaseModel):

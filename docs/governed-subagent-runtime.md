@@ -9,20 +9,21 @@ Supervisor/worker is first because final-answer ownership, approval routing, bud
 - Plan DAG nodes, which share one Agent identity/context; a child owns an independent identity, contract, context, plan, lifecycle, budget, and result.
 - Handoff, because ownership remains with the root.
 - Group chat, because children share no transcript/scratchpad and do not freely message peers.
-- Swarm, because fan-out, depth, tools, time, tokens, calls, cost, and concurrency are bounded.
+- Unbounded peer swarms, because Astra's built-in `swarm` is a supervised control-plane tool: fan-out, depth, tools, time, tokens, calls, cost, and concurrency are frozen and bounded.
 - Remote Agent/A2A, because the first executor is local; future transports must preserve all Astra invariants.
 - MCP, which exposes tools/resources rather than Agent lifecycle, identity, budget, join, and completion semantics.
 
 ## Execution walkthrough
 
 1. The adaptive gate scores complexity, independence, context pressure, expected benefit, write-conflict risk, execution risk, and remaining budget.
-2. `DelegationContractService` validates/deduplicates the request, attenuates authority, freezes Tool/Skill catalogs, creates identity/delegation, reserves hierarchical budget, and persists the child atomically.
-3. `SubagentContextComposer` builds an artifact-first manifest. Full parent history, hidden reasoning, sibling scratchpads, secrets, unrelated traces, and unselected memory are excluded.
-4. `AgentCoordinator` claims with state-version, fencing-token, and cancellation-epoch checks. Run/deployment/provider/tool/capability semaphores bound total concurrency.
-5. `LocalAstraAgentExecutor` runs an independent child plan and loop. Authorization receives actual identity, delegation chain, frozen catalog/effect plan, DataFlow state, Workspace scope, and budget.
-6. A child may wait for parent input, approval, or a resource without blocking unrelated root/sibling work. Continuations and approvals are version/token bound.
-7. Results are schema/provenance/Artifact/Evidence validated. Durable required, optional, and first-success joins drive fan-in; only verified facts/artifacts are promoted.
-8. The root Completion Gate requires descendant terminal state and required joins before top-level success.
+2. The root Agent may call the always-loaded `swarm` built-in (`astra.builtin`, backend `astra.runtime`). The whole fan-out group, child identities/delegations, budget reservations, execution handles, and immutable Join are committed atomically; the ToolCall then returns handles while work continues in the background.
+3. `DelegationContractService` validates/deduplicates each request, attenuates authority, and freezes Tool/Skill catalogs.
+4. `SubagentContextComposer` builds an artifact-first manifest. Full parent history, hidden reasoning, sibling scratchpads, secrets, unrelated traces, and unselected memory are excluded.
+5. The Run-scoped `SubagentSupervisor` uses `AgentCoordinator` to claim durable queued children with state-version, fencing-token, and cancellation-epoch checks. Run/deployment/provider/tool/capability semaphores bound total concurrency.
+6. `LocalAstraAgentExecutor` runs an independent child plan and loop in an independent database Session and ModelClient wrapper. Authorization receives actual identity, delegation chain, frozen catalog/effect plan, DataFlow state, Workspace scope, and budget.
+7. A child may wait for parent input, approval, or a resource without blocking unrelated root/sibling work. Continuations and approvals are version/token bound.
+8. Before every trusted root decision, changed Joins are reconciled. Results are schema/provenance/Artifact/Evidence validated, CAS-claimed for merge, and emitted as sanitized observations without child hidden reasoning.
+9. The root Completion Gate requires mandatory descendants terminal and required/first-success Joins consumed before top-level success.
 
 ## Permission and data boundaries
 
@@ -61,6 +62,22 @@ Settings are disabled/conservative by default and frozen in each Run policy snap
 | provider/tool/capability concurrency | Global backpressure |
 
 Rollout order is shadow decisions without execution, administrator-only canary, trusted read-only, then staged general availability. Promotion requires deterministic protocol tests, behavior evals, and paired single-/multi-Agent quality, p50/p95 latency, token, cost, failure, recovery, cancellation, and safety gates. Safety failures or a doubled failure threshold activate the kill switch. Rollback returns to shadow and drains/fences children.
+
+To enable the current trusted read-only production slice for newly created Runs, set at minimum:
+
+```text
+AGENT_SUBAGENT_EXECUTION_ENABLED=true
+AGENT_SUBAGENT_KILL_SWITCH=false
+AGENT_SUBAGENT_ROLLOUT_COHORT=trusted_read_only
+AGENT_SUBAGENT_MAX_DEPTH=1
+AGENT_SUBAGENT_MAX_PARALLEL_CHILDREN=2
+```
+
+Existing Runs keep their frozen policy snapshot. Restart the backend after changing deployment settings. `max_children_total` and `max_children_per_parent` cap cumulative creation; `max_parallel_children` caps simultaneous siblings; `max_depth=1` prevents children from creating grandchildren. The `swarm` manifest is excluded from child catalogs.
+
+## `/subagent` command
+
+`/subagent <task>` is a Run-creation command, not a host-side context mutation. The UI removes the command prefix, creates a trusted Run with automatic plan execution and `subagent_mode=required`, and preserves the original draft if validation or Run creation fails. A required-subagent Run cannot complete until it has created at least one governed Swarm group. The command remains visible but unavailable when execution is disabled, killed, shadow-only, or outside an executable rollout cohort.
 
 ## Operations and troubleshooting
 

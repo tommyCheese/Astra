@@ -1,3 +1,4 @@
+import asyncio
 import hashlib
 import json
 import logging
@@ -9,6 +10,7 @@ from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.artifacts import ArtifactService, LocalArtifactStore
 from app.core.config import Settings
@@ -42,7 +44,7 @@ from app.repositories.runs import RunRepository
 from app.repositories.workspaces import WorkspaceRepository
 from app.runner.adapters import ChartTaskAdapter, ProcessorRegistry, WebTaskAdapter
 from app.runner.approvals import input_hash, safe_preview, similar_matcher
-from app.runner.model_client import ModelClient, ModelOutputError
+from app.runner.model_client import ModelClient, ModelOutputError, build_model_client
 from app.runner.planning import PlanScheduler, PlanService
 from app.runner.reasoning import (
     CompletionGate,
@@ -56,6 +58,7 @@ from app.runner.runtime import LoopOrchestrator, NoProgressDetector
 from app.sandbox.docker_provider import build_sandbox_provider
 from app.sandbox.runtime import SandboxJobService, SandboxSupervisor
 from app.schemas.agent import (
+    EXECUTABLE_SUBAGENT_COHORTS,
     AgentDecision,
     AgentObservation,
     AgentState,
@@ -85,6 +88,7 @@ from app.schemas.permissions import (
     PermissionSubject,
 )
 from app.skills.catalog import SkillActivationService
+from app.subagents.supervisor import SubagentSupervisor
 from app.tools.base import (
     ToolExecutionContext,
     ToolExecutionError,
@@ -470,6 +474,18 @@ class ContextAssembler:
             plan_node_id=active_node_id,
         )
         specs = {candidate.tool_name: candidate.spec for candidate in resolution.candidates}
+        raw_profile = run.execution_profile or {}
+        raw_subagent_policy = (
+            ((run.reasoning_policy or {}).get("effective") or {}).get("subagents") or {}
+        )
+        subagent_eligible = bool(
+            run.answer_mode == AnswerMode.trusted.value
+            and raw_subagent_policy.get("enabled")
+            and not raw_subagent_policy.get("kill_switch")
+            and raw_subagent_policy.get("rollout_cohort") in EXECUTABLE_SUBAGENT_COHORTS
+        )
+        if not subagent_eligible:
+            specs.pop("swarm", None)
         _, unavailable = tool_router.eligible_specs()
         if self.skills_enabled and not quick_mode:
             skill_snapshot = await self.repo.session.scalar(
@@ -531,7 +547,57 @@ class ContextAssembler:
             "plan_version": plan_view.get("version", 1),
             "skill_catalog": skill_catalog,
             "active_skills": active_skills,
+            "subagent_mode": raw_profile.get("subagent_mode", "auto"),
         }
+        if subagent_eligible:
+            root_execution = await AgentExecutionRepository(self.repo.session).root_for_run(run_id)
+            descendants = (
+                await AgentExecutionRepository(self.repo.session).descendants(root_execution.id)
+                if root_execution is not None
+                else []
+            )
+            active_joins = (
+                list(
+                    (
+                        await self.repo.session.scalars(
+                            select(AgentJoinRecord).where(
+                                AgentJoinRecord.parent_execution_id == root_execution.id,
+                                AgentJoinRecord.status != "consumed",
+                            )
+                        )
+                    ).all()
+                )
+                if root_execution is not None
+                else []
+            )
+            budgets = raw_subagent_policy.get("budgets") or {}
+            context["subagent_policy"] = raw_subagent_policy
+            context["subagent_capacity"] = {
+                "created_children": len(descendants),
+                "active_children": sum(
+                    item.status not in {"completed", "completed_with_warnings", "blocked", "failed", "cancelled"}
+                    for item in descendants
+                ),
+                "remaining_children": max(
+                    0, int(budgets.get("max_children_total", 0)) - len(descendants)
+                ),
+                "max_parallel_children": int(budgets.get("max_parallel_children", 0)),
+            }
+            swarm_spec = specs.get("swarm")
+            context["subagent_eligible_capabilities"] = (
+                list(swarm_spec.task_capabilities) if swarm_spec is not None else []
+            )
+            context["subagent_active_groups"] = [
+                {
+                    "group_id": join.group_id,
+                    "join_id": join.id,
+                    "status": join.status,
+                    "policy": join.policy,
+                    "child_execution_ids": list(join.child_execution_ids),
+                    "consumer_plan_node_id": join.consumer_plan_node_id,
+                }
+                for join in active_joins
+            ]
         if unavailable:
             context["unavailable_capabilities"] = unavailable
         if recall_event_id is not None:
@@ -813,6 +879,7 @@ class AgentLoop:
         self.tool_registry = tool_registry
         self.sandbox_provider = sandbox_provider
         backends = {"in_process"}
+        backends.add("astra.runtime")
         if settings.sandbox_enabled:
             backends.add("sandbox.remote")
         self.router = ToolRouter(tool_registry, available_backends=backends)
@@ -822,6 +889,7 @@ class AgentLoop:
         self.evaluator = ObservationEvaluator()
         self.reflection_gate = ReflectionGate()
         self.completion_gate = CompletionGate()
+        self._supervisor_close_tasks: set[asyncio.Task[Any]] = set()
 
     async def run(
         self,
@@ -963,6 +1031,63 @@ class AgentLoop:
             max_resource_bytes=self.settings.skills_max_resource_bytes_per_run,
         )
         policy = policy_snapshot.effective
+        subagent_supervisor: SubagentSupervisor | None = None
+        if (
+            not quick_mode
+            and policy.subagents.enabled
+            and not policy.subagents.kill_switch
+            and policy.subagents.rollout_cohort in EXECUTABLE_SUBAGENT_COHORTS
+        ):
+            await ensure_permission_runtime()
+            assert main_identity is not None
+            execution_repository = AgentExecutionRepository(repo.session)
+            root_execution = await execution_repository.get_or_create_root(run_id)
+            if root_execution.identity_id is None:
+                root_execution.identity_id = main_identity.id
+                root_execution.state_version += 1
+                await repo.session.commit()
+            elif root_execution.identity_id != main_identity.id:
+                raise ToolExecutionError(
+                    "subagent_identity_mismatch",
+                    "Root AgentExecution is bound to a different identity",
+                )
+            child_session_factory = async_sessionmaker(
+                repo.session.bind,
+                expire_on_commit=False,
+                class_=type(repo.session),
+            )
+            subagent_supervisor = SubagentSupervisor(
+                settings=self.settings,
+                session=repo.session,
+                session_factory=child_session_factory,
+                run_id=run_id,
+                parent_execution_id=root_execution.id,
+                parent_identity_id=main_identity.id,
+                policy=policy.subagents,
+                tool_registry=self.tool_registry,
+                model_client_factory=lambda: build_model_client(
+                    self.settings,
+                    http_client=getattr(self.model_client, "_http_client", None),
+                ),
+            )
+            await subagent_supervisor.wake()
+            owner_task = asyncio.current_task()
+            if owner_task is not None:
+                def close_subagent_supervisor(completed_task: asyncio.Task[Any]) -> None:
+                    failed = completed_task.cancelled()
+                    if not failed:
+                        try:
+                            failed = completed_task.exception() is not None
+                        except asyncio.CancelledError:
+                            failed = True
+                    close_task = asyncio.create_task(
+                        subagent_supervisor.close(cancel=failed),
+                        name=f"subagent-supervisor-close:{run_id}",
+                    )
+                    self._supervisor_close_tasks.add(close_task)
+                    close_task.add_done_callback(self._supervisor_close_tasks.discard)
+
+                owner_task.add_done_callback(close_subagent_supervisor)
         max_turns = (
             self.settings.agent_max_turns
             if policy.budgets.max_turns is None
@@ -1356,6 +1481,13 @@ class AgentLoop:
         for turn_index in range(start_turn_index, max_turns + 1):
             if terminal_override == "waiting_user":
                 break
+            if subagent_supervisor is not None:
+                current_for_join = await repo.require_run_core(run_id)
+                observations.extend(
+                    await subagent_supervisor.reconcile(
+                        parent_state_version=current_for_join.state_version
+                    )
+                )
             active_execution_id = None
             if canonical_plan is not None:
                 canonical_plan = await plan_repository.active_for_run(run_id)
@@ -1838,6 +1970,56 @@ class AgentLoop:
                 continue
 
             if decision.decision_type == "finalize":
+                if subagent_supervisor is not None:
+                    root_joins = list(
+                        (
+                            await repo.session.scalars(
+                                select(AgentJoinRecord).where(
+                                    AgentJoinRecord.parent_execution_id
+                                    == subagent_supervisor.parent_execution_id
+                                )
+                            )
+                        ).all()
+                    )
+                    if profile.subagent_mode == "required" and not root_joins:
+                        observation = AgentObservation(
+                            kind="subagent_required",
+                            status="failed",
+                            summary="This Run requires at least one governed Swarm group before completion.",
+                            data={"required_action": "call_swarm"},
+                        )
+                        observations.append(observation.model_dump(mode="json"))
+                        await repo.update_agent_turn(
+                            turn.id,
+                            status="failed",
+                            observation=observation.model_dump(mode="json"),
+                            phase="failed",
+                        )
+                        await repo.session.commit()
+                        continue
+                    if await subagent_supervisor.has_pending():
+                        await repo.update_agent_turn(
+                            turn.id,
+                            status="completed",
+                            phase="waiting_subagents",
+                        )
+                        await repo.session.commit()
+                        await subagent_supervisor.wait()
+                        current_for_join = await repo.require_run_core(run_id)
+                        observations.extend(
+                            await subagent_supervisor.reconcile(
+                                parent_state_version=current_for_join.state_version
+                            )
+                        )
+                        if await subagent_supervisor.has_pending():
+                            observations.append(
+                                AgentObservation(
+                                    kind="subagent_join",
+                                    status="waiting",
+                                    summary="Subagent work or Join reconciliation is still pending.",
+                                ).model_dump(mode="json")
+                            )
+                        continue
                 if not quick_mode:
                     orchestrator.validate_result(
                         "select_action", NodeResult(next_node="completion_gate")
@@ -2378,6 +2560,12 @@ class AgentLoop:
                         skill_bindings=tuple(context.get("active_skills", [])),
                         skill_draft_test=bool(context.get("skill_draft_test")),
                         skill_input_provider=activation_service,
+                        agent_execution_id=(
+                            subagent_supervisor.parent_execution_id
+                            if subagent_supervisor is not None
+                            else None
+                        ),
+                        delegation_context=subagent_supervisor,
                     )
                     if execution_context.skill_bindings:
                         await repo.add_event(
