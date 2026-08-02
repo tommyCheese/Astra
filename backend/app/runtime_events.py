@@ -6,6 +6,15 @@ from dataclasses import dataclass, field
 from typing import Any
 
 MAX_PUBLISHED_EVENTS_PER_RUN = 2048
+COALESCIBLE_EVENT_TYPES = frozenset(
+    {
+        "answer.delta",
+        "reasoning.summary.delta",
+        "subagent.progress",
+        "subagent.heartbeat",
+        "budget.usage_updated",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -15,6 +24,7 @@ class PublishedRunEvent:
     type: str
     payload: dict[str, Any]
     created_at: str
+    agent_execution_id: str | None = None
 
 
 @dataclass
@@ -61,7 +71,24 @@ class RunEventBroker:
             state = self._states.get(run_id)
             if state is None:
                 continue
-            state.published_events.extend(run_events)
+            for published in run_events:
+                if published.type not in COALESCIBLE_EVENT_TYPES:
+                    state.published_events.append(published)
+                    continue
+                replacement_index = next(
+                    (
+                        index
+                        for index in range(len(state.published_events) - 1, -1, -1)
+                        if state.published_events[index].type == published.type
+                        and state.published_events[index].agent_execution_id
+                        == published.agent_execution_id
+                    ),
+                    None,
+                )
+                if replacement_index is None:
+                    state.published_events.append(published)
+                else:
+                    state.published_events[replacement_index] = published
             overflow = len(state.published_events) - MAX_PUBLISHED_EVENTS_PER_RUN
             if overflow > 0:
                 state.dropped_through_id = max(

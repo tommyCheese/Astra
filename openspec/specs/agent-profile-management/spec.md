@@ -16,16 +16,16 @@ The system SHALL define the default Astra Agent Profile with `IDENTITY.md`, `SOU
 - **THEN** all required Profile documents are present in the artifact
 
 ### Requirement: Profile documents have non-overlapping responsibilities
-The canonical documents SHALL keep stable product identity and goals in `IDENTITY.md`, behavioral values and communication principles in `SOUL.md`, memory governance in `MEMORY.md`, and the disabled future memory-consolidation protocol in `AUTODREAM.md`.
+The canonical documents SHALL keep stable product identity and goals in `IDENTITY.md`, behavioral values and communication principles in `SOUL.md`, memory governance in `MEMORY.md`, and the background-only memory-consolidation governance protocol in `AUTODREAM.md`.
 
 #### Scenario: Review a capability-dependent statement
 - **WHEN** a Profile document describes Astra's ability to act
 - **THEN** it describes the ability as conditional on runtime-provided authorization
-- **THEN** it does not assert that a particular tool, model, provider, sandbox, dependency, credential, or network capability is currently available
+- **THEN** it does not assert that a particular tool, model, provider, sandbox, dependency, credential, scheduler, or network capability is currently available
 
 #### Scenario: Review a user-specific fact
-- **WHEN** Astra learns a user preference, workspace fact, run observation, or source summary
-- **THEN** that fact is stored as scoped database Memory with provenance and confidence
+- **WHEN** Astra learns a user preference, workspace fact, Run observation, procedure, failure pattern, or source summary
+- **THEN** that fact is stored as scoped database Memory or a governed evolution candidate with provenance and confidence
 - **THEN** no canonical Profile document is modified
 
 ### Requirement: Canonical documents are validated before use
@@ -48,13 +48,22 @@ The system SHALL derive a deterministic Profile version from the normalized cont
 - **THEN** the derived Profile version changes
 
 ### Requirement: Static governance and dynamic state remain separate
-The system SHALL treat Git-managed Profile documents as the authority for stable identity and governance, the database as the authority for actual memories and run history, and runtime capability resolution as the authority for currently executable actions.
+The system SHALL treat Git-managed Profile documents as the packaged default for stable identity and governance, an optional validated local Runtime override as the active authority for subsequent new Runs, the database as the authority for actual memories and run history, and runtime capability resolution as the authority for currently executable actions. Every Run SHALL retain the complete immutable Profile snapshot that was active when the Run was created or first bound.
 
 #### Scenario: AutoDream protocol exists but no worker is enabled
-- **WHEN** `AUTODREAM.md` is present in the packaged Profile
+- **WHEN** `AUTODREAM.md` is present in either the packaged or active user Profile
 - **THEN** its presence does not schedule background work, mutate memories, modify Profile documents, or grant any tool permission
 
 #### Scenario: Runtime state is persisted
 - **WHEN** a tool setting, run result, model usage record, or actual Memory changes
-- **THEN** the change is persisted through its existing database or runtime configuration path rather than written into a canonical Profile document
+- **THEN** the change is persisted through its existing database or runtime configuration path rather than written into a Profile document
+
+#### Scenario: A new Run starts after a Profile update
+- **WHEN** a valid user Profile is activated before a new Run is created
+- **THEN** the new Run freezes the active user Profile as its immutable snapshot
+- **THEN** existing and running Runs keep their previously frozen Profile snapshots
+
+#### Scenario: No user Profile has been activated
+- **WHEN** a new Run is created without a local Runtime Profile override
+- **THEN** the Run freezes the Git-managed packaged Profile
 

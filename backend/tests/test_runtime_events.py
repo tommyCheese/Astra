@@ -73,7 +73,7 @@ async def test_run_event_broker_bounds_cache_and_refreshes_lagging_subscriber():
         PublishedRunEvent(
             id=index,
             run_id="run-1",
-            type="answer.delta",
+            type="test.progress",
             payload={"delta": str(index)},
             created_at="2026-07-29T00:00:00+00:00",
         )
@@ -84,6 +84,40 @@ async def test_run_event_broker_bounds_cache_and_refreshes_lagging_subscriber():
 
     assert broker.events_after("run-1", 0) is None
     assert broker.events_after("run-1", 1) == events[1:]
+    broker.unsubscribe("run-1")
+
+
+async def test_run_event_broker_coalesces_progress_but_preserves_critical_events():
+    broker = RunEventBroker()
+    broker.subscribe("run-1")
+    progress = [
+        PublishedRunEvent(
+            id=index,
+            run_id="run-1",
+            agent_execution_id="child-1",
+            type="subagent.progress",
+            payload={"percent": index},
+            created_at="2026-07-29T00:00:00+00:00",
+        )
+        for index in (1, 2, 3)
+    ]
+    terminal = PublishedRunEvent(
+        id=4,
+        run_id="run-1",
+        agent_execution_id="child-1",
+        type="subagent.completed",
+        payload={"status": "completed"},
+        created_at="2026-07-29T00:00:01+00:00",
+    )
+
+    broker.publish_events([*progress, terminal])
+
+    published = broker.events_after("run-1", 0)
+    assert published is not None
+    assert [(event.id, event.type) for event in published] == [
+        (3, "subagent.progress"),
+        (4, "subagent.completed"),
+    ]
     broker.unsubscribe("run-1")
 
 

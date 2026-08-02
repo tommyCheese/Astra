@@ -15,6 +15,7 @@ from app.core.errors import ConfigurationError, ResourceError, StateError, Valid
 from app.db.session import SessionLocal, get_session
 from app.model_providers import API_KEY_OPTIONAL_MODEL_PROVIDERS, SUPPORTED_MODEL_PROVIDERS
 from app.permissions.governance import verify_permission_bundle
+from app.repositories.agent_executions import AgentExecutionRepository
 from app.repositories.permissions import PermissionRepository
 from app.repositories.plans import PlanRepository, diff_plans, plan_to_summary, plan_to_view
 from app.repositories.runs import RunRepository, run_to_initial_view, run_to_view
@@ -26,7 +27,7 @@ from app.repositories.tool_settings import (
 from app.runner.engine import start_run_in_process
 from app.runner.model_reasoning import normalize_model_thinking
 from app.runner.plan_revision import PlanRevisionError, revise_waiting_plan
-from app.runner.reasoning import RunProfileResolver
+from app.runner.reasoning import RunProfileResolver, compile_subagent_policy
 from app.runtime_events import run_event_broker
 from app.schemas.agent import (
     ApprovalDecisionRequest,
@@ -42,6 +43,8 @@ from app.schemas.agent import (
 from app.schemas.models import RunModelConfig
 from app.schemas.permissions import PermissionBundle
 from app.skills.catalog import SkillActivationService, SkillCatalogBuilder
+from app.subagents.lifecycle import SubagentCancellationService
+from app.subagents.observability import SubagentTelemetryRepository
 
 router = APIRouter(prefix="/api", tags=["runs"])
 logger = logging.getLogger("astra.runs")
@@ -62,11 +65,15 @@ async def _run_event_stream(
     ready_payload: dict[str, object] | None = None,
     start_after_ready: Callable[[], None] | None = None,
 ) -> AsyncIterator[str]:
+    if not isinstance(after_id, int):
+        after_id = 0
     logger.info("sse.open run_id=%s after_id=%s", run_id, after_id)
     last_id = after_id
     broker_version = run_event_broker.subscribe(run_id)
     database_refresh_required = True
     status: str | None = None
+    run_sequence = after_id
+    agent_sequences: dict[str, int] = {}
     try:
         try:
             yield (
@@ -102,6 +109,8 @@ async def _run_event_stream(
                     payloads = [
                         {
                             "id": event.id,
+                            "run_sequence": event.id,
+                            "agent_execution_id": event.agent_execution_id,
                             "type": event.type,
                             "payload": event.payload,
                             "created_at": event.created_at.isoformat(),
@@ -115,6 +124,8 @@ async def _run_event_stream(
                 payloads = [
                     {
                         "id": event.id,
+                        "run_sequence": event.id,
+                        "agent_execution_id": event.agent_execution_id,
                         "type": event.type,
                         "payload": event.payload,
                         "created_at": event.created_at,
@@ -127,6 +138,13 @@ async def _run_event_stream(
                     elif event.type == "run.cancelled":
                         status = "cancelled"
             for payload in payloads:
+                run_sequence += 1
+                payload["run_sequence"] = run_sequence
+                agent_execution_id = payload.get("agent_execution_id")
+                if isinstance(agent_execution_id, str):
+                    agent_sequence = agent_sequences.get(agent_execution_id, 0) + 1
+                    agent_sequences[agent_execution_id] = agent_sequence
+                    payload["agent_sequence"] = agent_sequence
                 last_id = payload["id"]
                 yield f"id: {payload['id']}\ndata: {json.dumps(payload)}\n\n"
             if status in RunRepository.TERMINAL_STATUSES:
@@ -350,6 +368,7 @@ async def _create_run(
             payload.answer_mode,
             payload.reasoning_policy,
             plan_execution=payload.plan_execution,
+            subagent_policy=compile_subagent_policy(run_settings),
         )
         if not payload.interactive and payload.permission_bundle is None:
             raise ValidationError(
@@ -584,6 +603,39 @@ async def cancel_run(
     if run.status not in RunRepository.TERMINAL_STATUSES or run.status == "waiting_user":
         run = await repo.cancel_run(run_id)
     return RunView.model_validate(run_to_view(run))
+
+
+@router.post(
+    "/runs/{run_id}/agents/{agent_execution_id}/cancel",
+    response_model=RunView,
+)
+async def cancel_subagent(
+    run_id: str,
+    agent_execution_id: str,
+    session: AsyncSession = Depends(get_session),
+) -> RunView:
+    execution = await AgentExecutionRepository(session).require(agent_execution_id)
+    if execution.run_id != run_id or execution.parent_execution_id is None:
+        raise ResourceError("SUBAGENT_NOT_FOUND", "找不到指定子系统执行。")
+    await SubagentCancellationService(session).cancel_tree(
+        agent_execution_id,
+        reason="user_cancelled_child",
+    )
+    run = await RunRepository(session).get_run(run_id)
+    if run is None:
+        raise ResourceError("RUN_NOT_FOUND", "找不到指定运行记录。")
+    return RunView.model_validate(run_to_view(run))
+
+
+@router.get("/runs/{run_id}/subagents/metrics")
+async def get_subagent_metrics(
+    run_id: str,
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, object]:
+    try:
+        return await SubagentTelemetryRepository(session).summary(run_id)
+    except ValueError as exc:
+        raise ResourceError("RUN_NOT_FOUND", "找不到指定运行记录。") from exc
 
 
 @router.post("/runs/{run_id}/resume", response_model=CreateRunResponse)

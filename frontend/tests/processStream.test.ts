@@ -139,4 +139,52 @@ describe('process stream reducer', () => {
     expect(state.items.find((item) => item.id === 'phase-selecting_action-3')).toBeDefined();
     expect(state.items.find((item) => item.id === 'reasoning-3')?.groupId).toBe('phase-selecting_action-3');
   });
+
+  it('suppresses stale per-agent events and detects cursor gaps', () => {
+    let state = createOptimisticProcessState('run-1');
+    state = reduceProcessEvent(state, {
+      id: 10,
+      run_sequence: 1,
+      agent_execution_id: 'child-1',
+      agent_sequence: 1,
+      type: 'tool_call.started',
+      payload: { tool_call_id: 'call-1', tool_name: 'web_search' },
+    });
+    const unchanged = reduceProcessEvent(state, {
+      id: 11,
+      run_sequence: 2,
+      agent_execution_id: 'child-1',
+      agent_sequence: 1,
+      type: 'tool_call.started',
+      payload: { tool_call_id: 'stale', tool_name: 'must_not_render' },
+    });
+    expect(unchanged).toBe(state);
+
+    state = reduceProcessEvent(state, {
+      id: 13,
+      run_sequence: 3,
+      agent_execution_id: 'child-1',
+      agent_sequence: 3,
+      type: 'tool_call.completed',
+      payload: { tool_call_id: 'call-1', tool_name: 'web_search', status: 'succeeded' },
+    });
+    expect(state.cursorGap).toBe(true);
+    expect(state.agentCursors['child-1']).toBe(3);
+  });
+
+  it('clears a detected gap after authoritative snapshot reconciliation', () => {
+    const gapped = {
+      ...createOptimisticProcessState('run-1'),
+      runCursor: 9,
+      cursorGap: true,
+    };
+    const reconciled = reconcileProcessSnapshot(gapped, {
+      id: 'run-1', task_id: 'task-1', status: 'executing', mode: 'agent', summary: null, result: null,
+      steps: [], tool_calls: [], artifacts: [], events: [{
+        id: 20, run_sequence: 1, type: 'reasoning.phase.started', payload: { phase: 'executing' }, created_at: 'now',
+      }],
+    } as RunView);
+    expect(reconciled.cursorGap).toBe(false);
+    expect(reconciled.runCursor).toBe(1);
+  });
 });

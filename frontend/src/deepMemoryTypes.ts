@@ -127,6 +127,8 @@ export type MemoryRevocationRequest = {
   actor?: string;
 };
 
+export type MemoryActivationRequest = MemoryRevocationRequest;
+
 export type ConsolidationJobStatus =
   | 'queued'
   | 'running'

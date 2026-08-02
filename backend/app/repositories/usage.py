@@ -39,10 +39,18 @@ class UsageRepository:
         self.session = session
 
     async def create_invocation(
-        self, *, run_id: str, provider: str, model: str, operation: str, attempt: int
+        self,
+        *,
+        run_id: str,
+        provider: str,
+        model: str,
+        operation: str,
+        attempt: int,
+        agent_execution_id: str | None = None,
     ) -> str:
         record = ModelInvocationRecord(
             run_id=run_id,
+            agent_execution_id=agent_execution_id,
             provider=provider,
             model=model,
             operation=operation,

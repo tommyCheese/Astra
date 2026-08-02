@@ -2,6 +2,7 @@ import hashlib
 import json
 import logging
 import time
+import uuid
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 from typing import Any
@@ -11,7 +12,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from app.artifacts import ArtifactService, LocalArtifactStore
 from app.core.config import Settings
-from app.db.models import RunRecord, RunSkillSnapshotRecord
+from app.db.models import AgentJoinRecord, RunRecord, RunSkillSnapshotRecord
 from app.grounding.projection import project_grounded_answer
 from app.grounding.repository import EvidenceRepository, EvidenceWriter
 from app.grounding.validators import grounding_validation_outcomes
@@ -32,6 +33,7 @@ from app.permissions.effects import (
 )
 from app.permissions.engine import PermissionEngine
 from app.permissions.governance import ExtensionTrustPolicy
+from app.repositories.agent_executions import AgentExecutionRepository
 from app.repositories.executions import NodeExecutionRepository
 from app.repositories.memories import MemoryRepository
 from app.repositories.permissions import PermissionRepository
@@ -613,7 +615,8 @@ class MemoryManager:
                 )
                 if (
                     existing is not None
-                    and existing.status == MemoryStatus.active.value
+                    and existing.status
+                    in {MemoryStatus.candidate.value, MemoryStatus.active.value}
                     and existing.content == candidate.content
                 ):
                     memory = existing
@@ -628,9 +631,10 @@ class MemoryManager:
                     )
                     await self.repo.session.commit()
                 elif existing is not None and existing.status == MemoryStatus.active.value:
-                    memory = await memory_repo.create_version(
+                    memory = await memory_repo.create_candidate_version(
                         existing.id,
                         expected_state_version=existing.state_version,
+                        source_run_id=run_id,
                         content=candidate.content,
                         provenance=provenance,
                         structured_data=candidate.structured_data,
@@ -638,11 +642,11 @@ class MemoryManager:
                         importance=candidate.importance,
                         valid_from=candidate.valid_from,
                         actor="memory-extractor",
-                        reason="new supported observation for stable memory key",
+                        reason="new supported observation awaiting human activation",
                     )
                     await self.repo.add_event(
                         run_id,
-                        "memory.version_created",
+                        "memory.candidate_created",
                         {
                             "memory_id": memory.id,
                             "memory_key": memory.memory_key,
@@ -683,24 +687,6 @@ class MemoryManager:
                             "memory_key": memory.memory_key,
                             "scope": memory.scope,
                             "kind": memory.kind,
-                        },
-                    )
-                    await self.repo.session.commit()
-                    memory = await memory_repo.transition(
-                        memory.id,
-                        MemoryStatus.active,
-                        expected_state_version=memory.state_version,
-                        actor="memory-extractor",
-                        reason="validated extractor candidate",
-                        commit=False,
-                    )
-                    await self.repo.add_event(
-                        run_id,
-                        "memory.activated",
-                        {
-                            "memory_id": memory.id,
-                            "memory_key": memory.memory_key,
-                            "state_version": memory.state_version,
                         },
                     )
                     await self.repo.session.commit()
@@ -914,7 +900,21 @@ class AgentLoop:
                 task_id=initial_run.task_id,
                 run_id=run_id,
                 trust_level="platform",
-                attributes={"permission_scope": {"actions": ["*"], "resources": ["*"]}},
+                attributes={
+                    "permission_scope": {
+                        "actions": ["*"],
+                        "resources": ["*"],
+                        "effect_kinds": ["*"],
+                        "tools": ["*"],
+                        "skills": ["*"],
+                        "credential_scopes": ["*"],
+                        "data_labels": ["*"],
+                        "allowed_purposes": ["*"],
+                        "network_destinations": ["*"],
+                        "workspace_read_roots": ["*"],
+                        "workspace_write_roots": ["*"],
+                    }
+                },
             )
             await permission_repository.freeze_tool_catalog(
                 run_id,
@@ -2248,6 +2248,7 @@ class AgentLoop:
                             phase=NodeExecutionPhase.waiting_approval,
                             wait_reason="approval_required",
                         )
+                    approval_continuation_token = str(uuid.uuid4())
                     request = await repo.create_approval_request(
                         run_id=run_id,
                         turn_id=turn.id,
@@ -2271,6 +2272,8 @@ class AgentLoop:
                         effect_plan_hash=effect_hash,
                         analyzer_version=effect_plan.analyzer_version,
                         analyzer_digest=effect_plan.analyzer_digest,
+                        agent_execution_id=turn.agent_execution_id,
+                        continuation_token=approval_continuation_token,
                         node_execution_id=active_execution_id,
                         execution_attempt=bound_execution.attempt if bound_execution else None,
                         expected_execution_state_version=bound_execution.state_version
@@ -2321,6 +2324,7 @@ class AgentLoop:
                             ),
                             "paused_node": "policy_gate",
                             "request": terminal_summary,
+                            "continuation_token": approval_continuation_token,
                         },
                     )
                     break
@@ -2775,6 +2779,27 @@ class AgentLoop:
                 if terminal_override == "waiting_user"
                 else None
             )
+            root_execution = await AgentExecutionRepository(repo.session).root_for_run(run_id)
+            descendant_executions = (
+                await AgentExecutionRepository(repo.session).descendants(root_execution.id)
+                if root_execution is not None
+                else []
+            )
+            required_joins = (
+                [
+                    item
+                    for item in (
+                        await repo.session.scalars(
+                            select(AgentJoinRecord).where(
+                                AgentJoinRecord.parent_execution_id == root_execution.id
+                            )
+                        )
+                    ).all()
+                    if item.required_execution_ids
+                ]
+                if root_execution is not None
+                else []
+            )
             gate_decision = (
                 self.completion_gate.evaluate(
                     state,
@@ -2792,6 +2817,8 @@ class AgentLoop:
                         for execution in run_record.node_executions
                         for reservation in execution.budget_reservations
                     ),
+                    descendant_executions=descendant_executions,
+                    required_joins=required_joins,
                 )
                 if profile.assurance_level == AssuranceLevel.full
                 else self.completion_gate.evaluate_basic(

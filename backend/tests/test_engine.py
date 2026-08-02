@@ -525,9 +525,10 @@ async def test_answer_delta_batching_flushes_first_and_final_content(session):
         "answer.started",
         "answer.delta",
         "answer.delta",
-        "answer.settling",
+        "answer.content.completed",
         "answer.completed",
     ]
+    assert events[-2].payload == {"next_phase": "background_verification"}
     assert events[-1].payload == {"content": "首尾", "status": "answer_complete"}
 
 
@@ -559,9 +560,12 @@ async def test_final_plan_node_answer_is_regenerated_as_canonical_stream(session
     assert client.answer_callbacks[-1] is True
     assert all(value is False for value in client.answer_callbacks[:-1])
     assert deltas == ["真正的", "流式回答"]
-    assert events.index(
-        next(event for event in events if event.type == "answer.delta")
-    ) < events.index(next(event for event in events if event.type == "answer.completed"))
+    event_types = [event.type for event in events]
+    assert event_types.index("answer.delta") < event_types.index("answer.content.completed")
+    assert event_types.index("answer.content.completed") < event_types.index(
+        "verification.created"
+    )
+    assert event_types.index("verification.created") < event_types.index("answer.completed")
 
 
 async def test_standard_fast_path_skips_plan_state_and_all_quality_gates(session):

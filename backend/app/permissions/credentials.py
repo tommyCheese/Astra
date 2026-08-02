@@ -5,6 +5,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
+from app.db.models import CredentialGrantRecord
 from app.permissions.engine import PermissionEngine
 from app.repositories.permissions import PermissionRepository
 from app.schemas.permissions import (
@@ -14,6 +15,7 @@ from app.schemas.permissions import (
     PermissionRequest,
     PermissionSubject,
 )
+from app.schemas.subagents import DelegatedExecutionContext
 
 
 @dataclass(frozen=True)
@@ -91,6 +93,54 @@ class CredentialBroker:
         )
         self._issued[grant.id] = credential
         self._redaction_tokens[credential.token] = credential.expires_at
+        return credential
+
+    async def issue_for_child(
+        self,
+        *,
+        context: DelegatedExecutionContext,
+        service: str,
+        scopes: Iterable[str],
+        on_behalf_of: str,
+        policies: PermissionPolicySet,
+        ttl_seconds: int = 300,
+    ) -> BrokeredCredential:
+        """Issue a fresh, child-bound token; parent token material is never accepted."""
+        requested = tuple(sorted(set(scopes)))
+        allowed = set(context.effective_scope.credential_scopes)
+        if not set(requested) <= allowed:
+            raise ValueError("Credential scope exceeds the delegated child scope")
+        credential = await self.issue(
+            run_id=context.run_id,
+            agent_identity_id=context.identity_id,
+            service=service,
+            scopes=requested,
+            allowed_scopes=allowed,
+            on_behalf_of=on_behalf_of,
+            subject=PermissionSubject(
+                agent_id=context.identity_id,
+                identity_type="subagent",
+                task_id=context.task_id,
+                run_id=context.run_id,
+                parent_agent_id=context.parent_identity_id,
+                agent_execution_id=context.agent_execution_id,
+                delegation_id=context.delegation_id,
+                delegation_chain=list(context.delegation_chain),
+            ),
+            policies=policies,
+            ttl_seconds=min(ttl_seconds, 300),
+        )
+        grant = await self.repository.session.get(
+            CredentialGrantRecord, credential.grant_id
+        )
+        if grant is not None:
+            grant.metadata_ = {
+                **grant.metadata_,
+                "agent_execution_id": context.agent_execution_id,
+                "delegation_id": context.delegation_id,
+                "parent_secret_inherited": False,
+            }
+            await self.repository.session.commit()
         return credential
 
     async def revoke(self, grant_id: str) -> None:

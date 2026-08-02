@@ -114,6 +114,12 @@ class ModelClient(ABC):
         """Bind revision-pinned Skill instruction blocks selected for the current Run."""
         return None
 
+    def bind_agent_execution(self, agent_execution_id: str | None) -> None:
+        """Bind usage attribution for an isolated AgentExecution."""
+        recorder = getattr(self, "usage_recorder", None)
+        if recorder is not None and hasattr(recorder, "agent_execution_id"):
+            recorder.agent_execution_id = agent_execution_id
+
     @abstractmethod
     async def contract(self, goal: str) -> TaskContract:
         raise NotImplementedError

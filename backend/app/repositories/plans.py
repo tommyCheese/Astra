@@ -65,6 +65,7 @@ class PlanRepository:
         supersedes_plan_id: str | None = None,
         lineage: dict[str, str] | None = None,
         node_state: dict[str, dict[str, Any]] | None = None,
+        agent_execution_id: str | None = None,
     ) -> PlanRecord:
         run = await self.session.get(RunRecord, run_id)
         if run is None:
@@ -101,6 +102,7 @@ class PlanRepository:
         )
         plan = PlanRecord(
             run_id=run_id,
+            agent_execution_id=agent_execution_id,
             version=next_version,
             status=status.value,
             supersedes_plan_id=supersedes_plan_id,
@@ -114,6 +116,7 @@ class PlanRepository:
             preserved = node_state.get(item.node_key, {})
             node = PlanNodeRecord(
                 plan_id=plan.id,
+                agent_execution_id=agent_execution_id,
                 node_key=item.node_key,
                 index=index,
                 title=item.title,
@@ -144,7 +147,7 @@ class PlanRepository:
                         dependency_type="hard",
                     )
                 )
-        if status == PlanStatus.active:
+        if status == PlanStatus.active and agent_execution_id is None:
             if run.active_plan_id:
                 previous = await self.session.get(PlanRecord, run.active_plan_id)
                 if previous and previous.status == PlanStatus.active.value:
@@ -162,30 +165,37 @@ class PlanRepository:
                 "status": plan.status,
                 "node_count": len(draft.nodes),
                 "supersedes_plan_id": supersedes_plan_id,
+                "agent_execution_id": agent_execution_id,
             },
         )
         await self._event(
             run_id,
             "plan.version.created",
-            PlanVersionEvent(
+            {
+                **PlanVersionEvent(
                 plan_id=plan.id,
                 plan_version=plan.version,
                 status=plan.status,
                 supersedes_plan_id=supersedes_plan_id,
                 node_count=len(draft.nodes),
                 lineage_count=len(lineage),
-            ).model_dump(mode="json"),
+                ).model_dump(mode="json"),
+                "agent_execution_id": agent_execution_id,
+            },
         )
         if status == PlanStatus.active:
             await self._event(
                 run_id,
                 "plan.version.activated",
-                PlanVersionEvent(
+                {
+                    **PlanVersionEvent(
                     plan_id=plan.id,
                     plan_version=plan.version,
                     supersedes_plan_id=supersedes_plan_id,
                     lineage_count=len(lineage),
-                ).model_dump(mode="json"),
+                    ).model_dump(mode="json"),
+                    "agent_execution_id": agent_execution_id,
+                },
             )
         return loaded
 
@@ -201,16 +211,41 @@ class PlanRepository:
             raise ValueError(f"Plan not found: {plan_id}")
         return plan
 
-    async def active_for_run(self, run_id: str) -> PlanRecord | None:
+    async def active_for_run(
+        self,
+        run_id: str,
+        *,
+        agent_execution_id: str | None = None,
+    ) -> PlanRecord | None:
+        if agent_execution_id is not None:
+            result = await self.session.execute(
+                select(PlanRecord)
+                .where(
+                    PlanRecord.run_id == run_id,
+                    PlanRecord.agent_execution_id == agent_execution_id,
+                    PlanRecord.status == PlanStatus.active.value,
+                )
+                .order_by(PlanRecord.version.desc())
+                .options(selectinload(PlanRecord.nodes), selectinload(PlanRecord.edges))
+            )
+            return result.scalars().first()
         run = await self.session.get(RunRecord, run_id)
         if run is None or not run.active_plan_id:
             return None
         return await self.require(run.active_plan_id)
 
-    async def list_for_run(self, run_id: str) -> list[PlanRecord]:
+    async def list_for_run(
+        self,
+        run_id: str,
+        *,
+        agent_execution_id: str | None = None,
+    ) -> list[PlanRecord]:
+        conditions = [PlanRecord.run_id == run_id]
+        if agent_execution_id is not None:
+            conditions.append(PlanRecord.agent_execution_id == agent_execution_id)
         result = await self.session.execute(
             select(PlanRecord)
-            .where(PlanRecord.run_id == run_id)
+            .where(*conditions)
             .order_by(PlanRecord.version)
             .options(selectinload(PlanRecord.nodes), selectinload(PlanRecord.edges))
         )
@@ -270,7 +305,8 @@ class PlanRepository:
         await self._event(
             plan.run_id,
             "plan.node.updated",
-            PlanNodeTransitionEvent(
+            {
+                **PlanNodeTransitionEvent(
                 plan_id=plan.id,
                 plan_version=plan.version,
                 plan_node_id=node.id,
@@ -279,7 +315,9 @@ class PlanRepository:
                 status=node.status,
                 evidence_refs=node.evidence_refs,
                 failure=_safe_graph_failure(node.failure),
-            ).model_dump(mode="json"),
+                ).model_dump(mode="json"),
+                "agent_execution_id": plan.agent_execution_id,
+            },
         )
         await self.session.flush()
         return node
@@ -295,13 +333,14 @@ class PlanRepository:
         run = await self.session.get(RunRecord, plan.run_id)
         if run is None:
             raise ValueError(f"Run not found: {plan.run_id}")
-        if run.active_plan_id and run.active_plan_id != plan.id:
+        if plan.agent_execution_id is None and run.active_plan_id and run.active_plan_id != plan.id:
             previous = await self.session.get(PlanRecord, run.active_plan_id)
             if previous:
                 previous.status = PlanStatus.superseded.value
         plan.status = PlanStatus.active.value
         plan.activated_at = plan.activated_at or utc_now()
-        run.active_plan_id = plan.id
+        if plan.agent_execution_id is None:
+            run.active_plan_id = plan.id
         await self._event(
             plan.run_id,
             "plan.version.activated",
@@ -317,7 +356,15 @@ class PlanRepository:
     async def _event(self, run_id: str, event_type: str, payload: dict[str, Any]) -> None:
         from app.db.models import RunEventRecord
 
-        self.session.add(RunEventRecord(run_id=run_id, type=event_type, payload=payload))
+        agent_execution_id = payload.get("agent_execution_id")
+        self.session.add(
+            RunEventRecord(
+                run_id=run_id,
+                agent_execution_id=agent_execution_id,
+                type=event_type,
+                payload=payload,
+            )
+        )
 
 
 def plan_to_view(plan: PlanRecord) -> PlanView:

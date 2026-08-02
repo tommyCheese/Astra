@@ -200,6 +200,8 @@ class ToolExecutionContext:
     skill_bindings: tuple[dict[str, str], ...] = ()
     skill_draft_test: bool = False
     skill_input_provider: Any = None
+    agent_execution_id: str | None = None
+    delegation_context: Any = None
 
 
 async def materialize_skill_inputs(

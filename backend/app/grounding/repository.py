@@ -19,6 +19,8 @@ class EvidenceRepository:
         self,
         run_id: str,
         fragment: EvidenceFragment,
+        *,
+        agent_execution_id: str | None = None,
     ) -> EvidenceRecord:
         if fragment.lineage.run_id not in {None, run_id}:
             raise EvidenceConflictError("evidence Run lineage does not match persistence scope")
@@ -38,9 +40,17 @@ class EvidenceRepository:
                 raise EvidenceConflictError(
                     f"conflicting evidence replay for {normalized.evidence_key}"
                 )
+            if (
+                agent_execution_id is not None
+                and existing.agent_execution_id not in {None, agent_execution_id}
+            ):
+                raise EvidenceConflictError(
+                    "evidence replay crosses AgentExecution isolation"
+                )
             return existing
         record = EvidenceRecord(
             run_id=run_id,
+            agent_execution_id=agent_execution_id,
             evidence_id=normalized.id,
             evidence_key=normalized.evidence_key,
             kind=normalized.kind.value,
@@ -69,6 +79,13 @@ class EvidenceRepository:
             if existing.payload_digest != normalized.payload_digest:
                 raise EvidenceConflictError(
                     f"conflicting evidence replay for {normalized.evidence_key}"
+                ) from exc
+            if (
+                agent_execution_id is not None
+                and existing.agent_execution_id not in {None, agent_execution_id}
+            ):
+                raise EvidenceConflictError(
+                    "evidence replay crosses AgentExecution isolation"
                 ) from exc
             return existing
 

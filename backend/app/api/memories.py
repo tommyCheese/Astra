@@ -16,6 +16,7 @@ from app.memory.domain import (
 )
 from app.repositories.memories import MemoryRepository
 from app.schemas.memory import (
+    MemoryActivationRequest,
     MemoryDetailView,
     MemoryListView,
     MemoryRecallFeedbackRequest,
@@ -217,6 +218,34 @@ async def revoke_memory(
         raise StateError(
             "MEMORY_TRANSITION_INVALID",
             "当前记忆状态不允许撤销。",
+        ) from exc
+    return await _memory_detail(session, repository, memory_id)
+
+
+@router.post("/{memory_id}/activate", response_model=MemoryDetailView)
+async def activate_memory(
+    memory_id: str,
+    payload: MemoryActivationRequest,
+    session: AsyncSession = Depends(get_session),
+):
+    repository = MemoryRepository(session)
+    await _require_memory(repository, memory_id)
+    try:
+        await repository.activate_candidate(
+            memory_id,
+            expected_state_version=payload.expected_state_version,
+            actor=payload.actor,
+            reason=payload.reason,
+        )
+    except MemoryConflictError as exc:
+        raise StateError(
+            "MEMORY_VERSION_CONFLICT",
+            "记忆已被其他操作修改，请刷新后重试。",
+        ) from exc
+    except (MemoryValidationError, ValueError) as exc:
+        raise StateError(
+            "MEMORY_ACTIVATION_INVALID",
+            "当前记忆不满足人工激活条件。",
         ) from exc
     return await _memory_detail(session, repository, memory_id)
 

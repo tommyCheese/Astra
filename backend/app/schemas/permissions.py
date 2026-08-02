@@ -36,6 +36,8 @@ class PermissionSubject(BaseModel):
     task_id: str | None = None
     run_id: str | None = None
     parent_agent_id: str | None = None
+    agent_execution_id: str | None = None
+    delegation_id: str | None = None
     delegation_chain: list[str] = Field(default_factory=list)
 
 

@@ -85,6 +85,7 @@ class NodeExecutionRepository:
         dispatch_batch_id: str | None = None,
         worker_id: str | None = None,
         slot_index: int | None = None,
+        agent_execution_id: str | None = None,
     ) -> NodeExecutionRecord:
         attempt = int(
             await self.session.scalar(
@@ -96,6 +97,7 @@ class NodeExecutionRepository:
         ) + 1
         execution = NodeExecutionRecord(
             run_id=run_id,
+            agent_execution_id=agent_execution_id,
             plan_id=plan_id,
             plan_version=plan_version,
             plan_node_id=plan_node_id,

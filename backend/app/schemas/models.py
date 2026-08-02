@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from typing import Any, Literal
+from urllib.parse import urlsplit
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 MODEL_THINKING_CAPABILITY_VERSION = 2
 
@@ -110,6 +111,36 @@ class RuntimeDefaultModelResponse(BaseModel):
     provider: str
     model: str
     configured: bool
+
+
+class ModelConnectionTestRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    provider: str = Field(min_length=1, max_length=80)
+    model: str = Field(min_length=1, max_length=160)
+    api_key: str = Field(default="", max_length=4096)
+    base_url: str = Field(min_length=1, max_length=2048)
+
+    @field_validator("base_url")
+    @classmethod
+    def validate_base_url(cls, value: str) -> str:
+        parsed = urlsplit(value)
+        if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+            raise ValueError("base_url must use http or https")
+        if parsed.query or parsed.fragment:
+            raise ValueError("base_url must not contain a query or fragment")
+        return value.rstrip("/")
+
+
+class ModelConnectionTestResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    connected: bool
+    provider: str
+    model: str
+    message: str
+    latency_ms: int | None = None
+    error_code: str | None = None
 
 
 class ModelThinkingAdjustment(BaseModel):

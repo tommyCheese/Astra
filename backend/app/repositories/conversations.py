@@ -3,32 +3,42 @@ from __future__ import annotations
 import secrets
 from datetime import datetime
 
-from sqlalchemy import delete, or_, select
+from sqlalchemy import delete, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.db.models import (
+    AgentBudgetReservationRecord,
     AgentDelegationRecord,
     AgentEvolutionAuditRecord,
     AgentEvolutionCandidateRecord,
     AgentEvolutionSourceRecord,
+    AgentExecutionRecord,
     AgentIdentityRecord,
+    AgentJoinRecord,
     AgentTurnRecord,
     ApprovalGrantRecord,
     ApprovalRequestRecord,
     ArtifactRecord,
+    BudgetReservationRecord,
     ConversationShareRecord,
     CredentialGrantRecord,
     DataFlowStateRecord,
+    EvidenceRecord,
     MemoryAuditRecord,
     MemoryLinkRecord,
     MemoryRecallEventRecord,
     MemoryRecord,
     MemorySourceRecord,
     ModelInvocationRecord,
+    NodeExecutionRecord,
+    PlanEdgeRecord,
+    PlanNodeRecord,
     PlanRecord,
+    ResourceLeaseRecord,
     RunEventRecord,
     RunRecord,
+    RunSkillSnapshotRecord,
     SandboxJobRecord,
     StepRecord,
     TaskRecord,
@@ -282,6 +292,71 @@ class ConversationRepository:
                     )
                 ).all()
             )
+            for model in (
+                CredentialGrantRecord,
+                DataFlowStateRecord,
+                ToolCatalogSnapshotRecord,
+                RunSkillSnapshotRecord,
+            ):
+                await self.session.execute(delete(model).where(model.run_id.in_(run_ids)))
+            await self.session.execute(
+                delete(MemoryRecallEventRecord).where(
+                    MemoryRecallEventRecord.run_id.in_(run_ids)
+                )
+            )
+            for model in (
+                ApprovalGrantRecord,
+                ApprovalRequestRecord,
+                EvidenceRecord,
+                ArtifactRecord,
+                SandboxJobRecord,
+                ToolCallRecord,
+                StepRecord,
+                RunEventRecord,
+                AgentTurnRecord,
+                ModelInvocationRecord,
+            ):
+                await self.session.execute(delete(model).where(model.run_id.in_(run_ids)))
+            await self.session.execute(
+                delete(ResourceLeaseRecord).where(ResourceLeaseRecord.run_id.in_(run_ids))
+            )
+            await self.session.execute(
+                delete(BudgetReservationRecord).where(
+                    BudgetReservationRecord.run_id.in_(run_ids)
+                )
+            )
+            await self.session.execute(
+                update(NodeExecutionRecord)
+                .where(NodeExecutionRecord.run_id.in_(run_ids))
+                .values(agent_execution_id=None)
+            )
+            await self.session.execute(
+                update(AgentExecutionRecord)
+                .where(AgentExecutionRecord.run_id.in_(run_ids))
+                .values(parent_node_execution_id=None)
+            )
+            await self.session.execute(
+                delete(AgentJoinRecord).where(AgentJoinRecord.run_id.in_(run_ids))
+            )
+            await self.session.execute(
+                delete(AgentBudgetReservationRecord).where(
+                    AgentBudgetReservationRecord.run_id.in_(run_ids)
+                )
+            )
+            await self.session.execute(
+                delete(AgentExecutionRecord).where(AgentExecutionRecord.run_id.in_(run_ids))
+            )
+            await self.session.execute(
+                delete(NodeExecutionRecord).where(NodeExecutionRecord.run_id.in_(run_ids))
+            )
+            plan_ids = select(PlanRecord.id).where(PlanRecord.run_id.in_(run_ids))
+            await self.session.execute(
+                delete(PlanEdgeRecord).where(PlanEdgeRecord.plan_id.in_(plan_ids))
+            )
+            await self.session.execute(
+                delete(PlanNodeRecord).where(PlanNodeRecord.plan_id.in_(plan_ids))
+            )
+            await self.session.execute(delete(PlanRecord).where(PlanRecord.run_id.in_(run_ids)))
             if identity_ids:
                 await self.session.execute(
                     delete(AgentDelegationRecord).where(
@@ -289,25 +364,9 @@ class ConversationRepository:
                         | AgentDelegationRecord.child_identity_id.in_(identity_ids)
                     )
                 )
-            for model in (
-                CredentialGrantRecord,
-                DataFlowStateRecord,
-                ToolCatalogSnapshotRecord,
-            ):
-                await self.session.execute(delete(model).where(model.run_id.in_(run_ids)))
-            if identity_ids:
                 await self.session.execute(
                     delete(AgentIdentityRecord).where(AgentIdentityRecord.id.in_(identity_ids))
                 )
-            await self.session.execute(
-                delete(MemoryRecallEventRecord).where(
-                    MemoryRecallEventRecord.run_id.in_(run_ids)
-                )
-            )
-            for model in (ApprovalGrantRecord, ApprovalRequestRecord,
-                          ArtifactRecord, SandboxJobRecord, ToolCallRecord, StepRecord,
-                          RunEventRecord, AgentTurnRecord, ModelInvocationRecord, PlanRecord):
-                await self.session.execute(delete(model).where(model.run_id.in_(run_ids)))
             await self.session.execute(delete(RunRecord).where(RunRecord.id.in_(run_ids)))
         await self.session.execute(delete(ConversationShareRecord).where(ConversationShareRecord.conversation_id == task.id))
         await self.session.execute(delete(TaskRecord).where(TaskRecord.id == task.id))

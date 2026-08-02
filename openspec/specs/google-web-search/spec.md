@@ -15,7 +15,7 @@ TBD - created by archiving change add-google-search-adaptive-crawler. Update Pur
 - **THEN** runner 通过 tool registry 调用 `web_search`，而不是直接调用 Google provider 实现
 
 ### Requirement: Google 搜索 provider
-系统 SHALL 提供一个 Google `web_search` provider，通过 Google Programmable Search JSON API 获取真实搜索结果。
+系统 SHALL 提供一个 Google `web_search` provider，通过 Google Programmable Search JSON API 获取真实搜索结果，并在显式选择 Google 时保持严格凭据校验。
 
 #### Scenario: Google 搜索成功
 - **WHEN** `WEB_SEARCH_PROVIDER=google` 且 Google API 配置有效，并且 runner 调用 `web_search`
@@ -23,7 +23,11 @@ TBD - created by archiving change add-google-search-adaptive-crawler. Update Pur
 
 #### Scenario: Google 配置缺失
 - **WHEN** `WEB_SEARCH_PROVIDER=google` 但缺少 API Key 或 Search Engine ID
-- **THEN** 系统记录 failed ToolCall，错误类别为配置错误，并且不暴露 secret 值
+- **THEN** 系统记录 failed ToolCall，错误类别为配置错误，不暴露 secret 值，并且不静默切换到其他 provider
+
+#### Scenario: 自动模式选择 Google
+- **WHEN** `WEB_SEARCH_PROVIDER=auto` 且专用 Google API Key 与 Search Engine ID 均有效
+- **THEN** 系统调用 Google 搜索 API，并在输出中记录自动选择模式和实际 Google provider
 
 ### Requirement: 搜索结果标准化
 系统 SHALL 将 Google 搜索结果标准化为统一候选来源结构。
@@ -56,4 +60,18 @@ TBD - created by archiving change add-google-search-adaptive-crawler. Update Pur
 #### Scenario: mock 搜索仍可用
 - **WHEN** `WEB_SEARCH_PROVIDER=mock`
 - **THEN** `web_search` 返回确定性候选来源，并且不调用真实网络搜索 API
+
+### Requirement: Normalized Google results retain logical query lineage
+Google search candidates SHALL include their originating logical query identity, canonical URL, provider rank, retrieval time, and normalized constraint audit.
+
+#### Scenario: Batched Google search
+- **WHEN** multiple logical queries are executed through Google
+- **THEN** candidates from each response retain the corresponding logical query identity
+
+### Requirement: Google credentials remain outside grounding evidence
+Google API keys and search-engine credentials MUST NOT appear in search traces, candidates, constraint audits, warnings, ToolCall output, or evidence records.
+
+#### Scenario: Search result is persisted
+- **WHEN** a Google search result is normalized and ingested into the Evidence Ledger
+- **THEN** no credential value is present in the persisted evidence
 

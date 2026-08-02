@@ -2,7 +2,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { App, DocumentationPage } from '../src/App';
-import { buildRuntime, cancelRun, cancelRuntimeBuild, confirmPlanExecution, createConversationShare, createRun, decideToolApproval, deleteConversation, executeConversationCommand, getConversation, getConversationContext, getConversationStrategy, getRun, getRuntimeDefaultModel, getRuntimeProfile, listConversationShares, listConversations, listLibraryFiles, listRuns, listSkills, listSystemCommands, resetRuntimeAgentProfile, resolveModelContextCapabilities, resolveModelThinkingCapabilities, resumeRun, revisePlan, revokeConversationShare, streamRunEvents, takeCreatedRunStream, updateConversation, updateConversationStrategy, updateRuntimeAgentProfile, updateRuntimeMemorySettings, updateToolSettings, type ModelThinkingCapability, type RunStreamEvent, type SkillSummary } from '../src/api';
+import { buildRuntime, cancelRun, cancelRuntimeBuild, confirmPlanExecution, createConversationShare, createRun, decideToolApproval, deleteConversation, executeConversationCommand, getConversation, getConversationContext, getConversationStrategy, getRun, getRuntimeDefaultModel, getRuntimeProfile, listConversationShares, listConversations, listLibraryFiles, listRuns, listSkills, listSystemCommands, resetRuntimeAgentProfile, resolveModelContextCapabilities, resolveModelThinkingCapabilities, resumeRun, revisePlan, revokeConversationShare, streamRunEvents, takeCreatedRunStream, testModelConnection, updateConversation, updateConversationStrategy, updateRuntimeAgentProfile, updateRuntimeMemorySettings, updateToolSettings, type ModelThinkingCapability, type RunStreamEvent, type SkillSummary } from '../src/api';
 import type { PlanGraphSnapshot, RunView } from '../src/types';
 
 vi.mock('../src/api', () => ({
@@ -16,6 +16,14 @@ vi.mock('../src/api', () => ({
   },
   getConversationStrategy: vi.fn(async () => ({ preferred_answer_mode: 'standard', reasoning_effort: 'balanced', max_tool_calls: 8, reflection_enabled: true, reflection_trigger: 'adaptive' })),
   getRuntimeDefaultModel: vi.fn(async () => { throw new Error('runtime default unavailable in unit tests'); }),
+  testModelConnection: vi.fn(async (model) => ({
+    connected: true,
+    provider: model.provider,
+    model: model.name,
+    message: '连接成功，模型已响应测试请求。',
+    latency_ms: 42,
+    error_code: null,
+  })),
   resolveModelThinkingCapabilities: vi.fn(async (models: Array<{ provider: string; model: string }>) => models.map((item) => ({
     ...item,
     supported: item.provider === 'openai',
@@ -904,7 +912,7 @@ describe('App', () => {
       window.setTimeout(() => {
         onEvent({ type: 'answer.started', payload: {} });
         onEvent({ type: 'answer.delta', payload: { delta: '流式回答不会消失' } });
-        onEvent({ type: 'answer.settling', payload: { phase: 'structuring_and_verifying' } });
+        onEvent({ type: 'answer.content.completed', payload: { next_phase: 'background_verification' } });
       }, 0);
       window.setTimeout(() => onEvent({ type: 'answer.completed', payload: { content: '流式回答不会消失' } }), 300);
       return () => undefined;
@@ -915,7 +923,8 @@ describe('App', () => {
     await userEvent.click(screen.getByRole('button', { name: '发送' }));
 
     expect(await screen.findByText('流式回答不会消失')).toBeInTheDocument();
-    expect(screen.getByText('正在整理并验证结果…')).toBeInTheDocument();
+    expect(screen.getByText('后台校验中')).toBeInTheDocument();
+    expect(screen.getByText('流式回答不会消失').closest('article')).not.toHaveClass('streaming-message');
     await new Promise((resolve) => window.setTimeout(resolve, 200));
     expect(screen.getByText('流式回答不会消失')).toBeInTheDocument();
     await waitFor(() => expect(screen.getByText('已完成查询')).toBeInTheDocument(), { timeout: 4000 });
@@ -1370,6 +1379,23 @@ describe('App', () => {
     await userEvent.click(screen.getByRole('button', { name: '显示' }));
     expect(keyInput).toHaveAttribute('type', 'text');
     expect(screen.getByText('更改会自动保存到当前浏览器。')).toBeInTheDocument();
+  });
+
+  it('tests a configured model connection and shows the measured result', async () => {
+    window.localStorage.removeItem('astra.model-providers.v2');
+    render(<App />);
+    await userEvent.click(screen.getByRole('button', { name: /设置/ }));
+    await userEvent.click(screen.getByRole('button', { name: '模型管理' }));
+    await userEvent.type(screen.getByPlaceholderText('sk-...'), 'connection-key');
+    await userEvent.click(screen.getAllByRole('button', { name: '测试连接' })[0]);
+
+    await waitFor(() => expect(testModelConnection).toHaveBeenCalledWith({
+      provider: 'openai',
+      name: 'gpt-5',
+      api_key: 'connection-key',
+      base_url: 'https://api.openai.com/v1',
+    }));
+    expect(await screen.findByRole('status')).toHaveTextContent('连接成功，模型已响应测试请求。 · 42 ms');
   });
 
   it('rejects obsolete model profile entries and never sends removed context overrides', async () => {

@@ -848,8 +848,8 @@ class RunEngine:
                 await repo.add_event(run_id, "answer.delta", {"delta": buffered})
             await repo.add_event(
                 run_id,
-                "answer.settling",
-                {"phase": "structuring_and_verifying"},
+                "answer.content.completed",
+                {"next_phase": "background_verification"},
             )
             await repo.session.commit()
             return

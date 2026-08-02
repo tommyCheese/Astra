@@ -1,8 +1,9 @@
 from datetime import timedelta
 
 import pytest
+from sqlalchemy import select, update
 
-from app.db.models import TaskRecord, utc_now
+from app.db.models import MemoryAuditRecord, MemorySourceRecord, TaskRecord, utc_now
 from app.memory.domain import (
     MemoryConflictError,
     MemoryNamespace,
@@ -155,6 +156,95 @@ async def test_create_version_supersedes_without_overwriting_history(session):
         (1, "superseded"),
         (2, "active"),
     ]
+
+
+async def test_human_activation_atomically_supersedes_candidate_base(session):
+    first_run = await _run_with_identity(session, memory_session_id="session-a")
+    second_run = await RunRepository(session).create_task_run(
+        "Memory replacement",
+        {"provider": "mock", "model": "mock"},
+        task_id=first_run.task_id,
+        session_id="session-a",
+    )
+    repository = MemoryRepository(session)
+    original = await repository.create(
+        run_id=first_run.id,
+        scope="session",
+        kind="semantic_fact",
+        memory_key="project.runtime",
+        content="The project uses Python 3.10",
+        provenance={"run_id": first_run.id},
+        confidence=0.9,
+    )
+    candidate = await repository.create_candidate_version(
+        original.id,
+        expected_state_version=1,
+        source_run_id=second_run.id,
+        content="The project uses Python 3.12",
+        provenance={"run_id": second_run.id},
+        actor="memory-extractor",
+        reason="awaiting review",
+    )
+
+    assert candidate.status == "candidate"
+    assert (await repository.require(original.id)).status == "active"
+
+    activated = await repository.activate_candidate(
+        candidate.id,
+        expected_state_version=1,
+        actor="local-operator",
+        reason="verified upgrade",
+    )
+    assert activated.status == "active"
+    assert activated.state_version == 2
+    assert (await repository.require(original.id)).status == "superseded"
+    audit_types = list(
+        (
+            await session.execute(
+                select(MemoryAuditRecord.event_type).where(
+                    MemoryAuditRecord.memory_id == activated.id
+                )
+            )
+        ).scalars()
+    )
+    assert audit_types[-1] == "human_activated"
+
+    with pytest.raises(MemoryConflictError, match="state version"):
+        await repository.activate_candidate(
+            candidate.id,
+            expected_state_version=1,
+            actor="local-operator",
+            reason="duplicate decision",
+        )
+
+
+async def test_human_activation_rejects_candidate_without_accessible_source(session):
+    run = await _run_with_identity(session)
+    repository = MemoryRepository(session)
+    candidate = await repository.create(
+        run_id=run.id,
+        scope="run",
+        kind="semantic_fact",
+        content="A pending fact",
+        provenance={"run_id": run.id},
+        confidence=0.8,
+        status=MemoryStatus.candidate,
+    )
+    await session.execute(
+        update(MemorySourceRecord)
+        .where(MemorySourceRecord.memory_id == candidate.id)
+        .values(accessible=False)
+    )
+    await session.commit()
+
+    with pytest.raises(MemoryValidationError, match="accessible source"):
+        await repository.activate_candidate(
+            candidate.id,
+            expected_state_version=1,
+            actor="local-operator",
+            reason="attempt activation",
+        )
+    assert (await repository.require(candidate.id)).status == "candidate"
 
 
 async def test_list_filters_expired_inactive_and_other_namespaces(session):

@@ -1,8 +1,52 @@
 type RunEvent = {
   id: number;
+  run_sequence?: number | null;
+  agent_execution_id?: string | null;
+  agent_sequence?: number | null;
   type: string;
   payload: Record<string, unknown>;
   created_at: string;
+};
+
+export type AgentExecutionView = {
+  id: string;
+  parent_execution_id?: string | null;
+  execution_type: 'root' | 'child' | string;
+  identity_id?: string | null;
+  delegation_id?: string | null;
+  request_id: string;
+  depth: number;
+  ordinal: number;
+  objective?: string | null;
+  creation_reason?: string | null;
+  required: boolean;
+  status: string;
+  phase: string;
+  wait_reason?: string | null;
+  budget_envelope: Record<string, unknown>;
+  budget_usage: Record<string, unknown>;
+  permissions: string[];
+  capabilities: string[];
+  artifact_ids: string[];
+  result_summary?: string | null;
+  open_issues: string[];
+  error?: Record<string, unknown> | null;
+  created_at: string;
+  updated_at: string;
+  finished_at?: string | null;
+  plan?: PlanGraphSnapshot | null;
+  children: AgentExecutionView[];
+};
+
+export type SubagentSummary = {
+  total: number;
+  running: number;
+  waiting: number;
+  completed: number;
+  failed: number;
+  cancelled: number;
+  budget_usage: Record<string, number>;
+  key_wait_reason?: string | null;
 };
 
 type StepView = {
@@ -451,6 +495,8 @@ export type RunView = {
   pending_approval?: PendingApproval | null;
   node_executions?: NodeExecution[];
   parallelism?: ParallelismSummary | null;
+  agent_executions?: AgentExecutionView[];
+  subagent_summary?: SubagentSummary;
   task_adapter?: string;
 };
 

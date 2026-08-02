@@ -8,6 +8,7 @@ from sqlalchemy.orm import joinedload, selectinload
 
 from app.agent_profile import AgentProfile
 from app.db.models import (
+    AgentExecutionRecord,
     AgentTurnRecord,
     ApprovalGrantRecord,
     ApprovalRequestRecord,
@@ -52,6 +53,7 @@ def run_detail_options():
         selectinload(RunRecord.sandbox_jobs),
         selectinload(RunRecord.approval_requests),
         selectinload(RunRecord.approval_grants),
+        selectinload(RunRecord.agent_executions),
         selectinload(RunRecord.node_executions).selectinload(NodeExecutionRecord.resource_leases),
         selectinload(RunRecord.node_executions).selectinload(
             NodeExecutionRecord.budget_reservations
@@ -178,6 +180,33 @@ class RunRepository:
         self.session.add(task)
         self.session.add(run)
         await self.session.flush()
+        root_execution = AgentExecutionRecord(
+            run_id=run.id,
+            task_id=task.id,
+            execution_type="root",
+            root_slot="root",
+            request_id="root",
+            depth=0,
+            ordinal=0,
+            contract={},
+            context_manifest={},
+            catalog_snapshot={},
+            budget_envelope=deepcopy(
+                (((reasoning_policy or {}).get("effective") or {}).get("subagents") or {}).get(
+                    "budgets"
+                )
+                or {}
+            ),
+            budget_usage={},
+            status="queued",
+            phase="planning",
+            checkpoint={},
+            created_at=now,
+            queued_at=now,
+            updated_at=now,
+        )
+        self.session.add(root_execution)
+        await self.session.flush()
         await self.add_event(run.id, "run.created", {"goal": goal, "status": run.status})
         if agent_profile_snapshot:
             await self.add_event(
@@ -228,6 +257,21 @@ class RunRepository:
         run.agent_state = agent_state
         run.state_version = int(agent_state.get("version", 1))
         run.updated_at = utc_now()
+        root_execution = await self.session.scalar(
+            select(AgentExecutionRecord).where(
+                AgentExecutionRecord.run_id == run_id,
+                AgentExecutionRecord.root_slot == "root",
+            )
+        )
+        if root_execution is not None:
+            root_execution.contract = deepcopy(task_contract)
+            root_execution.checkpoint = deepcopy(agent_state)
+            root_execution.budget_usage = deepcopy(agent_state.get("budget_usage") or {})
+            root_execution.status = "running"
+            root_execution.phase = "planning"
+            root_execution.state_version += 1
+            root_execution.heartbeat_at = utc_now()
+            root_execution.updated_at = utc_now()
         await self.add_event(
             run_id,
             "reasoning.state_initialized",
@@ -828,8 +872,34 @@ class RunRepository:
             )
             .values(status="cancelled", settled_at=now)
         )
+        await self.session.execute(
+            update(AgentExecutionRecord)
+            .where(
+                AgentExecutionRecord.run_id == run_id,
+                AgentExecutionRecord.status.not_in(
+                    ["completed", "completed_with_warnings", "blocked", "failed", "cancelled"]
+                ),
+            )
+            .values(
+                status="cancelled",
+                phase="terminal",
+                wait_reason="user_cancelled",
+                error={
+                    "category": "user_cancelled",
+                    "reason": "用户主动终止当前运行。",
+                },
+                worker_id=None,
+                fencing_token=AgentExecutionRecord.fencing_token + 1,
+                cancellation_epoch=AgentExecutionRecord.cancellation_epoch + 1,
+                state_version=AgentExecutionRecord.state_version + 1,
+                heartbeat_at=now,
+                finished_at=now,
+                updated_at=now,
+            )
+        )
 
         run.status = "cancelled"
+        run.cancellation_epoch += 1
         run.summary = summary
         run.result = {
             "summary": summary,
@@ -942,9 +1012,11 @@ class RunRepository:
         plan_node_id: str | None = None,
         node_execution_id: str | None = None,
         status: str = "running",
+        agent_execution_id: str | None = None,
     ) -> ToolCallRecord:
         call = ToolCallRecord(
             run_id=run_id,
+            agent_execution_id=agent_execution_id,
             step_id=step_id,
             plan_node_id=plan_node_id,
             node_execution_id=node_execution_id,
@@ -968,7 +1040,9 @@ class RunRepository:
                 "node_execution_id": node_execution_id,
                 "tool_name": tool_name,
                 "status": status,
+                "agent_execution_id": agent_execution_id,
             },
+            agent_execution_id=agent_execution_id,
         )
         await self.session.commit()
         return call
@@ -982,6 +1056,7 @@ class RunRepository:
             call.run_id,
             "tool_call.started" if status == "running" else "tool_call.status_changed",
             {"tool_call_id": call.id, "tool_name": call.tool_name, "status": status},
+            agent_execution_id=call.agent_execution_id,
         )
         await self.session.commit()
         return call
@@ -1005,12 +1080,58 @@ class RunRepository:
         analyzer_version: str | None = None,
         analyzer_digest: str | None = None,
         reviewer_identity: dict[str, Any] | None = None,
+        agent_execution_id: str | None = None,
+        requester_identity_id: str | None = None,
+        delegation_id: str | None = None,
+        catalog_digest: str | None = None,
+        continuation_token: str | None = None,
+        grant_scope: dict[str, Any] | None = None,
         node_execution_id: str | None = None,
         execution_attempt: int | None = None,
         expected_execution_state_version: int | None = None,
     ) -> ApprovalRequestRecord:
+        call = await self._require_tool_call(tool_call_id)
+        if call.run_id != run_id:
+            raise ValueError("Approval ToolCall does not belong to the Run")
+        bound_execution_id = agent_execution_id or call.agent_execution_id
+        if agent_execution_id is not None and call.agent_execution_id != agent_execution_id:
+            raise ValueError("Approval AgentExecution does not match the ToolCall lineage")
+        if bound_execution_id is not None:
+            execution = await self.session.get(AgentExecutionRecord, bound_execution_id)
+            if execution is None or execution.run_id != run_id:
+                raise ValueError("Approval AgentExecution does not belong to the Run")
+            if requester_identity_id is None:
+                requester_identity_id = execution.identity_id
+            if delegation_id is None:
+                delegation_id = execution.delegation_id
+            snapshot = execution.catalog_snapshot or {}
+            stored_catalog_digest = str(
+                snapshot.get("catalog_digest")
+                or snapshot.get("tool_digest")
+                or ""
+            )
+            if catalog_digest is None:
+                catalog_digest = stored_catalog_digest or None
+            elif stored_catalog_digest and catalog_digest != stored_catalog_digest:
+                raise ValueError("Approval catalog digest is stale")
+        exact_scope = deepcopy(grant_scope or {})
+        exact_scope.update(
+            {
+                "agent_execution_id": bound_execution_id,
+                "requester_identity_id": requester_identity_id,
+                "delegation_id": delegation_id,
+                "tool_name": tool_name,
+                "tool_version": tool_version,
+                "input_hash": input_hash,
+                "effect_plan_hash": effect_plan_hash,
+                "catalog_digest": catalog_digest,
+            }
+        )
         request = ApprovalRequestRecord(
             run_id=run_id,
+            agent_execution_id=bound_execution_id,
+            requester_identity_id=requester_identity_id,
+            delegation_id=delegation_id,
             turn_id=turn_id,
             tool_call_id=tool_call_id,
             node_execution_id=node_execution_id,
@@ -1024,6 +1145,9 @@ class RunRepository:
             effect_plan_hash=effect_plan_hash,
             analyzer_version=analyzer_version,
             analyzer_digest=analyzer_digest,
+            catalog_digest=catalog_digest,
+            continuation_token=continuation_token,
+            grant_scope=exact_scope,
             reviewer_identity=deepcopy(reviewer_identity),
             preview=preview,
             permission=permission,
@@ -1075,15 +1199,45 @@ class RunRepository:
         rejection_guidance: str | None = None,
     ) -> tuple[ApprovalRequestRecord, ToolCallRecord]:
         run = await self.require_run(run_id)
-        if run.status != "waiting_user" or not run.waiting_state:
-            raise ValueError("Run is not waiting for approval")
-        if run.waiting_state.get("approval_id") != approval_id:
-            raise ValueError("Approval is not pending for this run")
-        if run.waiting_state.get("continuation_token") != continuation_token:
-            raise ValueError("Invalid continuation token")
         request = await self.session.get(ApprovalRequestRecord, approval_id)
         if request is None or request.run_id != run_id or request.status != "pending":
             raise ValueError("Approval has already been decided")
+        approval_execution = (
+            await self.session.get(AgentExecutionRecord, request.agent_execution_id)
+            if request.agent_execution_id
+            else None
+        )
+        delegated_approval = bool(
+            approval_execution is not None
+            and approval_execution.parent_execution_id is not None
+        )
+        if not delegated_approval:
+            if run.status != "waiting_user" or not run.waiting_state:
+                raise ValueError("Run is not waiting for approval")
+            if run.waiting_state.get("approval_id") != approval_id:
+                raise ValueError("Approval is not pending for this run")
+            if run.waiting_state.get("continuation_token") != continuation_token:
+                raise ValueError("Invalid continuation token")
+        if request.continuation_token and request.continuation_token != continuation_token:
+            raise ValueError("Approval continuation token is stale")
+        if request.agent_execution_id:
+            agent_execution = await self.session.get(
+                AgentExecutionRecord, request.agent_execution_id
+            )
+            if (
+                agent_execution is None
+                or agent_execution.run_id != run_id
+                or agent_execution.identity_id != request.requester_identity_id
+                or agent_execution.delegation_id != request.delegation_id
+            ):
+                raise ValueError("Approval is bound to stale delegated identity context")
+            stored_catalog_digest = str(
+                (agent_execution.catalog_snapshot or {}).get("catalog_digest")
+                or (agent_execution.catalog_snapshot or {}).get("tool_digest")
+                or ""
+            )
+            if request.catalog_digest and stored_catalog_digest != request.catalog_digest:
+                raise ValueError("Approval is bound to a stale catalog snapshot")
         if request.node_execution_id:
             execution = await self.session.get(
                 NodeExecutionRecord,
@@ -1105,6 +1259,12 @@ class RunRepository:
             "external_provider",
         }:
             raise ValueError("Agent identities cannot approve their own actions")
+        reviewer_id = reviewer_identity.get("id") if reviewer_identity else None
+        if reviewer_id is not None and reviewer_id in {
+            request.requester_identity_id,
+            (request.grant_scope or {}).get("parent_identity_id"),
+        }:
+            raise ValueError("Delegation-chain identities cannot approve child actions")
         decided_at = utc_now()
         claimed = await self.session.execute(
             update(ApprovalRequestRecord)
@@ -1165,9 +1325,13 @@ class RunRepository:
                     task_id=run.task_id,
                     scope="task" if decision == "allow_task" else "run",
                     subject=(
-                        {"task_id": run.task_id}
+                        {"task_id": run.task_id, **deepcopy(request.grant_scope or {})}
                         if decision == "allow_task"
-                        else {"run_id": run_id, "task_id": run.task_id}
+                        else {
+                            "run_id": run_id,
+                            "task_id": run.task_id,
+                            **deepcopy(request.grant_scope or {}),
+                        }
                     ),
                     tool_name=request.tool_name,
                     tool_version=request.tool_version,
@@ -1178,9 +1342,22 @@ class RunRepository:
                     source_approval_id=request.id,
                 )
             )
-        run.waiting_state = None
-        run.status = "executing"
-        run.completed_at = None
+        if delegated_approval:
+            delegated_execution = await self.session.get(
+                AgentExecutionRecord, request.agent_execution_id
+            )
+            if delegated_execution is None or delegated_execution.status != "waiting_approval":
+                raise ValueError("Delegated approval no longer has a waiting execution")
+            delegated_execution.status = "queued"
+            delegated_execution.phase = "approval_decided"
+            delegated_execution.wait_reason = None
+            delegated_execution.worker_id = None
+            delegated_execution.state_version += 1
+            delegated_execution.updated_at = utc_now()
+        else:
+            run.waiting_state = None
+            run.status = "executing"
+            run.completed_at = None
         run.updated_at = utc_now()
         await self.add_event(
             run_id,
@@ -1350,7 +1527,9 @@ class RunRepository:
                 "tool_name": call.tool_name,
                 "status": call.status,
                 "error": error,
+                "agent_execution_id": call.agent_execution_id,
             },
+            agent_execution_id=call.agent_execution_id,
         )
         await self.session.commit()
         return call
@@ -1372,9 +1551,11 @@ class RunRepository:
         security_status: str = "pending",
         provenance: dict[str, Any] | None = None,
         plan_node_id: str | None = None,
+        agent_execution_id: str | None = None,
     ) -> ArtifactRecord:
         artifact = ArtifactRecord(
             run_id=run_id,
+            agent_execution_id=agent_execution_id,
             type=artifact_type,
             path=path,
             content_ref=content_ref,
@@ -1484,10 +1665,12 @@ class RunRepository:
         idempotency_key: str | None = None,
         plan_node_id: str | None = None,
         node_execution_id: str | None = None,
+        agent_execution_id: str | None = None,
     ) -> AgentTurnRecord:
         now = utc_now()
         turn = AgentTurnRecord(
             run_id=run_id,
+            agent_execution_id=agent_execution_id,
             plan_node_id=plan_node_id,
             node_execution_id=node_execution_id,
             turn_index=turn_index,
@@ -1517,7 +1700,9 @@ class RunRepository:
                 "decision_type": decision_type,
                 "selected_tool": selected_tool,
                 "reasoning_summary": reasoning_summary,
+                "agent_execution_id": agent_execution_id,
             },
+            agent_execution_id=agent_execution_id,
         )
         await self.session.commit()
         return turn
@@ -1688,8 +1873,40 @@ class RunRepository:
         payload: dict[str, Any],
         *,
         flush: bool = True,
+        agent_execution_id: str | None = None,
     ) -> RunEventRecord:
-        event = RunEventRecord(run_id=run_id, type=event_type, payload=payload)
+        event_payload = deepcopy(payload)
+        if agent_execution_id is not None:
+            execution = await self.session.get(AgentExecutionRecord, agent_execution_id)
+            if execution is not None and execution.run_id == run_id:
+                event_payload = {
+                    **event_payload,
+                    "agent_execution_id": execution.id,
+                    "parent_execution_id": execution.parent_execution_id,
+                    "agent_status": execution.status,
+                    "agent_phase": execution.phase,
+                    "agent_wait_reason": execution.wait_reason,
+                    "agent_budget_usage": deepcopy(execution.budget_usage or {}),
+                    "causation_id": next(
+                        (
+                            str(event_payload[key])
+                            for key in (
+                                "tool_call_id",
+                                "node_execution_id",
+                                "approval_id",
+                                "request_id",
+                            )
+                            if event_payload.get(key) is not None
+                        ),
+                        None,
+                    ),
+                }
+        event = RunEventRecord(
+            run_id=run_id,
+            agent_execution_id=agent_execution_id,
+            type=event_type,
+            payload=event_payload,
+        )
         self.session.add(event)
         if flush:
             await self.session.flush()
@@ -1702,6 +1919,30 @@ class RunRepository:
             .order_by(RunEventRecord.id)
         )
         return list(result.scalars().all())
+
+    async def event_cursor_counts(
+        self, run_id: str, through_id: int = 0
+    ) -> tuple[int, dict[str, int]]:
+        conditions = [RunEventRecord.run_id == run_id]
+        if through_id > 0:
+            conditions.append(RunEventRecord.id <= through_id)
+        run_sequence = int(
+            await self.session.scalar(
+                select(func.count(RunEventRecord.id)).where(*conditions)
+            )
+            or 0
+        )
+        rows = (
+            await self.session.execute(
+                select(
+                    RunEventRecord.agent_execution_id,
+                    func.count(RunEventRecord.id),
+                )
+                .where(*conditions, RunEventRecord.agent_execution_id.is_not(None))
+                .group_by(RunEventRecord.agent_execution_id)
+            )
+        ).all()
+        return run_sequence, {str(agent_id): int(count) for agent_id, count in rows}
 
     async def list_events_with_status(
         self, run_id: str, after_id: int = 0
@@ -1814,6 +2055,32 @@ def run_to_view(run: RunRecord) -> dict[str, Any]:
     )
     execution_payloads = [_node_execution_payload(execution) for execution in run.node_executions]
     parallelism = _parallelism_summary(run)
+    agent_plans = {
+        plan.agent_execution_id: plan_to_view(plan).model_dump(mode="json")
+        for plan in getattr(run, "plans", [])
+        if plan.agent_execution_id is not None
+        and plan.status in {"planned", "active", "completed"}
+    }
+    agent_tree = _agent_execution_tree(
+        list(getattr(run, "agent_executions", [])),
+        agent_plans=agent_plans,
+    )
+    agent_sequences: dict[str, int] = {}
+
+    def event_payload(event: RunEventRecord) -> dict[str, Any]:
+        agent_sequence = None
+        if event.agent_execution_id:
+            agent_sequence = agent_sequences.get(event.agent_execution_id, 0) + 1
+            agent_sequences[event.agent_execution_id] = agent_sequence
+        return {
+            "id": event.id,
+            "run_sequence": event.id,
+            "agent_execution_id": event.agent_execution_id,
+            "agent_sequence": agent_sequence,
+            "type": event.type,
+            "payload": event.payload,
+            "created_at": event.created_at,
+        }
     plan_payload = plan_view.model_dump(mode="json") if plan_view else run.plan_graph or {}
     if trusted and plan_view:
         plan_payload = {
@@ -1910,15 +2177,7 @@ def run_to_view(run: RunRecord) -> dict[str, Any]:
             }
             for job in run.sandbox_jobs
         ],
-        "events": [
-            {
-                "id": event.id,
-                "type": event.type,
-                "payload": event.payload,
-                "created_at": event.created_at,
-            }
-            for event in run.events
-        ],
+        "events": [event_payload(event) for event in sorted(run.events, key=lambda item: item.id)],
         "turns": [
             {
                 "id": turn.id,
@@ -2040,6 +2299,8 @@ def run_to_view(run: RunRecord) -> dict[str, Any]:
         else None,
         "node_executions": execution_payloads,
         "parallelism": parallelism,
+        "agent_executions": agent_tree,
+        "subagent_summary": _subagent_summary(agent_tree),
         "task_adapter": run.task_adapter or "web",
         "agent_profile": safe_agent_profile_manifest(run.agent_profile_snapshot or {}),
     }
@@ -2086,8 +2347,123 @@ def run_to_initial_view(run: RunRecord) -> dict[str, Any]:
         "pending_approval": None,
         "node_executions": [],
         "parallelism": None,
+        "agent_executions": [],
+        "subagent_summary": {
+            "total": 0,
+            "running": 0,
+            "waiting": 0,
+            "completed": 0,
+            "failed": 0,
+            "cancelled": 0,
+            "budget_usage": {},
+            "key_wait_reason": None,
+        },
         "task_adapter": run.task_adapter or "web",
         "agent_profile": safe_agent_profile_manifest(run.agent_profile_snapshot or {}),
+    }
+
+
+def _agent_execution_tree(
+    executions: list[AgentExecutionRecord],
+    *,
+    agent_plans: dict[str, dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
+    agent_plans = agent_plans or {}
+    children: dict[str | None, list[AgentExecutionRecord]] = {}
+    for execution in sorted(executions, key=lambda item: (item.depth, item.ordinal, item.id)):
+        children.setdefault(execution.parent_execution_id, []).append(execution)
+
+    def project(execution: AgentExecutionRecord) -> dict[str, Any]:
+        contract = execution.contract or {}
+        request = contract.get("request") if isinstance(contract.get("request"), dict) else {}
+        context = execution.context_manifest or {}
+        execution_context = (
+            context.get("execution_context")
+            if isinstance(context.get("execution_context"), dict)
+            else {}
+        )
+        scope = (
+            execution_context.get("effective_scope")
+            if isinstance(execution_context.get("effective_scope"), dict)
+            else {}
+        )
+        result = execution.result if isinstance(execution.result, dict) else {}
+        error = execution.error if isinstance(execution.error, dict) else {}
+        artifact_ids = [
+            item.get("id")
+            for item in result.get("artifacts", [])
+            if isinstance(item, dict) and item.get("id")
+        ]
+        return {
+            "id": execution.id,
+            "parent_execution_id": execution.parent_execution_id,
+            "execution_type": execution.execution_type,
+            "identity_id": execution.identity_id,
+            "delegation_id": execution.delegation_id,
+            "request_id": execution.request_id,
+            "depth": execution.depth,
+            "ordinal": execution.ordinal,
+            "objective": request.get("objective"),
+            "creation_reason": request.get("relationship") or execution.execution_type,
+            "required": not bool(request.get("optional", False)),
+            "status": execution.status,
+            "phase": execution.phase,
+            "wait_reason": execution.wait_reason,
+            "budget_envelope": execution.budget_envelope or {},
+            "budget_usage": execution.budget_usage or {},
+            "permissions": list(scope.get("actions", [])),
+            "capabilities": [
+                item.get("name")
+                for item in (execution.catalog_snapshot or {}).get("tools", [])
+                if isinstance(item, dict) and item.get("name")
+            ],
+            "artifact_ids": artifact_ids,
+            "result_summary": result.get("summary"),
+            "open_issues": list(result.get("open_issues", [])),
+            "error": {
+                key: error.get(key)
+                for key in ("category", "reason", "message")
+                if error.get(key) is not None
+            }
+            or None,
+            "created_at": execution.created_at,
+            "updated_at": execution.updated_at,
+            "finished_at": execution.finished_at,
+            "plan": agent_plans.get(execution.id),
+            "children": [project(item) for item in children.get(execution.id, [])],
+        }
+
+    return [project(item) for item in children.get(None, [])]
+
+
+def _subagent_summary(agent_tree: list[dict[str, Any]]) -> dict[str, Any]:
+    flattened: list[dict[str, Any]] = []
+
+    def visit(item: dict[str, Any]) -> None:
+        if item.get("execution_type") == "child":
+            flattened.append(item)
+        for child in item.get("children", []):
+            visit(child)
+
+    for root in agent_tree:
+        visit(root)
+    waiting_statuses = {"waiting_parent", "waiting_approval", "waiting_resource"}
+    completed_statuses = {"completed", "completed_with_warnings"}
+    budget_usage: dict[str, float] = {}
+    for item in flattened:
+        for key, value in item.get("budget_usage", {}).items():
+            if isinstance(value, int | float):
+                budget_usage[key] = budget_usage.get(key, 0) + value
+    waiting = [item for item in flattened if item.get("status") in waiting_statuses]
+    return {
+        "total": len(flattened),
+        "running": sum(item.get("status") in {"queued", "running", "completing"} for item in flattened),
+        "waiting": len(waiting),
+        "completed": sum(item.get("status") in completed_statuses for item in flattened),
+        "failed": sum(item.get("status") in {"failed", "blocked"} for item in flattened),
+        "cancelled": sum(item.get("status") == "cancelled" for item in flattened),
+        "budget_usage": budget_usage,
+        "key_wait_reason": next((item.get("wait_reason") for item in waiting), None),
     }
 
 

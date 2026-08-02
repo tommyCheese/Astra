@@ -13,6 +13,7 @@ from app.core.config import Settings, get_settings
 from app.db.models import Base, RunRecord, TaskRecord, utc_now
 from app.db.session import get_session
 from app.main import create_app
+from app.memory.domain import MemoryStatus
 from app.repositories.memories import MemoryRepository
 from app.repositories.plans import PlanRepository, plan_to_view
 from app.repositories.runs import RunRepository
@@ -169,6 +170,46 @@ async def test_memory_management_api_lists_details_and_revokes_with_cas(app_clie
     assert revoked.json()["state_version"] == 2
     assert revoked.json()["revoke_reason"] == "错误信息"
     assert revoked.json()["audit_events"][-1]["event_type"] == "status_changed"
+
+
+async def test_memory_management_api_requires_explicit_human_activation(app_client):
+    async with app_client._astra_session() as session:
+        run = await RunRepository(session).create_task_run(
+            "人工确认记忆",
+            {"provider": "mock", "model": "mock"},
+        )
+        candidate = await MemoryRepository(session).create(
+            run_id=run.id,
+            scope="run",
+            kind="semantic_fact",
+            memory_key="review:fact",
+            content="这是一条待确认事实。",
+            provenance={"run_id": run.id},
+            confidence=0.9,
+            status=MemoryStatus.candidate,
+        )
+        memory_id = candidate.id
+
+    default_list = await app_client.get("/api/memories")
+    assert all(item["id"] != memory_id for item in default_list.json()["items"])
+    pending_list = await app_client.get("/api/memories", params={"status": "candidate"})
+    assert pending_list.json()["items"][0]["id"] == memory_id
+
+    stale = await app_client.post(
+        f"/api/memories/{memory_id}/activate",
+        json={"expected_state_version": 99, "reason": "人工确认", "actor": "local-test"},
+    )
+    assert stale.status_code == 409
+    assert stale.json()["error"]["code"] == "MEMORY_VERSION_CONFLICT"
+
+    activated = await app_client.post(
+        f"/api/memories/{memory_id}/activate",
+        json={"expected_state_version": 1, "reason": "人工确认", "actor": "local-test"},
+    )
+    assert activated.status_code == 200
+    assert activated.json()["status"] == "active"
+    assert activated.json()["audit_events"][-1]["event_type"] == "human_activated"
+    assert activated.json()["audit_events"][-1]["actor"] == "local-test"
 
 
 async def test_memory_management_api_rejects_incomplete_namespace_and_missing_memory(

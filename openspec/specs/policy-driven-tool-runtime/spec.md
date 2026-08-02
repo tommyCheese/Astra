@@ -11,22 +11,33 @@ TBD - created by archiving change decouple-tool-runtime-and-add-sandboxed-chart-
 - **THEN** Registry 同时暴露 `web_search`、`web_fetch` 和 `chart.render`，无需修改 AgentLoop
 
 ### Requirement: Policy-driven tool resolution
-Tool Router SHALL 根据 manifest capability、权限、风险、execution backend、当前 Run policy 和预算解析工具，而非通过硬编码工具名称 allowlist 决定。
+Tool Router and the execution-time capability selector SHALL resolve tools according to semantic task capability, manifest security capability, permissions, risk, execution backend, frozen catalog, current Run policy, and budget rather than a Plan-level concrete tool name or hardcoded tool-name allowlist.
 
 #### Scenario: Resolve an allowed sandboxed chart tool
-- **WHEN** `chart.render` 已注册且 Run policy 允许 `sandboxed_compute` 与 `artifact_write`
-- **THEN** Router 校验输入和预算后返回该工具
+- **WHEN** an active node requires `data.visualize`, `chart.render` declares that semantic task capability, and the Run allows its sandboxed compute and artifact effects
+- **THEN** the selector offers the manifest and Router validates its concrete invocation
 
 #### Scenario: Reject a disallowed capability
-- **WHEN** 工具已注册但其 capability 未被当前 Run policy 允许
-- **THEN** Router 返回可审计的 `tool_not_allowed` 或 `permission_denied`，且不执行工具
+- **WHEN** a matching tool is registered but its security capability is not allowed by the Run policy
+- **THEN** the tool is excluded or Router returns an auditable `tool_not_allowed` or `permission_denied`
+- **THEN** the tool is not executed
+
+#### Scenario: Resolve equivalent provider tools
+- **WHEN** multiple eligible tools declare the semantic capability required by the active node
+- **THEN** the runtime exposes all matching candidates without requiring a Plan change
 
 ### Requirement: Only eligible manifests enter model context
-Context assembler SHALL 只向模型暴露当前 Run 可实际调用的工具 manifest。
+Context assembler SHALL expose only tool manifests that are present in the Run's frozen catalog, currently eligible under Run policy and backend availability, and matched by the active node's semantic requirements; it SHALL expose safe resolution metadata separately from tool inputs and secrets.
 
 #### Scenario: Sandbox backend unavailable
-- **WHEN** chart capability 已配置但 Sandbox Executor 当前不可用
-- **THEN** 模型上下文不包含 `chart.render`，并记录 capability 不可用原因
+- **WHEN** a visualization tool is configured but its Sandbox Executor is unavailable
+- **THEN** the model context does not contain that tool
+- **THEN** resolution metadata records a safe capability-unavailable reason
+
+#### Scenario: Active node has multiple providers
+- **WHEN** multiple healthy and allowed provider tools satisfy the same active semantic requirement
+- **THEN** every matching manifest enters the execution decision context in deterministic order
+- **THEN** no provider credential or secret configuration enters the resolution metadata
 
 ### Requirement: Generic tool result envelope
 所有工具执行结果 SHALL 转换为统一 envelope，至少包含状态、结构化数据、warnings、metrics 和 Artifact 引用，AgentLoop 不得按具体工具名解释原始输出。
@@ -59,4 +70,25 @@ Agent Runtime SHALL 为每次工具调用构造 `ToolExecutionContext`，包含 
 #### Scenario: Execute an existing Web query
 - **WHEN** 用户发起此前由 Web Agent 支持的查询
 - **THEN** 通用工具路径产生与既有路径等价的搜索、抓取、Evidence Pack 和验证结果
+
+### Requirement: Result processors emit canonical evidence fragments
+Applicable result processors SHALL convert tool-specific output into schema-validated canonical evidence fragments without persisting directly or expanding permissions.
+
+#### Scenario: Web read completes
+- **WHEN** a Web read ToolResultEnvelope is processed
+- **THEN** the processor emits source snapshot and passage fragments and the host supplies trusted invocation lineage before persistence
+
+### Requirement: Host controls evidence persistence
+Only host-managed EvidenceWriter code SHALL persist evidence fragments, and plugins MUST NOT receive unrestricted repository or database access for evidence ingestion.
+
+#### Scenario: Plugin emits malformed evidence
+- **WHEN** a result processor returns an evidence fragment that fails the canonical schema
+- **THEN** the invocation fails safely before the fragment is persisted
+
+### Requirement: Persisted permission records use the current identity model
+The system SHALL read permission identities, grants, and audit records only from the current Run/Task identity schema and SHALL NOT expose compatibility projections for legacy single-lease or unscoped authorization data.
+
+#### Scenario: Read obsolete authorization data
+- **WHEN** a persisted grant or identity lacks the current binding and scope fields
+- **THEN** the record is rejected or treated as unauthorized without constructing a compatibility view
 

@@ -103,6 +103,26 @@ const memory: MemoryDetail = {
   }],
 };
 
+const pendingMemory: MemoryDetail = {
+  ...memory,
+  id: 'memory-pending',
+  status: 'candidate',
+  version: 3,
+  state_version: 1,
+  content: '项目默认使用 PostgreSQL 作为主数据库。',
+  supersedes_id: memory.id,
+  recall_events: [],
+  audit_events: [{
+    id: 'audit-pending',
+    event_type: 'candidate_version_created',
+    actor: 'memory-extractor',
+    reason: 'awaiting human activation',
+    payload: { supersedes_id: memory.id },
+    created_at: '2026-07-29T10:00:00Z',
+  }],
+  history: [memory],
+};
+
 const publishedJob: ConsolidationJob = {
   id: 'job-1',
   namespace_type: 'user',
@@ -207,6 +227,7 @@ function clientFixture(): DeepMemoryClient {
   return {
     listMemories: vi.fn(async () => ({ items: [memory], total: 1, next_cursor: null })),
     getMemory: vi.fn(async () => memory),
+    activateMemory: vi.fn(async () => ({ ...memory, status: 'active', state_version: 5 })),
     revokeMemory: vi.fn(async () => ({
       ...memory,
       status: 'revoked',
@@ -313,6 +334,74 @@ describe('MemoryWorkbench', () => {
     expect(await screen.findByText('记忆已撤销；历史召回记录仍保留用于审计。')).toBeInTheDocument();
     expect(screen.getAllByText('已撤销').length).toBeGreaterThan(0);
     expect(screen.getByText('validated provenance')).toBeInTheDocument();
+  });
+
+  it('lists pending Memory separately and activates it with a human audit reason', async () => {
+    const client = clientFixture();
+    client.listMemories = vi.fn(async () => ({ items: [memory, pendingMemory], total: 2, next_cursor: null }));
+    client.getMemory = vi.fn(async (memoryId) => memoryId === pendingMemory.id ? pendingMemory : memory);
+    client.activateMemory = vi.fn(async () => ({
+      ...pendingMemory,
+      status: 'active',
+      state_version: 2,
+      audit_events: [...pendingMemory.audit_events, {
+        id: 'audit-human',
+        event_type: 'human_activated',
+        actor: 'local-operator',
+        reason: '内容与来源已核对',
+        payload: {},
+        created_at: '2026-07-29T10:10:00Z',
+      }],
+    }));
+    render(<I18nProvider><MemoryWorkbench client={client} visibleTabs={['memories']} showHeader={false} /></I18nProvider>);
+
+    expect(await screen.findByText('待人工确认')).toBeInTheDocument();
+    expect(screen.getAllByText('项目默认使用 PostgreSQL 作为主数据库。').length).toBeGreaterThan(0);
+    const confirmButtons = screen.getAllByRole('button', { name: '确认并激活' });
+    fireEvent.click(confirmButtons[confirmButtons.length - 1]);
+    fireEvent.change(
+      screen.getByPlaceholderText('至少输入 3 个字符，原因会写入审计记录'),
+      { target: { value: '内容与来源已核对' } },
+    );
+    const dialogConfirmButtons = screen.getAllByRole('button', { name: '确认并激活' });
+    fireEvent.click(dialogConfirmButtons[dialogConfirmButtons.length - 1]);
+
+    await waitFor(() => expect(client.activateMemory).toHaveBeenCalledWith('memory-pending', {
+      expected_state_version: 1,
+      reason: '内容与来源已核对',
+      actor: 'local-operator',
+    }));
+    expect(await screen.findByText('记忆已由人工确认并激活，可参与后续召回。')).toBeInTheDocument();
+  });
+
+  it('rejects a pending Memory without activating it', async () => {
+    const client = clientFixture();
+    client.listMemories = vi.fn(async () => ({ items: [pendingMemory], total: 1, next_cursor: null }));
+    client.getMemory = vi.fn(async () => pendingMemory);
+    client.revokeMemory = vi.fn(async () => ({
+      ...pendingMemory,
+      status: 'revoked',
+      state_version: 2,
+      revoked_at: '2026-07-29T10:10:00Z',
+      revoke_reason: '来源表达不准确',
+    }));
+    render(<I18nProvider><MemoryWorkbench client={client} visibleTabs={['memories']} showHeader={false} /></I18nProvider>);
+
+    await screen.findByLabelText('记忆详情');
+    fireEvent.click(screen.getByRole('button', { name: '拒绝候选' }));
+    fireEvent.change(
+      screen.getByPlaceholderText('至少输入 3 个字符，原因会写入审计记录'),
+      { target: { value: '来源表达不准确' } },
+    );
+    fireEvent.click(screen.getByRole('button', { name: '确认撤销' }));
+
+    await waitFor(() => expect(client.revokeMemory).toHaveBeenCalledWith('memory-pending', {
+      expected_state_version: 1,
+      reason: '来源表达不准确',
+      actor: 'local-operator',
+    }));
+    expect(client.activateMemory).not.toHaveBeenCalled();
+    expect(await screen.findByText('候选已拒绝；内容和来源仍保留用于审计。')).toBeInTheDocument();
   });
 
   it('reviews a published consolidation generation and performs audited rollback', async () => {

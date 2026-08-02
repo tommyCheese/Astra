@@ -3,31 +3,35 @@
 ## Purpose
 TBD - created by archiving change implement-core-web-agent-loop. Update Purpose after archive.
 ## Requirements
-### Requirement: Run uses Web-only Agent loop
-The system SHALL execute new Web Agent runs through a bounded Agent loop that can plan, call allowed Web tools, observe results, reflect on failures, verify evidence, and finalize a response.
+### Requirement: Run uses bounded general Agent loop
+The system SHALL execute Runs through a bounded Agent loop that can follow a logical Plan, dynamically select eligible tools for active semantic needs, observe results, reflect on failures, verify outputs, and finalize a response without making the loop Web-only.
 
-#### Scenario: Successful bounded Web Agent run
-- **WHEN** a user submits a Web Agent goal
-- **THEN** the system creates a run and executes loop turns until it reaches `finalize`, `blocked`, or the configured maximum turn count
-- **THEN** the run records plan, tool calls, observations, verification, and final response
+#### Scenario: Successful bounded Web-backed run
+- **WHEN** a user submits a goal that requires current public information
+- **THEN** the system dynamically selects eligible discovery and reading tools until it reaches `finalize`, `blocked`, or the configured maximum turn count
+- **THEN** the run records Plan, candidate resolution, ToolCalls, observations, verification, and final response
+
+#### Scenario: Successful run without Web
+- **WHEN** a user goal can be fulfilled from reasoning, workspace tools, artifacts, or another registered capability
+- **THEN** the Agent loop does not require `web_search`, `web_fetch`, or Web evidence
 
 #### Scenario: Maximum turns reached
 - **WHEN** the Agent loop reaches the configured maximum turn count without a final answer
 - **THEN** the run status becomes `completed_with_warnings` or `blocked`
 - **THEN** the result includes a verification note explaining that the loop stopped at the turn limit
 
-### Requirement: Agent loop gates tools through registry
-The system SHALL only execute tools through the ToolRegistry and a Web Agent allowlist containing `web_search` and `web_fetch`.
+### Requirement: Agent loop gates dynamically selected tools through registry
+The system SHALL expose concrete tools only after semantic candidate resolution and SHALL execute a selected candidate only through ToolRegistry/ToolRouter and the existing policy, permission, effect, approval, backend, and budget gates.
 
-#### Scenario: Allowed Web tool call
-- **WHEN** an Agent decision requests `web_search` or `web_fetch`
-- **THEN** the system validates the tool against the registry and allowlist before execution
+#### Scenario: Eligible tool call
+- **WHEN** an execution decision requests a concrete tool from the active candidate resolution
+- **THEN** the system validates the tool against the frozen registry and runtime gates before execution
 - **THEN** the ToolCall is persisted with input, output, status, permission, and side effect level
 
-#### Scenario: Disallowed tool request
-- **WHEN** an Agent decision requests an unregistered tool or a tool outside the Web Agent allowlist
+#### Scenario: Out-of-candidate tool request
+- **WHEN** an execution decision requests an unregistered tool or a tool outside the active semantic candidates
 - **THEN** the system MUST NOT execute the tool
-- **THEN** the turn records a rejected observation and triggers reflection or blocked status
+- **THEN** the turn records a rejected observation and permits bounded alternative selection, reflection, replan, or blocked status
 
 ### Requirement: Agent turns are auditable
 The system SHALL persist each Agent loop turn with a turn index, decision type, reasoning summary, selected tool, observation, reflection, status, and related ToolCall or Artifact identifiers.

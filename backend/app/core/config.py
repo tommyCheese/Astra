@@ -53,6 +53,24 @@ class Settings(BaseSettings):
     agent_execution_stale_seconds: int = 45
     agent_node_attempt_timeout_seconds: int = 120
     agent_node_max_safe_retries: int = 1
+    agent_subagent_execution_enabled: bool = False
+    agent_subagent_kill_switch: bool = False
+    agent_subagent_rollout_cohort: str = "disabled"
+    agent_subagent_read_only: bool = True
+    agent_subagent_max_children_total: int = Field(default=4, ge=1, le=64)
+    agent_subagent_max_children_per_parent: int = Field(default=2, ge=1, le=16)
+    agent_subagent_max_parallel_children: int = Field(default=2, ge=1, le=16)
+    agent_subagent_max_depth: int = Field(default=1, ge=1, le=4)
+    agent_subagent_max_parent_round_trips: int = Field(default=1, ge=0, le=8)
+    agent_subagent_max_wall_time_seconds: int = Field(default=300, ge=10, le=86_400)
+    agent_subagent_max_tokens: int = Field(default=16_000, ge=1_000, le=2_000_000)
+    agent_subagent_max_model_calls: int = Field(default=8, ge=1, le=1_000)
+    agent_subagent_max_tool_calls: int = Field(default=12, ge=0, le=10_000)
+    agent_subagent_max_cost_usd: float = Field(default=2.0, ge=0, le=100_000)
+    agent_subagent_parent_token_reserve: int = Field(default=4_000, ge=0, le=2_000_000)
+    agent_subagent_parent_model_call_reserve: int = Field(default=2, ge=0, le=1_000)
+    agent_subagent_parent_tool_call_reserve: int = Field(default=2, ge=0, le=10_000)
+    agent_subagent_parent_cost_reserve_usd: float = Field(default=0.25, ge=0, le=100_000)
     agent_memory_write_enabled: bool = True
     agent_memory_cross_session_enabled: bool = False
     agent_memory_retrieval_policy_version: str = "memory-retrieval-v1"
@@ -134,12 +152,24 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 
     @model_validator(mode="after")
-    def validate_autodream_bounds(self) -> "Settings":
+    def validate_runtime_bounds(self) -> "Settings":
         if (
             self.agent_memory_autodream_min_candidates
             > self.agent_memory_autodream_max_records_per_job
         ):
             raise ValueError("AutoDream minimum candidates cannot exceed records per job")
+        if self.agent_subagent_max_children_per_parent > self.agent_subagent_max_children_total:
+            raise ValueError("Subagent children per parent cannot exceed total children")
+        if self.agent_subagent_max_parallel_children > self.agent_subagent_max_children_total:
+            raise ValueError("Subagent parallel children cannot exceed total children")
+        if self.agent_subagent_parent_token_reserve > self.agent_subagent_max_tokens:
+            raise ValueError("Subagent parent token reserve cannot exceed max tokens")
+        if self.agent_subagent_parent_model_call_reserve > self.agent_subagent_max_model_calls:
+            raise ValueError("Subagent parent model call reserve cannot exceed max model calls")
+        if self.agent_subagent_parent_tool_call_reserve > self.agent_subagent_max_tool_calls:
+            raise ValueError("Subagent parent tool call reserve cannot exceed max tool calls")
+        if self.agent_subagent_parent_cost_reserve_usd > self.agent_subagent_max_cost_usd:
+            raise ValueError("Subagent parent cost reserve cannot exceed max cost")
         return self
 
     @property

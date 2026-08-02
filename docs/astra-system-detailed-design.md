@@ -4,6 +4,8 @@
 
 本文描述 Astra 当前代码的系统结构和关键实现，目标是让开发者能够沿着真实调用链定位代码、理解安全边界，并据此扩展 Agent、工具、审批和交付能力。
 
+子 Agent 的 durable root/child 执行谱系、隔离上下文、权限衰减、层级预算、join、取消/恢复 fencing、事件及 UI 约束详见 [Governed Subagent Runtime](governed-subagent-runtime.md)。
+
 本文以 `main@e1bdc3b` 为分析基线，覆盖：
 
 - FastAPI 后端与 React 前端的整体分层；

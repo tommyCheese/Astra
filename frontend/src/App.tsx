@@ -1,9 +1,11 @@
 import { Component, CSSProperties, FormEvent, KeyboardEvent as ReactKeyboardEvent, lazy, MouseEvent, PointerEvent as ReactPointerEvent, ReactNode, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { AstraApiError, ApiErrorPayload, buildRuntime, cancelRun, cancelRuntimeBuild, confirmPlanExecution, createConversationShare, createRun, decideToolApproval, deleteConversation, executeConversationCommand, getConversation, getConversationContext, getConversationStrategy, getPermissionCenter, getRun, getRuntimeDefaultModel, getRuntimeProfile, getToolSettings, listConversationShares, listConversations, listLibraryFiles, listRuns, listSkills, listSystemCommands, resetRuntimeAgentProfile, resolveModelContextCapabilities, resolveModelThinkingCapabilities, resumeRun, revisePlan, revokeConversationShare, revokePermissionGrant, streamRunEvents, takeCreatedRunStream, updateConversation, updateConversationStrategy, updateRuntimeAgentProfile, updateRuntimeMemorySettings, updateToolSettings, type AgentProfileDocuments, type ContextWindowStatus, type ConversationStrategyPreferences, type LibraryFile, type MemoryRuntimeSettings, type ModelContextCapability, type ModelThinkingCapability, type ModelThinkingDepth, type ModelThinkingSelection, type PermissionCenterView, type RunModelConfig, type RunStreamEvent, type RunStreamHandle, type RuntimeDefaultModel, type SkillSummary, type SlashSystemCommand, type ToolSetting } from './api';
+import { AstraApiError, ApiErrorPayload, buildRuntime, cancelRun, cancelRuntimeBuild, confirmPlanExecution, createConversationShare, createRun, decideToolApproval, deleteConversation, executeConversationCommand, getConversation, getConversationContext, getConversationStrategy, getPermissionCenter, getRun, getRuntimeDefaultModel, getRuntimeProfile, getToolSettings, listConversationShares, listConversations, listLibraryFiles, listRuns, listSkills, listSystemCommands, resetRuntimeAgentProfile, resolveModelContextCapabilities, resolveModelThinkingCapabilities, resumeRun, revisePlan, revokeConversationShare, revokePermissionGrant, streamRunEvents, takeCreatedRunStream, testModelConnection, updateConversation, updateConversationStrategy, updateRuntimeAgentProfile, updateRuntimeMemorySettings, updateToolSettings, type AgentProfileDocuments, type ContextWindowStatus, type ConversationStrategyPreferences, type LibraryFile, type MemoryRuntimeSettings, type ModelConnectionTestResult, type ModelContextCapability, type ModelThinkingCapability, type ModelThinkingDepth, type ModelThinkingSelection, type PermissionCenterView, type RunModelConfig, type RunStreamEvent, type RunStreamHandle, type RuntimeDefaultModel, type SkillSummary, type SlashSystemCommand, type ToolSetting } from './api';
+import { cancelSubagent } from './api';
 import { buildAuditLog } from './auditPresentation';
 import { I18nProvider, useI18n } from './i18n';
 import { ThemeProvider, useTheme } from './theme';
 import type { ArtifactView, ChatMessage, ConversationShare, ConversationShareSummary, ConversationSummary, PendingApproval, RunView } from './types';
+import type { AgentExecutionView } from './types';
 import { UsageDashboard } from './UsageDashboard';
 import { GraphPaneWindowActions } from './GraphPaneWindowActions';
 import { CloseButton } from './CloseButton';
@@ -494,6 +496,15 @@ function AppContent() {
   useEffect(() => writeLocalJson(STORAGE_KEYS.modelThinkingPreferences, thinkingPreferences), [thinkingPreferences]);
   useEffect(() => writeLocalJson(STORAGE_KEYS.sidebarCollapsed, sidebarCollapsed), [sidebarCollapsed]);
   useEffect(() => writeLocalJson(STORAGE_KEYS.sidebarWidth, sidebarWidth), [sidebarWidth]);
+  useEffect(() => {
+    if (!processState?.cursorGap) return undefined;
+    const controller = new AbortController();
+    void getRun(processState.runId, controller.signal).then((snapshot) => {
+      setRun((current) => current?.id === snapshot.id ? snapshot : current);
+      setProcessState((current) => reconcileProcessSnapshot(current, snapshot));
+    }).catch(() => { /* The normal SSE reconnect path will retry authoritative replay. */ });
+    return () => controller.abort();
+  }, [processState?.cursorGap, processState?.runId]);
   useEffect(() => () => {
     if (trustedTransitionTimerRef.current !== undefined) {
       window.clearTimeout(trustedTransitionTimerRef.current);
@@ -1481,7 +1492,14 @@ function AppContent() {
       if (event.type === 'answer.settling') {
         if (deltaFrameRef.current !== undefined) window.cancelAnimationFrame(deltaFrameRef.current);
         flushDeltas();
-        setAnswerComplete(false);
+        setAnswerComplete(true);
+        setAnswerSettling(true);
+        return;
+      }
+      if (event.type === 'answer.content.completed') {
+        if (deltaFrameRef.current !== undefined) window.cancelAnimationFrame(deltaFrameRef.current);
+        flushDeltas();
+        setAnswerComplete(true);
         setAnswerSettling(true);
         return;
       }
@@ -1493,7 +1511,7 @@ function AppContent() {
         streamingAnswerRef.current = content;
         setStreamingAnswer(content);
         setAnswerComplete(true);
-        setAnswerSettling(true);
+        setAnswerSettling(false);
         scheduleRefresh(true);
         return;
       }
@@ -1580,9 +1598,9 @@ function AppContent() {
     const currentMessages = buildPresentation(effectiveRun)
       .filter((message) => !streamingAnswer || message.metadata.presentation !== 'answer')
       .map((message) => ({ ...message, id: `${run?.id ?? 'idle'}:${priorMessages.length}:${message.id}` }));
-    const streamed = visibleStreamingAnswer ? [{ id: `${run?.id ?? 'idle'}-stream`, role: 'assistant', content: visibleStreamingAnswer, status: 'streaming', metadata: {} }] : [];
+    const streamed = visibleStreamingAnswer ? [{ id: `${run?.id ?? 'idle'}-stream`, role: 'assistant', content: visibleStreamingAnswer, status: answerComplete ? 'completed' : 'streaming', metadata: {} }] : [];
     return [...priorMessages, ...currentMessages, ...streamed];
-  }, [priorMessages, effectiveRun, streamingAnswer, visibleStreamingAnswer]);
+  }, [priorMessages, effectiveRun, streamingAnswer, visibleStreamingAnswer, answerComplete]);
   const activeProcessItemId = [...(processState?.items ?? [])].reverse().find((item) => item.status === 'running')?.id;
   const initializeProcessPanel = useCallback((runId: string) => {
     setProcessPanelOpenByRun((states) => Object.prototype.hasOwnProperty.call(states, runId)
@@ -1772,7 +1790,7 @@ function AppContent() {
             {messages.map((message) => (
               <MessageBubble key={message.id} message={message} run={effectiveRun} processState={processState} processPanelDefaultOpen={processPanelDefaultOpen} processPanelOpenByRun={processPanelOpenByRun} onProcessPanelInitialize={initializeProcessPanel} onProcessPanelOpenChange={changeProcessPanelOpen} />
             ))}
-            {answerSettling && streamingAnswer && <div className="answer-settling" role="status" aria-live="polite"><span className="settling-spinner" aria-hidden="true" />{t('正在整理并验证结果…')}</div>}
+            {answerSettling && streamingAnswer && <div className="answer-settling"><span className="settling-dot" aria-hidden="true" />{t('后台校验中')}</div>}
             {run && !terminalStatuses.has(run.status) && !streamingAnswer && !processState && (
               <div className="bubble assistant waiting-message" role="status" aria-live="polite">
                 <span className="bubble-label">Astra</span>
@@ -2961,7 +2979,7 @@ function MemoryRuntimeSettings() {
     }}>{t('重试')}</button>}
   </div>;
   return <div className="memory-runtime-settings" data-setting-search-key="记忆设置">
-    <SettingRow title="保存新记忆" description="允许 Agent 在任务结束后提取并保存有来源的记忆候选"><Toggle checked={settings.write_enabled} disabled={saving} label={t('保存新记忆')} onChange={(value) => change('write_enabled', value)} /></SettingRow>
+    <SettingRow title="保存新记忆" description="允许 Agent 提取并保存有来源的待确认候选；只有人工激活后才参与召回"><Toggle checked={settings.write_enabled} disabled={saving} label={t('保存新记忆')} onChange={(value) => change('write_enabled', value)} /></SettingRow>
     <SettingRow title="持久记忆召回" description="允许当前运行召回符合范围的 Task、Session 或用户记忆"><Toggle checked={settings.recall_enabled} disabled={saving} label={t('持久记忆召回')} onChange={(value) => change('recall_enabled', value)} /></SettingRow>
     <SettingRow title="每次最多召回" description="限制一次上下文组装最多使用的记忆条数"><label className="memory-setting-number"><input aria-label={t('每次最多召回')} type="number" min={0} max={50} value={settings.retrieval_max_items} disabled={saving} onChange={(event) => change('retrieval_max_items', Number(event.currentTarget.value))} /><span>{t('条')}</span></label></SettingRow>
     <SettingRow title="记忆上下文预算" description="限制召回记忆占用的模型上下文 Token"><label className="memory-setting-number"><input aria-label={t('记忆上下文预算')} type="number" min={0} max={32000} step={100} value={settings.retrieval_max_tokens} disabled={saving} onChange={(event) => change('retrieval_max_tokens', Number(event.currentTarget.value))} /><span>tokens</span></label></SettingRow>
@@ -3408,6 +3426,8 @@ function ModelManagement({ providers, onChange }: { providers: ModelProviderConf
   const [showKey, setShowKey] = useState(false);
   const [query, setQuery] = useState('');
   const [contextCapabilities, setContextCapabilities] = useState<Record<string, ModelContextCapability>>({});
+  const [connectionTest, setConnectionTest] = useState<(ModelConnectionTestResult & { testing?: false }) | { provider: string; model: string; testing: true } | null>(null);
+  const connectionTestRequestRef = useRef(0);
   const provider = providers.find((item) => item.id === selectedProvider)!;
   const providerMeta = modelProviders.find((item) => item.id === selectedProvider)!;
   const normalizedQuery = query.trim().toLocaleLowerCase();
@@ -3445,12 +3465,46 @@ function ModelManagement({ providers, onChange }: { providers: ModelProviderConf
   }, [capabilityRequestKey]);
 
   function selectProvider(id: ModelProviderId) {
+    connectionTestRequestRef.current += 1;
     setSelectedProvider(id);
     setShowKey(false);
+    setConnectionTest(null);
   }
 
   function updateProvider(patch: Partial<ModelProviderConfig>) {
+    connectionTestRequestRef.current += 1;
+    setConnectionTest(null);
     onChange(providers.map((item) => item.id === selectedProvider ? { ...item, ...patch } : item));
+  }
+
+  async function runConnectionTest(model: string) {
+    const identity = { provider: provider.id, model };
+    const requestId = connectionTestRequestRef.current + 1;
+    connectionTestRequestRef.current = requestId;
+    setConnectionTest({ ...identity, testing: true });
+    try {
+      const result = await testModelConnection({
+        provider: provider.id,
+        name: model,
+        api_key: provider.apiKey,
+        base_url: provider.endpoint,
+      });
+      if (connectionTestRequestRef.current !== requestId) return;
+      setConnectionTest({ ...result, testing: false });
+    } catch (error) {
+      if (connectionTestRequestRef.current !== requestId) return;
+      const message = error instanceof AstraApiError
+        ? error.payload.message
+        : t('测试连接失败，请稍后重试。');
+      setConnectionTest({
+        ...identity,
+        connected: false,
+        message,
+        latency_ms: null,
+        error_code: 'request_failed',
+        testing: false,
+      });
+    }
   }
 
   function toggleProvider() {
@@ -3524,6 +3578,22 @@ function ModelManagement({ providers, onChange }: { providers: ModelProviderConf
                         />
                       </label>
                       <button type="button" aria-label={`${t('移除模型')} ${profile.id || index + 1}`} onClick={() => removeModelProfile(index)}>−</button>
+                    </div>
+                    <div className="model-connection-test">
+                      <button
+                        type="button"
+                        disabled={!profile.id.trim() || connectionTest?.testing === true}
+                        onClick={() => void runConnectionTest(profile.id.trim())}
+                      >
+                        {connectionTest?.testing && connectionTest.provider === provider.id && connectionTest.model === profile.id.trim()
+                          ? t('正在测试…')
+                          : t('测试连接')}
+                      </button>
+                      {connectionTest && !connectionTest.testing && connectionTest.provider === provider.id && connectionTest.model === profile.id.trim() && (
+                        <span className={connectionTest.connected ? 'success' : 'error'} role="status">
+                          {t(connectionTest.message)}{connectionTest.connected && connectionTest.latency_ms ? ` · ${connectionTest.latency_ms} ms` : ''}
+                        </span>
+                      )}
                     </div>
                     <div className="model-context-controls">
                       <div className={`model-context-auto ${capability?.source !== 'catalog' ? 'unverified' : ''}`}>
@@ -4157,6 +4227,7 @@ function ProcessPanel({ run, messageId, liveState, open, isLatestRun, onInitiali
     <ProcessTimeline items={processItems} run={run} />
     {!live && remainingNotes.map((note, index) => <div className="process-step verification" key={`verification-${index}`}><span className="process-dot"><Icon name="check" /></span><div><strong>{t('验证')}</strong><p>{note}</p></div></div>)}
   </div></details>
+    {(run.subagent_summary?.total ?? 0) > 0 && <SubagentPanel run={run} />}
     {hasHistoricalGraph && <button
       className="historical-graph-toggle"
       type="button"
@@ -4174,6 +4245,70 @@ function ProcessPanel({ run, messageId, liveState, open, isLatestRun, onInitiali
       </GraphErrorBoundary>
     </section>}
   </article>;
+}
+
+function SubagentPanel({ run }: { run: RunView }) {
+  const { t } = useI18n();
+  const [snapshot, setSnapshot] = useState(run);
+  const [cancelling, setCancelling] = useState<string | null>(null);
+  useEffect(() => setSnapshot(run), [run]);
+  const summary = snapshot.subagent_summary;
+  const roots = snapshot.agent_executions ?? [];
+  if (!summary || summary.total === 0) return null;
+  const cancel = async (executionId: string) => {
+    setCancelling(executionId);
+    try {
+      setSnapshot(await cancelSubagent(snapshot.id, executionId));
+    } finally {
+      setCancelling(null);
+    }
+  };
+  return <details className="subagent-panel">
+    <summary>
+      <span>{t('子系统')}</span>
+      <small>{t('{running} 运行 · {waiting} 等待 · {completed} 完成')
+        .replace('{running}', String(summary.running))
+        .replace('{waiting}', String(summary.waiting))
+        .replace('{completed}', String(summary.completed))}</small>
+    </summary>
+    {summary.key_wait_reason && <p className="subagent-wait" role="status">{t('等待原因')}：{summary.key_wait_reason}</p>}
+    <div className="subagent-tree" role="tree" aria-label={t('子系统执行树')}>
+      {roots.flatMap((root) => root.children).map((agent) => <SubagentTreeNode
+        agent={agent}
+        cancelling={cancelling}
+        onCancel={cancel}
+        key={agent.id}
+      />)}
+    </div>
+  </details>;
+}
+
+function SubagentTreeNode({ agent, cancelling, onCancel }: {
+  agent: AgentExecutionView;
+  cancelling: string | null;
+  onCancel: (executionId: string) => Promise<void>;
+}) {
+  const { t } = useI18n();
+  const cancellable = ['proposed', 'authorizing', 'queued', 'running', 'waiting_parent', 'waiting_approval', 'waiting_resource', 'completing'].includes(agent.status);
+  const budget = Object.entries(agent.budget_usage ?? {})
+    .filter(([, value]) => typeof value === 'number')
+    .map(([key, value]) => `${key} ${value}`)
+    .join(' · ');
+  return <div className={`subagent-node status-${agent.status}`} role="treeitem" aria-expanded={agent.children.length ? true : undefined}>
+    <details open={agent.status === 'running' || agent.status.startsWith('waiting')}>
+      <summary><strong>{agent.objective || agent.request_id}</strong><span>{agent.status}</span></summary>
+      <div className="subagent-detail">
+        <p>{agent.creation_reason}{agent.wait_reason ? ` · ${t('等待原因')}：${agent.wait_reason}` : ''}</p>
+        {agent.permissions.length > 0 && <p>{t('权限')}：{agent.permissions.join('、')}</p>}
+        {agent.capabilities.length > 0 && <p>{t('能力')}：{agent.capabilities.join('、')}</p>}
+        {budget && <p>{t('用量')}：{budget}</p>}
+        {agent.result_summary && <p>{agent.result_summary}</p>}
+        {agent.error && <p role="alert">{String(agent.error.reason ?? agent.error.category ?? agent.error.message ?? t('失败'))}</p>}
+        {cancellable && <button type="button" disabled={cancelling === agent.id} onClick={() => void onCancel(agent.id)}>{cancelling === agent.id ? t('正在终止…') : t('终止子系统')}</button>}
+      </div>
+    </details>
+    {agent.children.length > 0 && <div className="subagent-children" role="group">{agent.children.map((child) => <SubagentTreeNode agent={child} cancelling={cancelling} onCancel={onCancel} key={child.id} />)}</div>}
+  </div>;
 }
 
 function ProcessTimeline({ items, run }: { items: ProcessStreamItem[]; run: RunView }) {
@@ -4357,7 +4492,7 @@ function statusLabel(status?: string) {
     created: '等待开始',
     planning: '正在规划',
     executing: '正在执行',
-    verifying: '正在验证',
+    verifying: '后台校验',
     waiting_user: '等待回复',
     completed: '已完成',
     completed_with_warnings: '已完成 · 有提醒',

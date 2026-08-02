@@ -547,6 +547,217 @@ class MemoryRepository:
         await self.session.commit()
         return await self.require(replacement.id, include_sources=True)
 
+    async def create_candidate_version(
+        self,
+        memory_id: str,
+        *,
+        expected_state_version: int,
+        source_run_id: str,
+        content: str,
+        provenance: dict[str, Any],
+        structured_data: dict[str, Any] | None = None,
+        confidence: float | None = None,
+        importance: float | None = None,
+        valid_from: datetime | None = None,
+        actor: str | None = None,
+        reason: str | None = None,
+    ) -> MemoryRecord:
+        current = await self.require(memory_id, include_sources=True)
+        if current.status != MemoryStatus.active.value:
+            raise MemoryValidationError("Only active Memory can receive a candidate replacement")
+        if current.state_version != expected_state_version:
+            raise MemoryConflictError("Memory state version changed")
+        source_specs = await self._source_specs(
+            run_id=source_run_id,
+            provenance=provenance,
+        )
+        now = utc_now()
+        replacement = MemoryRecord(
+            run_id=source_run_id,
+            created_by=current.created_by,
+            memory_key=current.memory_key,
+            namespace_type=current.namespace_type,
+            namespace_id=current.namespace_id,
+            scope=current.scope,
+            kind=current.kind,
+            status=MemoryStatus.candidate.value,
+            version=current.version + 1,
+            state_version=1,
+            content=str(content or "").strip(),
+            structured_data=structured_data or {},
+            provenance=provenance,
+            confidence=current.confidence if confidence is None else confidence,
+            importance=current.importance if importance is None else importance,
+            utility_score=current.utility_score,
+            observed_at=now,
+            valid_from=_as_utc(valid_from) or now,
+            supersedes_id=current.id,
+            consolidation_generation=current.consolidation_generation,
+            created_at=now,
+            updated_at=now,
+        )
+        if not replacement.content:
+            raise MemoryValidationError("Memory content must be non-empty")
+        self.session.add(replacement)
+        await self.session.flush()
+        copied_refs: set[tuple[str, str]] = set()
+        for source in current.sources:
+            if not source.accessible or source.revoked_at is not None:
+                continue
+            copied_refs.add((source.source_kind, source.source_ref))
+            self.session.add(
+                MemorySourceRecord(
+                    memory_id=replacement.id,
+                    source_kind=source.source_kind,
+                    source_ref=source.source_ref,
+                    source_hash=source.source_hash,
+                    run_id=source.run_id,
+                    turn_id=source.turn_id,
+                    tool_call_id=source.tool_call_id,
+                    artifact_id=source.artifact_id,
+                    source_data=source.source_data,
+                    accessible=True,
+                    created_at=now,
+                )
+            )
+        for spec in source_specs:
+            ref = (spec["source_kind"], spec["source_ref"])
+            if ref in copied_refs:
+                continue
+            self.session.add(
+                MemorySourceRecord(
+                    memory_id=replacement.id,
+                    source_kind=spec["source_kind"],
+                    source_ref=spec["source_ref"],
+                    source_hash=_canonical_digest(spec),
+                    run_id=spec.get("run_id"),
+                    turn_id=spec.get("turn_id"),
+                    tool_call_id=spec.get("tool_call_id"),
+                    artifact_id=spec.get("artifact_id"),
+                    source_data=spec["source_data"],
+                    accessible=True,
+                    created_at=now,
+                )
+            )
+        self.session.add(
+            MemoryLinkRecord(
+                source_memory_id=replacement.id,
+                target_memory_id=current.id,
+                relation="candidate_supersedes",
+                link_data={"reason": reason},
+                created_at=now,
+            )
+        )
+        self.session.add(
+            MemoryAuditRecord(
+                memory_id=replacement.id,
+                event_type="candidate_version_created",
+                actor=actor,
+                reason=reason,
+                payload={"supersedes_id": current.id, "version": replacement.version},
+                created_at=now,
+            )
+        )
+        await self.session.commit()
+        return await self.require(replacement.id, include_sources=True)
+
+    async def activate_candidate(
+        self,
+        memory_id: str,
+        *,
+        expected_state_version: int,
+        actor: str,
+        reason: str,
+    ) -> MemoryRecord:
+        candidate = await self.require(memory_id, include_sources=True)
+        if candidate.state_version != expected_state_version:
+            raise MemoryConflictError("Memory state version changed")
+        if candidate.status != MemoryStatus.candidate.value:
+            raise MemoryValidationError("Only candidate Memory can be human-activated")
+        if not any(
+            source.accessible and source.revoked_at is None for source in candidate.sources
+        ):
+            raise MemoryValidationError("Active persistent Memory requires an accessible source")
+        normalized_reason = str(reason or "").strip()
+        normalized_actor = str(actor or "").strip()
+        if not normalized_actor or len(normalized_reason) < 3:
+            raise MemoryValidationError("Human activation requires an actor and audit reason")
+
+        now = utc_now()
+        base = None
+        if candidate.supersedes_id:
+            base = await self.require(candidate.supersedes_id)
+            if (
+                base.status != MemoryStatus.active.value
+                or base.namespace_type != candidate.namespace_type
+                or base.namespace_id != candidate.namespace_id
+                or base.memory_key != candidate.memory_key
+                or candidate.version != base.version + 1
+            ):
+                raise MemoryConflictError("Candidate base version changed")
+            result = await self.session.execute(
+                update(MemoryRecord)
+                .where(
+                    MemoryRecord.id == base.id,
+                    MemoryRecord.status == MemoryStatus.active.value,
+                    MemoryRecord.state_version == base.state_version,
+                )
+                .values(
+                    status=MemoryStatus.superseded.value,
+                    state_version=base.state_version + 1,
+                    valid_to=now,
+                    updated_at=now,
+                )
+            )
+            if result.rowcount != 1:
+                await self.session.rollback()
+                raise MemoryConflictError("Candidate base version changed")
+
+        result = await self.session.execute(
+            update(MemoryRecord)
+            .where(
+                MemoryRecord.id == candidate.id,
+                MemoryRecord.status == MemoryStatus.candidate.value,
+                MemoryRecord.state_version == expected_state_version,
+            )
+            .values(
+                status=MemoryStatus.active.value,
+                state_version=expected_state_version + 1,
+                updated_at=now,
+            )
+        )
+        if result.rowcount != 1:
+            await self.session.rollback()
+            raise MemoryConflictError("Memory state version changed")
+        if base is not None:
+            self.session.add(
+                MemoryAuditRecord(
+                    memory_id=base.id,
+                    event_type="superseded",
+                    actor=normalized_actor,
+                    reason=normalized_reason,
+                    payload={"replacement_id": candidate.id},
+                    created_at=now,
+                )
+            )
+        self.session.add(
+            MemoryAuditRecord(
+                memory_id=candidate.id,
+                event_type="human_activated",
+                actor=normalized_actor,
+                reason=normalized_reason,
+                payload={
+                    "from": MemoryStatus.candidate.value,
+                    "to": MemoryStatus.active.value,
+                    "expected_state_version": expected_state_version,
+                    "supersedes_id": candidate.supersedes_id,
+                },
+                created_at=now,
+            )
+        )
+        await self.session.commit()
+        return await self.require(candidate.id, include_sources=True)
+
     async def add_link(
         self,
         *,

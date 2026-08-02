@@ -135,6 +135,7 @@ class RunRecord(Base):
     plan_graph: Mapped[dict] = mapped_column(JsonType, default=dict)
     agent_state: Mapped[dict] = mapped_column(JsonType, default=dict)
     state_version: Mapped[int] = mapped_column(Integer, default=0)
+    cancellation_epoch: Mapped[int] = mapped_column(Integer, default=0)
     terminal_reason: Mapped[dict | None] = mapped_column(JsonType, nullable=True)
     waiting_state: Mapped[dict | None] = mapped_column(JsonType, nullable=True)
     task_adapter: Mapped[str] = mapped_column(String(80), default="web")
@@ -185,6 +186,11 @@ class RunRecord(Base):
         order_by="EvidenceRecord.created_at",
         cascade="all, delete-orphan",
     )
+    agent_executions: Mapped[list["AgentExecutionRecord"]] = relationship(
+        back_populates="run",
+        order_by="AgentExecutionRecord.created_at",
+        cascade="all, delete-orphan",
+    )
 
 
 class EvidenceRecord(Base):
@@ -193,10 +199,14 @@ class EvidenceRecord(Base):
         UniqueConstraint("run_id", "evidence_key", name="uq_evidence_records_run_key"),
         Index("ix_evidence_records_run_kind", "run_id", "kind"),
         Index("ix_evidence_records_tool_call", "tool_call_id"),
+        Index("ix_evidence_records_agent_execution", "agent_execution_id"),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_str)
     run_id: Mapped[str] = mapped_column(ForeignKey("runs.id"))
+    agent_execution_id: Mapped[str | None] = mapped_column(
+        ForeignKey("agent_executions.id"), nullable=True
+    )
     evidence_id: Mapped[str] = mapped_column(String(40))
     evidence_key: Mapped[str] = mapped_column(String(320))
     kind: Mapped[str] = mapped_column(String(40))
@@ -326,6 +336,9 @@ class PlanRecord(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_str)
     run_id: Mapped[str] = mapped_column(ForeignKey("runs.id"))
+    agent_execution_id: Mapped[str | None] = mapped_column(
+        ForeignKey("agent_executions.id"), nullable=True
+    )
     version: Mapped[int] = mapped_column(Integer)
     status: Mapped[str] = mapped_column(String(40), default="planned")
     supersedes_plan_id: Mapped[str | None] = mapped_column(ForeignKey("plans.id"), nullable=True)
@@ -353,6 +366,9 @@ class PlanNodeRecord(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_str)
     plan_id: Mapped[str] = mapped_column(ForeignKey("plans.id"))
+    agent_execution_id: Mapped[str | None] = mapped_column(
+        ForeignKey("agent_executions.id"), nullable=True
+    )
     node_key: Mapped[str] = mapped_column(String(120))
     index: Mapped[int] = mapped_column(Integer)
     title: Mapped[str] = mapped_column(String(240))
@@ -428,6 +444,9 @@ class NodeExecutionRecord(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_str)
     run_id: Mapped[str] = mapped_column(ForeignKey("runs.id"))
+    agent_execution_id: Mapped[str | None] = mapped_column(
+        ForeignKey("agent_executions.id"), nullable=True
+    )
     plan_id: Mapped[str] = mapped_column(ForeignKey("plans.id"))
     plan_version: Mapped[int] = mapped_column(Integer)
     plan_node_id: Mapped[str] = mapped_column(ForeignKey("plan_nodes.id"))
@@ -530,6 +549,9 @@ class ModelInvocationRecord(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_str)
     run_id: Mapped[str] = mapped_column(ForeignKey("runs.id"))
+    agent_execution_id: Mapped[str | None] = mapped_column(
+        ForeignKey("agent_executions.id"), nullable=True
+    )
     turn_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     provider: Mapped[str] = mapped_column(String(80))
     model: Mapped[str] = mapped_column(String(160))
@@ -578,6 +600,9 @@ class ToolCallRecord(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_str)
     run_id: Mapped[str] = mapped_column(ForeignKey("runs.id"))
+    agent_execution_id: Mapped[str | None] = mapped_column(
+        ForeignKey("agent_executions.id"), nullable=True
+    )
     step_id: Mapped[str | None] = mapped_column(ForeignKey("steps.id"), nullable=True)
     plan_node_id: Mapped[str | None] = mapped_column(ForeignKey("plan_nodes.id"), nullable=True)
     node_execution_id: Mapped[str | None] = mapped_column(
@@ -612,6 +637,15 @@ class ApprovalRequestRecord(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_str)
     run_id: Mapped[str] = mapped_column(ForeignKey("runs.id"))
+    agent_execution_id: Mapped[str | None] = mapped_column(
+        ForeignKey("agent_executions.id"), nullable=True
+    )
+    requester_identity_id: Mapped[str | None] = mapped_column(
+        ForeignKey("agent_identities.id"), nullable=True
+    )
+    delegation_id: Mapped[str | None] = mapped_column(
+        ForeignKey("agent_delegations.id"), nullable=True
+    )
     turn_id: Mapped[str] = mapped_column(ForeignKey("agent_turns.id"))
     tool_call_id: Mapped[str] = mapped_column(ForeignKey("tool_calls.id"))
     node_execution_id: Mapped[str | None] = mapped_column(
@@ -627,6 +661,9 @@ class ApprovalRequestRecord(Base):
     effect_plan_hash: Mapped[str | None] = mapped_column(String(80), nullable=True)
     analyzer_version: Mapped[str | None] = mapped_column(String(80), nullable=True)
     analyzer_digest: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    catalog_digest: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    continuation_token: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    grant_scope: Mapped[dict] = mapped_column(JsonType, default=dict)
     reviewer_identity: Mapped[dict | None] = mapped_column(JsonType, nullable=True)
     preview: Mapped[str] = mapped_column(Text)
     permission: Mapped[str] = mapped_column(String(80))
@@ -808,6 +845,126 @@ class AgentDelegationRecord(Base):
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
+class AgentExecutionRecord(Base):
+    __tablename__ = "agent_executions"
+    __table_args__ = (
+        UniqueConstraint("run_id", "root_slot", name="uq_agent_executions_run_root"),
+        UniqueConstraint(
+            "parent_execution_id",
+            "request_id",
+            name="uq_agent_executions_parent_request",
+        ),
+        Index("ix_agent_executions_run_status", "run_id", "status"),
+        Index("ix_agent_executions_parent_status", "parent_execution_id", "status"),
+        Index("ix_agent_executions_recovery", "status", "heartbeat_at"),
+        Index("ix_agent_executions_identity", "identity_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_str)
+    run_id: Mapped[str] = mapped_column(ForeignKey("runs.id"))
+    task_id: Mapped[str] = mapped_column(ForeignKey("tasks.id"))
+    parent_execution_id: Mapped[str | None] = mapped_column(
+        ForeignKey("agent_executions.id"), nullable=True
+    )
+    parent_node_execution_id: Mapped[str | None] = mapped_column(
+        ForeignKey("node_executions.id"), nullable=True
+    )
+    identity_id: Mapped[str | None] = mapped_column(
+        ForeignKey("agent_identities.id"), nullable=True
+    )
+    delegation_id: Mapped[str | None] = mapped_column(
+        ForeignKey("agent_delegations.id"), nullable=True
+    )
+    execution_type: Mapped[str] = mapped_column(String(40), default="child")
+    root_slot: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    request_id: Mapped[str] = mapped_column(String(160))
+    depth: Mapped[int] = mapped_column(Integer, default=0)
+    ordinal: Mapped[int] = mapped_column(Integer, default=0)
+    contract: Mapped[dict] = mapped_column(JsonType, default=dict)
+    context_manifest: Mapped[dict] = mapped_column(JsonType, default=dict)
+    catalog_snapshot: Mapped[dict] = mapped_column(JsonType, default=dict)
+    budget_envelope: Mapped[dict] = mapped_column(JsonType, default=dict)
+    budget_usage: Mapped[dict] = mapped_column(JsonType, default=dict)
+    status: Mapped[str] = mapped_column(String(40), default="proposed")
+    phase: Mapped[str] = mapped_column(String(40), default="proposed")
+    wait_reason: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    checkpoint: Mapped[dict] = mapped_column(JsonType, default=dict)
+    result: Mapped[dict | None] = mapped_column(JsonType, nullable=True)
+    error: Mapped[dict | None] = mapped_column(JsonType, nullable=True)
+    worker_id: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    fencing_token: Mapped[int] = mapped_column(Integer, default=0)
+    cancellation_epoch: Mapped[int] = mapped_column(Integer, default=0)
+    state_version: Mapped[int] = mapped_column(Integer, default=1)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    queued_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+    run: Mapped[RunRecord] = relationship(back_populates="agent_executions")
+
+
+class AgentBudgetReservationRecord(Base):
+    __tablename__ = "agent_budget_reservations"
+    __table_args__ = (
+        UniqueConstraint(
+            "child_execution_id",
+            name="uq_agent_budget_reservations_child",
+        ),
+        Index(
+            "ix_agent_budget_reservations_parent_status",
+            "parent_execution_id",
+            "status",
+        ),
+        Index("ix_agent_budget_reservations_run_status", "run_id", "status"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_str)
+    run_id: Mapped[str] = mapped_column(ForeignKey("runs.id"))
+    parent_execution_id: Mapped[str] = mapped_column(ForeignKey("agent_executions.id"))
+    child_execution_id: Mapped[str] = mapped_column(ForeignKey("agent_executions.id"))
+    envelope: Mapped[dict] = mapped_column(JsonType, default=dict)
+    parent_reserve: Mapped[dict] = mapped_column(JsonType, default=dict)
+    actual_usage: Mapped[dict] = mapped_column(JsonType, default=dict)
+    returned_budget: Mapped[dict] = mapped_column(JsonType, default=dict)
+    status: Mapped[str] = mapped_column(String(40), default="reserved")
+    state_version: Mapped[int] = mapped_column(Integer, default=1)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    settled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class AgentJoinRecord(Base):
+    __tablename__ = "agent_joins"
+    __table_args__ = (
+        UniqueConstraint(
+            "parent_execution_id",
+            "join_key",
+            name="uq_agent_joins_parent_key",
+        ),
+        Index("ix_agent_joins_run_status", "run_id", "status"),
+        Index("ix_agent_joins_parent_status", "parent_execution_id", "status"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_str)
+    run_id: Mapped[str] = mapped_column(ForeignKey("runs.id"))
+    parent_execution_id: Mapped[str] = mapped_column(ForeignKey("agent_executions.id"))
+    consumer_plan_node_id: Mapped[str | None] = mapped_column(
+        ForeignKey("plan_nodes.id"), nullable=True
+    )
+    join_key: Mapped[str] = mapped_column(String(160))
+    policy: Mapped[str] = mapped_column(String(40))
+    child_execution_ids: Mapped[list] = mapped_column(JsonType, default=list)
+    required_execution_ids: Mapped[list] = mapped_column(JsonType, default=list)
+    optional_execution_ids: Mapped[list] = mapped_column(JsonType, default=list)
+    status: Mapped[str] = mapped_column(String(40), default="waiting")
+    result: Mapped[dict] = mapped_column(JsonType, default=dict)
+    state_version: Mapped[int] = mapped_column(Integer, default=1)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
 class ToolCatalogSnapshotRecord(Base):
     __tablename__ = "tool_catalog_snapshots"
     __table_args__ = (UniqueConstraint("run_id", name="uq_tool_catalog_snapshots_run_id"),)
@@ -865,6 +1022,9 @@ class ArtifactRecord(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_str)
     run_id: Mapped[str] = mapped_column(ForeignKey("runs.id"))
+    agent_execution_id: Mapped[str | None] = mapped_column(
+        ForeignKey("agent_executions.id"), nullable=True
+    )
     type: Mapped[str] = mapped_column(String(80))
     path: Mapped[str | None] = mapped_column(String(500), nullable=True)
     content_ref: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -911,10 +1071,16 @@ class SandboxJobRecord(Base):
 
 class RunEventRecord(Base):
     __tablename__ = "run_events"
-    __table_args__ = (Index("ix_run_events_run_id_id", "run_id", "id"),)
+    __table_args__ = (
+        Index("ix_run_events_run_id_id", "run_id", "id"),
+        Index("ix_run_events_agent_execution_id", "agent_execution_id", "id"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     run_id: Mapped[str] = mapped_column(ForeignKey("runs.id"))
+    agent_execution_id: Mapped[str | None] = mapped_column(
+        ForeignKey("agent_executions.id"), nullable=True
+    )
     type: Mapped[str] = mapped_column(String(80))
     payload: Mapped[dict] = mapped_column(JsonType)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
@@ -928,6 +1094,9 @@ class AgentTurnRecord(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_str)
     run_id: Mapped[str] = mapped_column(ForeignKey("runs.id"))
+    agent_execution_id: Mapped[str | None] = mapped_column(
+        ForeignKey("agent_executions.id"), nullable=True
+    )
     plan_node_id: Mapped[str | None] = mapped_column(ForeignKey("plan_nodes.id"), nullable=True)
     node_execution_id: Mapped[str | None] = mapped_column(
         ForeignKey("node_executions.id"), nullable=True

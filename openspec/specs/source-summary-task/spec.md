@@ -4,11 +4,15 @@
 TBD - created by archiving change add-google-search-adaptive-crawler. Update Purpose after archive.
 ## Requirements
 ### Requirement: 用户可以运行真实 Web 总结任务
-系统 SHALL 支持用户输入一个主题，并完成搜索、抓取、综合和验证的真实 Web 总结任务。
+系统 SHALL 支持用户输入一个主题，并通过当前运行中满足语义发现、读取和证据处理需求的合格工具，完成搜索、抓取、综合和验证的真实 Web 总结任务；逻辑计划不得绑定 Google 或其他具体提供者。
 
 #### Scenario: 总结任务成功
 - **WHEN** 用户提交一个需要 Web 信息的总结目标
-- **THEN** 系统执行 Google 搜索、抓取多个来源、生成证据包，并返回有来源支撑的总结
+- **THEN** 系统从当前合格候选中选择搜索和读取实现、抓取多个来源、生成证据包，并返回有来源支撑的总结
+
+#### Scenario: 搜索提供者发生变化
+- **WHEN** 首个发现工具不可用而另一个工具满足相同语义能力和运行策略
+- **THEN** 系统无需修改逻辑计划即可选择替代实现
 
 #### Scenario: 总结任务证据不足
 - **WHEN** 搜索或抓取无法获得足够高质量来源
@@ -57,4 +61,18 @@ TBD - created by archiving change add-google-search-adaptive-crawler. Update Pur
 #### Scenario: Timeline 展示总结流程
 - **WHEN** 总结任务运行中或完成后被查看
 - **THEN** UI 展示每个阶段的状态、工具调用、抓取质量和最终结果可用事件
+
+### Requirement: Trusted Web summaries expose claim-level grounding
+A trusted summary based on Web evidence SHALL expose material claims with canonical evidence references and citations in addition to the existing summary, findings, and source list.
+
+#### Scenario: Grounded summary succeeds
+- **WHEN** a trusted summary contains material factual claims from fetched sources
+- **THEN** each supported claim references at least one eligible passage from the current Run
+
+### Requirement: Legacy summary consumers remain compatible
+The system SHALL continue populating the existing summary, findings, sources, caveats, and audit fields while claims and citations are introduced additively.
+
+#### Scenario: Historical result lacks grounding fields
+- **WHEN** a historical RunResult without claims or citations is loaded
+- **THEN** it remains readable and the missing grounding collections normalize to empty values
 

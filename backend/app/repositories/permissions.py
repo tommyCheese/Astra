@@ -41,6 +41,7 @@ class PermissionRepository:
         parent_identity_id: str | None = None,
         trust_level: str = "internal",
         attributes: dict[str, Any] | None = None,
+        commit: bool = True,
     ) -> AgentIdentityRecord:
         if run_id is not None:
             run = await self._require_run(run_id)
@@ -64,7 +65,10 @@ class PermissionRepository:
             attributes=deepcopy(attributes or {}),
         )
         self.session.add(identity)
-        await self.session.commit()
+        if commit:
+            await self.session.commit()
+        else:
+            await self.session.flush()
         return identity
 
     async def get_or_create_identity(
@@ -107,6 +111,7 @@ class PermissionRepository:
         delegated_scope: dict[str, Any],
         expires_at: datetime | None = None,
         policies: PermissionPolicySet | None = None,
+        commit: bool = True,
     ) -> AgentDelegationRecord:
         parent = await self._require_identity(parent_identity_id)
         child = await self._require_identity(child_identity_id)
@@ -145,7 +150,10 @@ class PermissionRepository:
             expires_at=expires_at,
         )
         self.session.add(delegation)
-        await self.session.commit()
+        if commit:
+            await self.session.commit()
+        else:
+            await self.session.flush()
         return delegation
 
     async def freeze_tool_catalog(
@@ -289,6 +297,10 @@ def _scope_is_subset(child: dict[str, Any], parent: dict[str, Any]) -> bool:
         "credential_scopes",
         "data_labels",
         "network_destinations",
+        "skills",
+        "allowed_purposes",
+        "workspace_read_roots",
+        "workspace_write_roots",
     ):
         parent_values = list(parent.get(key, []))
         child_values = list(child.get(key, []))

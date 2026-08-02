@@ -37,6 +37,7 @@ class EventAwareAsyncSession(AsyncSession):
                 type=record.type,
                 payload=record.payload,
                 created_at=record.created_at.isoformat(),
+                agent_execution_id=record.agent_execution_id,
             )
             for record in records
         ]

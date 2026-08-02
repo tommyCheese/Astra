@@ -67,6 +67,14 @@ export type RuntimeDefaultModel = {
   model: string;
   configured: boolean;
 };
+export type ModelConnectionTestResult = {
+  connected: boolean;
+  provider: string;
+  model: string;
+  message: string;
+  latency_ms: number | null;
+  error_code: string | null;
+};
 export type ModelContextCapability = {
   provider: string;
   model: string;
@@ -124,6 +132,25 @@ export async function getRuntimeDefaultModel(signal?: AbortSignal): Promise<Runt
   const response = await fetchWithTimeout('/api/models/default', { signal });
   if (!response.ok) throw await responseError(response);
   return response.json() as Promise<RuntimeDefaultModel>;
+}
+
+export async function testModelConnection(
+  model: RunModelConfig,
+  signal?: AbortSignal,
+): Promise<ModelConnectionTestResult> {
+  const response = await fetchWithTimeout('/api/models/test-connection', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      provider: model.provider,
+      model: model.name,
+      api_key: model.api_key,
+      base_url: model.base_url,
+    }),
+    signal,
+  }, 20000);
+  if (!response.ok) throw await responseError(response);
+  return response.json() as Promise<ModelConnectionTestResult>;
 }
 
 export async function resolveModelThinkingCapabilities(
@@ -508,6 +535,12 @@ export async function cancelRun(runId: string): Promise<RunView> {
   return response.json();
 }
 
+export async function cancelSubagent(runId: string, agentExecutionId: string): Promise<RunView> {
+  const response = await fetch(`/api/runs/${runId}/agents/${agentExecutionId}/cancel`, { method: 'POST' });
+  if (!response.ok) throw await responseError(response);
+  return response.json();
+}
+
 export async function decideToolApproval(
   runId: string,
   approvalId: string,
@@ -660,7 +693,15 @@ export async function getSharedConversation(token: string, signal?: AbortSignal)
   return response.json();
 }
 
-export type RunStreamEvent = { id?: number; type: string; payload: Record<string, unknown>; created_at?: string };
+export type RunStreamEvent = {
+  id?: number;
+  run_sequence?: number | null;
+  agent_execution_id?: string | null;
+  agent_sequence?: number | null;
+  type: string;
+  payload: Record<string, unknown>;
+  created_at?: string;
+};
 export type RunStreamHandle = {
   created: Promise<CreatedRun>;
   subscribe: (onEvent: (event: RunStreamEvent) => void, onError?: () => void) => () => void;

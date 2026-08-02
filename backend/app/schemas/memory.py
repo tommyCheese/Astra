@@ -100,6 +100,12 @@ class MemoryRevocationRequest(BaseModel):
     actor: str = Field(default="local-admin", min_length=1, max_length=120)
 
 
+class MemoryActivationRequest(BaseModel):
+    expected_state_version: int = Field(ge=1)
+    reason: str = Field(min_length=3, max_length=2_000)
+    actor: str = Field(default="local-operator", min_length=1, max_length=120)
+
+
 class MemoryRecallFeedbackRequest(BaseModel):
     outcome: str
     utility_delta: float = Field(ge=-1.0, le=1.0)

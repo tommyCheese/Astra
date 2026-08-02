@@ -14,6 +14,7 @@ if config.config_file_name is not None:
 
 target_metadata = Base.metadata
 CURRENT_BASELINE_REVISION = "0001_current_baseline"
+CURRENT_HEAD_REVISION = "0002_governed_subagent_runtime"
 
 
 def get_url() -> str:
@@ -36,7 +37,7 @@ def do_run_migrations(connection: Connection) -> None:
         revision = connection.execute(
             text("SELECT version_num FROM alembic_version LIMIT 1")
         ).scalar_one_or_none()
-        if revision not in {None, CURRENT_BASELINE_REVISION}:
+        if revision not in {None, CURRENT_BASELINE_REVISION, CURRENT_HEAD_REVISION}:
             raise RuntimeError(
                 "This database uses an obsolete Astra revision "
                 f"({revision}); reset the database before starting Astra."

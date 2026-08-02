@@ -161,6 +161,49 @@ class RunBudgets(BaseModel):
     max_parallel_nodes: int = Field(default=3, ge=1)
 
 
+class SubagentBudgetPolicy(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    max_children_total: int = Field(default=0, ge=0)
+    max_children_per_parent: int = Field(default=0, ge=0)
+    max_parallel_children: int = Field(default=0, ge=0)
+    max_depth: int = Field(default=1, ge=1)
+    max_parent_round_trips: int = Field(default=0, ge=0)
+    max_wall_time_seconds: int = Field(default=300, ge=1)
+    max_tokens: int = Field(default=0, ge=0)
+    max_model_calls: int = Field(default=0, ge=0)
+    max_tool_calls: int = Field(default=0, ge=0)
+    max_cost_usd: float = Field(default=0, ge=0)
+    parent_token_reserve: int = Field(default=0, ge=0)
+    parent_model_call_reserve: int = Field(default=0, ge=0)
+    parent_tool_call_reserve: int = Field(default=0, ge=0)
+    parent_cost_reserve_usd: float = Field(default=0, ge=0)
+
+
+class SubagentModelRoutingPolicy(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    allowed_providers: tuple[str, ...] = ()
+    allowed_models: tuple[str, ...] = ()
+    require_same_provider: bool = True
+    allow_lower_cost_model: bool = True
+    max_reasoning_effort: ReasoningEffort = ReasoningEffort.balanced
+
+
+class EffectiveSubagentPolicy(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    enabled: bool = False
+    kill_switch: bool = False
+    rollout_cohort: str = "disabled"
+    read_only: bool = True
+    allowed_join_policies: tuple[str, ...] = ("required", "optional")
+    budgets: SubagentBudgetPolicy = Field(default_factory=SubagentBudgetPolicy)
+    model_routing: SubagentModelRoutingPolicy = Field(
+        default_factory=SubagentModelRoutingPolicy
+    )
+
+
 class RequestedReasoningPolicy(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -180,6 +223,7 @@ class RequestedReasoningPolicy(BaseModel):
 
 class EffectiveReasoningPolicy(RequestedReasoningPolicy):
     budgets: RunBudgets = Field(default_factory=RunBudgets)
+    subagents: EffectiveSubagentPolicy = Field(default_factory=EffectiveSubagentPolicy)
 
 
 class PolicyAdjustment(BaseModel):
@@ -936,6 +980,9 @@ class ArtifactView(BaseModel):
 
 class RunEventView(BaseModel):
     id: int
+    run_sequence: int | None = None
+    agent_execution_id: str | None = None
+    agent_sequence: int | None = None
     type: str
     payload: dict[str, Any]
     created_at: datetime
@@ -1029,6 +1076,47 @@ class SandboxJobView(BaseModel):
     completed_at: datetime | None = None
 
 
+class AgentExecutionView(BaseModel):
+    id: str
+    parent_execution_id: str | None = None
+    execution_type: str
+    identity_id: str | None = None
+    delegation_id: str | None = None
+    request_id: str
+    depth: int
+    ordinal: int
+    objective: str | None = None
+    creation_reason: str | None = None
+    required: bool = True
+    status: str
+    phase: str
+    wait_reason: str | None = None
+    budget_envelope: dict[str, Any] = Field(default_factory=dict)
+    budget_usage: dict[str, Any] = Field(default_factory=dict)
+    permissions: list[str] = Field(default_factory=list)
+    capabilities: list[str] = Field(default_factory=list)
+    artifact_ids: list[str] = Field(default_factory=list)
+    result_summary: str | None = None
+    open_issues: list[str] = Field(default_factory=list)
+    error: dict[str, Any] | None = None
+    created_at: datetime
+    updated_at: datetime
+    finished_at: datetime | None = None
+    plan: PlanView | None = None
+    children: list[AgentExecutionView] = Field(default_factory=list)
+
+
+class SubagentSummaryView(BaseModel):
+    total: int = 0
+    running: int = 0
+    waiting: int = 0
+    completed: int = 0
+    failed: int = 0
+    cancelled: int = 0
+    budget_usage: dict[str, float] = Field(default_factory=dict)
+    key_wait_reason: str | None = None
+
+
 class RunView(BaseModel):
     id: str
     task_id: str
@@ -1058,5 +1146,7 @@ class RunView(BaseModel):
     pending_approval: PendingApprovalView | None = None
     node_executions: list[NodeExecutionView] = Field(default_factory=list)
     parallelism: ParallelismSummary | None = None
+    agent_executions: list[AgentExecutionView] = Field(default_factory=list)
+    subagent_summary: SubagentSummaryView = Field(default_factory=SubagentSummaryView)
     task_adapter: str = "web"
     agent_profile: dict[str, Any] = Field(default_factory=dict)

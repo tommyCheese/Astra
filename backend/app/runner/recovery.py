@@ -9,6 +9,7 @@ from app.db.models import utc_now
 from app.repositories.executions import NodeExecutionRepository
 from app.repositories.runs import RunRepository
 from app.schemas.agent import NodeExecutionPhase, NodeExecutionStatus
+from app.subagents.recovery import SubagentExecutionRecovery
 
 
 @dataclass(frozen=True)
@@ -16,6 +17,10 @@ class RecoveryScanResult:
     resumable_execution_ids: tuple[str, ...]
     replayable_execution_ids: tuple[str, ...]
     unknown_execution_ids: tuple[str, ...]
+    resumable_agent_execution_ids: tuple[str, ...] = ()
+    replayable_agent_execution_ids: tuple[str, ...] = ()
+    unknown_agent_execution_ids: tuple[str, ...] = ()
+    incompatible_agent_execution_ids: tuple[str, ...] = ()
 
 
 class ExecutionRecovery:
@@ -91,9 +96,17 @@ class ExecutionRecovery:
                 execution.wait_reason = "recovery_resume"
                 execution.state_version += 1
                 resumable.append(execution.id)
+            agent_recovery = await SubagentExecutionRecovery(
+                session,
+                stale_seconds=self.stale_seconds,
+            ).scan(run_id)
             await session.commit()
         return RecoveryScanResult(
             tuple(resumable),
             tuple(replayable),
             tuple(unknown),
+            agent_recovery.resumable_execution_ids,
+            agent_recovery.replayable_execution_ids,
+            agent_recovery.unknown_execution_ids,
+            agent_recovery.incompatible_execution_ids,
         )

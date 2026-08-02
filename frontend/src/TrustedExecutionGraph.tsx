@@ -15,7 +15,7 @@ import '@xyflow/react/dist/style.css';
 import { getPlanVersion, getPlanVersionDiff } from './api';
 import { useI18n } from './i18n';
 import { layoutPlanGraph, nodeTraceAssociations, planProgress, unmetDependencies, type PlanGraphLayout, type PositionedPlanNode } from './planGraph';
-import type { NodeExecution, PlanGraphDiff, PlanGraphNode, PlanGraphSnapshot, PlanNodeStatus, RunView } from './types';
+import type { AgentExecutionView, NodeExecution, PlanGraphDiff, PlanGraphNode, PlanGraphSnapshot, PlanNodeStatus, RunView } from './types';
 
 type GraphNodeData = {
   node: PlanGraphNode;
@@ -65,7 +65,14 @@ function GraphWorkbench({ run, compact = false, title = '执行图谱' }: Truste
   const { language, t } = useI18n();
   const flow = useReactFlow();
   const displayTitle = title ? t(title) : t('执行图谱');
-  const liveGraph = run.plan_graph && 'id' in run.plan_graph ? run.plan_graph as PlanGraphSnapshot : null;
+  const rootGraph = run.plan_graph && 'id' in run.plan_graph ? run.plan_graph as PlanGraphSnapshot : null;
+  const agents = flattenAgentTree(run.agent_executions ?? []);
+  const rootAgent = agents.find((agent) => agent.execution_type === 'root');
+  const [selectedAgentId, setSelectedAgentId] = useState<string | null>(rootAgent?.id ?? null);
+  const selectedAgent = agents.find((agent) => agent.id === selectedAgentId) ?? rootAgent;
+  const liveGraph = selectedAgent?.execution_type === 'child'
+    ? selectedAgent.plan ?? null
+    : rootGraph;
   const [selectedVersion, setSelectedVersion] = useState<number | null>(liveGraph?.version ?? null);
   const [historical, setHistorical] = useState<PlanGraphSnapshot | null>(null);
   const [diff, setDiff] = useState<PlanGraphDiff | null>(null);
@@ -212,6 +219,19 @@ function GraphWorkbench({ run, compact = false, title = '执行图谱' }: Truste
     aria-label={displayTitle}
     data-plan-status={graph.status}
   >
+    {agents.length > 1 && <nav className="trusted-agent-tree" aria-label={t('Agent 执行树')}>
+      {(run.agent_executions ?? []).map((agent) => <AgentTreeButton
+        agent={agent}
+        selectedAgentId={selectedAgent?.id ?? null}
+        onSelect={(next) => {
+          setSelectedAgentId(next.id);
+          setSelectedVersion(next.plan?.version ?? rootGraph?.version ?? null);
+          setHistorical(null);
+          setDiff(null);
+        }}
+        key={agent.id}
+      />)}
+    </nav>}
     <header className="trusted-graph-header">
       <div>
         <strong>{displayTitle}</strong>
@@ -222,7 +242,7 @@ function GraphWorkbench({ run, compact = false, title = '执行图谱' }: Truste
         </span>
       </div>
       <div className="trusted-graph-header-actions">
-        {(run.plan_versions?.length ?? 0) > 1 && <label>
+        {selectedAgent?.execution_type !== 'child' && (run.plan_versions?.length ?? 0) > 1 && <label>
           <span className="sr-only">{t('计划版本')}</span>
           <select
             value={selectedVersion ?? graph.version}
@@ -275,6 +295,33 @@ function GraphWorkbench({ run, compact = false, title = '执行图谱' }: Truste
       {selected && <NodeInspector run={run} graph={graph} node={selected} />}
     </div>
   </section>;
+}
+
+function AgentTreeButton({ agent, selectedAgentId, onSelect }: {
+  agent: AgentExecutionView;
+  selectedAgentId: string | null;
+  onSelect: (agent: AgentExecutionView) => void;
+}) {
+  const { t } = useI18n();
+  const hasPlan = agent.execution_type === 'root' || Boolean(agent.plan);
+  return <div className="trusted-agent-branch">
+    <button
+      type="button"
+      className={selectedAgentId === agent.id ? 'selected' : ''}
+      aria-current={selectedAgentId === agent.id ? 'true' : undefined}
+      disabled={!hasPlan}
+      title={!hasPlan ? t('此子系统尚未生成计划') : undefined}
+      onClick={() => onSelect(agent)}
+    >
+      <strong>{agent.execution_type === 'root' ? t('主系统') : agent.objective || agent.request_id}</strong>
+      <small>{agent.status}</small>
+    </button>
+    {agent.children.length > 0 && <div>{agent.children.map((child) => <AgentTreeButton agent={child} selectedAgentId={selectedAgentId} onSelect={onSelect} key={child.id} />)}</div>}
+  </div>;
+}
+
+function flattenAgentTree(roots: AgentExecutionView[]): AgentExecutionView[] {
+  return roots.flatMap((agent) => [agent, ...flattenAgentTree(agent.children)]);
 }
 
 function PlanNodeCard({ data, selected }: NodeProps<Node<GraphNodeData>>) {

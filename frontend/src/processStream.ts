@@ -19,6 +19,9 @@ export type ProcessStreamState = {
   answerMode: 'standard' | 'trusted';
   items: ProcessStreamItem[];
   seenEventIds: number[];
+  runCursor: number;
+  agentCursors: Record<string, number>;
+  cursorGap: boolean;
   active: boolean;
 };
 
@@ -42,6 +45,9 @@ export function createOptimisticProcessState(
     answerMode,
     active: true,
     seenEventIds: [],
+    runCursor: 0,
+    agentCursors: {},
+    cursorGap: false,
     items: answerMode === 'standard'
       ? [{ id: 'reasoning-0', kind: 'reasoning', title: '思考', status: 'running' }]
       : [{ id: 'phase-planning-0', kind: 'phase', title: phaseTitles.planning, status: 'running' }],
@@ -51,7 +57,14 @@ export function createOptimisticProcessState(
 export function reconcileProcessSnapshot(state: ProcessStreamState | null, run: RunView): ProcessStreamState {
   const answerMode: ProcessStreamState['answerMode'] = run.answer_mode === 'standard' ? 'standard' : 'trusted';
   let next: ProcessStreamState = state?.runId === run.id
-    ? { ...state, answerMode }
+    ? {
+      ...state,
+      answerMode,
+      seenEventIds: [],
+      runCursor: 0,
+      agentCursors: {},
+      cursorGap: false,
+    }
     : createOptimisticProcessState(run.id, answerMode);
   for (const event of [...(run.events ?? [])].sort((a, b) => a.id - b.id)) {
     next = reduceProcessEvent(next, event);
@@ -125,6 +138,18 @@ export function reconcileProcessSnapshot(state: ProcessStreamState | null, run: 
 
 export function reduceProcessEvent(state: ProcessStreamState, event: RunStreamEvent): ProcessStreamState {
   if (typeof event.id === 'number' && state.seenEventIds.includes(event.id)) return state;
+  const runSequence = numeric(event.run_sequence);
+  if (runSequence !== undefined && runSequence <= state.runCursor) return state;
+  const agentExecutionId = safeString(event.agent_execution_id);
+  const agentSequence = numeric(event.agent_sequence);
+  if (agentExecutionId && agentSequence !== undefined && agentSequence <= (state.agentCursors[agentExecutionId] ?? 0)) return state;
+  const cursorGap = state.cursorGap
+    || (runSequence !== undefined && state.runCursor > 0 && runSequence > state.runCursor + 1)
+    || Boolean(agentExecutionId && agentSequence !== undefined && (state.agentCursors[agentExecutionId] ?? 0) > 0 && agentSequence > (state.agentCursors[agentExecutionId] ?? 0) + 1);
+  const runCursor = runSequence ?? state.runCursor;
+  const agentCursors = agentExecutionId && agentSequence !== undefined
+    ? { ...state.agentCursors, [agentExecutionId]: agentSequence }
+    : state.agentCursors;
   const seenEventIds = typeof event.id === 'number' ? [...state.seenEventIds.slice(-199), event.id] : state.seenEventIds;
   const payload = event.payload;
   const turnIndex = numeric(payload.turn_index);
@@ -133,7 +158,7 @@ export function reduceProcessEvent(state: ProcessStreamState, event: RunStreamEv
   const quickMode = state.answerMode === 'standard';
 
   if (event.type === 'reasoning.phase.started') {
-    if (quickMode) return { ...state, active, seenEventIds };
+    if (quickMode) return { ...state, active, seenEventIds, runCursor, agentCursors, cursorGap };
     items = items
       .filter((item) => !isProcessingResultHandoff(item))
       .map((item) => item.kind === 'phase' && item.status === 'running' ? { ...item, status: 'completed' } : item);
@@ -248,7 +273,7 @@ export function reduceProcessEvent(state: ProcessStreamState, event: RunStreamEv
       .filter((item) => !isProcessingResultHandoff(item))
       .map((item) => item.status === 'running' ? { ...item, status: event.type === 'run.cancelled' || status === 'cancelled' ? 'cancelled' : 'completed' } : item);
   }
-  return { ...state, items, active, seenEventIds };
+  return { ...state, items, active, seenEventIds, runCursor, agentCursors, cursorGap };
 }
 
 export function isDecisionGroup(item: ProcessStreamItem) {

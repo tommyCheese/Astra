@@ -19,6 +19,7 @@ import type {
   EvolutionSource,
   JsonObject,
   MemoryAuditEvent,
+  MemoryActivationRequest,
   MemoryDetail,
   MemoryListQuery,
   MemoryListResult,
@@ -394,6 +395,14 @@ export async function getMemory(memoryId: string, signal?: AbortSignal): Promise
 
 export async function revokeMemory(memoryId: string, request: MemoryRevocationRequest): Promise<MemoryDetail> {
   return normalizeMemoryDetail(await apiJson(`${DEEP_MEMORY_API_PATHS.memory(memoryId)}/revoke`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(request),
+  }));
+}
+
+export async function activateMemory(memoryId: string, request: MemoryActivationRequest): Promise<MemoryDetail> {
+  return normalizeMemoryDetail(await apiJson(`${DEEP_MEMORY_API_PATHS.memory(memoryId)}/activate`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(request),

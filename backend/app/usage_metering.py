@@ -8,13 +8,21 @@ logger = logging.getLogger("astra.usage")
 
 
 class DatabaseUsageRecorder:
-    def __init__(self, run_id: str):
+    def __init__(self, run_id: str, *, agent_execution_id: str | None = None):
         self.run_id = run_id
+        self.agent_execution_id = agent_execution_id
 
     async def start(self, *, provider: str, model: str, operation: str, attempt: int) -> str | None:
         try:
             async with SessionLocal() as session:
-                return await UsageRepository(session).create_invocation(run_id=self.run_id, provider=provider, model=model, operation=operation, attempt=attempt)
+                return await UsageRepository(session).create_invocation(
+                    run_id=self.run_id,
+                    provider=provider,
+                    model=model,
+                    operation=operation,
+                    attempt=attempt,
+                    agent_execution_id=self.agent_execution_id,
+                )
         except Exception:
             logger.exception("usage.start.failed run_id=%s", self.run_id)
             return None

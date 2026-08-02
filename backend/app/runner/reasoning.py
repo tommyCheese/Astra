@@ -12,6 +12,7 @@ from app.schemas.agent import (
     ContractMode,
     CriterionStatus,
     EffectiveReasoningPolicy,
+    EffectiveSubagentPolicy,
     Evaluation,
     EvaluationOutcome,
     ExecutionMode,
@@ -25,6 +26,8 @@ from app.schemas.agent import (
     RequestedReasoningPolicy,
     RunBudgets,
     RunExecutionProfile,
+    SubagentBudgetPolicy,
+    SubagentModelRoutingPolicy,
     SuccessCriterion,
     TaskContract,
     TerminalState,
@@ -69,6 +72,7 @@ class PolicyCompiler:
         *,
         risk_level: str = "low",
         complexity: str = "normal",
+        subagent_policy: EffectiveSubagentPolicy | None = None,
     ) -> ReasoningPolicySnapshot:
         data = requested.model_dump()
         adjustments: list[PolicyAdjustment] = []
@@ -94,11 +98,14 @@ class PolicyCompiler:
         if requested.max_tool_calls is not None:
             budgets.max_tool_calls = requested.max_tool_calls
             budgets.max_turns = max(budgets.max_turns, requested.max_tool_calls + 1)
-        effective = EffectiveReasoningPolicy(**data, budgets=budgets)
+        effective = EffectiveReasoningPolicy(
+            **data,
+            budgets=budgets,
+            subagents=subagent_policy or EffectiveSubagentPolicy(),
+        )
         return ReasoningPolicySnapshot(
             requested=requested, effective=effective, adjustments=adjustments
         )
-
     def _raise(
         self,
         data: dict[str, Any],
@@ -119,6 +126,47 @@ class PolicyCompiler:
         )
 
 
+def compile_subagent_policy(settings: Any) -> EffectiveSubagentPolicy:
+    """Freeze deployment settings into a Run-scoped, non-escalating subagent policy."""
+    enabled = bool(settings.agent_subagent_execution_enabled) and not bool(
+        settings.agent_subagent_kill_switch
+    )
+    return EffectiveSubagentPolicy(
+        enabled=enabled,
+        kill_switch=bool(settings.agent_subagent_kill_switch),
+        rollout_cohort=str(settings.agent_subagent_rollout_cohort),
+        read_only=bool(settings.agent_subagent_read_only),
+        allowed_join_policies=("required", "optional", "first_success"),
+        budgets=SubagentBudgetPolicy(
+            max_children_total=settings.agent_subagent_max_children_total if enabled else 0,
+            max_children_per_parent=(
+                settings.agent_subagent_max_children_per_parent if enabled else 0
+            ),
+            max_parallel_children=(
+                settings.agent_subagent_max_parallel_children if enabled else 0
+            ),
+            max_depth=settings.agent_subagent_max_depth,
+            max_parent_round_trips=settings.agent_subagent_max_parent_round_trips,
+            max_wall_time_seconds=settings.agent_subagent_max_wall_time_seconds,
+            max_tokens=settings.agent_subagent_max_tokens if enabled else 0,
+            max_model_calls=settings.agent_subagent_max_model_calls if enabled else 0,
+            max_tool_calls=settings.agent_subagent_max_tool_calls if enabled else 0,
+            max_cost_usd=settings.agent_subagent_max_cost_usd if enabled else 0,
+            parent_token_reserve=settings.agent_subagent_parent_token_reserve,
+            parent_model_call_reserve=settings.agent_subagent_parent_model_call_reserve,
+            parent_tool_call_reserve=settings.agent_subagent_parent_tool_call_reserve,
+            parent_cost_reserve_usd=settings.agent_subagent_parent_cost_reserve_usd,
+        ),
+        model_routing=SubagentModelRoutingPolicy(
+            allowed_providers=(settings.model_provider,),
+            allowed_models=(settings.model_name,),
+            require_same_provider=True,
+            allow_lower_cost_model=True,
+            max_reasoning_effort=ReasoningEffort.balanced,
+        ),
+    )
+
+
 class RunProfileResolver:
     """Resolve product answer modes into immutable runtime facts."""
 
@@ -133,6 +181,7 @@ class RunProfileResolver:
         plan_execution: PlanExecution | None = None,
         risk_level: str = "low",
         complexity: str = "normal",
+        subagent_policy: EffectiveSubagentPolicy | None = None,
     ) -> RunExecutionProfile:
         if answer_mode == AnswerMode.standard:
             effective_request = requested.model_copy(
@@ -148,6 +197,7 @@ class RunProfileResolver:
             assurance_level = AssuranceLevel.basic
             validators = self.STANDARD_VALIDATORS
             resolved_plan_execution = None
+            effective_subagent_policy = EffectiveSubagentPolicy()
         else:
             effective_request = requested.model_copy(
                 update={"verification_level": VerificationLevel.strict}
@@ -156,8 +206,12 @@ class RunProfileResolver:
             assurance_level = AssuranceLevel.full
             validators = self.TRUSTED_VALIDATORS
             resolved_plan_execution = plan_execution or PlanExecution.confirm
+            effective_subagent_policy = subagent_policy or EffectiveSubagentPolicy()
         policy = PolicyCompiler().compile(
-            effective_request, risk_level=risk_level, complexity=complexity
+            effective_request,
+            risk_level=risk_level,
+            complexity=complexity,
+            subagent_policy=effective_subagent_policy,
         )
         if answer_mode == AnswerMode.standard:
             budgets = policy.effective.budgets.model_copy(
@@ -419,6 +473,8 @@ class CompletionGate:
         active_executions: list[Any] | None = None,
         unresolved_approvals: int = 0,
         unmerged_budgets: int = 0,
+        descendant_executions: list[Any] | None = None,
+        required_joins: list[Any] | None = None,
     ) -> CompletionDecision:
         combined_warnings = list(warnings or [])
         for outcome in validation_outcomes:
@@ -429,6 +485,66 @@ class CompletionGate:
         combined_warnings = list(dict.fromkeys(combined_warnings))
         if runtime_error:
             return CompletionDecision(state=TerminalState.failed, reason=runtime_error)
+        descendant_barriers = [
+            item
+            for item in (descendant_executions or [])
+            if (
+                getattr(item, "status", None)
+                if not isinstance(item, dict)
+                else item.get("status")
+            )
+            not in {
+                "completed",
+                "completed_with_warnings",
+                "blocked",
+                "failed",
+                "cancelled",
+            }
+        ]
+        blocked_joins = [
+            item
+            for item in (required_joins or [])
+            if (
+                getattr(item, "status", None)
+                if not isinstance(item, dict)
+                else item.get("status")
+            )
+            == "blocked"
+        ]
+        waiting_joins = [
+            item
+            for item in (required_joins or [])
+            if (
+                getattr(item, "status", None)
+                if not isinstance(item, dict)
+                else item.get("status")
+            )
+            not in {"ready", "blocked"}
+        ]
+        if blocked_joins:
+            return CompletionDecision(
+                state=TerminalState.blocked,
+                reason="必需的子 Agent 汇合失败。",
+                unmet_criteria=[
+                    f"agent-join:{item.get('id') if isinstance(item, dict) else getattr(item, 'id', None)}"
+                    for item in blocked_joins
+                ],
+            )
+        if descendant_barriers or waiting_joins:
+            return CompletionDecision(
+                state=TerminalState.continue_run,
+                reason="子 Agent 终态或必需汇合屏障尚未清空。",
+                unmet_criteria=[
+                    *[
+                        f"agent-execution:{item.get('id') if isinstance(item, dict) else getattr(item, 'id', None)}"
+                        for item in descendant_barriers
+                    ],
+                    *[
+                        f"agent-join:{item.get('id') if isinstance(item, dict) else getattr(item, 'id', None)}"
+                        for item in waiting_joins
+                    ],
+                ],
+            )
         execution_barriers = [
             execution
             for execution in (active_executions or [])

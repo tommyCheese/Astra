@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 
 import {
+  activateMemory,
   getConsolidationJob,
   getEvolutionCandidate,
   getMemory,
@@ -21,6 +22,7 @@ import type {
   EvolutionCandidateListResult,
   JsonObject,
   MemoryDetail,
+  MemoryActivationRequest,
   MemoryListQuery,
   MemoryListResult,
   MemoryRecord,
@@ -31,6 +33,7 @@ import { useI18n } from './i18n';
 
 type WorkbenchTab = 'memories' | 'consolidation' | 'evolution';
 type ConfirmAction =
+  | { kind: 'activate'; target: MemoryDetail }
   | { kind: 'revoke'; target: MemoryDetail }
   | { kind: 'publish'; target: ConsolidationJob }
   | { kind: 'rollback'; target: ConsolidationJob };
@@ -38,6 +41,7 @@ type ConfirmAction =
 export type DeepMemoryClient = {
   listMemories: (query?: MemoryListQuery, signal?: AbortSignal) => Promise<MemoryListResult>;
   getMemory: (memoryId: string, signal?: AbortSignal) => Promise<MemoryDetail>;
+  activateMemory: (memoryId: string, request: MemoryActivationRequest) => Promise<MemoryDetail>;
   revokeMemory: (memoryId: string, request: MemoryRevocationRequest) => Promise<MemoryDetail>;
   listConsolidationJobs: (query?: ConsolidationJobListQuery, signal?: AbortSignal) => Promise<ConsolidationJobListResult>;
   getConsolidationJob: (jobId: string, signal?: AbortSignal) => Promise<ConsolidationJob>;
@@ -50,6 +54,7 @@ export type DeepMemoryClient = {
 const defaultClient: DeepMemoryClient = {
   listMemories,
   getMemory,
+  activateMemory,
   revokeMemory,
   listConsolidationJobs,
   getConsolidationJob,
@@ -207,6 +212,7 @@ export function MemoryWorkbench({
   });
   const [errors, setErrors] = useState<Partial<Record<WorkbenchTab, string>>>({});
   const [query, setQuery] = useState('');
+  const [memoryView, setMemoryView] = useState<'pending' | 'all'>('pending');
   const [statusFilter, setStatusFilter] = useState('');
   const [kindFilter, setKindFilter] = useState('');
   const [confirmAction, setConfirmAction] = useState<ConfirmAction | null>(null);
@@ -226,11 +232,13 @@ export function MemoryWorkbench({
           const result = await client.listMemories({ include_history: true, limit: 200 }, controller.signal);
           if (controller.signal.aborted) return;
           setMemories(result.items);
-          if (result.items[0]) {
-            const fallback = summaryAsDetail(result.items[0]);
+          const initialMemory = result.items.find((memory) => memory.status === 'candidate') ?? result.items[0];
+          if (!result.items.some((memory) => memory.status === 'candidate')) setMemoryView('all');
+          if (initialMemory) {
+            const fallback = summaryAsDetail(initialMemory);
             setSelectedMemory(fallback);
             try {
-              setSelectedMemory(await client.getMemory(result.items[0].id, controller.signal));
+              setSelectedMemory(await client.getMemory(initialMemory.id, controller.signal));
             } catch (error) {
               if (!isAbort(error)) setErrors((current) => ({ ...current, memories: errorMessage(error) }));
             }
@@ -282,10 +290,23 @@ export function MemoryWorkbench({
         memory.kind,
       ].some((value) => value.toLocaleLowerCase().includes(normalizedQuery));
       return queryMatch
+        && (memoryView === 'all' || memory.status === 'candidate')
         && (!statusFilter || memory.status === statusFilter)
         && (!kindFilter || memory.kind === kindFilter);
     });
-  }, [kindFilter, memories, query, statusFilter]);
+  }, [kindFilter, memories, memoryView, query, statusFilter]);
+
+  const pendingMemoryCount = useMemo(
+    () => memories.filter((memory) => memory.status === 'candidate').length,
+    [memories],
+  );
+
+  useEffect(() => {
+    if (memoryView !== 'pending' || selectedMemory?.status === 'candidate') return;
+    const pending = memories.find((memory) => memory.status === 'candidate');
+    if (pending) void inspectMemory(pending);
+    else setSelectedMemory(null);
+  }, [memories, memoryView, selectedMemory?.status]);
 
   async function inspectMemory(memory: MemoryRecord) {
     setSelectedMemory(summaryAsDetail(memory));
@@ -328,15 +349,28 @@ export function MemoryWorkbench({
     setActionPending(true);
     setNotice('');
     try {
-      if (confirmAction.kind === 'revoke') {
-        const updated = await client.revokeMemory(confirmAction.target.id, {
+      if (confirmAction.kind === 'activate' || confirmAction.kind === 'revoke') {
+        const request = {
           expected_state_version: confirmAction.target.state_version,
           reason: reason.trim(),
           actor: 'local-operator',
-        });
+        };
+        const updated = confirmAction.kind === 'activate'
+          ? await client.activateMemory(confirmAction.target.id, request)
+          : await client.revokeMemory(confirmAction.target.id, request);
         setSelectedMemory(updated);
-        setMemories((items) => items.map((item) => item.id === updated.id ? updated : item));
-        setNotice(t('记忆已撤销；历史召回记录仍保留用于审计。'));
+        setMemories((items) => items.map((item) => {
+          if (item.id === updated.id) return updated;
+          if (confirmAction.kind === 'activate' && updated.supersedes_id === item.id) {
+            return { ...item, status: 'superseded' };
+          }
+          return item;
+        }));
+        setNotice(confirmAction.kind === 'activate'
+          ? t('记忆已由人工确认并激活，可参与后续召回。')
+          : confirmAction.target.status === 'candidate'
+            ? t('候选已拒绝；内容和来源仍保留用于审计。')
+            : t('记忆已撤销；历史召回记录仍保留用于审计。'));
       } else {
         const request = {
           expected_state_version: confirmAction.target.state_version,
@@ -393,6 +427,12 @@ export function MemoryWorkbench({
 
     {tab === 'memories' && <div className="memory-panel">
       <div className="memory-list-pane">
+        <div className="memory-review-switch" role="group" aria-label={t('记忆确认列表')}>
+          <button type="button" className={memoryView === 'pending' ? 'active' : ''} aria-pressed={memoryView === 'pending'} onClick={() => { setMemoryView('pending'); setStatusFilter(''); }}>
+            {t('待人工确认')} <span>{pendingMemoryCount}</span>
+          </button>
+          <button type="button" className={memoryView === 'all' ? 'active' : ''} aria-pressed={memoryView === 'all'} onClick={() => setMemoryView('all')}>{t('全部记录')}</button>
+        </div>
         <div className="memory-filters">
           <label>
             <span className="sr-only">{t('搜索记忆')}</span>
@@ -427,6 +467,7 @@ export function MemoryWorkbench({
         {selectedMemory ? <MemoryInspector
           memory={selectedMemory}
           language={language}
+          onActivate={() => openAction({ kind: 'activate', target: selectedMemory })}
           onRevoke={() => openAction({ kind: 'revoke', target: selectedMemory })}
         /> : <div className="memory-empty">{t('选择一条记忆查看审计详情')}</div>}
       </div>
@@ -494,9 +535,10 @@ export function MemoryWorkbench({
   </section>;
 }
 
-function MemoryInspector({ memory, language, onRevoke }: {
+function MemoryInspector({ memory, language, onActivate, onRevoke }: {
   memory: MemoryDetail;
   language: string;
+  onActivate: () => void;
   onRevoke: () => void;
 }) {
   const { t } = useI18n();
@@ -504,7 +546,10 @@ function MemoryInspector({ memory, language, onRevoke }: {
   return <article className="memory-inspector" aria-label={t('记忆详情')}>
     <header>
       <div><StatusBadge status={memory.status} /><span>{t(kindLabels[memory.kind] ?? memory.kind)}</span></div>
-      <button className="memory-danger-button" type="button" disabled={!canRevoke} onClick={onRevoke}>{t('撤销记忆')}</button>
+      <div className="memory-detail-actions">
+        {memory.status === 'candidate' && <button className="primary-button" type="button" onClick={onActivate}>{t('确认并激活')}</button>}
+        <button className="memory-danger-button" type="button" disabled={!canRevoke} onClick={onRevoke}>{memory.status === 'candidate' ? t('拒绝候选') : t('撤销记忆')}</button>
+      </div>
     </header>
     <p className="memory-content" data-testid="memory-safe-content">{memory.content || t('无内容摘要')}</p>
     <dl className="memory-metadata">
@@ -709,16 +754,20 @@ function ActionDialog({ action, reason, pending, onReasonChange, onCancel, onCon
   onConfirm: () => void;
 }) {
   const { t } = useI18n();
-  const title = action.kind === 'revoke' ? t('撤销这条记忆？')
+  const title = action.kind === 'activate' ? t('确认激活这条记忆？')
+    : action.kind === 'revoke' ? t('撤销这条记忆？')
     : action.kind === 'publish' ? t('发布这个合并代次？')
       : t('回滚这个合并代次？');
-  const actionLabel = action.kind === 'revoke' ? t('确认撤销')
+  const actionLabel = action.kind === 'activate' ? t('确认并激活')
+    : action.kind === 'revoke' ? t('确认撤销')
     : action.kind === 'publish' ? t('确认发布')
       : t('确认回滚');
   return <div className="memory-dialog-backdrop">
     <section className="memory-action-dialog" role="alertdialog" aria-modal="true" aria-labelledby="memory-action-title">
       <h2 id="memory-action-title">{title}</h2>
-      <p>{action.kind === 'revoke'
+      <p>{action.kind === 'activate'
+        ? t('激活后该记忆才有资格参与后续召回；此确认表示人工准入，不代表来源事实绝对正确。')
+        : action.kind === 'revoke'
         ? t('撤销会立即排除后续召回，但不会删除历史版本或既有运行审计。')
         : t('操作使用当前状态版本进行冲突检查，并保留输入、提案与来源清单。')}</p>
       <label>
@@ -733,7 +782,7 @@ function ActionDialog({ action, reason, pending, onReasonChange, onCancel, onCon
       </label>
       <div>
         <button type="button" disabled={pending} onClick={onCancel}>{t('取消')}</button>
-        <button className={action.kind === 'publish' ? 'primary-button' : 'memory-danger-button'} type="button" disabled={pending || reason.trim().length < 3} onClick={onConfirm}>{pending ? t('处理中…') : actionLabel}</button>
+        <button className={action.kind === 'publish' || action.kind === 'activate' ? 'primary-button' : 'memory-danger-button'} type="button" disabled={pending || reason.trim().length < 3} onClick={onConfirm}>{pending ? t('处理中…') : actionLabel}</button>
       </div>
     </section>
   </div>;

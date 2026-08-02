@@ -8,6 +8,7 @@ from app.db.base import Base
 
 BACKEND_ROOT = Path(__file__).parents[1]
 BASELINE_REVISION = "0001_current_baseline"
+HEAD_REVISION = "0002_governed_subagent_runtime"
 
 
 def _alembic(database_path: Path, *arguments: str) -> subprocess.CompletedProcess[str]:
@@ -46,7 +47,7 @@ def test_current_baseline_creates_the_complete_orm_schema(tmp_path: Path):
         connection.close()
 
     assert set(Base.metadata.tables) <= tables
-    assert revision == (BASELINE_REVISION,)
+    assert revision == (HEAD_REVISION,)
     assert "workspace_id" not in memory_columns
     assert "shadow" not in recall_columns
 
@@ -70,3 +71,111 @@ def test_obsolete_revision_has_no_upgrade_path(tmp_path: Path):
 
     assert upgraded.returncode != 0
     assert "reset the database" in upgraded.stderr
+
+
+def test_subagent_migration_backfills_root_execution_and_lineage(tmp_path: Path):
+    database_path = tmp_path / "existing.db"
+    baseline = _alembic(database_path, "upgrade", BASELINE_REVISION)
+    assert baseline.returncode == 0, baseline.stderr
+
+    connection = sqlite3.connect(database_path)
+    try:
+        connection.execute(
+            """
+            INSERT INTO tasks (
+                id, title, description, status, preferred_answer_mode, title_source,
+                context_state, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "task-existing",
+                "Existing task",
+                "Existing task",
+                "created",
+                "trusted",
+                "auto",
+                "{}",
+                "2026-08-01 00:00:00",
+                "2026-08-01 00:00:00",
+            ),
+        )
+        connection.execute(
+            """
+            INSERT INTO runs (
+                id, task_id, status, mode, answer_mode, execution_profile, model_policy,
+                agent_profile_snapshot, reasoning_policy, task_contract, plan_graph,
+                agent_state, state_version, task_adapter, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "run-existing",
+                "task-existing",
+                "executing",
+                "web_agent",
+                "trusted",
+                "{}",
+                "{}",
+                "{}",
+                "{}",
+                '{"original_goal":"existing"}',
+                "{}",
+                '{"version":3,"budget_usage":{"model_calls":1}}',
+                3,
+                "web",
+                "2026-08-01 00:00:00",
+                "2026-08-01 00:01:00",
+            ),
+        )
+        connection.execute(
+            "INSERT INTO run_events (run_id, type, payload, created_at) VALUES (?, ?, ?, ?)",
+            ("run-existing", "run.created", "{}", "2026-08-01 00:00:00"),
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+    upgraded = _alembic(database_path, "upgrade", "head")
+    assert upgraded.returncode == 0, upgraded.stderr
+
+    connection = sqlite3.connect(database_path)
+    try:
+        root = connection.execute(
+            """
+            SELECT id, execution_type, root_slot, depth, status, phase, contract, checkpoint
+            FROM agent_executions WHERE run_id = ?
+            """,
+            ("run-existing",),
+        ).fetchone()
+        event_execution_id = connection.execute(
+            "SELECT agent_execution_id FROM run_events WHERE run_id = ?",
+            ("run-existing",),
+        ).fetchone()
+    finally:
+        connection.close()
+
+    assert root is not None
+    assert root[1:6] == ("root", "root", 0, "running", "executing")
+    assert "existing" in root[6]
+    assert '"version": 3' in root[7]
+    assert event_execution_id == (root[0],)
+
+    downgraded = _alembic(database_path, "downgrade", BASELINE_REVISION)
+    assert downgraded.returncode == 0, downgraded.stderr
+    connection = sqlite3.connect(database_path)
+    try:
+        tables = {
+            row[0]
+            for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
+        }
+        run_row = connection.execute(
+            "SELECT id, status FROM runs WHERE id = ?", ("run-existing",)
+        ).fetchone()
+        event_columns = {
+            row[1] for row in connection.execute("PRAGMA table_info(run_events)")
+        }
+    finally:
+        connection.close()
+
+    assert "agent_executions" not in tables
+    assert "agent_execution_id" not in event_columns
+    assert run_row == ("run-existing", "executing")

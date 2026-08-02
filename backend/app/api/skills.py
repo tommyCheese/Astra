@@ -26,7 +26,7 @@ from app.db.models import (
 from app.db.session import get_session
 from app.repositories.runs import RunRepository
 from app.runner.model_reasoning import normalize_model_thinking
-from app.runner.reasoning import RunProfileResolver
+from app.runner.reasoning import RunProfileResolver, compile_subagent_policy
 from app.schemas.agent import CreateRunResponse, PlanExecution, RequestedReasoningPolicy
 from app.schemas.skills import (
     RunSkillsView,
@@ -733,6 +733,7 @@ async def create_skill_test_run(
             payload.answer_mode,
             RequestedReasoningPolicy(),
             plan_execution=(PlanExecution.auto if payload.answer_mode.value == "trusted" else None),
+            subagent_policy=compile_subagent_policy(settings),
         )
         thinking = normalize_model_thinking(
             provider=settings.model_provider,

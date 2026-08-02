@@ -145,7 +145,7 @@ async def test_session_retrieval_crosses_tasks_with_matching_identity(session):
     assert isolated_context["memory_context"] == []
 
 
-async def test_memory_manager_activates_safe_candidate_and_isolates_rejections(session):
+async def test_memory_manager_leaves_safe_candidate_pending_and_isolates_rejections(session):
     run_repo = RunRepository(session)
     run = await run_repo.create_task_run(
         "记住运行结论",
@@ -181,8 +181,8 @@ async def test_memory_manager_activates_safe_candidate_and_isolates_rejections(s
     second = await manager.write_candidates(run_id=run.id, goal="记住", context={})
 
     assert len(first) == 1
-    assert first[0]["status"] == "active"
-    assert first[0]["state_version"] == 2
+    assert first[0]["status"] == "candidate"
+    assert first[0]["state_version"] == 1
     assert second[0]["id"] == first[0]["id"]
     assert "content" not in first[0]
     events = list(

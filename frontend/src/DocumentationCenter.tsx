@@ -101,11 +101,12 @@ function MemoryArticle() {
     <DocumentSection id="memory-lifecycle" eyebrow="Lifecycle" title="记忆如何产生并生效">
       <ol className="documentation-timeline">
         <TimelineStep number="1" title="产生候选" description="任务形成可复用结果后，记忆提取器依据 MEMORY.md 从有来源的内容中生成结构化候选。关闭“保存新记忆”时不会进入写入流程。" />
-        <TimelineStep number="2" title="校验并激活" description="Astra 校验来源、命名空间、内容和置信度，并用稳定键去重或建立新版本。通过后状态成为 active。" />
-        <TimelineStep number="3" title="新请求触发检索" description="后续请求到来时，Astra 按当前目标、用户、Session、Task 和 Run 范围寻找符合条件的 active 记忆。" />
-        <TimelineStep number="4" title="筛选后注入" description="候选还要通过相关度、置信度、有效期、来源访问和上下文预算筛选；仅在持久记忆召回开启时才会加入模型上下文。" />
+        <TimelineStep number="2" title="校验并等待确认" description="Astra 校验来源、命名空间、内容和置信度，并用稳定键去重或建立候选版本；通过校验后仍保持 candidate。" />
+        <TimelineStep number="3" title="人工确认激活" description="本机操作员在待确认列表检查内容、范围、置信度和来源，填写原因后手动激活；拒绝的候选不会参与召回。" />
+        <TimelineStep number="4" title="新请求触发检索" description="后续请求到来时，Astra 按当前目标、用户、Session、Task 和 Run 范围寻找符合条件的 active 记忆。" />
+        <TimelineStep number="5" title="筛选后注入" description="active 记忆还要通过相关度、置信度、有效期、来源访问和上下文预算筛选；仅在持久记忆召回开启时才会加入模型上下文。" />
       </ol>
-      <aside className="documentation-callout emphasis"><strong>{t('什么时候真正生效？')}</strong><p>{t('保存成功只表示未来“可能被使用”。只有某次请求检索命中，并且召回模式为开启、所有门槛和预算都通过时，它才会进入该次回答的上下文。')}</p></aside>
+      <aside className="documentation-callout emphasis"><strong>{t('什么时候真正生效？')}</strong><p>{t('保存成功只产生待确认候选。人工激活后也只是未来“可能被使用”；只有某次请求检索命中，并且召回模式为开启、所有门槛和预算都通过时，它才会进入该次回答的上下文。')}</p></aside>
     </DocumentSection>
 
     <DocumentSection id="memory-scope" eyebrow="Scope" title="作用范围">
