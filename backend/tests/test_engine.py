@@ -528,7 +528,7 @@ async def test_answer_delta_batching_flushes_first_and_final_content(session):
         "answer.content.completed",
         "answer.completed",
     ]
-    assert events[-2].payload == {"next_phase": "background_verification"}
+    assert events[-2].payload == {"background_verification": False}
     assert events[-1].payload == {"content": "首尾", "status": "answer_complete"}
 
 
@@ -565,6 +565,9 @@ async def test_final_plan_node_answer_is_regenerated_as_canonical_stream(session
     assert event_types.index("answer.content.completed") < event_types.index(
         "verification.created"
     )
+    assert next(
+        event for event in events if event.type == "answer.content.completed"
+    ).payload == {"background_verification": True}
     assert event_types.index("verification.created") < event_types.index("answer.completed")
 
 

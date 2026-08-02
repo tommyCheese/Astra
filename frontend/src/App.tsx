@@ -315,8 +315,7 @@ function AppContent() {
   const [planConfirmationSubmitting, setPlanConfirmationSubmitting] = useState(false);
   const [planRevisionSubmitting, setPlanRevisionSubmitting] = useState(false);
   const [streamingAnswer, setStreamingAnswer] = useState('');
-  const [answerComplete, setAnswerComplete] = useState(false);
-  const [answerSettling, setAnswerSettling] = useState(false);
+  const [answerPhase, setAnswerPhase] = useState<'idle' | 'streaming' | 'background_verification' | 'complete'>('idle');
   const [processState, setProcessState] = useState<ProcessStreamState | null>(null);
   const [planGraphState, setPlanGraphState] = useState<PlanGraphStreamState | null>(null);
   const [processPanelDefaultOpen, setProcessPanelDefaultOpen] = useState(loadProcessPanelDefaultOpen);
@@ -927,8 +926,7 @@ function AppContent() {
     setActiveConversationId(conversation.id);
     clearSlashDraft();
     setStreamingAnswer('');
-    setAnswerComplete(false);
-    setAnswerSettling(false);
+    setAnswerPhase('idle');
     deltaBufferRef.current = '';
     processEventBufferRef.current = [];
     applyConversationAnswerMode(
@@ -1039,12 +1037,12 @@ function AppContent() {
   async function cancelRunById(runId: string, previousMessages: ChatMessage[] = priorMessages) {
     initialSnapshotControllerRef.current?.abort();
     initialSnapshotControllerRef.current = undefined;
-    setAnswerSettling(false);
+    setAnswerPhase('complete');
     try {
       const next = normalizeRunView(await cancelRun(runId));
       deltaBufferRef.current = '';
       setStreamingAnswer('');
-      setAnswerComplete(false);
+      setAnswerPhase('idle');
       setRun(next);
       setProcessState((state) => reconcileProcessSnapshot(state, next));
       rememberConversation(next, previousMessages);
@@ -1060,7 +1058,7 @@ function AppContent() {
     if (stopping) return;
     cancelRequestedRef.current = true;
     setStopping(true);
-    setAnswerSettling(false);
+    setAnswerPhase('complete');
     if (run && !terminalStatuses.has(run.status)) {
       await cancelRunById(run.id);
     }
@@ -1115,8 +1113,7 @@ function AppContent() {
     followLatestRef.current = true;
     setShowJumpToLatest(false);
     setStreamingAnswer('');
-    setAnswerComplete(false);
-    setAnswerSettling(false);
+    setAnswerPhase('idle');
     deltaBufferRef.current = '';
     setLoading(true);
     try {
@@ -1459,7 +1456,7 @@ function AppContent() {
         });
         rememberConversation(next);
         if (terminalStatuses.has(next.status) && next.result) {
-          if (!streamingAnswerRef.current) setAnswerSettling(false);
+          if (!streamingAnswerRef.current) setAnswerPhase('idle');
           closeStream();
           if (fallback !== undefined) window.clearInterval(fallback);
         }
@@ -1480,27 +1477,18 @@ function AppContent() {
         deltaBufferRef.current = '';
         streamingAnswerRef.current = '';
         setStreamingAnswer('');
-        setAnswerComplete(false);
-        setAnswerSettling(false);
+        setAnswerPhase('streaming');
         return;
       }
       if (event.type === 'answer.delta') {
-        setAnswerSettling(false);
+        setAnswerPhase('streaming');
         queueDelta(String(event.payload.delta ?? ''));
-        return;
-      }
-      if (event.type === 'answer.settling') {
-        if (deltaFrameRef.current !== undefined) window.cancelAnimationFrame(deltaFrameRef.current);
-        flushDeltas();
-        setAnswerComplete(true);
-        setAnswerSettling(true);
         return;
       }
       if (event.type === 'answer.content.completed') {
         if (deltaFrameRef.current !== undefined) window.cancelAnimationFrame(deltaFrameRef.current);
         flushDeltas();
-        setAnswerComplete(true);
-        setAnswerSettling(true);
+        setAnswerPhase(event.payload.background_verification === true ? 'background_verification' : 'complete');
         return;
       }
       if (event.type === 'answer.completed') {
@@ -1510,8 +1498,7 @@ function AppContent() {
         const content = String(event.payload.content ?? '');
         streamingAnswerRef.current = content;
         setStreamingAnswer(content);
-        setAnswerComplete(true);
-        setAnswerSettling(false);
+        setAnswerPhase('complete');
         scheduleRefresh(true);
         return;
       }
@@ -1583,24 +1570,25 @@ function AppContent() {
     if (trustedGraphRun?.id) setGraphPaneOpen(true);
   }, [trustedGraphRun?.id]);
   const visibleStreamingAnswer = usePacedStreamingText(streamingAnswer, run?.id);
+  const answerContentComplete = answerPhase === 'background_verification' || answerPhase === 'complete';
   useEffect(() => {
     if (
-      !answerComplete
+      !answerContentComplete
       || !streamingAnswer
       || visibleStreamingAnswer !== streamingAnswer
       || !run?.result
       || !terminalStatuses.has(run.status)
     ) return;
     setStreamingAnswer('');
-    setAnswerSettling(false);
-  }, [answerComplete, streamingAnswer, visibleStreamingAnswer, run?.result, run?.status]);
+    setAnswerPhase('idle');
+  }, [answerContentComplete, streamingAnswer, visibleStreamingAnswer, run?.result, run?.status]);
   const messages = useMemo(() => {
     const currentMessages = buildPresentation(effectiveRun)
       .filter((message) => !streamingAnswer || message.metadata.presentation !== 'answer')
       .map((message) => ({ ...message, id: `${run?.id ?? 'idle'}:${priorMessages.length}:${message.id}` }));
-    const streamed = visibleStreamingAnswer ? [{ id: `${run?.id ?? 'idle'}-stream`, role: 'assistant', content: visibleStreamingAnswer, status: answerComplete ? 'completed' : 'streaming', metadata: {} }] : [];
+    const streamed = visibleStreamingAnswer ? [{ id: `${run?.id ?? 'idle'}-stream`, role: 'assistant', content: visibleStreamingAnswer, status: answerContentComplete ? 'completed' : 'streaming', metadata: {} }] : [];
     return [...priorMessages, ...currentMessages, ...streamed];
-  }, [priorMessages, effectiveRun, streamingAnswer, visibleStreamingAnswer, answerComplete]);
+  }, [priorMessages, effectiveRun, streamingAnswer, visibleStreamingAnswer, answerContentComplete]);
   const activeProcessItemId = [...(processState?.items ?? [])].reverse().find((item) => item.status === 'running')?.id;
   const initializeProcessPanel = useCallback((runId: string) => {
     setProcessPanelOpenByRun((states) => Object.prototype.hasOwnProperty.call(states, runId)
@@ -1663,8 +1651,7 @@ function AppContent() {
     setPriorMessages([]);
     setError(null);
     setStreamingAnswer('');
-    setAnswerComplete(false);
-    setAnswerSettling(false);
+    setAnswerPhase('idle');
     setProcessState(null);
     cancelRequestedRef.current = false;
     setStopping(false);
@@ -1790,7 +1777,7 @@ function AppContent() {
             {messages.map((message) => (
               <MessageBubble key={message.id} message={message} run={effectiveRun} processState={processState} processPanelDefaultOpen={processPanelDefaultOpen} processPanelOpenByRun={processPanelOpenByRun} onProcessPanelInitialize={initializeProcessPanel} onProcessPanelOpenChange={changeProcessPanelOpen} />
             ))}
-            {answerSettling && streamingAnswer && <div className="answer-settling"><span className="settling-dot" aria-hidden="true" />{t('后台校验中')}</div>}
+            {answerPhase === 'background_verification' && streamingAnswer && <div className="background-verification"><span aria-hidden="true" />{t('后台校验中')}</div>}
             {run && !terminalStatuses.has(run.status) && !streamingAnswer && !processState && (
               <div className="bubble assistant waiting-message" role="status" aria-live="polite">
                 <span className="bubble-label">Astra</span>

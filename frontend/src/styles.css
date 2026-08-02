@@ -1417,8 +1417,8 @@ h1 {
   }
 }
 
-.answer-settling { align-items: center; color: #98a2ad; display: flex; font-size: 10px; gap: 5px; margin: -4px 0 10px 30px; }
-.settling-dot { background: currentColor; border-radius: 50%; height: 4px; opacity: .65; width: 4px; }
+.background-verification { align-items: center; color: #98a2ad; display: flex; font-size: 10px; gap: 5px; margin: -4px 0 10px 30px; }
+.background-verification > span { background: currentColor; border-radius: 50%; height: 4px; opacity: .65; width: 4px; }
 
 .process-entry {
   margin: 2px 0 8px;

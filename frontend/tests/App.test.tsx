@@ -912,7 +912,7 @@ describe('App', () => {
       window.setTimeout(() => {
         onEvent({ type: 'answer.started', payload: {} });
         onEvent({ type: 'answer.delta', payload: { delta: '流式回答不会消失' } });
-        onEvent({ type: 'answer.content.completed', payload: { next_phase: 'background_verification' } });
+        onEvent({ type: 'answer.content.completed', payload: { background_verification: true } });
       }, 0);
       window.setTimeout(() => onEvent({ type: 'answer.completed', payload: { content: '流式回答不会消失' } }), 300);
       return () => undefined;

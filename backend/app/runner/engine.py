@@ -693,7 +693,12 @@ class RunEngine:
                 repo,
                 run_id,
                 goal,
-                on_answer_delta=lambda delta: self._handle_answer_delta(repo, run_id, delta),
+                on_answer_delta=lambda delta: self._handle_answer_delta(
+                    repo,
+                    run_id,
+                    delta,
+                    background_verification=run.answer_mode == AnswerMode.trusted.value,
+                ),
                 initial_run=run if fresh_run else None,
                 fresh_run=fresh_run,
                 initial_skill_snapshot=initial_skill_snapshot if fresh_run else None,
@@ -836,7 +841,14 @@ class RunEngine:
         await repo.add_event(run_id, "answer.delta", {"delta": delta})
         await repo.session.commit()
 
-    async def _handle_answer_delta(self, repo: RunRepository, run_id: str, delta: str) -> None:
+    async def _handle_answer_delta(
+        self,
+        repo: RunRepository,
+        run_id: str,
+        delta: str,
+        *,
+        background_verification: bool = False,
+    ) -> None:
         if delta == "\0":
             await self._start_answer_stream(repo, run_id)
             return
@@ -849,7 +861,7 @@ class RunEngine:
             await repo.add_event(
                 run_id,
                 "answer.content.completed",
-                {"next_phase": "background_verification"},
+                {"background_verification": background_verification},
             )
             await repo.session.commit()
             return
