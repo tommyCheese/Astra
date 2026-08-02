@@ -1,4 +1,5 @@
 import { Component, CSSProperties, FormEvent, KeyboardEvent as ReactKeyboardEvent, lazy, MouseEvent, PointerEvent as ReactPointerEvent, ReactNode, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { AstraApiError, ApiErrorPayload, buildRuntime, cancelRun, cancelRuntimeBuild, confirmPlanExecution, createConversationShare, createRun, decideToolApproval, deleteConversation, executeConversationCommand, getConversation, getConversationContext, getConversationStrategy, getPermissionCenter, getRun, getRuntimeDefaultModel, getRuntimeProfile, getToolSettings, listConversationShares, listConversations, listLibraryFiles, listRuns, listSkills, listSystemCommands, resetRuntimeAgentProfile, resolveModelContextCapabilities, resolveModelThinkingCapabilities, resumeRun, revisePlan, revokeConversationShare, revokePermissionGrant, streamRunEvents, takeCreatedRunStream, testModelConnection, updateConversation, updateConversationStrategy, updateRuntimeAgentProfile, updateRuntimeMemorySettings, updateToolSettings, type AgentProfileDocuments, type ContextWindowStatus, type ConversationStrategyPreferences, type LibraryFile, type MemoryRuntimeSettings, type ModelConnectionTestResult, type ModelContextCapability, type ModelThinkingCapability, type ModelThinkingDepth, type ModelThinkingSelection, type PermissionCenterView, type RunModelConfig, type RunStreamEvent, type RunStreamHandle, type RuntimeDefaultModel, type SkillSummary, type SlashSystemCommand, type ToolSetting } from './api';
 import { cancelSubagent } from './api';
 import { buildAuditLog } from './auditPresentation';
@@ -2154,6 +2155,8 @@ function Sidebar({ open, collapsed, width, run, activeConversationId, conversati
   const { t } = useI18n();
   const [menuId, setMenuId] = useState<string | null>(null);
   const menuRootRef = useRef<HTMLDivElement>(null);
+  const menuPopupRef = useRef<HTMLDivElement>(null);
+  const [menuPosition, setMenuPosition] = useState({ left: 0, top: 0 });
   const resizeCleanupRef = useRef<(() => void) | null>(null);
   const pinned = conversations.filter((item) => item.pinned_at);
   const recent = conversations.filter((item) => !item.pinned_at);
@@ -2209,7 +2212,11 @@ function Sidebar({ open, collapsed, width, run, activeConversationId, conversati
     if (!menuId) return;
     const closeMenu = () => setMenuId(null);
     const closeWhenFocusLeaves = (event: PointerEvent | FocusEvent) => {
-      if (event.target instanceof Node && !menuRootRef.current?.contains(event.target)) closeMenu();
+      if (
+        event.target instanceof Node
+        && !menuRootRef.current?.contains(event.target)
+        && !menuPopupRef.current?.contains(event.target)
+      ) closeMenu();
     };
     const closeOnEscape = (event: KeyboardEvent) => {
       if (event.key === 'Escape') closeMenu();
@@ -2217,24 +2224,44 @@ function Sidebar({ open, collapsed, width, run, activeConversationId, conversati
     document.addEventListener('pointerdown', closeWhenFocusLeaves);
     document.addEventListener('focusin', closeWhenFocusLeaves);
     document.addEventListener('keydown', closeOnEscape);
+    document.addEventListener('scroll', closeMenu, true);
     window.addEventListener('blur', closeMenu);
+    window.addEventListener('resize', closeMenu);
     return () => {
       document.removeEventListener('pointerdown', closeWhenFocusLeaves);
       document.removeEventListener('focusin', closeWhenFocusLeaves);
       document.removeEventListener('keydown', closeOnEscape);
+      document.removeEventListener('scroll', closeMenu, true);
       window.removeEventListener('blur', closeMenu);
+      window.removeEventListener('resize', closeMenu);
     };
   }, [menuId]);
 
   const renderConversation = (conversation: ConversationEntry) => <div className={`history-item ${activeConversationId === conversation.id ? 'active' : ''}`} key={conversation.id} ref={menuId === conversation.id ? menuRootRef : undefined}>
     <button className="history-select" type="button" onClick={() => { setMenuId(null); onSelectConversation(conversation); }}><Icon name="message" /><span>{conversation.title ?? (conversation.run ? conversationTitle(conversation.run, t('当前 Web Agent 会话')) : t('未命名对话'))}</span></button>
-    <button className="history-more" type="button" aria-label={`${t('更多操作')} ${conversation.title ?? ''}`} aria-expanded={menuId === conversation.id} aria-haspopup="menu" onClick={(event) => { event.stopPropagation(); setMenuId((current) => current === conversation.id ? null : conversation.id); }}>•••</button>
-    {menuId === conversation.id && <div className="history-menu" role="menu">
+    <button className="history-more" type="button" aria-label={`${t('更多操作')} ${conversation.title ?? ''}`} aria-expanded={menuId === conversation.id} aria-haspopup="menu" onClick={(event) => {
+      event.stopPropagation();
+      if (menuId === conversation.id) {
+        setMenuId(null);
+        return;
+      }
+      const anchor = event.currentTarget.getBoundingClientRect();
+      const menuWidth = 144;
+      const menuHeight = 150;
+      setMenuPosition({
+        left: Math.max(8, Math.min(anchor.right - menuWidth, window.innerWidth - menuWidth - 8)),
+        top: anchor.bottom + menuHeight + 8 <= window.innerHeight
+          ? anchor.bottom + 6
+          : Math.max(8, anchor.top - menuHeight - 6),
+      });
+      setMenuId(conversation.id);
+    }}>•••</button>
+    {menuId === conversation.id && createPortal(<div className="history-menu history-menu-portal" role="menu" ref={menuPopupRef} style={menuPosition}>
       <button role="menuitem" type="button" onClick={() => { setMenuId(null); onConversationAction('rename', conversation); }}>{t('重命名')}</button>
       <button role="menuitem" type="button" onClick={() => { setMenuId(null); onTogglePin(conversation); }}>{conversation.pinned_at ? t('取消置顶') : t('置顶')}</button>
       <button role="menuitem" type="button" onClick={() => { setMenuId(null); onConversationAction('share', conversation); }}>{t('分享')}</button>
       <button className="danger" role="menuitem" type="button" onClick={() => { setMenuId(null); onConversationAction('delete', conversation); }}>{t('删除')}</button>
-    </div>}
+    </div>, document.body)}
   </div>;
   return (
     <aside className={`sidebar ${open ? 'mobile-open' : ''}`}>

@@ -1,7 +1,12 @@
 import TrustedExecutionGraph from '../TrustedExecutionGraph';
+import { I18nProvider } from '../i18n';
 import { complexDagRunFixture } from './complexDagFixture';
 
 export default function ComplexDagVerificationPage() {
+  return <I18nProvider><ComplexDagVerificationContent /></I18nProvider>;
+}
+
+function ComplexDagVerificationContent() {
   return <main style={{ minHeight: '100vh', padding: 24 }}>
     <header style={{ maxWidth: 1160, margin: '0 auto 16px' }}>
       <p style={{ margin: 0, color: '#69788b', fontSize: 12 }}>DEVELOPMENT VISUAL FIXTURE</p>

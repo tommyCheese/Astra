@@ -1178,8 +1178,15 @@ describe('App', () => {
     const moreButton = screen.getByRole('button', { name: '更多操作 重要对话' });
     await userEvent.click(moreButton);
     expect(moreButton).toHaveAttribute('aria-expanded', 'true');
-    expect(screen.getByRole('menu')).toBeInTheDocument();
+    expect(screen.getByRole('menu')).toHaveClass('history-menu-portal');
+    expect(screen.getByRole('menu').parentElement).toBe(document.body);
+    expect(screen.getByRole('menu').style.left).toMatch(/px$/);
+    expect(screen.getByRole('menu').style.top).toMatch(/px$/);
     expect(screen.getAllByRole('menuitem')).toHaveLength(4);
+    act(() => document.dispatchEvent(new Event('scroll')));
+    expect(moreButton).toHaveAttribute('aria-expanded', 'false');
+
+    await userEvent.click(moreButton);
     await userEvent.click(screen.getByRole('heading', { name: 'Navigate Ideas. Create Reality.' }));
     expect(moreButton).toHaveAttribute('aria-expanded', 'false');
     expect(screen.queryByRole('menu')).not.toBeInTheDocument();

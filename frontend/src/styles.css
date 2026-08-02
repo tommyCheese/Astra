@@ -993,6 +993,7 @@ p {
 .history-more { align-items: center; background: transparent; border: 0; border-radius: 7px; color: #788493; cursor: pointer; display: flex; font-size: 11px; height: 28px; justify-content: center; line-height: 1; opacity: 0; padding: 0; position: absolute; right: 4px; width: 28px; z-index: 2; }
 .history-item:hover .history-more, .history-more:focus, .history-more[aria-expanded="true"] { opacity: 1; }
 .history-menu { background: rgba(255,255,255,.98); border: 1px solid rgba(109,124,142,.2); border-radius: 10px; box-shadow: 0 12px 30px rgba(35,45,58,.18); display: grid; min-width: 132px; padding: 5px; position: absolute; right: 5px; top: 34px; z-index: 40; }
+.history-menu-portal { box-sizing: border-box; min-width: 144px; position: fixed; right: auto; z-index: 1000; }
 .history-menu button { background: transparent; border: 0; border-radius: 7px; color: #3e4a58; padding: 8px 10px; text-align: left; }
 .history-menu button:hover { background: #edf2f6; }
 .history-menu button.danger { color: #b33b3b; }
@@ -5782,6 +5783,21 @@ html[data-theme="dark"] .question-preview p {
 }
 .trusted-graph-floating-pane.expanded .trusted-node-inspector {
   display: none;
+}
+@media (min-width: 1121px) {
+  .chat-surface.has-trusted-graph-pane.trusted-graph-pane-expanded {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .trusted-graph-pane-expanded .conversation,
+  .trusted-graph-pane-expanded .composer-dock,
+  .trusted-graph-pane-expanded .question-rail {
+    opacity: 0;
+    pointer-events: none;
+  }
+  .trusted-graph-pane-expanded .trusted-graph-floating-pane.expanded {
+    grid-column: 1;
+    margin: 20px 0;
+  }
 }
 .trusted-graph-floating-pane .trusted-graph-header {
   align-items: flex-start;
