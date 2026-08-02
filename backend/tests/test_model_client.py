@@ -1,3 +1,4 @@
+import json
 from unittest.mock import AsyncMock
 
 import pytest
@@ -8,6 +9,8 @@ from app.runner.model_client import (
     AnthropicModelClient,
     MockModelClient,
     ModelConfigurationError,
+    ModelOutputError,
+    OpenAICompatibleModelClient,
     StreamingJsonFieldExtractor,
     build_model_client,
     extract_partial_json_string,
@@ -259,6 +262,82 @@ async def test_anthropic_client_translates_messages_and_stream_callbacks(monkeyp
     assert timeline.index("delta:完成") < timeline.index("usage.start")
 
 
+@pytest.mark.parametrize("provider", ["openai", "anthropic"])
+async def test_invalid_json_does_not_retry_after_streaming_visible_summary(
+    monkeypatch, provider
+):
+    requests = []
+    streamed_payload = '{"summary":"保留已经展示的回答","broken":'
+
+    class FakeResponse:
+        status_code = 200
+
+        def __init__(self):
+            self.headers = {
+                "content-type": "text/event-stream",
+                "request-id": "request-1",
+            }
+
+        def raise_for_status(self):
+            return None
+
+        async def aiter_lines(self):
+            if provider == "anthropic":
+                yield "data: " + json.dumps(
+                    {
+                        "type": "content_block_delta",
+                        "delta": {"type": "text_delta", "text": streamed_payload},
+                    }
+                )
+            else:
+                yield "data: " + json.dumps(
+                    {"choices": [{"delta": {"content": streamed_payload}}]}
+                )
+
+    class FakeStreamContext:
+        async def __aenter__(self):
+            return FakeResponse()
+
+        async def __aexit__(self, *args):
+            return None
+
+    class FakeAsyncClient:
+        def __init__(self, **kwargs):
+            pass
+
+        def stream(self, method, url, **kwargs):
+            requests.append((method, url, kwargs))
+            return FakeStreamContext()
+
+    monkeypatch.setattr("app.runner.model_client.httpx.AsyncClient", FakeAsyncClient)
+    settings = Settings(
+        model_provider=provider,
+        model_api_key="secret",
+        model_name="test-model",
+        model_base_url=f"https://{provider}.test/v1",
+    )
+    client = (
+        AnthropicModelClient(settings)
+        if provider == "anthropic"
+        else OpenAICompatibleModelClient(settings)
+    )
+    deltas = []
+
+    async def on_delta(delta):
+        deltas.append(delta)
+
+    with pytest.raises(ModelOutputError):
+        await client._chat_json(
+            [{"role": "user", "content": "回答"}],
+            operation=ModelOperation.SYNTHESIS,
+            stream_field="summary",
+            on_field_delta=on_delta,
+        )
+
+    assert requests and len(requests) == 1
+    assert "".join(delta for delta in deltas if delta != "\1") == "保留已经展示的回答"
+
+
 def test_model_json_parser_accepts_fences_and_leading_text():
     assert parse_json_object('```json\n{"answer": "ok"}\n```') == {"answer": "ok"}
     assert parse_json_object('Here is the JSON: {"answer": "ok"}') == {"answer": "ok"}
@@ -379,6 +458,58 @@ def test_final_answer_normalization_accepts_nullable_and_scalar_fields():
     assert answer.caveats == ["这是简化解释"]
     assert answer.source_quality == []
     assert answer.findings[0].artifact_ids == []
+
+
+@pytest.mark.parametrize("model_status", ["inferred", "self_known", "VERIFIED", "unknown"])
+def test_final_answer_normalizes_non_contract_support_status(model_status):
+    answer = FinalAnswer.model_validate(
+        normalize_final_answer_payload(
+            {
+                "summary": "我是 AI，没有人类意义上的年龄。",
+                "claims": [
+                    {
+                        "id": "identity",
+                        "text": "我是 AI",
+                        "evidence_refs": [],
+                        "material": True,
+                        "support_status": model_status,
+                    }
+                ],
+            }
+        )
+    )
+
+    assert answer.claims[0].support_status == "unverified"
+
+
+async def test_standard_combined_answer_accepts_non_contract_support_status_once():
+    client = build_model_client(Settings(model_provider="openai", model_api_key="secret"))
+    client._chat_json = AsyncMock(
+        return_value={
+            "reasoning_summary": "这是稳定的身份信息。",
+            "summary": "我是 AI，没有人类意义上的年龄。",
+            "claims": [
+                {
+                    "id": "identity",
+                    "text": "我是 AI",
+                    "evidence_refs": [],
+                    "material": True,
+                    "support_status": "self_known",
+                }
+            ],
+            "decision_type": "finalize",
+        }
+    )
+
+    decision, answer = await client.decide_with_answer(
+        "你多大了",
+        {"answer_mode": "standard", "memory_reads": []},
+    )
+
+    assert decision.decision_type == "finalize"
+    assert answer is not None
+    assert answer.claims[0].support_status == "unverified"
+    client._chat_json.assert_awaited_once()
 
 
 @pytest.mark.parametrize(
@@ -554,3 +685,24 @@ async def test_standard_combined_answer_prompt_streams_reasoning_before_summary(
     assert "without hidden chain-of-thought" in system_prompt
     assert decision.decision_type == "finalize"
     assert answer is not None and answer.summary == "完成"
+
+
+async def test_trusted_combined_answer_accepts_flat_streamed_final_answer():
+    client = build_model_client(Settings(model_provider="openai", model_api_key="secret"))
+    client._chat_json = AsyncMock(
+        return_value={
+            "reasoning_summary": "直接完成创作任务。",
+            "summary": "这是已经流式展示的完整故事。",
+            "decision_type": "finalize",
+        }
+    )
+
+    decision, answer = await client.decide_with_answer(
+        "写一个故事",
+        {"answer_mode": "trusted", "memory_reads": []},
+    )
+
+    assert decision.decision_type == "finalize"
+    assert answer is not None
+    assert answer.summary == "这是已经流式展示的完整故事。"
+    client._chat_json.assert_awaited_once()

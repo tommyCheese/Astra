@@ -513,7 +513,15 @@ export type ConversationSummary = {
   has_active_share: boolean;
 };
 
-export type ConversationView = ConversationSummary & { runs: RunView[] };
+export type CommandMessageView = {
+  id: string;
+  command: string;
+  content: string;
+  arguments: string;
+  after_run_count: number;
+  created_at: string;
+};
+export type ConversationView = ConversationSummary & { runs: RunView[]; command_messages?: CommandMessageView[] };
 export type ConversationShare = { url: string; created_at: string; updated_at: string };
 export type ConversationShareSummary = ConversationShare & { conversation_id: string; title: string; message_count: number };
 type SharedProcessItem = { kind: 'reasoning' | 'tool' | 'reflection' | 'verification'; title: string; detail: string; status: 'completed' | 'failed' | 'cancelled' };

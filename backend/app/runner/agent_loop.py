@@ -1008,6 +1008,7 @@ class AgentLoop:
             max_files=self.settings.task_workspace_max_files,
             max_bytes=self.settings.task_workspace_max_bytes,
             max_file_bytes=self.settings.task_workspace_max_file_bytes,
+            artifact_store_path=self.settings.artifact_store_path,
         )
         # Most standard answers never touch the workspace. Preparing it eagerly
         # adds a database commit and filesystem work before the first model token.
@@ -1619,6 +1620,18 @@ class AgentLoop:
                     await repo.session.commit()
 
             forced_action = approved_call is not None and approved_turn is not None
+            streamed_answer_state: dict[str, Any] = {"parts": [], "completed": False}
+
+            async def on_attempt_answer_delta(
+                delta: str, *, state: dict[str, Any] = streamed_answer_state
+            ) -> None:
+                if delta == "\1":
+                    state["completed"] = True
+                elif delta and delta != "\0":
+                    state["parts"].append(delta)
+                if on_answer_delta is not None:
+                    await on_answer_delta(delta)
+
             try:
                 if forced_action:
                     decision = AgentDecision.model_validate(approved_turn.decision).model_copy(
@@ -1651,45 +1664,108 @@ class AgentLoop:
                         # A node-level answer is provisional. Only stream after the
                         # canonical plan has no active node left, otherwise a model
                         # could expose an intermediate node result as the task answer.
-                        on_delta=on_answer_delta
+                        on_delta=on_attempt_answer_delta
                         if canonical_plan is None or active_node is None
                         else None,
                         on_reasoning_delta=on_reasoning_delta,
                     )
+                    streamed_answer = "".join(streamed_answer_state["parts"]).strip()
+                    if (
+                        decision.decision_type == "finalize"
+                        and candidate_answer is None
+                        and streamed_answer
+                    ):
+                        logger.warning(
+                            "agent.decision.streamed_answer_adopted run_id=%s turn=%s mode=%s",
+                            run_id,
+                            turn_index,
+                            profile.answer_mode.value,
+                        )
+                        candidate_answer = FinalAnswer(
+                            summary=streamed_answer,
+                            verification_notes=[
+                                "已采用本轮流式正文；模型未提供独立的结构化答案对象。"
+                            ],
+                        )
+                        await repo.add_event(
+                            run_id,
+                            "answer.structure_adopted",
+                            {
+                                "turn_index": turn_index,
+                                "answer_mode": profile.answer_mode.value,
+                            },
+                        )
             except ModelOutputError as exc:
-                logger.exception("agent.decision.invalid run_id=%s turn=%s", run_id, turn_index)
-                if on_answer_delta:
-                    await on_answer_delta("\0")
-                decision = None
-                observation = AgentObservation(
-                    kind="model_error",
-                    status="failed",
-                    summary="模型决策输出无法解析。",
-                    error={"category": "model_output_error", "message": str(exc)},
-                )
-                observations.append(observation.model_dump())
-                reflection = await maybe_reflect(
-                    "model_output_failed",
-                    {"last_observation": observation.model_dump(), "retry_count": 0},
-                )
-                turn = await repo.create_agent_turn(
-                    run_id,
-                    turn_index,
-                    "reflect" if reflection else "model_error",
-                    reflection.summary if reflection else observation.summary,
-                    decision={"decision_type": "reflect" if reflection else "model_error"},
-                    memory_reads=context["memory_reads"],
-                    plan_node_id=active_node.id if active_node is not None else None,
-                    node_execution_id=active_execution_id,
-                )
-                await repo.update_agent_turn(
-                    turn.id,
-                    status="completed",
-                    observation=observation.model_dump(),
-                    reflection=reflection.model_dump() if reflection else None,
-                )
-                await repo.session.commit()
-                continue
+                streamed_answer = "".join(streamed_answer_state["parts"]).strip()
+                if streamed_answer:
+                    # The user has already received this answer through SSE. Retrying here
+                    # would spend another model call and replace visible content. Preserve
+                    # the generated summary in both quick and trusted final-answer phases;
+                    # trusted mode will still run its ordinary verification gates below.
+                    logger.warning(
+                        "agent.decision.answer_salvaged run_id=%s turn=%s mode=%s cause=%s",
+                        run_id,
+                        turn_index,
+                        profile.answer_mode.value,
+                        str(exc),
+                    )
+                    if not streamed_answer_state["completed"] and on_answer_delta is not None:
+                        await on_answer_delta("\1")
+                    await repo.add_event(
+                        run_id,
+                        "answer.schema_degraded",
+                        {
+                            "turn_index": turn_index,
+                            "answer_mode": profile.answer_mode.value,
+                            "reason": str(exc),
+                        },
+                    )
+                    decision = AgentDecision(
+                        decision_type="finalize",
+                        reasoning_summary=reasoning_summary
+                        or "已保留完成生成的回答；辅助结构未通过校验。",
+                    )
+                    candidate_answer = FinalAnswer(
+                        summary=streamed_answer,
+                        verification_notes=["辅助结构未通过模型输出协议校验。"],
+                    )
+                    await repo.session.commit()
+                else:
+                    logger.exception(
+                        "agent.decision.invalid run_id=%s turn=%s", run_id, turn_index
+                    )
+                    if on_answer_delta:
+                        await on_answer_delta("\0")
+                    decision = None
+                    observation = AgentObservation(
+                        kind="model_error",
+                        status="failed",
+                        summary="模型决策输出无法解析。",
+                        error={"category": "model_output_error", "message": str(exc)},
+                    )
+                    observations.append(observation.model_dump())
+                    reflection = await maybe_reflect(
+                        "model_output_failed",
+                        {"last_observation": observation.model_dump(), "retry_count": 0},
+                    )
+                    turn = await repo.create_agent_turn(
+                        run_id,
+                        turn_index,
+                        "reflect" if reflection else "model_error",
+                        reflection.summary if reflection else observation.summary,
+                        decision={"decision_type": "reflect" if reflection else "model_error"},
+                        memory_reads=context["memory_reads"],
+                        plan_node_id=active_node.id if active_node is not None else None,
+                        node_execution_id=active_execution_id,
+                    )
+                    await repo.update_agent_turn(
+                        turn.id,
+                        status="completed",
+                        observation=observation.model_dump(),
+                        reflection=reflection.model_dump() if reflection else None,
+                    )
+                    await repo.session.commit()
+                    continue
 
             # A standard answer may stream while the model is still generating.
             # Permission identities and the immutable catalog are needed before
@@ -2130,8 +2206,10 @@ class AgentLoop:
                 terminal_override = (
                     "waiting_user" if decision.decision_type == "ask_user" else "blocked"
                 )
-                terminal_summary = decision.reasoning_summary
                 if terminal_override == "waiting_user":
+                    terminal_summary = (decision.expected_observation or "").strip()
+                    if not terminal_summary:
+                        terminal_summary = "请告诉我你希望我完成的具体任务或问题。"
                     current_run = await repo.require_run_core(run_id)
                     await repo.set_waiting_state(
                         run_id,
@@ -2139,9 +2217,11 @@ class AgentLoop:
                             "paused_node": "select_action",
                             "state_version": current_run.state_version,
                             "plan_version": (current_run.plan_graph or {}).get("version", 1),
-                            "request": decision.expected_observation or decision.reasoning_summary,
+                            "request": terminal_summary,
                         },
                     )
+                else:
+                    terminal_summary = decision.reasoning_summary
                 break
 
             if decision.decision_type == "replan":

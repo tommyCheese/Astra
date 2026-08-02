@@ -10,12 +10,10 @@ from app.core.config import Settings, get_settings
 from app.core.errors import ResourceError, StateError, ValidationError
 from app.db.models import (
     ArtifactRecord,
-    RunRecord,
     ScheduledJobRunRecord,
-    WorkspaceChangeRecord,
-    WorkspaceFileRecord,
 )
 from app.db.session import get_session
+from app.deliverables import DeliverableCatalog
 from app.repositories.conversations import ConversationRepository
 from app.repositories.schedules import (
     ScheduleNotFoundError,
@@ -40,7 +38,6 @@ from app.schemas.schedules import (
 )
 
 router = APIRouter(prefix="/api", tags=["scheduled-tasks"])
-
 
 def _translate_schedule_error(exc: Exception) -> Exception:
     if isinstance(exc, ScheduleNotFoundError):
@@ -227,163 +224,14 @@ async def list_schedule_deliverables(
     except Exception as exc:
         _raise_schedule_error(exc)
 
-    schedule_runs = list(
-        (
-            await session.scalars(
-                select(ScheduledJobRunRecord)
-                .where(
-                    ScheduledJobRunRecord.job_id == job_id,
-                    ScheduledJobRunRecord.run_id.is_not(None),
-                )
-                .order_by(ScheduledJobRunRecord.created_at.desc())
-                .limit(limit)
-            )
-        ).all()
-    )
-    run_ids = [item.run_id for item in schedule_runs if item.run_id]
-    if not run_ids:
-        return []
-
-    runs = {
-        item.id: item
-        for item in (
-            await session.scalars(select(RunRecord).where(RunRecord.id.in_(run_ids)))
-        ).all()
-    }
-    changes = list(
-        (
-            await session.scalars(
-                select(WorkspaceChangeRecord)
-                .where(
-                    WorkspaceChangeRecord.run_id.in_(run_ids),
-                    WorkspaceChangeRecord.deliverable_candidate.is_(True),
-                    WorkspaceChangeRecord.change_kind != "deleted",
-                )
-                .order_by(WorkspaceChangeRecord.created_at.desc())
-            )
-        ).all()
-    )
-    workspace_ids = {item.workspace_id for item in changes}
-    files = list(
-        (
-            await session.scalars(
-                select(WorkspaceFileRecord).where(
-                    WorkspaceFileRecord.workspace_id.in_(workspace_ids),
-                    WorkspaceFileRecord.status == "present",
-                    WorkspaceFileRecord.deliverable_candidate.is_(True),
-                    WorkspaceFileRecord.security_status == "verified",
-                )
-            )
-        ).all()
-    ) if workspace_ids else []
-    files_by_location = {
-        (item.workspace_id, item.relative_path): item for item in files
-    }
-    artifacts = list(
-        (
-            await session.scalars(
-                select(ArtifactRecord)
-                .where(
-                    ArtifactRecord.run_id.in_(run_ids),
-                    ArtifactRecord.storage_key.is_not(None),
-                    ArtifactRecord.security_status == "verified",
-                )
-                .order_by(ArtifactRecord.created_at.desc())
-            )
-        ).all()
-    )
-    artifacts_by_run: dict[str, list[ArtifactRecord]] = {}
-    for artifact in artifacts:
-        artifacts_by_run.setdefault(artifact.run_id, []).append(artifact)
-    changes_by_run: dict[str, list[WorkspaceChangeRecord]] = {}
-    for change in changes:
-        changes_by_run.setdefault(change.run_id, []).append(change)
-
-    deliverables: list[ScheduledDeliverableView] = []
-    for schedule_run in schedule_runs:
-        if schedule_run.run_id is None:
-            continue
-        run = runs.get(schedule_run.run_id)
-        if run is None:
-            continue
-        raw_result = run.result if isinstance(run.result, dict) else {}
-        result_summary = str(raw_result.get("summary") or run.summary or "").strip()
-        if result_summary:
-            deliverables.append(
-                ScheduledDeliverableView(
-                    id=f"result:{schedule_run.id}",
-                    job_id=job_id,
-                    schedule_run_id=schedule_run.id,
-                    run_id=run.id,
-                    task_id=run.task_id,
-                    kind="result",
-                    title="执行结果",
-                    summary=result_summary,
-                    metadata={"run_status": run.status},
-                    created_at=run.completed_at or run.updated_at,
-                )
-            )
-
-        emitted_paths: set[str] = set()
-        for change in changes_by_run.get(run.id, []):
-            if change.relative_path in emitted_paths:
-                continue
-            file = files_by_location.get((change.workspace_id, change.relative_path))
-            if file is None:
-                continue
-            emitted_paths.add(change.relative_path)
-            deliverables.append(
-                ScheduledDeliverableView(
-                    id=f"workspace-file:{file.id}:{schedule_run.id}",
-                    job_id=job_id,
-                    schedule_run_id=schedule_run.id,
-                    run_id=run.id,
-                    task_id=run.task_id,
-                    kind="file",
-                    title=Path(file.relative_path).name,
-                    summary=file.relative_path,
-                    mime_type=file.mime_type,
-                    size_bytes=file.size_bytes,
-                    content_url=(
-                        f"/api/tasks/{run.task_id}/workspace/files/{file.id}/content"
-                    ),
-                    metadata={"source": "workspace", "path": file.relative_path},
-                    created_at=change.created_at,
-                )
-            )
-        for artifact in artifacts_by_run.get(run.id, []):
-            if artifact.path and artifact.path in emitted_paths:
-                continue
-            title = str(
-                artifact.metadata_.get("filename")
-                or (Path(artifact.path).name if artifact.path else artifact.type)
-            )
-            deliverables.append(
-                ScheduledDeliverableView(
-                    id=f"artifact:{artifact.id}",
-                    job_id=job_id,
-                    schedule_run_id=schedule_run.id,
-                    run_id=run.id,
-                    task_id=run.task_id,
-                    kind="file",
-                    title=title,
-                    summary=artifact.path,
-                    mime_type=artifact.mime_type,
-                    size_bytes=artifact.size_bytes,
-                    content_url=(
-                        f"/api/schedules/{job_id}/deliverables/{artifact.id}/content"
-                    ),
-                    metadata={"source": "artifact", "artifact_type": artifact.type},
-                    created_at=artifact.created_at,
-                )
-            )
-    return deliverables[:limit]
+    return await DeliverableCatalog(session).list(job_id=job_id, limit=limit)
 
 
 @router.get("/schedules/{job_id}/deliverables/{artifact_id}/content")
 async def scheduled_deliverable_content(
     job_id: str,
     artifact_id: str,
+    inline: bool = False,
     session: AsyncSession = Depends(get_session),
     settings: Settings = Depends(get_settings),
 ):
@@ -411,6 +259,7 @@ async def scheduled_deliverable_content(
         path,
         media_type=artifact.mime_type,
         filename=str(artifact.metadata_.get("filename") or Path(artifact.path or path).name),
+        content_disposition_type="inline" if inline else "attachment",
     )
 
 

@@ -1,12 +1,13 @@
-import { ReactNode, useState } from 'react';
+import { ReactNode, useEffect, useState } from 'react';
 import { CloseButton } from './CloseButton';
 import { useI18n } from './i18n';
 
-type DocumentationTopic = 'memory' | 'answer-modes' | 'about';
+type DocumentationTopic = 'memory' | 'answer-modes' | 'runtime-settings' | 'about';
 
 const topics: Array<{ id: DocumentationTopic; label: string; description: string }> = [
   { id: 'memory', label: '记忆', description: '生产、召回、范围与整理' },
   { id: 'answer-modes', label: '快速模式与可信模式', description: '定义、差异与选择建议' },
+  { id: 'runtime-settings', label: '模型与运行设置', description: '思考、计划、反思、批准与上下文' },
   { id: 'about', label: '关于 Astra', description: '创建动机、使命与版权信息' },
 ];
 
@@ -30,6 +31,17 @@ const answerModeSections = [
   ['answer-mode-faq', '常见问题'],
 ] as const;
 
+const runtimeSettingsSections = [
+  ['runtime-settings-overview', '这些设置分别控制什么'],
+  ['runtime-settings-model-thinking', '模型思考'],
+  ['runtime-settings-plan-execution', '计划执行'],
+  ['runtime-settings-reasoning', '推理资源与工具调用上限'],
+  ['runtime-settings-reflection', '反思循环与触发方式'],
+  ['runtime-settings-approvals', '请求批准与自动批准'],
+  ['runtime-settings-context', '上下文容量如何计算'],
+  ['runtime-settings-effective-scope', '设置何时生效'],
+] as const;
+
 const aboutSections = [
   ['about-origin', '为什么创建 Astra'],
   ['about-mission', '我们的使命'],
@@ -39,14 +51,48 @@ const aboutSections = [
   ['about-accuracy', '信息与版本'],
 ] as const;
 
+const topicBySection = new Map<string, DocumentationTopic>([
+  ...memorySections.map(([id]) => [id, 'memory'] as const),
+  ...answerModeSections.map(([id]) => [id, 'answer-modes'] as const),
+  ...runtimeSettingsSections.map(([id]) => [id, 'runtime-settings'] as const),
+  ...aboutSections.map(([id]) => [id, 'about'] as const),
+]);
+
+function topicFromHash(): DocumentationTopic | null {
+  if (typeof window === 'undefined') return null;
+  return topicBySection.get(window.location.hash.replace(/^#/, '')) ?? null;
+}
+
 export function DocumentationCenter({ onClose }: { onClose: () => void }) {
   const { t } = useI18n();
-  const [topic, setTopic] = useState<DocumentationTopic>('memory');
+  const [topic, setTopic] = useState<DocumentationTopic>(() => topicFromHash() ?? 'memory');
   const sections = topic === 'memory'
     ? memorySections
     : topic === 'answer-modes'
       ? answerModeSections
-      : aboutSections;
+      : topic === 'runtime-settings'
+        ? runtimeSettingsSections
+        : aboutSections;
+
+  useEffect(() => {
+    const syncTopicToHash = () => {
+      const linkedTopic = topicFromHash();
+      if (linkedTopic) setTopic(linkedTopic);
+    };
+    syncTopicToHash();
+    window.addEventListener('hashchange', syncTopicToHash);
+    return () => window.removeEventListener('hashchange', syncTopicToHash);
+  }, []);
+
+  useEffect(() => {
+    const anchor = window.location.hash.replace(/^#/, '');
+    if (!anchor || topicBySection.get(anchor) !== topic) return;
+    const frame = window.requestAnimationFrame(() => {
+      const target = document.getElementById(anchor);
+      if (typeof target?.scrollIntoView === 'function') target.scrollIntoView({ block: 'start' });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [topic]);
 
   return <section className="documentation-center" aria-labelledby="documentation-center-title">
     <header className="documentation-header">
@@ -84,6 +130,7 @@ export function DocumentationCenter({ onClose }: { onClose: () => void }) {
           <DocumentationToc sections={sections} />
           {topic === 'memory' && <MemoryArticle />}
           {topic === 'answer-modes' && <AnswerModesArticle />}
+          {topic === 'runtime-settings' && <RuntimeSettingsArticle />}
           {topic === 'about' && <AboutArticle />}
         </div>
       </div>
@@ -285,6 +332,120 @@ function AnswerModesArticle() {
         <details><summary>{t('切换模式会修改当前正在运行的任务吗？')}</summary><p>{t('不会。回答模式在 Run 创建时固化；开关影响之后创建的 Run，当前运行继续使用原模式。')}</p></details>
         <details><summary>{t('模型思考深度等于回答模式吗？')}</summary><p>{t('不等于。思考深度是模型级设置，回答模式决定规划、编排和验证生命周期；调整思考深度不会自动启用或关闭可信模式。')}</p></details>
       </div>
+    </DocumentSection>
+  </article>;
+}
+
+function RuntimeSettingsArticle() {
+  const { t } = useI18n();
+  return <article className="documentation-article" aria-labelledby="runtime-settings-document-title">
+    <div className="documentation-hero">
+      <span className="documentation-kicker">Runtime settings</span>
+      <h2 id="runtime-settings-document-title">{t('模型与运行设置')}</h2>
+      <p>{t('聊天区的模型浮窗同时包含模型本身的思考参数和可信模式的运行策略。它们作用于不同层级：模型思考控制一次模型调用如何推理；计划、工具预算与反思控制 Astra 如何组织整个 Run；批准方式控制工具影响是否需要人工确认。')}</p>
+      <div className="documentation-summary-grid">
+        <div><span>01</span><strong>{t('模型调用层')}</strong><small>{t('模型思考开关与深度，由所选模型能力决定')}</small></div>
+        <div><span>02</span><strong>{t('Run 策略层')}</strong><small>{t('计划执行、推理资源、工具上限和反思触发')}</small></div>
+        <div><span>03</span><strong>{t('安全与容量层')}</strong><small>{t('工具批准边界和本轮可用上下文容量')}</small></div>
+      </div>
+    </div>
+
+    <DocumentSection id="runtime-settings-overview" eyebrow="Boundaries" title="这些设置分别控制什么">
+      <div className="documentation-table-wrap"><table>
+        <thead><tr><th>{t('设置')}</th><th>{t('直接控制')}</th><th>{t('不直接控制')}</th></tr></thead>
+        <tbody>
+          <tr><td>{t('模型思考')}</td><td>{t('当前模型调用的思考开关和深度')}</td><td>{t('是否生成计划、工具次数和批准规则')}</td></tr>
+          <tr><td>{t('计划执行')}</td><td>{t('可信计划生成后先等待确认还是立即开始')}</td><td>{t('后续工具是否免于批准')}</td></tr>
+          <tr><td>{t('推理强度')}</td><td>{t('Run 的工具预算档位和可用反思深度')}</td><td>{t('模型供应商提供的思考深度')}</td></tr>
+          <tr><td>{t('反思循环')}</td><td>{t('何时额外检查结果并修订下一步')}</td><td>{t('基础安全检查和完成检查')}</td></tr>
+          <tr><td>{t('批准方式')}</td><td>{t('可批准工具影响是否弹出人工确认')}</td><td>{t('平台禁止项、沙箱和权限边界')}</td></tr>
+          <tr><td>{t('上下文容量')}</td><td>{t('本轮输入、预留回复和剩余输入的估算')}</td><td>{t('账户额度、计费 Token 和未来轮次用量')}</td></tr>
+        </tbody>
+      </table></div>
+    </DocumentSection>
+
+    <DocumentSection id="runtime-settings-model-thinking" eyebrow="Model call" title="模型思考">
+      <p>{t('模型思考是所选模型公开的调用参数。Astra 先读取该模型是否支持开关、允许哪些深度以及默认值，再只显示可用选项。')}</p>
+      <div className="documentation-boundary-list">
+        <Boundary term={t('开启／关闭')} title="是否请求扩展思考" description="关闭时使用模型允许的非扩展思考路径；若供应商规定始终开启，界面会显示开启但不允许关闭。" />
+        <Boundary term={t('最低／低／中／高／极高')} title="模型思考深度" description="深度只在供应商声明支持时出现；档位含义和实际 Token 消耗由具体模型决定，不等同于 Astra 的快速、均衡、深入。" />
+        <Boundary term={t('不可调整')} title="能力不可用" description="模型不支持可配置参数，或能力读取暂时失败时，Astra 保留当前安全默认值并禁用调整；读取失败可以重试。" />
+      </div>
+      <aside className="documentation-callout neutral"><strong>{t('与推理强度的区别')}</strong><p>{t('模型思考深度作用于单次模型调用；Astra 推理强度作用于整个 Run 的工具调用预算和反思资源。两者可以独立设置。')}</p></aside>
+    </DocumentSection>
+
+    <DocumentSection id="runtime-settings-plan-execution" eyebrow="Trusted plan" title="计划执行">
+      <div className="documentation-mode-grid">
+        <div className="active"><span>{t('确认后执行')}</span><strong>{t('先核对计划版本')}</strong><p>{t('先展示完整计划，由你确认这个版本后开始执行。确认只启动当前计划版本，不批准计划中可能出现的后续工具影响。')}</p></div>
+        <div><span>{t('直接执行')}</span><strong>{t('计划生成后立即开始')}</strong><p>{t('完整计划通过结构校验后立即开始执行，不等待计划确认；后续工具仍分别经过权限、效果分析和批准规则。')}</p></div>
+      </div>
+      <aside className="documentation-callout"><strong>{t('计划确认不是工具批准')}</strong><p>{t('计划确认决定“是否开始执行这个计划版本”；工具批准决定“某个具体操作是否可以产生对应影响”。开启直接执行不会自动启用自动批准。')}</p></aside>
+    </DocumentSection>
+
+    <DocumentSection id="runtime-settings-reasoning" eyebrow="Run budget" title="推理资源与工具调用上限">
+      <div className="documentation-table-wrap"><table>
+        <thead><tr><th>{t('档位')}</th><th>{t('工具调用范围')}</th><th>{t('行为')}</th></tr></thead>
+        <tbody>
+          <tr><td>{t('快速')}</td><td>0–5</td><td>{t('简单任务更快；启用反思时提供轻量反思能力。')}</td></tr>
+          <tr><td>{t('均衡')}</td><td>6–15</td><td>{t('兼顾速度与检查深度；启用反思时提供基本反思能力。默认上限为 8 次。')}</td></tr>
+          <tr><td>{t('深入')}</td><td>{t('不设独立工具次数上限')}</td><td>{t('为复杂任务提供更充分的执行与反思空间，但仍受 Agent 轮次、安全策略、总预算和系统限制。')}</td></tr>
+        </tbody>
+      </table></div>
+      <ol className="documentation-checklist">
+        <li>{t('工具调用上限统计一次 Run 发起的外部工具调用；失败、超时和重试也会计入。')}</li>
+        <li>{t('把上限设为 0 表示该 Run 不应发起外部工具调用，但模型回答和确定性安全检查仍可继续。')}</li>
+        <li>{t('切换快速或均衡档位时，超出新范围的旧值会重置到该档位默认值。')}</li>
+        <li>{t('深入档位没有单独的工具次数滑块，不代表无限 Token、无限时间或绕过权限。')}</li>
+      </ol>
+    </DocumentSection>
+
+    <DocumentSection id="runtime-settings-reflection" eyebrow="Reflection" title="反思循环与触发方式">
+      <p>{t('反思允许 Agent 在预算内检查观察结果、失败或完成状态，并修订下一步策略。它是可选的额外推理，不替代确定性的权限检查、工具结果校验和完成门槛。')}</p>
+      <div className="documentation-boundary-list">
+        <Boundary term={t('关闭')} title="不调用额外反思" description="安全检查、工具结果校验和完成检查仍保留。" />
+        <Boundary term={t('失败时')} title="只对明确失败反思" description="仅在工具、模型输出或完成检查失败时触发，额外开销最低。" />
+        <Boundary term={t('按需')} title="对风险信号自适应反思" description="在失败、低置信度、证据冲突或无进展时触发，是默认的平衡选择。" />
+        <Boundary term={t('每轮')} title="每轮结束都反思" description="检查最频繁，更审慎但延迟和模型用量通常更高。" />
+      </div>
+    </DocumentSection>
+
+    <DocumentSection id="runtime-settings-approvals" eyebrow="Safety" title="请求批准与自动批准">
+      <div className="documentation-mode-grid">
+        <div className="active"><span>{t('请求批准')}</span><strong>{t('按具体影响确认')}</strong><p>{t('无副作用行为可以自动执行；写文件、删除、外部修改、凭据使用等操作按运行时识别出的影响和授权范围决定是否询问。')}</p></div>
+        <div><span>{t('自动批准')}</span><strong>{t('跳过可批准行为的交互确认')}</strong><p>{t('适合你信任当前任务和运行环境的情况。它只跳过原本允许用户批准的确认，不会把禁止操作变成允许。')}</p></div>
+      </div>
+      <ol className="documentation-checklist">
+        <li>{t('平台禁止项、权限边界、预算、沙箱、凭据范围和工具可用性始终生效。')}</li>
+        <li>{t('计划确认与工具批准相互独立：确认计划不会批准工具，自动批准也不会替你确认计划版本。')}</li>
+        <li>{t('请求批准模式中的持续授权只在显示的 Run 或 Task 范围内有效，并可在任务安全中心撤销。')}</li>
+        <li>{t('无法可靠识别影响的操作会按更保守的规则处理。')}</li>
+      </ol>
+    </DocumentSection>
+
+    <DocumentSection id="runtime-settings-context" eyebrow="Context" title="上下文容量如何计算">
+      <p>{t('上下文看板是发送前估算，不是供应商账单。它把模型窗口拆成可用输入和回复预留，再把可用输入中的当前占用按来源展示。')}</p>
+      <div className="documentation-table-wrap"><table>
+        <thead><tr><th>{t('项目')}</th><th>{t('计入内容')}</th><th>{t('明确不计入')}</th></tr></thead>
+        <tbody>
+          <tr><td>{t('系统指令与工具定义预留')}</td><td>{t('系统指令、Agent 执行与安全约束、可用工具接口的固定额度')}</td><td>{t('对话、草稿和回复预留')}</td></tr>
+          <tr><td>{t('较早轮次的压缩摘要')}</td><td>{t('整理后生成的一段较早用户目标和最终回答摘要')}</td><td>{t('已折叠原始轮次的重复占用')}</td></tr>
+          <tr><td>{t('未折叠轮次')}</td><td>{t('每个可见运行的用户目标与最终摘要')}</td><td>{t('工具日志、思考过程和中间事件')}</td></tr>
+          <tr><td>{t('当前草稿')}</td><td>{t('输入框文字和一条消息的固定开销')}</td><td>{t('尚未接入的附件内容')}</td></tr>
+          <tr><td>{t('已选 Skill')}</td><td>{t('名称和说明的界面估算，从系统预留中拆出展示')}</td><td>{t('完整 SKILL.md 大小或额外叠加用量')}</td></tr>
+          <tr><td>{t('回复预留')}</td><td>{t('Astra 回复预留上限与模型单次最大输出上限的较小值')}</td><td>{t('已使用输入')}</td></tr>
+        </tbody>
+      </table></div>
+      <aside className="documentation-callout emphasis"><strong>{t('计算公式')}</strong><p>{t('可用输入 = 模型窗口 − 回复预留；已使用输入 = 系统预留 + 压缩摘要 + 未折叠轮次 + 当前草稿；剩余输入 = 可用输入 − 已使用输入。')}</p></aside>
+      <p className="documentation-footnote">{t('估算器把中文、日文、韩文字符按 1 Token 计算，其他字符按每 3.2 个字符约 1 Token 计算，每条消息另加 6 Token。供应商实际分词和计费结果可能不同。')}</p>
+    </DocumentSection>
+
+    <DocumentSection id="runtime-settings-effective-scope" eyebrow="Lifecycle" title="设置何时生效">
+      <ol className="documentation-timeline">
+        <TimelineStep number="1" title="选择模型" description="模型选择和模型思考参数用于之后发起的模型调用；正在执行的调用不会被中途改写。" />
+        <TimelineStep number="2" title="调整可信策略" description="计划执行、推理强度、工具上限和反思设置用于之后创建或继续的 Run；已冻结的计划版本和已完成事件不会被追溯修改。" />
+        <TimelineStep number="3" title="选择批准方式" description="批准方式应用于之后到达权限门的工具操作；已经等待用户决定的批准请求仍需按当前卡片处理。" />
+        <TimelineStep number="4" title="查看上下文" description="看板随当前对话、草稿、所选 Skill 和模型能力更新，显示的是下一次发送前的估算。" />
+      </ol>
     </DocumentSection>
   </article>;
 }

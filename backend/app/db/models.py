@@ -905,6 +905,48 @@ class AgentExecutionRecord(Base):
     run: Mapped[RunRecord] = relationship(back_populates="agent_executions")
 
 
+class ContextCompactionAttemptRecord(Base):
+    __tablename__ = "context_compaction_attempts"
+    __table_args__ = (
+        UniqueConstraint(
+            "owner_type",
+            "owner_id",
+            "window_number",
+            "input_digest",
+            "policy_version",
+            name="uq_context_compaction_idempotency",
+        ),
+        Index("ix_context_compaction_owner_window", "owner_type", "owner_id", "window_number"),
+        Index("ix_context_compaction_status_created", "status", "created_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_str)
+    owner_type: Mapped[str] = mapped_column(String(40))
+    owner_id: Mapped[str] = mapped_column(String(160))
+    window_number: Mapped[int] = mapped_column(Integer, default=0)
+    input_digest: Mapped[str] = mapped_column(String(160))
+    policy_version: Mapped[str] = mapped_column(String(80))
+    checkpoint_schema_version: Mapped[int] = mapped_column(Integer, default=2)
+    implementation: Mapped[str] = mapped_column(String(40))
+    generation_provider: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    generation_model: Mapped[str | None] = mapped_column(String(240), nullable=True)
+    status: Mapped[str] = mapped_column(String(40), default="started")
+    state_version: Mapped[int] = mapped_column(Integer, default=0)
+    cancellation_epoch: Mapped[int] = mapped_column(Integer, default=0)
+    source_item_ids: Mapped[list] = mapped_column(JsonType, default=list)
+    retained_tail_ids: Mapped[list] = mapped_column(JsonType, default=list)
+    token_before: Mapped[int] = mapped_column(Integer, default=0)
+    token_after: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    cost_usd: Mapped[float | None] = mapped_column(Float, nullable=True)
+    failure_stage: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    failure_code: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    checkpoint: Mapped[dict | None] = mapped_column(JsonType, nullable=True)
+    usage: Mapped[dict] = mapped_column(JsonType, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
 class AgentBudgetReservationRecord(Base):
     __tablename__ = "agent_budget_reservations"
     __table_args__ = (

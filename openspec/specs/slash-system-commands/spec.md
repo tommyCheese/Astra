@@ -24,13 +24,30 @@ The system MUST resolve command execution through the server registry and MUST r
 - **THEN** the request fails with a classified command-not-found error
 - **THEN** no context or conversation state changes
 
-### Requirement: System commands do not become messages
-The client and server SHALL execute system commands as host operations and MUST NOT add the slash text to conversation messages, create a Run, invoke a model, or bind a Skill.
+### Requirement: System commands are visible without becoming model input
+The client and server SHALL execute host system commands without creating a Run, invoking a model, or binding a Skill, and SHALL preserve the executed slash invocation as a command-styled user timeline entry that is excluded from model context.
 
 #### Scenario: Execute compact from the Composer
 - **WHEN** the user selects or submits `/compact`
 - **THEN** the slash query is consumed by command execution
-- **THEN** no user message or model Run is created
+- **THEN** a command-styled user timeline entry containing the `/compact` prefix is created
+- **THEN** no model-visible user message or model Run is created
+
+#### Scenario: Highlight a command prefix
+- **WHEN** an executed command is shown in a user timeline entry
+- **THEN** the slash command prefix is visually distinguished from its arguments
+
+### Requirement: Commands support their declared argument mode
+The command catalog SHALL distinguish commands with no arguments, optional arguments, and required arguments. `/compact` SHALL accept an optional direction string and expose a useful default direction, while `/clear` SHALL execute with no user-message body.
+
+#### Scenario: Compact with the default direction
+- **WHEN** the user selects `/compact` without writing a direction
+- **THEN** the Composer stages the catalog-provided default direction
+- **THEN** execution records the full command invocation in the timeline
+
+#### Scenario: Clear without a message body
+- **WHEN** the user selects or submits `/clear`
+- **THEN** the context is cleared immediately without requiring additional user text
 
 ### Requirement: System commands coexist with Skill slash options
 The Composer SHALL use one command-boundary detector and one accessible option list for registered system commands and eligible Skills, while preserving their distinct execution semantics.
@@ -61,4 +78,3 @@ The Composer SHALL support pointer and keyboard command selection, SHALL prevent
 - **WHEN** a system command fails
 - **THEN** the UI presents the classified error
 - **THEN** the command text remains available for retry
-

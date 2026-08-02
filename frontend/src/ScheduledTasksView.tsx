@@ -84,6 +84,46 @@ function displayFileSize(value: number | null) {
   return `${(value / 1024 / 1024).toFixed(1)} MB`;
 }
 
+function inlineContentUrl(value: string) {
+  return `${value}${value.includes('?') ? '&' : '?'}inline=true`;
+}
+
+function deliverableIcon(deliverable: ScheduledDeliverable) {
+  if (deliverable.kind === 'result') return 'Aa';
+  if (deliverable.kind === 'data') return '{}';
+  if (deliverable.kind === 'receipt') return '✓';
+  return '↧';
+}
+
+function receiptDetails(metadata: Record<string, unknown>) {
+  return [metadata.status, metadata.target, metadata.object_id]
+    .filter((value): value is string => typeof value === 'string' && Boolean(value.trim()))
+    .join(' · ');
+}
+
+function ScheduledDeliverableCard({ deliverable, conversationTitle, onOpenConversation }: { deliverable: ScheduledDeliverable; conversationTitle: string; onOpenConversation: (id: string, title: string) => void }) {
+  const { t } = useI18n();
+  const mimeType = (deliverable.mime_type ?? '').split(';', 1)[0].toLowerCase();
+  const imagePreview = deliverable.content_url && mimeType.startsWith('image/');
+  const htmlPreview = deliverable.content_url && mimeType === 'text/html';
+  const details = deliverable.kind === 'receipt' ? receiptDetails(deliverable.metadata) : '';
+  return <article className={`${deliverable.kind}${imagePreview || htmlPreview ? ' previewable' : ''}`}>
+    <i aria-hidden="true">{deliverableIcon(deliverable)}</i>
+    <div><strong>{deliverable.title}</strong>{deliverable.summary && <p>{deliverable.summary}</p>}{details && <small>{details}</small>}<small>{displayTime(deliverable.created_at)}{['file', 'data'].includes(deliverable.kind) ? ` · ${displayFileSize(deliverable.size_bytes)}` : ''}</small></div>
+    {deliverable.kind === 'result'
+      ? <button type="button" onClick={() => onOpenConversation(deliverable.task_id, conversationTitle)}>{t('查看结果')}</button>
+      : deliverable.kind === 'receipt'
+        ? deliverable.external_url
+          ? <a href={deliverable.external_url} target="_blank" rel="noreferrer">{t('打开目标')}</a>
+          : <button type="button" onClick={() => onOpenConversation(deliverable.task_id, conversationTitle)}>{t('查看回执')}</button>
+        : deliverable.content_url
+          ? <a href={deliverable.content_url} target="_blank" rel="noreferrer">{deliverable.kind === 'data' ? t('查看数据') : t('打开文件')}</a>
+          : null}
+    {imagePreview && <figure className="scheduled-deliverable-preview"><img src={inlineContentUrl(deliverable.content_url!)} alt={deliverable.title} /></figure>}
+    {htmlPreview && <div className="scheduled-deliverable-preview html"><iframe src={inlineContentUrl(deliverable.content_url!)} title={deliverable.title} sandbox="allow-scripts" referrerPolicy="no-referrer" /></div>}
+  </article>;
+}
+
 function statusLabel(status: string) {
   const labels: Record<string, string> = {
     claimed: '已排队', running: '运行中', completed: '已完成', failed: '失败', blocked: '已阻塞',
@@ -263,15 +303,9 @@ export function ScheduledTasksView({ onClose, onOpenConversation }: Props) {
             ? <HeartbeatEditor task={selected} conversations={conversations} busy={busy} onSave={(payload) => perform(() => updateHeartbeat(payload), 'Heartbeat 设置已保存。')} />
             : <ScheduleEditor task={selected} conversations={conversations} busy={busy} onSave={(payload) => perform(() => updateScheduledTask(selected.id, payload), '任务设置已保存。')} />}
           <section className="scheduled-deliverables">
-            <header><div><h3>{t('制品')}</h3><p>{t('每次执行的最终结果和生成文件都会保存在这里；没有文件时也会保留结果文本。')}</p></div><span>{deliverables.length}</span></header>
+            <header><div><h3>{t('制品')}</h3><p>{t('集中查看每次执行的结果、文件、结构化数据和外部操作回执。')}</p></div><span>{deliverables.length}</span></header>
             <div className="scheduled-deliverable-grid">
-              {deliverables.map((deliverable) => <article className={deliverable.kind} key={deliverable.id}>
-                <i aria-hidden="true">{deliverable.kind === 'file' ? '↧' : 'Aa'}</i>
-                <div><strong>{deliverable.title}</strong>{deliverable.summary && <p>{deliverable.summary}</p>}<small>{displayTime(deliverable.created_at)}{deliverable.kind === 'file' ? ` · ${displayFileSize(deliverable.size_bytes)}` : ''}</small></div>
-                {deliverable.kind === 'file' && deliverable.content_url
-                  ? <a href={deliverable.content_url} target="_blank" rel="noreferrer">{t('打开文件')}</a>
-                  : <button type="button" onClick={() => onOpenConversation(deliverable.task_id, conversationById.get(deliverable.task_id)?.title ?? t('结果对话'))}>{t('查看结果')}</button>}
-              </article>)}
+              {deliverables.map((deliverable) => <ScheduledDeliverableCard deliverable={deliverable} conversationTitle={conversationById.get(deliverable.task_id)?.title ?? t('结果对话')} onOpenConversation={onOpenConversation} key={deliverable.id} />)}
             </div>
             {!deliverables.length && <div className="scheduled-task-empty">{t('任务运行后，结果文本和生成文件会出现在这里。')}</div>}
           </section>

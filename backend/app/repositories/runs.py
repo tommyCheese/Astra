@@ -2309,6 +2309,8 @@ def run_to_view(run: RunRecord) -> dict[str, Any]:
 def run_to_initial_view(run: RunRecord) -> dict[str, Any]:
     """Build the optimistic active-Run view without touching unloaded relationships."""
     goal = str((run.model_policy or {}).get("conversation_goal") or "")
+    command = "/subagent" if (run.execution_profile or {}).get("subagent_mode") == "required" else ""
+    visible_goal = f"{command} {goal}" if command else goal
     trusted = (run.answer_mode or "trusted") == "trusted"
     return {
         "id": run.id,
@@ -2330,9 +2332,9 @@ def run_to_initial_view(run: RunRecord) -> dict[str, Any]:
             {
                 "id": f"{run.id}-user",
                 "role": "user",
-                "content": goal,
+                "content": visible_goal,
                 "status": "completed",
-                "metadata": {"task_id": run.task_id},
+                "metadata": {"task_id": run.task_id, **({"command": command} if command else {})},
             }
         ],
         "model_policy": _public_model_policy(run.model_policy),
@@ -2554,16 +2556,20 @@ def safe_agent_profile_manifest(snapshot: dict[str, Any]) -> dict[str, Any]:
 
 
 def build_chat_messages(run: RunRecord) -> list[dict[str, Any]]:
+    goal = str(run.model_policy.get("conversation_goal", run.task.description))
+    command = "/subagent" if (run.execution_profile or {}).get("subagent_mode") == "required" else ""
+    visible_goal = f"{command} {goal}" if command else goal
     messages: list[dict[str, Any]] = [
         {
             "id": f"{run.id}-user",
             "role": "user",
-            "content": run.model_policy.get("conversation_goal", run.task.description),
+            "content": visible_goal,
             "status": "completed",
-            "metadata": {"task_id": run.task_id},
+            "metadata": {"task_id": run.task_id, **({"command": command} if command else {})},
         }
     ]
-    for turn in sorted(run.turns, key=lambda item: item.turn_index):
+    timeline: list[tuple[Any, int, dict[str, Any]]] = []
+    for turn in run.turns:
         if turn.decision_type == "call_tool":
             content = turn.reasoning_summary
             role = "tool"
@@ -2573,26 +2579,60 @@ def build_chat_messages(run: RunRecord) -> list[dict[str, Any]]:
         elif turn.decision_type == "finalize":
             content = (run.result or {}).get("summary") or turn.reasoning_summary
             role = "assistant"
+        elif turn.decision_type == "ask_user":
+            content = str((turn.decision or {}).get("expected_observation") or "").strip()
+            if not content:
+                content = "请告诉我你希望我完成的具体任务或问题。"
+            role = "assistant"
         else:
             content = turn.reasoning_summary
             role = "assistant"
-        messages.append(
-            {
-                "id": turn.id,
-                "role": role,
-                "content": content,
-                "status": turn.status,
-                "metadata": {
-                    "turn_index": turn.turn_index,
-                    "decision_type": turn.decision_type,
-                    "selected_tool": turn.selected_tool,
-                    "observation": turn.observation,
-                    "reflection": turn.reflection,
-                    "memory_reads": turn.memory_reads,
-                    "memory_writes": turn.memory_writes,
+        timeline.append(
+            (
+                turn.created_at,
+                0,
+                {
+                    "id": turn.id,
+                    "role": role,
+                    "content": content,
+                    "status": turn.status,
+                    "metadata": {
+                        "turn_index": turn.turn_index,
+                        "decision_type": turn.decision_type,
+                        "selected_tool": turn.selected_tool,
+                        "observation": turn.observation,
+                        "reflection": turn.reflection,
+                        "memory_reads": turn.memory_reads,
+                        "memory_writes": turn.memory_writes,
+                    },
                 },
-            }
+            )
         )
+    for event in run.events:
+        if event.type != "run.resumed":
+            continue
+        observation = (event.payload or {}).get("observation") or {}
+        content = observation.get("summary")
+        if (
+            observation.get("kind") != "user_response"
+            or not isinstance(content, str)
+            or not content.strip()
+        ):
+            continue
+        timeline.append(
+            (
+                event.created_at,
+                1,
+                {
+                    "id": f"{run.id}-resume-{event.id}",
+                    "role": "user",
+                    "content": content.strip(),
+                    "status": "completed",
+                    "metadata": {"event_id": event.id, "kind": "user_response"},
+                },
+            )
+        )
+    messages.extend(item[2] for item in sorted(timeline, key=lambda item: (item[0], item[1])))
     terminal_statuses = {"completed", "completed_with_warnings", "blocked", "failed", "cancelled"}
     if (
         run.status in terminal_statuses

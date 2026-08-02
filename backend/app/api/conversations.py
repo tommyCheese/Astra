@@ -121,7 +121,7 @@ async def run_conversation_command(
     repo = ConversationRepository(session)
     task = await require_conversation(repo, conversation_id)
     manager = ConversationContextManager(session, settings)
-    message, details = await execute_system_command(
+    message, details, user_message = await execute_system_command(
         manager,
         task,
         command,
@@ -138,6 +138,7 @@ async def run_conversation_command(
             model=model,
         ),
         "details": details,
+        "user_message": user_message,
     }
 
 

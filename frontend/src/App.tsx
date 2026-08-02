@@ -1,6 +1,6 @@
 import { Component, CSSProperties, FormEvent, KeyboardEvent as ReactKeyboardEvent, lazy, MouseEvent, PointerEvent as ReactPointerEvent, ReactNode, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { AstraApiError, ApiErrorPayload, buildRuntime, cancelRun, cancelRuntimeBuild, confirmPlanExecution, createConversationShare, createRun, decideToolApproval, deleteConversation, executeConversationCommand, getConversation, getConversationContext, getConversationStrategy, getPermissionCenter, getRun, getRuntimeDefaultModel, getRuntimeProfile, getToolSettings, listConversationShares, listConversations, listLibraryFiles, listRuns, listSkills, listSystemCommands, resetRuntimeAgentProfile, resolveModelContextCapabilities, resolveModelThinkingCapabilities, resumeRun, revisePlan, revokeConversationShare, revokePermissionGrant, streamRunEvents, takeCreatedRunStream, testModelConnection, updateConversation, updateConversationStrategy, updateRuntimeAgentProfile, updateRuntimeMemorySettings, updateToolSettings, type AgentProfileDocuments, type ContextWindowStatus, type ConversationStrategyPreferences, type LibraryFile, type MemoryRuntimeSettings, type ModelConnectionTestResult, type ModelContextCapability, type ModelThinkingCapability, type ModelThinkingDepth, type ModelThinkingSelection, type PermissionCenterView, type RunModelConfig, type RunStreamEvent, type RunStreamHandle, type RuntimeDefaultModel, type SkillSummary, type SlashSystemCommand, type ToolSetting } from './api';
+import { AstraApiError, ApiErrorPayload, buildRuntime, cancelRun, cancelRuntimeBuild, confirmPlanExecution, createConversationShare, createRun, decideToolApproval, deleteConversation, executeConversationCommand, getConversation, getConversationContext, getConversationStrategy, getPermissionCenter, getRun, getRuntimeDefaultModel, getRuntimeProfile, getToolSettings, listConversationShares, listConversations, listLibraryDeliverables, listRuns, listSkills, listSystemCommands, resetRuntimeAgentProfile, resolveModelContextCapabilities, resolveModelThinkingCapabilities, resumeRun, revisePlan, revokeConversationShare, revokePermissionGrant, streamRunEvents, takeCreatedRunStream, testModelConnection, updateConversation, updateConversationStrategy, updateRuntimeAgentProfile, updateRuntimeMemorySettings, updateToolSettings, type AgentProfileDocuments, type ContextWindowStatus, type ConversationStrategyPreferences, type Deliverable, type MemoryRuntimeSettings, type ModelConnectionTestResult, type ModelContextCapability, type ModelThinkingCapability, type ModelThinkingDepth, type ModelThinkingSelection, type PermissionCenterView, type RunModelConfig, type RunStreamEvent, type RunStreamHandle, type RuntimeDefaultModel, type SkillSummary, type SlashSystemCommand, type ToolSetting } from './api';
 import { cancelSubagent } from './api';
 import { buildAuditLog } from './auditPresentation';
 import { I18nProvider, useI18n } from './i18n';
@@ -10,7 +10,7 @@ import type { AgentExecutionView } from './types';
 import { UsageDashboard } from './UsageDashboard';
 import { GraphPaneWindowActions } from './GraphPaneWindowActions';
 import { CloseButton } from './CloseButton';
-import { buildPresentation, HISTORY_LIMIT, normalizeRunView, type ConversationEntry } from './conversations';
+import { buildPresentation, HISTORY_LIMIT, normalizeRunView, presentCommandMessage, type ConversationEntry } from './conversations';
 import { createOptimisticProcessState, isDecisionGroup, reconcileProcessSnapshot, reduceProcessEvent, type ProcessStreamItem, type ProcessStreamState } from './processStream';
 import { createPlanGraphStreamState, reconcilePlanGraphSnapshot, reducePlanGraphEvent, type PlanGraphStreamState } from './planGraph';
 import { detectSlashSkillCommand, filterSlashCommandOptions, normalizeSelectedSkillIds, type SlashSkillCommand } from './composerSkills';
@@ -48,6 +48,7 @@ class GraphErrorBoundary extends Component<{ children: ReactNode; fallback: Reac
 }
 
 const terminalStatuses = new Set(['completed', 'completed_with_warnings', 'failed', 'blocked', 'waiting_user', 'cancelled']);
+const completedConversationStatuses = new Set(['completed', 'completed_with_warnings']);
 const STORAGE_KEYS = {
   conversations: 'astra.conversations.v2',
   processPanelDefaultOpen: 'astra.process-panel-default-open.v2',
@@ -95,6 +96,7 @@ function ContextUsageRing({ status, actionLabel = '', compact = false }: {
 
 function initialContextStatus(capability: ModelContextCapability): ContextWindowStatus {
   const outputReserve = Math.min(capability.max_output_tokens ?? 8_192, 8_192);
+  const availableInputTokens = Math.max(1, capability.window_tokens - outputReserve);
   return {
     provider: capability.provider,
     model: capability.model,
@@ -103,9 +105,9 @@ function initialContextStatus(capability: ModelContextCapability): ContextWindow
     context_source: capability.source,
     context_verified: capability.verified,
     context_documentation_url: capability.documentation_url,
-    available_input_tokens: capability.window_tokens,
+    available_input_tokens: availableInputTokens,
     used_tokens: 0,
-    remaining_tokens: capability.window_tokens,
+    remaining_tokens: availableInputTokens,
     usage_ratio: 0,
     auto_compact_ratio: 0.8,
     status: 'normal',
@@ -310,7 +312,9 @@ function AppContent() {
   const [run, setRun] = useState<RunView | null>(null);
   const [conversationHistory, setConversationHistory] = useState<ConversationEntry[]>(loadConversationHistory);
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
+  const [unreadConversationIds, setUnreadConversationIds] = useState<Set<string>>(() => new Set());
   const [priorMessages, setPriorMessages] = useState<ChatMessage[]>([]);
+  const [trailingCommandMessages, setTrailingCommandMessages] = useState<ChatMessage[]>([]);
   const [loading, setLoading] = useState(false);
   const [stopping, setStopping] = useState(false);
   const [approvalSubmitting, setApprovalSubmitting] = useState(false);
@@ -332,7 +336,6 @@ function AppContent() {
   const [sidebarWidth, setSidebarWidth] = useState(loadSidebarWidth);
   const [usageOpen, setUsageOpen] = useState(false);
   const [controlCenterOpen, setControlCenterOpen] = useState(false);
-  const [strategyHelpOpen, setStrategyHelpOpen] = useState(false);
   const [conversationAction, setConversationAction] = useState<{ kind: 'rename' | 'share' | 'delete'; conversation: ConversationEntry } | null>(null);
   const [modelOpen, setModelOpen] = useState(false);
   const [contextOpen, setContextOpen] = useState(false);
@@ -402,6 +405,10 @@ function AppContent() {
   const trustedEasterEggTimerRef = useRef<number>();
   const slashSuppressedStartRef = useRef<number>();
   const composerIsComposingRef = useRef(false);
+  const conversationHistoryRef = useRef(conversationHistory);
+  const activeConversationIdRef = useRef(activeConversationId);
+  conversationHistoryRef.current = conversationHistory;
+  activeConversationIdRef.current = activeConversationId;
   streamingAnswerRef.current = streamingAnswer;
   const availableModels = useMemo(() => [
     ...(runtimeDefaultModel?.configured ? [{
@@ -470,7 +477,7 @@ function AppContent() {
         selectedSkillIds,
       ).filter((option) => (
         option.kind !== 'command'
-        || option.command.argument_mode !== 'required'
+        || option.command.argument_mode === 'none'
         || goal.slice(0, slashCommand.start).trim() === ''
       ))
       : [],
@@ -680,23 +687,77 @@ function AppContent() {
     setPlanGraphState(next);
   }, [run?.id]);
 
+  const syncConversationSummaries = useCallback(async () => {
+    const summaries = await listConversations(HISTORY_LIMIT);
+    const previousConversations = conversationHistoryRef.current;
+    const newlyCompleted = summaries.flatMap((summary) => {
+      const previous = previousConversations.find((item) => item.id === summary.id);
+      const previousStatus = previous?.last_run_status ?? previous?.run?.status ?? null;
+      return previousStatus
+        && !terminalStatuses.has(previousStatus)
+        && completedConversationStatuses.has(summary.last_run_status ?? '')
+        && summary.id !== activeConversationIdRef.current
+        ? [summary.id]
+        : [];
+    });
+    if (newlyCompleted.length) {
+      setUnreadConversationIds((current) => new Set([...current, ...newlyCompleted]));
+    }
+    setConversationHistory((local) => summaries.map((summary) => {
+      const cached = local.find((item) => item.id === summary.id);
+      return {
+        ...cached,
+        id: summary.id,
+        priorMessages: cached?.priorMessages ?? [],
+        title: summary.title,
+        last_run_status: summary.last_run_status,
+        preferred_answer_mode: summary.preferred_answer_mode,
+        pinned_at: summary.pinned_at,
+        updated_at: summary.updated_at,
+        has_active_share: summary.has_active_share,
+      };
+    }));
+    return summaries;
+  }, []);
+
   useEffect(() => {
     let active = true;
-    void listConversations(HISTORY_LIMIT).then((summaries) => {
-      if (!active) return;
-      if (!summaries.length) throw new Error('no persisted conversations');
-      setConversationHistory((local) => summaries.map((summary) => {
-        const cached = local.find((item) => item.id === summary.id);
-        return { ...cached, id: summary.id, priorMessages: cached?.priorMessages ?? [], title: summary.title, preferred_answer_mode: summary.preferred_answer_mode, pinned_at: summary.pinned_at, updated_at: summary.updated_at, has_active_share: summary.has_active_share };
-      }));
+    void syncConversationSummaries().then((summaries) => {
+      if (!active || summaries.length) return;
+      throw new Error('no persisted conversations');
     }).catch(() => listRuns(200).then((runs) => {
       if (!active) return;
       const grouped = new Map<string, RunView[]>();
       for (const item of runs) grouped.set(item.task_id, [...(grouped.get(item.task_id) ?? []), normalizeRunView(item)]);
-      setConversationHistory([...grouped.entries()].map(([id, items]) => ({ id, run: items[0], priorMessages: [...items.slice(1)].reverse().flatMap(buildPresentation) })));
+      setConversationHistory([...grouped.entries()].map(([id, items]) => ({ id, run: items[0], last_run_status: items[0]?.status ?? null, priorMessages: [...items.slice(1)].reverse().flatMap(buildPresentation) })));
     }).catch(() => { /* retain browser history while the backend is offline */ }));
     return () => { active = false; };
-  }, []);
+  }, [syncConversationSummaries]);
+
+  const hasRunningConversation = conversationHistory.some((item) => {
+    const status = item.last_run_status ?? item.run?.status;
+    return Boolean(status && !terminalStatuses.has(status));
+  });
+
+  useEffect(() => {
+    let active = true;
+    let timer: number | undefined;
+    const refresh = async () => {
+      if (document.visibilityState !== 'hidden') {
+        try {
+          await syncConversationSummaries();
+        } catch {
+          // Keep the last known status while the backend is temporarily unavailable.
+        }
+      }
+      if (active) timer = window.setTimeout(refresh, hasRunningConversation ? 1500 : 10000);
+    };
+    timer = window.setTimeout(refresh, hasRunningConversation ? 1500 : 10000);
+    return () => {
+      active = false;
+      if (timer !== undefined) window.clearTimeout(timer);
+    };
+  }, [hasRunningConversation, syncConversationSummaries]);
 
   useEffect(() => {
     if (!runtimeDefaultReady) return;
@@ -759,7 +820,7 @@ function AppContent() {
     setActiveConversationId(conversationId);
     setConversationHistory((items) => {
       const existing = items.find((item) => item.id === conversationId);
-      return [{ ...existing, id: conversationId, run: nextRun, priorMessages: previousMessages, title: existing?.title ?? conversationTitle(nextRun, t('当前 Web Agent 会话')), preferred_answer_mode: nextRun.answer_mode, updated_at: new Date().toISOString() }, ...items.filter((item) => item.id !== conversationId)].slice(0, HISTORY_LIMIT);
+      return [{ ...existing, id: conversationId, run: nextRun, priorMessages: previousMessages, title: existing?.title ?? conversationTitle(nextRun, t('当前 Web Agent 会话')), last_run_status: nextRun.status, preferred_answer_mode: nextRun.answer_mode, updated_at: new Date().toISOString() }, ...items.filter((item) => item.id !== conversationId)].slice(0, HISTORY_LIMIT);
     });
   }
 
@@ -822,11 +883,11 @@ function AppContent() {
 
   function selectSlashSystemCommand(command: SlashSystemCommand) {
     if (!slashCommand || commandPending) return;
-    if (command.argument_mode !== 'required') {
+    if (command.argument_mode === 'none') {
       void runSlashSystemCommand(command);
       return;
     }
-    const prefix = `${command.command} `;
+    const prefix = `${command.command} ${command.default_arguments ?? ''}`;
     const caret = slashCommand.start + prefix.length;
     setGoal(
       goal.slice(0, slashCommand.start)
@@ -848,7 +909,46 @@ function AppContent() {
     } = {},
   ) {
     if ((!slashCommand && !options.clearFullDraft) || commandPending) return;
-    if (!activeConversationId || !selectedModelOption) {
+    const submittedGoal = goal;
+    const commandRange = slashCommand;
+    const caret = commandRange?.start ?? 0;
+    const nextGoal = options.clearFullDraft
+      ? ''
+      : commandRange
+        ? goal.slice(0, commandRange.start) + goal.slice(commandRange.end)
+        : goal;
+    if (!activeConversationId && (command.name === 'clear' || command.name === 'compact')) {
+      const localArguments = command.name === 'compact'
+        ? (options.argumentsText?.trim() || command.default_arguments || '')
+        : '';
+      const localCommandMessage = presentCommandMessage({
+        id: `local-${command.name}-${Date.now()}`,
+        command: command.command,
+        content: `${command.command}${localArguments ? ` ${localArguments}` : ''}`,
+        arguments: localArguments,
+        after_run_count: 0,
+        created_at: new Date().toISOString(),
+      });
+      setError(null);
+      setGoal((current) => current === submittedGoal ? nextGoal : current);
+      if (command.name === 'clear') {
+        setPriorMessages([]);
+        setRun(null);
+        setStreamingAnswer('');
+        setAnswerPhase('idle');
+        setProcessState(null);
+        setContextStatus(null);
+        setContextNotice(t('当前没有模型上下文；已保持为空。'));
+        setTrailingCommandMessages([localCommandMessage]);
+      } else {
+        setContextNotice(t('当前没有可整理的模型上下文。'));
+        setTrailingCommandMessages((messages) => [...messages, localCommandMessage]);
+      }
+      closeSlashCommand();
+      queueMicrotask(() => goalInputRef.current?.focus());
+      return;
+    }
+    if (!activeConversationId) {
       setError({
         type: 'validation.command_unavailable',
         code: 'COMMAND_REQUIRES_CONVERSATION',
@@ -858,14 +958,8 @@ function AppContent() {
       });
       return;
     }
-    const submittedGoal = goal;
-    const commandRange = slashCommand;
-    const caret = commandRange?.start ?? 0;
-    const nextGoal = options.clearFullDraft
-      ? ''
-      : commandRange
-        ? goal.slice(0, commandRange.start) + goal.slice(commandRange.end)
-        : goal;
+    const commandProvider = selectedModelOption?.providerId ?? 'runtime';
+    const commandModel = selectedModelOption?.model ?? 'default';
     setCommandPending(command.name);
     setError(null);
     try {
@@ -873,19 +967,20 @@ function AppContent() {
         ? await executeConversationCommand(
           activeConversationId,
           command.name,
-          selectedModelOption.providerId,
-          selectedModelOption.model,
+          commandProvider,
+          commandModel,
         )
         : await executeConversationCommand(
           activeConversationId,
           command.name,
-          selectedModelOption.providerId,
-          selectedModelOption.model,
+          commandProvider,
+          commandModel,
           options.argumentsText,
         );
       setGoal((current) => current === submittedGoal ? nextGoal : current);
       setContextStatus(result.context);
       setContextNotice(t(result.message));
+      setTrailingCommandMessages((messages) => [...messages, presentCommandMessage(result.user_message)]);
       closeSlashCommand();
       queueMicrotask(() => {
         goalInputRef.current?.focus();
@@ -926,6 +1021,7 @@ function AppContent() {
     const controller = new AbortController();
     conversationControllerRef.current = controller;
     setActiveConversationId(conversation.id);
+    setTrailingCommandMessages([]);
     clearSlashDraft();
     setStreamingAnswer('');
     setAnswerPhase('idle');
@@ -940,11 +1036,18 @@ function AppContent() {
       const runs = detail.runs.map(normalizeRunView);
       const latest = runs[runs.length - 1];
       if (!latest) throw new Error('conversation has no runs');
-      setPriorMessages(runs.slice(0, -1).flatMap(buildPresentation));
+      const commandMessages = detail.command_messages ?? [];
+      const prior = runs.slice(0, -1).flatMap((item, index) => [
+        ...buildPresentation(item),
+        ...commandMessages.filter((message) => message.after_run_count === index + 1).map(presentCommandMessage),
+      ]);
+      prior.unshift(...commandMessages.filter((message) => message.after_run_count === 0).map(presentCommandMessage));
+      setPriorMessages(prior);
+      setTrailingCommandMessages(commandMessages.filter((message) => message.after_run_count >= runs.length).map(presentCommandMessage));
       setRun(latest);
       applyConversationAnswerMode(detail.preferred_answer_mode ?? latest.answer_mode ?? 'standard');
       setProcessState(reconcileProcessSnapshot(null, latest));
-      setConversationHistory((items) => items.map((item) => item.id === conversation.id ? { ...item, run: latest, title: detail.title, preferred_answer_mode: detail.preferred_answer_mode, pinned_at: detail.pinned_at, updated_at: detail.updated_at, has_active_share: detail.has_active_share } : item));
+      setConversationHistory((items) => items.map((item) => item.id === conversation.id ? { ...item, run: latest, title: detail.title, last_run_status: detail.last_run_status ?? latest.status, preferred_answer_mode: detail.preferred_answer_mode, pinned_at: detail.pinned_at, updated_at: detail.updated_at, has_active_share: detail.has_active_share } : item));
     } catch (error) {
       if (controller.signal.aborted) return;
       if (conversation.run) {
@@ -1140,10 +1243,11 @@ function AppContent() {
     deltaBufferRef.current = '';
     setLoading(true);
     try {
-      const previousMessages = run ? messages : [];
+      const resumingWaitingRun = run?.status === 'waiting_user';
+      const previousMessages = resumingWaitingRun ? priorMessages : run ? messages : [];
       const explicitSkillIds = normalizeSelectedSkillIds(selectedSkillIds);
-      const modelConfig = selectedRunModel(run?.status === 'waiting_user' ? run : undefined);
-      const created = run?.status === 'waiting_user'
+      const modelConfig = selectedRunModel(resumingWaitingRun ? run : undefined);
+      const created = resumingWaitingRun
         ? await resumeRun(run.id, trimmedGoal, typeof run.waiting_state?.continuation_token === 'string' ? run.waiting_state.continuation_token : undefined, modelConfig)
         : submissionSubagentMode === 'required'
           ? await createRun(submissionGoal, run?.task_id, submissionAnswerMode, {
@@ -1182,7 +1286,15 @@ function AppContent() {
         };
       }
       const createdAnswerMode = (created as { answer_mode?: 'standard' | 'trusted' }).answer_mode;
+      const optimisticUserMessage = {
+        id: `optimistic-${created.run_id}-${Date.now()}`,
+        role: 'user' as const,
+        content: submissionSubagentMode === 'required' ? trimmedGoal : submissionGoal,
+        status: 'completed',
+        metadata: submissionSubagentMode === 'required' ? { command: '/subagent' } : {},
+      };
       const current = normalizeRunView({
+        ...(resumingWaitingRun ? run : {}),
         id: created.run_id,
         task_id: created.task_id,
         status: created.status,
@@ -1198,10 +1310,20 @@ function AppContent() {
           } : undefined,
         } : {},
         result: null,
-        steps: [], tool_calls: [], artifacts: [], events: [], turns: [], memories: [],
-        chat_messages: [{ id: `optimistic-${created.run_id}`, role: 'user', content: submissionGoal, status: 'completed', metadata: {} }],
+        waiting_state: null,
+        pending_approval: null,
+        steps: resumingWaitingRun ? run.steps : [],
+        tool_calls: resumingWaitingRun ? run.tool_calls : [],
+        artifacts: resumingWaitingRun ? run.artifacts : [],
+        events: resumingWaitingRun ? run.events : [],
+        turns: resumingWaitingRun ? run.turns : [],
+        memories: resumingWaitingRun ? run.memories : [],
+        chat_messages: resumingWaitingRun
+          ? [...(run.chat_messages ?? []), optimisticUserMessage]
+          : [optimisticUserMessage],
       } as RunView);
       setPriorMessages(previousMessages);
+      setTrailingCommandMessages([]);
       setRun(current);
       setProcessState(createOptimisticProcessState(created.run_id, createdAnswerMode ?? submissionAnswerMode));
       rememberConversation(current, previousMessages);
@@ -1625,12 +1747,13 @@ function AppContent() {
     setAnswerPhase('idle');
   }, [answerContentComplete, streamingAnswer, visibleStreamingAnswer, run?.result, run?.status]);
   const messages = useMemo(() => {
+    const answerMessageId = `${run?.id ?? 'idle'}:${priorMessages.length}:${run?.id ?? 'idle'}-answer`;
     const currentMessages = buildPresentation(effectiveRun)
       .filter((message) => !streamingAnswer || message.metadata.presentation !== 'answer')
       .map((message) => ({ ...message, id: `${run?.id ?? 'idle'}:${priorMessages.length}:${message.id}` }));
-    const streamed = visibleStreamingAnswer ? [{ id: `${run?.id ?? 'idle'}-stream`, role: 'assistant', content: visibleStreamingAnswer, status: answerContentComplete ? 'completed' : 'streaming', metadata: {} }] : [];
-    return [...priorMessages, ...currentMessages, ...streamed];
-  }, [priorMessages, effectiveRun, streamingAnswer, visibleStreamingAnswer, answerContentComplete]);
+    const streamed = visibleStreamingAnswer ? [{ id: answerMessageId, role: 'assistant', content: visibleStreamingAnswer, status: answerContentComplete ? 'completed' : 'streaming', metadata: {} }] : [];
+    return [...priorMessages, ...currentMessages, ...trailingCommandMessages, ...streamed];
+  }, [priorMessages, effectiveRun, trailingCommandMessages, streamingAnswer, visibleStreamingAnswer, answerContentComplete]);
   const activeProcessItemId = [...(processState?.items ?? [])].reverse().find((item) => item.status === 'running')?.id;
   const initializeProcessPanel = useCallback((runId: string) => {
     setProcessPanelOpenByRun((states) => Object.prototype.hasOwnProperty.call(states, runId)
@@ -1670,7 +1793,12 @@ function AppContent() {
     if (typeof element.scrollTo === 'function') element.scrollTo({ top: element.scrollHeight, behavior: 'smooth' });
     else element.scrollTop = element.scrollHeight;
     if (jumpResetTimerRef.current !== undefined) window.clearTimeout(jumpResetTimerRef.current);
-    jumpResetTimerRef.current = window.setTimeout(() => { jumpingToLatestRef.current = false; }, 450);
+    jumpResetTimerRef.current = window.setTimeout(() => {
+      const latestElement = conversationRef.current;
+      if (latestElement && followLatestRef.current) latestElement.scrollTop = latestElement.scrollHeight;
+      jumpingToLatestRef.current = false;
+      setShowJumpToLatest(false);
+    }, 450);
   }
 
   function changeView(nextView: AppView) {
@@ -1691,6 +1819,7 @@ function AppContent() {
     setActiveConversationId(null);
     applyConversationAnswerMode('standard');
     setPriorMessages([]);
+    setTrailingCommandMessages([]);
     setError(null);
     setStreamingAnswer('');
     setAnswerPhase('idle');
@@ -1704,6 +1833,15 @@ function AppContent() {
     clearSlashDraft();
     changeView('chat');
     setSidebarOpen(false);
+  }
+
+  function acknowledgeConversation(id: string) {
+    setUnreadConversationIds((current) => {
+      if (!current.has(id)) return current;
+      const next = new Set(current);
+      next.delete(id);
+      return next;
+    });
   }
 
   async function toggleConversationPin(conversation: ConversationEntry) {
@@ -1743,9 +1881,10 @@ function AppContent() {
         run={run}
         activeConversationId={activeConversationId}
         conversations={conversationHistory}
+        unreadConversationIds={unreadConversationIds}
         activeView={view}
         onNewChat={startNewChat}
-        onSelectConversation={(conversation) => { setSidebarOpen(false); void openConversation(conversation); }}
+        onSelectConversation={(conversation) => { acknowledgeConversation(conversation.id); setSidebarOpen(false); void openConversation(conversation); }}
         onConversationAction={(kind, conversation) => setConversationAction({ kind, conversation })}
         onTogglePin={(conversation) => { void toggleConversationPin(conversation); }}
         onOpenSettings={() => {
@@ -1854,7 +1993,21 @@ function AppContent() {
             <Icon name="route" />
             <span>{t('打开执行图谱')}</span>
           </button>}
-          {showJumpToLatest && !planConfirmation && <button className="jump-latest-button" type="button" onClick={jumpToLatest}><span aria-hidden="true">↓</span>{t('回到最新')}</button>}
+          {showJumpToLatest && !planConfirmation && <button
+            className="jump-latest-button"
+            type="button"
+            onPointerDown={(event) => {
+              if (event.button > 0) return;
+              event.preventDefault();
+              jumpToLatest();
+            }}
+            onClick={(event) => {
+              // Pointer activation is handled on pointerdown so streaming layout
+              // changes cannot remove the button before click. detail=0 keeps
+              // keyboard and assistive-technology activation available.
+              if (event.detail === 0) jumpToLatest();
+            }}
+          ><span aria-hidden="true">↓</span>{t('回到最新')}</button>}
           <div ref={composerDockRef} className={`composer-dock ${run?.pending_approval ? 'has-approval' : ''} ${planConfirmation ? 'has-plan-confirmation' : ''}`}>
             {run && planConfirmation && (
               <PlanConfirmationCard
@@ -2139,10 +2292,6 @@ function AppContent() {
                   onReflectionTriggerChange={(value) => persistConversationStrategy({ reflection_trigger: value === '失败时' ? 'failure_only' : value === '每轮' ? 'every_turn' : 'adaptive' })}
                   planExecution={planExecution}
                   onPlanExecutionChange={(value) => setPlanExecution(value ? 'auto' : 'confirm')}
-                  onOpenStrategyHelp={() => {
-                    setModelOpen(false);
-                    setStrategyHelpOpen(true);
-                  }}
                 />
               )}
             </div>
@@ -2162,13 +2311,13 @@ function AppContent() {
       </section>
       {usageOpen && <UsageDashboard taskId={run?.task_id} runId={run?.id} onClose={() => setUsageOpen(false)} />}
       {controlCenterOpen && run && <ControlCenterDialog run={run} onClose={() => setControlCenterOpen(false)} />}
-      {strategyHelpOpen && <StrategyHelpDialog onClose={() => setStrategyHelpOpen(false)} />}
       {bypassConfirmOpen && <BypassConfirmation onCancel={() => setBypassConfirmOpen(false)} onConfirm={() => {
         setExecutionMode('bypass');
         setExecutionMenuOpen(false);
         setBypassConfirmOpen(false);
       }} />}
       {conversationAction && <ConversationActionDialog action={conversationAction} onClose={() => setConversationAction(null)} onRenamed={(updated) => setConversationHistory((items) => items.map((item) => item.id === updated.id ? { ...item, title: updated.title, updated_at: updated.updated_at } : item))} onDeleted={(id) => {
+        acknowledgeConversation(id);
         setConversationHistory((items) => items.filter((item) => item.id !== id));
         if (activeConversationId === id) startNewChat();
       }} onShareChanged={(id, active) => setConversationHistory((items) => items.map((item) => item.id === id ? { ...item, has_active_share: active } : item))} />}
@@ -2176,13 +2325,14 @@ function AppContent() {
   );
 }
 
-function Sidebar({ open, collapsed, width, run, activeConversationId, conversations, activeView, onNewChat, onSelectConversation, onConversationAction, onTogglePin, onOpenSettings, onOpenShares, onOpenLibrary, onOpenSkills, onOpenScheduled, onOpenDocumentation, onOpenUsage, onClose, onCollapse, onExpand, onWidthChange }: {
+function Sidebar({ open, collapsed, width, run, activeConversationId, conversations, unreadConversationIds, activeView, onNewChat, onSelectConversation, onConversationAction, onTogglePin, onOpenSettings, onOpenShares, onOpenLibrary, onOpenSkills, onOpenScheduled, onOpenDocumentation, onOpenUsage, onClose, onCollapse, onExpand, onWidthChange }: {
   open: boolean;
   collapsed: boolean;
   width: number;
   run: RunView | null;
   activeConversationId: string | null;
   conversations: ConversationEntry[];
+  unreadConversationIds: Set<string>;
   activeView: AppView;
   onNewChat: () => void;
   onSelectConversation: (conversation: ConversationEntry) => void;
@@ -2285,8 +2435,28 @@ function Sidebar({ open, collapsed, width, run, activeConversationId, conversati
     };
   }, [menuId]);
 
-  const renderConversation = (conversation: ConversationEntry) => <div className={`history-item ${activeConversationId === conversation.id ? 'active' : ''}`} key={conversation.id} ref={menuId === conversation.id ? menuRootRef : undefined}>
-    <button className="history-select" type="button" onClick={() => { setMenuId(null); onSelectConversation(conversation); }}><Icon name="message" /><span>{conversation.title ?? (conversation.run ? conversationTitle(conversation.run, t('当前 Web Agent 会话')) : t('未命名对话'))}</span></button>
+  const renderConversation = (conversation: ConversationEntry) => {
+    const title = conversation.title ?? (conversation.run ? conversationTitle(conversation.run, t('当前 Web Agent 会话')) : t('未命名对话'));
+    const status = conversation.last_run_status ?? conversation.run?.status ?? null;
+    const running = Boolean(status && !terminalStatuses.has(status));
+    const unread = unreadConversationIds.has(conversation.id);
+    return <div className={`history-item ${activeConversationId === conversation.id ? 'active' : ''} ${running || unread ? 'has-run-status' : ''}`} key={conversation.id} ref={menuId === conversation.id ? menuRootRef : undefined}>
+    <button className="history-select" type="button" onClick={() => { setMenuId(null); onSelectConversation(conversation); }}><Icon name="message" /><span>{title}</span></button>
+    {running && <span
+      className="history-run-status running"
+      role="img"
+      aria-label={t('运行中')}
+      title={t('运行中')}
+      data-testid={`conversation-status-${conversation.id}`}
+    ><i /></span>}
+    {!running && unread && <button
+      className="history-run-status unread"
+      type="button"
+      aria-label={`${t('查看新消息')} ${title}`}
+      title={t('新消息')}
+      data-testid={`conversation-status-${conversation.id}`}
+      onClick={(event) => { event.stopPropagation(); setMenuId(null); onSelectConversation(conversation); }}
+    ><i /></button>}
     <button className="history-more" type="button" aria-label={`${t('更多操作')} ${conversation.title ?? ''}`} aria-expanded={menuId === conversation.id} aria-haspopup="menu" onClick={(event) => {
       event.stopPropagation();
       if (menuId === conversation.id) {
@@ -2311,6 +2481,7 @@ function Sidebar({ open, collapsed, width, run, activeConversationId, conversati
       <button className="danger" role="menuitem" type="button" onClick={() => { setMenuId(null); onConversationAction('delete', conversation); }}>{t('删除')}</button>
     </div>, document.body)}
   </div>;
+  };
   return (
     <aside className={`sidebar ${open ? 'mobile-open' : ''}`}>
       <div className="brand">
@@ -2406,9 +2577,11 @@ type LibraryGroupMode = 'time' | 'conversation' | 'type';
 type LibrarySortMode = 'updated_desc' | 'updated_asc' | 'name_asc' | 'name_desc' | 'size_desc' | 'size_asc' | 'type_asc';
 type LibraryViewMode = 'gallery' | 'list';
 
-function libraryFileType(file: LibraryFile) {
+function libraryFileType(file: Deliverable) {
+  if (file.kind === 'result') return '结果';
+  if (file.kind === 'receipt') return '回执';
   const mime = (file.mime_type ?? '').toLowerCase();
-  const extension = file.path.split('.').pop()?.toLowerCase() ?? '';
+  const extension = (file.summary ?? file.title).split('.').pop()?.toLowerCase() ?? '';
   if (mime.startsWith('image/') || ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'heic'].includes(extension)) return '图片';
   if (mime.includes('sheet') || mime.includes('csv') || mime.includes('json') || ['csv', 'tsv', 'xls', 'xlsx', 'json', 'parquet'].includes(extension)) return '数据';
   if (['js', 'jsx', 'ts', 'tsx', 'py', 'java', 'go', 'rs', 'html', 'css', 'sql', 'sh', 'yaml', 'yml'].includes(extension)) return '代码';
@@ -2429,7 +2602,7 @@ function libraryTimeGroup(value: string, language: string) {
 
 function LibraryView({ onClose, onOpenConversation }: { onClose: () => void; onOpenConversation: (id: string, title: string) => void }) {
   const { language, t } = useI18n();
-  const [files, setFiles] = useState<LibraryFile[]>([]);
+  const [deliverables, setDeliverables] = useState<Deliverable[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [groupMode, setGroupMode] = useState<LibraryGroupMode>('time');
@@ -2439,8 +2612,8 @@ function LibraryView({ onClose, onOpenConversation }: { onClose: () => void; onO
 
   useEffect(() => {
     let active = true;
-    void listLibraryFiles().then((items) => {
-      if (active) setFiles(items);
+    void listLibraryDeliverables().then((items) => {
+      if (active) setDeliverables(items);
     }).catch((reason) => {
       if (active) setError(reason instanceof Error ? reason.message : t('资料库加载失败'));
     }).finally(() => {
@@ -2451,31 +2624,31 @@ function LibraryView({ onClose, onOpenConversation }: { onClose: () => void; onO
 
   const groups = useMemo(() => {
     const needle = query.trim().toLocaleLowerCase();
-    const visible = files.filter((file) => !needle || `${file.path} ${file.conversation_title} ${file.mime_type ?? ''}`.toLocaleLowerCase().includes(needle));
+    const visible = deliverables.filter((item) => !needle || `${item.title} ${item.summary ?? ''} ${item.conversation_title} ${item.job_name ?? ''} ${item.mime_type ?? ''}`.toLocaleLowerCase().includes(needle));
     visible.sort((left, right) => {
-      if (sortMode === 'updated_asc') return new Date(left.updated_at).getTime() - new Date(right.updated_at).getTime();
-      if (sortMode === 'name_asc') return left.path.localeCompare(right.path, 'zh-CN', { numeric: true });
-      if (sortMode === 'name_desc') return right.path.localeCompare(left.path, 'zh-CN', { numeric: true });
-      if (sortMode === 'size_desc') return right.size_bytes - left.size_bytes;
-      if (sortMode === 'size_asc') return left.size_bytes - right.size_bytes;
-      if (sortMode === 'type_asc') return libraryFileType(left).localeCompare(libraryFileType(right), 'zh-CN') || left.path.localeCompare(right.path, 'zh-CN', { numeric: true });
-      return new Date(right.updated_at).getTime() - new Date(left.updated_at).getTime();
+      if (sortMode === 'updated_asc') return new Date(left.created_at).getTime() - new Date(right.created_at).getTime();
+      if (sortMode === 'name_asc') return left.title.localeCompare(right.title, 'zh-CN', { numeric: true });
+      if (sortMode === 'name_desc') return right.title.localeCompare(left.title, 'zh-CN', { numeric: true });
+      if (sortMode === 'size_desc') return (right.size_bytes ?? 0) - (left.size_bytes ?? 0);
+      if (sortMode === 'size_asc') return (left.size_bytes ?? 0) - (right.size_bytes ?? 0);
+      if (sortMode === 'type_asc') return libraryFileType(left).localeCompare(libraryFileType(right), 'zh-CN') || left.title.localeCompare(right.title, 'zh-CN', { numeric: true });
+      return new Date(right.created_at).getTime() - new Date(left.created_at).getTime();
     });
-    const grouped = new Map<string, LibraryFile[]>();
-    for (const file of visible) {
-      const key = groupMode === 'conversation' ? file.conversation_title || t('未命名对话') : groupMode === 'type' ? t(libraryFileType(file)) : t(libraryTimeGroup(file.updated_at, language));
-      grouped.set(key, [...(grouped.get(key) ?? []), file]);
+    const grouped = new Map<string, Deliverable[]>();
+    for (const item of visible) {
+      const key = groupMode === 'conversation' ? item.conversation_title || t('未命名对话') : groupMode === 'type' ? t(libraryFileType(item)) : t(libraryTimeGroup(item.created_at, language));
+      grouped.set(key, [...(grouped.get(key) ?? []), item]);
     }
     return [...grouped.entries()];
-  }, [files, groupMode, language, query, sortMode, t]);
+  }, [deliverables, groupMode, language, query, sortMode, t]);
 
   return <section className="library-page">
     <header className="library-header">
-      <div><span className="library-eyebrow">Astra Library</span><h2>{t('资料库')}</h2><p>{t('集中查看所有会话生成或保存的文档、图片和其他文件。')}</p></div>
+      <div><span className="library-eyebrow">Astra Library</span><h2>{t('资料库')}</h2><p>{t('集中查看对话与已安排任务产出的结果、文件、数据和操作回执。')}</p></div>
       <CloseButton className="settings-close" label={t('关闭资料库')} onClick={onClose} />
     </header>
     <div className="library-toolbar">
-      <label className="library-search"><span className="sr-only">{t('搜索资料库')}</span><input value={query} onChange={(event) => setQuery(event.currentTarget.value)} placeholder={t('搜索文件或会话')} /></label>
+      <label className="library-search"><span className="sr-only">{t('搜索资料库')}</span><input value={query} onChange={(event) => setQuery(event.currentTarget.value)} placeholder={t('搜索制品、任务或会话')} /></label>
       <div className="library-group-switch" aria-label={t('分类方式')}>
         {([['time', '时间'], ['conversation', '会话'], ['type', '类型']] as const).map(([value, label]) => <button type="button" aria-pressed={groupMode === value} key={value} onClick={() => setGroupMode(value)}>{t(label)}</button>)}
       </div>
@@ -2487,17 +2660,18 @@ function LibraryView({ onClose, onOpenConversation }: { onClose: () => void; onO
         <option value="updated_desc">{t('最近更新')}</option><option value="updated_asc">{t('最早更新')}</option><option value="name_asc">{t('名称 A–Z')}</option><option value="name_desc">{t('名称 Z–A')}</option><option value="size_desc">{t('大小：从大到小')}</option><option value="size_asc">{t('大小：从小到大')}</option><option value="type_asc">{t('文件类型')}</option>
       </select></label>
     </div>
-    <div className="library-summary"><strong>{files.length}</strong><span>{t('个文件')}</span>{query && <small>{t('当前显示 {count} 个').replace('{count}', String(groups.reduce((total, [, items]) => total + items.length, 0)))}</small>}</div>
-    {loading ? <div className="library-state">{t('正在加载资料库…')}</div> : error ? <div className="library-state error">{error}</div> : !groups.length ? <div className="library-state"><strong>{query ? t('没有匹配的文件') : t('资料库还是空的')}</strong><span>{query ? t('尝试搜索其他名称、会话或文件类型。') : t('任务生成的文件会自动集中到这里。')}</span></div> : <div className={`library-groups view-${viewMode}`}>
+    <div className="library-summary"><strong>{deliverables.length}</strong><span>{t('个制品')}</span>{query && <small>{t('当前显示 {count} 个').replace('{count}', String(groups.reduce((total, [, items]) => total + items.length, 0)))}</small>}</div>
+    {loading ? <div className="library-state">{t('正在加载资料库…')}</div> : error ? <div className="library-state error">{error}</div> : !groups.length ? <div className="library-state"><strong>{query ? t('没有匹配的制品') : t('资料库还是空的')}</strong><span>{query ? t('尝试搜索其他名称、任务、会话或类型。') : t('任务生成的结果和文件会自动集中到这里。')}</span></div> : <div className={`library-groups view-${viewMode}`}>
       {groups.map(([label, items]) => <section className="library-group" key={label}><header><h3>{label}</h3><span>{items.length}</span></header><div className="library-grid">
-        {items.map((file) => {
-          const type = libraryFileType(file);
-          const name = file.path.split('/').pop() || file.path;
-          const previewableImage = type === '图片' && file.content_url;
-          return <article className="library-card" key={file.id}>
-            <div className={`library-preview type-${type}`} aria-hidden="true">{previewableImage ? <img src={file.content_url ?? ''} alt="" /> : <span>{file.path.split('.').pop()?.slice(0, 4).toUpperCase() || 'FILE'}</span>}</div>
-            <div className="library-card-body"><strong title={file.path}>{name}</strong><span>{t(type)} · {formatFileSize(file.size_bytes, language)}</span><time dateTime={file.updated_at}>{new Date(file.updated_at).toLocaleString(language)}</time></div>
-            <div className="library-card-actions"><button type="button" onClick={() => onOpenConversation(file.task_id, file.conversation_title)}>{file.conversation_title || t('未命名对话')}</button>{file.content_url ? <a href={file.content_url}>{t('打开')}</a> : <span>{t('受保护')}</span>}</div>
+        {items.map((item) => {
+          const type = libraryFileType(item);
+          const previewableImage = type === '图片' && item.content_url;
+          const origin = item.job_kind === 'heartbeat' ? t('Heartbeat') : item.job_id ? t('定时任务') : t('对话');
+          const extension = (item.summary ?? item.title).split('.').pop()?.slice(0, 4).toUpperCase();
+          return <article className={`library-card kind-${item.kind}`} key={item.id}>
+            <div className={`library-preview type-${type}`} aria-hidden="true">{previewableImage ? <img src={`${item.content_url}${item.content_url!.includes('?') ? '&' : '?'}inline=true`} alt="" /> : <span>{item.kind === 'result' ? 'Aa' : item.kind === 'receipt' ? '✓' : extension || 'FILE'}</span>}</div>
+            <div className="library-card-body"><strong title={item.summary ?? item.title}>{item.title}</strong><span>{t(type)}{item.size_bytes !== null ? ` · ${formatFileSize(item.size_bytes, language)}` : ''} · {origin}</span>{item.summary && item.kind !== 'file' && item.kind !== 'data' ? <p>{item.summary}</p> : null}<time dateTime={item.created_at}>{new Date(item.created_at).toLocaleString(language)}</time></div>
+            <div className="library-card-actions"><button type="button" onClick={() => onOpenConversation(item.task_id, item.conversation_title || t('未命名对话'))}>{item.conversation_title || t('未命名对话')}</button>{item.kind === 'receipt' && item.external_url ? <a href={item.external_url} target="_blank" rel="noreferrer">{t('打开目标')}</a> : item.content_url ? <a href={item.content_url} target="_blank" rel="noreferrer">{item.kind === 'data' ? t('查看数据') : t('打开')}</a> : item.kind === 'result' || item.kind === 'receipt' ? <button type="button" onClick={() => onOpenConversation(item.task_id, item.conversation_title || t('未命名对话'))}>{t('查看结果')}</button> : <span>{t('受保护')}</span>}</div>
           </article>;
         })}
       </div></section>)}
@@ -4027,12 +4201,42 @@ function ContextCapacityPanel({ status, selectedSkills, actionLabel }: {
     ];
   });
   const labels = {
-    system: [t('基础占用'), t('当前任务所需内容')],
-    summary: [t('已整理的对话'), t('较早对话的压缩摘要')],
-    conversation: [t('对话与运行结果'), t('{count} 轮可见上下文').replace('{count}', String(status.visible_run_count))],
-    draft: [t('当前输入'), t('尚未发送的任务内容')],
-    skills: [t('已加载 Skill'), t('{count} 个已选择 Skill').replace('{count}', String(selectedSkills.length))],
-    output_reserve: [t('回复预留'), t('为当前模型输出保留的容量')],
+    system: {
+      title: t('系统指令与工具定义预留'),
+      count: t('1 项固定额度'),
+      detail: t('用于系统指令、Agent 执行与安全约束、可用工具接口定义；按固定额度计入，不读取这些文本的实际 Token。'),
+      rule: t('不包含：对话、输入框草稿、回复预留。'),
+    },
+    summary: {
+      title: t('较早轮次的压缩摘要'),
+      count: t('{count} 段摘要').replace('{count}', '1'),
+      detail: t('执行整理后生成的一段文本，概括已折叠轮次中的用户目标和最终回答。'),
+      rule: t('已折叠的原始轮次不再重复计入；完整记录仍保存在对话历史中。'),
+    },
+    conversation: {
+      title: t('未折叠轮次的用户目标与最终结果'),
+      count: t('{count} 个运行').replace('{count}', String(status.visible_run_count)),
+      detail: t('每个运行只计入用户目标和最终摘要；失败、阻塞或取消且没有摘要时，计入“任务未完成”。'),
+      rule: t('不包含：工具日志、思考过程、中间事件和已折叠轮次。'),
+    },
+    draft: {
+      title: t('输入框内尚未发送的文字'),
+      count: t('1 条草稿'),
+      detail: t('只计入当前输入框里的文字，并加一条消息的固定开销。'),
+      rule: t('尚未接入的附件内容不在此项中。'),
+    },
+    skills: {
+      title: t('本轮已选 Skill 的名称与说明'),
+      count: t('{count} 个 Skill').replace('{count}', String(selectedSkills.length)),
+      detail: t('界面根据 Skill 名称和说明估算，并从“系统指令与工具定义预留”中拆出显示。'),
+      rule: t('这不是额外增加的用量，也不代表完整 SKILL.md 文件大小。'),
+    },
+    output_reserve: {
+      title: t('本轮模型回复预留'),
+      count: t('1 项固定额度'),
+      detail: t('取 Astra 的回复预留上限与该模型单次最大输出上限中的较小值。'),
+      rule: t('它从模型窗口中扣除，但不计入“已使用输入”。'),
+    },
   } as const;
   const percent = Math.round(Math.min(Math.max(status.usage_ratio, 0), 1) * 100);
 
@@ -4046,19 +4250,34 @@ function ContextCapacityPanel({ status, selectedSkills, actionLabel }: {
       <div><strong>{compactTokenCount(status.used_tokens)} <small>/ {compactTokenCount(status.available_input_tokens)}</small></strong><span>{t('已使用 {percent}%').replace('{percent}', String(percent))}</span></div>
       <div className="context-remaining"><span>{t('剩余')}</span><strong>{compactTokenCount(status.remaining_tokens)}</strong></div>
     </section>
+    <section className="context-budget-equation" aria-label={t('本轮容量计算')}>
+      <div><span>{t('模型窗口')}</span><strong>{compactTokenCount(status.window_tokens)}</strong></div>
+      <i aria-hidden="true">−</i>
+      <div><span>{t('回复预留')}</span><strong>{compactTokenCount(Math.max(0, status.window_tokens - status.available_input_tokens))}</strong></div>
+      <i aria-hidden="true">=</i>
+      <div><span>{t('可用输入')}</span><strong>{compactTokenCount(status.available_input_tokens)}</strong></div>
+    </section>
     <div className="context-stack" aria-hidden="true">
       {items.map((item) => <i className={`context-stack-${item.kind}`} key={item.kind} style={{ flexGrow: item.tokens }} />)}
     </div>
     <section className="context-breakdown" aria-label={t('上下文构成')}>
       {items.map((item) => {
-        const [label, detail] = labels[item.kind];
+        const label = labels[item.kind];
         return <div className="context-breakdown-row" key={item.kind}>
           <i className={`context-dot context-stack-${item.kind}`} />
-          <div><strong>{label}</strong><small>{detail}</small></div>
-          <span>{compactTokenCount(item.tokens)}</span>
+          <div className="context-breakdown-copy">
+            <div><strong>{label.title}</strong><span>{label.count}</span></div>
+            <small>{label.detail}</small>
+            <small className="context-breakdown-rule">{label.rule}</small>
+          </div>
+          <span>{t('约 {tokens} Token').replace('{tokens}', compactTokenCount(item.tokens))}</span>
         </div>;
       })}
     </section>
+    <div className="context-counting-note">
+      <strong>{t('这里的数字怎么计算')}</strong>
+      <span>{t('中文、日文、韩文字符按 1 Token 估算；其他字符按每 3.2 个字符约 1 Token 估算；每条消息另加 6 Token。已使用输入 = 系统预留 + 压缩摘要 + 未折叠轮次 + 当前草稿。剩余输入 = 可用输入 − 已使用输入。')}</span>
+    </div>
     <footer className="context-panel-footer">
       <span>{status.summary_active ? t('已启用对话整理') : t('使用量为发送前估算')}</span>
       {status.max_output_tokens && <span>{t('模型最大输出 {tokens}').replace('{tokens}', compactTokenCount(status.max_output_tokens))}</span>}
@@ -4246,7 +4465,11 @@ function MessageBubble({ message, run, processState, processPanelDefaultOpen, pr
   const presentation = String(message.metadata.presentation ?? '');
 
   if (message.role === 'user') {
-    return <article className="bubble user" id={`message-${message.id}`}><span className="bubble-label">{t('你')}</span><p>{message.content}</p></article>;
+    const command = typeof message.metadata.command === 'string' ? message.metadata.command : '';
+    const argumentsText = command && message.content.startsWith(command)
+      ? message.content.slice(command.length).trimStart()
+      : message.content;
+    return <article className={`bubble user${command ? ' command-message' : ''}`} id={`message-${message.id}`}><span className="bubble-label">{t('你')}</span><p>{command && <span className="message-command-prefix">{command}</span>}{argumentsText && <span className="message-command-arguments">{argumentsText}</span>}</p></article>;
   }
 
   if (message.role === 'assistant' && message.status === 'streaming') {

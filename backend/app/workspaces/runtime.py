@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, ClassVar
 
-from app.artifacts import ArtifactCollector
+from app.artifacts import ArtifactCollector, LocalArtifactStore
 from app.db.models import utc_now
 from app.repositories.workspaces import WorkspaceRepository, validate_workspace_path
 from app.sandbox.runtime import PROTECTED_WORKSPACE_PATHS
@@ -40,6 +40,7 @@ class WorkspaceRuntimeService:
         max_files: int,
         max_bytes: int,
         max_file_bytes: int,
+        artifact_store_path: str | None = None,
     ):
         self.repository = repository
         self.root = Path(root).resolve()
@@ -47,6 +48,9 @@ class WorkspaceRuntimeService:
         self.max_files = max_files
         self.max_bytes = max_bytes
         self.max_file_bytes = max_file_bytes
+        self.artifact_store = (
+            LocalArtifactStore(artifact_store_path) if artifact_store_path else None
+        )
 
     async def prepare(self, task_id: str) -> Path:
         workspace = await self.repository.get_or_create(
@@ -287,6 +291,28 @@ class WorkspaceRuntimeService:
                 deliverable_candidate=deliverable_candidate,
                 metadata={"trust_label": "untrusted_workspace_content"},
             )
+            if deliverable_candidate and current is not None and self.artifact_store is not None:
+                existing = await self.repository.find_workspace_snapshot(
+                    run_id=run_id,
+                    relative_path=relative_path,
+                    checksum=current.checksum,
+                )
+                if existing is None:
+                    source = workspace_dir / relative_path
+                    storage_key = self.artifact_store.put(source, source.suffix.lower())
+                    try:
+                        await self.repository.create_workspace_snapshot(
+                            run_id=run_id,
+                            tool_call_id=tool_call_id,
+                            relative_path=relative_path,
+                            mime_type=current.mime_type,
+                            size_bytes=current.size_bytes,
+                            checksum=current.checksum,
+                            storage_key=storage_key,
+                        )
+                    except BaseException:
+                        self.artifact_store.delete(storage_key)
+                        raise
             if current is not None:
                 await self.repository.upsert_file(
                     workspace.id,

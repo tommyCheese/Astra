@@ -200,6 +200,8 @@ class ConversationContextManager:
             ),
             "last_action": raw.get("last_action"),
             "last_action_at": raw.get("last_action_at"),
+            "command_history": list(raw.get("command_history", [])),
+            "compaction_direction": str(raw.get("compaction_direction") or ""),
         }
 
     async def projection(
@@ -369,6 +371,7 @@ class ConversationContextManager:
         self,
         previous_summary: str,
         runs: list[RunRecord],
+        direction: str = "",
     ) -> str:
         sections: list[str] = []
         if previous_summary:
@@ -380,6 +383,8 @@ class ConversationContextManager:
                 + "  回答要点：" + answer.strip()[:1200]
             )
         combined = "\n".join(item for item in sections if item)
+        if direction.strip():
+            combined += f"\n压缩方向：{direction.strip()}"
         limit = self.settings.context_summary_max_chars
         return combined[-limit:]
 
@@ -391,6 +396,7 @@ class ConversationContextManager:
         action: str = "compact",
         require_idle: bool = True,
         commit: bool = True,
+        direction: str = "",
     ) -> dict[str, int]:
         runs = await self.list_runs(task.id)
         if require_idle:
@@ -411,10 +417,12 @@ class ConversationContextManager:
         now = utc_now()
         task.context_state = {
             "version": CONTEXT_STATE_VERSION,
-            "summary": self._build_summary(state["summary"], eligible),
+            "summary": self._build_summary(state["summary"], eligible, direction),
             "folded_run_ids": folded,
             "last_action": action,
             "last_action_at": now.isoformat(),
+            "command_history": state["command_history"],
+            "compaction_direction": direction.strip(),
         }
         task.updated_at = now
         if commit:
@@ -437,6 +445,8 @@ class ConversationContextManager:
             "folded_run_ids": folded,
             "last_action": "clear",
             "last_action_at": now.isoformat(),
+            "command_history": state["command_history"],
+            "compaction_direction": "",
         }
         task.updated_at = now
         if commit:

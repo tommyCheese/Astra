@@ -239,15 +239,20 @@ class ScheduledDeliverableView(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     id: str
-    job_id: str
-    schedule_run_id: str
-    run_id: str
+    job_id: str | None = None
+    job_name: str | None = None
+    job_kind: ScheduledJobKind | None = None
+    schedule_run_id: str | None = None
+    trigger_type: str | None = None
+    run_id: str | None
     task_id: str
-    kind: Literal["result", "file"]
+    conversation_title: str
+    kind: Literal["result", "file", "data", "receipt"]
     title: str
     summary: str | None = None
     mime_type: str | None = None
     size_bytes: int | None = None
     content_url: str | None = None
+    external_url: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
     created_at: datetime

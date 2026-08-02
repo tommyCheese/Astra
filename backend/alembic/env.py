@@ -19,6 +19,7 @@ SUPPORTED_REVISIONS = {
     "0002_governed_subagent_runtime",
     "0003_concurrent_subagent_supervision",
     "0004_detach_scheduled_jobs",
+    "0005_agent_context_compaction",
 }
 
 

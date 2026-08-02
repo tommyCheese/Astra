@@ -19,8 +19,18 @@ class ConversationSummary(BaseModel):
     has_active_share: bool = False
 
 
+class CommandMessageView(BaseModel):
+    id: str
+    command: str
+    content: str
+    arguments: str = ""
+    after_run_count: int = Field(default=0, ge=0)
+    created_at: datetime
+
+
 class ConversationView(ConversationSummary):
     runs: list[RunView] = Field(default_factory=list)
+    command_messages: list[CommandMessageView] = Field(default_factory=list)
 
 
 class ConversationCreateRequest(BaseModel):
@@ -106,7 +116,8 @@ class SlashSystemCommand(BaseModel):
         "manage_heartbeat",
         "start_subagent_run",
     ]
-    argument_mode: Literal["none", "required"]
+    argument_mode: Literal["none", "optional", "required"]
+    default_arguments: str = ""
     usage: str
     side_effect: Literal["read", "write", "mixed"]
     available: bool = True
@@ -123,3 +134,4 @@ class SlashCommandResult(BaseModel):
     message: str
     context: ContextWindowStatus
     details: dict[str, Any] = Field(default_factory=dict)
+    user_message: CommandMessageView

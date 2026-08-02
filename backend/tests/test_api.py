@@ -426,6 +426,8 @@ async def test_context_status_and_registered_commands_preserve_history(app_clien
         "/subagent",
     ]
     assert catalog.json()[2]["argument_mode"] == "required"
+    assert catalog.json()[0]["argument_mode"] == "optional"
+    assert catalog.json()[0]["default_arguments"] == "保留后续任务所需的关键上下文"
     assert catalog.json()[2]["usage"].startswith("/schedule ")
     assert catalog.json()[2]["side_effect"] == "mixed"
     assert catalog.json()[4]["execution_mode"] == "run"
@@ -585,8 +587,24 @@ async def test_parameterized_automation_commands_are_host_operations(app_client)
         params={"provider": "mock", "model": "mock-model"},
         json={"arguments": "unexpected"},
     )
-    assert compact_with_arguments.status_code == 422
-    assert compact_with_arguments.json()["error"]["code"] == ("SYSTEM_COMMAND_USAGE_INVALID")
+    assert compact_with_arguments.status_code == 200
+    assert compact_with_arguments.json()["details"]["direction"] == "unexpected"
+    assert compact_with_arguments.json()["user_message"]["content"] == "/compact unexpected"
+
+    cleared = await app_client.post(
+        f"/api/conversations/{task_id}/commands/clear",
+        params={"provider": "mock", "model": "mock-model"},
+    )
+    assert cleared.status_code == 200
+    assert cleared.json()["user_message"]["content"] == "/clear"
+
+    conversation = await app_client.get(f"/api/conversations/{task_id}")
+    assert [item["command"] for item in conversation.json()["command_messages"]] == [
+        "/schedule",
+        "/heartbeat",
+        "/compact",
+        "/clear",
+    ]
 
     async with app_client._astra_session() as session:
         runs = await session.execute(select(RunRecord).where(RunRecord.task_id == task_id))
@@ -702,8 +720,11 @@ async def test_workspace_file_view_and_safe_download(app_client):
     assert file["security_status"] == "verified"
     assert file["content_url"]
     content = await app_client.get(file["content_url"])
+    preview = await app_client.get(f"{file['content_url']}?inline=true")
     assert content.status_code == 200
     assert content.text == "# report"
+    assert preview.status_code == 200
+    assert preview.headers["content-disposition"].startswith("inline;")
 
 
 async def test_library_lists_present_files_with_conversation_context(app_client):
@@ -2081,6 +2102,8 @@ async def test_required_subagent_run_can_use_the_standard_no_dag_profile(app_cli
     body = (await app_client.get(f"/api/runs/{created.json()['run_id']}")).json()
     assert body["answer_mode"] == "standard"
     assert body["execution_profile"]["subagent_mode"] == "required"
+    assert body["chat_messages"][0]["content"] == "/subagent 快速并发比较两个方案"
+    assert body["chat_messages"][0]["metadata"]["command"] == "/subagent"
     assert body["execution_profile"]["plan_execution"] is None
     assert body["reasoning_policy"]["effective"]["subagents"]["enabled"] is True
     assert body["reasoning_policy"]["effective"]["subagents"]["budgets"][

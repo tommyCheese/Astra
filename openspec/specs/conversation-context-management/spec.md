@@ -77,7 +77,7 @@ The system SHALL evaluate projected context usage before creating a Run and SHAL
 - **THEN** no model invocation is started
 
 ### Requirement: Users can compact context manually
-The system SHALL allow `/compact` to immediately fold eligible older context into a bounded summary without creating a model Run or deleting conversation records.
+The system SHALL allow `/compact [方向]` to immediately fold eligible older context into a bounded summary without creating a model Run or deleting conversation records. The direction is optional and SHALL fall back to the catalog-provided default.
 
 #### Scenario: Compact a long conversation
 - **WHEN** the user executes `/compact` on an idle conversation with eligible older Runs
@@ -90,7 +90,7 @@ The system SHALL allow `/compact` to immediately fold eligible older context int
 - **THEN** recent visible context remains unchanged
 
 ### Requirement: Users can clear model context manually
-The system SHALL allow `/clear` to exclude all existing Runs and summaries from subsequent model context while preserving the conversation and its records.
+The system SHALL allow `/clear` with no additional message body to exclude all existing Runs and summaries from subsequent model context while preserving the conversation and its records.
 
 #### Scenario: Clear a conversation
 - **WHEN** the user executes `/clear` on an idle conversation
@@ -109,4 +109,3 @@ The system MUST reject manual context mutations while the conversation has an ac
 - **WHEN** the conversation contains a non-terminal Run
 - **THEN** `/compact` and `/clear` fail with a classified state error
 - **THEN** persisted context state is unchanged
-

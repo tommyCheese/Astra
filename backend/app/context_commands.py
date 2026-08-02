@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from uuid import uuid4
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -8,7 +9,7 @@ from app.automation_commands import AutomationCommandService
 from app.conversation_context import ConversationContextManager
 from app.core.config import Settings
 from app.core.errors import ResourceError, ValidationError
-from app.db.models import TaskRecord
+from app.db.models import TaskRecord, utc_now
 from app.schemas.agent import EXECUTABLE_SUBAGENT_COHORTS
 
 
@@ -18,6 +19,7 @@ class SystemCommandDefinition:
     description: str
     effect: str
     argument_mode: str = "none"
+    default_arguments: str = ""
     usage: str = ""
     available: bool = True
     side_effect: str = "write"
@@ -31,6 +33,7 @@ class SystemCommandDefinition:
             "description": self.description,
             "effect": self.effect,
             "argument_mode": self.argument_mode,
+            "default_arguments": self.default_arguments,
             "usage": self.usage or f"/{self.name}",
             "available": self.available,
             "side_effect": self.side_effect,
@@ -44,10 +47,13 @@ SYSTEM_COMMANDS = (
         name="compact",
         description="整理较早的对话，保留近期内容和完整记录",
         effect="compact_context",
+        argument_mode="optional",
+        default_arguments="保留后续任务所需的关键上下文",
+        usage="/compact [压缩方向]",
     ),
     SystemCommandDefinition(
         name="clear",
-        description="让模型从当前消息重新开始，完整记录仍会保留",
+        description="清空整个模型上下文，完整记录仍会保留",
         effect="clear_context",
     ),
     SystemCommandDefinition(
@@ -111,12 +117,13 @@ async def execute_system_command(
     arguments: str = "",
     session: AsyncSession | None = None,
     settings: Settings | None = None,
-) -> tuple[str, dict[str, object]]:
+) -> tuple[str, dict[str, object], dict[str, object]]:
     definition = next((item for item in SYSTEM_COMMANDS if item.name == command), None)
     if definition is None:
         raise ResourceError("SYSTEM_COMMAND_NOT_FOUND", "找不到这个快捷操作。")
+    normalized_arguments = arguments.strip()
     if definition.argument_mode == "required":
-        if not arguments.strip():
+        if not normalized_arguments:
             raise ValidationError(
                 "SYSTEM_COMMAND_ARGUMENTS_REQUIRED",
                 f"此命令需要参数。用法：{definition.usage}",
@@ -126,16 +133,37 @@ async def execute_system_command(
             raise RuntimeError("Parameterized command dependencies are unavailable")
         automation = AutomationCommandService(session, settings)
         if command == "schedule":
-            return await automation.execute_schedule(task, arguments)
-        return await automation.execute_heartbeat(task, arguments)
-    if arguments.strip():
+            message, details = await automation.execute_schedule(task, normalized_arguments)
+        else:
+            message, details = await automation.execute_heartbeat(task, normalized_arguments)
+    elif definition.argument_mode == "none" and normalized_arguments:
         raise ValidationError(
             "SYSTEM_COMMAND_USAGE_INVALID",
             f"/{command} 不接受参数。",
             {"usage": definition.usage, "command": f"/{command}"},
         )
-    if command == "compact":
-        details = await manager.compact(task)
-        return "已整理较早的对话，完整记录仍保留。", details
-    details = await manager.clear(task)
-    return "模型将从当前消息重新开始，完整记录仍保留。", details
+    elif command == "compact":
+        direction = normalized_arguments or definition.default_arguments
+        details = await manager.compact(task, direction=direction)
+        details["direction"] = direction
+        message = "已按指定方向整理较早的对话，完整记录仍保留。"
+        normalized_arguments = direction
+    else:
+        details = await manager.clear(task)
+        message = "已清空模型上下文；后续请求将从零开始，完整记录仍保留。"
+
+    invocation = f"/{command}" + (f" {normalized_arguments}" if normalized_arguments else "")
+    raw_state = task.context_state if isinstance(task.context_state, dict) else {}
+    history = [item for item in raw_state.get("command_history", []) if isinstance(item, dict)]
+    command_message = {
+        "id": f"command-{uuid4()}",
+        "command": f"/{command}",
+        "content": invocation,
+        "arguments": normalized_arguments,
+        "after_run_count": len(task.runs),
+        "created_at": utc_now().isoformat(),
+    }
+    task.context_state = {**raw_state, "command_history": [*history, command_message][-200:]}
+    task.updated_at = utc_now()
+    await manager.session.commit()
+    return message, details, command_message

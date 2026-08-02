@@ -8,7 +8,7 @@ from app.db.base import Base
 
 BACKEND_ROOT = Path(__file__).parents[1]
 BASELINE_REVISION = "0001_current_baseline"
-HEAD_REVISION = "0004_detach_scheduled_jobs"
+HEAD_REVISION = "0005_agent_context_compaction"
 
 
 def _alembic(database_path: Path, *arguments: str) -> subprocess.CompletedProcess[str]:

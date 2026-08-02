@@ -2,7 +2,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { App, DocumentationPage } from '../src/App';
-import { buildRuntime, cancelRun, cancelRuntimeBuild, confirmPlanExecution, createConversationShare, createRun, decideToolApproval, deleteConversation, executeConversationCommand, getConversation, getConversationContext, getConversationStrategy, getRun, getRuntimeDefaultModel, getRuntimeProfile, listConversationShares, listConversations, listLibraryFiles, listRuns, listSkills, listSystemCommands, resetRuntimeAgentProfile, resolveModelContextCapabilities, resolveModelThinkingCapabilities, resumeRun, revisePlan, revokeConversationShare, streamRunEvents, takeCreatedRunStream, testModelConnection, updateConversation, updateConversationStrategy, updateRuntimeAgentProfile, updateRuntimeMemorySettings, updateToolSettings, type ModelThinkingCapability, type RunStreamEvent, type SkillSummary } from '../src/api';
+import { buildRuntime, cancelRun, cancelRuntimeBuild, confirmPlanExecution, createConversationShare, createRun, decideToolApproval, deleteConversation, executeConversationCommand, getConversation, getConversationContext, getConversationStrategy, getRun, getRuntimeDefaultModel, getRuntimeProfile, listConversationShares, listConversations, listLibraryDeliverables, listRuns, listSkills, listSystemCommands, resetRuntimeAgentProfile, resolveModelContextCapabilities, resolveModelThinkingCapabilities, resumeRun, revisePlan, revokeConversationShare, streamRunEvents, takeCreatedRunStream, testModelConnection, updateConversation, updateConversationStrategy, updateRuntimeAgentProfile, updateRuntimeMemorySettings, updateToolSettings, type ModelThinkingCapability, type RunStreamEvent, type SkillSummary } from '../src/api';
 import type { PlanGraphSnapshot, RunView } from '../src/types';
 
 vi.mock('../src/api', () => ({
@@ -87,7 +87,7 @@ vi.mock('../src/api', () => ({
   createConversationShare: vi.fn(async () => ({ url: '/share/token', created_at: new Date().toISOString(), updated_at: new Date().toISOString() })),
   revokeConversationShare: vi.fn(async () => undefined),
   listConversationShares: vi.fn(async () => []),
-  listLibraryFiles: vi.fn(async () => []),
+  listLibraryDeliverables: vi.fn(async () => []),
   listSkills: vi.fn(async () => []),
   listSystemCommands: vi.fn(async () => []),
   getConversationContext: vi.fn(async () => ({
@@ -97,7 +97,7 @@ vi.mock('../src/api', () => ({
     status: 'normal', estimated: true, summary_active: false, visible_run_count: 1,
     folded_run_count: 0, last_action: null, last_action_at: null,
   })),
-  executeConversationCommand: vi.fn(async (_id, command) => ({
+  executeConversationCommand: vi.fn(async (_id, command, _provider, _model, argumentsText = '') => ({
     command: `/${command}`,
     message: command === 'clear' ? '模型将从当前消息重新开始，完整记录仍保留。' : '已整理较早的对话，完整记录仍保留。',
     context: {
@@ -108,6 +108,14 @@ vi.mock('../src/api', () => ({
       folded_run_count: command === 'compact' ? 2 : 0, last_action: command, last_action_at: new Date().toISOString(),
     },
     details: {},
+    user_message: {
+      id: `command-${command}`,
+      command: `/${command}`,
+      content: `/${command}${argumentsText ? ` ${argumentsText}` : ''}`,
+      arguments: argumentsText,
+      after_run_count: 1,
+      created_at: new Date().toISOString(),
+    },
   })),
   getRunSkills: vi.fn(async () => ({
     catalog_digest: 'sha256:test',
@@ -398,12 +406,15 @@ describe('App', () => {
     expect(getConversationContext).not.toHaveBeenCalled();
 
     await waitFor(() => expect(selector).toHaveClass('has-context'));
-    const contextControl = screen.getByRole('button', { name: '上下文：已使用 0，总计 400K，剩余 400K（估算）' });
+    const contextControl = screen.getByRole('button', { name: '上下文：已使用 0，总计 400K，剩余 392K（估算）' });
     expect(contextControl.querySelector('.model-context-ring-value')).toHaveAttribute('stroke-dasharray', '0 100');
     await userEvent.click(contextControl);
-    expect(screen.getByRole('dialog', { name: '上下文容量' })).toHaveTextContent('回复预留');
+    const contextPanel = screen.getByRole('dialog', { name: '上下文容量' });
+    expect(contextPanel).toHaveTextContent('本轮模型回复预留');
+    expect(contextPanel).toHaveTextContent('模型窗口400K−回复预留8K=可用输入392K');
+    expect(contextPanel).toHaveTextContent('它从模型窗口中扣除，但不计入“已使用输入”');
     expect(document.getElementById('model-context-status-description')).toHaveTextContent(
-      '上下文：已使用 0，总计 400K，剩余 400K（估算）',
+      '上下文：已使用 0，总计 400K，剩余 392K（估算）',
     );
     expect(getConversationContext).not.toHaveBeenCalled();
   });
@@ -418,7 +429,7 @@ describe('App', () => {
 
     const nextSelector = screen.getByRole('button', { name: '当前模型：gpt-5-mini' });
     await waitFor(() => expect(nextSelector).toHaveClass('has-context'));
-    const contextControl = screen.getByRole('button', { name: '上下文：已使用 0，总计 400K，剩余 400K（估算）' });
+    const contextControl = screen.getByRole('button', { name: '上下文：已使用 0，总计 400K，剩余 392K（估算）' });
     expect(contextControl.querySelector('.model-context-ring-value')).toHaveAttribute('stroke-dasharray', '0 100');
     expect(getConversationContext).not.toHaveBeenCalled();
   });
@@ -559,7 +570,7 @@ describe('App', () => {
 
   it('executes preset slash commands without submitting a model message and refreshes context status', async () => {
     vi.mocked(listSystemCommands).mockResolvedValueOnce([
-      { name: 'compact', command: '/compact', description: '整理较早的对话，保留近期内容和完整记录', effect: 'compact_context', argument_mode: 'none', usage: '/compact', side_effect: 'write', available: true, execution_mode: 'host', unavailable_reason: null },
+      { name: 'compact', command: '/compact', description: '整理较早的对话，保留近期内容和完整记录', effect: 'compact_context', argument_mode: 'optional', default_arguments: '保留后续任务所需的关键上下文', usage: '/compact [压缩方向]', side_effect: 'write', available: true, execution_mode: 'host', unavailable_reason: null },
       { name: 'clear', command: '/clear', description: '让模型从当前消息重新开始，完整记录仍会保留', effect: 'clear_context', argument_mode: 'none', usage: '/clear', side_effect: 'write', available: true, execution_mode: 'host', unavailable_reason: null },
     ]);
     render(<App />);
@@ -580,10 +591,13 @@ describe('App', () => {
     const command = screen.getByRole('option', { name: /\/compact/ });
     expect(command).toHaveTextContent('快捷操作');
     await userEvent.click(command);
+    expect(textbox).toHaveValue('/compact 保留后续任务所需的关键上下文');
+    await userEvent.click(screen.getByRole('button', { name: '发送' }));
 
-    await waitFor(() => expect(executeConversationCommand).toHaveBeenCalledWith('task-1', 'compact', 'openai', 'gpt-5'));
+    await waitFor(() => expect(executeConversationCommand).toHaveBeenCalledWith('task-1', 'compact', 'openai', 'gpt-5', '保留后续任务所需的关键上下文'));
     expect(vi.mocked(createRun).mock.calls).toHaveLength(runCalls);
     expect(textbox).toHaveValue('');
+    expect(document.querySelector('.message-command-prefix')).toHaveTextContent('/compact');
     const modelSelector = screen.getByRole('button', { name: '当前模型：gpt-5' });
     expect(modelSelector.querySelector('.model-context-tooltip')).toHaveTextContent('5K / 400K');
     expect(modelSelector.querySelector('.model-context-tooltip')).toHaveTextContent('已整理');
@@ -597,7 +611,9 @@ describe('App', () => {
     await userEvent.click(contextControl);
     const capacityPanel = screen.getByRole('dialog', { name: '上下文容量' });
     expect(capacityPanel).toHaveTextContent('5K');
-    expect(capacityPanel).toHaveTextContent('对话与运行结果');
+    expect(capacityPanel).toHaveTextContent('未折叠轮次的用户目标与最终结果');
+    expect(capacityPanel).toHaveTextContent('不包含：工具日志、思考过程、中间事件和已折叠轮次。');
+    expect(capacityPanel).toHaveTextContent('这里的数字怎么计算');
     expect(capacityPanel).not.toHaveTextContent('模型目录');
     expect(capacityPanel).not.toHaveTextContent('回退');
     expect(document.querySelector('.context-window-status')).not.toBeInTheDocument();
@@ -652,6 +668,60 @@ describe('App', () => {
     await waitFor(() => expect(screen.getByText('操作执行失败，输入内容已保留，可稍后重试。')).toBeInTheDocument());
     expect(textbox).toHaveValue('/schedule list');
     expect(vi.mocked(createRun).mock.calls).toHaveLength(runCalls);
+  });
+
+  it('executes /clear directly without requiring message text', async () => {
+    vi.mocked(listSystemCommands).mockResolvedValueOnce([
+      { name: 'clear', command: '/clear', description: '清空整个模型上下文', effect: 'clear_context', argument_mode: 'none', usage: '/clear', side_effect: 'write', available: true, execution_mode: 'host', unavailable_reason: null },
+    ]);
+    render(<App />);
+    const textbox = screen.getByRole('textbox');
+
+    await userEvent.type(textbox, '先建立对话');
+    await userEvent.click(screen.getByRole('button', { name: '发送' }));
+    await waitFor(() => expect(getRun).toHaveBeenCalled());
+    const runCalls = vi.mocked(createRun).mock.calls.length;
+
+    await userEvent.type(textbox, '/cl');
+    await userEvent.click(screen.getByRole('option', { name: /\/clear/ }));
+
+    await waitFor(() => expect(executeConversationCommand).toHaveBeenCalledWith('task-1', 'clear', 'openai', 'gpt-5'));
+    expect(vi.mocked(createRun).mock.calls).toHaveLength(runCalls);
+    expect(textbox).toHaveValue('');
+    expect(document.querySelector('.message-command-prefix')).toHaveTextContent('/clear');
+  });
+
+  it('treats /clear as an idempotent local command before a conversation exists', async () => {
+    vi.mocked(listSystemCommands).mockResolvedValueOnce([
+      { name: 'clear', command: '/clear', description: '清空整个模型上下文', effect: 'clear_context', argument_mode: 'none', usage: '/clear', side_effect: 'write', available: true, execution_mode: 'host', unavailable_reason: null },
+    ]);
+    render(<App />);
+    const textbox = screen.getByRole('textbox');
+
+    await userEvent.type(textbox, '/clear');
+    await userEvent.click(screen.getByRole('button', { name: '发送' }));
+
+    expect(executeConversationCommand).not.toHaveBeenCalled();
+    expect(textbox).toHaveValue('');
+    expect(screen.queryByText('请先开始一段对话，再使用此快捷操作。')).not.toBeInTheDocument();
+    expect(document.querySelector('.message-command-prefix')).toHaveTextContent('/clear');
+  });
+
+  it('treats /compact as an idempotent local command before a conversation exists', async () => {
+    vi.mocked(listSystemCommands).mockResolvedValueOnce([
+      { name: 'compact', command: '/compact', description: '整理较早的对话', effect: 'compact_context', argument_mode: 'optional', default_arguments: '保留后续任务所需的关键上下文', usage: '/compact [压缩方向]', side_effect: 'write', available: true, execution_mode: 'host', unavailable_reason: null },
+    ]);
+    render(<App />);
+    const textbox = screen.getByRole('textbox');
+
+    await userEvent.type(textbox, '/compact');
+    await userEvent.click(screen.getByRole('button', { name: '发送' }));
+
+    expect(executeConversationCommand).not.toHaveBeenCalled();
+    expect(textbox).toHaveValue('');
+    expect(screen.queryByText('请先开始一段对话，再使用此快捷操作。')).not.toBeInTheDocument();
+    expect(document.querySelector('.message-command-prefix')).toHaveTextContent('/compact');
+    expect(document.querySelector('.message-command-arguments')).toHaveTextContent('保留后续任务所需的关键上下文');
   });
 
   it('routes /subagent to a quick required-subagent Run and preserves arguments on failure', async () => {
@@ -1092,12 +1162,14 @@ describe('App', () => {
     await userEvent.type(screen.getByRole('textbox'), '竞态测试');
     await userEvent.click(screen.getByRole('button', { name: '发送' }));
 
-    expect(await screen.findByText('流式回答不会消失')).toBeInTheDocument();
+    const answerArticle = (await screen.findByText('流式回答不会消失')).closest('article');
+    expect(answerArticle).not.toBeNull();
     expect(screen.getByText('后台校验中')).toBeInTheDocument();
     expect(screen.getByText('流式回答不会消失').closest('article')).not.toHaveClass('streaming-message');
     await new Promise((resolve) => window.setTimeout(resolve, 200));
     expect(screen.getByText('流式回答不会消失')).toBeInTheDocument();
     await waitFor(() => expect(screen.getByText('已完成查询')).toBeInTheDocument(), { timeout: 4000 });
+    expect(screen.getByText('已完成查询').closest('article')).toBe(answerArticle);
     expect(screen.queryByText('流式回答不会消失')).not.toBeInTheDocument();
     vi.mocked(getRun).mockResolvedValue(finalSnapshot);
     vi.mocked(streamRunEvents).mockImplementation(() => () => undefined);
@@ -1335,6 +1407,40 @@ describe('App', () => {
     expect(screen.getByText('今天想完成点什么？')).toBeInTheDocument();
   });
 
+  it('replaces background activity with a new-message reminder that clears when opened', async () => {
+    vi.useFakeTimers();
+    const now = new Date().toISOString();
+    const running = {
+      id: 'background-chat', title: '后台任务', title_source: 'auto', pinned_at: null,
+      created_at: now, updated_at: now, last_run_status: 'running', last_message_preview: '', has_active_share: false,
+    };
+    vi.mocked(listConversations)
+      .mockResolvedValueOnce([running])
+      .mockResolvedValueOnce([{ ...running, last_run_status: 'completed' }]);
+
+    try {
+      render(<App />);
+      await act(async () => { await Promise.resolve(); });
+
+      expect(screen.getByTestId('conversation-status-background-chat')).toHaveClass('running');
+      expect(screen.getByRole('img', { name: '运行中' })).toBeInTheDocument();
+
+      await act(async () => {
+        vi.advanceTimersByTime(1500);
+        await Promise.resolve();
+      });
+
+      const reminder = screen.getByTestId('conversation-status-background-chat');
+      expect(reminder).toHaveClass('unread');
+      expect(screen.queryByRole('img', { name: '已完成' })).not.toBeInTheDocument();
+
+      fireEvent.click(reminder);
+      expect(screen.queryByTestId('conversation-status-background-chat')).not.toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('separates pinned conversations and manages rename and delete with dialogs', async () => {
     const now = new Date().toISOString();
     vi.mocked(listConversations).mockResolvedValueOnce([
@@ -1399,9 +1505,10 @@ describe('App', () => {
 
   it('groups and sorts files in the independent library view', async () => {
     const now = new Date().toISOString();
-    vi.mocked(listLibraryFiles).mockResolvedValueOnce([
-      { id: 'file-image', task_id: 'conversation-1', conversation_title: '图表任务', path: 'outputs/chart.png', mime_type: 'image/png', size_bytes: 2048, security_status: 'verified', deliverable_candidate: true, content_url: '/api/files/chart', created_at: now, updated_at: now },
-      { id: 'file-doc', task_id: 'conversation-2', conversation_title: '报告任务', path: 'reports/summary.pdf', mime_type: 'application/pdf', size_bytes: 8192, security_status: 'verified', deliverable_candidate: true, content_url: '/api/files/report', created_at: now, updated_at: now },
+    vi.mocked(listLibraryDeliverables).mockResolvedValueOnce([
+      { id: 'file-image', job_id: null, schedule_run_id: null, run_id: 'run-1', task_id: 'conversation-1', conversation_title: '图表任务', kind: 'file', title: 'chart.png', summary: 'outputs/chart.png', mime_type: 'image/png', size_bytes: 2048, content_url: '/api/files/chart', external_url: null, metadata: {}, created_at: now },
+      { id: 'file-doc', job_id: 'job-1', job_name: '日报', job_kind: 'agent', schedule_run_id: 'scheduled-run-1', trigger_type: 'scheduled', run_id: 'run-2', task_id: 'conversation-2', conversation_title: '报告任务', kind: 'file', title: 'summary.pdf', summary: 'reports/summary.pdf', mime_type: 'application/pdf', size_bytes: 8192, content_url: '/api/files/report', external_url: null, metadata: {}, created_at: now },
+      { id: 'result:scheduled-run-1', job_id: 'job-1', job_name: '日报', job_kind: 'agent', schedule_run_id: 'scheduled-run-1', trigger_type: 'scheduled', run_id: 'run-2', task_id: 'conversation-2', conversation_title: '报告任务', kind: 'result', title: '执行结果', summary: '日报生成完成', mime_type: null, size_bytes: null, content_url: null, external_url: null, metadata: {}, created_at: now },
     ]);
     render(<App />);
 
@@ -1409,6 +1516,7 @@ describe('App', () => {
     expect(await screen.findByRole('heading', { name: '资料库' })).toBeInTheDocument();
     expect(screen.getByText('chart.png')).toBeInTheDocument();
     expect(screen.getByText('summary.pdf')).toBeInTheDocument();
+    expect(screen.getByText('日报生成完成')).toBeInTheDocument();
     expect(document.querySelector('a[href="/api/files/chart"]')).toHaveTextContent('打开');
     expect(document.querySelector('.library-groups')).toHaveClass('view-gallery');
     expect(screen.getByRole('button', { name: '时间' })).toHaveAttribute('aria-pressed', 'true');
@@ -1430,12 +1538,12 @@ describe('App', () => {
 
   it('renders the library navigation and controls in English', async () => {
     window.localStorage.setItem('astra.language', 'en');
-    vi.mocked(listLibraryFiles).mockResolvedValueOnce([]);
+    vi.mocked(listLibraryDeliverables).mockResolvedValueOnce([]);
     render(<App />);
 
     await userEvent.click(screen.getByRole('button', { name: 'Library' }));
     expect(await screen.findByRole('heading', { name: 'Library' })).toBeInTheDocument();
-    expect(screen.getByPlaceholderText('Search files or chats')).toBeInTheDocument();
+    expect(screen.getByPlaceholderText('Search deliverables, tasks, or chats')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Gallery view' })).toHaveAttribute('aria-pressed', 'true');
     expect(screen.getByRole('combobox', { name: 'Library sort' })).toHaveValue('updated_desc');
     expect(document.documentElement).toHaveAttribute('lang', 'en');
@@ -1495,6 +1603,119 @@ describe('App', () => {
     await userEvent.click(firstQuestion);
     expect(firstQuestion).toHaveAttribute('aria-current', 'true');
     expect(secondQuestion).not.toHaveAttribute('aria-current');
+  });
+
+  it('jumps on pointer down before streaming layout changes can remove the button', async () => {
+    render(<App />);
+    await userEvent.type(screen.getByRole('textbox'), '生成一段较长回答');
+    await userEvent.click(screen.getByRole('button', { name: '发送' }));
+    await screen.findByText('已完成查询');
+
+    const conversation = document.querySelector<HTMLElement>('.conversation');
+    expect(conversation).not.toBeNull();
+    Object.defineProperties(conversation!, {
+      scrollHeight: { configurable: true, value: 2400 },
+      clientHeight: { configurable: true, value: 600 },
+      scrollTop: { configurable: true, writable: true, value: 200 },
+    });
+    const scrollTo = vi.fn();
+    Object.defineProperty(conversation!, 'scrollTo', { configurable: true, value: scrollTo });
+    fireEvent.scroll(conversation!);
+
+    const jumpButton = screen.getByRole('button', { name: '回到最新' });
+    fireEvent.pointerDown(jumpButton, { button: 0, pointerType: 'touch' });
+
+    expect(scrollTo).toHaveBeenCalledWith({ top: 2400, behavior: 'smooth' });
+    expect(screen.queryByRole('button', { name: '回到最新' })).not.toBeInTheDocument();
+  });
+
+  it('keeps one independently controlled process panel when resuming a clarification', async () => {
+    const completedFixture = await vi.mocked(getRun)('fixture');
+    const waitingSnapshot: RunView = {
+      ...completedFixture,
+      id: 'run-clarification',
+      task_id: 'task-clarification',
+      status: 'waiting_user',
+      summary: '请告诉我你希望我完成的具体任务或问题。',
+      result: null,
+      waiting_state: {
+        paused_node: 'select_action',
+        continuation_token: 'continue-clarification',
+        request: '请告诉我你希望我完成的具体任务或问题。',
+      },
+      events: [
+        { id: 1, type: 'reasoning.summary.completed', payload: { turn_index: 1, summary: '需要澄清用户意图' }, created_at: 'now' },
+        { id: 2, type: 'run.waiting_user', payload: { request: '请告诉我你希望我完成的具体任务或问题。' }, created_at: 'now' },
+      ],
+      chat_messages: [
+        { id: 'clarification-user-1', role: 'user', content: '！', status: 'completed', metadata: {} },
+        { id: 'clarification-question', role: 'assistant', content: '请告诉我你希望我完成的具体任务或问题。', status: 'waiting_user', metadata: {} },
+      ],
+    };
+    const resumedSnapshot: RunView = {
+      ...completedFixture,
+      id: 'run-clarification',
+      task_id: 'task-clarification',
+      status: 'completed',
+      summary: '明白了，你是在打招呼。你好！',
+      result: { ...completedFixture.result!, summary: '明白了，你是在打招呼。你好！' },
+      waiting_state: null,
+      events: [
+        ...waitingSnapshot.events,
+        { id: 3, type: 'run.resumed', payload: { observation: { kind: 'user_response', summary: '只是在打招呼' } }, created_at: 'now' },
+        { id: 4, type: 'reasoning.summary.completed', payload: { turn_index: 2, summary: '根据澄清直接回答' }, created_at: 'now' },
+      ],
+      chat_messages: [
+        { id: 'clarification-user-1', role: 'user', content: '！', status: 'completed', metadata: {} },
+        { id: 'clarification-question', role: 'assistant', content: '请告诉我你希望我完成的具体任务或问题。', status: 'ask_user', metadata: {} },
+        { id: 'clarification-user-2', role: 'user', content: '只是在打招呼', status: 'completed', metadata: {} },
+        { id: 'clarification-answer', role: 'assistant', content: '明白了，你是在打招呼。你好！', status: 'completed', metadata: {} },
+      ],
+    };
+    vi.mocked(createRun).mockResolvedValueOnce({
+      run_id: waitingSnapshot.id,
+      task_id: waitingSnapshot.task_id,
+      status: 'created',
+      answer_mode: 'standard',
+    });
+    vi.mocked(getRun).mockReset();
+    vi.mocked(getRun).mockResolvedValueOnce(waitingSnapshot).mockResolvedValue(resumedSnapshot);
+    vi.mocked(resumeRun).mockResolvedValueOnce({
+      run_id: waitingSnapshot.id,
+      task_id: waitingSnapshot.task_id,
+      status: 'executing',
+    });
+
+    render(<App />);
+    await userEvent.type(screen.getByRole('textbox'), '！');
+    await userEvent.click(screen.getByRole('button', { name: '发送' }));
+
+    expect(await screen.findByText('请告诉我你希望我完成的具体任务或问题。')).toBeInTheDocument();
+    expect(document.querySelectorAll('.process-panel')).toHaveLength(1);
+
+    await userEvent.type(screen.getByRole('textbox'), '只是在打招呼');
+    await userEvent.click(screen.getByRole('button', { name: '发送' }));
+
+    await waitFor(() => expect(resumeRun).toHaveBeenCalledWith(
+      waitingSnapshot.id,
+      '只是在打招呼',
+      'continue-clarification',
+      expect.objectContaining({ provider: 'openai', name: 'gpt-5' }),
+    ));
+    expect(await screen.findByText('明白了，你是在打招呼。你好！')).toBeInTheDocument();
+    expect(screen.getAllByText('请告诉我你希望我完成的具体任务或问题。')).toHaveLength(1);
+    expect(screen.getAllByRole('button', { name: /跳转到问题/ })).toHaveLength(2);
+    expect(document.querySelectorAll('.process-panel')).toHaveLength(1);
+    expect(screen.getAllByText('思考完成')).toHaveLength(1);
+
+    const processSummary = screen.getByText('思考完成').closest('summary');
+    const processPanel = processSummary?.closest('details');
+    expect(processPanel).not.toHaveAttribute('open');
+    await userEvent.click(processSummary!);
+    expect(processPanel).toHaveAttribute('open');
+
+    vi.mocked(getRun).mockResolvedValue(completedFixture);
+    vi.mocked(resumeRun).mockResolvedValue({ run_id: 'run-1', task_id: 'task-1', status: 'executing' });
   });
 
   it('opens settings and moves capabilities into the settings view', async () => {

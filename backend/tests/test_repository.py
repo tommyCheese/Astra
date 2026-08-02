@@ -418,6 +418,17 @@ async def test_reasoning_state_is_versioned_and_waiting_run_resumes(session):
         plan_graph={},
         agent_state=state.model_dump(mode="json"),
     )
+    turn = await repo.create_agent_turn(
+        run.id,
+        1,
+        "ask_user",
+        "内部判断：需要用户选择。",
+        decision={
+            "decision_type": "ask_user",
+            "expected_observation": "请选择 A 或 B。",
+        },
+    )
+    await repo.update_agent_turn(turn.id, status="ask_user")
     await repo.set_waiting_state(run.id, {"paused_node": "build_contract", "request": "请选择"})
     waiting = await repo.require_run(run.id)
     waiting_view = run_to_view(waiting)
@@ -434,6 +445,18 @@ async def test_reasoning_state_is_versioned_and_waiting_run_resumes(session):
     assert resumed.status == "executing"
     assert resumed.state_version == 2
     assert resumed.agent_state["observations"][-1]["summary"] == "选 A"
+    resumed_view = run_to_view(await repo.require_run(run.id))
+    dialogue = [
+        (message["role"], message["content"])
+        for message in resumed_view["chat_messages"]
+        if message["role"] in {"user", "assistant"}
+    ]
+    assert dialogue == [
+        ("user", "需要选择"),
+        ("assistant", "请选择 A 或 B。"),
+        ("user", "选 A"),
+    ]
+    assert all("内部判断" not in content for _, content in dialogue)
 
 
 async def test_reasoning_state_rejects_stale_version(session):

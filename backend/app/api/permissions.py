@@ -2,16 +2,19 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from fastapi.responses import FileResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.artifacts import LocalArtifactStore
 from app.core.config import Settings, get_settings
+from app.core.errors import ResourceError
 from app.db.models import (
     AgentDelegationRecord,
     AgentIdentityRecord,
     ApprovalGrantRecord,
+    ArtifactRecord,
     CredentialGrantRecord,
     DataFlowStateRecord,
     RunEventRecord,
@@ -24,10 +27,12 @@ from app.db.models import (
     WorkspaceFileRecord,
 )
 from app.db.session import get_session
+from app.deliverables import DeliverableCatalog
 from app.permissions.engine import PermissionEngine
 from app.repositories.runs import RunRepository
 from app.repositories.workspaces import WorkspaceRepository
 from app.schemas.permissions import PolicySimulationRequest, PolicySimulationResult
+from app.schemas.schedules import ScheduledDeliverableView
 from app.workspaces.runtime import WorkspaceRuntimeService
 
 router = APIRouter(prefix="/api", tags=["permissions", "workspaces"])
@@ -308,10 +313,40 @@ async def library_files(
     ]
 
 
+@router.get("/library/deliverables", response_model=list[ScheduledDeliverableView])
+async def library_deliverables(
+    limit: int = Query(default=500, ge=1, le=1000),
+    session: AsyncSession = Depends(get_session),
+):
+    return await DeliverableCatalog(session).list(limit=limit)
+
+
+@router.get("/deliverables/artifacts/{artifact_id}/content")
+async def deliverable_artifact_content(
+    artifact_id: str,
+    inline: bool = False,
+    session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+):
+    artifact = await session.get(ArtifactRecord, artifact_id)
+    if artifact is None or not artifact.storage_key or artifact.security_status != "verified":
+        raise ResourceError("DELIVERABLE_NOT_FOUND", "找不到可访问的制品。")
+    path = LocalArtifactStore(settings.artifact_store_path).resolve(artifact.storage_key)
+    if not path.is_file():
+        raise ResourceError("DELIVERABLE_NOT_FOUND", "制品内容已不可用。")
+    return FileResponse(
+        path,
+        media_type=artifact.mime_type,
+        filename=str(artifact.metadata_.get("filename") or Path(artifact.path or path).name),
+        content_disposition_type="inline" if inline else "attachment",
+    )
+
+
 @router.get("/tasks/{task_id}/workspace/files/{file_id}/content")
 async def workspace_file_content(
     task_id: str,
     file_id: str,
+    inline: bool = False,
     session: AsyncSession = Depends(get_session),
     settings: Settings = Depends(get_settings),
 ):
@@ -338,4 +373,5 @@ async def workspace_file_content(
         Path(path),
         media_type=file.mime_type or "application/octet-stream",
         filename=Path(file.relative_path).name,
+        content_disposition_type="inline" if inline else "attachment",
     )

@@ -1,4 +1,4 @@
-import type { ChatMessage, PlanGraphSnapshot, RunView } from './types';
+import type { ChatMessage, CommandMessageView, PlanGraphSnapshot, RunView } from './types';
 
 export const HISTORY_LIMIT = 100;
 
@@ -7,6 +7,7 @@ export type ConversationEntry = {
   run?: RunView;
   priorMessages: ChatMessage[];
   title?: string;
+  last_run_status?: string | null;
   preferred_answer_mode?: 'standard' | 'trusted';
   pinned_at?: string | null;
   updated_at?: string;
@@ -70,11 +71,18 @@ function buildConversation(run: RunView | null): ChatMessage[] {
 export function buildPresentation(run: RunView | null): ChatMessage[] {
   if (!run) return [];
   const snapshot = normalizeRunView(run);
-  const presented: ChatMessage[] = buildConversation(snapshot)
-    .filter((message) => message.role === 'user')
+  const conversation = buildConversation(snapshot);
+  const hasCurrentWaitingMessage = snapshot.status === 'waiting_user'
+    && conversation.some((message) => message.role === 'assistant' && message.status === 'waiting_user');
+  const presented: ChatMessage[] = conversation
+    .filter((message) => message.role === 'user'
+      || (message.role === 'assistant'
+        && (message.status === 'waiting_user' || (!hasCurrentWaitingMessage && message.status === 'ask_user'))))
     .map((message) => ({
       ...message,
-      metadata: { ...message.metadata, presentation: 'user' },
+      metadata: message.role === 'user'
+        ? { ...message.metadata, presentation: 'user' }
+        : { ...message.metadata },
     }));
   const hasProcessEvents = snapshot.events.some((event) => event.type.startsWith('reasoning.') || ['agent_turn.created', 'tool_call.started', 'tool_call.completed', 'reflection.created', 'verification.created'].includes(event.type));
   const isActive = !['completed', 'completed_with_warnings', 'failed', 'blocked', 'waiting_user'].includes(snapshot.status);
@@ -96,5 +104,32 @@ export function buildPresentation(run: RunView | null): ChatMessage[] {
       metadata: { presentation: 'answer', run_snapshot: snapshot },
     });
   }
+  const waitingRequest = snapshot.status === 'waiting_user'
+    && !snapshot.result
+    && !snapshot.pending_approval
+    && snapshot.waiting_state?.kind !== 'plan_confirmation'
+    && !presented.some((message) => message.role === 'assistant' && message.status === 'waiting_user')
+    && typeof snapshot.waiting_state?.request === 'string'
+    ? snapshot.waiting_state.request.trim()
+    : '';
+  if (waitingRequest) {
+    presented.push({
+      id: `${run.id}-waiting`,
+      role: 'assistant',
+      content: waitingRequest,
+      status: 'waiting_user',
+      metadata: { waiting_state: snapshot.waiting_state },
+    });
+  }
   return presented;
+}
+
+export function presentCommandMessage(message: CommandMessageView): ChatMessage {
+  return {
+    id: message.id,
+    role: 'user',
+    content: message.content,
+    status: 'completed',
+    metadata: { presentation: 'user', command: message.command, command_arguments: message.arguments },
+  };
 }

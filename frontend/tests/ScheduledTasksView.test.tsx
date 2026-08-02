@@ -39,8 +39,12 @@ describe('ScheduledTasksView', () => {
     vi.mocked(api.listScheduledTasks).mockResolvedValue([task]);
     vi.mocked(api.listScheduledTaskRuns).mockResolvedValue([{ id: 'scheduled-run-1', job_id: task.id, scheduled_for: '2026-08-02T01:00:00Z', trigger_type: 'manual', status: 'completed', task_id: 'task-1', run_id: 'run-1', outcome: {}, claimed_at: null, started_at: null, completed_at: null, created_at: '2026-08-02T01:00:00Z' }]);
     vi.mocked(api.listScheduledDeliverables).mockResolvedValue([
-      { id: 'result:scheduled-run-1', job_id: task.id, schedule_run_id: 'scheduled-run-1', run_id: 'run-1', task_id: 'task-1', kind: 'result', title: '执行结果', summary: '日报生成完成', mime_type: null, size_bytes: null, content_url: null, metadata: {}, created_at: '2026-08-02T01:00:00Z' },
-      { id: 'workspace-file:file-1:scheduled-run-1', job_id: task.id, schedule_run_id: 'scheduled-run-1', run_id: 'run-1', task_id: 'task-1', kind: 'file', title: 'daily.txt', summary: 'reports/daily.txt', mime_type: 'text/plain', size_bytes: 1024, content_url: '/api/tasks/task-1/workspace/files/file-1/content', metadata: {}, created_at: '2026-08-02T01:00:00Z' },
+      { id: 'result:scheduled-run-1', job_id: task.id, schedule_run_id: 'scheduled-run-1', run_id: 'run-1', task_id: 'task-1', kind: 'result', title: '执行结果', summary: '日报生成完成', mime_type: null, size_bytes: null, content_url: null, external_url: null, metadata: {}, created_at: '2026-08-02T01:00:00Z' },
+      { id: 'workspace-file:file-1:scheduled-run-1', job_id: task.id, schedule_run_id: 'scheduled-run-1', run_id: 'run-1', task_id: 'task-1', kind: 'file', title: 'daily.txt', summary: 'reports/daily.txt', mime_type: 'text/plain', size_bytes: 1024, content_url: '/api/tasks/task-1/workspace/files/file-1/content', external_url: null, metadata: {}, created_at: '2026-08-02T01:00:00Z' },
+      { id: 'workspace-file:data-1:scheduled-run-1', job_id: task.id, schedule_run_id: 'scheduled-run-1', run_id: 'run-1', task_id: 'task-1', kind: 'data', title: 'metrics.json', summary: 'exports/metrics.json', mime_type: 'application/json', size_bytes: 320, content_url: '/api/tasks/task-1/workspace/files/data-1/content', external_url: null, metadata: {}, created_at: '2026-08-02T01:00:00Z' },
+      { id: 'receipt:call-1', job_id: task.id, schedule_run_id: 'scheduled-run-1', run_id: 'run-1', task_id: 'task-1', kind: 'receipt', title: 'publish 操作回执', summary: 'Dashboard updated', mime_type: null, size_bytes: null, content_url: null, external_url: 'https://example.test/report/42', metadata: { status: 'published', target: 'dashboard', object_id: '42' }, created_at: '2026-08-02T01:00:00Z' },
+      { id: 'workspace-file:image-1:scheduled-run-1', job_id: task.id, schedule_run_id: 'scheduled-run-1', run_id: 'run-1', task_id: 'task-1', kind: 'file', title: 'chart.png', summary: 'charts/chart.png', mime_type: 'image/png', size_bytes: 2048, content_url: '/api/tasks/task-1/workspace/files/image-1/content', external_url: null, metadata: {}, created_at: '2026-08-02T01:00:00Z' },
+      { id: 'workspace-file:html-1:scheduled-run-1', job_id: task.id, schedule_run_id: 'scheduled-run-1', run_id: 'run-1', task_id: 'task-1', kind: 'file', title: 'dashboard.html', summary: 'reports/dashboard.html', mime_type: 'text/html', size_bytes: 4096, content_url: '/api/tasks/task-1/workspace/files/html-1/content', external_url: null, metadata: {}, created_at: '2026-08-02T01:00:00Z' },
     ]);
     vi.mocked(api.listConversations).mockResolvedValue([{ id: 'task-1', title: '日报会话', title_source: 'auto', pinned_at: null, created_at: '', updated_at: '', last_run_status: 'completed', last_message_preview: '', has_active_share: false }]);
   });
@@ -60,7 +64,11 @@ describe('ScheduledTasksView', () => {
     expect(screen.getByText('复用目标对话')).toBeInTheDocument();
     expect(await screen.findByRole('heading', { name: '制品' })).toBeInTheDocument();
     expect(screen.getByText('日报生成完成')).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: '打开文件' })).toHaveAttribute('href', '/api/tasks/task-1/workspace/files/file-1/content');
+    expect(screen.getAllByRole('link', { name: '打开文件' }).some((link) => link.getAttribute('href') === '/api/tasks/task-1/workspace/files/file-1/content')).toBe(true);
+    expect(screen.getByRole('link', { name: '查看数据' })).toHaveAttribute('href', '/api/tasks/task-1/workspace/files/data-1/content');
+    expect(screen.getByRole('link', { name: '打开目标' })).toHaveAttribute('href', 'https://example.test/report/42');
+    expect(screen.getByRole('img', { name: 'chart.png' })).toHaveAttribute('src', '/api/tasks/task-1/workspace/files/image-1/content?inline=true');
+    expect(screen.getByTitle('dashboard.html')).toHaveAttribute('src', '/api/tasks/task-1/workspace/files/html-1/content?inline=true');
     expect(await screen.findByText('已完成')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: '查看结果对话' }));
     expect(openConversation).toHaveBeenCalledWith('task-1', '日报会话');

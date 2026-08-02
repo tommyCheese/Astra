@@ -116,7 +116,8 @@ export type SlashSystemCommand = {
   command: string;
   description: string;
   effect: 'compact_context' | 'clear_context' | 'manage_schedules' | 'manage_heartbeat' | 'start_subagent_run';
-  argument_mode: 'none' | 'required';
+  argument_mode: 'none' | 'optional' | 'required';
+  default_arguments?: string;
   usage: string;
   side_effect: 'read' | 'write' | 'mixed';
   available: boolean;
@@ -128,6 +129,16 @@ export type SlashCommandResult = {
   message: string;
   context: ContextWindowStatus;
   details: Record<string, unknown>;
+  user_message: CommandMessage;
+};
+
+export type CommandMessage = {
+  id: string;
+  command: string;
+  content: string;
+  arguments: string;
+  after_run_count: number;
+  created_at: string;
 };
 
 export type ScheduleSpec =
@@ -185,21 +196,27 @@ export type ScheduledTaskRun = {
   created_at: string;
 };
 
-export type ScheduledDeliverable = {
+export type Deliverable = {
   id: string;
-  job_id: string;
-  schedule_run_id: string;
-  run_id: string;
+  job_id: string | null;
+  job_name?: string | null;
+  job_kind?: 'agent' | 'heartbeat' | null;
+  schedule_run_id: string | null;
+  trigger_type?: string | null;
+  run_id: string | null;
   task_id: string;
-  kind: 'result' | 'file';
+  conversation_title?: string;
+  kind: 'result' | 'file' | 'data' | 'receipt';
   title: string;
   summary: string | null;
   mime_type: string | null;
   size_bytes: number | null;
   content_url: string | null;
+  external_url: string | null;
   metadata: Record<string, unknown>;
   created_at: string;
 };
+export type ScheduledDeliverable = Deliverable;
 
 export async function listScheduledTasks(signal?: AbortSignal): Promise<ScheduledTask[]> {
   const response = await fetchWithTimeout('/api/schedules', { signal });
@@ -743,6 +760,12 @@ export async function listLibraryFiles(): Promise<LibraryFile[]> {
   const response = await fetch('/api/library/files');
   if (!response.ok) throw await responseError(response);
   return response.json();
+}
+
+export async function listLibraryDeliverables(signal?: AbortSignal): Promise<Deliverable[]> {
+  const response = await fetch('/api/library/deliverables', { signal });
+  if (!response.ok) throw await responseError(response);
+  return response.json() as Promise<Deliverable[]>;
 }
 
 export async function listRuns(limit = 100): Promise<RunView[]> {

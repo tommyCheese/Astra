@@ -16,7 +16,7 @@ from app.db.models import (
 from app.repositories.plans import PlanRepository, plan_to_view
 from app.repositories.runs import RunRepository
 from app.runner.engine import RunEngine
-from app.runner.model_client import MockModelClient
+from app.runner.model_client import MockModelClient, ModelOutputError
 from app.runner.planning import PlanScheduler, PlanService, canonical_agent_state
 from app.runner.reasoning import RunProfileResolver, build_default_contract
 from app.schemas.agent import (
@@ -223,6 +223,53 @@ class QuickStreamingClient(MockModelClient):
             decision_type="finalize",
             reasoning_summary="直接回答",
         ), FinalAnswer(summary="立即流式回答")
+
+
+class QuickClarificationClient(MockModelClient):
+    async def decide_with_answer(self, goal, context, *, on_delta=None, on_reasoning_delta=None):
+        return AgentDecision(
+            decision_type="ask_user",
+            reasoning_summary="输入缺少可执行目标，应请求用户澄清。",
+        ), None
+
+
+class StreamThenModelErrorClient(MockModelClient):
+    def __init__(self):
+        self.final_answer_calls = 0
+
+    async def decide_with_answer(self, goal, context, *, on_delta=None, on_reasoning_delta=None):
+        active = context.get("active_node")
+        if active is not None:
+            return AgentDecision(
+                decision_type="complete_node",
+                reasoning_summary=f"完成 {active['title']}",
+                target_step_id=active["id"],
+            ), None
+        self.final_answer_calls += 1
+        assert on_delta is not None
+        await on_delta("保留已经展示的")
+        await on_delta("完整回答")
+        await on_delta("\1")
+        raise ModelOutputError("invalid auxiliary answer structure")
+
+
+class StreamWithoutStructuredAnswerClient(StreamThenModelErrorClient):
+    async def decide_with_answer(self, goal, context, *, on_delta=None, on_reasoning_delta=None):
+        active = context.get("active_node")
+        if active is not None:
+            return AgentDecision(
+                decision_type="complete_node",
+                reasoning_summary=f"完成 {active['title']}",
+                target_step_id=active["id"],
+            ), None
+        self.final_answer_calls += 1
+        assert on_delta is not None
+        await on_delta("采用已经展示的完整回答")
+        await on_delta("\1")
+        return AgentDecision(
+            decision_type="finalize",
+            reasoning_summary="完成最终回答",
+        ), None
 
 
 class QuickPermissionTimingClient(QuickStreamingClient):
@@ -532,6 +579,77 @@ async def test_answer_delta_batching_flushes_first_and_final_content(session):
     assert events[-1].payload == {"content": "首尾", "status": "answer_complete"}
 
 
+@pytest.mark.parametrize("answer_mode", [AnswerMode.standard, AnswerMode.trusted])
+async def test_streamed_answer_is_not_replaced_after_late_model_validation_error(
+    session, answer_mode
+):
+    settings = Settings(model_provider="mock")
+    profile = RunProfileResolver().resolve(
+        answer_mode,
+        RequestedReasoningPolicy(execution_mode="auto_approval"),
+        plan_execution=PlanExecution.auto if answer_mode == AnswerMode.trusted else None,
+    )
+    repo = RunRepository(session)
+    run = await repo.create_task_run(
+        "生成一个不会被替换的回答",
+        settings.model_policy,
+        reasoning_policy=profile.reasoning_policy.model_dump(mode="json"),
+        answer_mode=profile.answer_mode.value,
+        execution_profile=profile.model_dump(mode="json"),
+        agent_profile_snapshot=load_agent_profile().snapshot(),
+    )
+    client = StreamThenModelErrorClient()
+
+    await RunEngine(settings, model_client=client, tool_registry=ToolRegistry())._run_with_repo(
+        repo, run.id
+    )
+
+    loaded = await repo.require_run(run.id)
+    events = await repo.list_events(run.id)
+    event_types = [event.type for event in events]
+    assert loaded.status == "completed"
+    assert loaded.result["summary"] == "保留已经展示的完整回答"
+    assert client.final_answer_calls == 1
+    assert event_types.count("answer.started") == 1
+    assert event_types.count("answer.completed") == 1
+    assert event_types.count("answer.schema_degraded") == 1
+
+
+@pytest.mark.parametrize("answer_mode", [AnswerMode.standard, AnswerMode.trusted])
+async def test_streamed_answer_is_not_resynthesized_when_answer_object_is_missing(
+    session, answer_mode
+):
+    settings = Settings(model_provider="mock")
+    profile = RunProfileResolver().resolve(
+        answer_mode,
+        RequestedReasoningPolicy(execution_mode="auto_approval"),
+        plan_execution=PlanExecution.auto if answer_mode == AnswerMode.trusted else None,
+    )
+    repo = RunRepository(session)
+    run = await repo.create_task_run(
+        "生成一份最终回答",
+        settings.model_policy,
+        reasoning_policy=profile.reasoning_policy.model_dump(mode="json"),
+        answer_mode=profile.answer_mode.value,
+        execution_profile=profile.model_dump(mode="json"),
+        agent_profile_snapshot=load_agent_profile().snapshot(),
+    )
+    client = StreamWithoutStructuredAnswerClient()
+
+    await RunEngine(settings, model_client=client, tool_registry=ToolRegistry())._run_with_repo(
+        repo, run.id
+    )
+
+    loaded = await repo.require_run(run.id)
+    events = await repo.list_events(run.id)
+    event_types = [event.type for event in events]
+    assert loaded.result["summary"] == "采用已经展示的完整回答"
+    assert client.final_answer_calls == 1
+    assert event_types.count("answer.started") == 1
+    assert event_types.count("answer.completed") == 1
+    assert event_types.count("answer.structure_adopted") == 1
+
+
 async def test_final_plan_node_answer_is_regenerated_as_canonical_stream(session):
     settings = Settings(model_provider="mock")
     profile = RunProfileResolver().resolve(
@@ -619,9 +737,10 @@ async def test_standard_fast_path_skips_plan_state_and_all_quality_gates(session
     assert loaded.plan_graph == {}
     assert loaded.agent_state == {}
     assert loaded.steps == []
-    # A newly created standard Run reaches the model with one startup read plus
-    # one legacy missing-Skill-snapshot check in this direct repository fixture.
-    assert client.selects_before_decide == 2
+    # A newly created standard Run reaches the model with one startup read, one
+    # legacy missing-Skill-snapshot check, and one live Tool Settings read used
+    # by lightweight Subagent eligibility.
+    assert client.selects_before_decide == 3
     # The original full-graph loading path issued 129 SELECTs here.
     assert len(select_statements) <= 12, Counter(
         statement.rsplit("FROM ", 1)[-1].split()[0] for statement in select_statements
@@ -662,6 +781,37 @@ async def test_standard_fast_path_skips_plan_state_and_all_quality_gates(session
         and event.payload.get("phase") in {"planning", "selecting_action", "verifying"}
         for event in events
     )
+
+
+async def test_standard_ask_user_uses_a_user_facing_fallback_question(session):
+    settings = Settings(model_provider="mock", tool_swarm_enabled=False)
+    profile = RunProfileResolver().resolve(
+        AnswerMode.standard, RequestedReasoningPolicy(execution_mode="auto_approval")
+    )
+    repo = RunRepository(session)
+    run = await repo.create_task_run(
+        "！",
+        settings.model_policy,
+        reasoning_policy=profile.reasoning_policy.model_dump(mode="json"),
+        answer_mode=profile.answer_mode.value,
+        execution_profile=profile.model_dump(mode="json"),
+        agent_profile_snapshot=load_agent_profile().snapshot(),
+    )
+
+    await RunEngine(
+        settings,
+        model_client=QuickClarificationClient(),
+        tool_registry=ToolRegistry(),
+    )._run_with_repo(repo, run.id)
+
+    loaded = await repo.require_run(run.id)
+    events = await repo.list_events(run.id)
+    assert loaded.status == "waiting_user"
+    assert loaded.result is None
+    assert loaded.summary == "请告诉我你希望我完成的具体任务或问题。"
+    assert loaded.waiting_state["request"] == loaded.summary
+    assert "输入缺少可执行目标" not in loaded.waiting_state["request"]
+    assert "answer.paused" in [event.type for event in events]
 
 
 async def test_standard_fast_path_defers_permission_records_until_after_first_delta(session):

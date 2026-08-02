@@ -9,6 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import (
+    ArtifactRecord,
     RunRecord,
     TaskRecord,
     TaskWorkspaceRecord,
@@ -184,6 +185,57 @@ class WorkspaceRepository:
                 file.updated_at = file.deleted_at
         await self.session.commit()
         return change
+
+    async def find_workspace_snapshot(
+        self,
+        *,
+        run_id: str,
+        relative_path: str,
+        checksum: str,
+    ) -> ArtifactRecord | None:
+        return await self.session.scalar(
+            select(ArtifactRecord).where(
+                ArtifactRecord.run_id == run_id,
+                ArtifactRecord.type == "workspace_snapshot",
+                ArtifactRecord.path == validate_workspace_path(relative_path),
+                ArtifactRecord.checksum == checksum,
+                ArtifactRecord.security_status == "verified",
+            )
+        )
+
+    async def create_workspace_snapshot(
+        self,
+        *,
+        run_id: str,
+        tool_call_id: str | None,
+        relative_path: str,
+        mime_type: str | None,
+        size_bytes: int,
+        checksum: str,
+        storage_key: str,
+    ) -> ArtifactRecord:
+        run = await self._require_run(run_id)
+        path = validate_workspace_path(relative_path)
+        artifact = ArtifactRecord(
+            run_id=run.id,
+            tool_call_id=tool_call_id,
+            type="workspace_snapshot",
+            path=path,
+            mime_type=mime_type,
+            size_bytes=size_bytes,
+            checksum=checksum,
+            storage_key=storage_key,
+            security_status="verified",
+            provenance={"task_id": run.task_id, "source": "workspace_change"},
+            metadata_={
+                "filename": PurePosixPath(path).name,
+                "relative_path": path,
+                "trust_label": "untrusted_workspace_content",
+            },
+        )
+        self.session.add(artifact)
+        await self.session.commit()
+        return artifact
 
     async def list_changes_for_tool_call(
         self, tool_call_id: str

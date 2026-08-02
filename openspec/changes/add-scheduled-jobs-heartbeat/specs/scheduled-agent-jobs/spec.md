@@ -93,6 +93,16 @@
 - **THEN** 系统返回带 schedule run、Run 和目标 Task 来源的最终结果文本及安全可交付文件
 - **THEN** 文件来自对应 Run 的工作空间变更或 Artifact 记录，不包含目标对话中无关的历史文件
 
+#### Scenario: 生成结构化数据和操作回执
+- **WHEN** 对应 Run 生成明确的数据格式或成功执行外部持久化操作
+- **THEN** 系统将数据文件分类为结构化数据制品，并从工具审计白名单字段生成操作回执
+- **THEN** 系统不把原始凭据、完整工具输出、stdout 或只读调用结果复制到制品
+
+#### Scenario: 制品目录与资料库归一
+- **WHEN** 用户分别从资料库和已安排任务详情查询同一次自动化执行的制品
+- **THEN** 两个入口返回相同的制品 ID、Run/Task/schedule run 来源和内容地址
+- **THEN** 同路径文件被后续执行覆盖或删除后，历史执行仍指向该次执行保存的不可变文件版本
+
 ### Requirement: 用户可以通过 schedule 系统命令管理任务
 系统 SHALL 注册参数化 `/schedule` host command，并通过确定性 subcommand 调用与 HTTP API 相同的定时任务应用服务。
 

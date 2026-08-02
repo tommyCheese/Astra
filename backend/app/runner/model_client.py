@@ -120,6 +120,10 @@ class ModelClient(ABC):
         if recorder is not None and hasattr(recorder, "agent_execution_id"):
             recorder.agent_execution_id = agent_execution_id
 
+    async def generate_context_checkpoint(self, prompt: str):
+        """Use ordinary text generation for an Astra-owned checkpoint request."""
+        raise ModelOutputError("This ordinary model client cannot generate checkpoints")
+
     @abstractmethod
     async def contract(self, goal: str) -> TaskContract:
         raise NotImplementedError
@@ -183,6 +187,11 @@ class ModelClient(ABC):
 class MockModelClient(ModelClient):
     def bind_skills(self, skills: list[dict[str, Any]]) -> None:
         self.skill_blocks = list(skills)
+
+    async def generate_context_checkpoint(self, prompt: str):
+        # The mock intentionally has no semantic summarizer. Runtime policy may
+        # exercise the deterministic emergency path without Provider features.
+        raise ModelOutputError("Mock model has no semantic checkpoint generator")
 
     async def contract(self, goal: str) -> TaskContract:
         from app.runner.reasoning import build_default_contract
@@ -582,6 +591,29 @@ class OpenAICompatibleModelClient(ModelClient):
     def bind_skills(self, skills: list[dict[str, Any]]) -> None:
         self.prompt_composer.bind_skills(skills)
 
+    async def generate_context_checkpoint(self, prompt: str):
+        from app.context_compaction.service import CompactionGeneration
+
+        payload = await self._chat_json(
+            [
+                {
+                    "role": "system",
+                    "content": (
+                        "You are executing Astra's Provider-neutral checkpoint prompt. "
+                        "Return one JSON object and do not emit hidden reasoning."
+                    ),
+                },
+                {"role": "user", "content": prompt},
+            ],
+            operation=ModelOperation.MEMORY,
+            usage_operation="context_compaction",
+        )
+        return CompactionGeneration(
+            output=payload,
+            provider=self.settings.model_provider,
+            model=self.settings.model_name,
+        )
+
     @staticmethod
     def _active_skill_identities(context: dict[str, Any]) -> set[str]:
         identities: set[str] = set()
@@ -673,6 +705,7 @@ class OpenAICompatibleModelClient(ModelClient):
                         "conflicts, caveats, verification_notes. "
                         "Each finding has text, source_urls, and artifact_ids. Each source has url, title, retrieved_at. "
                         "Each material claim has id, text, evidence_refs, material, and support_status. "
+                        "support_status must be exactly one of: unverified, supported, unsupported. "
                         "Each citation has id, claim_id, evidence_ref, and optional source_id, passage_id, url, title. "
                         "Evidence refs may only use evidence_id values supplied in grounding_context; never invent them. "
                         "artifact_ids may only contain Artifact IDs that appear in tool_outputs and directly support that finding; "
@@ -715,6 +748,8 @@ class OpenAICompatibleModelClient(ModelClient):
                         "when external or current evidence is needed. Use context.tool_selection to "
                         "respect unresolved task requirements and capability gaps. "
                         "For stable general knowledge, explanation, writing, or conversation, finalize without tools. "
+                        "For ask_user, include expected_observation as one concise user-facing clarification question. "
+                        "Do not use reasoning_summary as the question shown to the user. "
                         "Select tools only from context.tool_manifests and follow each manifest's description, schema, capabilities, and permissions. "
                         "For call_tool include tool_name and tool_input. "
                         "Do not include hidden chain-of-thought; reasoning_summary must be concise and user-auditable.",
@@ -766,6 +801,7 @@ class OpenAICompatibleModelClient(ModelClient):
                         "reference Artifact IDs present in the supplied context that directly support the finding; "
                         "never invent IDs, and use an empty list when there is no supporting Artifact. "
                         "Each material claim must contain id, text, evidence_refs, material, and support_status. "
+                        "support_status must be exactly one of: unverified, supported, unsupported. "
                         "Each citation must bind claim_id to an evidence_ref supplied by grounding_context; never invent evidence IDs. "
                         "The summary must contain the complete user-facing answer, not an introduction or preview; "
                         "use findings only for optional supporting details. "
@@ -777,6 +813,8 @@ class OpenAICompatibleModelClient(ModelClient):
                         "immediately after reasoning_summary, followed by any non-empty final-answer support fields, "
                         "then decision_type. Do not wrap these fields in final_answer. "
                         "For any other standard-mode decision, emit decision_type immediately after reasoning_summary. "
+                        "For ask_user, include expected_observation as one concise user-facing clarification question; "
+                        "do not use reasoning_summary as the question shown to the user. "
                         "For non-standard finalize responses, put final_answer immediately after reasoning_summary. "
                         "For call_tool include tool_name and tool_input and omit final_answer. For complete_node "
                         "omit final_answer. "
@@ -803,10 +841,14 @@ class OpenAICompatibleModelClient(ModelClient):
             decision = AgentDecision.model_validate(payload)
             raw_answer = payload.get("final_answer")
             if (
-                context.get("answer_mode") == "standard"
+                decision.decision_type == "finalize"
                 and not isinstance(raw_answer, dict)
                 and isinstance(payload.get("summary"), str)
             ):
+                # The flat answer shape is preferred for standard mode, but some
+                # providers also emit it during a trusted final-answer turn. A valid
+                # top-level summary is still the answer already streamed to the user;
+                # accepting it avoids a second synthesis call that would replace it.
                 raw_answer = payload
             answer = (
                 FinalAnswer.model_validate(normalize_final_answer_payload(raw_answer))
@@ -902,6 +944,7 @@ class OpenAICompatibleModelClient(ModelClient):
         stream_field: str | None = None,
         on_field_delta: AnswerDeltaCallback | None = None,
         stream_callbacks: StreamFieldCallbacks | None = None,
+        usage_operation: str | None = None,
     ) -> dict[str, Any]:
         url = self.settings.model_base_url.rstrip("/") + "/chat/completions"
         started = time.perf_counter()
@@ -916,7 +959,7 @@ class OpenAICompatibleModelClient(ModelClient):
             self.usage_recorder,
             provider=self.settings.model_provider,
             model=self.settings.model_name,
-            operation=operation.value,
+            operation=usage_operation or operation.value,
             attempt=attempt + 1,
         )
         usage: dict[str, Any] | None = None
@@ -936,6 +979,7 @@ class OpenAICompatibleModelClient(ModelClient):
             "stream_options": {"include_usage": True},
             **reasoning_config.request_params,
         }
+        emitted_stream_fields: set[str] = set()
         if self.settings.model_provider == "openai":
             static_prefix = "\n\n".join(
                 message["content"] for message in messages if message["role"] == "system"
@@ -1004,6 +1048,8 @@ class OpenAICompatibleModelClient(ModelClient):
                         chunks.append(delta)
                         if field_extractor is not None:
                             for field, value in field_extractor.feed(delta):
+                                if value and value not in {"\0", "\1"}:
+                                    emitted_stream_fields.add(field)
                                 await callbacks[field](value)
                                 usage_invocation.start()
                 content = "".join(chunks)
@@ -1061,7 +1107,7 @@ class OpenAICompatibleModelClient(ModelClient):
                     usage=attach_reasoning_usage(usage, reasoning_config),
                     error=exc,
                 )
-            if attempt == 0:
+            if attempt == 0 and "summary" not in emitted_stream_fields:
                 logger.warning("model.response.retry operation=%s reason=non_json", operation)
                 return await self._chat_json(
                     [
@@ -1076,6 +1122,7 @@ class OpenAICompatibleModelClient(ModelClient):
                     stream_field=stream_field,
                     on_field_delta=on_field_delta,
                     stream_callbacks=stream_callbacks,
+                    usage_operation=usage_operation,
                 )
             raise ModelOutputError("Model returned non-JSON content") from exc
 
@@ -1092,6 +1139,7 @@ class AnthropicModelClient(OpenAICompatibleModelClient):
         stream_field: str | None = None,
         on_field_delta: AnswerDeltaCallback | None = None,
         stream_callbacks: StreamFieldCallbacks | None = None,
+        usage_operation: str | None = None,
     ) -> dict[str, Any]:
         url = self.settings.model_base_url.rstrip("/") + "/messages"
         reasoning_config = resolve_model_reasoning(
@@ -1112,10 +1160,11 @@ class AnthropicModelClient(OpenAICompatibleModelClient):
             self.usage_recorder,
             provider=self.settings.model_provider,
             model=self.settings.model_name,
-            operation=operation.value,
+            operation=usage_operation or operation.value,
             attempt=attempt + 1,
         )
         callbacks = dict(stream_callbacks or {})
+        emitted_stream_fields: set[str] = set()
         if stream_field and on_field_delta:
             callbacks[stream_field] = on_field_delta
         headers = {
@@ -1178,6 +1227,8 @@ class AnthropicModelClient(OpenAICompatibleModelClient):
                         if text_delta:
                             chunks.append(text_delta)
                             for field, value in field_extractor.feed(text_delta):
+                                if value and value not in {"\0", "\1"}:
+                                    emitted_stream_fields.add(field)
                                 await callbacks[field](value)
                                 usage_invocation.start()
                 content = "".join(chunks).strip()
@@ -1217,7 +1268,11 @@ class AnthropicModelClient(OpenAICompatibleModelClient):
                     usage=attach_reasoning_usage(None, reasoning_config),
                     error=exc,
                 )
-            if attempt == 0 and not isinstance(exc, httpx.HTTPError):
+            if (
+                attempt == 0
+                and "summary" not in emitted_stream_fields
+                and not isinstance(exc, httpx.HTTPError)
+            ):
                 return await self._chat_json(
                     [
                         *messages,
@@ -1231,6 +1286,7 @@ class AnthropicModelClient(OpenAICompatibleModelClient):
                     stream_field=stream_field,
                     on_field_delta=on_field_delta,
                     stream_callbacks=stream_callbacks,
+                    usage_operation=usage_operation,
                 )
             if isinstance(exc, httpx.HTTPStatusError):
                 raise ModelOutputError(
@@ -1727,7 +1783,16 @@ def normalize_final_answer_payload(payload: dict[str, Any]) -> dict[str, Any]:
             [str(ref) for ref in refs if isinstance(ref, str)] if isinstance(refs, list) else []
         )
         item["material"] = bool(item.get("material", True))
-        item["support_status"] = str(item.get("support_status") or "unverified")
+        support_status = str(item.get("support_status") or "unverified").strip().lower()
+        # Models commonly describe unsupported-by-tools knowledge with labels such as
+        # "inferred" or "self_known". Those labels are semantically unverified, but
+        # rejecting the entire streamed answer makes the Agent Loop call the model a
+        # second time and visibly replace an already rendered response.
+        item["support_status"] = (
+            support_status
+            if support_status in {"unverified", "supported", "unsupported"}
+            else "unverified"
+        )
     citations = normalized.get("citations") or []
     normalized["citations"] = [
         item

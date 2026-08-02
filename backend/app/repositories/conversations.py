@@ -622,4 +622,13 @@ def conversation_summary(task: TaskRecord) -> dict:
 
 
 def conversation_view(task: TaskRecord) -> dict:
-    return {**conversation_summary(task), "runs": [run_to_view(run) for run in sorted(task.runs, key=lambda item: item.created_at)]}
+    state = task.context_state if isinstance(task.context_state, dict) else {}
+    command_messages = [
+        item for item in state.get("command_history", [])
+        if isinstance(item, dict) and item.get("id") and item.get("command") and item.get("created_at")
+    ]
+    return {
+        **conversation_summary(task),
+        "runs": [run_to_view(run) for run in sorted(task.runs, key=lambda item: item.created_at)],
+        "command_messages": command_messages,
+    }

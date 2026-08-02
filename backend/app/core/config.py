@@ -112,6 +112,25 @@ class Settings(BaseSettings):
     context_auto_compact_ratio: float = Field(default=0.8, ge=0.5, le=0.95)
     context_compact_retain_runs: int = Field(default=4, ge=1, le=20)
     context_summary_max_chars: int = Field(default=12_000, ge=2_000, le=100_000)
+    context_compaction_v2_enabled: bool = False
+    context_compaction_shadow_mode: bool = True
+    context_compaction_conversation_enabled: bool = False
+    context_compaction_root_enabled: bool = False
+    context_compaction_child_enabled: bool = False
+    context_compaction_threshold_scope: str = "body_after_prefix"
+    context_compaction_recovery_ratio: float = Field(default=0.55, ge=0.1, le=0.79)
+    context_compaction_output_reserve_tokens: int = Field(default=4_096, ge=512)
+    context_compaction_recent_tail_tokens: int = Field(default=65_536, ge=0)
+    context_compaction_child_recent_tail_tokens: int = Field(default=8_192, ge=0)
+    context_compaction_recent_tail_max_ratio: float = Field(default=0.2, ge=0.0, le=0.5)
+    context_compaction_deterministic_emergency_enabled: bool = True
+    context_compaction_model_provider: str = ""
+    context_compaction_model_name: str = ""
+    context_compaction_max_attempts: int = Field(default=2, ge=1, le=4)
+    context_compaction_root_inline_bytes: int = Field(default=32_000, ge=1_024)
+    context_compaction_child_inline_bytes: int = Field(default=8_000, ge=1_024)
+    context_compaction_root_inline_tokens: int = Field(default=8_000, ge=256)
+    context_compaction_child_inline_tokens: int = Field(default=2_000, ge=256)
     task_workspace_max_files: int = 10_000
     task_workspace_max_bytes: int = 1024 * 1024 * 1024
     task_workspace_max_file_bytes: int = 100 * 1024 * 1024
@@ -170,6 +189,13 @@ class Settings(BaseSettings):
             raise ValueError("Subagent parent tool call reserve cannot exceed max tool calls")
         if self.agent_subagent_parent_cost_reserve_usd > self.agent_subagent_max_cost_usd:
             raise ValueError("Subagent parent cost reserve cannot exceed max cost")
+        if self.context_compaction_threshold_scope not in {"total", "body_after_prefix"}:
+            raise ValueError("Compaction threshold scope must be total or body_after_prefix")
+        if (
+            self.context_compaction_v2_enabled
+            and self.context_compaction_recovery_ratio >= self.context_auto_compact_ratio
+        ):
+            raise ValueError("Compaction recovery ratio must be below the trigger ratio")
         return self
 
     @property
