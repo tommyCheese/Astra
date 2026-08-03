@@ -49,6 +49,24 @@ export type SubagentSummary = {
   key_wait_reason?: string | null;
 };
 
+export type AgentJoinView = {
+  id: string;
+  parent_execution_id: string;
+  consumer_plan_node_id?: string | null;
+  join_key: string;
+  group_id?: string | null;
+  policy: string;
+  child_execution_ids: string[];
+  required_execution_ids: string[];
+  optional_execution_ids: string[];
+  status: 'waiting' | 'ready' | 'merging' | 'consumed' | 'blocked' | string;
+  result: Record<string, unknown>;
+  state_version: number;
+  created_at: string;
+  completed_at?: string | null;
+  updated_at: string;
+};
+
 type StepView = {
   id: string;
   plan_id?: string | null;
@@ -497,6 +515,7 @@ export type RunView = {
   parallelism?: ParallelismSummary | null;
   agent_executions?: AgentExecutionView[];
   subagent_summary?: SubagentSummary;
+  agent_joins?: AgentJoinView[];
   task_adapter?: string;
 };
 

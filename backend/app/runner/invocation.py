@@ -130,6 +130,14 @@ class InvocationRecorder:
     async def succeeded(self, request: InvocationRequest, outcome: InvocationOutcome) -> None:
         return None
 
+    async def enrich_envelope(
+        self,
+        request: InvocationRequest,
+        effect_plan: ActionEffectPlan,
+        envelope: ToolResultEnvelope,
+    ) -> ToolResultEnvelope:
+        return envelope
+
     async def failed(self, request: InvocationRequest, error: ToolExecutionError) -> None:
         return None
 
@@ -222,6 +230,8 @@ class InvocationPipeline:
             envelope = validate_tool_result(raw, tool.spec)
             if envelope.status == "failed":
                 raise ToolExecutionError("tool_failed", "Tool reported a failed result")
+            phase = "result_persistence"
+            envelope = await self.recorder.enrich_envelope(request, effect_plan, envelope)
             phase = "result_processing"
             processed = self._process(tool, request, envelope)
             if self.evidence_writer is not None:
@@ -282,6 +292,7 @@ class InvocationPipeline:
                 "execution": "tool_failed",
                 "result_adaptation": "invalid_result",
                 "result_validation": "invalid_result",
+                "result_persistence": "result_persistence_failed",
                 "result_processing": "result_processing_failed",
                 "evidence_persistence": "evidence_persistence_failed",
             }.get(phase, "invocation_failed")

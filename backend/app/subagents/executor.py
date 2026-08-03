@@ -9,6 +9,8 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.context_compaction.tool_outputs import ToolOutputGovernanceService
+from app.core.config import Settings
 from app.db.models import AgentExecutionRecord, utc_now
 from app.permissions.effects import DefaultEffectAnalyzer, effect_plan_hash
 from app.repositories.agent_executions import AgentExecutionRepository
@@ -26,6 +28,12 @@ from app.schemas.agent import (
     TaskContract,
     ValidationIssue,
     ValidationOutcome,
+)
+from app.schemas.context_compaction import (
+    ChildCheckpoint,
+    ContextOwnerRole,
+    ContextReference,
+    parse_child_checkpoint,
 )
 from app.schemas.permissions import PermissionDecisionKind, PermissionPolicySet
 from app.schemas.subagents import (
@@ -85,9 +93,16 @@ class AgentExecutor(ABC):
 class LocalAstraAgentExecutor(AgentExecutor):
     """A child-local Astra loop for the conservative depth-one, read-only slice."""
 
-    def __init__(self, *, model_client: ModelClient, tool_registry: ToolRegistry):
+    def __init__(
+        self,
+        *,
+        model_client: ModelClient,
+        tool_registry: ToolRegistry,
+        settings: Settings | None = None,
+    ):
         self.model_client = model_client
         self.tool_registry = tool_registry
+        self.settings = settings or Settings()
         self.authorizer = ChildInvocationAuthorizer()
         self.completion_gate = CompletionGate()
 
@@ -124,8 +139,8 @@ class LocalAstraAgentExecutor(AgentExecutor):
         raw_context_checkpoint = (checkpoint or execution.checkpoint or {}).get(
             "context_checkpoint"
         )
-        context_checkpoint = (
-            SubagentContextCheckpoint.model_validate(raw_context_checkpoint)
+        context_checkpoint: ChildCheckpoint = (
+            parse_child_checkpoint(raw_context_checkpoint)
             if raw_context_checkpoint
             else SubagentContextCheckpoint(
                 agent_execution_id=execution.id,
@@ -189,6 +204,7 @@ class LocalAstraAgentExecutor(AgentExecutor):
                     item.model_dump(mode="json")
                     for item in context_checkpoint.continuation_answers
                 ],
+                "context_checkpoint": context_checkpoint.model_dump(mode="json"),
             }
             decision, _ = await self.model_client.decide_with_answer(
                 contract.request.objective,
@@ -595,13 +611,52 @@ class LocalAstraAgentExecutor(AgentExecutor):
             )
             output = validate_tool_result(raw_output, tool.spec).model_dump(mode="json")
             await repo.finish_tool_call(call.id, output=output)
+            reference_labels = tuple(
+                dict.fromkeys(
+                    label
+                    for effect in effect_plan.effects
+                    for label in effect.data_labels
+                )
+            )
+
+            async def persisted_tool_output_reference(
+                _serialized: bytes,
+                checksum: str,
+                *,
+                call_id: str = call.id,
+                data_labels: tuple[str, ...] = reference_labels,
+            ) -> ContextReference:
+                return ContextReference(
+                    kind="tool_call",
+                    ref=f"tool_call:{call_id}",
+                    content_hash=checksum,
+                    data_labels=data_labels,
+                    allowed_purposes=("child_agent_context", "child_result_validation"),
+                )
+
+            governed_output = await ToolOutputGovernanceService(self.settings).normalize(
+                role=ContextOwnerRole.child_execution,
+                tool_name=tool.spec.name,
+                status="succeeded",
+                output=output,
+                key_fields={
+                    "tool_call_id": call.id,
+                    "agent_execution_id": execution.id,
+                    "identity_id": runtime.execution_context.identity_id,
+                },
+                persist=persisted_tool_output_reference,
+            )
             usage["tool_calls"] += 1
             return {
                 "kind": "tool_result",
                 "status": "succeeded",
                 "summary": f"{tool.spec.name} completed.",
                 "tool_call_id": call.id,
-                "data": output.get("data", {}),
+                "data": (
+                    {"normalized_output": governed_output.model_dump(mode="json", exclude_none=True)}
+                    if governed_output.externalized
+                    else output.get("data", {})
+                ),
                 "artifacts": output.get("artifacts", []),
                 "evidence_refs": [call.id],
             }
@@ -857,7 +912,7 @@ class LocalAstraAgentExecutor(AgentExecutor):
         usage: dict[str, Any],
         observations: list[dict[str, Any]],
         plan_id: str,
-        context_checkpoint: SubagentContextCheckpoint,
+        context_checkpoint: ChildCheckpoint,
     ) -> AgentExecutionRecord:
         return await executions.save_checkpoint(
             execution.id,

@@ -9,7 +9,10 @@ from collections import deque
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from sqlalchemy import select
+
 from app.agent_profile import AgentProfile, AgentProfileLoader
+from app.db.models import RuntimeBuildRecord, RuntimeProfileRecord, utc_now
 from app.sandbox.runtime import sanitize_log
 
 NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
@@ -56,8 +59,9 @@ def normalize_dependencies(values):
 
 
 class RuntimeProfileService:
-    def __init__(self, settings, *, recover_interrupted: bool = False):
+    def __init__(self, settings, *, recover_interrupted: bool = False, session_factory=None):
         self.settings, self.path, self.tasks = settings, Path(settings.runtime_profile_path), {}
+        self.session_factory = session_factory
         self.recovered_staging_images = []
         self._packaged_agent_profile = AgentProfileLoader().load()
         self._active_agent_profile = self._load_agent_profile(self._read_persisted())
@@ -203,12 +207,122 @@ class RuntimeProfileService:
         self.write(state)
 
     async def startup(self):
-        recovered = self.recovered_staging_images
+        await self._load_database_state()
+        recovered = list(dict.fromkeys(self.recovered_staging_images))
         self.recovered_staging_images = []
         for build_id, image in recovered:
             await self._remove_managed_image(build_id, image)
         cleanup_id = recovered[-1][0] if recovered else "startup"
         await self._prune_images(cleanup_id)
+
+    async def _load_database_state(self):
+        if self.session_factory is None:
+            return
+        state = self.read()
+        async with self.session_factory() as session:
+            profile = await session.get(RuntimeProfileRecord, "default")
+            if profile is None:
+                profile = RuntimeProfileRecord(
+                    id="default",
+                    dependencies=state["dependencies"],
+                    active_image=state["active_image"],
+                    dependency_digest=state["dependency_digest"],
+                )
+                session.add(profile)
+            else:
+                state.update(
+                    dependencies=list(profile.dependencies),
+                    active_image=profile.active_image,
+                    dependency_digest=profile.dependency_digest,
+                )
+            build = await session.scalar(
+                select(RuntimeBuildRecord)
+                .where(RuntimeBuildRecord.profile_id == "default")
+                .order_by(RuntimeBuildRecord.created_at.desc())
+                .limit(1)
+            )
+            if build is not None:
+                if build.status in {"queued", "building"}:
+                    build.status = "cancelled"
+                    build.phase = "构建已中断"
+                    build.error_code = "runtime_restarted"
+                    build.completed_at = utc_now()
+                    self.recovered_staging_images.append(
+                        (build.id, build.staging_image or f"astra-data-viz:build-{build.id}")
+                    )
+                state["build"] = self._database_build_view(build)
+            await session.commit()
+        self.write(state)
+        await self._persist_database_state(state)
+
+    @staticmethod
+    def _database_build_view(build: RuntimeBuildRecord):
+        return {
+            "id": build.id,
+            "status": build.status,
+            "phase": build.phase,
+            "progress": build.progress,
+            "log": build.log_summary,
+            "image": build.activated_image,
+            "dependencies": list(build.dependencies),
+            "dependency_digest": build.dependency_digest,
+        }
+
+    async def _persist_database_state(self, state):
+        if self.session_factory is None:
+            return
+        async with self.session_factory() as session:
+            raw_build = state.get("build") or {}
+            profile = await session.get(RuntimeProfileRecord, "default")
+            if profile is None:
+                profile = RuntimeProfileRecord(
+                    id="default",
+                    dependencies=[],
+                    active_image=state["active_image"],
+                    dependency_digest=state["dependency_digest"],
+                    version=1,
+                )
+                session.add(profile)
+            if not raw_build or raw_build.get("status") == "succeeded":
+                runtime_changed = (
+                    profile.dependencies != state["dependencies"]
+                    or profile.active_image != state["active_image"]
+                    or profile.dependency_digest != state["dependency_digest"]
+                )
+                profile.dependencies = list(state["dependencies"])
+                profile.active_image = state["active_image"]
+                profile.dependency_digest = state["dependency_digest"]
+                if runtime_changed:
+                    profile.version += 1
+            profile.updated_at = utc_now()
+            if raw_build.get("id"):
+                build = await session.get(RuntimeBuildRecord, raw_build["id"])
+                if build is None:
+                    build = RuntimeBuildRecord(
+                        id=raw_build["id"],
+                        profile_id="default",
+                        dependencies=list(raw_build.get("dependencies", state["dependencies"])),
+                        dependency_digest=raw_build.get(
+                            "dependency_digest", state["dependency_digest"]
+                        ),
+                    )
+                    session.add(build)
+                build.dependencies = list(raw_build.get("dependencies", state["dependencies"]))
+                build.dependency_digest = raw_build.get(
+                    "dependency_digest", state["dependency_digest"]
+                )
+                build.status = raw_build.get("status", build.status)
+                build.phase = raw_build.get("phase", build.phase)
+                build.progress = int(raw_build.get("progress", build.progress))
+                build.log_summary = str(raw_build.get("log") or "")
+                build.staging_image = f"astra-data-viz:build-{build.id}"
+                build.activated_image = raw_build.get("image")
+                build.updated_at = utc_now()
+                if build.status == "building" and build.started_at is None:
+                    build.started_at = utc_now()
+                if build.status in {"succeeded", "failed", "cancelled"}:
+                    build.completed_at = build.completed_at or utc_now()
+            await session.commit()
 
     def read(self):
         state = self._read_persisted()
@@ -275,8 +389,11 @@ class RuntimeProfileService:
             "progress": 0,
             "log": "等待构建",
             "image": None,
+            "dependencies": deps,
+            "dependency_digest": digest,
         }
         self.write(state)
+        await self._persist_database_state(state)
         task = asyncio.create_task(self._build(build_id, deps, digest))
         self.tasks[build_id] = task
         task.add_done_callback(lambda _: self.tasks.pop(build_id, None))
@@ -296,7 +413,7 @@ class RuntimeProfileService:
             raise RuntimeError("当前构建已结束或不存在")
         task = self.tasks.get(build_id)
         if task is None:
-            return self._update_build(
+            return await self._update_build(
                 build_id,
                 status="cancelled",
                 phase="已取消",
@@ -308,7 +425,7 @@ class RuntimeProfileService:
             await task
         state = self.read()
         if (state.get("build") or {}).get("status") in {"queued", "building"}:
-            state = self._update_build(
+            state = await self._update_build(
                 build_id,
                 status="cancelled",
                 phase="已取消",
@@ -317,12 +434,13 @@ class RuntimeProfileService:
             )
         return state
 
-    def _update_build(self, build_id, **values):
+    async def _update_build(self, build_id, **values):
         state = self.read()
         if (state.get("build") or {}).get("id") != build_id:
             return state
         state["build"].update(values)
         self.write(state)
+        await self._persist_database_state(state)
         return state
 
     async def _run_with_progress(
@@ -357,7 +475,7 @@ class RuntimeProfileService:
                     continue
                 line_count += 1
                 progress = min(end - 1, start + line_count)
-                self._update_build(
+                await self._update_build(
                     build_id,
                     status="building",
                     phase=phase,
@@ -449,10 +567,11 @@ class RuntimeProfileService:
                 item for item in state.get("images", []) if item.get("image") not in removed
             ]
             self.write(state)
+            await self._persist_database_state(state)
         return cleanup_failed
 
     async def _build(self, build_id, deps, digest):
-        self._update_build(
+        await self._update_build(
             build_id,
             status="building",
             phase="准备构建环境",
@@ -505,7 +624,7 @@ class RuntimeProfileService:
                     )
                 else:
                     smoke_code = f"import importlib.metadata as m; [m.version(name) for name in {package_names}]"
-                self._update_build(
+                await self._update_build(
                     build_id,
                     phase="验证依赖导入",
                     progress=85,
@@ -584,19 +703,22 @@ class RuntimeProfileService:
                     progress=100,
                     log="构建与导入验证成功",
                     image=image,
+                    dependencies=resolved_dependencies,
+                    dependency_digest=digest,
                 )
                 self.write(state)
+                await self._persist_database_state(state)
                 cleanup_failed = not await self._remove_managed_image(build_id, staging_image)
                 cleanup_failed = await self._prune_images(build_id) or cleanup_failed
                 if cleanup_failed:
-                    self._update_build(
+                    await self._update_build(
                         build_id,
                         log="构建与导入验证成功；部分旧镜像暂未清理，将在后续构建重试",
                     )
         except asyncio.CancelledError:
             with contextlib.suppress(Exception):
                 await self._remove_managed_image(build_id, staging_image)
-            self._update_build(
+            await self._update_build(
                 build_id,
                 status="cancelled",
                 phase="已取消",
@@ -607,7 +729,7 @@ class RuntimeProfileService:
         except Exception as exc:
             with contextlib.suppress(Exception):
                 await self._remove_managed_image(build_id, staging_image)
-            self._update_build(
+            await self._update_build(
                 build_id,
                 status="failed",
                 phase="构建失败",

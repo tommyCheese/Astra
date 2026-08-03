@@ -7,14 +7,10 @@ from fastapi import APIRouter, Depends, Header, Query
 from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.agent_profile import AgentProfileConfigurationError, load_agent_profile
 from app.artifacts import LocalArtifactStore
-from app.conversation_context import ConversationContextManager, resolve_context_window
 from app.core.config import Settings, get_settings
-from app.core.errors import ConfigurationError, ResourceError, StateError, ValidationError
+from app.core.errors import ResourceError, StateError, ValidationError
 from app.db.session import SessionLocal, get_session
-from app.model_providers import API_KEY_OPTIONAL_MODEL_PROVIDERS, SUPPORTED_MODEL_PROVIDERS
-from app.permissions.governance import verify_permission_bundle
 from app.repositories.agent_executions import AgentExecutionRepository
 from app.repositories.permissions import PermissionRepository
 from app.repositories.plans import PlanRepository, diff_plans, plan_to_summary, plan_to_view
@@ -24,10 +20,9 @@ from app.repositories.tool_settings import (
     apply_tool_states,
     default_tool_states,
 )
+from app.run_creation import RunCreationService
 from app.runner.engine import start_run_in_process
-from app.runner.model_reasoning import normalize_model_thinking
 from app.runner.plan_revision import PlanRevisionError, revise_waiting_plan
-from app.runner.reasoning import RunProfileResolver, compile_subagent_policy
 from app.runtime_events import run_event_broker
 from app.schemas.agent import (
     ApprovalDecisionRequest,
@@ -40,10 +35,6 @@ from app.schemas.agent import (
     PlanView,
     RunView,
 )
-from app.schemas.models import RunModelConfig
-from app.schemas.permissions import PermissionBundle
-from app.skills.catalog import SkillActivationService, SkillCatalogBuilder
-from app.subagents.eligibility import subagent_execution_eligibility
 from app.subagents.lifecycle import SubagentCancellationService
 from app.subagents.observability import SubagentTelemetryRepository
 
@@ -172,33 +163,6 @@ def _streaming_response(stream: AsyncIterator[str]) -> StreamingResponse:
     )
 
 
-def _apply_model_config(settings: Settings, model: RunModelConfig | dict | None) -> Settings:
-    if not model:
-        return settings
-    if not isinstance(model, RunModelConfig):
-        model = RunModelConfig.model_validate(model)
-    provider = model.provider
-    if provider not in SUPPORTED_MODEL_PROVIDERS:
-        raise ValidationError("MODEL_PROVIDER_UNSUPPORTED", "当前模型供应商尚未接入通用运行时。")
-    configured = settings.model_copy(
-        update={
-            "model_provider": provider,
-            "model_name": model.name,
-            "model_api_key": model.api_key,
-            "model_base_url": model.base_url,
-        }
-    )
-    if (
-        not configured.model_name
-        or not configured.model_base_url
-        or (provider not in API_KEY_OPTIONAL_MODEL_PROVIDERS and not configured.model_api_key)
-    ):
-        raise ValidationError(
-            "MODEL_CONFIGURATION_REQUIRED", "请先配置模型名称、API 地址和 API Key。"
-        )
-    return configured
-
-
 def _restore_run_model_config(
     settings: Settings,
     model_policy: dict,
@@ -221,20 +185,6 @@ def _restore_run_model_config(
             "model_base_url": base_url or settings.model_base_url,
         }
     )
-
-
-def _configured_skill_capabilities(settings: Settings) -> set[str]:
-    return {
-        name
-        for name, enabled in {
-            "web_search": settings.tool_web_search_enabled,
-            "web_fetch": settings.tool_web_fetch_enabled,
-            "chart_render": settings.tool_chart_render_enabled,
-            "bash_execute": settings.tool_bash_execute_enabled,
-            "sandbox": settings.sandbox_enabled,
-        }.items()
-        if enabled
-    }
 
 
 def _schedule_run(run_id: str, settings: Settings) -> asyncio.Task[None]:
@@ -321,194 +271,13 @@ async def list_runs(
     return [RunView.model_validate(run_to_view(run)) for run in runs]
 
 
-async def _create_run(
-    payload: CreateRunRequest,
-    session: AsyncSession,
-    settings: Settings,
-) -> tuple[CreateRunResponse, Settings]:
-    goal = payload.goal.strip()
-    if not goal:
-        raise ValidationError("GOAL_REQUIRED", "请输入你想完成的目标。", {"field": "goal"})
-    repo = RunRepository(session)
-    logger.info(
-        "run.create.start task_id=%s provider=%s model=%s goal_chars=%s",
-        payload.task_id,
-        payload.model.provider if payload.model else settings.model_provider,
-        payload.model.name if payload.model else settings.model_name,
-        len(goal),
-    )
-    try:
-        tool_states = await ToolSettingsRepository(session).get_or_create(
-            default_tool_states(settings)
-        )
-        # Keep the database-backed tool configuration active at creation time.
-        run_settings = apply_tool_states(settings, tool_states)
-        run_settings = _apply_model_config(run_settings, payload.model)
-        context_window = resolve_context_window(
-            run_settings.model_provider,
-            run_settings.model_name,
-            fallback_tokens=run_settings.context_window_fallback_tokens,
-        )
-        context_policy = {
-            "window_tokens": context_window.tokens,
-            "max_output_tokens": context_window.max_output_tokens,
-            "source": context_window.source,
-            "verified": context_window.verified,
-            "documentation_url": context_window.documentation_url,
-            "capability_version": 2,
-        }
-        if payload.task_id:
-            context_manager = ConversationContextManager(session, run_settings)
-            context_task = await context_manager.require_task(payload.task_id)
-            await context_manager.prepare_for_run(
-                context_task,
-                provider=run_settings.model_provider,
-                model=run_settings.model_name,
-                draft=goal,
-            )
-        profile = RunProfileResolver().resolve(
-            payload.answer_mode,
-            payload.reasoning_policy,
-            plan_execution=payload.plan_execution,
-            subagent_policy=compile_subagent_policy(run_settings),
-            subagent_mode=payload.subagent_mode,
-        )
-        if payload.subagent_mode == "required":
-            subagent_policy = profile.reasoning_policy.effective.subagents
-            eligibility = subagent_execution_eligibility(
-                subagent_policy,
-                live_swarm_enabled=bool(run_settings.tool_swarm_enabled),
-            )
-            if not eligibility.executable:
-                raise ValidationError(
-                    "SUBAGENT_COMMAND_UNAVAILABLE",
-                    "当前策略不允许创建必需子 Agent 运行。",
-                )
-        if not payload.interactive and payload.permission_bundle is None:
-            raise ValidationError(
-                "PERMISSION_BUNDLE_REQUIRED",
-                "无人值守、定时或后台运行必须提供显式权限包。",
-            )
-        permission_bundle = None
-        if payload.permission_bundle is not None:
-            try:
-                permission_bundle = PermissionBundle.model_validate(payload.permission_bundle)
-            except ValueError as exc:
-                raise ValidationError("PERMISSION_BUNDLE_INVALID", "权限包格式无效。") from exc
-            if not verify_permission_bundle(
-                permission_bundle, settings.permission_bundle_signing_secret
-            ):
-                raise ValidationError(
-                    "PERMISSION_BUNDLE_INVALID", "权限包签名无效或签名密钥未配置。"
-                )
-        policy = profile.reasoning_policy
-        thinking = normalize_model_thinking(
-            provider=run_settings.model_provider,
-            model=run_settings.model_name,
-            selection=payload.model.thinking if payload.model else None,
-        )
-        profile = profile.model_copy(
-            update={
-                "interactive": payload.interactive,
-                "permission_bundle": (
-                    permission_bundle.model_dump(mode="json") if permission_bundle else None
-                ),
-            }
-        )
-        execution_profile = profile.model_dump(mode="json")
-        run = await repo.create_task_run(
-            goal,
-            {
-                **run_settings.model_policy,
-                "thinking": thinking.model_dump(mode="json"),
-                "context": context_policy,
-            },
-            payload.task_id,
-            reasoning_policy=policy.model_dump(mode="json"),
-            answer_mode=profile.answer_mode.value,
-            execution_profile=execution_profile,
-            agent_profile_snapshot=load_agent_profile().snapshot(),
-            session_id=payload.session_id,
-            commit=False,
-        )
-        if run_settings.skills_enabled:
-            catalog_builder = SkillCatalogBuilder(
-                session, metadata_chars=run_settings.skills_catalog_metadata_chars
-            )
-            catalog = await catalog_builder.build(
-                goal=goal,
-                explicit_identities=payload.skill_ids,
-                runtime_capabilities=_configured_skill_capabilities(run_settings),
-            )
-            await catalog_builder.freeze(
-                run.id,
-                profile.answer_mode.value,
-                catalog,
-                new_run=True,
-            )
-            for identity in payload.skill_ids:
-                try:
-                    catalog.require(identity)
-                except ValueError as exc:
-                    raise ValidationError(
-                        "SKILL_SELECTION_INVALID",
-                        f"无法激活 Skill：{identity}",
-                        {"qualified_identity": identity, "reason": "absent_from_catalog"},
-                    ) from exc
-            activator = SkillActivationService(
-                session,
-                max_active=run_settings.skills_max_active,
-                max_resource_bytes=run_settings.skills_max_resource_bytes_per_run,
-            )
-            for identity in payload.skill_ids:
-                try:
-                    await activator.activate(
-                        run.id,
-                        identity,
-                        initiator="explicit",
-                        reason="explicit run selection",
-                    )
-                except ValueError as exc:
-                    raise ValidationError(
-                        "SKILL_SELECTION_INVALID",
-                        f"无法激活 Skill：{identity}",
-                        {"qualified_identity": identity, "reason": str(exc)},
-                    ) from exc
-        for adjustment in policy.adjustments:
-            await repo.add_event(
-                run.id, "reasoning.policy_adjusted", adjustment.model_dump(mode="json")
-            )
-        await session.commit()
-    except AgentProfileConfigurationError as exc:
-        raise ConfigurationError(
-            "AGENT_PROFILE_INVALID", "Astra 身份配置无效，暂时无法创建任务。"
-        ) from exc
-    except ValueError as exc:
-        message = str(exc)
-        if message.startswith("Task not found"):
-            raise ResourceError("TASK_NOT_FOUND", "找不到指定任务。") from exc
-        raise ValidationError("RUN_REQUEST_INVALID", "无法创建任务。") from exc
-    logger.info(
-        "run.create.accepted run_id=%s task_id=%s status=%s", run.id, run.task_id, run.status
-    )
-    return (
-        CreateRunResponse(
-            task_id=run.task_id,
-            run_id=run.id,
-            status=run.status,
-            answer_mode=profile.answer_mode,
-        ),
-        run_settings,
-    )
-
-
 @router.post("/runs", response_model=CreateRunResponse)
 async def create_run(
     payload: CreateRunRequest,
     session: AsyncSession = Depends(get_session),
     settings: Settings = Depends(get_settings),
 ) -> CreateRunResponse:
-    created, run_settings = await _create_run(payload, session, settings)
+    created, run_settings = await RunCreationService(session, settings).create(payload)
     _schedule_run(created.run_id, run_settings)
     return created
 
@@ -520,7 +289,7 @@ async def create_run_stream(
     settings: Settings = Depends(get_settings),
 ) -> StreamingResponse:
     """Create a run and stream it on the same HTTP request."""
-    created, run_settings = await _create_run(payload, session, settings)
+    created, run_settings = await RunCreationService(session, settings).create(payload)
     # The streaming response outlives this endpoint's dependency scope.
     await session.rollback()
     return _streaming_response(
@@ -662,7 +431,9 @@ async def resume_run(
     repo = RunRepository(session)
     existing_run = await repo.require_run(run_id)
     tool_states = await ToolSettingsRepository(session).get_or_create(default_tool_states(settings))
-    run_settings = _apply_model_config(apply_tool_states(settings, tool_states), payload.model)
+    run_settings = RunCreationService.apply_model_config(
+        apply_tool_states(settings, tool_states), payload.model
+    )
     run_settings = _restore_run_model_config(run_settings, existing_run.model_policy)
     try:
         if payload.action == ContinuationAction.execute_plan:
@@ -745,7 +516,9 @@ async def decide_tool_approval(
     repo = RunRepository(session)
     existing_run = await repo.require_run(run_id)
     tool_states = await ToolSettingsRepository(session).get_or_create(default_tool_states(settings))
-    run_settings = _apply_model_config(apply_tool_states(settings, tool_states), payload.model)
+    run_settings = RunCreationService.apply_model_config(
+        apply_tool_states(settings, tool_states), payload.model
+    )
     run_settings = _restore_run_model_config(run_settings, existing_run.model_policy)
     try:
         run = existing_run

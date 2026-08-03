@@ -113,6 +113,13 @@ function initialContextStatus(capability: ModelContextCapability): ContextWindow
     status: 'normal',
     estimated: true,
     summary_active: false,
+    compaction_implementation: null,
+    compaction_failure_code: null,
+    checkpoint_status: 'none',
+    window_number: 0,
+    token_before: null,
+    token_after: null,
+    retained_run_count: 0,
     visible_run_count: 0,
     folded_run_count: 0,
     breakdown: [{ kind: 'output_reserve', tokens: outputReserve, item_count: 1 }],
@@ -3885,13 +3892,18 @@ function Toggle({ checked = false, onChange, disabled = false, label, describedB
   return <button className={`toggle ${value ? 'on' : ''}`} type="button" role="switch" aria-checked={value} aria-label={label} aria-describedby={describedBy} disabled={disabled} onClick={() => onChange ? onChange(!value) : setLocalChecked(!value)}><span /></button>;
 }
 
+function DocumentationLink({ anchor, label, className = '' }: { anchor: string; label: string; className?: string }) {
+  const { t } = useI18n();
+  return <a className={`documentation-reference-link ${className}`.trim()} href={`/help#${anchor}`} target="_blank" rel="noreferrer">{t(label)} <span aria-hidden="true">↗</span></a>;
+}
+
 function ExecutionModeMenu({ value, onChange }: { value: 'default' | 'bypass'; onChange: (mode: 'default' | 'bypass') => void }) {
   const { t } = useI18n();
   const modes = [
     { id: 'default' as const, title: '请求批准', detail: '无副作用行为自动执行，危险行为按影响范围确认', icon: 'requestApprove' as const },
     { id: 'bypass' as const, title: '自动批准', detail: '跳过可批准行为的确认，平台禁止项仍不可执行', icon: 'autoApprove' as const },
   ];
-  return <div className="floating-menu execution-menu"><div className="menu-heading">{t('工具批准')}</div>{modes.map((mode) => <button className={value === mode.id ? 'selected' : ''} type="button" key={mode.id} onClick={() => onChange(mode.id)}><Icon name={mode.icon} /><div><strong>{t(mode.title)}</strong><small>{t(mode.detail)}</small></div><span className="mode-selected-mark">{value === mode.id ? '✓' : ''}</span></button>)}</div>;
+  return <div className="floating-menu execution-menu"><div className="menu-heading">{t('工具批准')}</div>{modes.map((mode) => <button className={value === mode.id ? 'selected' : ''} type="button" key={mode.id} onClick={() => onChange(mode.id)}><Icon name={mode.icon} /><div><strong>{t(mode.title)}</strong><small>{t(mode.detail)}</small></div><span className="mode-selected-mark">{value === mode.id ? '✓' : ''}</span></button>)}<DocumentationLink className="floating-help-reference" anchor="runtime-settings-approvals" label="查看批准方式说明" /></div>;
 }
 
 function PlanConfirmationCard({ run, submitting, revisionSubmitting, onExecute, onRevise, onCancel }: {
@@ -4163,7 +4175,7 @@ function ControlCenterDialog({ run, onClose }: { run: RunView; onClose: () => vo
 
 function BypassConfirmation({ onCancel, onConfirm }: { onCancel: () => void; onConfirm: () => void }) {
   const { t } = useI18n();
-  return <div className="modal-backdrop" role="presentation" onMouseDown={onCancel}><section className="confirmation-modal" role="alertdialog" aria-modal="true" aria-labelledby="bypass-title" onMouseDown={(event) => event.stopPropagation()}><div className="warning-mark">!</div><h2 id="bypass-title">{t('启用自动批准模式？')}</h2><p>{t('自动批准模式会跳过可批准行为的交互确认，但仍受平台禁止项、权限边界、预算和沙箱限制。')}</p><div className="confirmation-note"><strong>{t('仅在你信任当前任务和运行环境时启用。')}</strong></div><div className="confirmation-actions"><button className="secondary-button" type="button" onClick={onCancel}>{t('取消')}</button><button className="danger-confirm-button" type="button" onClick={onConfirm}>{t('确认启用自动批准')}</button></div></section></div>;
+  return <div className="modal-backdrop" role="presentation" onMouseDown={onCancel}><section className="confirmation-modal" role="alertdialog" aria-modal="true" aria-labelledby="bypass-title" onMouseDown={(event) => event.stopPropagation()}><div className="warning-mark">!</div><h2 id="bypass-title">{t('启用自动批准模式？')}</h2><p>{t('自动批准模式会跳过可批准行为的交互确认，但仍受平台禁止项、权限边界、预算和沙箱限制。')}</p><div className="confirmation-note"><strong>{t('仅在你信任当前任务和运行环境时启用。')}</strong></div><DocumentationLink className="confirmation-help-reference" anchor="runtime-settings-approvals" label="查看自动批准边界" /><div className="confirmation-actions"><button className="secondary-button" type="button" onClick={onCancel}>{t('取消')}</button><button className="danger-confirm-button" type="button" onClick={onConfirm}>{t('确认启用自动批准')}</button></div></section></div>;
 }
 
 function estimateUiTokens(value: string): number {
@@ -4277,15 +4289,26 @@ function ContextCapacityPanel({ status, selectedSkills, actionLabel }: {
     <div className="context-counting-note">
       <strong>{t('这里的数字怎么计算')}</strong>
       <span>{t('中文、日文、韩文字符按 1 Token 估算；其他字符按每 3.2 个字符约 1 Token 估算；每条消息另加 6 Token。已使用输入 = 系统预留 + 压缩摘要 + 未折叠轮次 + 当前草稿。剩余输入 = 可用输入 − 已使用输入。')}</span>
+      <DocumentationLink anchor="runtime-settings-context" label="查看完整计算与排除项" />
     </div>
     <footer className="context-panel-footer">
-      <span>{status.summary_active ? t('已启用对话整理') : t('使用量为发送前估算')}</span>
+      <span>{status.compaction_failure_code
+        ? t('最近整理失败：{code}').replace('{code}', status.compaction_failure_code)
+        : status.compaction_implementation === 'astra_semantic'
+          ? t('Astra 语义整理 · 窗口 {window}').replace('{window}', String(status.window_number ?? 0))
+          : status.compaction_implementation === 'deterministic_emergency'
+            ? t('确定性应急整理 · 窗口 {window}').replace('{window}', String(status.window_number ?? 0))
+            : status.compaction_implementation === 'legacy_v1'
+              ? t('旧版对话摘要')
+              : t('使用量为发送前估算')}</span>
+      {status.token_before != null && status.token_after != null && <span>{t('整理 Token {before} → {after}').replace('{before}', compactTokenCount(status.token_before)).replace('{after}', compactTokenCount(status.token_after))}</span>}
+      {status.summary_active && <span>{t('保留 {retained} 轮 · 折叠 {folded} 轮').replace('{retained}', String(status.retained_run_count ?? status.visible_run_count)).replace('{folded}', String(status.folded_run_count))}</span>}
       {status.max_output_tokens && <span>{t('模型最大输出 {tokens}').replace('{tokens}', compactTokenCount(status.max_output_tokens))}</span>}
     </footer>
   </div>;
 }
 
-function ModelMenu({ selectedModelKey, onModelChange, modelOptions, thinkingCapability, thinkingSelection, thinkingLoading, thinkingFailed, onThinkingRetry, onThinkingEnabledChange, onThinkingDepthChange, trusted, reasoningEffort, onReasoningEffortChange, toolCallLimit, onToolCallLimitChange, reflectionEnabled, onReflectionChange, reflectionTrigger, onReflectionTriggerChange, planExecution, onPlanExecutionChange, onOpenStrategyHelp }: {
+function ModelMenu({ selectedModelKey, onModelChange, modelOptions, thinkingCapability, thinkingSelection, thinkingLoading, thinkingFailed, onThinkingRetry, onThinkingEnabledChange, onThinkingDepthChange, trusted, reasoningEffort, onReasoningEffortChange, toolCallLimit, onToolCallLimitChange, reflectionEnabled, onReflectionChange, reflectionTrigger, onReflectionTriggerChange, planExecution, onPlanExecutionChange }: {
   selectedModelKey: string;
   onModelChange: (modelKey: string) => void;
   modelOptions: Array<{ key: string; model: string; profile: ModelProfileConfig; providerId: string; providerName: string; runtimeDefault: boolean }>;
@@ -4307,7 +4330,6 @@ function ModelMenu({ selectedModelKey, onModelChange, modelOptions, thinkingCapa
   onReflectionTriggerChange: (trigger: string) => void;
   planExecution: 'auto' | 'confirm';
   onPlanExecutionChange: (auto: boolean) => void;
-  onOpenStrategyHelp: () => void;
 }) {
   const { t } = useI18n();
   const groups = modelOptions.reduce<Array<{ key: string; providerId: string; providerName: string; runtimeDefault: boolean; models: Array<{ key: string; model: string; profile: ModelProfileConfig }> }>>((result, option) => {
@@ -4330,6 +4352,7 @@ function ModelMenu({ selectedModelKey, onModelChange, modelOptions, thinkingCapa
           <span className="model-selected-mark">{selectedModelKey === item.key ? '✓' : ''}</span>
         </button>
         {selectedModelKey === item.key && <section className="model-row-thinking-controls" aria-label={t('模型思考')}>
+          <div className="inline-help-heading"><span>{t('模型思考设置')}</span><DocumentationLink anchor="runtime-settings-model-thinking" label="查看说明" /></div>
           {thinkingLoading ? <p className="model-thinking-status" role="status">{t('正在读取模型思考能力…')}</p>
             : thinkingFailed ? <div className="model-thinking-status unavailable" role="status"><span>{t('暂时无法读取模型思考能力，当前设置不可调整。')}</span><button type="button" onClick={onThinkingRetry}>{t('重试')}</button></div>
               : !thinkingCapability?.supported || !thinkingSelection ? <p className="model-thinking-status unavailable">{t('当前模型不支持可配置的思考参数。')}</p>
@@ -4352,55 +4375,28 @@ function ModelMenu({ selectedModelKey, onModelChange, modelOptions, thinkingCapa
       <div className="menu-divider" />
       <div className="menu-heading">{t('可信对话策略')}</div>
       <section className="trusted-strategy-section" aria-label={t('计划执行')}>
+        <div className="inline-help-heading"><span>{t('计划执行')}</span><DocumentationLink anchor="runtime-settings-plan-execution" label="查看说明" /></div>
         <div className="menu-toggle plan-execution-menu-row"><div><strong>{t('计划生成后直接执行')}</strong><small>{t(planExecution === 'auto' ? '完整计划生成后立即开始执行。' : '先展示完整计划，由你确认这个版本后开始执行。')}</small></div><Toggle checked={planExecution === 'auto'} onChange={onPlanExecutionChange} label={t('计划生成后直接执行')} /></div>
       </section>
       <section className="trusted-strategy-section" aria-label={t('推理强度')}>
+        <div className="inline-help-heading"><span>{t('推理资源')}</span><DocumentationLink anchor="runtime-settings-reasoning" label="查看说明" /></div>
         <MenuChoice label="推理强度" value={reasoningEffort} options={['快速', '均衡', '深入']} onChange={onReasoningEffortChange} />
         {limitRange ? <ToolCallLimitControl value={toolCallLimit ?? limitRange.defaultValue} min={limitRange.min} max={limitRange.max} onChange={onToolCallLimitChange} /> : <UnlimitedToolCallLimitControl />}
       </section>
       <section className="trusted-strategy-section" aria-label={t('反思循环')}>
+        <div className="inline-help-heading"><span>{t('反思策略')}</span><DocumentationLink anchor="runtime-settings-reflection" label="查看说明" /></div>
         <div className="menu-toggle"><div><strong>{t('反思循环')}</strong><small>{t('检查结果并修订下一步策略')}</small></div><Toggle checked={reflectionEnabled} onChange={onReflectionChange} label={t('反思循环')} /></div>
         {reflectionEnabled && <MenuChoice label="触发方式" value={reflectionTrigger} options={['失败时', '按需', '每轮']} onChange={onReflectionTriggerChange} />}
       </section>
       <div className="trusted-strategy-help-footer">
-        <button className="trusted-strategy-help-link" type="button" onClick={onOpenStrategyHelp}>
+        <a className="trusted-strategy-help-link" href="/help#runtime-settings-overview" target="_blank" rel="noreferrer">
           <Icon name="info" />
-          <span><strong>{t('了解可信策略')}</strong><small>{t('查看计划执行、推理资源与反思策略说明')}</small></span>
+          <span><strong>{t('查看全部模型与运行设置')}</strong><small>{t('模型思考、计划、推理、反思、批准与上下文')}</small></span>
           <b aria-hidden="true">›</b>
-        </button>
+        </a>
       </div>
     </>}
   </div>;
-}
-
-function StrategyHelpDialog({ onClose }: { onClose: () => void }) {
-  const { t } = useI18n();
-  useEffect(() => {
-    const closeOnEscape = (event: KeyboardEvent) => { if (event.key === 'Escape') onClose(); };
-    document.addEventListener('keydown', closeOnEscape);
-    return () => document.removeEventListener('keydown', closeOnEscape);
-  }, [onClose]);
-  const groups = [
-    { title: '计划执行', items: [
-      ['确认后执行', '先展示完整计划，由你确认这个版本后开始执行。'],
-      ['直接执行', '完整计划生成后立即开始执行。'],
-    ] },
-    { title: '推理资源', items: [
-      ['快速', '允许 0–5 次工具调用，简单任务更快；启用反思时，提供轻量反思能力。'],
-      ['均衡', '允许 6–15 次工具调用，兼顾速度与检查深度；启用反思时，提供基本的反思能力。'],
-      ['深入', '工具调用次数不限，为复杂任务提供充分执行空间；启用反思时，允许更深层的反思能力。'],
-      ['调用次数', '限制一次运行可发起的外部工具调用数量；失败与重试也会计入。'],
-      ['深入模式', '没有独立工具次数上限，但仍受 Agent 轮次、安全策略与系统限制。'],
-    ] },
-    { title: '反思策略', items: [
-      ['开启', '允许 Agent 检查结果，并在预算内修订下一步策略。'],
-      ['关闭', '不调用额外反思；安全与完成检查仍保留。'],
-      ['失败时', '只在工具、模型输出或完成检查失败时反思。'],
-      ['按需', '失败、低置信度、冲突或无进展时反思。'],
-      ['每轮', '每轮结束都反思，更审慎但更慢、更耗用量。'],
-    ] },
-  ];
-  return <div className="modal-backdrop" role="presentation" onMouseDown={onClose}><section className="usage-modal strategy-guide-modal strategy-guide-modal-overview" role="dialog" aria-modal="true" aria-labelledby="strategy-guide-title" onMouseDown={(event) => event.stopPropagation()}><header><div><span>{t('可信执行')}</span><h2 id="strategy-guide-title">{t('可信策略说明')}</h2></div><CloseButton label={t('关闭策略说明')} onClick={onClose} /></header><div className="strategy-guide-grid">{groups.map((group) => <section className="strategy-guide-group" aria-labelledby={`strategy-guide-${group.title}`} key={group.title}><h3 id={`strategy-guide-${group.title}`}>{t(group.title)}</h3>{group.items.map(([label, detail]) => <div className="strategy-guide-item" key={label}><strong>{t(label)}</strong><p>{t(detail)}</p></div>)}</section>)}</div></section></div>;
 }
 
 function MenuChoice({ label, value, options, onChange, disabled = false, disabledOptionHints }: { label: string; value: string; options: string[]; onChange: (value: string) => void; disabled?: boolean; disabledOptionHints?: Record<string, string> }) {
@@ -4544,6 +4540,7 @@ function SubagentPanel({ run }: { run: RunView }) {
   useEffect(() => setSnapshot(run), [run]);
   const summary = snapshot.subagent_summary;
   const roots = snapshot.agent_executions ?? [];
+  const joins = snapshot.agent_joins ?? [];
   if (!summary || summary.total === 0) return null;
   const cancel = async (executionId: string) => {
     setCancelling(executionId);
@@ -4562,6 +4559,15 @@ function SubagentPanel({ run }: { run: RunView }) {
         .replace('{completed}', String(summary.completed))}</small>
     </summary>
     {summary.key_wait_reason && <p className="subagent-wait" role="status">{t('等待原因')}：{summary.key_wait_reason}</p>}
+    {joins.length > 0 && <div className="subagent-joins" aria-label={t('子系统汇合状态')}>
+      {joins.map((join) => <p className={`status-${join.status}`} key={join.id}>
+        <strong>{join.group_id || join.join_key}</strong>
+        <span>{t('汇合 {status} · 必需 {required} · 可选 {optional}')
+          .replace('{status}', join.status)
+          .replace('{required}', String(join.required_execution_ids.length))
+          .replace('{optional}', String(join.optional_execution_ids.length))}</span>
+      </p>)}
+    </div>}
     <div className="subagent-tree" role="tree" aria-label={t('子系统执行树')}>
       {roots.flatMap((root) => root.children).map((agent) => <SubagentTreeNode
         agent={agent}

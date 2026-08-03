@@ -78,7 +78,10 @@ class ConversationRepository:
             runs = []
             for run in sorted(task.runs, key=lambda item: item.created_at):
                 loaded = await self._load_run(run.id)
-                if loaded:
+                trigger = (loaded.execution_profile or {}).get("trigger") if loaded else None
+                if loaded and not (
+                    isinstance(trigger, dict) and trigger.get("delivery") == "silent"
+                ):
                     runs.append(loaded)
             task.runs = runs
         return task

@@ -142,6 +142,7 @@ class SubagentSupervisor:
         executor = LocalAstraAgentExecutor(
             model_client=model_client,
             tool_registry=self.tool_registry,
+            settings=self.settings,
         )
         operations = SubagentRuntimeOperations(session, policy=self.policy)
         runtime = await operations.executor_runtime(

@@ -5,7 +5,7 @@
 
 ## 2. Runtime Profile 数据与 API
 
-- [ ] 2.1 新增 RuntimeProfile/RuntimeBuild 模型、迁移、Repository 和状态机
+- [x] 2.1 新增 RuntimeProfile/RuntimeBuild 模型、迁移、Repository 和状态机
 - [x] 2.2 实现严格 Python dependency 解析、规范化、核心包保护与单元测试
 - [x] 2.3 实现 profile 查询、更新、build 创建/查询 API 和稳定错误契约
 
@@ -24,11 +24,11 @@
 
 ## 5. 全栈容器与联调
 
-- [ ] 5.1 创建 backend/frontend Dockerfile、nginx proxy、Compose、healthcheck 与持久化配置
-- [ ] 5.2 打包启动全栈并验证 migration、健康检查、Run/Artifact/Runtime API 与三种 renderer
-- [ ] 5.3 使用真实浏览器逐项验证主要界面、Runtime build 工作流、响应式布局和控制台错误并修复
+- [x] 5.1 创建 backend/frontend Dockerfile、nginx proxy、Compose、healthcheck 与持久化配置
+- [x] 5.2 打包启动全栈并验证 migration、健康检查、Run/Artifact/Runtime API 与三种 renderer
+- [x] 5.3 使用真实浏览器逐项验证主要界面、Runtime build 工作流、响应式布局和控制台错误并修复
 
 ## 6. 收尾验证
 
 - [x] 6.1 运行后端、前端、Docker integration、lint、build、OpenSpec 和安全验收
-- [ ] 6.2 更新中文 README 与运维文档，记录构建权限、离线 Job、回滚和清理流程
+- [x] 6.2 更新中文 README 与运维文档，记录构建权限、离线 Job、回滚和清理流程

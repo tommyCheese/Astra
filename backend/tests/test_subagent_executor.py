@@ -338,7 +338,14 @@ async def test_local_child_executes_tool_with_full_lineage_and_completes(session
         ]
     )
     result = await LocalAstraAgentExecutor(
-        model_client=client, tool_registry=registry
+        model_client=client,
+        tool_registry=registry,
+        settings=Settings().model_copy(
+            update={
+                "context_compaction_child_inline_bytes": 1,
+                "context_compaction_child_inline_tokens": 1,
+            }
+        ),
     ).execute(contract=contract, context_manifest=manifest, runtime=runtime)
 
     plans = list(
@@ -376,6 +383,12 @@ async def test_local_child_executes_tool_with_full_lineage_and_completes(session
     assert plans[0].agent_execution_id == child.id
     assert node_executions[0].status == "completed"
     assert calls[0].agent_execution_id == child.id
+    assert calls[0].output["data"] == {"value": "evidence"}
+    normalized = turns[0].observation["data"]["normalized_output"]
+    assert normalized["externalized"] is True
+    assert normalized["reference"]["ref"] == f"tool_call:{calls[0].id}"
+    assert client.contexts[0]["context_checkpoint"]["agent_execution_id"] == child.id
+    assert client.contexts[1]["context_checkpoint"]["manifest_hash"]
     assert all(turn.agent_execution_id == child.id for turn in turns)
     assert tool.last_context.agent_execution_id == child.id
     assert tool.last_context.delegation_context.identity_id == child.identity_id

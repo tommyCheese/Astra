@@ -22,6 +22,6 @@ RUN mkdir -p /var/lib/astra/artifacts /var/lib/astra/workspaces \
 EXPOSE 8000
 
 HEALTHCHECK --interval=10s --timeout=3s --start-period=20s --retries=6 \
-  CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=2)"
+  CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/ready', timeout=2)"
 
 CMD ["sh", "-c", "alembic upgrade head && exec uvicorn app.main:app --host 0.0.0.0 --port 8000"]

@@ -13,6 +13,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.artifacts import ArtifactService, LocalArtifactStore
+from app.context_compaction.tool_outputs import ToolOutputGovernanceService
 from app.core.config import Settings
 from app.db.models import AgentJoinRecord, RunRecord, RunSkillSnapshotRecord
 from app.grounding.projection import project_grounded_answer
@@ -43,6 +44,7 @@ from app.repositories.plans import PlanRepository, plan_to_view
 from app.repositories.runs import RunRepository
 from app.repositories.tool_settings import ToolSettingsRepository, default_tool_states
 from app.repositories.workspaces import WorkspaceRepository
+from app.root_context_compaction import compact_root_context
 from app.runner.adapters import ChartTaskAdapter, ProcessorRegistry, WebTaskAdapter
 from app.runner.approvals import input_hash, safe_preview, similar_matcher
 from app.runner.model_client import ModelClient, ModelOutputError, build_model_client
@@ -81,6 +83,7 @@ from app.schemas.agent import (
     ValidationOutcome,
     VerificationReport,
 )
+from app.schemas.context_compaction import ContextOwnerRole, ContextReference
 from app.schemas.permissions import (
     ExtensionDescriptor,
     PermissionBundle,
@@ -1550,6 +1553,15 @@ class AgentLoop:
                 initial_run=initial_run if fresh_run else None,
                 initial_skill_snapshot=initial_skill_snapshot if fresh_run else None,
             )
+            context = await compact_root_context(
+                repo=repo,
+                settings=self.settings,
+                model_client=self.model_client,
+                run_id=run_id,
+                goal=goal,
+                context=context,
+                observations=observations,
+            )
             if not quick_mode:
                 await repo.add_event(
                     run_id,
@@ -2734,6 +2746,41 @@ class AgentLoop:
                 output["plan_node_id"] = call.plan_node_id
                 output["node_execution_id"] = call.node_execution_id
                 tool_outputs.append(output)
+                reference_labels = tuple(
+                    dict.fromkeys(
+                        label
+                        for effect in effect_plan.effects
+                        for label in effect.data_labels
+                    )
+                )
+
+                async def persisted_tool_output_reference(
+                    _serialized: bytes,
+                    checksum: str,
+                    *,
+                    call_id: str = call.id,
+                    data_labels: tuple[str, ...] = reference_labels,
+                ) -> ContextReference:
+                    return ContextReference(
+                        kind="tool_call",
+                        ref=f"tool_call:{call_id}",
+                        content_hash=checksum,
+                        data_labels=data_labels,
+                        allowed_purposes=("agent_context", "completion_validation"),
+                    )
+
+                governed_output = await ToolOutputGovernanceService(self.settings).normalize(
+                    role=ContextOwnerRole.root_execution,
+                    tool_name=tool.spec.name,
+                    status="succeeded",
+                    output=output,
+                    key_fields={
+                        "tool_call_id": call.id,
+                        "plan_node_id": call.plan_node_id,
+                        "runtime_identity_id": runtime_identity.id,
+                    },
+                    persist=persisted_tool_output_reference,
+                )
                 processor = self.processors.for_tool(tool.spec.name)
                 if processor:
                     observation, step_evidence = processor.process(tool.spec.name, output)
@@ -2747,9 +2794,23 @@ class AgentLoop:
                     step_evidence = {}
                 if canonical_plan is not None and active_node is not None:
                     observation.plan_node_id = active_node.id
+                context_observation = (
+                    observation.model_copy(
+                        update={
+                            "data": {
+                                "tool_name": tool.spec.name,
+                                "normalized_output": governed_output.model_dump(
+                                    mode="json", exclude_none=True
+                                ),
+                            }
+                        }
+                    )
+                    if governed_output.externalized
+                    else observation
+                )
                 if canonical_plan is None and step is not None:
                     await repo.update_step(step.id, "completed", evidence=step_evidence)
-                observations.append(observation.model_dump())
+                observations.append(context_observation.model_dump())
                 if quick_mode:
                     completed_by_workspace_change = (
                         tool.spec.name == "bash_execute"
@@ -2761,7 +2822,7 @@ class AgentLoop:
                     await repo.update_agent_turn(
                         turn.id,
                         status="completed",
-                        observation=observation.model_dump(),
+                        observation=context_observation.model_dump(),
                         tool_call_id=call.id,
                         phase="committed",
                     )
@@ -2819,7 +2880,7 @@ class AgentLoop:
                     await maybe_reflect(
                         "no_progress",
                         {
-                            "last_observation": observation.model_dump(),
+                            "last_observation": context_observation.model_dump(),
                             "runtime_context": context,
                             "retry_count": 0,
                         },
@@ -2829,14 +2890,14 @@ class AgentLoop:
                     goal=goal,
                     context={
                         "run_id": run_id,
-                        "last_observation": observation.model_dump(),
+                        "last_observation": context_observation.model_dump(),
                         "evidence_pack": {},
                     },
                 )
                 await repo.update_agent_turn(
                     turn.id,
                     status="completed",
-                    observation=observation.model_dump(),
+                    observation=context_observation.model_dump(),
                     tool_call_id=call.id,
                     memory_writes=writes,
                     evaluation=evaluation.model_dump(mode="json"),
@@ -2844,7 +2905,7 @@ class AgentLoop:
                 )
                 turn_reflection = await maybe_reflect(
                     "turn_completed",
-                    {"last_observation": observation.model_dump(), "retry_count": 0},
+                    {"last_observation": context_observation.model_dump(), "retry_count": 0},
                 )
                 if turn_reflection:
                     await repo.update_agent_turn(turn.id, reflection=turn_reflection.model_dump())

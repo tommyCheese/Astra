@@ -1196,7 +1196,7 @@ async def test_create_run_rejects_invalid_agent_profile_as_configuration_error(
     def invalid_profile():
         raise AgentProfileConfigurationError("invalid test profile")
 
-    monkeypatch.setattr(runs_api, "load_agent_profile", invalid_profile)
+    monkeypatch.setattr("app.run_creation.load_agent_profile", invalid_profile)
     response = await app_client.post("/api/runs", json={"goal": "Profile 配置测试"})
 
     assert response.status_code == 503
@@ -2222,7 +2222,9 @@ async def test_create_run_rejects_unknown_model_provider(app_client):
 
 @pytest.mark.parametrize("provider", ["anthropic", "google", "azure", "groq", "qwen"])
 def test_model_config_accepts_supported_cloud_providers(provider):
-    configured = runs_api._apply_model_config(
+    from app.run_creation import RunCreationService
+
+    configured = RunCreationService.apply_model_config(
         Settings(model_provider="mock"),
         {
             "provider": provider,
@@ -2237,7 +2239,9 @@ def test_model_config_accepts_supported_cloud_providers(provider):
 
 @pytest.mark.parametrize("provider", ["ollama", "lmstudio", "vllm", "localai", "compatible"])
 def test_model_config_allows_keyless_local_providers(provider):
-    configured = runs_api._apply_model_config(
+    from app.run_creation import RunCreationService
+
+    configured = RunCreationService.apply_model_config(
         Settings(model_provider="mock"),
         {
             "provider": provider,

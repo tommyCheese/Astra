@@ -6,9 +6,11 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
+from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.agent_profile import AgentProfileConfigurationError
 from app.core.config import Settings
+from app.db.models import RuntimeBuildRecord, RuntimeProfileRecord
 from app.runtime_profiles import CORE_DEPENDENCIES, RuntimeProfileService, normalize_dependencies
 
 
@@ -524,3 +526,43 @@ def test_read_only_profile_service_does_not_cancel_an_active_build(tmp_path):
     service = RuntimeProfileService(Settings(runtime_profile_path=str(profile_path)))
 
     assert service.read()["build"]["status"] == "building"
+
+
+async def test_runtime_service_persists_and_rehydrates_database_state(session, tmp_path):
+    factory = async_sessionmaker(session.bind, expire_on_commit=False)
+    first_path = tmp_path / "first.json"
+    service = RuntimeProfileService(
+        Settings(runtime_profile_path=str(first_path)),
+        session_factory=factory,
+    )
+    state = service.read()
+    state.update(
+        dependencies=[{"name": "polars", "version": "1.2.3"}],
+        active_image="astra-data-viz:custom-digest",
+        dependency_digest="digest",
+        build={
+            "id": "build-1",
+            "status": "succeeded",
+            "phase": "构建完成",
+            "progress": 100,
+            "log": "ok",
+            "image": "astra-data-viz:custom-digest",
+            "dependencies": [{"name": "polars", "version": "1.2.3"}],
+            "dependency_digest": "digest",
+        },
+    )
+    service.write(state)
+    await service._persist_database_state(state)
+
+    profile = await session.get(RuntimeProfileRecord, "default")
+    build = await session.get(RuntimeBuildRecord, "build-1")
+    assert profile is not None and profile.active_image == "astra-data-viz:custom-digest"
+    assert build is not None and build.status == "succeeded"
+
+    restored = RuntimeProfileService(
+        Settings(runtime_profile_path=str(tmp_path / "restored.json")),
+        session_factory=factory,
+    )
+    await restored._load_database_state()
+    assert restored.read()["active_image"] == "astra-data-viz:custom-digest"
+    assert restored.read()["build"]["id"] == "build-1"

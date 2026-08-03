@@ -24,7 +24,7 @@
 - [x] 3.5 Implement executor backend selection and capability-limited context serialization for isolated providers
 - [ ] 3.6 Move tool execution, envelope validation, ToolCall completion, Artifact association, Workspace diff recording, and DataFlowState updates into pipeline stages
 - [x] 3.7 Implement zero-to-many processor dispatch and return normalized observations, evidence fragments, validation inputs, and completion signals
-- [ ] 3.8 Add pipeline tests for allow, ask, deny, cancellation, timeout, invalid output, analyzer failure, processor failure, and checkpoint recovery
+- [x] 3.8 Add pipeline tests for allow, ask, deny, cancellation, timeout, invalid output, analyzer failure, processor failure, and checkpoint recovery
 
 ## 4. Agent Loop decoupling
 
@@ -44,7 +44,7 @@
 - [ ] 5.4 Add legacy result adapters inside each built-in provider and remove provider-specific output interpretation from core runtime modules
 - [x] 5.5 Replace build_tool_registry with PluginCatalogBuilder-based built-in assembly while preserving current tool names and enablement defaults
 - [ ] 5.6 Remove concrete Web, Chart, and Bash tool-name branches from AgentLoop, DefaultEffectAnalyzer, approvals, and generic sandbox dispatch
-- [ ] 5.7 Run golden compatibility tests and document any intentional event or result contract changes
+- [x] 5.7 Run golden compatibility tests and document any intentional event or result contract changes
 
 ## 6. Run snapshot and persistence
 
@@ -77,7 +77,7 @@
 
 - [ ] 9.1 Add startup diagnostics and metrics for provider discovery, verification, load, health, catalog conflicts, invocation stages, and contribution failures
 - [ ] 9.2 Add a rollout flag that restricts the catalog to built-in plugins and a rollback procedure that preserves new snapshots
-- [ ] 9.3 Run backend unit, integration, Docker, permission, recovery, API, and frontend suites with external discovery disabled and enabled
+- [x] 9.3 Run backend unit, integration, Docker, permission, recovery, API, and frontend suites with external discovery disabled and enabled
 - [ ] 9.4 Update the system design and operator documentation with plugin trust boundaries, managed source configuration, lifecycle, and troubleshooting
 - [ ] 9.5 Remove legacy registry builders, static tool toggle fields, compatibility API, and unused adapter code after the announced compatibility window
 - [ ] 9.6 Verify no core AgentLoop, generic Effect Analyzer, approval, settings, or completion module branches on `web_search`, `web_fetch`, `chart.render`, or `bash_execute`

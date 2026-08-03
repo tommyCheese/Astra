@@ -118,6 +118,7 @@ async def execute_system_command(
     session: AsyncSession | None = None,
     settings: Settings | None = None,
 ) -> tuple[str, dict[str, object], dict[str, object]]:
+    run_count = len(await manager.list_runs(task.id))
     definition = next((item for item in SYSTEM_COMMANDS if item.name == command), None)
     if definition is None:
         raise ResourceError("SYSTEM_COMMAND_NOT_FOUND", "找不到这个快捷操作。")
@@ -146,7 +147,11 @@ async def execute_system_command(
         direction = normalized_arguments or definition.default_arguments
         details = await manager.compact(task, direction=direction)
         details["direction"] = direction
-        message = "已按指定方向整理较早的对话，完整记录仍保留。"
+        message = (
+            f"未能完成对话整理（{details['failure_code']}）；原上下文保持不变。"
+            if details.get("status") == "failed"
+            else "已按指定方向整理较早的对话，完整记录仍保留。"
+        )
         normalized_arguments = direction
     else:
         details = await manager.clear(task)
@@ -160,7 +165,7 @@ async def execute_system_command(
         "command": f"/{command}",
         "content": invocation,
         "arguments": normalized_arguments,
-        "after_run_count": len(task.runs),
+        "after_run_count": run_count,
         "created_at": utc_now().isoformat(),
     }
     task.context_state = {**raw_state, "command_history": [*history, command_message][-200:]}

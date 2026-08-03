@@ -41,18 +41,18 @@
 ## 5. Tool Output Governance
 
 - [x] 5.1 Add role-aware inline byte and Token limits to normalized tool outcomes before they enter root or child model context
-- [ ] 5.2 Persist oversized complete outputs in the existing ToolCall/Artifact/Evidence storage with checksum, provenance, identity and data-purpose controls
+- [x] 5.2 Persist oversized complete outputs in the existing ToolCall/Artifact/Evidence storage with checksum, provenance, identity and data-purpose controls
 - [x] 5.3 Replace oversized observations with bounded previews, stable references, status, key fields and classified error metadata
 - [x] 5.4 Fail through classified storage/recovery paths when a required large output cannot be persisted instead of silently truncating it
 - [x] 5.5 Verify root and child compaction requests consume normalized bounded observations rather than raw external payloads
 
 ## 6. Root Agent Loop Integration
 
-- [ ] 6.1 Build the standard-root protected prefix from current request, authorization boundary, active Skills, budget and current verified runtime state without creating trusted-only structures
+- [x] 6.1 Build the standard-root protected prefix from current request, authorization boundary, active Skills, budget and current verified runtime state without creating trusted-only structures
 - [ ] 6.2 Build the trusted-root protected prefix from TaskContract, Profile/Skill snapshot, permissions, Plan/AgentState versions, budget and Completion Gate inputs
-- [ ] 6.3 Insert pre-model context-pressure checks into all standard and trusted decision/model-call paths
-- [ ] 6.4 Insert post-tool checks after result persistence/normalization and before any follow-up model call
-- [ ] 6.5 Inject `RootContextCheckpointV2` plus retained recent observations into model context while continuing to evaluate completion from canonical state
+- [x] 6.3 Insert pre-model context-pressure checks into all standard and trusted decision/model-call paths
+- [x] 6.4 Insert post-tool checks after result persistence/normalization and before any follow-up model call
+- [x] 6.5 Inject `RootContextCheckpointV2` plus retained recent observations into model context while continuing to evaluate completion from canonical state
 - [ ] 6.6 Preserve action idempotency, waiting continuations, cancellation, Plan node state and Evidence lineage across root compaction and recovery
 - [ ] 6.7 Integrate verified child fan-in results as references in root checkpoints without promoting unaccepted child local facts
 
@@ -68,13 +68,13 @@
 
 ## 8. Conversation Compaction and Migration
 
-- [ ] 8.1 Replace `_build_summary()` character-tail truncation with conversation policy input built from complete eligible Run/audit records and any prior checkpoint
-- [ ] 8.2 Update automatic pre-Run compaction to use Astra semantic checkpoints, Token-bounded recent Runs and the recovery-waterline postcondition
-- [ ] 8.3 Update `/compact` to invoke the shared semantic engine idempotently on idle conversations and leave the old projection unchanged on failure
-- [ ] 8.4 Add lazy V1 `summary/folded_run_ids` migration as unverified legacy input while retaining all original Runs and rollback-readable fields
-- [ ] 8.5 Update conversation rendering to inject canonical prefix, one active checkpoint and recent Runs without nested `Earlier conversation summary` accumulation
-- [ ] 8.6 Extend context status/API schemas with reported-versus-estimated usage, implementation, window number, checkpoint status, retained/folded counts and Token before/after
-- [ ] 8.7 Update the context capacity UI and command results to disclose Astra semantic/deterministic compaction status and classified failures without rendering hidden reasoning
+- [x] 8.1 Replace `_build_summary()` character-tail truncation with conversation policy input built from complete eligible Run/audit records and any prior checkpoint
+- [x] 8.2 Update automatic pre-Run compaction to use Astra semantic checkpoints, Token-bounded recent Runs and the recovery-waterline postcondition
+- [x] 8.3 Update `/compact` to invoke the shared semantic engine idempotently on idle conversations and leave the old projection unchanged on failure
+- [x] 8.4 Add lazy V1 `summary/folded_run_ids` migration as unverified legacy input while retaining all original Runs and rollback-readable fields
+- [x] 8.5 Update conversation rendering to inject canonical prefix, one active checkpoint and recent Runs without nested `Earlier conversation summary` accumulation
+- [x] 8.6 Extend context status/API schemas with reported-versus-estimated usage, implementation, window number, checkpoint status, retained/folded counts and Token before/after
+- [x] 8.7 Update the context capacity UI and command results to disclose Astra semantic/deterministic compaction status and classified failures without rendering hidden reasoning
 
 ## 9. Recovery, Observability and Safety Verification
 

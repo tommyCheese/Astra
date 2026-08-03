@@ -1122,6 +1122,24 @@ class SubagentSummaryView(BaseModel):
     key_wait_reason: str | None = None
 
 
+class AgentJoinView(BaseModel):
+    id: str
+    parent_execution_id: str
+    consumer_plan_node_id: str | None = None
+    join_key: str
+    group_id: str | None = None
+    policy: str
+    child_execution_ids: list[str] = Field(default_factory=list)
+    required_execution_ids: list[str] = Field(default_factory=list)
+    optional_execution_ids: list[str] = Field(default_factory=list)
+    status: str
+    result: dict[str, Any] = Field(default_factory=dict)
+    state_version: int
+    created_at: datetime
+    completed_at: datetime | None = None
+    updated_at: datetime
+
+
 class RunView(BaseModel):
     id: str
     task_id: str
@@ -1152,6 +1170,7 @@ class RunView(BaseModel):
     node_executions: list[NodeExecutionView] = Field(default_factory=list)
     parallelism: ParallelismSummary | None = None
     agent_executions: list[AgentExecutionView] = Field(default_factory=list)
+    agent_joins: list[AgentJoinView] = Field(default_factory=list)
     subagent_summary: SubagentSummaryView = Field(default_factory=SubagentSummaryView)
     task_adapter: str = "web"
     agent_profile: dict[str, Any] = Field(default_factory=dict)

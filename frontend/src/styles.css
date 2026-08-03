@@ -279,6 +279,9 @@ p {
 .subagent-panel > summary { align-items: center; cursor: pointer; display: flex; gap: 10px; list-style: none; }
 .subagent-panel > summary span { color: var(--app-text); font-size: 13px; font-weight: 650; }
 .subagent-panel > summary small, .subagent-wait { color: var(--app-muted); font-size: 11px; }
+.subagent-joins { display: grid; gap: 5px; margin-top: 8px; }
+.subagent-joins p { align-items: center; border: 1px solid var(--app-line); border-radius: 8px; display: flex; font-size: 11px; justify-content: space-between; margin: 0; padding: 6px 8px; }
+.subagent-joins span { color: var(--app-muted); }
 .subagent-tree { display: grid; gap: 7px; margin-top: 10px; }
 .subagent-node { border-left: 2px solid var(--app-line); padding-left: 10px; }
 .subagent-node.status-running { border-left-color: var(--accent, #257a64); }
@@ -2905,6 +2908,11 @@ html[data-theme="dark"] .plan-confirmation-card {
   line-height: 1.5;
 }
 
+.context-counting-note .documentation-reference-link {
+  justify-self: start;
+  margin-top: 2px;
+}
+
 .context-panel-footer {
   color: #84909e;
   display: flex;
@@ -2970,6 +2978,33 @@ html[data-theme="dark"] .plan-confirmation-card {
 .model-row-thinking-controls {
   border-top: 1px solid rgba(47, 143, 115, .12);
   padding: 7px 10px 9px;
+}
+
+.inline-help-heading {
+  align-items: center;
+  color: #697586;
+  display: flex;
+  font-size: 9px;
+  font-weight: 700;
+  justify-content: space-between;
+  letter-spacing: .02em;
+  padding: 3px 8px 5px;
+}
+
+.documentation-reference-link {
+  color: #2f7c68;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0;
+  line-height: 1.4;
+  text-decoration: none;
+}
+
+.documentation-reference-link:hover,
+.documentation-reference-link:focus-visible {
+  color: #205f50;
+  text-decoration: underline;
+  text-underline-offset: 2px;
 }
 
 .model-row-thinking-head {
@@ -3238,6 +3273,10 @@ html[data-theme="dark"] .plan-confirmation-card {
   margin: 5px 4px 6px;
 }
 
+.trusted-strategy-section > .inline-help-heading {
+  padding-top: 6px;
+}
+
 .trusted-strategy-help-footer {
   border-top: 1px solid #e3e8ef;
   margin: 6px 4px 0;
@@ -3255,7 +3294,15 @@ html[data-theme="dark"] .plan-confirmation-card {
   grid-template-columns: 20px minmax(0, 1fr) 10px;
   padding: 9px 10px;
   text-align: left;
+  text-decoration: none;
   width: 100%;
+}
+
+.floating-help-reference {
+  border-top: 1px solid #e3e8ef;
+  display: block;
+  margin: 5px 8px 0;
+  padding: 9px 2px 3px;
 }
 
 .trusted-strategy-help-link > svg {
@@ -4687,6 +4734,12 @@ html[data-theme="dark"] .usage-coverage.complete { border-color: #315c4d; backgr
   padding: 11px 12px;
 }
 
+.confirmation-help-reference {
+  display: inline-block;
+  font-size: 10px;
+  margin-top: 12px;
+}
+
 .confirmation-actions {
   display: flex;
   gap: 8px;
@@ -4935,6 +4988,14 @@ html[data-theme="dark"] .context-counting-note {
   border-color: rgba(91, 151, 211, .16);
 }
 
+html[data-theme="dark"] .documentation-reference-link {
+  color: #83cdb6;
+}
+
+html[data-theme="dark"] .inline-help-heading {
+  color: #aeb6c2;
+}
+
 html[data-theme="dark"] .context-breakdown-row,
 html[data-theme="dark"] .model-menu-title {
   border-color: #313942;
@@ -5123,6 +5184,10 @@ html[data-theme="dark"] .floating-menu .trusted-strategy-help-link:focus-visible
 }
 
 html[data-theme="dark"] .trusted-strategy-help-footer {
+  border-color: #343a43;
+}
+
+html[data-theme="dark"] .floating-help-reference {
   border-color: #343a43;
 }
 

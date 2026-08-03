@@ -12,6 +12,7 @@ vi.mock('../src/api', async (importOriginal) => {
     listScheduledTasks: vi.fn(),
     createScheduledTask: vi.fn(),
     createConversation: vi.fn(),
+    deleteConversation: vi.fn(),
     listScheduledDeliverables: vi.fn(),
     listScheduledTaskRuns: vi.fn(),
     listConversations: vi.fn(),
@@ -138,6 +139,22 @@ describe('ScheduledTasksView', () => {
 
     await waitFor(() => expect(api.createConversation).toHaveBeenCalledWith('自动化产出'));
     expect(api.createScheduledTask).toHaveBeenCalledWith(expect.objectContaining({ target_task_id: 'task-new' }));
+  });
+
+  it('removes a newly-created result conversation when schedule creation fails', async () => {
+    vi.mocked(api.listConversations).mockResolvedValue([]);
+    vi.mocked(api.createConversation).mockResolvedValue({ id: 'task-orphan', title: '自动化产出', title_source: 'user', pinned_at: null, created_at: '', updated_at: '', last_run_status: null, last_message_preview: '', has_active_share: false });
+    vi.mocked(api.createScheduledTask).mockRejectedValue(new Error('权限包无效'));
+    render(<I18nProvider><ScheduledTasksView onClose={() => undefined} onOpenConversation={() => undefined} /></I18nProvider>);
+
+    fireEvent.click(await screen.findByRole('button', { name: '新建' }));
+    fireEvent.change(screen.getByLabelText('名称'), { target: { value: '晨间摘要' } });
+    fireEvent.change(screen.getByLabelText('新对话名称'), { target: { value: '自动化产出' } });
+    fireEvent.change(screen.getByLabelText('任务指令'), { target: { value: '整理今天的重点' } });
+    fireEvent.click(screen.getByRole('button', { name: '创建并启用' }));
+
+    await waitFor(() => expect(api.deleteConversation).toHaveBeenCalledWith('task-orphan'));
+    expect(await screen.findByText('权限包无效')).toBeInTheDocument();
   });
 
   it('creates the workspace heartbeat from the management page', async () => {

@@ -13,4 +13,4 @@
 
 - [x] 3.1 Add backend schema/repository tests for current, failed, legacy, malformed, nullable, and unknown-field result payloads
 - [x] 3.2 Add or update frontend tests for typed result rendering and error compatibility
-- [ ] 3.3 Run backend tests, frontend lint/tests/build, and inspect OpenAPI to confirm `RunView.result` references the formal schema
+- [x] 3.3 Run backend tests, frontend lint/tests/build, and inspect OpenAPI to confirm `RunView.result` references the formal schema

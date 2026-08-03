@@ -4,6 +4,7 @@ import asyncio
 import logging
 import uuid
 from contextlib import suppress
+from datetime import datetime, timezone
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -27,6 +28,7 @@ class SchedulerService:
         self._stopping = asyncio.Event()
         self._semaphore = asyncio.Semaphore(settings.scheduler_max_dispatch_concurrency)
         self.last_scan_error: str | None = None
+        self.last_scan_at: datetime | None = None
 
     async def startup(self) -> None:
         if not self.settings.scheduler_enabled or self._task is not None:
@@ -40,9 +42,12 @@ class SchedulerService:
         self._task = None
         if task is None:
             return
-        task.cancel()
-        with suppress(asyncio.CancelledError):
-            await task
+        try:
+            await asyncio.wait_for(task, timeout=5)
+        except TimeoutError:
+            task.cancel()
+            with suppress(asyncio.CancelledError):
+                await task
 
     async def scan_once(self) -> int:
         async with self.session_factory() as session:
@@ -58,15 +63,31 @@ class SchedulerService:
                 lease_seconds=self.settings.scheduler_lease_seconds,
                 batch_size=remaining,
             )
+            await repository.cleanup_runs(
+                retention_days=self.settings.scheduler_history_retention_days,
+            )
         pending = [*recovered, *claimed]
         if not pending:
             self.last_scan_error = None
+            self.last_scan_at = datetime.now(timezone.utc)
             return 0
         await asyncio.gather(
             *(self._dispatch(item.id) for item in pending),
         )
         self.last_scan_error = None
+        self.last_scan_at = datetime.now(timezone.utc)
         return len(pending)
+
+    def health(self) -> dict[str, object]:
+        enabled = self.settings.scheduler_enabled
+        running = self._task is not None and not self._task.done()
+        return {
+            "enabled": enabled,
+            "running": running,
+            "ready": not enabled or (running and self.last_scan_error is None),
+            "last_scan_at": self.last_scan_at.isoformat() if self.last_scan_at else None,
+            "last_scan_error": self.last_scan_error,
+        }
 
     async def _dispatch(self, schedule_run_id: str) -> None:
         async with self._semaphore:

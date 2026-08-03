@@ -2,20 +2,25 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.artifacts import ArtifactService, LocalArtifactStore
 from app.core.config import Settings
-from app.permissions.effects import DefaultEffectAnalyzer
+from app.permissions.effects import DefaultEffectAnalyzer, workspace_mount_mode
 from app.repositories.executions import NodeExecutionRepository
 from app.repositories.runs import RunRepository
+from app.repositories.workspaces import WorkspaceRepository
 from app.runner.concurrency import (
     acquire_resource_claims,
     resource_claims_from_effect_plan,
 )
 from app.runner.coordinator import NodeContextSnapshot, NodeExecutionResult
 from app.runner.model_client import ModelClient
+from app.sandbox.docker_provider import build_sandbox_provider
+from app.sandbox.runtime import SandboxJobService, SandboxSupervisor
 from app.schemas.agent import AgentObservation, NodeExecutionPhase, NodeExecutionStatus
 from app.tools.base import ToolExecutionContext, ToolExecutionError, ToolRegistry
 from app.tools.router import ToolRouter
 from app.tools.selection import CapabilityToolResolver
+from app.workspaces.runtime import WorkspaceRuntimeService
 
 
 class ReadOnlyAgentNodeExecutor:
@@ -52,6 +57,26 @@ class ReadOnlyAgentNodeExecutor:
         context: NodeContextSnapshot,
     ) -> NodeExecutionResult:
         run = await repository.require_run(context.run_id)
+        artifact_service = ArtifactService(
+            repository,
+            LocalArtifactStore(self.settings.artifact_store_path),
+            max_files=self.settings.artifact_max_files,
+            max_bytes=self.settings.artifact_max_bytes,
+        )
+        workspace_service = WorkspaceRuntimeService(
+            WorkspaceRepository(repository.session),
+            self.settings.task_workspace_store_path,
+            max_files=self.settings.task_workspace_max_files,
+            max_bytes=self.settings.task_workspace_max_bytes,
+            max_file_bytes=self.settings.task_workspace_max_file_bytes,
+            artifact_store_path=self.settings.artifact_store_path,
+        )
+        sandbox_service = SandboxJobService(
+            repository,
+            SandboxSupervisor(build_sandbox_provider(self.settings)),
+            artifact_service,
+            workspace_service,
+        )
         goal = str(
             context.task_contract.get("original_goal")
             or run.model_policy.get("conversation_goal")
@@ -310,6 +335,10 @@ class ReadOnlyAgentNodeExecutor:
                 decision.tool_input,
                 task_id=run.task_id,
             )
+            mount_mode = workspace_mount_mode(effect_plan)
+            workspace_path = (
+                await workspace_service.prepare(run.task_id) if mount_mode != "none" else None
+            )
             claims = resource_claims_from_effect_plan(effect_plan)
             if any(claim.mode != "read" for claim in claims):
                 return await self._unsafe_tool_result(
@@ -414,9 +443,11 @@ class ReadOnlyAgentNodeExecutor:
                         tool_call_id=call.id,
                         step_id=context.plan_node_id,
                         trace_id=f"{context.run_id}:{context.execution_id}:{call.id}",
-                        artifact_service=None,
-                        sandbox_service=None,
+                        artifact_service=artifact_service,
+                        sandbox_service=sandbox_service,
                         task_id=run.task_id,
+                        workspace_path=workspace_path,
+                        workspace_mode=mount_mode,
                         effect_plan=effect_plan.model_dump(mode="json"),
                         skill_bindings=tuple(context.active_skills),
                         skill_draft_test=context.skill_draft_test,

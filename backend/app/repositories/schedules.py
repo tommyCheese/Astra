@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import or_, select, update
+from sqlalchemy import delete, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -31,6 +31,7 @@ class SystemManagedScheduleError(RuntimeError):
 
 class ScheduleRepository:
     GLOBAL_HEARTBEAT_KEY = "heartbeat:global"
+    ACTIVE_RUN_STATUSES = frozenset({"claimed", "running"})
 
     def __init__(self, session: AsyncSession):
         self.session = session
@@ -276,14 +277,21 @@ class ScheduleRepository:
         ).scalar_one_or_none()
         if existing is not None:
             return existing
+        overlapping = await self._has_active_run(job.id)
         schedule_run = ScheduledJobRunRecord(
             job_id=job.id,
             scheduled_for=reference,
             idempotency_key=key,
             trigger_type="manual",
-            status="claimed",
+            status="skipped_overlap" if overlapping else "claimed",
             claimed_by=claimed_by,
             claimed_at=reference,
+            completed_at=reference if overlapping else None,
+            outcome=(
+                {"reason": "overlap_policy", "policy": job.overlap_policy}
+                if overlapping
+                else {}
+            ),
             created_at=reference,
             updated_at=reference,
         )
@@ -360,10 +368,12 @@ class ScheduleRepository:
             if result.rowcount != 1:
                 continue
             key = f"scheduled:{job.id}:{scheduled_for.isoformat()}"
-            next_fire = next_fire_time(
-                self._schedule_from_record(job),
+            schedule = self._schedule_from_record(job)
+            next_fire = self._next_after_reference(
+                schedule,
                 job.timezone,
-                after=scheduled_for,
+                scheduled_for=scheduled_for,
+                reference=reference,
             )
             existing = await self.session.scalar(
                 select(ScheduledJobRunRecord).where(
@@ -389,14 +399,43 @@ class ScheduleRepository:
                     existing.updated_at = reference
                     claimed.append(existing)
                 continue
+            lateness = max(0.0, (reference - scheduled_for).total_seconds())
+            skipped_misfire = (
+                lateness > job.misfire_grace_seconds
+                and job.misfire_policy == "skip"
+            )
+            skipped_overlap = (
+                not skipped_misfire
+                and job.overlap_policy == "skip"
+                and await self._has_active_run(job.id)
+            )
+            status = (
+                "skipped_misfire"
+                if skipped_misfire
+                else "skipped_overlap"
+                if skipped_overlap
+                else "claimed"
+            )
             schedule_run = ScheduledJobRunRecord(
                 job_id=job.id,
                 scheduled_for=scheduled_for,
                 idempotency_key=key,
                 trigger_type="scheduled",
-                status="claimed",
+                status=status,
                 claimed_by=claimed_by,
                 claimed_at=reference,
+                completed_at=reference if status != "claimed" else None,
+                outcome=(
+                    {
+                        "reason": "misfire_grace_exceeded",
+                        "lateness_seconds": lateness,
+                        "grace_seconds": job.misfire_grace_seconds,
+                    }
+                    if skipped_misfire
+                    else {"reason": "overlap_policy", "policy": job.overlap_policy}
+                    if skipped_overlap
+                    else {}
+                ),
                 created_at=reference,
                 updated_at=reference,
             )
@@ -413,7 +452,8 @@ class ScheduleRepository:
                     updated_at=reference,
                 )
             )
-            claimed.append(schedule_run)
+            if status == "claimed":
+                claimed.append(schedule_run)
         await self.session.commit()
         return claimed
 
@@ -479,6 +519,50 @@ class ScheduleRepository:
             .limit(limit)
         )
         return list((await self.session.scalars(query)).all())
+
+    async def cleanup_runs(
+        self,
+        *,
+        retention_days: int,
+        now: datetime | None = None,
+    ) -> int:
+        reference = (now or utc_now()).astimezone(timezone.utc)
+        cutoff = reference - timedelta(days=retention_days)
+        result = await self.session.execute(
+            delete(ScheduledJobRunRecord).where(
+                ScheduledJobRunRecord.completed_at.is_not(None),
+                ScheduledJobRunRecord.completed_at < cutoff,
+            )
+        )
+        await self.session.commit()
+        return int(result.rowcount or 0)
+
+    async def _has_active_run(self, job_id: str) -> bool:
+        return bool(
+            await self.session.scalar(
+                select(ScheduledJobRunRecord.id)
+                .where(
+                    ScheduledJobRunRecord.job_id == job_id,
+                    ScheduledJobRunRecord.status.in_(self.ACTIVE_RUN_STATUSES),
+                )
+                .limit(1)
+            )
+        )
+
+    @staticmethod
+    def _next_after_reference(
+        schedule,
+        timezone_name: str,
+        *,
+        scheduled_for: datetime,
+        reference: datetime,
+    ) -> datetime | None:
+        cursor = scheduled_for
+        while True:
+            candidate = next_fire_time(schedule, timezone_name, after=cursor)
+            if candidate is None or candidate > reference:
+                return candidate
+            cursor = candidate
 
     async def get_heartbeat(
         self,

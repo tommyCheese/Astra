@@ -3,7 +3,7 @@ import subprocess
 
 from app.core.config import Settings
 from app.plugins.builtin import builtin_contributions
-from app.plugins.catalog import PluginCatalogBuilder
+from app.plugins.catalog import PluginCatalog, PluginCatalogBuilder
 from app.plugins.discovery import BuiltinDiscoverySource
 from app.tools.base import ToolRegistry
 from app.tools.runtime import build_runtime_tool_registry
@@ -11,12 +11,9 @@ from app.tools.runtime import build_runtime_tool_registry
 
 def build_tool_registry(settings: Settings) -> ToolRegistry:
     runtime_registry = build_runtime_tool_registry()
-    if not settings.sandbox_enabled or not sandbox_available(settings):
+    catalog = build_plugin_catalog(settings)
+    if catalog is None:
         return runtime_registry
-    catalog = PluginCatalogBuilder(
-        [BuiltinDiscoverySource(builtin_contributions(settings))],
-        allowed_providers=settings.trusted_tool_provider_map,
-    ).build_static()
     application_registry = catalog.tool_registry()
     if any(
         spec.execution_backend != "sandbox.remote"
@@ -24,6 +21,15 @@ def build_tool_registry(settings: Settings) -> ToolRegistry:
     ):
         raise RuntimeError("Application tools must use the sandbox.remote execution backend")
     return ToolRegistry.compose(runtime_registry, application_registry)
+
+
+def build_plugin_catalog(settings: Settings) -> PluginCatalog | None:
+    if not settings.sandbox_enabled or not sandbox_available(settings):
+        return None
+    return PluginCatalogBuilder(
+        [BuiltinDiscoverySource(builtin_contributions(settings))],
+        allowed_providers=settings.trusted_tool_provider_map,
+    ).build_static()
 
 
 def sandbox_available(settings: Settings) -> bool:

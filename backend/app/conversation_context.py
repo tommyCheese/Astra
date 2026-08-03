@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import math
 import re
 from dataclasses import dataclass
@@ -9,9 +10,19 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.context_compaction.accounting import TokenAccountingService
+from app.context_compaction.policy import build_compaction_policy
+from app.context_compaction.service import AgentContextCompactionService
 from app.core.config import Settings
 from app.core.errors import StateError, ValidationError
 from app.db.models import RunRecord, TaskRecord, utc_now
+from app.repositories.context_compaction import ContextCompactionAttemptRepository
+from app.schemas.context_compaction import (
+    ContextEnvelope,
+    ContextItem,
+    ContextOwnerRole,
+    ContinuationManifest,
+)
 
 CONTEXT_STATE_VERSION = 1
 CONTEXT_TERMINAL_STATUSES = frozenset(
@@ -193,8 +204,16 @@ class ConversationContextManager:
     def _state(task: TaskRecord) -> dict[str, Any]:
         raw = task.context_state if isinstance(task.context_state, dict) else {}
         return {
-            "version": CONTEXT_STATE_VERSION,
+            "version": int(raw.get("version", CONTEXT_STATE_VERSION)),
             "summary": str(raw.get("summary") or ""),
+            "checkpoint": raw.get("checkpoint") if isinstance(raw.get("checkpoint"), dict) else None,
+            "state_version": int(raw.get("state_version", 0)),
+            "window_number": int(raw.get("window_number", 0)),
+            "retained_tail_ids": list(raw.get("retained_tail_ids", [])),
+            "token_before": raw.get("token_before"),
+            "token_after": raw.get("token_after"),
+            "compaction_implementation": raw.get("compaction_implementation"),
+            "compaction_failure_code": raw.get("compaction_failure_code"),
             "folded_run_ids": list(
                 dict.fromkeys(str(item) for item in raw.get("folded_run_ids", []) if item)
             ),
@@ -225,10 +244,25 @@ class ConversationContextManager:
             )
         )
         return ContextProjection(
-            summary=state["summary"],
+            summary=self._checkpoint_text(state["checkpoint"]) or state["summary"],
             runs=visible,
             folded_run_ids=folded,
         )
+
+    @staticmethod
+    def _checkpoint_text(checkpoint: dict[str, Any] | None) -> str:
+        if not checkpoint:
+            return ""
+        fields = (
+            "user_intent",
+            "current_constraints",
+            "key_decisions",
+            "completed_outcomes",
+            "open_issues",
+            "next_steps",
+        )
+        selected = {key: checkpoint[key] for key in fields if checkpoint.get(key)}
+        return json.dumps(selected, ensure_ascii=False, sort_keys=True)
 
     @staticmethod
     def _run_context(run: RunRecord) -> tuple[str, str]:
@@ -244,7 +278,7 @@ class ConversationContextManager:
         projection = await self.projection(task)
         context_lines: list[str] = []
         if projection.summary:
-            context_lines.append("Earlier conversation summary:\n" + projection.summary)
+            context_lines.append("Conversation checkpoint:\n" + projection.summary)
         for run in projection.runs:
             goal, answer = self._run_context(run)
             context_lines.extend((f"User: {goal}", f"Assistant: {answer}"))
@@ -315,6 +349,16 @@ class ConversationContextManager:
             "status": status,
             "estimated": True,
             "summary_active": bool(projection.summary),
+            "compaction_implementation": (
+                state["compaction_implementation"]
+                or "astra_semantic" if state["checkpoint"] else "legacy_v1" if state["summary"] else None
+            ),
+            "compaction_failure_code": state["compaction_failure_code"],
+            "checkpoint_status": "active" if state["checkpoint"] else "legacy" if state["summary"] else "none",
+            "window_number": state["window_number"],
+            "token_before": state.get("token_before"),
+            "token_after": state.get("token_after"),
+            "retained_run_count": len(state["retained_tail_ids"]),
             "visible_run_count": len(projection.runs),
             "folded_run_count": len(projection.folded_run_ids),
             "breakdown": [
@@ -397,7 +441,17 @@ class ConversationContextManager:
         require_idle: bool = True,
         commit: bool = True,
         direction: str = "",
-    ) -> dict[str, int]:
+    ) -> dict[str, int | str]:
+        policy = build_compaction_policy(self.settings, ContextOwnerRole.conversation)
+        if policy.enabled and not policy.shadow_mode:
+            return await self._semantic_compact(
+                task,
+                retain_runs=retain_runs,
+                action=action,
+                require_idle=require_idle,
+                commit=commit,
+                direction=direction,
+            )
         runs = await self.list_runs(task.id)
         if require_idle:
             await self.ensure_idle(task.id, runs=runs)
@@ -430,6 +484,159 @@ class ConversationContextManager:
         else:
             await self.session.flush()
         return {"folded": len(eligible), "retained": len(projection.runs) - len(eligible)}
+
+    async def _semantic_compact(
+        self,
+        task: TaskRecord,
+        *,
+        retain_runs: int | None,
+        action: str,
+        require_idle: bool,
+        commit: bool,
+        direction: str,
+    ) -> dict[str, int | str]:
+        from app.runner.model_client import build_model_client
+
+        runs = await self.list_runs(task.id)
+        if require_idle:
+            await self.ensure_idle(task.id, runs=runs)
+        projection = await self.projection(task, runs=runs)
+        retain = self.settings.context_compact_retain_runs if retain_runs is None else max(0, retain_runs)
+        eligible = list(projection.runs[:-retain] if retain else projection.runs)
+        if not eligible:
+            return {"folded": 0, "retained": len(projection.runs)}
+
+        state = self._state(task)
+        accounting_service = TokenAccountingService()
+        body: list[ContextItem] = []
+        for run in eligible:
+            goal, answer = self._run_context(run)
+            content = {
+                "run_id": run.id,
+                "goal": goal,
+                "answer": answer,
+                "status": run.status,
+                "created_at": run.created_at.isoformat(),
+            }
+            count, _, _ = accounting_service.count_value(content)
+            body.append(
+                ContextItem(
+                    id=run.id,
+                    kind="conversation_run",
+                    content=content,
+                    summary=f"User: {goal}\nAssistant: {answer}",
+                    token_count=count,
+                )
+            )
+        if state["summary"] and not state["checkpoint"]:
+            count, _, _ = accounting_service.count_text(state["summary"])
+            body.insert(
+                0,
+                ContextItem(
+                    id=f"legacy:{task.id}",
+                    kind="legacy_v1_summary",
+                    content=state["summary"],
+                    summary=state["summary"],
+                    token_count=count,
+                ),
+            )
+        prefix_text = direction.strip() or task.description or task.title
+        prefix_count, _, _ = accounting_service.count_text(prefix_text)
+        prefix = (
+            ContextItem(
+                id=f"conversation:{task.id}:intent",
+                kind="current_request",
+                content=prefix_text,
+                summary=prefix_text,
+                token_count=prefix_count,
+                canonical=True,
+            ),
+        )
+        window = resolve_context_window(
+            self.settings.model_provider,
+            self.settings.model_name,
+            fallback_tokens=self.settings.context_window_fallback_tokens,
+        )
+        output_reserve = min(
+            self.settings.context_output_reserve_tokens,
+            window.max_output_tokens or self.settings.context_output_reserve_tokens,
+        )
+        accounting = accounting_service.account(
+            context_window=window.tokens,
+            output_reserve=output_reserve,
+            compaction_output_reserve=self.settings.context_compaction_output_reserve_tokens,
+            protected_prefix=prefix,
+            checkpoint=(
+                ContextItem(id=f"checkpoint:{task.id}", kind="prior_checkpoint", content=state["checkpoint"]),
+            ) if state["checkpoint"] else (),
+            body=body,
+        )
+        envelope = ContextEnvelope(
+            owner_type=ContextOwnerRole.conversation,
+            owner_id=task.id,
+            purpose=prefix_text,
+            protected_prefix=prefix,
+            prior_checkpoint=state["checkpoint"],
+            compactable_body=tuple(body),
+            accounting=accounting,
+            continuation=ContinuationManifest(
+                owner_type=ContextOwnerRole.conversation,
+                owner_id=task.id,
+                state_version=state["state_version"],
+                window_number=state["window_number"],
+                source_item_ids=tuple(run.id for run in eligible),
+            ),
+        )
+        attempts = ContextCompactionAttemptRepository(self.session)
+        service = AgentContextCompactionService(attempts, accounting=accounting_service)
+        client = build_model_client(self.settings)
+        try:
+            result = await service.compact(
+                envelope,
+                build_compaction_policy(self.settings, ContextOwnerRole.conversation),
+                generate=client.generate_context_checkpoint,
+                install=attempts.install_conversation_checkpoint,
+            )
+        finally:
+            await client.aclose()
+        if result.checkpoint is None:
+            raw = task.context_state if isinstance(task.context_state, dict) else {}
+            task.context_state = {
+                **raw,
+                "compaction_failure_code": result.failure_code or "compaction_failed",
+            }
+            task.updated_at = utc_now()
+            if commit:
+                await self.session.commit()
+            else:
+                await self.session.flush()
+            return {
+                "folded": 0,
+                "retained": len(projection.runs),
+                "status": "failed",
+                "failure_code": result.failure_code or "compaction_failed",
+            }
+        await self.session.refresh(task)
+        raw = task.context_state if isinstance(task.context_state, dict) else {}
+        task.context_state = {
+            **raw,
+            "token_before": result.token_before,
+            "token_after": result.token_after,
+            "compaction_implementation": (
+                result.implementation.value if result.implementation else "astra_semantic"
+            ),
+            "compaction_failure_code": None,
+            "last_action": action,
+            "last_action_at": utc_now().isoformat(),
+            "compaction_direction": direction.strip(),
+        }
+        task.updated_at = utc_now()
+        if commit:
+            await self.session.commit()
+        else:
+            await self.session.flush()
+        folded = len(eligible) - len(result.retained_tail_ids)
+        return {"folded": folded, "retained": len(projection.runs) - folded}
 
     async def clear(self, task: TaskRecord, *, commit: bool = True) -> dict[str, int]:
         runs = await self.list_runs(task.id)

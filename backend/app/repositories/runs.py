@@ -54,6 +54,7 @@ def run_detail_options():
         selectinload(RunRecord.approval_requests),
         selectinload(RunRecord.approval_grants),
         selectinload(RunRecord.agent_executions),
+        selectinload(RunRecord.agent_joins),
         selectinload(RunRecord.node_executions).selectinload(NodeExecutionRecord.resource_leases),
         selectinload(RunRecord.node_executions).selectinload(
             NodeExecutionRecord.budget_reservations
@@ -2300,6 +2301,26 @@ def run_to_view(run: RunRecord) -> dict[str, Any]:
         "node_executions": execution_payloads,
         "parallelism": parallelism,
         "agent_executions": agent_tree,
+        "agent_joins": [
+            {
+                "id": join.id,
+                "parent_execution_id": join.parent_execution_id,
+                "consumer_plan_node_id": join.consumer_plan_node_id,
+                "join_key": join.join_key,
+                "group_id": join.group_id,
+                "policy": join.policy,
+                "child_execution_ids": join.child_execution_ids or [],
+                "required_execution_ids": join.required_execution_ids or [],
+                "optional_execution_ids": join.optional_execution_ids or [],
+                "status": join.status,
+                "result": join.result or {},
+                "state_version": join.state_version,
+                "created_at": join.created_at,
+                "completed_at": join.completed_at,
+                "updated_at": join.updated_at,
+            }
+            for join in run.agent_joins
+        ],
         "subagent_summary": _subagent_summary(agent_tree),
         "task_adapter": run.task_adapter or "web",
         "agent_profile": safe_agent_profile_manifest(run.agent_profile_snapshot or {}),
@@ -2350,6 +2371,7 @@ def run_to_initial_view(run: RunRecord) -> dict[str, Any]:
         "node_executions": [],
         "parallelism": None,
         "agent_executions": [],
+        "agent_joins": [],
         "subagent_summary": {
             "total": 0,
             "running": 0,

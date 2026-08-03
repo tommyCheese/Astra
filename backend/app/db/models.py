@@ -191,6 +191,11 @@ class RunRecord(Base):
         order_by="AgentExecutionRecord.created_at",
         cascade="all, delete-orphan",
     )
+    agent_joins: Mapped[list["AgentJoinRecord"]] = relationship(
+        back_populates="run",
+        order_by="AgentJoinRecord.created_at",
+        cascade="all, delete-orphan",
+    )
 
 
 class EvidenceRecord(Base):
@@ -947,6 +952,48 @@ class ContextCompactionAttemptRecord(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
 
+class RuntimeProfileRecord(Base):
+    __tablename__ = "runtime_profiles"
+
+    id: Mapped[str] = mapped_column(String(80), primary_key=True, default="default")
+    dependencies: Mapped[list] = mapped_column(JsonType, default=list)
+    active_image: Mapped[str] = mapped_column(String(500))
+    dependency_digest: Mapped[str] = mapped_column(String(160))
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+    builds: Mapped[list["RuntimeBuildRecord"]] = relationship(
+        back_populates="profile", order_by="RuntimeBuildRecord.created_at"
+    )
+
+
+class RuntimeBuildRecord(Base):
+    __tablename__ = "runtime_builds"
+    __table_args__ = (
+        Index("ix_runtime_builds_profile_created", "profile_id", "created_at"),
+        Index("ix_runtime_builds_status_updated", "status", "updated_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_str)
+    profile_id: Mapped[str] = mapped_column(ForeignKey("runtime_profiles.id"))
+    dependencies: Mapped[list] = mapped_column(JsonType, default=list)
+    dependency_digest: Mapped[str] = mapped_column(String(160))
+    status: Mapped[str] = mapped_column(String(40), default="queued")
+    phase: Mapped[str] = mapped_column(String(160), default="等待构建")
+    progress: Mapped[int] = mapped_column(Integer, default=0)
+    log_summary: Mapped[str] = mapped_column(Text, default="")
+    staging_image: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    activated_image: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    error_code: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+    profile: Mapped[RuntimeProfileRecord] = relationship(back_populates="builds")
+
+
 class AgentBudgetReservationRecord(Base):
     __tablename__ = "agent_budget_reservations"
     __table_args__ = (
@@ -1014,6 +1061,8 @@ class AgentJoinRecord(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+    run: Mapped[RunRecord] = relationship(back_populates="agent_joins")
 
 
 class ToolCatalogSnapshotRecord(Base):

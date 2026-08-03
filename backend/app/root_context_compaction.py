@@ -1,0 +1,266 @@
+from __future__ import annotations
+
+import hashlib
+import json
+from typing import Any
+
+from app.context_compaction import (
+    AgentContextCompactionService,
+    TokenAccountingService,
+    build_compaction_policy,
+    evaluate_compaction_trigger,
+    project_shadow_compaction,
+)
+from app.conversation_context import resolve_context_window
+from app.core.config import Settings
+from app.repositories.agent_executions import AgentExecutionRepository
+from app.repositories.context_compaction import ContextCompactionAttemptRepository
+from app.repositories.runs import RunRepository
+from app.runner.model_client import ModelClient
+from app.schemas.context_compaction import (
+    ContextEnvelope,
+    ContextItem,
+    ContextOwnerRole,
+    ContextReference,
+    ContinuationManifest,
+)
+
+
+def _item_id(observation: dict[str, Any], index: int) -> str:
+    data = observation.get("data") if isinstance(observation.get("data"), dict) else {}
+    normalized = data.get("normalized_output") if isinstance(data, dict) else {}
+    key_fields = normalized.get("key_fields") if isinstance(normalized, dict) else {}
+    stable = (
+        key_fields.get("tool_call_id") if isinstance(key_fields, dict) else None
+    ) or observation.get("id")
+    if stable:
+        return f"observation:{stable}"
+    digest = hashlib.sha256(
+        json.dumps(observation, ensure_ascii=False, sort_keys=True, default=str).encode()
+    ).hexdigest()[:20]
+    return f"observation:{index}:{digest}"
+
+
+def _reference_manifest(observations: list[dict[str, Any]]) -> tuple[ContextReference, ...]:
+    references: dict[str, ContextReference] = {}
+    for observation in observations:
+        data = observation.get("data") if isinstance(observation.get("data"), dict) else {}
+        normalized = data.get("normalized_output") if isinstance(data, dict) else None
+        raw = normalized.get("reference") if isinstance(normalized, dict) else None
+        if isinstance(raw, dict):
+            reference = ContextReference.model_validate(raw)
+            references[reference.ref] = reference
+    return tuple(references.values())
+
+
+def _protected_prefix(
+    *,
+    goal: str,
+    context: dict[str, Any],
+    trusted: bool,
+    accounting: TokenAccountingService,
+) -> tuple[ContextItem, ...]:
+    sections: list[tuple[str, Any]] = [
+        ("current_request", goal),
+        (
+            "authorization",
+            {
+                "boundary": "Use only the frozen tool manifests and current permission scope.",
+                "tool_names": sorted(context.get("tool_manifests", {})),
+            },
+        ),
+        ("skills", context.get("active_skills", [])),
+        (
+            "budget",
+            ((context.get("reasoning_policy") or {}).get("effective") or {}).get("budgets", {}),
+        ),
+        (
+            "canonical_runtime_state",
+            {
+                "state_version": context.get("state_version"),
+                "plan_version": context.get("plan_version"),
+                "active_node": context.get("active_node"),
+            },
+        ),
+    ]
+    if trusted:
+        sections.extend(
+            [
+                ("task_contract", context.get("task_contract", {})),
+                ("plan_graph", context.get("plan_graph", {})),
+                (
+                    "completion_gate",
+                    {
+                        "evidence_pack": context.get("evidence_pack", {}),
+                        "subagent_active_groups": context.get("subagent_active_groups", []),
+                    },
+                ),
+            ]
+        )
+    items = []
+    for kind, content in sections:
+        count, _, _ = accounting.count_value(content)
+        items.append(
+            ContextItem(
+                id=f"root:{kind}",
+                kind=kind,
+                content=content,
+                token_count=count,
+                canonical=True,
+            )
+        )
+    return tuple(items)
+
+
+async def compact_root_context(
+    *,
+    repo: RunRepository,
+    settings: Settings,
+    model_client: ModelClient,
+    run_id: str,
+    goal: str,
+    context: dict[str, Any],
+    observations: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Apply the root compaction policy immediately before a model call.
+
+    Canonical Run/Plan state remains untouched. Only the lossy model projection is
+    replaced by a checkpoint and a deterministic retained/new observation tail.
+    """
+    policy = build_compaction_policy(settings, ContextOwnerRole.root_execution)
+    if not policy.enabled:
+        return context
+
+    root = await AgentExecutionRepository(repo.session).root_for_run(run_id)
+    if root is None:
+        return context
+    accounting = TokenAccountingService()
+    prefix = _protected_prefix(
+        goal=goal,
+        context=context,
+        trusted=context.get("answer_mode") != "standard",
+        accounting=accounting,
+    )
+    body = []
+    observation_by_id: dict[str, dict[str, Any]] = {}
+    for index, observation in enumerate(observations):
+        item_id = _item_id(observation, index)
+        count, _, _ = accounting.count_value(observation)
+        body.append(
+            ContextItem(
+                id=item_id,
+                kind=str(observation.get("kind") or "observation"),
+                content=observation,
+                summary=str(observation.get("summary") or "")[:8_000] or None,
+                token_count=count,
+            )
+        )
+        observation_by_id[item_id] = observation
+
+    root_checkpoint = root.checkpoint if isinstance(root.checkpoint, dict) else {}
+    prior_checkpoint = root_checkpoint.get("context_checkpoint")
+    metadata = root_checkpoint.get("context_compaction") or {}
+    checkpoint_items: tuple[ContextItem, ...] = ()
+    if isinstance(prior_checkpoint, dict):
+        checkpoint_count, _, _ = accounting.count_value(prior_checkpoint)
+        checkpoint_items = (
+            ContextItem(
+                id=f"root-checkpoint:{root.id}",
+                kind="root_context_checkpoint_v2",
+                content=prior_checkpoint,
+                token_count=checkpoint_count,
+            ),
+        )
+    window = resolve_context_window(
+        settings.model_provider,
+        settings.model_name,
+        fallback_tokens=settings.context_window_fallback_tokens,
+    )
+    output_reserve = min(
+        settings.context_output_reserve_tokens,
+        window.max_output_tokens or settings.context_output_reserve_tokens,
+    )
+    token_accounting = accounting.account(
+        context_window=window.tokens,
+        output_reserve=output_reserve,
+        compaction_output_reserve=settings.context_compaction_output_reserve_tokens,
+        protected_prefix=prefix,
+        checkpoint=checkpoint_items,
+        body=body,
+    )
+    envelope = ContextEnvelope(
+        owner_type=ContextOwnerRole.root_execution,
+        owner_id=root.id,
+        purpose=goal,
+        protected_prefix=prefix,
+        prior_checkpoint=prior_checkpoint if isinstance(prior_checkpoint, dict) else None,
+        compactable_body=tuple(body),
+        reference_manifest=_reference_manifest(observations),
+        accounting=token_accounting,
+        continuation=ContinuationManifest(
+            owner_type=ContextOwnerRole.root_execution,
+            owner_id=root.id,
+            state_version=root.state_version,
+            cancellation_epoch=root.cancellation_epoch,
+            window_number=int(metadata.get("window_number", 0)),
+            source_item_ids=tuple(item.id for item in body),
+            waiting_state=dict((await repo.require_run_core(run_id)).waiting_state or {}),
+            remaining_budget=dict(root.budget_envelope or {}),
+        ),
+    )
+    decision = evaluate_compaction_trigger(token_accounting, policy)
+    result = None
+    if decision.should_compact:
+        attempts = ContextCompactionAttemptRepository(repo.session)
+        if policy.shadow_mode:
+            projection = project_shadow_compaction(
+                token_accounting,
+                policy,
+                expected_checkpoint_tokens=max(256, token_accounting.protected_prefix_tokens // 4),
+            )
+            context["context_compaction"] = projection.model_dump(mode="json")
+        else:
+            result = await AgentContextCompactionService(attempts, accounting=accounting).compact(
+                envelope,
+                policy,
+                generate=model_client.generate_context_checkpoint,
+                install=attempts.install_agent_checkpoint,
+            )
+            await repo.add_event(
+                run_id,
+                "context.compaction",
+                {
+                    "owner_role": "root_execution",
+                    "status": result.status.value,
+                    "reasons": list(decision.reasons),
+                    "token_before": result.token_before,
+                    "token_after": result.token_after,
+                    "implementation": result.implementation.value
+                    if result.implementation
+                    else None,
+                    "retained_tail_size": len(result.retained_tail_ids),
+                    "failure_code": result.failure_code,
+                },
+            )
+            await repo.session.commit()
+            if result.checkpoint is not None:
+                prior_checkpoint = result.checkpoint.model_dump(mode="json")
+                metadata = {
+                    "source_item_ids": [item.id for item in body],
+                    "retained_tail_ids": list(result.retained_tail_ids),
+                }
+
+    if not isinstance(prior_checkpoint, dict):
+        return context
+    source_ids = set(metadata.get("source_item_ids", []))
+    retained_ids = set(metadata.get("retained_tail_ids", []))
+    visible_ids = retained_ids | (set(observation_by_id) - source_ids)
+    visible_observations = [observation_by_id[item.id] for item in body if item.id in visible_ids]
+    context["context_checkpoint"] = prior_checkpoint
+    context["observations"] = visible_observations
+    if isinstance(context.get("agent_state"), dict):
+        context["agent_state"] = {
+            **context["agent_state"],
+            "observations": visible_observations,
+        }
+    return context

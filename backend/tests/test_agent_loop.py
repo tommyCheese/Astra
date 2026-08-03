@@ -617,6 +617,42 @@ async def test_standard_mode_releases_read_transaction_before_model_wait(session
     assert client.transaction_states == [False]
 
 
+async def test_root_loop_externalizes_oversized_model_observation_but_keeps_tool_audit(
+    session,
+):
+    settings = Settings(model_provider="mock").model_copy(
+        update={
+            "context_compaction_root_inline_bytes": 1,
+            "context_compaction_root_inline_tokens": 1,
+        }
+    )
+    profile = RunProfileResolver().resolve(
+        AnswerMode.standard,
+        RequestedReasoningPolicy(execution_mode="auto_approval"),
+    )
+    repo = RunRepository(session)
+    run = await repo.create_task_run(
+        "搜索并总结",
+        settings.model_policy,
+        reasoning_policy=profile.reasoning_policy.model_dump(mode="json"),
+        answer_mode=profile.answer_mode.value,
+        execution_profile=profile.model_dump(mode="json"),
+    )
+
+    await AgentLoop(
+        settings,
+        model_client=TwoToolsThenFinalizeClient(),
+        tool_registry=fake_web_registry(),
+    ).run(repo, run.id, run.task.description)
+    loaded = await repo.require_run(run.id)
+
+    assert loaded.tool_calls[0].output
+    normalized = loaded.turns[0].observation["data"]["normalized_output"]
+    assert normalized["externalized"] is True
+    assert normalized["reference"]["ref"] == f"tool_call:{loaded.tool_calls[0].id}"
+    assert "output" not in normalized
+
+
 async def test_standard_mode_reuses_swarm_supervisor_without_creating_a_dag(session):
     settings = Settings(model_provider="mock", tool_swarm_enabled=True)
     profile = RunProfileResolver().resolve(

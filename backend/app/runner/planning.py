@@ -7,6 +7,7 @@ from typing import Any
 from sqlalchemy import func, select, update
 
 from app.db.models import (
+    AgentJoinRecord,
     BudgetReservationRecord,
     NodeExecutionRecord,
     PlanNodeRecord,
@@ -567,7 +568,7 @@ class PlanScheduler:
                     PlanNodeStatus.blocked,
                     failure={"category": "dependency_broken"},
                 )
-        candidates = self.ready_candidates(plan)
+        candidates = await self._filter_join_consumers(self.ready_candidates(plan))
         if not candidates:
             return None
         from app.db.models import RunRecord
@@ -744,6 +745,42 @@ class PlanScheduler:
             total_slots=total_slots,
             used_slots=occupied + len(executions),
         )
+
+    async def _filter_join_consumers(
+        self, candidates: list[ReadyNodeCandidate]
+    ) -> list[ReadyNodeCandidate]:
+        if not candidates:
+            return candidates
+        candidate_ids = [item.node.id for item in candidates]
+        joins = list(
+            (
+                await self.repository.session.scalars(
+                    select(AgentJoinRecord).where(
+                        AgentJoinRecord.consumer_plan_node_id.in_(candidate_ids),
+                        AgentJoinRecord.status != "consumed",
+                    )
+                )
+            ).all()
+        )
+        by_consumer: dict[str, list[AgentJoinRecord]] = {}
+        for join in joins:
+            if join.consumer_plan_node_id:
+                by_consumer.setdefault(join.consumer_plan_node_id, []).append(join)
+        ready: list[ReadyNodeCandidate] = []
+        for candidate in candidates:
+            pending = by_consumer.get(candidate.node.id, [])
+            if not pending:
+                ready.append(candidate)
+            elif any(join.status == "blocked" for join in pending):
+                await self.repository.transition_node(
+                    candidate.node.id,
+                    PlanNodeStatus.blocked,
+                    failure={
+                        "category": "subagent_join_blocked",
+                        "join_ids": [join.id for join in pending if join.status == "blocked"],
+                    },
+                )
+        return ready
 
     async def select_next(self, run_id: str) -> PlanNodeRecord | None:
         batch = await self.claim_ready_batch(run_id, requested_max_parallel_nodes=1)

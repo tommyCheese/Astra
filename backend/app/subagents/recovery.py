@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import AgentExecutionRecord, RunEventRecord, ToolCallRecord, utc_now
 from app.repositories.agent_executions import TERMINAL_AGENT_STATUSES, AgentExecutionRepository
-from app.schemas.subagents import SubagentContextCheckpoint
+from app.schemas.context_compaction import parse_child_checkpoint
 
 
 @dataclass(frozen=True)
@@ -113,7 +113,7 @@ class SubagentExecutionRecovery:
         raw_context = checkpoint.get("context_checkpoint")
         if raw_context is not None:
             try:
-                SubagentContextCheckpoint.model_validate(raw_context)
+                parse_child_checkpoint(raw_context)
             except ValueError:
                 return "context_checkpoint_incompatible"
         return None

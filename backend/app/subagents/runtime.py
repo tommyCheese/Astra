@@ -14,6 +14,7 @@ from app.repositories.agent_executions import (
 from app.repositories.permissions import PermissionRepository
 from app.repositories.runs import RunRepository
 from app.schemas.agent import EffectiveSubagentPolicy
+from app.schemas.context_compaction import parse_child_checkpoint
 from app.schemas.permissions import PermissionPolicySet
 from app.schemas.subagents import (
     DelegatedExecutionContext,
@@ -21,7 +22,6 @@ from app.schemas.subagents import (
     DelegationRejectionCode,
     DelegationRequest,
     EffectiveDelegationScope,
-    SubagentContextCheckpoint,
     SubagentContinuationAnswer,
     SubagentExecutionStatus,
     SubagentFanoutRequest,
@@ -461,7 +461,7 @@ class SubagentRuntimeOperations:
         raw_checkpoint = (execution.checkpoint or {}).get("context_checkpoint")
         if raw_checkpoint is None:
             raise ValueError("Child continuation checkpoint is unavailable")
-        checkpoint = SubagentContextCheckpoint.model_validate(raw_checkpoint)
+        checkpoint = parse_child_checkpoint(raw_checkpoint)
         resumed = self.continuations.answer(
             checkpoint=checkpoint,
             question=question,

@@ -1,15 +1,18 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timezone
+from datetime import datetime, time, timezone
+from zoneinfo import ZoneInfo
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.api.runs import _create_run, _schedule_run
+from app.api.runs import _schedule_run
 from app.core.config import Settings
 from app.core.errors import AstraError
 from app.db.models import RunRecord, ScheduledJobRecord, ScheduledJobRunRecord, utc_now
 from app.repositories.workspaces import WorkspaceRepository
+from app.run_creation import RunCreationService
 from app.schemas.agent import AnswerMode, CreateRunRequest
 from app.schemas.models import RunModelConfig
 from app.schemas.schedules import ScheduledExecutionConfig
@@ -51,6 +54,8 @@ class ScheduledRunDispatcher:
                 raise LookupError(schedule_run_id)
             if schedule_run.run_id:
                 return schedule_run
+            if schedule_run.status != "claimed":
+                return schedule_run
             job = await session.get(ScheduledJobRecord, schedule_run.job_id)
             if job is None or not job.target_task_id:
                 return await self._block(
@@ -59,6 +64,29 @@ class ScheduledRunDispatcher:
                     code="SCHEDULE_TARGET_REQUIRED",
                     message="任务没有可用的结果对话，请先重新绑定。",
                 )
+            if job.kind == "heartbeat":
+                if not self._heartbeat_is_active(job, schedule_run.scheduled_for):
+                    return await self._defer(
+                        session,
+                        schedule_run,
+                        status="deferred_inactive",
+                        reason="outside_active_hours",
+                    )
+                busy = await session.scalar(
+                    select(RunRecord.id)
+                    .where(
+                        RunRecord.task_id == job.target_task_id,
+                        RunRecord.status.not_in(TERMINAL_RUN_STATUSES),
+                    )
+                    .limit(1)
+                )
+                if busy is not None:
+                    return await self._defer(
+                        session,
+                        schedule_run,
+                        status="deferred_busy",
+                        reason="target_conversation_busy",
+                    )
 
             # A task workspace is unique by task_id. Creating or resolving it before
             # the Run makes workspace reuse an explicit dispatch invariant.
@@ -85,12 +113,11 @@ class ScheduledRunDispatcher:
                     permission_bundle=execution.permission_bundle,
                     skill_ids=execution.skill_ids,
                 )
-                created, run_settings = await _create_run(
-                    request,
-                    session,
-                    self.settings,
-                )
+                created, run_settings = await RunCreationService(
+                    session, self.settings
+                ).create(request, commit=False)
             except (AstraError, ValueError) as exc:
+                await session.rollback()
                 return await self._block(
                     session,
                     schedule_run,
@@ -108,6 +135,7 @@ class ScheduledRunDispatcher:
                 "trigger_type": schedule_run.trigger_type,
                 "workspace_id": workspace.id,
                 "target_task_id": job.target_task_id,
+                "principal": job.owner_principal or "astra:scheduler",
             }
             run.execution_profile = {**(run.execution_profile or {}), "trigger": trigger}
             schedule_run.task_id = job.target_task_id
@@ -142,9 +170,23 @@ class ScheduledRunDispatcher:
             if schedule_run is None or run is None:
                 return
             status = run.status if run.status in TERMINAL_RUN_STATUSES else "failed"
-            schedule_run.status = (
-                "completed" if status == "completed_with_warnings" else status
+            trigger = (run.execution_profile or {}).get("trigger") or {}
+            silent_heartbeat = (
+                trigger.get("type") == "heartbeat"
+                and (run.summary or "").strip() == "HEARTBEAT_OK"
             )
+            schedule_run.status = (
+                "silent_ok"
+                if silent_heartbeat
+                else "completed"
+                if status == "completed_with_warnings"
+                else status
+            )
+            if silent_heartbeat:
+                run.execution_profile = {
+                    **(run.execution_profile or {}),
+                    "trigger": {**trigger, "delivery": "silent"},
+                }
             schedule_run.completed_at = utc_now()
             schedule_run.updated_at = schedule_run.completed_at
             schedule_run.outcome = {
@@ -153,6 +195,36 @@ class ScheduledRunDispatcher:
                 "summary": run.summary,
             }
             await session.commit()
+
+    @staticmethod
+    def _heartbeat_is_active(job: ScheduledJobRecord, scheduled_for: datetime) -> bool:
+        raw = (job.heartbeat or {}).get("active_hours")
+        if not raw:
+            return True
+        local = scheduled_for.astimezone(ZoneInfo(job.timezone)).time().replace(tzinfo=None)
+        start = time.fromisoformat(raw["start"])
+        end = time.fromisoformat(raw["end"])
+        if start == end:
+            return True
+        if start < end:
+            return start <= local < end
+        return local >= start or local < end
+
+    @staticmethod
+    async def _defer(
+        session: AsyncSession,
+        schedule_run: ScheduledJobRunRecord,
+        *,
+        status: str,
+        reason: str,
+    ) -> ScheduledJobRunRecord:
+        now = datetime.now(timezone.utc)
+        schedule_run.status = status
+        schedule_run.completed_at = now
+        schedule_run.updated_at = now
+        schedule_run.outcome = {"reason": reason}
+        await session.commit()
+        return schedule_run
 
     @staticmethod
     async def _block(

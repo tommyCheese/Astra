@@ -106,6 +106,10 @@ class ContextCompactionAttemptRepository:
         prior = task.context_state if isinstance(task.context_state, dict) else {}
         if int(prior.get("state_version", 0)) != envelope.continuation.state_version:
             return False
+        retained = set(retained_tail_ids)
+        folded_source_ids = (
+            item for item in envelope.continuation.source_item_ids if item not in retained
+        )
         next_state = {
             **prior,
             "version": 2,
@@ -114,6 +118,14 @@ class ContextCompactionAttemptRepository:
             "checkpoint": checkpoint.model_dump(mode="json"),
             "retained_tail_ids": list(retained_tail_ids),
             "source_item_ids": list(envelope.continuation.source_item_ids),
+            "folded_run_ids": list(
+                dict.fromkeys(
+                    [
+                        *(str(item) for item in prior.get("folded_run_ids", []) if item),
+                        *folded_source_ids,
+                    ]
+                )
+            ),
         }
         result = await self.session.execute(
             update(TaskRecord)

@@ -10,30 +10,30 @@
 - [x] 2.1 实现 once、interval、cron 的 aware UTC 下次触发计算及 IANA 时区/DST 测试
 - [x] 2.2 实现 schedule CRUD、版本化更新、暂停/恢复和 system-managed 保护
 - [x] 2.3 实现到期任务 CAS 领取、租约、唯一 fire record 和下一触发推进
-- [ ] 2.4 实现 misfire skip/fire_once、overlap skip 和重启 claimed 记录恢复
-- [ ] 2.5 实现幂等手动触发、运行历史查询和历史保留清理
+- [x] 2.4 实现 misfire skip/fire_once、overlap skip 和重启 claimed 记录恢复
+- [x] 2.5 实现幂等手动触发、运行历史查询和历史保留清理
 
 ## 3. Run 派发与生命周期
 
-- [ ] 3.1 从 HTTP 创建流程提取可复用 Run 创建应用服务
-- [ ] 3.2 将 schedule trigger 元数据和内部 principal 持久化到 Run 审计链路
+- [x] 3.1 从 HTTP 创建流程提取可复用 Run 创建应用服务
+- [x] 3.2 将 schedule trigger 元数据和内部 principal 持久化到 Run 审计链路
 - [x] 3.3 触发时重新校验权限包，并将无效权限收敛为 blocked schedule run
 - [x] 3.4 实现有并发上限的 SchedulerService scanner/dispatcher/reconciler 与优雅关闭
-- [ ] 3.5 在 FastAPI lifespan 注册服务，并暴露扫描健康/就绪状态
+- [x] 3.5 在 FastAPI lifespan 注册服务，并暴露扫描健康/就绪状态
 
 ## 4. 定时任务 API
 
 - [x] 4.1 实现 schedule 创建、列表、详情、版本化更新和受保护删除 API
 - [x] 4.2 实现 pause、resume、manual-run API 及幂等键
 - [x] 4.3 实现 schedule run 历史与关联 Astra Run 查询 API
-- [ ] 4.4 补充本机 API 边界、结构化错误和审计日志
+- [x] 4.4 补充本机 API 边界、结构化错误和审计日志
 
 ## 5. Heartbeat
 
 - [x] 5.1 实现每主会话唯一的 heartbeat desired-state upsert 与稳定 system-managed schedule
-- [ ] 5.2 实现活动时间窗、最小周期和会话 busy defer 判定
-- [ ] 5.3 实现 heartbeat prompt Run、`HEARTBEAT_OK` 静默收敛和关注事项投递
-- [ ] 5.4 实现 heartbeat 配置/状态 API 与权限失效处理
+- [x] 5.2 实现活动时间窗、最小周期和会话 busy defer 判定
+- [x] 5.3 实现 heartbeat prompt Run、`HEARTBEAT_OK` 静默收敛和关注事项投递
+- [x] 5.4 实现 heartbeat 配置/状态 API 与权限失效处理
 
 ## 6. Chat UI 自动化管理
 
@@ -59,8 +59,8 @@
 
 ## 8. 验证与运维
 
-- [ ] 8.1 增加 Repository 并发领取、重启恢复、misfire、overlap 和幂等测试
-- [ ] 8.2 增加 API、Run 派发、权限过期和 heartbeat 静默/繁忙测试
+- [x] 8.1 增加 Repository 并发领取、重启恢复、misfire、overlap 和幂等测试
+- [x] 8.2 增加 API、Run 派发、权限过期和 heartbeat 静默/繁忙测试
 - [x] 8.3 增加前端自动化与 heartbeat 交互测试、类型检查和生产构建
-- [ ] 8.4 更新部署配置、健康检查、运维文档和自动化安全说明
-- [ ] 8.5 运行后端完整测试、ruff、前端测试与 build，并记录验证结果
+- [x] 8.4 更新部署配置、健康检查、运维文档和自动化安全说明
+- [x] 8.5 运行后端完整测试、ruff、前端测试与 build，并记录验证结果

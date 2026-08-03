@@ -3,6 +3,8 @@ from datetime import timedelta
 import pytest
 from pydantic import ValidationError as PydanticValidationError
 
+from app.context_commands import execute_system_command
+from app.context_compaction.service import AgentContextCompactionService, CompactionResult
 from app.conversation_context import (
     ConversationContextManager,
     estimate_tokens,
@@ -11,6 +13,7 @@ from app.conversation_context import (
 from app.core.config import Settings
 from app.core.errors import StateError
 from app.db.models import RunRecord, TaskRecord, utc_now
+from app.schemas.context_compaction import CompactionLifecycleStatus
 from app.schemas.models import RunModelConfig
 
 
@@ -109,7 +112,7 @@ async def test_compact_and_clear_change_projection_without_deleting_runs(session
     assert compacted.summary
     assert len(await manager.list_runs(task.id)) == 7
     rendered = await manager.render_goal(task, "继续")
-    assert "Earlier conversation summary:" in rendered
+    assert "Conversation checkpoint:" in rendered
     assert "Current user request: 继续" in rendered
 
     cleared = await manager.clear(task)
@@ -157,6 +160,88 @@ async def test_automatic_compaction_and_active_run_guard(session):
     await session.commit()
     with pytest.raises(StateError):
         await manager.clear(task)
+
+
+@pytest.mark.asyncio
+async def test_v2_compaction_installs_semantic_checkpoint_and_preserves_audit_runs(session):
+    task = await _conversation_with_runs(session)
+    settings = Settings(
+        model_provider="mock",
+        context_compaction_v2_enabled=True,
+        context_compaction_conversation_enabled=True,
+        context_compaction_shadow_mode=False,
+        context_compaction_recent_tail_tokens=0,
+    )
+    manager = ConversationContextManager(session, settings)
+
+    result = await manager.compact(task, retain_runs=2, direction="保留约束和结论")
+
+    assert result == {"folded": 5, "retained": 2}
+    assert task.context_state["version"] == 2
+    assert task.context_state["window_number"] == 1
+    assert task.context_state["compaction_implementation"] == "deterministic_emergency"
+    assert task.context_state["checkpoint"]["checkpoint_role"] == "conversation"
+    assert len(task.context_state["folded_run_ids"]) == 5
+    assert len(await manager.list_runs(task.id)) == 7
+    rendered = await manager.render_goal(task, "继续")
+    assert rendered.count("Conversation checkpoint:") == 1
+
+
+@pytest.mark.asyncio
+async def test_v2_compaction_keeps_token_selected_recent_tail_visible(session):
+    task = await _conversation_with_runs(session)
+    manager = ConversationContextManager(
+        session,
+        Settings(
+            model_provider="mock",
+            context_compaction_v2_enabled=True,
+            context_compaction_conversation_enabled=True,
+            context_compaction_shadow_mode=False,
+        ),
+    )
+
+    result = await manager.compact(task, retain_runs=2)
+
+    assert result == {"folded": 0, "retained": 7}
+    assert len(task.context_state["retained_tail_ids"]) == 5
+    assert task.context_state["folded_run_ids"] == []
+    assert len((await manager.projection(task)).runs) == 7
+
+
+@pytest.mark.asyncio
+async def test_v2_compaction_discloses_classified_failure_without_changing_projection(
+    session, monkeypatch
+):
+    task = await _conversation_with_runs(session)
+    manager = ConversationContextManager(
+        session,
+        Settings(
+            model_provider="mock",
+            context_compaction_v2_enabled=True,
+            context_compaction_conversation_enabled=True,
+            context_compaction_shadow_mode=False,
+        ),
+    )
+    visible_before = [run.id for run in (await manager.projection(task)).runs]
+
+    async def fail_compaction(*_args, **_kwargs):
+        return CompactionResult(
+            status=CompactionLifecycleStatus.failed,
+            checkpoint=None,
+            retained_tail_ids=(),
+            token_before=1_000,
+            token_after=None,
+            failure_code="checkpoint_schema_invalid",
+        )
+
+    monkeypatch.setattr(AgentContextCompactionService, "compact", fail_compaction)
+    message, details, _ = await execute_system_command(manager, task, "compact")
+
+    assert details["status"] == "failed"
+    assert details["failure_code"] == "checkpoint_schema_invalid"
+    assert "checkpoint_schema_invalid" in message
+    assert task.context_state["compaction_failure_code"] == "checkpoint_schema_invalid"
+    assert [run.id for run in (await manager.projection(task)).runs] == visible_before
 
 
 @pytest.mark.asyncio

@@ -44,5 +44,8 @@ describe('TrustedExecutionGraph complex DAG', () => {
     expect(screen.getByRole('complementary', {
       name: '双重验证汇合并形成最终交付 节点详情',
     })).toHaveTextContent('受阻');
+    expect(screen.getByRole('complementary', {
+      name: '双重验证汇合并形成最终交付 节点详情',
+    })).toHaveTextContent('blocked · required · 必需 2 / 可选 0');
   });
 });

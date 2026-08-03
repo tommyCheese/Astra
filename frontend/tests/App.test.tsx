@@ -386,6 +386,16 @@ describe('App', () => {
     expect(screen.getByRole('link', { name: '如何选择' })).toHaveAttribute('href', '#answer-mode-choose');
     expect(screen.getByRole('button', { name: /快速模式与可信模式.*定义、差异与选择建议/ })).toHaveAttribute('aria-current', 'page');
     expect(screen.queryByText('什么时候真正生效？')).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: /模型与运行设置.*思考、计划、反思、批准与上下文/ }));
+    expect(screen.getByRole('heading', { name: '模型与运行设置' })).toBeInTheDocument();
+    for (const heading of ['这些设置分别控制什么', '模型思考', '计划执行', '推理资源与工具调用上限', '反思循环与触发方式', '请求批准与自动批准', '上下文容量如何计算', '设置何时生效']) {
+      expect(screen.getByRole('heading', { name: heading })).toBeInTheDocument();
+    }
+    expect(screen.getByText(/默认上限为 8 次/)).toBeInTheDocument();
+    expect(screen.getByText('计划确认不是工具批准')).toBeInTheDocument();
+    expect(screen.getByText(/可用输入 = 模型窗口 − 回复预留/)).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: '反思循环与触发方式' })).toHaveAttribute('href', '#runtime-settings-reflection');
+    expect(screen.getByRole('button', { name: /模型与运行设置.*思考、计划、反思、批准与上下文/ })).toHaveAttribute('aria-current', 'page');
     await userEvent.click(screen.getByRole('button', { name: /关于 Astra.*创建动机、使命与版权信息/ }));
     expect(screen.getByRole('heading', { name: '关于 Astra' })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: '为什么创建 Astra' })).toBeInTheDocument();
@@ -397,6 +407,16 @@ describe('App', () => {
     expect(screen.getByRole('button', { name: /关于 Astra.*创建动机、使命与版权信息/ })).toHaveAttribute('aria-current', 'page');
     expect(screen.queryByRole('button', { name: '新对话' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '设置' })).not.toBeInTheDocument();
+  });
+
+  it('opens a documentation deep link on the topic that owns the anchor', async () => {
+    window.history.replaceState(null, '', '/help#runtime-settings-reflection');
+    render(<DocumentationPage />);
+
+    expect(await screen.findByRole('heading', { name: '反思循环与触发方式' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /模型与运行设置.*思考、计划、反思、批准与上下文/ })).toHaveAttribute('aria-current', 'page');
+
+    window.history.replaceState(null, '', '/');
   });
 
   it('shows the standalone context capacity control before the first conversation exists', async () => {
@@ -413,6 +433,7 @@ describe('App', () => {
     expect(contextPanel).toHaveTextContent('本轮模型回复预留');
     expect(contextPanel).toHaveTextContent('模型窗口400K−回复预留8K=可用输入392K');
     expect(contextPanel).toHaveTextContent('它从模型窗口中扣除，但不计入“已使用输入”');
+    expect(screen.getByRole('link', { name: '查看完整计算与排除项' })).toHaveAttribute('href', '/help#runtime-settings-context');
     expect(document.getElementById('model-context-status-description')).toHaveTextContent(
       '上下文：已使用 0，总计 400K，剩余 392K（估算）',
     );
@@ -468,8 +489,14 @@ describe('App', () => {
     render(<App />);
 
     await userEvent.type(screen.getByRole('textbox'), '查询 Astra');
-    await userEvent.click(screen.getByRole('button', { name: '发送' }));
+    const send = screen.getByRole('button', { name: '发送' });
+    await waitFor(() => expect(send).toBeEnabled());
+    await userEvent.click(send);
 
+    await waitFor(() => expect(createRun).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(getRun).toHaveBeenCalledWith('run-1', expect.any(AbortSignal), 'initial'));
+    const snapshotResults = vi.mocked(getRun).mock.results;
+    await act(async () => { await snapshotResults[snapshotResults.length - 1]?.value; });
     expect(await screen.findByText('已完成查询')).toBeInTheDocument();
     expect(screen.queryByText('最终结果')).not.toBeInTheDocument();
     const supplementarySummary = screen.getByText('附加信息').closest('summary');
@@ -852,6 +879,12 @@ describe('App', () => {
         budget_usage: { tokens: 120 },
         key_wait_reason: null,
       },
+      agent_joins: [{
+        id: 'join-1', parent_execution_id: 'agent-root', consumer_plan_node_id: null,
+        join_key: 'comparison', group_id: 'comparison', policy: 'required',
+        child_execution_ids: [child.id], required_execution_ids: [child.id], optional_execution_ids: [],
+        status: 'waiting', result: {}, state_version: 1, created_at: 'now', updated_at: 'now', completed_at: null,
+      }],
     });
     render(<App />);
 
@@ -860,6 +893,8 @@ describe('App', () => {
 
     expect(await screen.findByText('子系统')).toBeInTheDocument();
     expect(screen.getByText('1 运行 · 0 等待 · 0 完成')).toBeInTheDocument();
+    await userEvent.click(screen.getByText('子系统'));
+    expect(screen.getByLabelText('子系统汇合状态')).toHaveTextContent('汇合 waiting · 必需 1 · 可选 0');
     expect(screen.queryByRole('region', { name: '可信执行图谱' })).not.toBeInTheDocument();
   });
 
@@ -2672,7 +2707,7 @@ describe('App', () => {
     expect(input).toHaveFocus();
   });
 
-  it('groups trusted strategy documentation behind one menu entry', async () => {
+  it('links trusted strategy controls to the complete runtime guide', async () => {
     render(<App />);
 
     await userEvent.click(screen.getByRole('switch', { name: '快速响应' }));
@@ -2681,26 +2716,25 @@ describe('App', () => {
       expect(screen.queryByRole('button', { name })).not.toBeInTheDocument();
     }
 
-    await userEvent.click(screen.getByRole('button', { name: /了解可信策略/ }));
-    expect(screen.getByRole('dialog', { name: '可信策略说明' })).toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: '计划执行' })).toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: '推理资源' })).toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: '反思策略' })).toBeInTheDocument();
-    expect(screen.getByText('先展示完整计划，由你确认这个版本后开始执行。')).toBeInTheDocument();
-    expect(screen.getByText('允许 6–15 次工具调用，兼顾速度与检查深度；启用反思时，提供基本的反思能力。')).toBeInTheDocument();
-    expect(screen.getByText('限制一次运行可发起的外部工具调用数量；失败与重试也会计入。')).toBeInTheDocument();
-    expect(screen.getByText('失败、低置信度、冲突或无进展时反思。')).toBeInTheDocument();
-
-    await userEvent.click(screen.getByRole('button', { name: '关闭策略说明' }));
-    expect(screen.queryByRole('dialog', { name: '可信策略说明' })).not.toBeInTheDocument();
+    const guide = screen.getByRole('link', { name: /查看全部模型与运行设置/ });
+    expect(guide).toHaveAttribute('href', '/help#runtime-settings-overview');
+    expect(guide).toHaveAttribute('target', '_blank');
+    expect(screen.getAllByRole('link', { name: '查看说明' }).map((link) => link.getAttribute('href'))).toEqual([
+      '/help#runtime-settings-model-thinking',
+      '/help#runtime-settings-plan-execution',
+      '/help#runtime-settings-reasoning',
+      '/help#runtime-settings-reflection',
+    ]);
   });
 
   it('switches execution modes and confirms before enabling bypass', async () => {
     render(<App />);
 
     await userEvent.click(screen.getByRole('button', { name: /请求批准/ }));
+    expect(screen.getByRole('link', { name: '查看批准方式说明' })).toHaveAttribute('href', '/help#runtime-settings-approvals');
     await userEvent.click(screen.getByRole('button', { name: /自动批准/ }));
     expect(screen.getByRole('alertdialog')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: '查看自动批准边界' })).toHaveAttribute('href', '/help#runtime-settings-approvals');
     await userEvent.click(screen.getByRole('button', { name: '取消' }));
     expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
 

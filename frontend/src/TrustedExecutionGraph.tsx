@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
 import {
-  Background,
   Handle,
   MarkerType,
   Position,
@@ -15,7 +14,7 @@ import '@xyflow/react/dist/style.css';
 import { getPlanVersion, getPlanVersionDiff } from './api';
 import { useI18n } from './i18n';
 import { layoutPlanGraph, nodeTraceAssociations, planProgress, unmetDependencies, type PlanGraphLayout, type PositionedPlanNode } from './planGraph';
-import type { AgentExecutionView, NodeExecution, PlanGraphDiff, PlanGraphNode, PlanGraphSnapshot, PlanNodeStatus, RunView } from './types';
+import type { AgentExecutionView, AgentJoinView, NodeExecution, PlanGraphDiff, PlanGraphNode, PlanGraphSnapshot, PlanNodeStatus, RunView } from './types';
 
 type GraphNodeData = {
   node: PlanGraphNode;
@@ -23,6 +22,7 @@ type GraphNodeData = {
   diff?: PlanGraphDiff['nodes'][number]['change'];
   execution?: NodeExecution;
   dependencyProgress?: { satisfied: number; total: number };
+  join?: AgentJoinView;
   ariaLabel: string;
   onSelect: (id: string) => void;
 };
@@ -162,6 +162,7 @@ function GraphWorkbench({ run, compact = false, title = '执行图谱' }: Truste
       total: dependencies.length,
     };
     const execution = executionsByNode.get(node.id);
+    const join = (run.agent_joins ?? []).find((item) => item.consumer_plan_node_id === node.id);
     const ariaLabel = [
       t('节点 {index}：{title}').replace('{index}', String(node.index)).replace('{title}', node.title),
       t(execution ? executionPhaseLabels[execution.phase] : statusLabels[node.derivedStatus]),
@@ -187,6 +188,7 @@ function GraphWorkbench({ run, compact = false, title = '执行图谱' }: Truste
         diff: nodeDiff.get(node.id),
         execution,
         dependencyProgress,
+        join,
         ariaLabel,
         onSelect: setSelectedNodeId,
       },
@@ -288,7 +290,6 @@ function GraphWorkbench({ run, compact = false, title = '执行图谱' }: Truste
           onNodeClick={(_event, node) => setSelectedNodeId(node.id)}
           proOptions={{ hideAttribution: true }}
         >
-          <Background gap={24} size={1} />
           <FocusCurrentButton graph={graph} onSelect={setSelectedNodeId} />
         </ReactFlow>
       </div>
@@ -326,7 +327,7 @@ function flattenAgentTree(roots: AgentExecutionView[]): AgentExecutionView[] {
 
 function PlanNodeCard({ data, selected }: NodeProps<Node<GraphNodeData>>) {
   const { t } = useI18n();
-  const { node, status, diff, execution, dependencyProgress, ariaLabel, onSelect } = data;
+  const { node, status, diff, execution, dependencyProgress, join, ariaLabel, onSelect } = data;
   return <article
     className={`trusted-plan-node status-${status} ${selected ? 'selected' : ''} ${diff ? `diff-${diff}` : ''}`}
     data-node-status={status}
@@ -352,7 +353,9 @@ function PlanNodeCard({ data, selected }: NodeProps<Node<GraphNodeData>>) {
     <p>{node.intent}</p>
     {execution?.wait_reason && <span className="trusted-plan-node-wait">{t(safeWaitReason(execution.wait_reason))}</span>}
     {dependencyProgress && dependencyProgress.total > 1 && status !== 'completed' && <span className="trusted-plan-node-join">
-      {t('汇合 {satisfied}/{total}').replace('{satisfied}', String(dependencyProgress.satisfied)).replace('{total}', String(dependencyProgress.total))}
+      {join
+        ? t('汇合 {status} · {satisfied}/{total}').replace('{status}', join.status).replace('{satisfied}', String(dependencyProgress.satisfied)).replace('{total}', String(dependencyProgress.total))
+        : t('汇合 {satisfied}/{total}').replace('{satisfied}', String(dependencyProgress.satisfied)).replace('{total}', String(dependencyProgress.total))}
     </span>}
     {diff && !['unchanged'].includes(diff) && <mark>{t(diffLabel(diff))}</mark>}
     <Handle type="source" position={Position.Bottom} isConnectable={false} />
@@ -386,6 +389,7 @@ function FocusCurrentButton({ graph, onSelect }: { graph: PlanGraphSnapshot; onS
 function NodeInspector({ run, graph, node }: { run: RunView; graph: PlanGraphSnapshot; node: PositionedPlanNode }) {
   const { language, t } = useI18n();
   const unmet = unmetDependencies(graph, node.id);
+  const join = (run.agent_joins ?? []).find((item) => item.consumer_plan_node_id === node.id);
   const {
     turns,
     toolCalls: calls,
@@ -406,6 +410,11 @@ function NodeInspector({ run, graph, node }: { run: RunView; graph: PlanGraphSna
         <div><dt>{t('成功准则')}</dt><dd>{node.success_criteria_refs.join(language === 'en' ? ', ' : '、') || t('无')}</dd></div>
         <div><dt>{t('所需能力')}</dt><dd>{node.required_capabilities.join(language === 'en' ? ', ' : '、') || t('无')}</dd></div>
         <div><dt>{t('风险')}</dt><dd>{t(riskLabel(node.risk_level))}{node.optional ? ` · ${t('可选')}` : ''}</dd></div>
+        {join && <div><dt>{t('汇合')}</dt><dd>{t('{status} · {policy} · 必需 {required} / 可选 {optional}')
+          .replace('{status}', join.status)
+          .replace('{policy}', join.policy)
+          .replace('{required}', String(join.required_execution_ids.length))
+          .replace('{optional}', String(join.optional_execution_ids.length))}</dd></div>}
       </dl>
       {unmet.length > 0 && <p className="trusted-node-blocking">{t('尚未满足：{items}').replace('{items}', unmet.map((item) => item.title).join(language === 'en' ? ', ' : '、'))}</p>}
     </section>

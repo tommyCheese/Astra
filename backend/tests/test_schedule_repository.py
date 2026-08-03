@@ -2,7 +2,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from app.db.models import ScheduledJobRecord, TaskRecord
+from app.db.models import ScheduledJobRecord, ScheduledJobRunRecord, TaskRecord
 from app.repositories.schedules import (
     ScheduleRepository,
     ScheduleVersionConflictError,
@@ -156,3 +156,92 @@ async def test_recover_claimed_run_after_scheduler_restart(session):
     )
     assert [item.id for item in recovered] == [schedule_run.id]
     assert recovered[0].claimed_by == "new-scheduler"
+
+
+@pytest.mark.asyncio
+async def test_misfire_skip_advances_past_the_recovery_window(session):
+    task = TaskRecord(title="Target", description="Scheduled task target")
+    session.add(task)
+    await session.commit()
+    repo = ScheduleRepository(session)
+    job = await repo.create(
+        job_payload(
+            target_task_id=task.id,
+            schedule={"type": "interval", "interval_seconds": 600},
+            timezone="UTC",
+            misfire_grace_seconds=60,
+        ),
+        now=datetime(2026, 8, 1, 0, 0, tzinfo=UTC),
+    )
+
+    claimed = await repo.claim_due(
+        claimed_by="scheduler",
+        lease_seconds=30,
+        batch_size=10,
+        now=datetime(2026, 8, 1, 1, 5, tzinfo=UTC),
+    )
+
+    assert claimed == []
+    history = await repo.list_runs(job.id)
+    assert history[0].status == "skipped_misfire"
+    assert history[0].outcome["grace_seconds"] == 60
+    refreshed = await repo.require(job.id)
+    assert refreshed.next_fire_at == datetime(2026, 8, 1, 1, 10, tzinfo=UTC)
+
+
+@pytest.mark.asyncio
+async def test_fire_once_coalesces_missed_intervals(session):
+    task = TaskRecord(title="Target", description="Scheduled task target")
+    session.add(task)
+    await session.commit()
+    repo = ScheduleRepository(session)
+    job = await repo.create(
+        job_payload(
+            target_task_id=task.id,
+            schedule={"type": "interval", "interval_seconds": 600},
+            timezone="UTC",
+            misfire_policy="fire_once",
+            misfire_grace_seconds=0,
+        ),
+        now=datetime(2026, 8, 1, 0, 0, tzinfo=UTC),
+    )
+
+    claimed = await repo.claim_due(
+        claimed_by="scheduler",
+        lease_seconds=30,
+        batch_size=10,
+        now=datetime(2026, 8, 1, 1, 5, tzinfo=UTC),
+    )
+
+    assert len(claimed) == 1
+    assert claimed[0].scheduled_for == datetime(2026, 8, 1, 0, 10, tzinfo=UTC)
+    assert (await repo.require(job.id)).next_fire_at == datetime(2026, 8, 1, 1, 10, tzinfo=UTC)
+
+
+@pytest.mark.asyncio
+async def test_manual_trigger_skips_overlap_and_cleanup_removes_old_terminal_runs(session):
+    task = TaskRecord(title="Target", description="Scheduled task target")
+    session.add(task)
+    await session.commit()
+    repo = ScheduleRepository(session)
+    job = await repo.create(job_payload(target_task_id=task.id))
+    first = await repo.manual_trigger(
+        job,
+        now=datetime(2026, 5, 1, 0, 0, tzinfo=UTC),
+    )
+    second = await repo.manual_trigger(
+        job,
+        now=datetime(2026, 5, 1, 0, 1, tzinfo=UTC),
+    )
+    assert first.status == "claimed"
+    assert second.status == "skipped_overlap"
+
+    first.status = "completed"
+    first.completed_at = datetime(2026, 5, 1, 0, 2, tzinfo=UTC)
+    await session.commit()
+    removed = await repo.cleanup_runs(
+        retention_days=30,
+        now=datetime(2026, 8, 1, tzinfo=UTC),
+    )
+    assert removed == 2
+    assert await session.get(ScheduledJobRunRecord, first.id) is None

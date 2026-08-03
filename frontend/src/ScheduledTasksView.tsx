@@ -5,6 +5,7 @@ import {
   AstraApiError,
   createConversation,
   createScheduledTask,
+  deleteConversation,
   deleteScheduledTask,
   disableHeartbeat,
   listConversations,
@@ -228,10 +229,11 @@ export function ScheduledTasksView({ onClose, onOpenConversation }: Props) {
     targetTaskId: string | null,
     newConversationTitle: string,
   ) {
-    const target = targetTaskId
-      ? targetTaskId
-      : (await createConversation(newConversationTitle.trim())).id;
-    return createScheduledTask({ ...payload, target_task_id: target });
+    return createWithBoundConversation(
+      targetTaskId,
+      newConversationTitle,
+      (target) => createScheduledTask({ ...payload, target_task_id: target }),
+    );
   }
 
   async function createBoundHeartbeat(
@@ -239,10 +241,26 @@ export function ScheduledTasksView({ onClose, onOpenConversation }: Props) {
     targetTaskId: string | null,
     newConversationTitle: string,
   ) {
-    const target = targetTaskId
-      ? targetTaskId
-      : (await createConversation(newConversationTitle.trim())).id;
-    return updateHeartbeat({ ...payload, target_task_id: target });
+    return createWithBoundConversation(
+      targetTaskId,
+      newConversationTitle,
+      (target) => updateHeartbeat({ ...payload, target_task_id: target }),
+    );
+  }
+
+  async function createWithBoundConversation(
+    targetTaskId: string | null,
+    newConversationTitle: string,
+    bind: (targetTaskId: string) => Promise<ScheduledTask>,
+  ) {
+    if (targetTaskId) return bind(targetTaskId);
+    const conversation = await createConversation(newConversationTitle.trim());
+    try {
+      return await bind(conversation.id);
+    } catch (error) {
+      try { await deleteConversation(conversation.id); } catch { /* preserve the binding error */ }
+      throw error;
+    }
   }
 
   const heartbeat = tasks.find((task) => task.kind === 'heartbeat');

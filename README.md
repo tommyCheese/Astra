@@ -82,6 +82,26 @@ npm run dev
 
 默认前端运行在 `http://localhost:5173`，通过 Vite proxy 访问 `http://localhost:8000/api`。
 
+### Runtime 依赖构建与运维
+
+“设置 → 运行时”只接受规范的 Python 包名和可选精确版本；URL、VCS、路径、
+pip 参数以及 Matplotlib、NumPy 等基础镜像核心包会被拒绝。构建由后台 Job
+执行，先生成唯一 staging image，通过 Matplotlib、Seaborn 与 ECharts smoke
+test 后才原子激活内容寻址 custom image。运行中的图表任务继续使用旧 active
+image，因此构建失败或取消不会破坏现有任务。
+
+部署主机需要 Docker Engine，并仅向后端容器挂载 Docker socket。该权限等同于
+宿主级 Docker 管理权限，只应授予受信任的本机 Astra 实例；不要把 API 直接暴露
+到公网。离线环境应预先缓存基础镜像和依赖源，构建失败时可在 Runtime 页面查看
+脱敏日志并重试。回滚只需重新构建上一组依赖；系统始终保护基础镜像、当前 active
+image 和最近 3 个成功 image，并默认清理 30 天前的额外 inactive image。清理只
+匹配 `astra-data-viz:build-*` 与 `astra-data-viz:custom-*`，不会执行全局 prune。
+
+完整容器栈使用 `deploy/compose.yaml`。Release 安装包会创建持久化 data 目录、执行
+Alembic migration，并通过 `/api/ready` 健康检查后启动同源 Nginx proxy。升级前备份
+data 目录；若新 Runtime 构建异常，保留旧 active image、检查 Docker 容量与依赖源，
+再取消或重试构建。
+
 ### 真实模型配置
 
 `.env` 中默认使用 mock provider，便于本地确定性验证：

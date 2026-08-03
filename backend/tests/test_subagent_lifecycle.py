@@ -2,7 +2,12 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from app.db.models import AgentDelegationRecord, AgentIdentityRecord, ToolCallRecord
+from app.db.models import (
+    AgentDelegationRecord,
+    AgentIdentityRecord,
+    AgentJoinRecord,
+    ToolCallRecord,
+)
 from app.repositories.agent_executions import (
     AgentExecutionRepository,
     AgentExecutionStateError,
@@ -288,6 +293,17 @@ async def test_recovery_never_replays_unknown_non_idempotent_call(session):
 
 async def test_run_projection_exposes_sanitized_nested_agent_tree(session):
     run, root, child = await _child(session)
+    join = AgentJoinRecord(
+        run_id=run.id,
+        parent_execution_id=root.id,
+        join_key="final-review",
+        group_id="reviewers",
+        policy="required",
+        child_execution_ids=[child.id],
+        required_execution_ids=[child.id],
+        status="waiting",
+    )
+    session.add(join)
     child.context_manifest = {
         "execution_context": {
             "effective_scope": {"actions": ["network_read"]},
@@ -318,5 +334,7 @@ async def test_run_projection_exposes_sanitized_nested_agent_tree(session):
     assert projected_child["capabilities"] == ["web_search"]
     assert projected_child["result_summary"] == "bounded result"
     assert payload["subagent_summary"]["completed"] == 1
+    assert payload["agent_joins"][0]["join_key"] == "final-review"
+    assert payload["agent_joins"][0]["status"] == "waiting"
     assert "hidden_reasoning" not in str(payload["agent_executions"])
     assert "private notes" not in str(payload["agent_executions"])

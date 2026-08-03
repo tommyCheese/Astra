@@ -6,7 +6,8 @@ import pytest
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from app.db.models import Base, NodeExecutionRecord, utc_now
+from app.db.models import AgentJoinRecord, Base, NodeExecutionRecord, utc_now
+from app.repositories.agent_executions import AgentExecutionRepository
 from app.repositories.executions import (
     NodeExecutionRepository,
     NodeExecutionStateError,
@@ -209,6 +210,71 @@ async def test_scheduler_claims_independent_nodes_as_one_batch(session):
 
     no_more = await scheduler.claim_ready_batch(run.id)
     assert no_more is None
+
+
+async def test_scheduler_holds_join_consumer_without_blocking_unrelated_nodes(session):
+    run = await RunRepository(session).create_task_run(
+        "join barrier", {"provider": "mock"}, answer_mode="trusted"
+    )
+    plan = await PlanRepository(session).create(run.id, parallel_plan())
+    root = await AgentExecutionRepository(session).get_or_create_root(run.id)
+    session.add(
+        AgentJoinRecord(
+            run_id=run.id,
+            parent_execution_id=root.id,
+            consumer_plan_node_id=plan.nodes[0].id,
+            join_key="wait-for-child",
+            group_id="group-wait",
+            policy="required",
+            status="waiting",
+        )
+    )
+    await session.flush()
+
+    batch = await PlanScheduler(PlanRepository(session)).claim_ready_batch(run.id)
+
+    assert batch is not None
+    assert [item.plan_node_id for item in batch.executions] == [plan.nodes[1].id]
+    assert plan.nodes[0].status == "pending"
+
+
+async def test_scheduler_releases_consumed_join_and_blocks_failed_join(session):
+    run = await RunRepository(session).create_task_run(
+        "join outcomes", {"provider": "mock"}, answer_mode="trusted"
+    )
+    plan = await PlanRepository(session).create(run.id, parallel_plan())
+    root = await AgentExecutionRepository(session).get_or_create_root(run.id)
+    session.add_all(
+        [
+            AgentJoinRecord(
+                run_id=run.id,
+                parent_execution_id=root.id,
+                consumer_plan_node_id=plan.nodes[0].id,
+                join_key="consumed",
+                group_id="group-consumed",
+                policy="required",
+                status="consumed",
+            ),
+            AgentJoinRecord(
+                run_id=run.id,
+                parent_execution_id=root.id,
+                consumer_plan_node_id=plan.nodes[1].id,
+                join_key="blocked",
+                group_id="group-blocked",
+                policy="required",
+                status="blocked",
+            ),
+        ]
+    )
+    await session.flush()
+
+    batch = await PlanScheduler(PlanRepository(session)).claim_ready_batch(run.id)
+
+    assert batch is not None
+    assert [item.plan_node_id for item in batch.executions] == [plan.nodes[0].id]
+    await session.refresh(plan.nodes[1])
+    assert plan.nodes[1].status == "blocked"
+    assert plan.nodes[1].failure["category"] == "subagent_join_blocked"
 
 
 async def test_scheduler_single_slot_matches_serial_order(session):

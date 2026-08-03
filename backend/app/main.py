@@ -101,6 +101,7 @@ def create_app(settings: Settings | None = None, *, session_factory=SessionLocal
     app.state.runtime_profile_service = RuntimeProfileService(
         settings,
         recover_interrupted=True,
+        session_factory=session_factory,
     )
     configure_agent_profile_resolver(app.state.runtime_profile_service.active_agent_profile)
     app.state.conversation_retention_service = ConversationRetentionService(
@@ -229,7 +230,19 @@ def create_app(settings: Settings | None = None, *, session_factory=SessionLocal
 
     @app.get("/api/health")
     async def health() -> dict:
-        return {"status": "ok"}
+        return {
+            "status": "ok",
+            "scheduler": app.state.scheduler_service.health(),
+        }
+
+    @app.get("/api/ready")
+    async def readiness():
+        scheduler = app.state.scheduler_service.health()
+        payload = {
+            "status": "ready" if scheduler["ready"] else "not_ready",
+            "scheduler": scheduler,
+        }
+        return JSONResponse(status_code=200 if scheduler["ready"] else 503, content=payload)
 
     return app
 
