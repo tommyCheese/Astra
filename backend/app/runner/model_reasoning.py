@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from app.agent_profile import ModelOperation
-from app.schemas.agent import ReasoningEffort
+from app.schemas.agent.types import ReasoningEffort
 from app.schemas.models import (
     MODEL_THINKING_CAPABILITY_VERSION,
     EffectiveModelThinking,
@@ -84,141 +84,24 @@ def model_thinking_capability(*, provider: str, model: str) -> ModelThinkingCapa
     normalized_provider = provider.strip().lower()
     normalized_model = model.strip().lower()
 
-    if normalized_provider == "openai" and _is_openai_pro_model(normalized_model):
-        return _unavailable_capability(
-            provider,
-            model,
-            adapter="openai-responses-required",
-            reason="responses_api_required_for_pro_model",
-        )
-    if normalized_provider == "openai" and _is_openai_gpt5_base_family(normalized_model):
-        return _capability(
-            provider,
-            model,
-            toggle="always_on",
-            depths=("minimal", "low", "medium", "high"),
-            default_depth="medium",
-            adapter="openai-gpt5",
-        )
-    if normalized_provider == "openai" and _is_openai_family(normalized_model, ("gpt-5.1",)):
-        return _capability(
-            provider,
-            model,
-            toggle="optional",
-            depths=("low", "medium", "high"),
-            default_depth="medium",
-            default_enabled=False,
-            adapter="openai-gpt5-modern",
-        )
-    if normalized_provider == "openai" and _is_openai_family(
-        normalized_model,
-        ("gpt-5.2", "gpt-5.4", "gpt-5.4-mini", "gpt-5.4-nano"),
-    ):
-        return _capability(
-            provider,
-            model,
-            toggle="optional",
-            depths=("low", "medium", "high", "xhigh"),
-            default_depth="medium",
-            default_enabled=False,
-            adapter="openai-gpt5-modern",
-        )
-    if normalized_provider == "openai" and _is_openai_family(normalized_model, ("gpt-5.5",)):
-        return _capability(
-            provider,
-            model,
-            toggle="optional",
-            depths=("low", "medium", "high", "xhigh"),
-            default_depth="medium",
-            default_enabled=True,
-            adapter="openai-gpt5-modern",
-        )
-    if normalized_provider == "openai" and normalized_model in {
-        "gpt-5.6",
-        "gpt-5.6-sol",
-        "gpt-5.6-terra",
-        "gpt-5.6-luna",
-    }:
-        return _capability(
-            provider,
-            model,
-            toggle="optional",
-            depths=("low", "medium", "high", "xhigh", "max"),
-            default_depth="medium",
-            default_enabled=True,
-            adapter="openai-gpt5-modern",
-        )
+    if normalized_provider == "openai":
+        capability = _openai_thinking_capability(provider, model, normalized_model)
+        if capability is not None:
+            return capability
 
-    claude = (
-        _anthropic_thinking_profile(normalized_model)
-        if normalized_provider == "anthropic"
-        else None
-    )
-    if claude is not None:
-        toggle, depths, default_enabled, adapter, default_depth = claude
-        return _capability(
-            provider,
-            model,
-            toggle=toggle,
-            depths=depths,
-            default_depth=default_depth,
-            default_enabled=default_enabled,
-            adapter=adapter,
-        )
+    if normalized_provider == "anthropic":
+        capability = _anthropic_thinking_capability(provider, model, normalized_model)
+        if capability is not None:
+            return capability
 
-    if normalized_provider == "qwen" and _is_qwen_thinking_only(normalized_model):
-        return _capability(
-            provider,
-            model,
-            toggle="always_on",
-            depths=("low", "medium", "high"),
-            default_depth="medium",
-            adapter="qwen-thinking-only-budget",
-            reason="thinking_only_model_cannot_be_disabled",
-        )
-    if normalized_provider == "qwen" and normalized_model == "qwq-plus":
-        return _capability(
-            provider,
-            model,
-            toggle="always_on",
-            depths=("medium",),
-            default_depth="medium",
-            adapter="qwen-thinking-only-intrinsic",
-            reason="thinking_only_model_has_no_confirmed_budget_control",
-        )
-    qwen_default = (
-        _qwen_hybrid_default_enabled(normalized_model) if normalized_provider == "qwen" else None
-    )
-    if qwen_default is not None:
-        return _capability(
-            provider,
-            model,
-            toggle="optional",
-            depths=("low", "medium", "high"),
-            default_depth="medium",
-            default_enabled=qwen_default,
-            adapter="qwen-hybrid-thinking",
-        )
-    if normalized_provider == "deepseek" and normalized_model == "deepseek-reasoner":
-        return _unavailable_capability(
-            provider,
-            model,
-            adapter="deepseek-retired-model",
-            reason="model_retired_migrate_to_deepseek_v4",
-        )
-    if normalized_provider == "deepseek" and normalized_model in {
-        "deepseek-v4-pro",
-        "deepseek-v4-flash",
-    }:
-        return _capability(
-            provider,
-            model,
-            toggle="optional",
-            depths=("high", "xhigh"),
-            default_depth="high",
-            default_enabled=True,
-            adapter="deepseek-v4-thinking",
-        )
+    if normalized_provider == "qwen":
+        capability = _qwen_thinking_capability(provider, model, normalized_model)
+        if capability is not None:
+            return capability
+    if normalized_provider == "deepseek":
+        capability = _deepseek_thinking_capability(provider, model, normalized_model)
+        if capability is not None:
+            return capability
 
     reason = _unsupported_reason(normalized_provider)
     return _unavailable_capability(
@@ -229,6 +112,128 @@ def model_thinking_capability(*, provider: str, model: str) -> ModelThinkingCapa
     )
 
 
+def _openai_thinking_capability(provider, model, normalized_model):
+    if _is_openai_pro_model(normalized_model):
+        return _unavailable_capability(
+            provider,
+            model,
+            adapter="openai-responses-required",
+            reason="responses_api_required_for_pro_model",
+        )
+    if _is_openai_gpt5_base_family(normalized_model):
+        return _capability(
+            provider,
+            model,
+            toggle="always_on",
+            depths=("minimal", "low", "medium", "high"),
+            default_depth="medium",
+            adapter="openai-gpt5",
+        )
+    families = (
+        (("gpt-5.1",), ("low", "medium", "high"), False),
+        (
+            ("gpt-5.2", "gpt-5.4", "gpt-5.4-mini", "gpt-5.4-nano"),
+            ("low", "medium", "high", "xhigh"),
+            False,
+        ),
+        (("gpt-5.5",), ("low", "medium", "high", "xhigh"), True),
+    )
+    for bases, depths, enabled in families:
+        if _is_openai_family(normalized_model, bases):
+            return _capability(
+                provider,
+                model,
+                toggle="optional",
+                depths=depths,
+                default_depth="medium",
+                default_enabled=enabled,
+                adapter="openai-gpt5-modern",
+            )
+    if normalized_model in {"gpt-5.6", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"}:
+        return _capability(
+            provider,
+            model,
+            toggle="optional",
+            depths=("low", "medium", "high", "xhigh", "max"),
+            default_depth="medium",
+            default_enabled=True,
+            adapter="openai-gpt5-modern",
+        )
+    return None
+
+
+def _anthropic_thinking_capability(provider, model, normalized_model):
+    profile = _anthropic_thinking_profile(normalized_model)
+    if profile is None:
+        return None
+    toggle, depths, default_enabled, adapter, default_depth = profile
+    return _capability(
+        provider,
+        model,
+        toggle=toggle,
+        depths=depths,
+        default_depth=default_depth,
+        default_enabled=default_enabled,
+        adapter=adapter,
+    )
+
+
+def _qwen_thinking_capability(provider, model, normalized_model):
+    if _is_qwen_thinking_only(normalized_model):
+        return _capability(
+            provider,
+            model,
+            toggle="always_on",
+            depths=("low", "medium", "high"),
+            default_depth="medium",
+            adapter="qwen-thinking-only-budget",
+            reason="thinking_only_model_cannot_be_disabled",
+        )
+    if normalized_model == "qwq-plus":
+        return _capability(
+            provider,
+            model,
+            toggle="always_on",
+            depths=("medium",),
+            default_depth="medium",
+            adapter="qwen-thinking-only-intrinsic",
+            reason="thinking_only_model_has_no_confirmed_budget_control",
+        )
+    default_enabled = _qwen_hybrid_default_enabled(normalized_model)
+    if default_enabled is None:
+        return None
+    return _capability(
+        provider,
+        model,
+        toggle="optional",
+        depths=("low", "medium", "high"),
+        default_depth="medium",
+        default_enabled=default_enabled,
+        adapter="qwen-hybrid-thinking",
+    )
+
+
+def _deepseek_thinking_capability(provider, model, normalized_model):
+    if normalized_model == "deepseek-reasoner":
+        return _unavailable_capability(
+            provider,
+            model,
+            adapter="deepseek-retired-model",
+            reason="model_retired_migrate_to_deepseek_v4",
+        )
+    if normalized_model not in {"deepseek-v4-pro", "deepseek-v4-flash"}:
+        return None
+    return _capability(
+        provider,
+        model,
+        toggle="optional",
+        depths=("high", "xhigh"),
+        default_depth="high",
+        default_enabled=True,
+        adapter="deepseek-v4-thinking",
+    )
+
+
 def normalize_model_thinking(
     *,
     provider: str,
@@ -236,72 +241,12 @@ def normalize_model_thinking(
     selection: ModelThinkingSelection | dict[str, Any] | None,
 ) -> ModelThinkingSnapshot:
     capability = model_thinking_capability(provider=provider, model=model)
-    requested = (
-        selection
-        if isinstance(selection, ModelThinkingSelection)
-        else ModelThinkingSelection.model_validate(selection)
-        if selection is not None
-        else None
-    )
+    requested = _thinking_selection(selection)
     source = "explicit_model_control" if requested is not None else "model_default"
     adjustments: list[ModelThinkingAdjustment] = []
-
     if not capability.supported:
-        if requested is not None:
-            adjustments.append(
-                ModelThinkingAdjustment(
-                    field="enabled",
-                    requested=requested.enabled,
-                    effective=False,
-                    reason=capability.reason or "thinking_control_unavailable",
-                )
-            )
-        return ModelThinkingSnapshot(
-            requested=requested,
-            effective=EffectiveModelThinking(enabled=False, depth=None),
-            source=source,
-            adapter=capability.adapter,
-            adjustments=adjustments,
-            capability_version=capability.capability_version,
-        )
-
-    supported_depths = [item.id for item in capability.depths]
-    if requested is None:
-        enabled = capability.default_enabled
-        depth = capability.default_depth if enabled else None
-    else:
-        enabled = requested.enabled
-        depth = requested.depth if requested.enabled else None
-        if requested.capability_version != capability.capability_version:
-            adjustments.append(
-                ModelThinkingAdjustment(
-                    field="capability_version",
-                    requested=requested.capability_version,
-                    effective=capability.capability_version,
-                    reason="capability_version_changed",
-                )
-            )
-        if capability.toggle == "always_on" and not enabled:
-            adjustments.append(
-                ModelThinkingAdjustment(
-                    field="enabled",
-                    requested=False,
-                    effective=True,
-                    reason="model_thinking_always_on",
-                )
-            )
-            enabled = True
-            depth = requested.depth or capability.default_depth
-        if enabled and depth not in supported_depths:
-            adjustments.append(
-                ModelThinkingAdjustment(
-                    field="depth",
-                    requested=depth,
-                    effective=capability.default_depth,
-                    reason="thinking_depth_not_supported",
-                )
-            )
-            depth = capability.default_depth
+        return _unsupported_thinking_snapshot(capability, requested, source)
+    enabled, depth = _normalize_effective_thinking(capability, requested, adjustments)
 
     return ModelThinkingSnapshot(
         requested=requested,
@@ -311,6 +256,73 @@ def normalize_model_thinking(
         adjustments=adjustments,
         capability_version=capability.capability_version,
     )
+
+
+def _thinking_selection(selection):
+    if isinstance(selection, ModelThinkingSelection):
+        return selection
+    return ModelThinkingSelection.model_validate(selection) if selection is not None else None
+
+
+def _unsupported_thinking_snapshot(capability, requested, source):
+    adjustments = []
+    if requested is not None:
+        adjustments.append(
+            ModelThinkingAdjustment(
+                field="enabled",
+                requested=requested.enabled,
+                effective=False,
+                reason=capability.reason or "thinking_control_unavailable",
+            )
+        )
+    return ModelThinkingSnapshot(
+        requested=requested,
+        effective=EffectiveModelThinking(enabled=False, depth=None),
+        source=source,
+        adapter=capability.adapter,
+        adjustments=adjustments,
+        capability_version=capability.capability_version,
+    )
+
+
+def _normalize_effective_thinking(capability, requested, adjustments):
+    if requested is None:
+        return capability.default_enabled, (
+            capability.default_depth if capability.default_enabled else None
+        )
+    enabled = requested.enabled
+    depth = requested.depth if enabled else None
+    if requested.capability_version != capability.capability_version:
+        adjustments.append(
+            ModelThinkingAdjustment(
+                field="capability_version",
+                requested=requested.capability_version,
+                effective=capability.capability_version,
+                reason="capability_version_changed",
+            )
+        )
+    if capability.toggle == "always_on" and not enabled:
+        adjustments.append(
+            ModelThinkingAdjustment(
+                field="enabled",
+                requested=False,
+                effective=True,
+                reason="model_thinking_always_on",
+            )
+        )
+        enabled, depth = True, requested.depth or capability.default_depth
+    supported_depths = [item.id for item in capability.depths]
+    if enabled and depth not in supported_depths:
+        adjustments.append(
+            ModelThinkingAdjustment(
+                field="depth",
+                requested=depth,
+                effective=capability.default_depth,
+                reason="thinking_depth_not_supported",
+            )
+        )
+        depth = capability.default_depth
+    return enabled, depth
 
 
 def resolve_model_reasoning(
@@ -343,51 +355,46 @@ def resolve_model_reasoning(
         "adjustments": [item.model_dump(mode="json") for item in snapshot.adjustments],
     }
 
-    if adapter in {"openai-gpt5", "openai-gpt5-modern"} and effective.enabled:
-        return ModelReasoningConfig(
-            **common,
-            request_params={"reasoning_effort": effective.depth},
-            reason=adjustment_reason,
-        )
-    if adapter == "openai-gpt5-modern" and not effective.enabled:
-        return ModelReasoningConfig(
-            **common,
-            request_params={"reasoning_effort": "none"},
-            reason=adjustment_reason,
-        )
-    if adapter == "anthropic-effort" and effective.enabled:
-        return ModelReasoningConfig(
-            **common,
-            request_params={"output_config": {"effort": effective.depth}},
-            reason=adjustment_reason,
-        )
-    if adapter == "anthropic-adaptive-thinking":
-        if not effective.enabled:
-            return ModelReasoningConfig(
-                **common,
-                request_params={"thinking": {"type": "disabled"}},
-                reason=adjustment_reason,
-            )
-        return ModelReasoningConfig(
-            **common,
-            request_params={
-                "thinking": {"type": "adaptive", "display": "omitted"},
-                "output_config": {"effort": effective.depth},
-            },
-            reason=adjustment_reason,
-        )
+    if adapter in {"openai-gpt5", "openai-gpt5-modern"}:
+        return _openai_reasoning_config(common, effective, adjustment_reason)
     if adapter in {
+        "anthropic-effort",
+        "anthropic-adaptive-thinking",
         "anthropic-manual-thinking",
         "anthropic-manual-thinking-effort",
     }:
-        if not effective.enabled:
-            return ModelReasoningConfig(
-                **common,
-                request_params={"thinking": {"type": "disabled"}},
-                reason=adjustment_reason,
-            )
+        return _anthropic_reasoning_config(common, effective, adjustment_reason, adapter)
+    if adapter == "deepseek-v4-thinking":
+        return _deepseek_reasoning_config(common, effective, adjustment_reason)
+    if adapter.startswith("qwen-"):
+        return _qwen_reasoning_config(common, effective, adjustment_reason, adapter)
+
+    return ModelReasoningConfig(
+        **common,
+        reason=adjustment_reason or capability.reason,
+    )
+
+
+def _openai_reasoning_config(common, effective, reason):
+    effort = effective.depth if effective.enabled else "none"
+    return ModelReasoningConfig(
+        **common, request_params={"reasoning_effort": effort}, reason=reason
+    )
+
+
+def _anthropic_reasoning_config(common, effective, reason, adapter):
+    if adapter == "anthropic-effort":
+        params = {"output_config": {"effort": effective.depth}} if effective.enabled else {}
+    elif not effective.enabled:
+        params = {"thinking": {"type": "disabled"}}
+    elif adapter == "anthropic-adaptive-thinking":
+        params = {
+            "thinking": {"type": "adaptive", "display": "omitted"},
+            "output_config": {"effort": effective.depth},
+        }
+    else:
         depth = effective.depth or "medium"
-        request_params = {
+        params = {
             "max_tokens": 32_768,
             "thinking": {
                 "type": "enabled",
@@ -396,66 +403,42 @@ def resolve_model_reasoning(
             },
         }
         if adapter == "anthropic-manual-thinking-effort":
-            request_params["output_config"] = {"effort": depth}
-        return ModelReasoningConfig(
-            **common,
-            request_params=request_params,
-            reason=adjustment_reason,
-        )
+            params["output_config"] = {"effort": depth}
+    return ModelReasoningConfig(**common, request_params=params, reason=reason)
+
+
+def _deepseek_reasoning_config(common, effective, reason):
+    params: dict[str, Any] = {"thinking": {"type": "enabled" if effective.enabled else "disabled"}}
+    if effective.enabled:
+        params["reasoning_effort"] = "max" if effective.depth == "xhigh" else "high"
+    return ModelReasoningConfig(**common, request_params=params, reason=reason)
+
+
+def _qwen_reasoning_config(common, effective, reason, adapter):
+    depth = effective.depth or "medium"
     if adapter == "qwen-hybrid-thinking":
-        if not effective.enabled:
-            return ModelReasoningConfig(
-                **common,
-                request_params={"enable_thinking": False},
-                reason=adjustment_reason,
-            )
-        return ModelReasoningConfig(
-            **common,
-            request_params={
-                "enable_thinking": True,
-                "thinking_budget": _QWEN_THINKING_BUDGET[effective.depth or "medium"],
-            },
-            include_json_mode=False,
-            reason=adjustment_reason or "thinking_mode_uses_prompt_enforced_json",
-        )
-    if adapter == "deepseek-v4-thinking":
-        request_params: dict[str, Any] = {
-            "thinking": {"type": "enabled" if effective.enabled else "disabled"}
-        }
+        params = {"enable_thinking": effective.enabled}
         if effective.enabled:
-            request_params["reasoning_effort"] = "max" if effective.depth == "xhigh" else "high"
+            params["thinking_budget"] = _QWEN_THINKING_BUDGET[depth]
         return ModelReasoningConfig(
             **common,
-            request_params=request_params,
-            reason=adjustment_reason,
+            request_params=params,
+            include_json_mode=not effective.enabled,
+            reason=reason
+            or ("thinking_mode_uses_prompt_enforced_json" if effective.enabled else None),
         )
     if adapter == "qwen-thinking-only-budget":
         return ModelReasoningConfig(
             **common,
-            request_params={"thinking_budget": _QWEN_THINKING_BUDGET[effective.depth or "medium"]},
+            request_params={"thinking_budget": _QWEN_THINKING_BUDGET[depth]},
             include_json_mode=False,
             intrinsic=True,
-            reason=adjustment_reason or "thinking_only_model_cannot_be_disabled",
+            reason=reason or "thinking_only_model_cannot_be_disabled",
         )
-    if adapter in {
-        "qwen-thinking-only",
-        "qwen-thinking-only-intrinsic",
-        "deepseek-model-selected-reasoning",
-    }:
-        return ModelReasoningConfig(
-            **common,
-            intrinsic=effective.enabled,
-            reason=adjustment_reason
-            or (
-                "thinking_only_model_has_no_confirmed_budget_control"
-                if adapter.startswith("qwen-thinking-only")
-                else "native_api_controls_reasoning_by_model_selection"
-            ),
-        )
-
     return ModelReasoningConfig(
         **common,
-        reason=adjustment_reason or capability.reason,
+        intrinsic=effective.enabled,
+        reason=reason or "thinking_only_model_has_no_confirmed_budget_control",
     )
 
 

@@ -3,13 +3,14 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from sqlalchemy import func, select
 
-from app.db.models import AgentExecutionRecord, RunRecord
+from app.db.models.executions import AgentExecutionRecord
+from app.db.models.runs import RunRecord
 from app.repositories.agent_executions import (
     AgentExecutionRepository,
     AgentExecutionStateError,
 )
 from app.repositories.conversations import ConversationRepository
-from app.repositories.runs import RunRepository
+from app.repositories.run_unit_of_work import RunUnitOfWork
 from app.schemas.subagents import DelegationContract, DelegationRequest
 
 
@@ -47,7 +48,7 @@ def child_contract(
 
 
 async def test_new_run_has_one_backward_compatible_root_execution(session):
-    run = await RunRepository(session).create_task_run("Root execution", {})
+    run = await RunUnitOfWork(session).create_task_run("Root execution", {})
     root = await AgentExecutionRepository(session).root_for_run(run.id)
 
     assert root is not None
@@ -67,7 +68,7 @@ async def test_new_run_has_one_backward_compatible_root_execution(session):
 
 
 async def test_reasoning_initialization_checkpoints_root_execution(session):
-    runs = RunRepository(session)
+    runs = RunUnitOfWork(session)
     run = await runs.create_task_run("Initialize root", {})
 
     await runs.initialize_reasoning_state(
@@ -86,7 +87,7 @@ async def test_reasoning_initialization_checkpoints_root_execution(session):
 
 
 async def test_child_creation_is_idempotent_and_contract_is_immutable(session):
-    run = await RunRepository(session).create_task_run("Child creation", {})
+    run = await RunUnitOfWork(session).create_task_run("Child creation", {})
     repository = AgentExecutionRepository(session)
     root = await repository.root_for_run(run.id)
     assert root is not None
@@ -115,7 +116,7 @@ async def test_child_creation_is_idempotent_and_contract_is_immutable(session):
 
 
 async def test_claim_checkpoint_heartbeat_and_transition_use_fencing(session):
-    run = await RunRepository(session).create_task_run("Child lifecycle", {})
+    run = await RunUnitOfWork(session).create_task_run("Child lifecycle", {})
     repository = AgentExecutionRepository(session)
     root = await repository.root_for_run(run.id)
     assert root is not None
@@ -182,7 +183,7 @@ async def test_claim_checkpoint_heartbeat_and_transition_use_fencing(session):
 
 
 async def test_descendant_barrier_and_stale_scan_are_scoped_to_tree(session):
-    run = await RunRepository(session).create_task_run("Descendant tree", {})
+    run = await RunUnitOfWork(session).create_task_run("Descendant tree", {})
     repository = AgentExecutionRepository(session)
     root = await repository.root_for_run(run.id)
     assert root is not None
@@ -221,7 +222,7 @@ async def test_descendant_barrier_and_stale_scan_are_scoped_to_tree(session):
 
 
 async def test_conversation_deletion_removes_agent_execution_tree(session):
-    run = await RunRepository(session).create_task_run("Delete lineage", {})
+    run = await RunUnitOfWork(session).create_task_run("Delete lineage", {})
     repository = AgentExecutionRepository(session)
     root = await repository.root_for_run(run.id)
     assert root is not None

@@ -1,3 +1,4 @@
-from app.db.models import Base
+from app.db.model_base import Base
+from app.db.models.metadata import metadata
 
-__all__ = ["Base"]
+__all__ = ["Base", "metadata"]

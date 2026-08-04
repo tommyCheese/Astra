@@ -2,12 +2,14 @@ import pytest
 from pydantic import ValidationError
 
 from app.core.config import Settings
-from app.repositories.runs import RunRepository
+from app.model_clients.mock import MockModelClient
+from app.repositories.run_unit_of_work import RunUnitOfWork
 from app.runner.agent_loop import AgentLoop
-from app.runner.model_client import MockModelClient
 from app.runner.reasoning import PolicyCompiler
 from app.sandbox.runtime import SandboxHandle, SandboxProvider, SandboxResult
-from app.schemas.agent import AgentDecision, FinalAnswer, RequestedReasoningPolicy
+from app.schemas.agent.execution_state import AgentDecision
+from app.schemas.agent.run_policy import RequestedReasoningPolicy
+from app.schemas.agent.run_result import FinalAnswer
 from app.tools.chart import ChartRenderTool, ChartRequest, select_backend
 from app.tools.registry import build_tool_registry
 from app.tools.router import ToolRouter
@@ -189,7 +191,7 @@ async def test_chart_only_agent_run_creates_sandbox_artifact_without_web_evidenc
         sandbox_skip_availability_check=True,
         artifact_store_path=str(tmp_path / "store"),
     )
-    repo = RunRepository(session)
+    repo = RunUnitOfWork(session)
     policy = PolicyCompiler().compile(
         RequestedReasoningPolicy(execution_mode="auto_approval")
     )

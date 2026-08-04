@@ -7,20 +7,28 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.core.config import Settings
 from app.core.errors import ValidationError
-from app.db.models import (
-    Base,
-    RunRecord,
-    ScheduledJobRecord,
-    ScheduledJobRunRecord,
-    TaskRecord,
-)
+from app.db.model_base import Base
+from app.db.models.conversations import TaskRecord
+from app.db.models.runs import RunRecord
+from app.db.models.scheduling import ScheduledJobRecord, ScheduledJobRunRecord
 from app.repositories.schedules import ScheduleRepository
 from app.repositories.workspaces import WorkspaceRepository
+from app.run_management.contracts import PreparedRun
+from app.run_management.dispatcher import InProcessRunDispatcher
 from app.scheduling.dispatcher import ScheduledRunDispatcher
-from app.schemas.agent import AnswerMode, CreateRunResponse
+from app.schemas.agent.api_views import CreateRunResponse
+from app.schemas.agent.types import AnswerMode
 from app.schemas.schedules import ScheduledJobCreate
 
 UTC = timezone.utc
+
+
+async def _finished_run(_run_id, _settings):
+    await asyncio.sleep(0)
+
+
+def _run_dispatcher():
+    return InProcessRunDispatcher(_finished_run)
 
 
 @pytest.mark.asyncio
@@ -56,7 +64,7 @@ async def test_dispatcher_reuses_target_conversation_workspace(tmp_path, monkeyp
 
     captured_task_ids: list[str | None] = []
 
-    async def fake_create_run(_service, payload, *, commit=True):
+    async def fake_prepare(_service, payload, *, commit=True):
         captured_task_ids.append(payload.task_id)
         run = RunRecord(
             task_id=payload.task_id,
@@ -71,27 +79,20 @@ async def test_dispatcher_reuses_target_conversation_workspace(tmp_path, monkeyp
             await _service.session.commit()
         else:
             await _service.session.flush()
-        return (
+        return PreparedRun(
             CreateRunResponse(
                 task_id=run.task_id,
                 run_id=run.id,
                 status=run.status,
                 answer_mode=AnswerMode.standard,
             ),
-            _service.settings,
+            Settings(),
         )
 
-    async def finished_engine():
-        await asyncio.sleep(0)
-
-    def fake_schedule_run(run_id, settings):
-        return asyncio.create_task(finished_engine())
-
-    monkeypatch.setattr("app.scheduling.dispatcher.RunCreationService.create", fake_create_run)
-    monkeypatch.setattr("app.scheduling.dispatcher._schedule_run", fake_schedule_run)
+    monkeypatch.setattr("app.scheduling.dispatcher.RunApplicationService.prepare", fake_prepare)
 
     dispatched = await ScheduledRunDispatcher(
-        Settings(), session_factory
+        Settings(), session_factory, _run_dispatcher()
     ).dispatch(schedule_run.id)
     await asyncio.sleep(0.05)
 
@@ -143,7 +144,9 @@ async def test_heartbeat_defers_while_target_conversation_is_busy(tmp_path):
         await session.commit()
         schedule_run = await ScheduleRepository(session).manual_trigger(job)
 
-    result = await ScheduledRunDispatcher(Settings(), session_factory).dispatch(schedule_run.id)
+    result = await ScheduledRunDispatcher(Settings(), session_factory, _run_dispatcher()).dispatch(
+        schedule_run.id
+    )
     assert result.status == "deferred_busy"
     assert result.run_id is None
     assert result.outcome == {"reason": "target_conversation_busy"}
@@ -197,7 +200,7 @@ async def test_heartbeat_ok_is_recorded_silently_and_hidden_from_chat(tmp_path):
         await session.commit()
         schedule_run_id, run_id = schedule_run.id, run.id
 
-    await ScheduledRunDispatcher(Settings(), session_factory)._finalize(
+    await ScheduledRunDispatcher(Settings(), session_factory, _run_dispatcher())._finalize(
         schedule_run_id, run_id
     )
     async with session_factory() as session:
@@ -241,6 +244,7 @@ async def test_dispatcher_blocks_invalid_unattended_permissions(tmp_path):
     dispatched = await ScheduledRunDispatcher(
         Settings(permission_bundle_signing_secret="test-secret"),
         session_factory,
+        _run_dispatcher(),
     ).dispatch(schedule_run.id)
 
     assert dispatched.status == "blocked"
@@ -254,9 +258,7 @@ async def test_dispatcher_blocks_invalid_unattended_permissions(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_dispatcher_rolls_back_partial_run_when_creation_is_blocked(
-    tmp_path, monkeypatch
-):
+async def test_dispatcher_rolls_back_partial_run_when_creation_is_blocked(tmp_path, monkeypatch):
     engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'rollback.db'}")
     async with engine.begin() as connection:
         await connection.run_sync(Base.metadata.create_all)
@@ -280,16 +282,12 @@ async def test_dispatcher_rolls_back_partial_run_when_creation_is_blocked(
         schedule_run = await ScheduleRepository(session).manual_trigger(job)
 
     async def fail_after_flush(service, payload, *, commit=True):
-        service.session.add(
-            RunRecord(task_id=payload.task_id, status="created", model_policy={})
-        )
+        service.session.add(RunRecord(task_id=payload.task_id, status="created", model_policy={}))
         await service.session.flush()
         raise ValidationError("TEST_BLOCKED", "blocked")
 
-    monkeypatch.setattr(
-        "app.scheduling.dispatcher.RunCreationService.create", fail_after_flush
-    )
-    result = await ScheduledRunDispatcher(Settings(), session_factory).dispatch(
+    monkeypatch.setattr("app.scheduling.dispatcher.RunApplicationService.prepare", fail_after_flush)
+    result = await ScheduledRunDispatcher(Settings(), session_factory, _run_dispatcher()).dispatch(
         schedule_run.id
     )
 

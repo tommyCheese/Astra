@@ -5,15 +5,14 @@ from datetime import timedelta
 import pytest
 from sqlalchemy import select
 
-from app.db.models import CredentialGrantRecord, RunSkillSnapshotRecord, utc_now
+from app.db.model_base import utc_now
+from app.db.models.permissions import CredentialGrantRecord
+from app.db.models.skills import RunSkillSnapshotRecord
 from app.permissions.credentials import CredentialBroker
 from app.repositories.agent_executions import AgentExecutionRepository
 from app.repositories.permissions import PermissionRepository
-from app.repositories.runs import RunRepository
-from app.schemas.agent import (
-    EffectiveSubagentPolicy,
-    SubagentBudgetPolicy,
-)
+from app.repositories.run_unit_of_work import RunUnitOfWork
+from app.schemas.agent.run_policy import EffectiveSubagentPolicy, SubagentBudgetPolicy
 from app.schemas.permissions import (
     ActionEffectPlan,
     EffectItem,
@@ -118,7 +117,7 @@ def _request(
 
 
 async def _runtime(session, *, skills: bool = False):
-    run = await RunRepository(session).create_task_run("Governed delegation", {})
+    run = await RunUnitOfWork(session).create_task_run("Governed delegation", {})
     executions = AgentExecutionRepository(session)
     root = await executions.root_for_run(run.id)
     assert root is not None

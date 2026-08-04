@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any, ClassVar
 
 from app.artifacts import ArtifactCollector, LocalArtifactStore
-from app.db.models import utc_now
+from app.db.model_base import utc_now
 from app.repositories.workspaces import WorkspaceRepository, validate_workspace_path
 from app.sandbox.runtime import PROTECTED_WORKSPACE_PATHS
 from app.tools.base import ToolExecutionError
@@ -191,34 +191,45 @@ class WorkspaceRuntimeService:
         await self.repository.session.commit()
 
     def validate_archive(self, archive_path: Path) -> list[str]:
-        names: list[str]
-        total_size = 0
-        if zipfile.is_zipfile(archive_path):
-            with zipfile.ZipFile(archive_path) as archive:
-                names = [entry.filename for entry in archive.infolist()]
-                total_size = sum(entry.file_size for entry in archive.infolist())
-        elif tarfile.is_tarfile(archive_path):
-            with tarfile.open(archive_path) as archive:
-                members = archive.getmembers()
-                if any(member.issym() or member.islnk() or not (member.isfile() or member.isdir()) for member in members):
-                    raise ToolExecutionError(
-                        "sandbox_policy_violation", "Archive contains unsafe entries"
-                    )
-                names = [member.name for member in members]
-                total_size = sum(member.size for member in members)
-        else:
-            raise ToolExecutionError("invalid_artifact", "Unsupported archive format")
-        for name in names:
-            candidate = Path(name)
-            if candidate.is_absolute() or ".." in candidate.parts or "\x00" in name:
-                raise ToolExecutionError(
-                    "sandbox_policy_violation", "Archive path traversal is not allowed"
-                )
+        names, total_size = self._archive_entries(archive_path)
+        if any(self._unsafe_archive_name(name) for name in names):
+            raise ToolExecutionError(
+                "sandbox_policy_violation", "Archive path traversal is not allowed"
+            )
         if len(names) > self.max_files or total_size > self.max_bytes:
             raise ToolExecutionError(
                 "artifact_limit_exceeded", "Archive expansion exceeds Workspace quota"
             )
         return names
+
+    @staticmethod
+    def _archive_entries(archive_path: Path) -> tuple[list[str], int]:
+        if zipfile.is_zipfile(archive_path):
+            with zipfile.ZipFile(archive_path) as archive:
+                entries = archive.infolist()
+                return [entry.filename for entry in entries], sum(
+                    entry.file_size for entry in entries
+                )
+        if tarfile.is_tarfile(archive_path):
+            with tarfile.open(archive_path) as archive:
+                members = archive.getmembers()
+                if any(WorkspaceRuntimeService._unsafe_tar_member(member) for member in members):
+                    raise ToolExecutionError(
+                        "sandbox_policy_violation", "Archive contains unsafe entries"
+                    )
+                return [member.name for member in members], sum(member.size for member in members)
+        raise ToolExecutionError("invalid_artifact", "Unsupported archive format")
+
+    @staticmethod
+    def _unsafe_tar_member(member) -> bool:
+        if member.issym() or member.islnk():
+            return True
+        return not member.isfile() and not member.isdir()
+
+    @staticmethod
+    def _unsafe_archive_name(name: str) -> bool:
+        candidate = Path(name)
+        return candidate.is_absolute() or ".." in candidate.parts or "\x00" in name
 
     async def capture_changes(
         self,
@@ -230,31 +241,9 @@ class WorkspaceRuntimeService:
         before_protected_paths: set[str] | None = None,
     ) -> list[dict[str, Any]]:
         after = self.scan(workspace_dir)
-        current_protected_paths = self.protected_paths(workspace_dir)
-        protected_path_changes = (
-            current_protected_paths ^ before_protected_paths
-            if before_protected_paths is not None
-            else set()
+        self._reject_protected_changes(
+            workspace_dir, before, after, before_protected_paths
         )
-        protected_changes = [
-            relative_path
-            for relative_path, entry in after.items()
-            if any(
-                part in PROTECTED_WORKSPACE_PATHS
-                for part in Path(relative_path).parts
-            )
-            and before.get(relative_path) != entry
-        ]
-        if protected_changes or protected_path_changes:
-            self._remove_new_protected_paths(
-                workspace_dir,
-                before,
-                [*protected_changes, *protected_path_changes],
-            )
-            raise ToolExecutionError(
-                "sandbox_policy_violation",
-                "Tool execution attempted to modify a protected Workspace path",
-            )
         workspace = await self.repository.for_run(run_id)
         changes: list[dict[str, Any]] = []
         for relative_path in sorted(before.keys() | after.keys()):
@@ -262,70 +251,112 @@ class WorkspaceRuntimeService:
             current = after.get(relative_path)
             if previous == current:
                 continue
-            if previous is None:
-                kind = "created"
-            elif current is None:
-                kind = "deleted"
-            else:
-                kind = "modified"
-            entry = current or previous
-            security_status = "deleted" if current is None else self._security_status(
-                workspace_dir / relative_path
+            kind = await self._record_workspace_change(
+                workspace.id,
+                run_id,
+                tool_call_id,
+                workspace_dir,
+                relative_path,
+                previous,
+                current,
             )
-            deliverable_candidate = (
-                current is not None
-                and security_status == "verified"
-                and self._deliverable_candidate(relative_path)
+            changes.append({"path": relative_path, "kind": kind})
+        return changes
+
+    def _reject_protected_changes(self, workspace_dir, before, after, previous_paths) -> None:
+        current_paths = self.protected_paths(workspace_dir)
+        path_changes = current_paths ^ previous_paths if previous_paths is not None else set()
+        content_changes = [
+            path
+            for path, entry in after.items()
+            if any(part in PROTECTED_WORKSPACE_PATHS for part in Path(path).parts)
+            and before.get(path) != entry
+        ]
+        if not content_changes and not path_changes:
+            return
+        self._remove_new_protected_paths(
+            workspace_dir, before, [*content_changes, *path_changes]
+        )
+        raise ToolExecutionError(
+            "sandbox_policy_violation",
+            "Tool execution attempted to modify a protected Workspace path",
+        )
+
+    async def _record_workspace_change(
+        self, workspace_id, run_id, tool_call_id, workspace_dir, path, previous, current
+    ) -> str:
+        kind = self._change_kind(previous, current)
+        entry = current or previous
+        security = self._change_security(workspace_dir, path, current)
+        is_deliverable = self._is_deliverable_change(path, current, security)
+        await self.repository.record_change(
+            workspace_id=workspace_id,
+            run_id=run_id,
+            tool_call_id=tool_call_id,
+            relative_path=path,
+            change_kind=kind,
+            before_checksum=previous.checksum if previous else None,
+            after_checksum=current.checksum if current else None,
+            mime_type=entry.mime_type if entry else None,
+            size_bytes=current.size_bytes if current else None,
+            security_status=security,
+            deliverable_candidate=is_deliverable,
+            metadata={"trust_label": "untrusted_workspace_content"},
+        )
+        if is_deliverable:
+            await self._snapshot_workspace_file(run_id, tool_call_id, workspace_dir, path, current)
+        if current is not None:
+            await self.repository.upsert_file(
+                workspace_id,
+                path,
+                mime_type=current.mime_type,
+                size_bytes=current.size_bytes,
+                checksum=current.checksum,
+                security_status=security,
+                deliverable_candidate=is_deliverable,
+                metadata={"trust_label": "untrusted_workspace_content"},
             )
-            await self.repository.record_change(
-                workspace_id=workspace.id,
+        return kind
+
+    @staticmethod
+    def _change_kind(previous, current) -> str:
+        if previous is None:
+            return "created"
+        return "deleted" if current is None else "modified"
+
+    def _change_security(self, workspace_dir, path, current) -> str:
+        return "deleted" if current is None else self._security_status(workspace_dir / path)
+
+    def _is_deliverable_change(self, path, current, security) -> bool:
+        if current is None or security != "verified":
+            return False
+        return self._deliverable_candidate(path)
+
+    async def _snapshot_workspace_file(
+        self, run_id, tool_call_id, workspace_dir, relative_path, current
+    ) -> None:
+        if self.artifact_store is None:
+            return
+        existing = await self.repository.find_workspace_snapshot(
+            run_id=run_id, relative_path=relative_path, checksum=current.checksum
+        )
+        if existing is not None:
+            return
+        source = workspace_dir / relative_path
+        storage_key = self.artifact_store.put(source, source.suffix.lower())
+        try:
+            await self.repository.create_workspace_snapshot(
                 run_id=run_id,
                 tool_call_id=tool_call_id,
                 relative_path=relative_path,
-                change_kind=kind,
-                before_checksum=previous.checksum if previous else None,
-                after_checksum=current.checksum if current else None,
-                mime_type=entry.mime_type if entry else None,
-                size_bytes=current.size_bytes if current else None,
-                security_status=security_status,
-                deliverable_candidate=deliverable_candidate,
-                metadata={"trust_label": "untrusted_workspace_content"},
+                mime_type=current.mime_type,
+                size_bytes=current.size_bytes,
+                checksum=current.checksum,
+                storage_key=storage_key,
             )
-            if deliverable_candidate and current is not None and self.artifact_store is not None:
-                existing = await self.repository.find_workspace_snapshot(
-                    run_id=run_id,
-                    relative_path=relative_path,
-                    checksum=current.checksum,
-                )
-                if existing is None:
-                    source = workspace_dir / relative_path
-                    storage_key = self.artifact_store.put(source, source.suffix.lower())
-                    try:
-                        await self.repository.create_workspace_snapshot(
-                            run_id=run_id,
-                            tool_call_id=tool_call_id,
-                            relative_path=relative_path,
-                            mime_type=current.mime_type,
-                            size_bytes=current.size_bytes,
-                            checksum=current.checksum,
-                            storage_key=storage_key,
-                        )
-                    except BaseException:
-                        self.artifact_store.delete(storage_key)
-                        raise
-            if current is not None:
-                await self.repository.upsert_file(
-                    workspace.id,
-                    relative_path,
-                    mime_type=current.mime_type,
-                    size_bytes=current.size_bytes,
-                    checksum=current.checksum,
-                    security_status=security_status,
-                    deliverable_candidate=deliverable_candidate,
-                    metadata={"trust_label": "untrusted_workspace_content"},
-                )
-            changes.append({"path": relative_path, "kind": kind})
-        return changes
+        except BaseException:
+            self.artifact_store.delete(storage_key)
+            raise
 
     @staticmethod
     def _remove_new_protected_paths(

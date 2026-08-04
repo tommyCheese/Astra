@@ -6,14 +6,15 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import AgentExecutionRecord, AgentIdentityRecord
+from app.db.models.executions import AgentExecutionRecord
+from app.db.models.permissions import AgentIdentityRecord
 from app.repositories.agent_executions import (
     TERMINAL_AGENT_STATUSES,
     AgentExecutionRepository,
 )
 from app.repositories.permissions import PermissionRepository
-from app.repositories.runs import RunRepository
-from app.schemas.agent import EffectiveSubagentPolicy
+from app.repositories.run_unit_of_work import RunUnitOfWork
+from app.schemas.agent.run_policy import EffectiveSubagentPolicy
 from app.schemas.context_compaction import parse_child_checkpoint
 from app.schemas.permissions import PermissionPolicySet
 from app.schemas.subagents import (
@@ -38,7 +39,7 @@ from app.subagents.context import (
     SubagentContextComposer,
     SubagentContinuationService,
 )
-from app.subagents.executor import AgentExecutorRuntime
+from app.subagents.executor_contracts import AgentExecutorRuntime
 from app.subagents.fan_in import SubagentJoinService
 from app.subagents.governance import (
     DelegationAuthorizationError,
@@ -96,173 +97,13 @@ class SubagentRuntimeOperations:
         permission_check=None,
         commit: bool = True,
     ) -> AgentExecutionRecord:
-        if (
-            not self.policy.enabled
-            or self.policy.kill_switch
-        ):
-            raise DelegationAuthorizationError(
-                DelegationRejectionCode.feature_disabled,
-                "Subagent execution is disabled by the frozen Run policy.",
-            )
-        if self.policy.enabled and not self.policy.kill_switch:
-            gate = self.delegation_gate.evaluate(self._gate_input(request))
-            if not gate.allowed:
-                parent = await self.executions.require(parent_execution_id)
-                await RunRepository(self.session).add_event(
-                    parent.run_id,
-                    "subagent.delegation_rejected",
-                    {
-                        "request_id": request.request_id,
-                        "reason_code": gate.reason_code,
-                        "score": gate.score,
-                    },
-                    agent_execution_id=parent.id,
-                )
-                if commit:
-                    await self.session.commit()
-                else:
-                    await self.session.flush()
-                raise DelegationAuthorizationError(
-                    DelegationRejectionCode.not_beneficial,
-                    "Delegation did not pass the deterministic benefit gate.",
-                    details={
-                        "reason_code": gate.reason_code,
-                        "score": gate.score,
-                        "diagnostics": gate.diagnostics,
-                    },
-                )
-            if self.policy.rollout_cohort == "shadow":
-                parent = await self.executions.require(parent_execution_id)
-                await RunRepository(self.session).add_event(
-                    parent.run_id,
-                    "subagent.shadow_decision",
-                    {
-                        "request_id": request.request_id,
-                        "would_delegate": True,
-                        "score": gate.score,
-                        "reason_code": gate.reason_code,
-                    },
-                    agent_execution_id=parent.id,
-                )
-                if commit:
-                    await self.session.commit()
-                else:
-                    await self.session.flush()
-                raise DelegationAuthorizationError(
-                    DelegationRejectionCode.feature_disabled,
-                    "Shadow cohort records delegation decisions without execution.",
-                    details={"shadow": True},
-                )
-        active = [
-            item
-            for item in await self.executions.active_descendants(parent_execution_id)
-            if item.parent_execution_id == parent_execution_id
-        ]
-        parallel_limit = self.policy.budgets.max_parallel_children
-        if len(active) >= parallel_limit:
-            raise DelegationAuthorizationError(
-                DelegationRejectionCode.budget_rejected,
-                "The parent reached its active child limit.",
-                details={"active_children": len(active), "maximum": parallel_limit},
-            )
-        async def reserve(child: AgentExecutionRecord) -> None:
-            await self.budgets.reserve(
-                parent_execution_id=parent_execution_id,
-                child_execution_id=child.id,
-                envelope=request.budget,
-                max_children_total=self.policy.budgets.max_children_total,
-                max_children_per_parent=self.policy.budgets.max_children_per_parent,
-                max_parallel_children=self.policy.budgets.max_parallel_children,
-                commit=False,
-            )
-
-        try:
-            child = await self.contracts.authorize_and_create(
-                parent_execution_id=parent_execution_id,
-                parent_identity_id=parent_identity_id,
-                request=request,
-                on_child_created=reserve,
-                commit=commit,
-            )
-        except HierarchicalBudgetError as exc:
-            raise DelegationAuthorizationError(
-                DelegationRejectionCode.budget_rejected,
-                "The parent cannot reserve the requested child budget.",
-                details={"reason": str(exc)},
-            ) from exc
-        except DelegationAuthorizationError as exc:
-            parent = await self.executions.require(parent_execution_id)
-            await RunRepository(self.session).add_event(
-                parent.run_id,
-                "subagent.delegation_rejected",
-                {
-                    "request_id": request.request_id,
-                    "reason_code": exc.issue.code.value,
-                },
-                agent_execution_id=parent.id,
-            )
-            if commit:
-                await self.session.commit()
-            else:
-                await self.session.flush()
-            raise
-        contract = DelegationContract.model_validate(child.contract)
-        identity = await self.session.get(AgentIdentityRecord, child.identity_id)
-        if identity is None:
-            raise ValueError("Child identity was not created")
-        scope = EffectiveDelegationScope.model_validate(
-            identity.attributes["permission_scope"]
+        await self._enforce_delegation_gate(parent_execution_id, request, commit)
+        await self._enforce_parallel_limit(parent_execution_id)
+        child = await self._create_child(parent_execution_id, parent_identity_id, request, commit)
+        child.context_manifest = await self._compose_child_context(
+            child, parent_identity_id, profile_layers, selected_facts, permission_check
         )
-        catalog = self._catalog(child.catalog_snapshot)
-        composed = SubagentContextComposer().compose(
-            agent_execution_id=child.id,
-            contract=contract,
-            effective_scope=scope,
-            catalog=catalog,
-            profile_layers=profile_layers,
-            selected_facts=selected_facts,
-            permission_check=permission_check,
-        )
-        data_flow = await self.permissions.get_data_flow_state(child.run_id)
-        workspace_scope = composed.manifest.workspace_scope
-        execution_context = DelegatedExecutionContext(
-            task_id=child.task_id,
-            run_id=child.run_id,
-            agent_execution_id=child.id,
-            identity_id=identity.id,
-            parent_identity_id=parent_identity_id,
-            delegation_id=str(child.delegation_id),
-            delegation_chain=(parent_identity_id, identity.id),
-            purpose=composed.manifest.purpose,
-            effective_scope=scope,
-            budget_envelope=contract.request.budget,
-            data_flow_state=(
-                {
-                    "trust_sources": list(data_flow.trust_sources),
-                    "data_labels": list(data_flow.data_labels),
-                    "allowed_destinations": list(data_flow.allowed_destinations),
-                    "prohibited_destinations": list(data_flow.prohibited_destinations),
-                    "retention": deepcopy(data_flow.retention),
-                    "state_version": data_flow.state_version,
-                }
-                if data_flow is not None
-                else {}
-            ),
-            workspace_scope=workspace_scope,
-            tool_catalog_digest=catalog.tool_digest,
-            skill_catalog_digest=catalog.skill_digest,
-        )
-        child.context_manifest = {
-            "manifest": composed.manifest.model_dump(mode="json"),
-            "manifest_hash": composed.manifest_hash,
-            "gaps": [item.model_dump(mode="json") for item in composed.gaps],
-            "execution_context": execution_context.model_dump(mode="json"),
-            "delegation_gate": {
-                "allowed": True,
-                "reason_code": "delegation_beneficial",
-            },
-        }
-        await RunRepository(self.session).add_event(
+        await RunUnitOfWork(self.session).add_event(
             child.run_id,
             "subagent.delegation_accepted",
             {
@@ -278,6 +119,171 @@ class SubagentRuntimeOperations:
         else:
             await self.session.flush()
         return child
+
+    async def _enforce_delegation_gate(self, parent_id, request, commit) -> None:
+        if not self.policy.enabled or self.policy.kill_switch:
+            raise DelegationAuthorizationError(
+                DelegationRejectionCode.feature_disabled,
+                "Subagent execution is disabled by the frozen Run policy.",
+            )
+        gate = self.delegation_gate.evaluate(self._gate_input(request))
+        if not gate.allowed:
+            await self._record_gate_decision(
+                parent_id, request, gate, "subagent.delegation_rejected", commit
+            )
+            raise DelegationAuthorizationError(
+                DelegationRejectionCode.not_beneficial,
+                "Delegation did not pass the deterministic benefit gate.",
+                details={
+                    "reason_code": gate.reason_code,
+                    "score": gate.score,
+                    "diagnostics": gate.diagnostics,
+                },
+            )
+        if self.policy.rollout_cohort == "shadow":
+            await self._record_gate_decision(
+                parent_id, request, gate, "subagent.shadow_decision", commit
+            )
+            raise DelegationAuthorizationError(
+                DelegationRejectionCode.feature_disabled,
+                "Shadow cohort records delegation decisions without execution.",
+                details={"shadow": True},
+            )
+
+    async def _record_gate_decision(self, parent_id, request, gate, event_type, commit):
+        parent = await self.executions.require(parent_id)
+        payload = {
+            "request_id": request.request_id,
+            "reason_code": gate.reason_code,
+            "score": gate.score,
+        }
+        if event_type == "subagent.shadow_decision":
+            payload["would_delegate"] = True
+        await RunUnitOfWork(self.session).add_event(
+            parent.run_id, event_type, payload, agent_execution_id=parent.id
+        )
+        await self._persist(commit)
+
+    async def _enforce_parallel_limit(self, parent_id) -> None:
+        active = [
+            item
+            for item in await self.executions.active_descendants(parent_id)
+            if item.parent_execution_id == parent_id
+        ]
+        maximum = self.policy.budgets.max_parallel_children
+        if len(active) >= maximum:
+            raise DelegationAuthorizationError(
+                DelegationRejectionCode.budget_rejected,
+                "The parent reached its active child limit.",
+                details={"active_children": len(active), "maximum": maximum},
+            )
+
+    async def _create_child(self, parent_id, parent_identity_id, request, commit):
+        async def reserve(child: AgentExecutionRecord) -> None:
+            limits = self.policy.budgets
+            await self.budgets.reserve(
+                parent_execution_id=parent_id,
+                child_execution_id=child.id,
+                envelope=request.budget,
+                max_children_total=limits.max_children_total,
+                max_children_per_parent=limits.max_children_per_parent,
+                max_parallel_children=limits.max_parallel_children,
+                commit=False,
+            )
+
+        try:
+            return await self.contracts.authorize_and_create(
+                parent_execution_id=parent_id,
+                parent_identity_id=parent_identity_id,
+                request=request,
+                on_child_created=reserve,
+                commit=commit,
+            )
+        except HierarchicalBudgetError as exc:
+            raise DelegationAuthorizationError(
+                DelegationRejectionCode.budget_rejected,
+                "The parent cannot reserve the requested child budget.",
+                details={"reason": str(exc)},
+            ) from exc
+        except DelegationAuthorizationError as exc:
+            await self._record_authorization_rejection(parent_id, request, exc, commit)
+            raise
+
+    async def _record_authorization_rejection(self, parent_id, request, error, commit):
+        parent = await self.executions.require(parent_id)
+        await RunUnitOfWork(self.session).add_event(
+            parent.run_id,
+            "subagent.delegation_rejected",
+            {"request_id": request.request_id, "reason_code": error.issue.code.value},
+            agent_execution_id=parent.id,
+        )
+        await self._persist(commit)
+
+    async def _compose_child_context(
+        self, child, parent_identity_id, profile_layers, selected_facts, permission_check
+    ):
+        contract = DelegationContract.model_validate(child.contract)
+        identity = await self.session.get(AgentIdentityRecord, child.identity_id)
+        if identity is None:
+            raise ValueError("Child identity was not created")
+        scope = EffectiveDelegationScope.model_validate(identity.attributes["permission_scope"])
+        catalog = self._catalog(child.catalog_snapshot)
+        composed = SubagentContextComposer().compose(
+            agent_execution_id=child.id,
+            contract=contract,
+            effective_scope=scope,
+            catalog=catalog,
+            profile_layers=profile_layers,
+            selected_facts=selected_facts,
+            permission_check=permission_check,
+        )
+        execution_context = await self._execution_context(
+            child, identity, parent_identity_id, contract, scope, catalog, composed
+        )
+        return {
+            "manifest": composed.manifest.model_dump(mode="json"),
+            "manifest_hash": composed.manifest_hash,
+            "gaps": [item.model_dump(mode="json") for item in composed.gaps],
+            "execution_context": execution_context.model_dump(mode="json"),
+            "delegation_gate": {"allowed": True, "reason_code": "delegation_beneficial"},
+        }
+
+    async def _execution_context(
+        self, child, identity, parent_identity_id, contract, scope, catalog, composed
+    ):
+        data_flow = await self.permissions.get_data_flow_state(child.run_id)
+        data_flow_state = {}
+        if data_flow is not None:
+            data_flow_state = {
+                "trust_sources": list(data_flow.trust_sources),
+                "data_labels": list(data_flow.data_labels),
+                "allowed_destinations": list(data_flow.allowed_destinations),
+                "prohibited_destinations": list(data_flow.prohibited_destinations),
+                "retention": deepcopy(data_flow.retention),
+                "state_version": data_flow.state_version,
+            }
+        return DelegatedExecutionContext(
+            task_id=child.task_id,
+            run_id=child.run_id,
+            agent_execution_id=child.id,
+            identity_id=identity.id,
+            parent_identity_id=parent_identity_id,
+            delegation_id=str(child.delegation_id),
+            delegation_chain=(parent_identity_id, identity.id),
+            purpose=composed.manifest.purpose,
+            effective_scope=scope,
+            budget_envelope=contract.request.budget,
+            data_flow_state=data_flow_state,
+            workspace_scope=composed.manifest.workspace_scope,
+            tool_catalog_digest=catalog.tool_digest,
+            skill_catalog_digest=catalog.skill_digest,
+        )
+
+    async def _persist(self, commit: bool) -> None:
+        if commit:
+            await self.session.commit()
+        else:
+            await self.session.flush()
 
     async def delegate_tasks(
         self,
@@ -347,7 +353,7 @@ class SubagentRuntimeOperations:
                 consumer_plan_node_id=fanout.join.consumer_plan_node_id,
                 commit=False,
             )
-            await RunRepository(self.session).add_event(
+            await RunUnitOfWork(self.session).add_event(
                 children[0].run_id,
                 "subagent.fanout.accepted",
                 {
@@ -401,9 +407,7 @@ class SubagentRuntimeOperations:
         stored = execution.context_manifest or {}
         return AgentExecutorRuntime(
             session=self.session,
-            execution_context=DelegatedExecutionContext.model_validate(
-                stored["execution_context"]
-            ),
+            execution_context=DelegatedExecutionContext.model_validate(stored["execution_context"]),
             frozen_catalog=self._catalog(execution.catalog_snapshot),
             permission_policies=self.contracts.permission_policies,
             worker_id=worker_id,
@@ -552,9 +556,7 @@ class SubagentRuntimeOperations:
                 )
             ),
             execution_risk=float(configured.get("execution_risk", 0.1)),
-            budget_fraction_remaining=float(
-                configured.get("budget_fraction_remaining", 1.0)
-            ),
+            budget_fraction_remaining=float(configured.get("budget_fraction_remaining", 1.0)),
             simple_atomic=simple_atomic,
             strongly_sequential=bool(
                 configured.get(

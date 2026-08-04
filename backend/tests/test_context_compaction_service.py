@@ -11,7 +11,10 @@ from app.context_compaction import (
 from app.context_compaction.parsing import extract_json_object
 from app.context_compaction.validation import CheckpointValidationError, validate_checkpoint_payload
 from app.core.config import Settings
-from app.db.models import AgentExecutionRecord, RunRecord, TaskRecord, utc_now
+from app.db.model_base import utc_now
+from app.db.models.conversations import TaskRecord
+from app.db.models.executions import AgentExecutionRecord
+from app.db.models.runs import RunRecord
 from app.repositories.context_compaction import ContextCompactionAttemptRepository
 from app.schemas.context_compaction import (
     ContextEnvelope,

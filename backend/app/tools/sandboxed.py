@@ -143,28 +143,32 @@ class SandboxedWebTool(Tool):
         finally:
             shutil.rmtree(root, ignore_errors=True)
 
-        raw = result.stdout.encode("utf-8")
-        if len(raw) > MAX_SANDBOX_RESPONSE_BYTES:
-            raise ToolExecutionError("sandbox_policy_violation", "Sandbox response is too large")
-        try:
-            envelope = json.loads(result.stdout)
-        except (json.JSONDecodeError, TypeError) as exc:
-            raise ToolExecutionError(
-                "sandbox_policy_violation", "Sandbox returned an invalid response"
-            ) from exc
-        if not isinstance(envelope, dict):
-            raise ToolExecutionError(
-                "sandbox_policy_violation", "Sandbox returned an invalid response"
-            )
-        if envelope.get("ok") is not True:
-            error = envelope.get("error") if isinstance(envelope.get("error"), dict) else {}
-            raise ToolExecutionError(
-                str(error.get("category") or "tool_failed"),
-                str(error.get("message") or "Sandboxed tool failed"),
-            )
-        output = envelope.get("output")
-        if not isinstance(output, dict):
-            raise ToolExecutionError(
-                "sandbox_policy_violation", "Sandbox returned an invalid tool output"
-            )
-        return output
+        return _parse_sandbox_response(result.stdout)
+
+
+def _parse_sandbox_response(stdout: str) -> dict[str, Any]:
+    raw = stdout.encode("utf-8")
+    if len(raw) > MAX_SANDBOX_RESPONSE_BYTES:
+        raise ToolExecutionError("sandbox_policy_violation", "Sandbox response is too large")
+    try:
+        envelope = json.loads(stdout)
+    except (json.JSONDecodeError, TypeError) as exc:
+        raise ToolExecutionError(
+            "sandbox_policy_violation", "Sandbox returned an invalid response"
+        ) from exc
+    if not isinstance(envelope, dict):
+        raise ToolExecutionError(
+            "sandbox_policy_violation", "Sandbox returned an invalid response"
+        )
+    if envelope.get("ok") is not True:
+        error = envelope.get("error") if isinstance(envelope.get("error"), dict) else {}
+        raise ToolExecutionError(
+            str(error.get("category") or "tool_failed"),
+            str(error.get("message") or "Sandboxed tool failed"),
+        )
+    output = envelope.get("output")
+    if not isinstance(output, dict):
+        raise ToolExecutionError(
+            "sandbox_policy_violation", "Sandbox returned an invalid tool output"
+        )
+    return output

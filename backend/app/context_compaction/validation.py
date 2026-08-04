@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import Any, cast
 
 from pydantic import BaseModel, ValidationError
 
@@ -55,7 +55,7 @@ def validate_checkpoint_payload(
         raise CheckpointValidationError(f"checkpoint_schema_invalid: {exc}") from exc
     _validate_binding(checkpoint, envelope)
     _validate_references(checkpoint, envelope)
-    return checkpoint  # type: ignore[return-value]
+    return cast(CheckpointV2, checkpoint)
 
 
 def _reject_forbidden_content(value: Any) -> None:

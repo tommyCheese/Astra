@@ -2,7 +2,8 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from app.db.models import ScheduledJobRecord, ScheduledJobRunRecord, TaskRecord
+from app.db.models.conversations import TaskRecord
+from app.db.models.scheduling import ScheduledJobRecord, ScheduledJobRunRecord
 from app.repositories.schedules import (
     ScheduleRepository,
     ScheduleVersionConflictError,

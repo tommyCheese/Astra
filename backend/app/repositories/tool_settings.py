@@ -6,7 +6,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 
 from app.core.config import Settings
-from app.db.models import ToolSettingRecord, utc_now
+from app.db.model_base import utc_now
+from app.db.models.conversations import ToolSettingRecord
 
 TOOL_SETTING_FIELDS = {
     "web_search": "tool_web_search_enabled",

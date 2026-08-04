@@ -7,7 +7,7 @@ import pytest
 from app.grounding.ledger import EvidenceConflictError
 from app.grounding.schemas import EvidenceFragment, EvidenceKind
 from app.repositories.agent_executions import AgentExecutionRepository
-from app.repositories.runs import RunRepository
+from app.repositories.run_unit_of_work import RunUnitOfWork
 from app.schemas.subagents import (
     DelegationContract,
     DelegationInput,
@@ -226,7 +226,7 @@ def test_context_checkpoint_and_continuation_are_child_local_bounded_and_version
 
 
 async def test_child_artifact_evidence_staging_and_explicit_parent_promotion(session):
-    run = await RunRepository(session).create_task_run("Child exchange", {})
+    run = await RunUnitOfWork(session).create_task_run("Child exchange", {})
     executions = AgentExecutionRepository(session)
     root = await executions.root_for_run(run.id)
     assert root is not None

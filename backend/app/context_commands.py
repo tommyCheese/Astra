@@ -9,8 +9,9 @@ from app.automation_commands import AutomationCommandService
 from app.conversation_context import ConversationContextManager
 from app.core.config import Settings
 from app.core.errors import ResourceError, ValidationError
-from app.db.models import TaskRecord, utc_now
-from app.schemas.agent import EXECUTABLE_SUBAGENT_COHORTS
+from app.db.model_base import utc_now
+from app.db.models.conversations import TaskRecord
+from app.schemas.agent.run_policy import EXECUTABLE_SUBAGENT_COHORTS
 
 
 @dataclass(frozen=True)
@@ -123,41 +124,16 @@ async def execute_system_command(
     if definition is None:
         raise ResourceError("SYSTEM_COMMAND_NOT_FOUND", "找不到这个快捷操作。")
     normalized_arguments = arguments.strip()
-    if definition.argument_mode == "required":
-        if not normalized_arguments:
-            raise ValidationError(
-                "SYSTEM_COMMAND_ARGUMENTS_REQUIRED",
-                f"此命令需要参数。用法：{definition.usage}",
-                {"usage": definition.usage, "command": f"/{command}"},
-            )
-        if session is None or settings is None:
-            raise RuntimeError("Parameterized command dependencies are unavailable")
-        automation = AutomationCommandService(session, settings)
-        if command == "schedule":
-            message, details = await automation.execute_schedule(task, normalized_arguments)
-        else:
-            message, details = await automation.execute_heartbeat(task, normalized_arguments)
-    elif definition.argument_mode == "none" and normalized_arguments:
-        raise ValidationError(
-            "SYSTEM_COMMAND_USAGE_INVALID",
-            f"/{command} 不接受参数。",
-            {"usage": definition.usage, "command": f"/{command}"},
-        )
-    elif command == "compact":
-        direction = normalized_arguments or definition.default_arguments
-        details = await manager.compact(task, direction=direction)
-        details["direction"] = direction
-        message = (
-            f"未能完成对话整理（{details['failure_code']}）；原上下文保持不变。"
-            if details.get("status") == "failed"
-            else "已按指定方向整理较早的对话，完整记录仍保留。"
-        )
-        normalized_arguments = direction
-    else:
-        details = await manager.clear(task)
-        message = "已清空模型上下文；后续请求将从零开始，完整记录仍保留。"
-
-    invocation = f"/{command}" + (f" {normalized_arguments}" if normalized_arguments else "")
+    message, details, normalized_arguments = await _execute_command(
+        manager=manager,
+        task=task,
+        definition=definition,
+        command=command,
+        arguments=normalized_arguments,
+        session=session,
+        settings=settings,
+    )
+    invocation = _command_invocation(command, normalized_arguments)
     raw_state = task.context_state if isinstance(task.context_state, dict) else {}
     history = [item for item in raw_state.get("command_history", []) if isinstance(item, dict)]
     command_message = {
@@ -172,3 +148,54 @@ async def execute_system_command(
     task.updated_at = utc_now()
     await manager.session.commit()
     return message, details, command_message
+
+
+async def _execute_command(
+    *, manager, task, definition, command, arguments, session, settings
+) -> tuple[str, dict[str, object], str]:
+    if definition.argument_mode == "required":
+        return await _execute_parameterized_command(
+            task, definition, command, arguments, session, settings
+        )
+    if definition.argument_mode == "none" and arguments:
+        raise ValidationError(
+            "SYSTEM_COMMAND_USAGE_INVALID",
+            f"/{command} 不接受参数。",
+            {"usage": definition.usage, "command": f"/{command}"},
+        )
+    if command == "compact":
+        direction = arguments or definition.default_arguments
+        details = await manager.compact(task, direction=direction)
+        details["direction"] = direction
+        message = _compaction_message(details)
+        return message, details, direction
+    return "已清空模型上下文；后续请求将从零开始，完整记录仍保留。", await manager.clear(task), arguments
+
+
+async def _execute_parameterized_command(
+    task, definition, command, arguments, session, settings
+) -> tuple[str, dict[str, object], str]:
+    if not arguments:
+        raise ValidationError(
+            "SYSTEM_COMMAND_ARGUMENTS_REQUIRED",
+            f"此命令需要参数。用法：{definition.usage}",
+            {"usage": definition.usage, "command": f"/{command}"},
+        )
+    if session is None or settings is None:
+        raise RuntimeError("Parameterized command dependencies are unavailable")
+    automation = AutomationCommandService(session, settings)
+    if command == "schedule":
+        message, details = await automation.execute_schedule(task, arguments)
+    else:
+        message, details = await automation.execute_heartbeat(task, arguments)
+    return message, details, arguments
+
+
+def _compaction_message(details: dict[str, object]) -> str:
+    if details.get("status") == "failed":
+        return f"未能完成对话整理（{details['failure_code']}）；原上下文保持不变。"
+    return "已按指定方向整理较早的对话，完整记录仍保留。"
+
+
+def _command_invocation(command: str, arguments: str) -> str:
+    return f"/{command}" + (f" {arguments}" if arguments else "")

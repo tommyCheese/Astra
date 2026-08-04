@@ -11,11 +11,8 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import TYPE_CHECKING, Any
 
-from app.memory.domain import MemoryKind, normalize_memory_kind
-
 if TYPE_CHECKING:
-    from app.agent_profile.profile import AgentProfile
-    from app.db.models import MemoryRecord, MemorySourceRecord
+    from app.db.models.memory import MemoryRecord, MemorySourceRecord
 
 
 INPUT_MANIFEST_SCHEMA_VERSION = 1
@@ -26,7 +23,6 @@ MAX_OPERATION_SOURCES = 100
 MAX_MODEL_OUTPUT_BYTES = 256 * 1024
 MAX_PROPOSAL_CONTENT_CHARS = 20_000
 MAX_TOTAL_PROPOSAL_CONTENT_CHARS = 100_000
-
 
 class ConsolidationAction(str, Enum):
     add = "add"
@@ -376,126 +372,146 @@ class FrozenMemoryInput:
 
     @classmethod
     def from_dict(cls, value: Mapping[str, Any]) -> FrozenMemoryInput:
-        allowed = {
-            "id",
-            "memory_key",
-            "version",
-            "state_version",
-            "status",
-            "namespace_type",
-            "namespace_id",
-            "scope",
-            "kind",
-            "content",
-            "structured_data",
-            "provenance",
-            "confidence",
-            "importance",
-            "utility_score",
-            "run_id",
-            "created_by",
-            "observed_at",
-            "valid_from",
-            "valid_to",
-            "expires_at",
-            "consolidation_generation",
-            "sources",
-            "content_hash",
-            "memory_hash",
-        }
+        allowed = _FROZEN_MEMORY_FIELDS
         _strict_fields(
             value,
             allowed=allowed,
             required=allowed,
             label="Frozen Memory input",
         )
-        integer_fields = ("version", "state_version", "consolidation_generation")
-        for field in integer_fields:
-            if isinstance(value[field], bool) or not isinstance(value[field], int):
-                raise ConsolidationValidationError(f"Frozen Memory {field} must be an integer")
-        if not isinstance(value["sources"], list):
-            raise ConsolidationValidationError("Frozen Memory sources must be a list")
-        sources = tuple(
-            sorted(
-                (
-                    FrozenSourceReference.from_dict(source)
-                    for source in value["sources"]
-                    if isinstance(source, Mapping)
-                ),
-                key=lambda source: (
-                    source.source_kind,
-                    source.source_ref,
-                    source.source_hash,
-                ),
-            )
-        )
-        if len(sources) != len(value["sources"]):
-            raise ConsolidationValidationError("Frozen Memory source entries must be objects")
-        content = _bounded_string(
-            value["content"],
-            label="Frozen Memory content",
-            maximum=50_000,
-        )
-        content_hash = _bounded_string(
-            value["content_hash"],
-            label="Frozen Memory content hash",
-            maximum=128,
-        )
-        if hashlib.sha256(content.encode("utf-8")).hexdigest() != content_hash:
-            raise ConsolidationValidationError("Frozen Memory content hash mismatch")
-        if not isinstance(value["structured_data"], Mapping):
-            raise ConsolidationValidationError("Frozen Memory structured_data must be an object")
-        if not isinstance(value["provenance"], Mapping):
-            raise ConsolidationValidationError("Frozen Memory provenance must be an object")
+        _validate_frozen_memory_types(value)
+        content, content_hash = _validated_frozen_content(value)
         candidate = cls(
-            id=_bounded_string(value["id"], label="Memory ID", maximum=120),
-            memory_key=_bounded_string(value["memory_key"], label="Memory key", maximum=240),
-            version=value["version"],
-            state_version=value["state_version"],
-            status=_bounded_string(value["status"], label="Memory status", maximum=40),
-            namespace_type=_bounded_string(
-                value["namespace_type"], label="Namespace type", maximum=40
-            ),
-            namespace_id=_bounded_string(value["namespace_id"], label="Namespace ID", maximum=120),
-            scope=_bounded_string(value["scope"], label="Memory scope", maximum=40),
-            kind=_bounded_string(value["kind"], label="Memory kind", maximum=80),
-            content=content,
-            structured_data_json=canonical_json(value["structured_data"]),
-            provenance_json=canonical_json(value["provenance"]),
-            confidence=_bounded_number(
-                value["confidence"],
-                label="Memory confidence",
-                minimum=0.0,
-                maximum=1.0,
-            ),
-            importance=_bounded_number(
-                value["importance"],
-                label="Memory importance",
-                minimum=0.0,
-                maximum=1.0,
-            ),
-            utility_score=_bounded_number(
-                value["utility_score"],
-                label="Memory utility",
-                minimum=-1.0,
-                maximum=1.0,
-            ),
-            run_id=_optional_string(value["run_id"], label="Run ID", maximum=120),
-            created_by=_optional_string(value["created_by"], label="Creator ID", maximum=120),
-            observed_at=_bounded_string(value["observed_at"], label="Observed time", maximum=80),
-            valid_from=_bounded_string(value["valid_from"], label="Valid-from time", maximum=80),
-            valid_to=_optional_string(value["valid_to"], label="Valid-to time", maximum=80),
-            expires_at=_optional_string(value["expires_at"], label="Expiration time", maximum=80),
-            consolidation_generation=value["consolidation_generation"],
-            sources=sources,
-            content_hash=content_hash,
-            memory_hash=_bounded_string(
-                value["memory_hash"], label="Frozen Memory hash", maximum=128
-            ),
+            **{
+                **_frozen_memory_identity(value, content),
+                **_frozen_memory_scores(value),
+                **_frozen_memory_lifecycle(value),
+                "sources": _frozen_sources(value["sources"]),
+                "content_hash": content_hash,
+                "memory_hash": _bounded_string(
+                    value["memory_hash"], label="Frozen Memory hash", maximum=128
+                ),
+            }
         )
         if canonical_digest(candidate._payload()) != candidate.memory_hash:
             raise ConsolidationValidationError("Frozen Memory hash mismatch")
         return candidate
+
+
+_FROZEN_MEMORY_FIELDS = {
+    "id",
+    "memory_key",
+    "version",
+    "state_version",
+    "status",
+    "namespace_type",
+    "namespace_id",
+    "scope",
+    "kind",
+    "content",
+    "structured_data",
+    "provenance",
+    "confidence",
+    "importance",
+    "utility_score",
+    "run_id",
+    "created_by",
+    "observed_at",
+    "valid_from",
+    "valid_to",
+    "expires_at",
+    "consolidation_generation",
+    "sources",
+    "content_hash",
+    "memory_hash",
+}
+
+
+def _validate_frozen_memory_types(value: Mapping[str, Any]) -> None:
+    for field in ("version", "state_version", "consolidation_generation"):
+        if isinstance(value[field], bool) or not isinstance(value[field], int):
+            raise ConsolidationValidationError(f"Frozen Memory {field} must be an integer")
+    if not isinstance(value["sources"], list):
+        raise ConsolidationValidationError("Frozen Memory sources must be a list")
+    for field in ("structured_data", "provenance"):
+        if not isinstance(value[field], Mapping):
+            raise ConsolidationValidationError(f"Frozen Memory {field} must be an object")
+
+
+def _frozen_sources(value: Any) -> tuple[FrozenSourceReference, ...]:
+    sources = tuple(
+        sorted(
+            (FrozenSourceReference.from_dict(item) for item in value if isinstance(item, Mapping)),
+            key=lambda item: (item.source_kind, item.source_ref, item.source_hash),
+        )
+    )
+    if len(sources) != len(value):
+        raise ConsolidationValidationError("Frozen Memory source entries must be objects")
+    return sources
+
+
+def _validated_frozen_content(value: Mapping[str, Any]) -> tuple[str, str]:
+    content = _bounded_string(value["content"], label="Frozen Memory content", maximum=50_000)
+    content_hash = _bounded_string(
+        value["content_hash"], label="Frozen Memory content hash", maximum=128
+    )
+    if hashlib.sha256(content.encode("utf-8")).hexdigest() != content_hash:
+        raise ConsolidationValidationError("Frozen Memory content hash mismatch")
+    return content, content_hash
+
+
+def _frozen_memory_identity(value: Mapping[str, Any], content: str) -> dict[str, Any]:
+    return {
+        "id": _bounded_string(value["id"], label="Memory ID", maximum=120),
+        "memory_key": _bounded_string(value["memory_key"], label="Memory key", maximum=240),
+        "version": value["version"],
+        "state_version": value["state_version"],
+        "status": _bounded_string(value["status"], label="Memory status", maximum=40),
+        "namespace_type": _bounded_string(
+            value["namespace_type"], label="Namespace type", maximum=40
+        ),
+        "namespace_id": _bounded_string(value["namespace_id"], label="Namespace ID", maximum=120),
+        "scope": _bounded_string(value["scope"], label="Memory scope", maximum=40),
+        "kind": _bounded_string(value["kind"], label="Memory kind", maximum=80),
+        "content": content,
+        "structured_data_json": canonical_json(value["structured_data"]),
+        "provenance_json": canonical_json(value["provenance"]),
+    }
+
+
+def _frozen_memory_scores(value: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        "confidence": _bounded_number(
+            value["confidence"],
+            label="Memory confidence",
+            minimum=0.0,
+            maximum=1.0,
+        ),
+        "importance": _bounded_number(
+            value["importance"],
+            label="Memory importance",
+            minimum=0.0,
+            maximum=1.0,
+        ),
+        "utility_score": _bounded_number(
+            value["utility_score"],
+            label="Memory utility",
+            minimum=-1.0,
+            maximum=1.0,
+        ),
+    }
+
+
+def _frozen_memory_lifecycle(value: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        "run_id": _optional_string(value["run_id"], label="Run ID", maximum=120),
+        "created_by": _optional_string(value["created_by"], label="Creator ID", maximum=120),
+        "observed_at": _bounded_string(value["observed_at"], label="Observed time", maximum=80),
+        "valid_from": _bounded_string(value["valid_from"], label="Valid-from time", maximum=80),
+        "valid_to": _optional_string(value["valid_to"], label="Valid-to time", maximum=80),
+        "expires_at": _optional_string(value["expires_at"], label="Expiration time", maximum=80),
+        "consolidation_generation": value["consolidation_generation"],
+    }
 
 
 @dataclass(frozen=True, slots=True)
@@ -740,510 +756,45 @@ class ConsolidationProposal:
             },
             label="Consolidation proposal",
         )
-        raw = {
-            "schema_version": value["schema_version"],
-            "operations": value["operations"],
-        }
-        proposal = normalize_model_output(raw, producer=str(value["producer"]))
+        if value["schema_version"] != CONSOLIDATION_PROPOSAL_SCHEMA_VERSION:
+            raise ConsolidationValidationError("Unsupported consolidation proposal schema")
+        raw_operations = value["operations"]
+        if not isinstance(raw_operations, list):
+            raise ConsolidationValidationError("Proposal operations must be a list")
+        proposal = cls.build(
+            producer=str(value["producer"]),
+            operations=(_stored_operation(item) for item in raw_operations),
+        )
         stored_hash = _bounded_string(value["proposal_hash"], label="Proposal hash", maximum=128)
         if proposal.proposal_hash != stored_hash:
             raise ConsolidationValidationError("Consolidation proposal hash mismatch")
         return proposal
 
 
-def normalize_model_output(
-    raw_output: str | Mapping[str, Any],
-    *,
-    producer: str = "model",
-) -> ConsolidationProposal:
-    if isinstance(raw_output, str):
-        if len(raw_output.encode("utf-8")) > MAX_MODEL_OUTPUT_BYTES:
-            raise ConsolidationValidationError("Model consolidation output is too large")
-        try:
-            decoded = json.loads(raw_output)
-        except json.JSONDecodeError as exc:
-            raise ConsolidationValidationError(
-                "Model consolidation output must be valid JSON"
-            ) from exc
-    elif isinstance(raw_output, Mapping):
-        decoded = dict(raw_output)
-    else:
-        raise ConsolidationValidationError("Model consolidation output must be a JSON object")
-    if not isinstance(decoded, Mapping):
-        raise ConsolidationValidationError("Model consolidation output must be a JSON object")
-    if len(canonical_json(decoded).encode("utf-8")) > MAX_MODEL_OUTPUT_BYTES:
-        raise ConsolidationValidationError("Model consolidation output is too large")
-    _strict_fields(
-        decoded,
-        allowed={"schema_version", "operations"},
-        required={"schema_version", "operations"},
-        label="Model consolidation output",
-    )
-    if decoded["schema_version"] != CONSOLIDATION_PROPOSAL_SCHEMA_VERSION:
-        raise ConsolidationValidationError("Unsupported consolidation proposal schema")
-    raw_operations = decoded["operations"]
-    if not isinstance(raw_operations, list):
-        raise ConsolidationValidationError("Proposal operations must be a list")
-    if len(raw_operations) > MAX_PROPOSAL_OPERATIONS:
-        raise ConsolidationValidationError(
-            f"Proposal exceeds the {MAX_PROPOSAL_OPERATIONS} operation limit"
-        )
-    operations: list[ConsolidationOperation] = []
-    total_content_chars = 0
-    replaced_ids: set[str] = set()
-    for index, raw_operation in enumerate(raw_operations):
-        if not isinstance(raw_operation, Mapping):
-            raise ConsolidationValidationError(f"Proposal operation {index} must be an object")
-        allowed = {
-            "action",
-            "memory_key",
-            "kind",
-            "scope",
-            "content",
-            "structured_data",
-            "confidence",
-            "importance",
-            "source_memory_ids",
-            "replace_memory_ids",
-            "operation_id",
-        }
-        required = {
-            "action",
-            "memory_key",
-            "kind",
-            "scope",
-            "content",
-            "source_memory_ids",
-        }
-        _strict_fields(
-            raw_operation,
-            allowed=allowed,
-            required=required,
-            label=f"Proposal operation {index}",
-        )
-        try:
-            action = ConsolidationAction(str(raw_operation["action"]))
-        except ValueError as exc:
-            raise ConsolidationValidationError(
-                f"Proposal operation {index} has an unsupported action"
-            ) from exc
-        memory_key = _bounded_string(
-            raw_operation["memory_key"],
-            label=f"Proposal operation {index} Memory key",
-            maximum=240,
-        )
-        raw_kind = _bounded_string(
-            raw_operation["kind"],
-            label=f"Proposal operation {index} kind",
-            maximum=80,
-        )
-        normalized_kind = normalize_memory_kind(
-            raw_kind,
-        )
-        if not isinstance(normalized_kind, MemoryKind):
-            raise ConsolidationValidationError(
-                f"Proposal operation {index} has an unsupported Memory kind"
-            )
-        scope = _bounded_string(
-            raw_operation["scope"],
-            label=f"Proposal operation {index} scope",
-            maximum=40,
-        )
-        if scope not in {"run", "task", "session", "user"}:
-            raise ConsolidationValidationError(
-                f"Proposal operation {index} has an unsupported Memory scope"
-            )
-        content = _bounded_string(
-            raw_operation["content"],
-            label=f"Proposal operation {index} content",
-            maximum=MAX_PROPOSAL_CONTENT_CHARS,
-        )
-        total_content_chars += len(content)
-        if total_content_chars > MAX_TOTAL_PROPOSAL_CONTENT_CHARS:
-            raise ConsolidationValidationError("Proposal exceeds the total content character limit")
-        structured_data = raw_operation.get("structured_data", {})
-        if not isinstance(structured_data, Mapping):
-            raise ConsolidationValidationError(
-                f"Proposal operation {index} structured_data must be an object"
-            )
-        confidence = _bounded_number(
-            raw_operation.get("confidence", 0.8),
-            label=f"Proposal operation {index} confidence",
-            minimum=0.0,
-            maximum=1.0,
-        )
-        importance = _bounded_number(
-            raw_operation.get("importance", 0.5),
-            label=f"Proposal operation {index} importance",
-            minimum=0.0,
-            maximum=1.0,
-        )
-        source_ids = _bounded_ids(
-            raw_operation["source_memory_ids"],
-            label=f"Proposal operation {index} source_memory_ids",
-            required=True,
-        )
-        replacement_ids = _bounded_ids(
-            raw_operation.get("replace_memory_ids", []),
-            label=f"Proposal operation {index} replace_memory_ids",
-            required=action is ConsolidationAction.replace,
-        )
-        if action is ConsolidationAction.add and replacement_ids:
-            raise ConsolidationValidationError(
-                f"Proposal operation {index} add action cannot replace Memory"
-            )
-        overlap = replaced_ids.intersection(replacement_ids)
-        if overlap:
-            raise ConsolidationValidationError(
-                "Proposal cannot replace the same Memory in multiple operations"
-            )
-        replaced_ids.update(replacement_ids)
+def _stored_operation(value: Any) -> ConsolidationOperation:
+    if not isinstance(value, Mapping):
+        raise ConsolidationValidationError("Stored consolidation operation must be an object")
+    try:
         operation = ConsolidationOperation.build(
-            action=action,
-            memory_key=memory_key,
-            kind=normalized_kind.value,
-            scope=scope,
-            content=content,
-            structured_data=_json_object(structured_data),
-            confidence=confidence,
-            importance=importance,
-            source_memory_ids=source_ids,
-            replace_memory_ids=replacement_ids,
-        )
-        supplied_id = raw_operation.get("operation_id")
-        if supplied_id is not None and normalize_text(str(supplied_id)) != operation.operation_id:
-            raise ConsolidationValidationError(
-                f"Proposal operation {index} operation_id does not match its content"
-            )
-        operations.append(operation)
-    output_keys = [operation.memory_key for operation in operations]
-    if len(output_keys) != len(set(output_keys)):
-        raise ConsolidationValidationError(
-            "Proposal cannot create multiple outputs for one normalized Memory key"
-        )
-    return ConsolidationProposal.build(producer=producer, operations=operations)
-
-
-def deterministic_duplicate_proposal(
-    manifest: ConsolidationInputManifest,
-) -> ConsolidationProposal:
-    groups: dict[tuple[str, str, str, str], list[FrozenMemoryInput]] = {}
-    for item in manifest.items:
-        if item.status != "active":
-            continue
-        group_key = (
-            normalize_memory_key(item.memory_key),
-            equivalent_content_key(item.content),
-            item.kind,
-            item.scope,
-        )
-        groups.setdefault(group_key, []).append(item)
-    operations: list[ConsolidationOperation] = []
-    for group_key, items in sorted(groups.items()):
-        if len(items) < 2:
-            continue
-        canonical = min(
-            items,
-            key=lambda item: (
-                -item.confidence,
-                -item.importance,
-                -item.version,
-                item.id,
+            action=ConsolidationAction(str(value["action"])),
+            memory_key=str(value["memory_key"]),
+            kind=str(value["kind"]),
+            scope=str(value["scope"]),
+            content=str(value["content"]),
+            structured_data=_json_object(value.get("structured_data")),
+            confidence=float(value["confidence"]),
+            importance=float(value["importance"]),
+            source_memory_ids=_bounded_ids(
+                value["source_memory_ids"], label="source ids", required=True
+            ),
+            replace_memory_ids=_bounded_ids(
+                value.get("replace_memory_ids", []),
+                label="replacement ids",
+                required=False,
             ),
         )
-        source_ids = tuple(sorted(item.id for item in items))
-        operations.append(
-            ConsolidationOperation.build(
-                action=ConsolidationAction.replace,
-                memory_key=group_key[0],
-                kind=canonical.kind,
-                scope=canonical.scope,
-                content=canonical.content,
-                structured_data=canonical.structured_data,
-                confidence=max(item.confidence for item in items),
-                importance=max(item.importance for item in items),
-                source_memory_ids=source_ids,
-                replace_memory_ids=source_ids,
-            )
-        )
-    return ConsolidationProposal.build(
-        producer="deterministic",
-        operations=operations,
-    )
-
-
-@dataclass(frozen=True, slots=True)
-class ConsolidationValidationIssue:
-    code: str
-    detail: str
-    operation_id: str | None = None
-    memory_id: str | None = None
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "code": self.code,
-            "detail": self.detail,
-            "operation_id": self.operation_id,
-            "memory_id": self.memory_id,
-        }
-
-
-@dataclass(frozen=True, slots=True)
-class ConsolidationValidationReport:
-    input_hash: str
-    proposal_hash: str
-    issues: tuple[ConsolidationValidationIssue, ...]
-
-    @property
-    def valid(self) -> bool:
-        return not self.issues
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "valid": self.valid,
-            "input_hash": self.input_hash,
-            "proposal_hash": self.proposal_hash,
-            "issues": [issue.to_dict() for issue in self.issues],
-        }
-
-
-_INSTRUCTION_PATTERNS = (
-    re.compile(
-        r"\bignore\s+(?:all\s+)?(?:previous|prior|trusted|system)\b",
-        re.IGNORECASE,
-    ),
-    re.compile(
-        r"\b(?:replace|override|rewrite)\b.{0,80}"
-        r"\b(?:system\s+prompt|agent\s+profile|autodream|memory\s+governance)\b",
-        re.IGNORECASE | re.DOTALL,
-    ),
-    re.compile(r"<\s*/?\s*astra_(?:runtime_context|skill)\b", re.IGNORECASE),
-    re.compile(r"(?:忽略|覆盖|替换).{0,40}(?:系统|受信任|协议|配置|指令)"),
-)
-_AUTHORITY_PATTERNS = (
-    re.compile(
-        r"\b(?:enable|grant|expand|bypass|weaken|override|install|modify|change)\b"
-        r".{0,80}\b(?:tool|permission|credential|approval|sandbox|security|policy|"
-        r"profile|skill)\b",
-        re.IGNORECASE | re.DOTALL,
-    ),
-    re.compile(
-        r"\b(?:tool|permission|credential|approval|sandbox|security|policy|profile|"
-        r"skill)\b.{0,80}\b(?:enable|grant|expand|bypass|weaken|override|install|"
-        r"modify|change)\b",
-        re.IGNORECASE | re.DOTALL,
-    ),
-    re.compile(
-        r"(?:启用|授予|扩大|绕过|削弱|覆盖|安装|修改|变更).{0,40}"
-        r"(?:工具|权限|凭据|审批|沙箱|安全|策略|Profile|Skill)",
-        re.IGNORECASE,
-    ),
-)
-_PROTECTED_KEY_PATTERN = re.compile(
-    r"(?:enable|grant|expand|bypass|override|install|modify|change|disable|remove)"
-    r".*(?:tool|permission|credential|approval|sandbox|security|policy|profile|skill)"
-    r"|(?:credential|secret|api_key|approval_bypass|sandbox_exception|security_override)",
-    re.IGNORECASE,
-)
-
-
-def _contains_instruction_override(value: str) -> bool:
-    return any(pattern.search(value) for pattern in _INSTRUCTION_PATTERNS)
-
-
-def _contains_authority_change(value: str) -> bool:
-    return any(pattern.search(value) for pattern in _AUTHORITY_PATTERNS)
-
-
-def _protected_structured_key(value: Any) -> str | None:
-    if isinstance(value, Mapping):
-        for raw_key, nested in value.items():
-            key = normalize_text(str(raw_key))
-            if _PROTECTED_KEY_PATTERN.search(key):
-                return key
-            found = _protected_structured_key(nested)
-            if found is not None:
-                return found
-    elif isinstance(value, list):
-        for nested in value:
-            found = _protected_structured_key(nested)
-            if found is not None:
-                return found
-    return None
-
-
-def validate_proposal(
-    manifest: ConsolidationInputManifest,
-    proposal: ConsolidationProposal,
-    *,
-    extra_issues: Iterable[ConsolidationValidationIssue] = (),
-) -> ConsolidationValidationReport:
-    items = {item.id: item for item in manifest.items}
-    issues = list(extra_issues)
-    output_keys: set[str] = set()
-    replaced_ids: set[str] = set()
-    for operation in proposal.operations:
-        if operation.memory_key in output_keys:
-            issues.append(
-                ConsolidationValidationIssue(
-                    code="duplicate_output_key",
-                    detail="Multiple operations produce the same normalized Memory key",
-                    operation_id=operation.operation_id,
-                )
-            )
-        output_keys.add(operation.memory_key)
-        if not operation.source_memory_ids:
-            issues.append(
-                ConsolidationValidationIssue(
-                    code="source_coverage",
-                    detail="A consolidation output must cite at least one input Memory",
-                    operation_id=operation.operation_id,
-                )
-            )
-        for source_id in operation.source_memory_ids:
-            source = items.get(source_id)
-            if source is None:
-                issues.append(
-                    ConsolidationValidationIssue(
-                        code="namespace_isolation",
-                        detail=(
-                            "A consolidation source is outside the frozen namespace working region"
-                        ),
-                        operation_id=operation.operation_id,
-                        memory_id=source_id,
-                    )
-                )
-                continue
-            if not any(reference.accessible for reference in source.sources):
-                issues.append(
-                    ConsolidationValidationIssue(
-                        code="source_coverage",
-                        detail="An input Memory has no accessible frozen provenance",
-                        operation_id=operation.operation_id,
-                        memory_id=source_id,
-                    )
-                )
-        for replacement_id in operation.replace_memory_ids:
-            if replacement_id in replaced_ids:
-                issues.append(
-                    ConsolidationValidationIssue(
-                        code="duplicate_replacement",
-                        detail="An input Memory cannot be replaced more than once",
-                        operation_id=operation.operation_id,
-                        memory_id=replacement_id,
-                    )
-                )
-            replaced_ids.add(replacement_id)
-            replacement = items.get(replacement_id)
-            if replacement is None:
-                issues.append(
-                    ConsolidationValidationIssue(
-                        code="namespace_isolation",
-                        detail="A replacement target is outside the frozen working region",
-                        operation_id=operation.operation_id,
-                        memory_id=replacement_id,
-                    )
-                )
-                continue
-            if replacement_id not in operation.source_memory_ids:
-                issues.append(
-                    ConsolidationValidationIssue(
-                        code="source_coverage",
-                        detail="Every replacement target must also be a cited source",
-                        operation_id=operation.operation_id,
-                        memory_id=replacement_id,
-                    )
-                )
-            if replacement.kind != operation.kind or replacement.scope != operation.scope:
-                issues.append(
-                    ConsolidationValidationIssue(
-                        code="type_isolation",
-                        detail=(
-                            "A replacement cannot change the Memory kind or scope of its input"
-                        ),
-                        operation_id=operation.operation_id,
-                        memory_id=replacement_id,
-                    )
-                )
-        if operation.action is ConsolidationAction.replace and not operation.replace_memory_ids:
-            issues.append(
-                ConsolidationValidationIssue(
-                    code="replacement_required",
-                    detail="A replace operation must identify replacement targets",
-                    operation_id=operation.operation_id,
-                )
-            )
-        if operation.action is ConsolidationAction.add and operation.replace_memory_ids:
-            issues.append(
-                ConsolidationValidationIssue(
-                    code="unexpected_replacement",
-                    detail="An add operation cannot identify replacement targets",
-                    operation_id=operation.operation_id,
-                )
-            )
-        if operation.scope != manifest.namespace_type:
-            issues.append(
-                ConsolidationValidationIssue(
-                    code="namespace_isolation",
-                    detail="Output scope does not match the frozen namespace type",
-                    operation_id=operation.operation_id,
-                )
-            )
-        inspection_text = operation.content + "\n" + operation.structured_data_json
-        if _contains_instruction_override(inspection_text):
-            issues.append(
-                ConsolidationValidationIssue(
-                    code="instruction_isolation",
-                    detail="Output contains an attempt to replace trusted instructions",
-                    operation_id=operation.operation_id,
-                )
-            )
-        protected_key = _protected_structured_key(operation.structured_data)
-        if _contains_authority_change(inspection_text) or protected_key is not None:
-            detail = "Output attempts to change protected runtime authority"
-            if protected_key is not None:
-                detail += f" through structured field {protected_key}"
-            issues.append(
-                ConsolidationValidationIssue(
-                    code="protected_authority",
-                    detail=detail,
-                    operation_id=operation.operation_id,
-                )
-            )
-    normalized_issues = tuple(
-        sorted(
-            issues,
-            key=lambda issue: (
-                issue.code,
-                issue.operation_id or "",
-                issue.memory_id or "",
-                issue.detail,
-            ),
-        )
-    )
-    return ConsolidationValidationReport(
-        input_hash=manifest.input_hash,
-        proposal_hash=proposal.proposal_hash,
-        issues=normalized_issues,
-    )
-
-
-def autodream_profile_snapshot(profile: AgentProfile) -> dict[str, Any]:
-    from app.agent_profile.profile import ModelOperation
-
-    selected = profile.documents_for(ModelOperation.AUTODREAM)
-    selected_names = tuple(document.name for document in selected)
-    if selected_names != ("identity", "memory", "autodream"):
-        raise ConsolidationValidationError(
-            "AutoDream Profile selection must be identity, memory, and autodream"
-        )
-    payload = {
-        "operation": ModelOperation.AUTODREAM.value,
-        "profile": profile.snapshot(),
-        "selected_documents": [document.safe_metadata() for document in selected],
-    }
-    normalized = _json_object(payload)
-    return {
-        **normalized,
-        "snapshot_hash": canonical_digest(normalized),
-    }
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ConsolidationValidationError("Stored consolidation operation is invalid") from exc
+    if value.get("operation_id") != operation.operation_id:
+        raise ConsolidationValidationError("Stored consolidation operation hash mismatch")
+    return operation

@@ -5,7 +5,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ResourceError, StateError, ValidationError
-from app.db.models import MemoryAuditRecord, MemoryRecallEventRecord
+from app.db.models.memory import MemoryAuditRecord, MemoryRecallEventRecord
 from app.db.session import get_session
 from app.memory.domain import (
     MemoryConflictError,
@@ -15,6 +15,8 @@ from app.memory.domain import (
     MemoryValidationError,
 )
 from app.repositories.memories import MemoryRepository
+from app.repositories.memory_queries import MemoryQueryRepository
+from app.repositories.memory_recall import MemoryRecallRepository
 from app.schemas.memory import (
     MemoryActivationRequest,
     MemoryDetailView,
@@ -34,21 +36,12 @@ def _memory_view(memory) -> MemoryView:
 
 
 def _recall_view(event: MemoryRecallEventRecord, memory_id: str) -> MemoryRecallView | None:
-    selected = next(
-        (item for item in event.selected or [] if item.get("id") == memory_id),
-        None,
-    )
-    excluded = next(
-        (item for item in event.excluded or [] if item.get("id") == memory_id),
-        None,
-    )
-    candidate = next(
-        (item for item in event.candidates or [] if item.get("id") == memory_id),
-        None,
-    )
+    selected = _recall_entry(event.selected, memory_id)
+    excluded = _recall_entry(event.excluded, memory_id)
+    candidate = _recall_entry(event.candidates, memory_id)
     if selected is None and excluded is None and candidate is None:
         return None
-    reasons = excluded.get("reasons") if excluded else None
+    reasons = excluded.get("reasons") if excluded else []
     return MemoryRecallView(
         event_id=event.id,
         run_id=event.run_id,
@@ -56,13 +49,19 @@ def _recall_view(event: MemoryRecallEventRecord, memory_id: str) -> MemoryRecall
         query_fingerprint=event.query_hash,
         policy_version=event.policy_version,
         selected=selected is not None,
-        exclusion_reason=", ".join(str(item) for item in reasons)
-        if isinstance(reasons, list)
-        else None,
+        exclusion_reason=_exclusion_reason(reasons),
         scores=(selected or candidate or {}).get("score") or {},
         feedback=event.feedback or {},
         created_at=event.created_at,
     )
+
+
+def _recall_entry(entries: list[dict] | None, memory_id: str) -> dict | None:
+    return next((item for item in entries or [] if item.get("id") == memory_id), None)
+
+
+def _exclusion_reason(reasons) -> str | None:
+    return ", ".join(str(item) for item in reasons) if isinstance(reasons, list) else None
 
 
 async def _require_memory(
@@ -87,7 +86,7 @@ async def _memory_detail(
         MemoryNamespaceType(memory.namespace_type),
         memory.namespace_id,
     )
-    history = await repository.history(
+    history = await MemoryQueryRepository(session).history(
         namespace=namespace,
         memory_key=memory.memory_key,
     )
@@ -161,7 +160,7 @@ async def list_memories(
             raise ValidationError("MEMORY_STATUS_INVALID", "记忆生命周期状态无效。") from exc
     elif not include_history:
         statuses = [MemoryStatus.active]
-    records = await MemoryRepository(session).list_records(
+    records = await MemoryQueryRepository(session).list_records(
         kind=kind,
         run_id=run_id,
         namespaces=namespaces,
@@ -257,7 +256,7 @@ async def record_memory_recall_feedback(
     session: AsyncSession = Depends(get_session),
 ):
     try:
-        event = await MemoryRepository(session).record_recall_feedback(
+        event = await MemoryRecallRepository(session).record_feedback(
             recall_event_id,
             outcome=payload.outcome,
             utility_delta=payload.utility_delta,

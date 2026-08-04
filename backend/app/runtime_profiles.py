@@ -9,181 +9,42 @@ from collections import deque
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from sqlalchemy import select
-
-from app.agent_profile import AgentProfile, AgentProfileLoader
-from app.db.models import RuntimeBuildRecord, RuntimeProfileRecord, utc_now
+from app.agent_profile import AgentProfile
+from app.runtime_configuration import RuntimeConfiguration
+from app.runtime_dependency_policy import CORE_DEPENDENCIES, normalize_dependencies
+from app.runtime_profile_persistence import RuntimeProfilePersistence
 from app.sandbox.runtime import sanitize_log
 
-NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
-VERSION = re.compile(r"^[0-9]+(?:\.[0-9A-Za-z]+)*(?:[-+][0-9A-Za-z.-]+)?$")
-CORE_DEPENDENCIES = [
-    {"name": "matplotlib", "version": "3.10.3"},
-    {"name": "numpy", "version": "2.2.6"},
-    {"name": "pandas", "version": "2.2.3"},
-    {"name": "pillow", "version": "11.2.1"},
-    {"name": "pyarrow", "version": "20.0.0"},
-    {"name": "scipy", "version": "1.15.3"},
-    {"name": "seaborn", "version": "0.13.2"},
-]
-PROTECTED = {item["name"] for item in CORE_DEPENDENCIES} | {"echarts", "playwright"}
 MANAGED_IMAGE = re.compile(r"^astra-data-viz:(?:build-[0-9a-f-]+|custom-[0-9a-f]+)$")
-MEMORY_SETTING_BOUNDS = {
-    "retrieval_max_items": (0, 50),
-    "retrieval_max_tokens": (0, 32_000),
-    "retrieval_min_confidence": (0.0, 1.0),
-    "retrieval_min_score": (0.0, 1.0),
-    "autodream_scan_seconds": (60, 604_800),
-    "autodream_min_candidates": (2, 100),
-}
-
-
-def normalize_dependencies(values):
-    if len(values) > 32:
-        raise ValueError("最多允许 32 个依赖")
-    result, seen = [], set()
-    for item in values:
-        name, version = str(item.get("name", "")).strip(), str(item.get("version", "")).strip()
-        normalized = re.sub(r"[-_.]+", "-", name).lower()
-        if (
-            not NAME.fullmatch(name)
-            or (version and not VERSION.fullmatch(version))
-            or normalized in PROTECTED
-        ):
-            raise ValueError(f"不允许的依赖：{name}")
-        if normalized in seen:
-            raise ValueError(f"依赖重复：{name}")
-        seen.add(normalized)
-        result.append({"name": normalized, "version": version})
-    return sorted(result, key=lambda value: value["name"])
 
 
 class RuntimeProfileService:
     def __init__(self, settings, *, recover_interrupted: bool = False, session_factory=None):
         self.settings, self.path, self.tasks = settings, Path(settings.runtime_profile_path), {}
         self.session_factory = session_factory
+        self.persistence = RuntimeProfilePersistence(session_factory)
         self.recovered_staging_images = []
-        self._packaged_agent_profile = AgentProfileLoader().load()
-        self._active_agent_profile = self._load_agent_profile(self._read_persisted())
-        persisted_memory = self._read_persisted().get("memory_settings")
-        if persisted_memory is not None:
-            self._apply_memory_settings(self._normalize_memory_settings(persisted_memory))
+        self.configuration = RuntimeConfiguration(settings, self.path)
         if recover_interrupted:
             self._recover_interrupted_build()
 
     def _read_persisted(self):
-        if not self.path.exists():
-            return {}
-        return json.loads(self.path.read_text())
-
-    def _load_agent_profile(self, state) -> AgentProfile:
-        value = state.get("agent_profile")
-        if value is None:
-            return self._packaged_agent_profile
-        documents = value.get("documents") if isinstance(value, dict) else None
-        if not isinstance(documents, dict):
-            raise ValueError("Agent Profile 运行时配置无效")
-        return AgentProfileLoader().load(documents)
-
-    @staticmethod
-    def _agent_profile_documents(profile: AgentProfile):
-        return {document.name: document.content for document in profile.manifest.documents}
-
-    def _agent_profile_view(self, state):
-        source = "user" if state.get("agent_profile") is not None else "default"
-        profile = self._active_agent_profile
-        return {
-            "source": source,
-            "version": profile.manifest.version,
-            "documents": self._agent_profile_documents(profile),
-        }
+        return self.configuration.read_persisted()
 
     def active_agent_profile(self) -> AgentProfile:
-        return self._active_agent_profile
+        return self.configuration.active_profile
 
     def update_agent_profile(self, documents):
-        profile = AgentProfileLoader().load(documents)
-        state = self._read_persisted()
-        state["agent_profile"] = {
-            "documents": self._agent_profile_documents(profile),
-        }
-        self.write(state)
-        self._active_agent_profile = profile
-        return self._agent_profile_view(state)
+        return self.configuration.update_agent_profile(documents)
 
     def reset_agent_profile(self):
-        state = self._read_persisted()
-        state.pop("agent_profile", None)
-        self.write(state)
-        self._active_agent_profile = self._packaged_agent_profile
-        return self._agent_profile_view(state)
+        return self.configuration.reset_agent_profile()
 
     def memory_settings(self):
-        return {
-            "write_enabled": self.settings.agent_memory_write_enabled,
-            "recall_enabled": self.settings.agent_memory_cross_session_enabled,
-            "retrieval_max_items": self.settings.agent_memory_retrieval_max_items,
-            "retrieval_max_tokens": self.settings.agent_memory_retrieval_max_tokens,
-            "retrieval_min_confidence": self.settings.agent_memory_retrieval_min_confidence,
-            "retrieval_min_score": self.settings.agent_memory_retrieval_min_score,
-            "autodream_enabled": self.settings.agent_memory_autodream_enabled,
-            "autodream_scan_seconds": self.settings.agent_memory_autodream_scan_seconds,
-            "autodream_min_candidates": self.settings.agent_memory_autodream_min_candidates,
-        }
-
-    def _normalize_memory_settings(self, value):
-        if not isinstance(value, dict):
-            raise ValueError("记忆运行设置必须是对象")
-        value = dict(value)
-        required = set(self.memory_settings())
-        if set(value) != required:
-            raise ValueError("记忆运行设置字段不完整")
-        if any(
-            not isinstance(value[field], bool)
-            for field in ("write_enabled", "recall_enabled", "autodream_enabled")
-        ):
-            raise ValueError("记忆运行开关必须是布尔值")
-        normalized = {
-            "write_enabled": value["write_enabled"],
-            "recall_enabled": value["recall_enabled"],
-            "autodream_enabled": value["autodream_enabled"],
-        }
-        integer_fields = {
-            "retrieval_max_items",
-            "retrieval_max_tokens",
-            "autodream_scan_seconds",
-            "autodream_min_candidates",
-        }
-        for field, (minimum, maximum) in MEMORY_SETTING_BOUNDS.items():
-            raw = value[field]
-            if field in integer_fields:
-                if not isinstance(raw, int) or isinstance(raw, bool):
-                    raise ValueError(f"记忆运行设置 {field} 必须是整数")
-            elif not isinstance(raw, (int, float)) or isinstance(raw, bool):
-                raise ValueError(f"记忆运行设置 {field} 必须是数字")
-            if not minimum <= raw <= maximum:
-                raise ValueError(f"记忆运行设置 {field} 超出允许范围")
-            normalized[field] = raw
-        return normalized
-
-    def _apply_memory_settings(self, value):
-        self.settings.agent_memory_write_enabled = value["write_enabled"]
-        self.settings.agent_memory_cross_session_enabled = value["recall_enabled"]
-        self.settings.agent_memory_retrieval_max_items = value["retrieval_max_items"]
-        self.settings.agent_memory_retrieval_max_tokens = value["retrieval_max_tokens"]
-        self.settings.agent_memory_retrieval_min_confidence = value["retrieval_min_confidence"]
-        self.settings.agent_memory_retrieval_min_score = value["retrieval_min_score"]
-        self.settings.agent_memory_autodream_enabled = value["autodream_enabled"]
-        self.settings.agent_memory_autodream_scan_seconds = value["autodream_scan_seconds"]
-        self.settings.agent_memory_autodream_min_candidates = value["autodream_min_candidates"]
+        return self.configuration.memory_settings()
 
     def update_memory_settings(self, value):
-        normalized = self._normalize_memory_settings(value)
-        state = self._read_persisted()
-        state["memory_settings"] = normalized
-        self.write(state, persist_memory_settings=True)
-        self._apply_memory_settings(normalized)
-        return self.memory_settings()
+        return self.configuration.update_memory_settings(value)
 
     def _recover_interrupted_build(self):
         if not self.path.exists():
@@ -216,113 +77,13 @@ class RuntimeProfileService:
         await self._prune_images(cleanup_id)
 
     async def _load_database_state(self):
-        if self.session_factory is None:
-            return
-        state = self.read()
-        async with self.session_factory() as session:
-            profile = await session.get(RuntimeProfileRecord, "default")
-            if profile is None:
-                profile = RuntimeProfileRecord(
-                    id="default",
-                    dependencies=state["dependencies"],
-                    active_image=state["active_image"],
-                    dependency_digest=state["dependency_digest"],
-                )
-                session.add(profile)
-            else:
-                state.update(
-                    dependencies=list(profile.dependencies),
-                    active_image=profile.active_image,
-                    dependency_digest=profile.dependency_digest,
-                )
-            build = await session.scalar(
-                select(RuntimeBuildRecord)
-                .where(RuntimeBuildRecord.profile_id == "default")
-                .order_by(RuntimeBuildRecord.created_at.desc())
-                .limit(1)
-            )
-            if build is not None:
-                if build.status in {"queued", "building"}:
-                    build.status = "cancelled"
-                    build.phase = "构建已中断"
-                    build.error_code = "runtime_restarted"
-                    build.completed_at = utc_now()
-                    self.recovered_staging_images.append(
-                        (build.id, build.staging_image or f"astra-data-viz:build-{build.id}")
-                    )
-                state["build"] = self._database_build_view(build)
-            await session.commit()
+        state, recovered = await self.persistence.load(self.read())
+        self.recovered_staging_images.extend(recovered)
         self.write(state)
-        await self._persist_database_state(state)
-
-    @staticmethod
-    def _database_build_view(build: RuntimeBuildRecord):
-        return {
-            "id": build.id,
-            "status": build.status,
-            "phase": build.phase,
-            "progress": build.progress,
-            "log": build.log_summary,
-            "image": build.activated_image,
-            "dependencies": list(build.dependencies),
-            "dependency_digest": build.dependency_digest,
-        }
+        await self.persistence.persist(state)
 
     async def _persist_database_state(self, state):
-        if self.session_factory is None:
-            return
-        async with self.session_factory() as session:
-            raw_build = state.get("build") or {}
-            profile = await session.get(RuntimeProfileRecord, "default")
-            if profile is None:
-                profile = RuntimeProfileRecord(
-                    id="default",
-                    dependencies=[],
-                    active_image=state["active_image"],
-                    dependency_digest=state["dependency_digest"],
-                    version=1,
-                )
-                session.add(profile)
-            if not raw_build or raw_build.get("status") == "succeeded":
-                runtime_changed = (
-                    profile.dependencies != state["dependencies"]
-                    or profile.active_image != state["active_image"]
-                    or profile.dependency_digest != state["dependency_digest"]
-                )
-                profile.dependencies = list(state["dependencies"])
-                profile.active_image = state["active_image"]
-                profile.dependency_digest = state["dependency_digest"]
-                if runtime_changed:
-                    profile.version += 1
-            profile.updated_at = utc_now()
-            if raw_build.get("id"):
-                build = await session.get(RuntimeBuildRecord, raw_build["id"])
-                if build is None:
-                    build = RuntimeBuildRecord(
-                        id=raw_build["id"],
-                        profile_id="default",
-                        dependencies=list(raw_build.get("dependencies", state["dependencies"])),
-                        dependency_digest=raw_build.get(
-                            "dependency_digest", state["dependency_digest"]
-                        ),
-                    )
-                    session.add(build)
-                build.dependencies = list(raw_build.get("dependencies", state["dependencies"]))
-                build.dependency_digest = raw_build.get(
-                    "dependency_digest", state["dependency_digest"]
-                )
-                build.status = raw_build.get("status", build.status)
-                build.phase = raw_build.get("phase", build.phase)
-                build.progress = int(raw_build.get("progress", build.progress))
-                build.log_summary = str(raw_build.get("log") or "")
-                build.staging_image = f"astra-data-viz:build-{build.id}"
-                build.activated_image = raw_build.get("image")
-                build.updated_at = utc_now()
-                if build.status == "building" and build.started_at is None:
-                    build.started_at = utc_now()
-                if build.status in {"succeeded", "failed", "cancelled"}:
-                    build.completed_at = build.completed_at or utc_now()
-            await session.commit()
+        await self.persistence.persist(state)
 
     def read(self):
         state = self._read_persisted()
@@ -349,30 +110,12 @@ class RuntimeProfileService:
             "keep_recent": max(0, self.settings.runtime_image_keep_recent),
             "retention_days": max(0, self.settings.runtime_image_retention_days),
         }
-        state["agent_profile"] = self._agent_profile_view(state)
+        state["agent_profile"] = self.configuration.profile_view(state)
         state["memory_settings"] = self.memory_settings()
         return state
 
     def write(self, value, *, persist_memory_settings: bool = False):
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        temporary = self.path.with_suffix(f"{self.path.suffix}.tmp")
-        persisted = {
-            key: item
-            for key, item in value.items()
-            if key not in {"core_dependencies", "image_policy"}
-        }
-        agent_profile = persisted.get("agent_profile")
-        if isinstance(agent_profile, dict) and "source" in agent_profile:
-            if agent_profile.get("source") == "user":
-                persisted["agent_profile"] = {
-                    "documents": agent_profile.get("documents", {}),
-                }
-            else:
-                persisted.pop("agent_profile", None)
-        if not persist_memory_settings and "memory_settings" not in self._read_persisted():
-            persisted.pop("memory_settings", None)
-        temporary.write_text(json.dumps(persisted, ensure_ascii=False, indent=2))
-        temporary.replace(self.path)
+        self.configuration.write_state(value, persist_memory_settings=persist_memory_settings)
 
     async def start(self, dependencies):
         deps = normalize_dependencies(dependencies)
@@ -578,143 +321,9 @@ class RuntimeProfileService:
             progress=5,
             log="正在解析依赖并准备隔离环境",
         )
-        has_unpinned = any(not item["version"] for item in deps)
         staging_image = f"astra-data-viz:build-{build_id}"
-        image = staging_image
         try:
-            with tempfile.TemporaryDirectory(prefix="astra-runtime-build-") as root:
-                requirements = " ".join(
-                    f"{item['name']}=={item['version']}" if item["version"] else item["name"]
-                    for item in deps
-                )
-                install = (
-                    f"RUN uv pip install --python /opt/astra/runtime/.venv/bin/python {requirements}\n"
-                    if requirements
-                    else ""
-                )
-                Path(root, "Dockerfile").write_text(
-                    f"FROM {self.settings.sandbox_runtime_image}\n"
-                    f'LABEL io.astra.runtime.managed="true" io.astra.runtime.build-id="{build_id}"\n'
-                    f"USER root\n{install}USER 65532:65532\n"
-                )
-                build_options = ["--no-cache"] if has_unpinned else []
-                await self._run_with_progress(
-                    build_id,
-                    [
-                        self.settings.docker_binary,
-                        "build",
-                        *build_options,
-                        "--network",
-                        "default",
-                        "-t",
-                        image,
-                        root,
-                    ],
-                    phase="构建镜像并安装依赖",
-                    start=10,
-                    end=82,
-                )
-                package_names = json.dumps([item["name"] for item in deps])
-                if has_unpinned:
-                    smoke_code = (
-                        "import importlib.metadata as m, json; "
-                        f"names={package_names}; "
-                        "print('ASTRA_DEPENDENCIES=' + json.dumps({name: m.version(name) "
-                        "for name in names}, sort_keys=True))"
-                    )
-                else:
-                    smoke_code = f"import importlib.metadata as m; [m.version(name) for name in {package_names}]"
-                await self._update_build(
-                    build_id,
-                    phase="验证依赖导入",
-                    progress=85,
-                    log="环境构建完成，正在验证依赖",
-                )
-                verification_output = await self._run_with_progress(
-                    build_id,
-                    [
-                        self.settings.docker_binary,
-                        "run",
-                        "--rm",
-                        "--network",
-                        "none",
-                        image,
-                        "/opt/astra/runtime/.venv/bin/python",
-                        "-c",
-                        smoke_code,
-                    ],
-                    phase="验证依赖导入",
-                    start=85,
-                    end=98,
-                    capture_output=has_unpinned,
-                    display_output=False,
-                )
-                resolved_dependencies = deps
-                if has_unpinned:
-                    prefix = "ASTRA_DEPENDENCIES="
-                    version_line = next(
-                        (
-                            line
-                            for line in reversed(verification_output.splitlines())
-                            if line.startswith(prefix)
-                        ),
-                        None,
-                    )
-                    if version_line is None:
-                        raise RuntimeError("依赖验证成功，但未能读取实际安装版本")
-                    installed_versions = json.loads(version_line.removeprefix(prefix))
-                    resolved_dependencies = [
-                        {
-                            "name": item["name"],
-                            "version": item["version"] or installed_versions[item["name"]],
-                        }
-                        for item in deps
-                    ]
-                    digest = hashlib.sha256(
-                        json.dumps(resolved_dependencies, sort_keys=True).encode()
-                    ).hexdigest()[:16]
-                resolved_image = f"astra-data-viz:custom-{digest}"
-                await self._run_with_progress(
-                    build_id,
-                    [self.settings.docker_binary, "tag", image, resolved_image],
-                    phase="固定依赖版本",
-                    start=98,
-                    end=100,
-                    display_output=False,
-                )
-                image = resolved_image
-                state = self.read()
-                image_record = {
-                    "image": image,
-                    "dependency_digest": digest,
-                    "dependencies": resolved_dependencies,
-                    "activated_at": datetime.now(timezone.utc).isoformat(),
-                }
-                images = [item for item in state.get("images", []) if item.get("image") != image]
-                state.update(
-                    dependencies=resolved_dependencies,
-                    active_image=image,
-                    dependency_digest=digest,
-                    images=[image_record, *images],
-                )
-                state["build"].update(
-                    status="succeeded",
-                    phase="构建完成",
-                    progress=100,
-                    log="构建与导入验证成功",
-                    image=image,
-                    dependencies=resolved_dependencies,
-                    dependency_digest=digest,
-                )
-                self.write(state)
-                await self._persist_database_state(state)
-                cleanup_failed = not await self._remove_managed_image(build_id, staging_image)
-                cleanup_failed = await self._prune_images(build_id) or cleanup_failed
-                if cleanup_failed:
-                    await self._update_build(
-                        build_id,
-                        log="构建与导入验证成功；部分旧镜像暂未清理，将在后续构建重试",
-                    )
+            await self._execute_build(build_id, deps, digest, staging_image)
         except asyncio.CancelledError:
             with contextlib.suppress(Exception):
                 await self._remove_managed_image(build_id, staging_image)
@@ -735,4 +344,148 @@ class RuntimeProfileService:
                 phase="构建失败",
                 log=sanitize_log(str(exc) or "构建超时"),
                 image=None,
+            )
+
+    async def _execute_build(self, build_id, deps, digest, staging_image):
+        has_unpinned = any(not item["version"] for item in deps)
+        image = staging_image
+        with tempfile.TemporaryDirectory(prefix="astra-runtime-build-") as root:
+            requirements = " ".join(
+                f"{item['name']}=={item['version']}" if item["version"] else item["name"]
+                for item in deps
+            )
+            install = (
+                f"RUN uv pip install --python /opt/astra/runtime/.venv/bin/python {requirements}\n"
+                if requirements
+                else ""
+            )
+            Path(root, "Dockerfile").write_text(
+                f"FROM {self.settings.sandbox_runtime_image}\n"
+                f'LABEL io.astra.runtime.managed="true" io.astra.runtime.build-id="{build_id}"\n'
+                f"USER root\n{install}USER 65532:65532\n"
+            )
+            build_options = ["--no-cache"] if has_unpinned else []
+            await self._run_with_progress(
+                build_id,
+                [
+                    self.settings.docker_binary,
+                    "build",
+                    *build_options,
+                    "--network",
+                    "default",
+                    "-t",
+                    image,
+                    root,
+                ],
+                phase="构建镜像并安装依赖",
+                start=10,
+                end=82,
+            )
+            package_names = json.dumps([item["name"] for item in deps])
+            if has_unpinned:
+                smoke_code = (
+                    "import importlib.metadata as m, json; "
+                    f"names={package_names}; "
+                    "print('ASTRA_DEPENDENCIES=' + json.dumps({name: m.version(name) "
+                    "for name in names}, sort_keys=True))"
+                )
+            else:
+                smoke_code = (
+                    f"import importlib.metadata as m; [m.version(name) for name in {package_names}]"
+                )
+            await self._update_build(
+                build_id,
+                phase="验证依赖导入",
+                progress=85,
+                log="环境构建完成，正在验证依赖",
+            )
+            verification_output = await self._run_with_progress(
+                build_id,
+                [
+                    self.settings.docker_binary,
+                    "run",
+                    "--rm",
+                    "--network",
+                    "none",
+                    image,
+                    "/opt/astra/runtime/.venv/bin/python",
+                    "-c",
+                    smoke_code,
+                ],
+                phase="验证依赖导入",
+                start=85,
+                end=98,
+                capture_output=has_unpinned,
+                display_output=False,
+            )
+            resolved_dependencies = deps
+            if has_unpinned:
+                prefix = "ASTRA_DEPENDENCIES="
+                version_line = next(
+                    (
+                        line
+                        for line in reversed(verification_output.splitlines())
+                        if line.startswith(prefix)
+                    ),
+                    None,
+                )
+                if version_line is None:
+                    raise RuntimeError("依赖验证成功，但未能读取实际安装版本")
+                installed_versions = json.loads(version_line.removeprefix(prefix))
+                resolved_dependencies = [
+                    {
+                        "name": item["name"],
+                        "version": item["version"] or installed_versions[item["name"]],
+                    }
+                    for item in deps
+                ]
+                digest = hashlib.sha256(
+                    json.dumps(resolved_dependencies, sort_keys=True).encode()
+                ).hexdigest()[:16]
+            await self._activate_built_image(
+                build_id, image, digest, resolved_dependencies, staging_image
+            )
+
+    async def _activate_built_image(
+        self, build_id, source_image, digest, dependencies, cleanup_image
+    ) -> None:
+        image = f"astra-data-viz:custom-{digest}"
+        await self._run_with_progress(
+            build_id,
+            [self.settings.docker_binary, "tag", source_image, image],
+            phase="固定依赖版本",
+            start=98,
+            end=100,
+            display_output=False,
+        )
+        state = self.read()
+        image_record = {
+            "image": image,
+            "dependency_digest": digest,
+            "dependencies": dependencies,
+            "activated_at": datetime.now(timezone.utc).isoformat(),
+        }
+        images = [item for item in state.get("images", []) if item.get("image") != image]
+        state.update(
+            dependencies=dependencies,
+            active_image=image,
+            dependency_digest=digest,
+            images=[image_record, *images],
+        )
+        state["build"].update(
+            status="succeeded",
+            phase="构建完成",
+            progress=100,
+            log="构建与导入验证成功",
+            image=image,
+            dependencies=dependencies,
+            dependency_digest=digest,
+        )
+        self.write(state)
+        await self._persist_database_state(state)
+        cleanup_failed = not await self._remove_managed_image(build_id, cleanup_image)
+        cleanup_failed = await self._prune_images(build_id) or cleanup_failed
+        if cleanup_failed:
+            await self._update_build(
+                build_id, log="构建与导入验证成功；部分旧镜像暂未清理，将在后续构建重试"
             )

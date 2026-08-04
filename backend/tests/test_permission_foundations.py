@@ -3,9 +3,11 @@ from datetime import timedelta
 import pytest
 from pydantic import ValidationError
 
-from app.db.models import WorkspaceFileRecord, utc_now
+from app.db.model_base import utc_now
+from app.db.models.workspaces import WorkspaceFileRecord
+from app.repositories.approval_contracts import ApprovalRequestCreate
 from app.repositories.permissions import PermissionRepository
-from app.repositories.runs import RunRepository
+from app.repositories.run_unit_of_work import RunUnitOfWork
 from app.repositories.workspaces import WorkspaceRepository, validate_workspace_path
 from app.schemas.permissions import (
     ActionEffectPlan,
@@ -83,7 +85,7 @@ def test_workspace_paths_reject_escape_and_shell_ambiguous_names():
 
 
 async def test_workspace_repository_persists_files_tombstones_and_checkpoints(session):
-    run = await RunRepository(session).create_task_run("Workspace persistence", {})
+    run = await RunUnitOfWork(session).create_task_run("Workspace persistence", {})
     repository = WorkspaceRepository(session)
     workspace = await repository.get_or_create(run.task_id)
     file = await repository.upsert_file(
@@ -119,7 +121,7 @@ async def test_workspace_repository_persists_files_tombstones_and_checkpoints(se
 
 
 async def test_workspace_runtime_persists_cross_tool_files_and_change_manifest(session, tmp_path):
-    run = await RunRepository(session).create_task_run("Shared Workspace", {})
+    run = await RunUnitOfWork(session).create_task_run("Shared Workspace", {})
     repository = WorkspaceRepository(session)
     runtime = WorkspaceRuntimeService(
         repository,
@@ -146,7 +148,7 @@ async def test_workspace_runtime_persists_cross_tool_files_and_change_manifest(s
 
 
 async def test_permission_repository_persists_identity_delegation_catalog_and_data_flow(session):
-    run = await RunRepository(session).create_task_run("Permission persistence", {})
+    run = await RunUnitOfWork(session).create_task_run("Permission persistence", {})
     repository = PermissionRepository(session)
     parent = await repository.create_identity(
         identity_type="main_agent",
@@ -243,7 +245,7 @@ async def test_permission_repository_persists_identity_delegation_catalog_and_da
 
 
 async def test_approval_persistence_freezes_effects_and_creates_scoped_lease(session):
-    repository = RunRepository(session)
+    repository = RunUnitOfWork(session)
     run = await repository.create_task_run("Effect approval persistence", {})
     turn = await repository.create_agent_turn(
         run.id,
@@ -278,24 +280,26 @@ async def test_approval_persistence_freezes_effects_and_creates_scoped_lease(ses
         "approval_required": True,
     }
     approval = await repository.create_approval_request(
-        run_id=run.id,
-        turn_id=turn.id,
-        tool_call_id=call.id,
-        tool_name="file_write",
-        tool_version="1",
-        frozen_input={"path": "reports/summary.md"},
-        input_hash="sha256:input",
-        frozen_effect_plan=effect_plan,
-        effect_plan_hash="sha256:effect",
-        analyzer_version="2",
-        analyzer_digest="sha256:analyzer",
-        preview="Create reports/summary.md",
-        permission="workspace_write",
-        impact="persistent_side_effect",
-        similar_matcher={
-            "kind": "resource_glob",
-            "resource_matcher": {"glob": "reports/**"},
-        },
+        ApprovalRequestCreate(
+            run_id=run.id,
+            turn_id=turn.id,
+            tool_call_id=call.id,
+            tool_name="file_write",
+            tool_version="1",
+            frozen_input={"path": "reports/summary.md"},
+            input_hash="sha256:input",
+            frozen_effect_plan=effect_plan,
+            effect_plan_hash="sha256:effect",
+            analyzer_version="2",
+            analyzer_digest="sha256:analyzer",
+            preview="Create reports/summary.md",
+            permission="workspace_write",
+            impact="persistent_side_effect",
+            similar_matcher={
+                "kind": "resource_glob",
+                "resource_matcher": {"glob": "reports/**"},
+            },
+        )
     )
     waiting = await repository.set_waiting_state(
         run.id,

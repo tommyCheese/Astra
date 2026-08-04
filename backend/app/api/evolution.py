@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings, get_settings
 from app.core.errors import ResourceError, StateError, ValidationError
-from app.db.models import AgentEvolutionCandidateRecord
+from app.db.models.evolution import AgentEvolutionCandidateRecord
 from app.db.session import get_session
 from app.evolution import (
     EvaluationThresholds,

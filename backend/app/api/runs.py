@@ -9,45 +9,43 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.artifacts import LocalArtifactStore
 from app.core.config import Settings, get_settings
-from app.core.errors import ResourceError, StateError, ValidationError
+from app.core.errors import ResourceError, ValidationError
 from app.db.session import SessionLocal, get_session
+from app.platform.http.dependencies import ApplicationServices, get_application_container
 from app.repositories.agent_executions import AgentExecutionRepository
-from app.repositories.permissions import PermissionRepository
 from app.repositories.plans import PlanRepository, diff_plans, plan_to_summary, plan_to_view
-from app.repositories.runs import RunRepository, run_to_initial_view, run_to_view
-from app.repositories.tool_settings import (
-    ToolSettingsRepository,
-    apply_tool_states,
-    default_tool_states,
-)
-from app.run_creation import RunCreationService
-from app.runner.engine import start_run_in_process
-from app.runner.plan_revision import PlanRevisionError, revise_waiting_plan
+from app.repositories.run_unit_of_work import RunUnitOfWork
+from app.repositories.run_view_projection import RunViewProjector
+from app.run_management.application import RunApplicationService
+from app.run_management.query_service import RunQueryService
 from app.runtime_events import run_event_broker
-from app.schemas.agent import (
-    ApprovalDecisionRequest,
-    ContinuationAction,
+from app.schemas.agent.api_views import (
     ContinueRunRequest,
     CreateRunRequest,
     CreateRunResponse,
-    PlanGraphDiff,
-    PlanVersionSummary,
-    PlanView,
     RunView,
 )
+from app.schemas.agent.planning import PlanGraphDiff, PlanVersionSummary, PlanView
+from app.schemas.agent.tool_invocation import ApprovalDecisionRequest
 from app.subagents.lifecycle import SubagentCancellationService
 from app.subagents.observability import SubagentTelemetryRepository
 
 router = APIRouter(prefix="/api", tags=["runs"])
 logger = logging.getLogger("astra.runs")
 SSE_FALLBACK_POLL_SECONDS = 0.2
-_background_tasks: set[asyncio.Task[None]] = set()
-_background_tasks_by_run: dict[str, asyncio.Task[None]] = {}
 SSE_HEADERS = {
     "Cache-Control": "no-cache, no-transform",
     "Connection": "keep-alive",
     "X-Accel-Buffering": "no",
 }
+
+
+def get_run_application_service(
+    session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+    container: ApplicationServices = Depends(get_application_container),
+) -> RunApplicationService:
+    return RunApplicationService(session, settings, container.run_dispatcher)
 
 
 async def _run_event_stream(
@@ -78,15 +76,11 @@ async def _run_event_stream(
                 )
                 + "\n\n"
             )
-            # Give the ASGI server one scheduling turn to flush the response
-            # headers and ready event before the run engine starts doing work.
             await asyncio.sleep(0)
         finally:
             if start_after_ready is not None:
                 start_after_ready()
         if start_after_ready is not None:
-            # Let the newly-created engine task reach its first async I/O
-            # before this stream performs the initial database replay.
             await asyncio.sleep(0)
         while True:
             published = (
@@ -95,35 +89,12 @@ async def _run_event_stream(
                 else run_event_broker.events_after(run_id, last_id)
             )
             if published is None:
-                async with SessionLocal() as stream_session:
-                    stream_repo = RunRepository(stream_session)
-                    events, status = await stream_repo.list_events_with_status(run_id, last_id)
-                    payloads = [
-                        {
-                            "id": event.id,
-                            "run_sequence": event.id,
-                            "agent_execution_id": event.agent_execution_id,
-                            "type": event.type,
-                            "payload": event.payload,
-                            "created_at": event.created_at.isoformat(),
-                        }
-                        for event in events
-                    ]
+                payloads, status = await _database_event_payloads(run_id, last_id)
                 if payloads:
                     last_id = payloads[-1]["id"]
                 run_event_broker.mark_database_synced(run_id, last_id)
             else:
-                payloads = [
-                    {
-                        "id": event.id,
-                        "run_sequence": event.id,
-                        "agent_execution_id": event.agent_execution_id,
-                        "type": event.type,
-                        "payload": event.payload,
-                        "created_at": event.created_at,
-                    }
-                    for event in published
-                ]
+                payloads = _published_event_payloads(published)
                 for event in published:
                     if event.type == "run.status_changed":
                         status = event.payload.get("status", status)
@@ -131,15 +102,10 @@ async def _run_event_stream(
                         status = "cancelled"
             for payload in payloads:
                 run_sequence += 1
-                payload["run_sequence"] = run_sequence
-                agent_execution_id = payload.get("agent_execution_id")
-                if isinstance(agent_execution_id, str):
-                    agent_sequence = agent_sequences.get(agent_execution_id, 0) + 1
-                    agent_sequences[agent_execution_id] = agent_sequence
-                    payload["agent_sequence"] = agent_sequence
+                _assign_event_sequences(payload, run_sequence, agent_sequences)
                 last_id = payload["id"]
                 yield f"id: {payload['id']}\ndata: {json.dumps(payload)}\n\n"
-            if status in RunRepository.TERMINAL_STATUSES:
+            if status in RunUnitOfWork.TERMINAL_STATUSES:
                 if not payloads:
                     yield 'data: {"type": "heartbeat", "payload": {}}\n\n'
                 break
@@ -155,90 +121,56 @@ async def _run_event_stream(
     logger.info("sse.close run_id=%s last_id=%s", run_id, last_id)
 
 
+async def _database_event_payloads(run_id: str, after_id: int) -> tuple[list[dict], str | None]:
+    async with SessionLocal() as stream_session:
+        events, status = await RunUnitOfWork(stream_session).list_events_with_status(
+            run_id, after_id
+        )
+        payloads = [
+            {
+                "id": event.id,
+                "run_sequence": event.id,
+                "agent_execution_id": event.agent_execution_id,
+                "type": event.type,
+                "payload": event.payload,
+                "created_at": event.created_at.isoformat(),
+            }
+            for event in events
+        ]
+    return payloads, status
+
+
+def _published_event_payloads(events) -> list[dict]:
+    return [
+        {
+            "id": event.id,
+            "run_sequence": event.id,
+            "agent_execution_id": event.agent_execution_id,
+            "type": event.type,
+            "payload": event.payload,
+            "created_at": event.created_at,
+        }
+        for event in events
+    ]
+
+
+def _assign_event_sequences(
+    payload: dict, run_sequence: int, agent_sequences: dict[str, int]
+) -> None:
+    payload["run_sequence"] = run_sequence
+    agent_execution_id = payload.get("agent_execution_id")
+    if isinstance(agent_execution_id, str):
+        agent_sequence = agent_sequences.get(agent_execution_id, 0) + 1
+        agent_sequences[agent_execution_id] = agent_sequence
+        payload["agent_sequence"] = agent_sequence
+
+
 def _streaming_response(stream: AsyncIterator[str]) -> StreamingResponse:
     return StreamingResponse(
         stream,
         media_type="text/event-stream",
         headers=SSE_HEADERS,
     )
-
-
-def _restore_run_model_config(
-    settings: Settings,
-    model_policy: dict,
-) -> Settings:
-    provider = str(model_policy.get("provider") or "")
-    model = str(model_policy.get("model") or "")
-    base_url = str(model_policy.get("base_url") or "")
-    if not provider or not model:
-        return settings
-    if settings.model_provider != provider or settings.model_name != model:
-        raise ValidationError(
-            "RUN_MODEL_MISMATCH",
-            "继续运行时必须使用该任务开始时选择的模型。",
-            {"provider": provider, "model": model},
-        )
-    return settings.model_copy(
-        update={
-            "model_provider": provider,
-            "model_name": model,
-            "model_base_url": base_url or settings.model_base_url,
-        }
-    )
-
-
-def _schedule_run(run_id: str, settings: Settings) -> asyncio.Task[None]:
-    """Keep a strong reference to in-process runs until they finish."""
-    task = asyncio.create_task(
-        start_run_in_process(run_id, settings),
-        name=f"astra-run-{run_id}",
-    )
-    _background_tasks.add(task)
-    _background_tasks_by_run[run_id] = task
-    task.add_done_callback(lambda completed: _finish_background_task(run_id, completed))
-    return task
-
-
-def _finish_background_task(run_id: str, task: asyncio.Task[None]) -> None:
-    _background_tasks.discard(task)
-    if _background_tasks_by_run.get(run_id) is task:
-        _background_tasks_by_run.pop(run_id, None)
-    _report_background_failure(task)
-
-
-async def _cancel_background_run(run_id: str) -> bool:
-    task = _background_tasks_by_run.get(run_id)
-    if task is None or task.done():
-        return False
-    task.cancel()
-    try:
-        await task
-    except asyncio.CancelledError:
-        pass
-    except Exception as exc:
-        # Cancellation is finalized authoritatively by the request session
-        # below. A best-effort background cleanup failure must not turn the
-        # user's stop action into a database availability error.
-        logger.warning(
-            "run.background.cancel_cleanup_failed run_id=%s cause=%s",
-            run_id,
-            type(exc).__name__,
-        )
-    return True
-
-
-def _report_background_failure(task: asyncio.Task[None]) -> None:
-    if task.cancelled():
-        logger.info("run.background.cancelled task=%s", task.get_name())
-        return
-    error = task.exception()
-    if error is not None:
-        logger.error(
-            "run.background.failed task=%s cause=%s",
-            task.get_name(),
-            type(error).__name__,
-            exc_info=(type(error), error, error.__traceback__),
-        )
 
 
 @router.get("/artifacts/{artifact_id}/content")
@@ -248,7 +180,7 @@ async def get_artifact_content(
     settings: Settings = Depends(get_settings),
     workspace_id: str | None = Header(default=None, alias="X-Astra-Workspace-Id"),
 ):
-    scoped = await RunRepository(session).get_artifact_with_workspace(artifact_id)
+    scoped = await RunUnitOfWork(session).get_artifact_with_workspace(artifact_id)
     artifact, required_workspace = scoped if scoped else (None, None)
     if artifact is None or not artifact.storage_key or artifact.security_status != "verified":
         raise ResourceError("ARTIFACT_NOT_FOUND", "找不到可访问的工件。")
@@ -267,29 +199,26 @@ async def list_runs(
     limit: int = Query(default=100, ge=1, le=200),
     session: AsyncSession = Depends(get_session),
 ) -> list[RunView]:
-    runs = await RunRepository(session).list_recent_runs(limit)
-    return [RunView.model_validate(run_to_view(run)) for run in runs]
+    return await RunQueryService(RunUnitOfWork(session)).recent(limit)
 
 
 @router.post("/runs", response_model=CreateRunResponse)
 async def create_run(
     payload: CreateRunRequest,
-    session: AsyncSession = Depends(get_session),
-    settings: Settings = Depends(get_settings),
+    service: RunApplicationService = Depends(get_run_application_service),
 ) -> CreateRunResponse:
-    created, run_settings = await RunCreationService(session, settings).create(payload)
-    _schedule_run(created.run_id, run_settings)
-    return created
+    return await service.create_and_start(payload)
 
 
 @router.post("/runs/stream")
 async def create_run_stream(
     payload: CreateRunRequest,
     session: AsyncSession = Depends(get_session),
-    settings: Settings = Depends(get_settings),
+    service: RunApplicationService = Depends(get_run_application_service),
 ) -> StreamingResponse:
     """Create a run and stream it on the same HTTP request."""
-    created, run_settings = await RunCreationService(session, settings).create(payload)
+    prepared_run = await service.prepare(payload)
+    created = prepared_run.response
     # The streaming response outlives this endpoint's dependency scope.
     await session.rollback()
     return _streaming_response(
@@ -301,7 +230,7 @@ async def create_run_stream(
                 "status": created.status,
                 "answer_mode": created.answer_mode.value,
             },
-            start_after_ready=lambda: _schedule_run(created.run_id, run_settings),
+            start_after_ready=lambda: service.start(prepared_run),
         )
     )
 
@@ -312,15 +241,11 @@ async def get_run(
     detail: str = Query(default="full", pattern="^(full|initial)$"),
     session: AsyncSession = Depends(get_session),
 ) -> RunView:
-    repo = RunRepository(session)
-    if detail == "initial":
-        run, loaded_full = await repo.get_run_initial(run_id)
-    else:
-        run, loaded_full = await repo.get_run(run_id), True
-    if run is None:
+    queries = RunQueryService(RunUnitOfWork(session))
+    run_view = await (queries.initial(run_id) if detail == "initial" else queries.detail(run_id))
+    if run_view is None:
         raise ResourceError("RUN_NOT_FOUND", "找不到指定运行记录。")
-    payload = run_to_view(run) if loaded_full else run_to_initial_view(run)
-    return RunView.model_validate(payload)
+    return run_view
 
 
 @router.get("/runs/{run_id}/plans", response_model=list[PlanVersionSummary])
@@ -328,7 +253,7 @@ async def list_run_plans(
     run_id: str,
     session: AsyncSession = Depends(get_session),
 ) -> list[PlanVersionSummary]:
-    run = await RunRepository(session).get_run(run_id)
+    run = await RunUnitOfWork(session).get_run(run_id)
     if run is None:
         raise ResourceError("RUN_NOT_FOUND", "找不到指定运行记录。")
     if run.answer_mode != "trusted":
@@ -369,23 +294,10 @@ async def get_run_plan_diff(
 @router.post("/runs/{run_id}/cancel", response_model=RunView)
 async def cancel_run(
     run_id: str,
-    session: AsyncSession = Depends(get_session),
+    service: RunApplicationService = Depends(get_run_application_service),
 ) -> RunView:
-    repo = RunRepository(session)
-    run = await repo.get_run(run_id)
-    if run is None:
-        raise ResourceError("RUN_NOT_FOUND", "找不到指定运行记录。")
-    if run.status in RunRepository.TERMINAL_STATUSES and run.status != "waiting_user":
-        return RunView.model_validate(run_to_view(run))
-
-    await _cancel_background_run(run_id)
-    await session.rollback()
-    run = await repo.get_run(run_id)
-    if run is None:
-        raise ResourceError("RUN_NOT_FOUND", "找不到指定运行记录。")
-    if run.status not in RunRepository.TERMINAL_STATUSES or run.status == "waiting_user":
-        run = await repo.cancel_run(run_id)
-    return RunView.model_validate(run_to_view(run))
+    run = await service.cancel(run_id)
+    return RunViewProjector().project(run)
 
 
 @router.post(
@@ -404,10 +316,10 @@ async def cancel_subagent(
         agent_execution_id,
         reason="user_cancelled_child",
     )
-    run = await RunRepository(session).get_run(run_id)
-    if run is None:
+    run_view = await RunQueryService(RunUnitOfWork(session)).detail(run_id)
+    if run_view is None:
         raise ResourceError("RUN_NOT_FOUND", "找不到指定运行记录。")
-    return RunView.model_validate(run_to_view(run))
+    return run_view
 
 
 @router.get("/runs/{run_id}/subagents/metrics")
@@ -425,81 +337,9 @@ async def get_subagent_metrics(
 async def resume_run(
     run_id: str,
     payload: ContinueRunRequest,
-    session: AsyncSession = Depends(get_session),
-    settings: Settings = Depends(get_settings),
+    service: RunApplicationService = Depends(get_run_application_service),
 ) -> CreateRunResponse:
-    repo = RunRepository(session)
-    existing_run = await repo.require_run(run_id)
-    tool_states = await ToolSettingsRepository(session).get_or_create(default_tool_states(settings))
-    run_settings = RunCreationService.apply_model_config(
-        apply_tool_states(settings, tool_states), payload.model
-    )
-    run_settings = _restore_run_model_config(run_settings, existing_run.model_policy)
-    try:
-        if payload.action == ContinuationAction.execute_plan:
-            run = await repo.confirm_waiting_plan(
-                run_id,
-                continuation_token=payload.continuation_token or "",
-                plan_id=payload.plan_id or "",
-                expected_plan_version=payload.expected_plan_version or 0,
-                expected_state_version=payload.expected_state_version or 0,
-            )
-        elif payload.action == ContinuationAction.revise_plan:
-            run = await revise_waiting_plan(
-                repo,
-                run_settings,
-                run_id=run_id,
-                request=payload.content or "",
-                continuation_token=payload.continuation_token or "",
-                plan_id=payload.plan_id or "",
-                expected_plan_version=payload.expected_plan_version or 0,
-                expected_state_version=payload.expected_state_version or 0,
-            )
-        else:
-            run = await repo.resume_waiting_run(
-                run_id,
-                {
-                    "kind": "approval_result" if payload.approved is not None else "user_response",
-                    "status": "approved"
-                    if payload.approved
-                    else "rejected"
-                    if payload.approved is False
-                    else "received",
-                    "summary": payload.content,
-                    "data": {"approved": payload.approved},
-                },
-                continuation_token=payload.continuation_token,
-            )
-    except ValueError as exc:
-        message = str(exc)
-        if isinstance(exc, PlanRevisionError):
-            raise ValidationError(
-                exc.code,
-                "计划调整未通过校验，原计划仍可继续使用。",
-            ) from exc
-        if "plan revision" in message:
-            raise StateError(
-                "PLAN_REVISION_STALE",
-                "计划已变化，请刷新后基于最新版本调整。",
-            ) from exc
-        if "plan confirmation" in message:
-            raise StateError(
-                "PLAN_CONFIRMATION_INVALID",
-                "计划确认已失效，请刷新后核对最新计划。",
-            ) from exc
-        if "not waiting" in message:
-            raise StateError("RUN_NOT_WAITING", "该任务当前不需要补充信息。") from exc
-        if "continuation token" in message:
-            raise StateError("CONTINUATION_INVALID", "任务恢复凭据已失效，请刷新后重试。") from exc
-        raise StateError("RUN_RESUME_CONFLICT", "当前任务无法恢复。") from exc
-    if payload.action != ContinuationAction.revise_plan:
-        _schedule_run(run.id, run_settings)
-    return CreateRunResponse(
-        task_id=run.task_id,
-        run_id=run.id,
-        status=run.status,
-        answer_mode=run.answer_mode,
-    )
+    return await service.resume_and_start(run_id, payload)
 
 
 @router.post(
@@ -510,56 +350,9 @@ async def decide_tool_approval(
     run_id: str,
     approval_id: str,
     payload: ApprovalDecisionRequest,
-    session: AsyncSession = Depends(get_session),
-    settings: Settings = Depends(get_settings),
+    service: RunApplicationService = Depends(get_run_application_service),
 ) -> CreateRunResponse:
-    repo = RunRepository(session)
-    existing_run = await repo.require_run(run_id)
-    tool_states = await ToolSettingsRepository(session).get_or_create(default_tool_states(settings))
-    run_settings = RunCreationService.apply_model_config(
-        apply_tool_states(settings, tool_states), payload.model
-    )
-    run_settings = _restore_run_model_config(run_settings, existing_run.model_policy)
-    try:
-        run = existing_run
-        reviewer = await PermissionRepository(session).get_or_create_identity(
-            identity_type="reviewer",
-            principal="local-user",
-            task_id=run.task_id,
-            run_id=run_id,
-            trust_level="user",
-        )
-        await repo.decide_approval(
-            run_id,
-            approval_id,
-            payload.decision.value,
-            continuation_token=payload.continuation_token,
-            reviewer_identity={
-                "id": reviewer.id,
-                "identity_type": reviewer.identity_type,
-                "principal": reviewer.principal,
-            },
-            rejection_guidance=payload.guidance,
-        )
-    except ValueError as exc:
-        message = str(exc)
-        if "continuation token" in message:
-            raise StateError("CONTINUATION_INVALID", "批准凭据已失效，请刷新后重试。") from exc
-        if "already been decided" in message:
-            raise StateError("APPROVAL_ALREADY_DECIDED", "该工具调用已经处理。") from exc
-        if "not available" in message:
-            raise StateError(
-                "SIMILAR_APPROVAL_UNAVAILABLE", "该命令不能使用相似命令授权。"
-            ) from exc
-        raise StateError("APPROVAL_CONFLICT", "该批准请求当前无法处理。") from exc
-    run = await repo.require_run(run_id)
-    _schedule_run(run_id, run_settings)
-    return CreateRunResponse(
-        task_id=run.task_id,
-        run_id=run.id,
-        status=run.status,
-        answer_mode=run.answer_mode,
-    )
+    return await service.decide_approval_and_start(run_id, approval_id, payload)
 
 
 @router.get("/runs/{run_id}/events")
@@ -568,7 +361,7 @@ async def stream_run_events(
     after_id: int = Query(default=0, ge=0),
     session: AsyncSession = Depends(get_session),
 ) -> StreamingResponse:
-    repo = RunRepository(session)
+    repo = RunUnitOfWork(session)
     if await repo.get_run_status(run_id) is None:
         raise ResourceError("RUN_NOT_FOUND", "找不到指定运行记录。")
     # FastAPI keeps dependency scopes alive until a streaming response closes.

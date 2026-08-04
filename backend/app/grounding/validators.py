@@ -4,7 +4,7 @@ from typing import Any
 
 from app.grounding.ledger import EvidenceLedger
 from app.grounding.schemas import EvidenceFragment, EvidenceKind
-from app.schemas.agent import ValidationIssue, ValidationOutcome
+from app.schemas.agent.run_result import ValidationIssue, ValidationOutcome
 
 
 def ledger_from_evidence(evidence: dict[str, Any]) -> EvidenceLedger:
@@ -35,7 +35,6 @@ def grounding_validation_outcomes(
     evidence_by_id = {item.id: item for item in ledger.records()}
     claim_ids = {str(item.get("id")) for item in claims if item.get("id")}
 
-    provenance_issues = []
     cited_refs = {
         str(item.get("evidence_ref"))
         for item in citations
@@ -46,44 +45,39 @@ def grounding_validation_outcomes(
         for item in claims
         for ref in item.get("evidence_refs", [])
     }
-    for evidence_ref in sorted(cited_refs | claim_refs):
-        if evidence_ref not in evidence_by_id:
-            provenance_issues.append(
-                ValidationIssue(
-                    code="grounding_evidence_unknown",
-                    message="回答引用了本次运行中不存在的证据。",
-                    evidence_refs=[evidence_ref],
-                )
-            )
-    provenance = ValidationOutcome(
+    provenance = _provenance_outcome(cited_refs, claim_refs, evidence_by_id)
+    citation_integrity = _citation_outcome(
+        claims, citations, claim_ids, cited_refs, evidence_by_id
+    )
+    claim_support = _claim_support_outcome(claims, claim_refs, ledger, evidence_by_id)
+    return [provenance, citation_integrity, claim_support]
+
+
+def _provenance_outcome(cited_refs, claim_refs, evidence_by_id):
+    unknown_refs = sorted((cited_refs | claim_refs) - evidence_by_id.keys())
+    issues = [
+        ValidationIssue(
+            code="grounding_evidence_unknown",
+            message="回答引用了本次运行中不存在的证据。",
+            evidence_refs=[evidence_ref],
+        )
+        for evidence_ref in unknown_refs
+    ]
+    return ValidationOutcome(
         validator="grounding.provenance",
-        passed=not provenance_issues,
+        passed=not issues,
         blocking=True,
-        issues=provenance_issues,
+        issues=issues,
         evidence_refs=sorted((cited_refs | claim_refs) & evidence_by_id.keys()),
     )
 
-    citation_issues = []
-    for citation in citations:
-        claim_id = str(citation.get("claim_id") or "")
-        evidence_ref = str(citation.get("evidence_ref") or "")
-        if claim_id not in claim_ids:
-            citation_issues.append(
-                ValidationIssue(
-                    code="grounding_citation_claim_unknown",
-                    message="引用指向了不存在的声明。",
-                    evidence_refs=[evidence_ref] if evidence_ref else [],
-                )
-            )
-        record = evidence_by_id.get(evidence_ref)
-        if record is None or record.kind != EvidenceKind.passage:
-            citation_issues.append(
-                ValidationIssue(
-                    code="grounding_citation_passage_invalid",
-                    message="引用没有指向可复核的来源片段。",
-                    evidence_refs=[evidence_ref] if evidence_ref else [],
-                )
-            )
+
+def _citation_outcome(claims, citations, claim_ids, cited_refs, evidence_by_id):
+    citation_issues = [
+        issue
+        for citation in citations
+        for issue in _citation_issues(citation, claim_ids, evidence_by_id)
+    ]
     if claims and not citations:
         citation_issues.append(
             ValidationIssue(
@@ -91,7 +85,7 @@ def grounding_validation_outcomes(
                 message="已生成事实声明，但没有可展示的来源引用。",
             )
         )
-    citation_integrity = ValidationOutcome(
+    return ValidationOutcome(
         validator="grounding.citation_integrity",
         passed=not citation_issues,
         blocking=True,
@@ -99,27 +93,35 @@ def grounding_validation_outcomes(
         evidence_refs=sorted(cited_refs & evidence_by_id.keys()),
     )
 
-    support_issues = []
-    for claim in claims:
-        if not bool(claim.get("material", True)):
-            continue
-        refs = [str(ref) for ref in claim.get("evidence_refs", [])]
-        eligible = [
-            ref
-            for ref in refs
-            if ref in evidence_by_id
-            and evidence_by_id[ref].kind == EvidenceKind.passage
-            and evidence_by_id[ref].payload.get("evidence_strength")
-            != "candidate_only"
-        ]
-        if not eligible:
-            support_issues.append(
-                ValidationIssue(
-                    code="grounding_material_claim_unsupported",
-                    message="一个关键声明没有可复核的来源片段支持。",
-                    evidence_refs=refs,
-                )
-            )
+
+def _citation_issues(citation, claim_ids, evidence_by_id):
+    claim_id = str(citation.get("claim_id") or "")
+    evidence_ref = str(citation.get("evidence_ref") or "")
+    evidence_refs = [evidence_ref] if evidence_ref else []
+    issues = []
+    if claim_id not in claim_ids:
+        issues.append(ValidationIssue(
+            code="grounding_citation_claim_unknown",
+            message="引用指向了不存在的声明。",
+            evidence_refs=evidence_refs,
+        ))
+    record = evidence_by_id.get(evidence_ref)
+    if record is None or record.kind != EvidenceKind.passage:
+        issues.append(ValidationIssue(
+            code="grounding_citation_passage_invalid",
+            message="引用没有指向可复核的来源片段。",
+            evidence_refs=evidence_refs,
+        ))
+    return issues
+
+
+
+def _claim_support_outcome(claims, claim_refs, ledger, evidence_by_id):
+    support_issues = [
+        issue
+        for claim in claims
+        if (issue := _unsupported_claim_issue(claim, evidence_by_id)) is not None
+    ]
     if ledger.records(EvidenceKind.passage) and not claims:
         support_issues.append(
             ValidationIssue(
@@ -127,11 +129,33 @@ def grounding_validation_outcomes(
                 message="已读取外部来源，但最终答案没有声明级证据绑定。",
             )
         )
-    claim_support = ValidationOutcome(
+    return ValidationOutcome(
         validator="grounding.claim_support",
         passed=not support_issues,
         blocking=True,
         issues=support_issues,
         evidence_refs=sorted(claim_refs & evidence_by_id.keys()),
     )
-    return [provenance, citation_integrity, claim_support]
+
+
+def _unsupported_claim_issue(claim, evidence_by_id):
+    if not bool(claim.get("material", True)):
+        return None
+    refs = [str(ref) for ref in claim.get("evidence_refs", [])]
+    eligible = [ref for ref in refs if _is_supporting_passage(ref, evidence_by_id)]
+    if eligible:
+        return None
+    return ValidationIssue(
+        code="grounding_material_claim_unsupported",
+        message="一个关键声明没有可复核的来源片段支持。",
+        evidence_refs=refs,
+    )
+
+
+def _is_supporting_passage(evidence_ref, evidence_by_id):
+    record = evidence_by_id.get(evidence_ref)
+    return (
+        record is not None
+        and record.kind == EvidenceKind.passage
+        and record.payload.get("evidence_strength") != "candidate_only"
+    )

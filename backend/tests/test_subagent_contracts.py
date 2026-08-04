@@ -5,7 +5,8 @@ from pydantic import ValidationError
 
 from app.core.config import Settings
 from app.runner.reasoning import PolicyCompiler, RunProfileResolver, compile_subagent_policy
-from app.schemas.agent import AnswerMode, PlanExecution, RequestedReasoningPolicy
+from app.schemas.agent.run_policy import RequestedReasoningPolicy
+from app.schemas.agent.types import AnswerMode, PlanExecution
 from app.schemas.subagents import (
     DelegationContract,
     DelegationInput,

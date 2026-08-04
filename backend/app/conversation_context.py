@@ -10,19 +10,15 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.context_compaction.accounting import TokenAccountingService
 from app.context_compaction.policy import build_compaction_policy
-from app.context_compaction.service import AgentContextCompactionService
+from app.context_windows import resolve_context_window
+from app.conversation_compaction import SemanticConversationCompactor
 from app.core.config import Settings
 from app.core.errors import StateError, ValidationError
-from app.db.models import RunRecord, TaskRecord, utc_now
-from app.repositories.context_compaction import ContextCompactionAttemptRepository
-from app.schemas.context_compaction import (
-    ContextEnvelope,
-    ContextItem,
-    ContextOwnerRole,
-    ContinuationManifest,
-)
+from app.db.model_base import utc_now
+from app.db.models.conversations import TaskRecord
+from app.db.models.runs import RunRecord
+from app.schemas.context_compaction import ContextOwnerRole
 
 CONTEXT_STATE_VERSION = 1
 CONTEXT_TERMINAL_STATUSES = frozenset(
@@ -35,137 +31,10 @@ _CJK_RE = re.compile(
 
 
 @dataclass(frozen=True)
-class ContextWindow:
-    provider: str
-    model: str
-    tokens: int
-    max_output_tokens: int | None
-    source: str
-    verified: bool
-    documentation_url: str | None
-
-
-@dataclass(frozen=True)
-class ModelContextCatalogEntry:
-    providers: tuple[str, ...]
-    model_prefixes: tuple[str, ...]
-    window_tokens: int
-    max_output_tokens: int | None
-    documentation_url: str
-
-
-_CONTEXT_WINDOW_CATALOG: tuple[ModelContextCatalogEntry, ...] = (
-    ModelContextCatalogEntry(
-        ("openai",), ("gpt-5.6",), 1_050_000, 128_000,
-        "https://developers.openai.com/api/docs/models/gpt-5.6-sol",
-    ),
-    ModelContextCatalogEntry(
-        ("openai",), ("gpt-4.1",), 1_047_576, 32_768,
-        "https://developers.openai.com/api/docs/models/gpt-4.1",
-    ),
-    ModelContextCatalogEntry(
-        ("openai",), ("gpt-5",), 400_000, 128_000,
-        "https://developers.openai.com/api/docs/models/gpt-5",
-    ),
-    ModelContextCatalogEntry(
-        ("openai",), ("o1", "o3", "o4"), 200_000, 100_000,
-        "https://developers.openai.com/api/docs/models",
-    ),
-    ModelContextCatalogEntry(
-        ("openai",), ("gpt-4o", "gpt-4-turbo"), 128_000, 16_384,
-        "https://developers.openai.com/api/docs/models",
-    ),
-    ModelContextCatalogEntry(
-        ("anthropic",),
-        ("claude-fable-5", "claude-mythos-5", "claude-opus-5", "claude-sonnet-5"),
-        1_000_000,
-        128_000,
-        "https://platform.claude.com/docs/en/about-claude/models/overview",
-    ),
-    ModelContextCatalogEntry(
-        ("anthropic",),
-        ("claude-opus-4-6", "claude-sonnet-4-6"),
-        1_000_000,
-        128_000,
-        "https://platform.claude.com/docs/en/about-claude/models/overview",
-    ),
-    ModelContextCatalogEntry(
-        ("anthropic",), ("claude",), 200_000, 64_000,
-        "https://platform.claude.com/docs/en/about-claude/models/overview",
-    ),
-    ModelContextCatalogEntry(
-        ("google", "gemini"), ("gemini",), 1_048_576, 65_536,
-        "https://ai.google.dev/gemini-api/docs/models",
-    ),
-    ModelContextCatalogEntry(
-        ("deepseek",),
-        ("deepseek-v4", "deepseek-chat", "deepseek-reasoner"),
-        1_000_000,
-        384_000,
-        "https://api-docs.deepseek.com/quick_start/pricing/",
-    ),
-    ModelContextCatalogEntry(
-        ("xai",), ("grok-4.5",), 500_000, None,
-        "https://docs.x.ai/developers/pricing",
-    ),
-    ModelContextCatalogEntry(
-        ("xai",), ("grok-4.3", "grok-4.20"), 1_000_000, None,
-        "https://docs.x.ai/developers/pricing",
-    ),
-)
-
-
-@dataclass(frozen=True)
 class ContextProjection:
     summary: str
     runs: tuple[RunRecord, ...]
     folded_run_ids: frozenset[str]
-
-
-def resolve_context_window(
-    provider: str,
-    model: str,
-    *,
-    fallback_tokens: int = 131_072,
-) -> ContextWindow:
-    normalized_provider = provider.strip().lower()
-    normalized_model = model.strip().lower()
-    catalog_provider = normalized_provider
-    catalog_model = normalized_model
-    if normalized_provider == "openrouter" and "/" in normalized_model:
-        catalog_provider, catalog_model = normalized_model.split("/", 1)
-
-    catalog_tokens: int | None = None
-    catalog_max_output: int | None = None
-    documentation_url: str | None = None
-    for entry in _CONTEXT_WINDOW_CATALOG:
-        if (
-            any(item in catalog_provider for item in entry.providers)
-            and any(catalog_model.startswith(item) for item in entry.model_prefixes)
-        ):
-            catalog_tokens = entry.window_tokens
-            catalog_max_output = entry.max_output_tokens
-            documentation_url = entry.documentation_url
-            break
-
-    if catalog_tokens is not None:
-        tokens = catalog_tokens
-        source = "catalog"
-        verified = True
-    else:
-        tokens = fallback_tokens
-        source = "fallback"
-        verified = False
-
-    return ContextWindow(
-        provider=provider,
-        model=model,
-        tokens=tokens,
-        max_output_tokens=catalog_max_output,
-        source=source,
-        verified=verified,
-        documentation_url=documentation_url,
-    )
 
 
 def estimate_tokens(text: str) -> int:
@@ -206,7 +75,9 @@ class ConversationContextManager:
         return {
             "version": int(raw.get("version", CONTEXT_STATE_VERSION)),
             "summary": str(raw.get("summary") or ""),
-            "checkpoint": raw.get("checkpoint") if isinstance(raw.get("checkpoint"), dict) else None,
+            "checkpoint": raw.get("checkpoint")
+            if isinstance(raw.get("checkpoint"), dict)
+            else None,
             "state_version": int(raw.get("state_version", 0)),
             "window_number": int(raw.get("window_number", 0)),
             "retained_tail_ids": list(raw.get("retained_tail_ids", [])),
@@ -307,9 +178,7 @@ class ConversationContextManager:
             fallback_tokens=self.settings.context_window_fallback_tokens,
         )
         messages = [projection.summary] if projection.summary else []
-        summary_tokens = (
-            estimate_messages_tokens([projection.summary]) if projection.summary else 0
-        )
+        summary_tokens = estimate_messages_tokens([projection.summary]) if projection.summary else 0
         conversation_tokens = 0
         for run in projection.runs:
             run_messages = list(self._run_context(run))
@@ -325,14 +194,7 @@ class ConversationContextManager:
             output_reserve = min(output_reserve, window.max_output_tokens)
         available = max(1, window.tokens - output_reserve)
         ratio = used / available
-        if ratio >= 1:
-            status = "overflow"
-        elif ratio >= self.settings.context_auto_compact_ratio:
-            status = "compact_required"
-        elif ratio >= self.settings.context_auto_compact_ratio * 0.75:
-            status = "warning"
-        else:
-            status = "normal"
+        status = self._usage_status(ratio)
         return {
             "provider": provider,
             "model": model,
@@ -350,47 +212,70 @@ class ConversationContextManager:
             "estimated": True,
             "summary_active": bool(projection.summary),
             "compaction_implementation": (
-                state["compaction_implementation"]
-                or "astra_semantic" if state["checkpoint"] else "legacy_v1" if state["summary"] else None
+                state["compaction_implementation"] or "astra_semantic"
+                if state["checkpoint"]
+                else "legacy_v1"
+                if state["summary"]
+                else None
             ),
             "compaction_failure_code": state["compaction_failure_code"],
-            "checkpoint_status": "active" if state["checkpoint"] else "legacy" if state["summary"] else "none",
+            "checkpoint_status": "active"
+            if state["checkpoint"]
+            else "legacy"
+            if state["summary"]
+            else "none",
             "window_number": state["window_number"],
             "token_before": state.get("token_before"),
             "token_after": state.get("token_after"),
             "retained_run_count": len(state["retained_tail_ids"]),
             "visible_run_count": len(projection.runs),
             "folded_run_count": len(projection.folded_run_ids),
-            "breakdown": [
-                {"kind": "system", "tokens": system_tokens, "item_count": 1},
-                *(
-                    [{"kind": "summary", "tokens": summary_tokens, "item_count": 1}]
-                    if summary_tokens
-                    else []
-                ),
-                *(
-                    [{
-                        "kind": "conversation",
-                        "tokens": conversation_tokens,
-                        "item_count": len(projection.runs),
-                    }]
-                    if conversation_tokens
-                    else []
-                ),
-                *(
-                    [{"kind": "draft", "tokens": draft_tokens, "item_count": 1}]
-                    if draft_tokens
-                    else []
-                ),
-                {
-                    "kind": "output_reserve",
-                    "tokens": output_reserve,
-                    "item_count": 1,
-                },
-            ],
+            "breakdown": self._usage_breakdown(
+                system_tokens=system_tokens,
+                summary_tokens=summary_tokens,
+                conversation_tokens=conversation_tokens,
+                conversation_count=len(projection.runs),
+                draft_tokens=draft_tokens,
+                output_reserve=output_reserve,
+            ),
             "last_action": state.get("last_action"),
             "last_action_at": self._parse_datetime(state.get("last_action_at")),
         }
+
+    def _usage_status(self, ratio: float) -> str:
+        if ratio >= 1:
+            return "overflow"
+        if ratio >= self.settings.context_auto_compact_ratio:
+            return "compact_required"
+        if ratio >= self.settings.context_auto_compact_ratio * 0.75:
+            return "warning"
+        return "normal"
+
+    @staticmethod
+    def _usage_breakdown(
+        *,
+        system_tokens: int,
+        summary_tokens: int,
+        conversation_tokens: int,
+        conversation_count: int,
+        draft_tokens: int,
+        output_reserve: int,
+    ) -> list[dict[str, int | str]]:
+        breakdown = [{"kind": "system", "tokens": system_tokens, "item_count": 1}]
+        if summary_tokens:
+            breakdown.append({"kind": "summary", "tokens": summary_tokens, "item_count": 1})
+        if conversation_tokens:
+            breakdown.append(
+                {
+                    "kind": "conversation",
+                    "tokens": conversation_tokens,
+                    "item_count": conversation_count,
+                }
+            )
+        if draft_tokens:
+            breakdown.append({"kind": "draft", "tokens": draft_tokens, "item_count": 1})
+        breakdown.append({"kind": "output_reserve", "tokens": output_reserve, "item_count": 1})
+        return breakdown
 
     @staticmethod
     def _parse_datetime(value: Any) -> datetime | None:
@@ -423,8 +308,7 @@ class ConversationContextManager:
         for run in runs:
             goal, answer = self._run_context(run)
             sections.append(
-                "- 用户目标：" + goal.strip()[:600] + "\n"
-                + "  回答要点：" + answer.strip()[:1200]
+                "- 用户目标：" + goal.strip()[:600] + "\n" + "  回答要点：" + answer.strip()[:1200]
             )
         combined = "\n".join(item for item in sections if item)
         if direction.strip():
@@ -465,9 +349,7 @@ class ConversationContextManager:
         if not eligible:
             return {"folded": 0, "retained": len(projection.runs)}
         state = self._state(task)
-        folded = list(
-            dict.fromkeys([*state["folded_run_ids"], *(run.id for run in eligible)])
-        )
+        folded = list(dict.fromkeys([*state["folded_run_ids"], *(run.id for run in eligible)]))
         now = utc_now()
         task.context_state = {
             "version": CONTEXT_STATE_VERSION,
@@ -495,156 +377,20 @@ class ConversationContextManager:
         commit: bool,
         direction: str,
     ) -> dict[str, int | str]:
-        from app.runner.model_client import build_model_client
-
-        runs = await self.list_runs(task.id)
-        if require_idle:
-            await self.ensure_idle(task.id, runs=runs)
-        projection = await self.projection(task, runs=runs)
-        retain = self.settings.context_compact_retain_runs if retain_runs is None else max(0, retain_runs)
-        eligible = list(projection.runs[:-retain] if retain else projection.runs)
-        if not eligible:
-            return {"folded": 0, "retained": len(projection.runs)}
-
-        state = self._state(task)
-        accounting_service = TokenAccountingService()
-        body: list[ContextItem] = []
-        for run in eligible:
-            goal, answer = self._run_context(run)
-            content = {
-                "run_id": run.id,
-                "goal": goal,
-                "answer": answer,
-                "status": run.status,
-                "created_at": run.created_at.isoformat(),
-            }
-            count, _, _ = accounting_service.count_value(content)
-            body.append(
-                ContextItem(
-                    id=run.id,
-                    kind="conversation_run",
-                    content=content,
-                    summary=f"User: {goal}\nAssistant: {answer}",
-                    token_count=count,
-                )
-            )
-        if state["summary"] and not state["checkpoint"]:
-            count, _, _ = accounting_service.count_text(state["summary"])
-            body.insert(
-                0,
-                ContextItem(
-                    id=f"legacy:{task.id}",
-                    kind="legacy_v1_summary",
-                    content=state["summary"],
-                    summary=state["summary"],
-                    token_count=count,
-                ),
-            )
-        prefix_text = direction.strip() or task.description or task.title
-        prefix_count, _, _ = accounting_service.count_text(prefix_text)
-        prefix = (
-            ContextItem(
-                id=f"conversation:{task.id}:intent",
-                kind="current_request",
-                content=prefix_text,
-                summary=prefix_text,
-                token_count=prefix_count,
-                canonical=True,
-            ),
+        return await SemanticConversationCompactor(self, resolve_context_window).compact(
+            task,
+            retain_runs=retain_runs,
+            action=action,
+            require_idle=require_idle,
+            commit=commit,
+            direction=direction,
         )
-        window = resolve_context_window(
-            self.settings.model_provider,
-            self.settings.model_name,
-            fallback_tokens=self.settings.context_window_fallback_tokens,
-        )
-        output_reserve = min(
-            self.settings.context_output_reserve_tokens,
-            window.max_output_tokens or self.settings.context_output_reserve_tokens,
-        )
-        accounting = accounting_service.account(
-            context_window=window.tokens,
-            output_reserve=output_reserve,
-            compaction_output_reserve=self.settings.context_compaction_output_reserve_tokens,
-            protected_prefix=prefix,
-            checkpoint=(
-                ContextItem(id=f"checkpoint:{task.id}", kind="prior_checkpoint", content=state["checkpoint"]),
-            ) if state["checkpoint"] else (),
-            body=body,
-        )
-        envelope = ContextEnvelope(
-            owner_type=ContextOwnerRole.conversation,
-            owner_id=task.id,
-            purpose=prefix_text,
-            protected_prefix=prefix,
-            prior_checkpoint=state["checkpoint"],
-            compactable_body=tuple(body),
-            accounting=accounting,
-            continuation=ContinuationManifest(
-                owner_type=ContextOwnerRole.conversation,
-                owner_id=task.id,
-                state_version=state["state_version"],
-                window_number=state["window_number"],
-                source_item_ids=tuple(run.id for run in eligible),
-            ),
-        )
-        attempts = ContextCompactionAttemptRepository(self.session)
-        service = AgentContextCompactionService(attempts, accounting=accounting_service)
-        client = build_model_client(self.settings)
-        try:
-            result = await service.compact(
-                envelope,
-                build_compaction_policy(self.settings, ContextOwnerRole.conversation),
-                generate=client.generate_context_checkpoint,
-                install=attempts.install_conversation_checkpoint,
-            )
-        finally:
-            await client.aclose()
-        if result.checkpoint is None:
-            raw = task.context_state if isinstance(task.context_state, dict) else {}
-            task.context_state = {
-                **raw,
-                "compaction_failure_code": result.failure_code or "compaction_failed",
-            }
-            task.updated_at = utc_now()
-            if commit:
-                await self.session.commit()
-            else:
-                await self.session.flush()
-            return {
-                "folded": 0,
-                "retained": len(projection.runs),
-                "status": "failed",
-                "failure_code": result.failure_code or "compaction_failed",
-            }
-        await self.session.refresh(task)
-        raw = task.context_state if isinstance(task.context_state, dict) else {}
-        task.context_state = {
-            **raw,
-            "token_before": result.token_before,
-            "token_after": result.token_after,
-            "compaction_implementation": (
-                result.implementation.value if result.implementation else "astra_semantic"
-            ),
-            "compaction_failure_code": None,
-            "last_action": action,
-            "last_action_at": utc_now().isoformat(),
-            "compaction_direction": direction.strip(),
-        }
-        task.updated_at = utc_now()
-        if commit:
-            await self.session.commit()
-        else:
-            await self.session.flush()
-        folded = len(eligible) - len(result.retained_tail_ids)
-        return {"folded": folded, "retained": len(projection.runs) - folded}
 
     async def clear(self, task: TaskRecord, *, commit: bool = True) -> dict[str, int]:
         runs = await self.list_runs(task.id)
         await self.ensure_idle(task.id, runs=runs)
         state = self._state(task)
-        folded = list(
-            dict.fromkeys([*state["folded_run_ids"], *(run.id for run in runs)])
-        )
+        folded = list(dict.fromkeys([*state["folded_run_ids"], *(run.id for run in runs)]))
         now = utc_now()
         task.context_state = {
             "version": CONTEXT_STATE_VERSION,

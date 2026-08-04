@@ -13,12 +13,12 @@ from app.tools.base import (
     ToolResultEnvelope,
     ToolSpec,
 )
-from app.tools.web import (
+from app.tools.web import build_web_registry
+from app.tools.web_content import extract_source
+from app.tools.web_fetch import WebFetchTool
+from app.tools.web_search import WebSearchTool
+from app.tools.web_search_providers import (
     DuckDuckGoHTMLParser,
-    WebFetchTool,
-    WebSearchTool,
-    build_web_registry,
-    extract_source,
     normalize_bing_rss,
     normalize_google_items,
     normalize_search_result_url,
@@ -65,7 +65,7 @@ async def test_web_search_batches_logical_queries_and_preserves_lineage(monkeypa
             ],
         }
 
-    monkeypatch.setattr(tool, "_search_one", fake_search)
+    monkeypatch.setattr(tool.provider_client, "search_one", fake_search)
     output = await tool.run(
         {
             "queries": [
@@ -107,7 +107,7 @@ async def test_web_search_reports_provider_unsupported_region_truthfully(monkeyp
             "candidates": [],
         }
 
-    monkeypatch.setattr(tool, "_search_one", fake_search)
+    monkeypatch.setattr(tool.provider_client, "search_one", fake_search)
     output = await tool.run({"query": "Astra", "region": "CN"})
 
     assert "region" not in output["constraint_audit"]["applied"]
@@ -159,7 +159,7 @@ async def test_duckduckgo_web_search_uses_real_provider_response(monkeypatch):
                 ),
             )
 
-    monkeypatch.setattr("app.tools.web.httpx.AsyncClient", FakeClient)
+    monkeypatch.setattr("app.tools.web_search_providers.httpx.AsyncClient", FakeClient)
     output = await WebSearchTool(Settings(web_search_provider="duckduckgo")).run(
         {"query": "Astra", "num_results": 1}
     )
@@ -204,7 +204,7 @@ async def test_bing_web_search_uses_rss_response(monkeypatch):
                 ),
             )
 
-    monkeypatch.setattr("app.tools.web.httpx.AsyncClient", FakeClient)
+    monkeypatch.setattr("app.tools.web_search_providers.httpx.AsyncClient", FakeClient)
     output = await WebSearchTool(Settings(web_search_provider="bing")).run(
         {"query": "Astra", "num_results": 1}
     )
@@ -240,8 +240,8 @@ async def test_auto_web_search_selects_google_with_dedicated_credentials(monkeyp
     )
     google = AsyncMock(return_value=search_output("google"))
     brave = AsyncMock(return_value=search_output("brave"))
-    monkeypatch.setattr(tool, "_google_search", google)
-    monkeypatch.setattr(tool, "_brave_search", brave)
+    monkeypatch.setattr(tool.provider_client, "_google_search", google)
+    monkeypatch.setattr(tool.provider_client, "_brave_search", brave)
 
     output = await tool.run({"query": "Astra"})
 
@@ -264,8 +264,8 @@ async def test_auto_web_search_selects_brave_from_generic_search_key(monkeypatch
     )
     brave = AsyncMock(return_value=search_output("brave"))
     bing = AsyncMock(return_value=search_output("bing"))
-    monkeypatch.setattr(tool, "_brave_search", brave)
-    monkeypatch.setattr(tool, "_bing_search", bing)
+    monkeypatch.setattr(tool.provider_client, "_brave_search", brave)
+    monkeypatch.setattr(tool.provider_client, "_bing_search", bing)
 
     output = await tool.run({"query": "Astra"})
 
@@ -287,8 +287,8 @@ async def test_auto_keyless_search_stops_after_successful_bing(monkeypatch):
     )
     bing = AsyncMock(return_value=search_output("bing"))
     duckduckgo = AsyncMock(return_value=search_output("duckduckgo"))
-    monkeypatch.setattr(tool, "_bing_search", bing)
-    monkeypatch.setattr(tool, "_duckduckgo_search", duckduckgo)
+    monkeypatch.setattr(tool.provider_client, "_bing_search", bing)
+    monkeypatch.setattr(tool.provider_client, "_duckduckgo_search", duckduckgo)
 
     output = await tool.run({"query": "Astra"})
 
@@ -316,8 +316,8 @@ async def test_auto_keyless_search_falls_back_to_duckduckgo(monkeypatch, bing_fa
     else:
         bing = AsyncMock(side_effect=ToolExecutionError("search_failed", "provider detail"))
     duckduckgo = AsyncMock(return_value=search_output("duckduckgo"))
-    monkeypatch.setattr(tool, "_bing_search", bing)
-    monkeypatch.setattr(tool, "_duckduckgo_search", duckduckgo)
+    monkeypatch.setattr(tool.provider_client, "_bing_search", bing)
+    monkeypatch.setattr(tool.provider_client, "_duckduckgo_search", duckduckgo)
 
     output = await tool.run({"query": "Astra"})
 
@@ -342,12 +342,12 @@ async def test_auto_keyless_search_aggregates_provider_failures_without_details(
         )
     )
     monkeypatch.setattr(
-        tool,
+        tool.provider_client,
         "_bing_search",
         AsyncMock(side_effect=ToolExecutionError("search_failed", "bing-secret-detail")),
     )
     monkeypatch.setattr(
-        tool,
+        tool.provider_client,
         "_duckduckgo_search",
         AsyncMock(side_effect=ToolExecutionError("search_failed", "duck-secret-detail")),
     )
@@ -365,8 +365,8 @@ async def test_explicit_provider_failure_does_not_fall_back(monkeypatch):
     tool = WebSearchTool(Settings(web_search_provider="google"))
     bing = AsyncMock(return_value=search_output("bing"))
     duckduckgo = AsyncMock(return_value=search_output("duckduckgo"))
-    monkeypatch.setattr(tool, "_bing_search", bing)
-    monkeypatch.setattr(tool, "_duckduckgo_search", duckduckgo)
+    monkeypatch.setattr(tool.provider_client, "_bing_search", bing)
+    monkeypatch.setattr(tool.provider_client, "_duckduckgo_search", duckduckgo)
 
     with pytest.raises(ToolExecutionError) as exc_info:
         await tool.run({"query": "Astra"})
@@ -422,7 +422,7 @@ async def test_google_web_search_api_error(monkeypatch):
             response = httpx.Response(500, request=request)
             raise httpx.HTTPStatusError("boom", request=request, response=response)
 
-    monkeypatch.setattr("app.tools.web.httpx.AsyncClient", FakeClient)
+    monkeypatch.setattr("app.tools.web_search_providers.httpx.AsyncClient", FakeClient)
     tool = WebSearchTool(
         Settings(
             web_search_provider="google",
@@ -468,7 +468,7 @@ async def test_brave_web_search_wraps_provider_errors(monkeypatch):
             response = httpx.Response(503, request=request)
             raise httpx.HTTPStatusError("unavailable", request=request, response=response)
 
-    monkeypatch.setattr("app.tools.web.httpx.AsyncClient", FakeClient)
+    monkeypatch.setattr("app.tools.web_search_providers.httpx.AsyncClient", FakeClient)
     tool = WebSearchTool(Settings(web_search_provider="brave", web_search_api_key="secret"))
 
     with pytest.raises(ToolExecutionError) as exc_info:
@@ -594,7 +594,7 @@ async def test_web_fetch_revalidates_redirect_targets(monkeypatch):
         async def getaddrinfo(self, _host, port, **_kwargs):
             return [(2, 1, 6, "", ("93.184.216.34", port))]
 
-    monkeypatch.setattr("app.tools.web.asyncio.get_running_loop", lambda: Resolver())
+    monkeypatch.setattr("app.tools.web_security.asyncio.get_running_loop", lambda: Resolver())
 
     def respond(request: httpx.Request) -> httpx.Response:
         return httpx.Response(
@@ -614,7 +614,7 @@ async def test_web_fetch_rejects_hostnames_resolving_to_private_addresses(monkey
         async def getaddrinfo(self, _host, port, **_kwargs):
             return [(2, 1, 6, "", ("127.0.0.1", port))]
 
-    monkeypatch.setattr("app.tools.web.asyncio.get_running_loop", lambda: Resolver())
+    monkeypatch.setattr("app.tools.web_security.asyncio.get_running_loop", lambda: Resolver())
     tool = WebFetchTool(Settings())
     async with httpx.AsyncClient(transport=httpx.MockTransport(lambda request: None)) as client:
         with pytest.raises(ToolExecutionError) as exc_info:
@@ -628,7 +628,7 @@ async def test_web_fetch_proxy_fake_ip_compatibility_is_explicit(monkeypatch):
         async def getaddrinfo(self, _host, port, **_kwargs):
             return [(2, 1, 6, "", ("198.18.0.42", port))]
 
-    monkeypatch.setattr("app.tools.web.asyncio.get_running_loop", lambda: Resolver())
+    monkeypatch.setattr("app.tools.web_security.asyncio.get_running_loop", lambda: Resolver())
 
     async def respond(request: httpx.Request) -> httpx.Response:
         return httpx.Response(
@@ -652,7 +652,7 @@ async def test_web_fetch_streams_with_a_hard_response_limit(monkeypatch):
     async def allow_public_target(_url, **_kwargs):
         return {"93.184.216.34"}
 
-    monkeypatch.setattr("app.tools.web.validate_public_http_target", allow_public_target)
+    monkeypatch.setattr("app.tools.web_fetch.validate_public_http_target", allow_public_target)
 
     def respond(request: httpx.Request) -> httpx.Response:
         return httpx.Response(
@@ -676,7 +676,7 @@ async def test_web_fetch_rejects_non_text_content(monkeypatch):
     async def allow_public_target(_url, **_kwargs):
         return {"93.184.216.34"}
 
-    monkeypatch.setattr("app.tools.web.validate_public_http_target", allow_public_target)
+    monkeypatch.setattr("app.tools.web_fetch.validate_public_http_target", allow_public_target)
 
     def respond(request: httpx.Request) -> httpx.Response:
         return httpx.Response(
@@ -698,7 +698,7 @@ async def test_web_fetch_records_the_validated_final_url(monkeypatch):
     async def allow_public_target(_url, **_kwargs):
         return {"93.184.216.34"}
 
-    monkeypatch.setattr("app.tools.web.validate_public_http_target", allow_public_target)
+    monkeypatch.setattr("app.tools.web_fetch.validate_public_http_target", allow_public_target)
 
     def respond(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/start":

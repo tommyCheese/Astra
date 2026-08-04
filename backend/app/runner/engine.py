@@ -13,44 +13,38 @@ from app.agent_profile import (
     AgentProfile,
     AgentProfileConfigurationError,
 )
-from app.conversation_context import ConversationContextManager
 from app.core.config import Settings
 from app.core.errors import run_error_from_exception
-from app.db.models import RunRecord, RunSkillSnapshotRecord
+from app.db.models.runs import RunRecord
+from app.db.models.skills import RunSkillSnapshotRecord
 from app.db.session import SessionLocal
-from app.repositories.plans import PlanRepository, plan_to_view
-from app.repositories.runs import RunRepository
-from app.runner.agent_loop import AgentLoop
-from app.runner.coordinator import RunCoordinator
-from app.runner.model_client import (
+from app.model_clients.contracts import (
     ModelConfigurationError,
     ModelOutputError,
-    build_model_client,
     model_http_client_options,
 )
+from app.model_clients.factory import build_model_client
+from app.repositories.plans import PlanRepository, plan_to_view
+from app.repositories.run_unit_of_work import RunUnitOfWork
+from app.runner.agent_loop import AgentLoop
+from app.runner.answer_stream import AnswerStreamMixin
+from app.runner.coordinator import RunCoordinator
 from app.runner.node_worker import ReadOnlyAgentNodeExecutor
-from app.runner.planning import PlanService, PlanValidationError, canonical_agent_state
+from app.runner.plan_errors import PlanValidationError
+from app.runner.plan_preparation import PlanPreparationMixin
+from app.runner.planning import PlanService, canonical_agent_state
 from app.runner.reasoning import (
     build_default_contract,
-    normalize_contract,
-    validate_contract,
 )
 from app.runner.recovery import ExecutionRecovery
-from app.schemas.agent import (
-    AnswerMode,
-    ExpectedObservation,
-    FinalAnswer,
-    PlanDraft,
-    PlanExecution,
+from app.schemas.agent.planning import (
     PlanGraphSnapshotEvent,
-    PlanNodeDraft,
-    ReasoningPolicySnapshot,
-    RunExecutionProfile,
-    SuccessCriterion,
-    TaskContract,
 )
+from app.schemas.agent.run_policy import ReasoningPolicySnapshot, RunExecutionProfile
+from app.schemas.agent.run_result import FinalAnswer
+from app.schemas.agent.types import AnswerMode, PlanExecution
 from app.schemas.models import ModelThinkingSnapshot
-from app.skills.catalog import SkillActivationService
+from app.skills.activation import SkillActivationService
 from app.tools.base import ToolRegistry
 from app.tools.registry import build_tool_registry
 from app.tools.selection import forbidden_plan_bindings, task_capability_catalog
@@ -58,8 +52,6 @@ from app.usage_metering import DatabaseUsageRecorder
 
 logger = logging.getLogger("astra.engine")
 
-STREAM_FLUSH_INTERVAL_SECONDS = 0.1
-STREAM_FLUSH_MAX_CHARS = 512
 _SHARED_MODEL_HTTP_CLIENTS: dict[str, httpx.AsyncClient] = {}
 _SHARED_TOOL_REGISTRIES: OrderedDict[str, ToolRegistry] = OrderedDict()
 MAX_SHARED_TOOL_REGISTRIES = 16
@@ -106,7 +98,7 @@ def shared_tool_registry(settings: Settings) -> ToolRegistry:
     return registry
 
 
-class RunEngine:
+class RunEngine(PlanPreparationMixin, AnswerStreamMixin):
     def __init__(
         self,
         settings: Settings,
@@ -134,7 +126,7 @@ class RunEngine:
             self.settings.model_name,
         )
         async with SessionLocal() as session:
-            repo = RunRepository(session)
+            repo = RunUnitOfWork(session)
             try:
                 await self._run_with_repo(repo, run_id)
             except asyncio.CancelledError:
@@ -175,7 +167,7 @@ class RunEngine:
                     },
                 )
 
-    async def _flush_cancelled_answer(self, repo: RunRepository, run_id: str) -> None:
+    async def _flush_cancelled_answer(self, repo: RunUnitOfWork, run_id: str) -> None:
         buffered = self._answer_buffers.pop(run_id, "")
         self._answer_flush_at.pop(run_id, None)
         if not buffered:
@@ -185,7 +177,7 @@ class RunEngine:
         await repo.add_event(run_id, "answer.delta", {"delta": buffered})
         await repo.session.commit()
 
-    async def _run_with_repo(self, repo: RunRepository, run_id: str) -> None:
+    async def _run_with_repo(self, repo: RunUnitOfWork, run_id: str) -> None:
         run, skill_snapshot = await repo.require_run_startup(
             run_id,
             include_skills=self.settings.skills_enabled,
@@ -194,6 +186,29 @@ class RunEngine:
         self.model_client.bind_agent_profile(profile)
         self._bind_reasoning_effort(run)
         self._bind_model_thinking(run)
+        skill_snapshot = await self._bind_skills(repo, run, skill_snapshot)
+        goal = await self._conversation_goal(repo, run)
+        execution_profile = RunExecutionProfile.model_validate(run.execution_profile or {})
+        if execution_profile.answer_mode == AnswerMode.standard:
+            await self._execute_agent_loop(
+                repo,
+                run_id,
+                goal,
+                initial_run=run,
+                fresh_run=run.status == "created" and not run.state_version,
+                initial_skill_snapshot=skill_snapshot,
+            )
+            return
+        if run.state_version and run.agent_state:
+            await repo.session.commit()
+            await self._execute_trusted_runtime(repo, run_id, goal)
+            return
+        if await self._prepare_trusted_run(repo, run, goal, execution_profile):
+            return
+        await self._execute_trusted_runtime(repo, run_id, goal)
+
+    async def _bind_skills(self, repo, run, skill_snapshot):
+        run_id = run.id
         skill_service = SkillActivationService(
             repo.session,
             max_active=self.settings.skills_max_active,
@@ -236,41 +251,11 @@ class RunEngine:
                     },
                 )
             self._active_skill_blocks = skill_blocks
-        goal = await self._conversation_goal(repo, run)
-        execution_profile = (
-            RunExecutionProfile.model_validate(run.execution_profile)
-            if run.execution_profile
-            else None
-        )
-        if execution_profile is None:
-            raise ValueError("Run execution profile is required")
-        if execution_profile.answer_mode == AnswerMode.standard:
-            await self._execute_agent_loop(
-                repo,
-                run_id,
-                goal,
-                initial_run=run,
-                fresh_run=run.status == "created" and not run.state_version,
-                initial_skill_snapshot=skill_snapshot,
-            )
-            return
+        return skill_snapshot
 
-        if run.state_version and run.agent_state:
-            # Skill/profile binding can append audit events above. The trusted
-            # coordinator executes claimed nodes through independent sessions,
-            # so release this session's SQLite writer before those sessions
-            # begin their CAS updates.
-            await repo.session.commit()
-            await self._execute_trusted_runtime(repo, run_id, goal)
-            return
-
-        logger.info("run.phase run_id=%s phase=planning", run_id)
-        await repo.add_event(
-            run_id,
-            "reasoning.phase.started",
-            {"phase": "planning", "label": "正在理解任务并制定计划"},
-        )
-        await repo.update_run_status(run_id, "planning")
+    async def _prepare_trusted_run(self, repo, run, goal, execution_profile) -> bool:
+        run_id = run.id
+        await self._announce_planning(repo, run_id)
         contract, plan = await self._prepare_plan(
             run_id,
             goal,
@@ -321,25 +306,7 @@ class RunEngine:
                 activate=execution_profile.plan_execution == PlanExecution.auto,
             )
         await repo.session.commit()
-        skill_bound_nodes = [
-            {
-                "plan_node_id": node.id,
-                "node_key": node.node_key,
-                "required_skill_ids": list(node.required_skill_ids or []),
-            }
-            for node in canonical_plan.nodes
-            if node.required_skill_ids
-        ]
-        if skill_bound_nodes:
-            await repo.add_event(
-                run_id,
-                "skill.plan_bound",
-                {
-                    "plan_id": canonical_plan.id,
-                    "plan_version": canonical_plan.version,
-                    "nodes": skill_bound_nodes,
-                },
-            )
+        await self._emit_skill_plan_binding(repo, run_id, canonical_plan)
         state = canonical_agent_state(contract, canonical_plan, policy_version=snapshot.version)
         if execution_profile.plan_execution == PlanExecution.confirm:
             state = state.model_copy(update={"active_plan_id": None, "active_executions": []})
@@ -371,7 +338,7 @@ class RunEngine:
                     "request": "计划已生成，确认后执行。",
                 },
             )
-            return
+            return True
         if contract.ambiguity_status != "clear":
             await repo.set_waiting_state(
                 run_id,
@@ -382,13 +349,40 @@ class RunEngine:
                     "request": contract.clarification_question,
                 },
             )
-            return
+            return True
+        return False
 
-        await self._execute_trusted_runtime(repo, run_id, goal)
+    @staticmethod
+    async def _announce_planning(repo, run_id) -> None:
+        logger.info("run.phase run_id=%s phase=planning", run_id)
+        await repo.add_event(
+            run_id,
+            "reasoning.phase.started",
+            {"phase": "planning", "label": "正在理解任务并制定计划"},
+        )
+        await repo.update_run_status(run_id, "planning")
+
+    @staticmethod
+    async def _emit_skill_plan_binding(repo, run_id, plan) -> None:
+        nodes = [
+            {
+                "plan_node_id": node.id,
+                "node_key": node.node_key,
+                "required_skill_ids": list(node.required_skill_ids or []),
+            }
+            for node in plan.nodes
+            if node.required_skill_ids
+        ]
+        if nodes:
+            await repo.add_event(
+                run_id,
+                "skill.plan_bound",
+                {"plan_id": plan.id, "plan_version": plan.version, "nodes": nodes},
+            )
 
     async def _execute_trusted_runtime(
         self,
-        repo: RunRepository,
+        repo: RunUnitOfWork,
         run_id: str,
         goal: str,
     ) -> None:
@@ -470,190 +464,9 @@ class RunEngine:
             raise ValueError(f"Run {run.id} is missing the current model thinking snapshot")
         self.model_client.bind_model_thinking(ModelThinkingSnapshot.model_validate(thinking))
 
-    async def _prepare_plan(
-        self,
-        run_id: str,
-        goal: str,
-        reasoning_policy: dict[str, Any],
-        execution_profile: dict[str, Any] | None = None,
-    ) -> tuple[TaskContract, PlanDraft]:
-        ReasoningPolicySnapshot.model_validate(reasoning_policy)
-        RunExecutionProfile.model_validate(execution_profile or {})
-        public_goal = self._public_plan_text(goal)
-        if self.settings.agent_use_general_runtime:
-            try:
-                contract_result = await self.model_client.contract(public_goal)
-            except ModelOutputError as exc:
-                contract_result = exc
-        else:
-            contract_result = build_default_contract(public_goal)
-        contract = self._resolve_contract(run_id, public_goal, contract_result)
-        skill_revisions = [
-            {
-                "qualified_identity": item["qualified_identity"],
-                "revision_id": item["revision_id"],
-                "digest": item["digest"],
-            }
-            for item in getattr(self, "_active_skill_blocks", [])
-        ]
-        if skill_revisions:
-            criteria = [
-                criterion.model_copy(
-                    update={
-                        "provenance": {
-                            **criterion.provenance,
-                            "skill_revisions": skill_revisions,
-                        }
-                    }
-                )
-                for criterion in contract.success_criteria
-            ]
-            known_checks: set[str] = set()
-            for block in getattr(self, "_active_skill_blocks", []):
-                metadata = block.get("metadata", {})
-                checks = metadata.get("mandatory_checks", []) if isinstance(metadata, dict) else []
-                if not isinstance(checks, list):
-                    continue
-                for raw_check in checks:
-                    check = str(raw_check).strip()
-                    if not check or check in known_checks:
-                        continue
-                    known_checks.add(check)
-                    identity = block["qualified_identity"]
-                    stable_id = hashlib.sha256(f"{identity}\0{check}".encode()).hexdigest()[:12]
-                    criteria.append(
-                        SuccessCriterion(
-                            id=f"skill-check-{stable_id}",
-                            description=check,
-                            verification_method="task_adapter",
-                            provenance={
-                                "kind": "skill_mandatory_check",
-                                "qualified_identity": identity,
-                                "revision_id": block["revision_id"],
-                                "digest": block["digest"],
-                            },
-                        )
-                    )
-            contract = contract.model_copy(
-                update={
-                    "skill_revisions": skill_revisions,
-                    "success_criteria": criteria,
-                }
-            )
-        try:
-            plan_result = await self.model_client.plan(
-                goal,
-                contract=contract,
-            )
-        except ModelOutputError as exc:
-            plan_result = exc
-        plan = self._resolve_plan(
-            run_id,
-            plan_result,
-            contract=contract,
-        )
-        active_identities = [item["qualified_identity"] for item in skill_revisions]
-        if active_identities:
-            plan = plan.model_copy(
-                update={
-                    "nodes": [
-                        node
-                        if node.required_skill_ids
-                        else node.model_copy(update={"required_skill_ids": active_identities})
-                        for node in plan.nodes
-                    ]
-                }
-            )
-        return contract, plan
-
-    def _resolve_contract(
-        self, run_id: str, goal: str, result: TaskContract | Exception | None
-    ) -> TaskContract:
-        contract = result
-        if isinstance(result, Exception):
-            if not isinstance(result, ModelOutputError):
-                raise result
-            logger.warning("run.contract.fallback run_id=%s reason=%s", run_id, str(result))
-            contract = build_default_contract(goal)
-        if contract:
-            contract = normalize_contract(contract, goal)
-            try:
-                validate_contract(contract)
-            except ValueError as exc:
-                raise ModelOutputError(f"Invalid task contract: {exc}") from exc
-        return contract or build_default_contract(goal)
-
-    def _resolve_plan(
-        self,
-        run_id: str,
-        result: PlanDraft | Exception,
-        *,
-        contract: TaskContract,
-    ) -> PlanDraft:
-        if not isinstance(result, Exception):
-            if result.nodes:
-                return result
-            logger.warning("run.plan.fallback run_id=%s reason=empty plan nodes", run_id)
-            return self._default_plan(
-                "生成回复",
-                "直接回应用户当前请求",
-                contract=contract,
-            )
-        if not isinstance(result, ModelOutputError):
-            raise result
-        logger.warning("run.plan.fallback run_id=%s reason=%s", run_id, str(result))
-        return self._default_plan(
-            "生成回复",
-            "直接回应用户当前请求",
-            contract=contract,
-        )
-
-    @staticmethod
-    def _default_plan(
-        title: str,
-        intent: str,
-        *,
-        contract: TaskContract,
-    ) -> PlanDraft:
-        return PlanDraft(
-            nodes=[
-                PlanNodeDraft(
-                    node_key="step-1",
-                    title=title,
-                    intent=intent,
-                    success_criteria_refs=[item.id for item in contract.success_criteria],
-                    expected_outcome=ExpectedObservation(
-                        kind="step_result",
-                        success_condition="step completed with accepted evidence",
-                    ),
-                    risk_level=contract.risk_level,
-                )
-            ],
-        )
-
-    @staticmethod
-    def _public_plan_text(text: str) -> str:
-        context_marker = "Conversation context:\n"
-        request_marker = "\nCurrent user request: "
-        if context_marker not in text or request_marker not in text:
-            return text
-        prefix, contextual = text.split(context_marker, 1)
-        _, current_request = contextual.rsplit(request_marker, 1)
-        return prefix + current_request
-
-    async def _conversation_goal(self, repo: RunRepository, run: RunRecord) -> str:
-        current_goal = run.model_policy.get("conversation_goal")
-        if not current_goal:
-            current_goal = (await repo.require_run(run.id)).task.description
-        if run.model_policy.get("conversation_context_required") is False:
-            return current_goal
-        manager = ConversationContextManager(repo.session, self.settings)
-        task = await manager.require_task(run.task_id)
-        return await manager.render_goal(task, current_goal)
-
     async def _execute_agent_loop(
         self,
-        repo: RunRepository,
+        repo: RunUnitOfWork,
         run_id: str,
         goal: str,
         *,
@@ -724,7 +537,7 @@ class RunEngine:
 
     async def _finalize_agent_loop(
         self,
-        repo: RunRepository,
+        repo: RunUnitOfWork,
         run_id: str,
         final_answer: FinalAnswer,
         result: dict[str, Any],
@@ -807,112 +620,11 @@ class RunEngine:
 
     async def _profile_for_run(
         self,
-        repo: RunRepository,
+        repo: RunUnitOfWork,
         run_id: str,
         snapshot: dict[str, Any],
     ) -> AgentProfile:
         return AgentProfile.from_snapshot(snapshot)
-
-    async def _emit_answer_stream(self, repo: RunRepository, run_id: str, content: str) -> None:
-        await self._start_answer_stream(repo, run_id)
-        await self._answer_delta(repo, run_id, content)
-        await self._complete_answer_stream(repo, run_id, content)
-
-    async def _start_answer_stream(self, repo: RunRepository, run_id: str) -> None:
-        self._answer_buffers[run_id] = ""
-        self._answer_flush_at[run_id] = 0.0
-        self._answer_start_pending.add(run_id)
-
-    async def _ensure_answer_stream_started(self, repo: RunRepository, run_id: str) -> None:
-        if run_id not in self._answer_start_pending:
-            return
-        self._answer_start_pending.discard(run_id)
-        await repo.add_event(
-            run_id,
-            "answer.started",
-            {"role": "assistant", "mode": "native"},
-            flush=False,
-        )
-
-    async def _answer_delta(self, repo: RunRepository, run_id: str, delta: str) -> None:
-        if not delta:
-            return
-        await self._ensure_answer_stream_started(repo, run_id)
-        await repo.add_event(run_id, "answer.delta", {"delta": delta})
-        await repo.session.commit()
-
-    async def _handle_answer_delta(
-        self,
-        repo: RunRepository,
-        run_id: str,
-        delta: str,
-        *,
-        background_verification: bool = False,
-    ) -> None:
-        if delta == "\0":
-            await self._start_answer_stream(repo, run_id)
-            return
-        if delta == "\1":
-            buffered = self._answer_buffers.get(run_id, "")
-            self._answer_buffers[run_id] = ""
-            await self._ensure_answer_stream_started(repo, run_id)
-            if buffered:
-                await repo.add_event(run_id, "answer.delta", {"delta": buffered})
-            await repo.add_event(
-                run_id,
-                "answer.content.completed",
-                {"background_verification": background_verification},
-            )
-            await repo.session.commit()
-            return
-        if not delta:
-            return
-        buffered = self._answer_buffers.get(run_id, "") + delta
-        now = time.monotonic()
-        last_flush = self._answer_flush_at.get(run_id, 0.0)
-        first_delta = last_flush == 0.0
-        should_flush = (
-            first_delta
-            or now - last_flush >= STREAM_FLUSH_INTERVAL_SECONDS
-            or len(buffered) >= STREAM_FLUSH_MAX_CHARS
-        )
-        if should_flush:
-            self._answer_buffers[run_id] = ""
-            self._answer_flush_at[run_id] = now
-            await self._answer_delta(repo, run_id, buffered)
-        else:
-            self._answer_buffers[run_id] = buffered
-
-    async def _complete_answer_stream(self, repo: RunRepository, run_id: str, content: str) -> None:
-        buffered = self._answer_buffers.pop(run_id, "")
-        self._answer_flush_at.pop(run_id, None)
-        await self._ensure_answer_stream_started(repo, run_id)
-        if buffered:
-            await repo.add_event(run_id, "answer.delta", {"delta": buffered})
-        await repo.add_event(
-            run_id,
-            "answer.completed",
-            {"content": content, "status": "answer_complete"},
-        )
-        await repo.session.commit()
-
-    async def _mark_named_step_running(self, repo: RunRepository, run_id: str, name_part: str):
-        run = await repo.require_run(run_id)
-        for step in sorted(run.steps, key=lambda item: item.index):
-            if name_part in step.title or name_part in step.intent:
-                await repo.update_step(step.id, "running")
-                return step
-        return None
-
-    async def _complete_pending_steps(self, repo: RunRepository, run_id: str) -> None:
-        run = await repo.require_run(run_id)
-        for step in sorted(run.steps, key=lambda item: item.index):
-            if step.status in {"pending", "running"}:
-                await repo.update_step(
-                    step.id,
-                    "completed",
-                    evidence={"handled_by": "agent_loop"},
-                )
 
 
 async def start_run_in_process(run_id: str, settings: Settings) -> None:
@@ -921,7 +633,7 @@ async def start_run_in_process(run_id: str, settings: Settings) -> None:
     except ModelConfigurationError as exc:
         logger.exception("run.engine.configuration_error run_id=%s", run_id)
         async with SessionLocal() as session:
-            repo = RunRepository(session)
+            repo = RunUnitOfWork(session)
             error = run_error_from_exception(exc)
             await repo.add_event(run_id, "run.error", error)
             await repo.update_run_status(
@@ -932,7 +644,7 @@ async def start_run_in_process(run_id: str, settings: Settings) -> None:
         await engine.run(run_id)
     except asyncio.CancelledError:
         async with SessionLocal() as session:
-            await RunRepository(session).cancel_run(run_id)
+            await RunUnitOfWork(session).cancel_run(run_id)
         raise
     finally:
         await engine.model_client.aclose()

@@ -1,25 +1,22 @@
 import pytest
 from sqlalchemy.exc import IntegrityError
 
-from app.db.models import PlanNodeRecord
+from app.db.models.plans import PlanNodeRecord
 from app.repositories.plans import PlanRepository, PlanStateError, diff_plans, plan_to_view
-from app.repositories.runs import RunRepository, run_to_view
-from app.runner.planning import (
-    PlanScheduler,
-    PlanService,
-    PlanValidationError,
-    PlanValidator,
-    canonical_agent_state,
-)
+from app.repositories.run_unit_of_work import RunUnitOfWork
+from app.repositories.run_view_projection import RunViewProjector
+from app.runner.plan_errors import PlanValidationError
+from app.runner.plan_scheduler import PlanScheduler
+from app.runner.planning import PlanService, PlanValidator, canonical_agent_state
 from app.runner.reasoning import build_default_contract
-from app.schemas.agent import (
+from app.schemas.agent.planning import (
     ExpectedObservation,
     PlanDraft,
     PlanNodeDraft,
-    PlanNodeStatus,
     PlanPatch,
     PlanPatchOperation,
 )
+from app.schemas.agent.types import PlanNodeStatus
 
 
 def weather_plan() -> PlanDraft:
@@ -115,7 +112,7 @@ def test_validator_rejects_concrete_tool_bindings_and_honors_empty_catalog():
 
 
 async def test_plan_repository_persists_graph_and_projects_run_view(session):
-    run = await RunRepository(session).create_task_run(
+    run = await RunUnitOfWork(session).create_task_run(
         "查询天气", {"provider": "mock"}, answer_mode="trusted"
     )
     contract = build_default_contract("查询天气")
@@ -127,15 +124,15 @@ async def test_plan_repository_persists_graph_and_projects_run_view(session):
         capabilities={"weather.lookup"},
     )
     state = canonical_agent_state(contract, plan, policy_version=1)
-    await RunRepository(session).initialize_reasoning_state(
+    await RunUnitOfWork(session).initialize_reasoning_state(
         run.id,
         task_contract=contract.model_dump(mode="json"),
         plan_graph=plan_to_view(plan).model_dump(mode="json"),
         agent_state=state.model_dump(mode="json"),
     )
 
-    loaded = await RunRepository(session).require_run(run.id)
-    view = run_to_view(loaded)
+    loaded = await RunUnitOfWork(session).require_run(run.id)
+    view = RunViewProjector().payload(loaded)
     assert view["plan_graph"]["id"] == plan.id
     assert [item["node_key"] for item in view["steps"]] == [
         "resolve-location",
@@ -148,19 +145,19 @@ async def test_plan_repository_persists_graph_and_projects_run_view(session):
 
 
 async def test_standard_run_never_projects_a_plan_graph(session):
-    run = await RunRepository(session).create_task_run("快速回答", {"provider": "mock"})
+    run = await RunUnitOfWork(session).create_task_run("快速回答", {"provider": "mock"})
     plan = await PlanRepository(session).create(run.id, weather_plan())
     run.plan_graph = plan_to_view(plan).model_dump(mode="json")
     await session.commit()
 
-    view = run_to_view(await RunRepository(session).require_run(run.id))
+    view = RunViewProjector().payload(await RunUnitOfWork(session).require_run(run.id))
     assert view["plan_graph"] == {}
     assert view["plan_versions"] == []
     assert view["steps"] == []
 
 
 async def test_plan_projection_uses_explicit_edges_and_keeps_depends_on(session):
-    run = await RunRepository(session).create_task_run(
+    run = await RunUnitOfWork(session).create_task_run(
         "图投影", {"provider": "mock"}, answer_mode="trusted"
     )
     plan = await PlanRepository(session).create(run.id, weather_plan())
@@ -175,7 +172,7 @@ async def test_plan_projection_uses_explicit_edges_and_keeps_depends_on(session)
 
 
 async def test_plan_version_and_node_key_constraints(session):
-    run = await RunRepository(session).create_task_run("约束测试", {"provider": "mock"})
+    run = await RunUnitOfWork(session).create_task_run("约束测试", {"provider": "mock"})
     repository = PlanRepository(session)
     plan = await repository.create(run.id, weather_plan())
     session.add(
@@ -193,8 +190,8 @@ async def test_plan_version_and_node_key_constraints(session):
 
 
 async def test_plan_lineage_must_reference_the_same_run(session):
-    first_run = await RunRepository(session).create_task_run("原运行", {"provider": "mock"})
-    second_run = await RunRepository(session).create_task_run("其他运行", {"provider": "mock"})
+    first_run = await RunUnitOfWork(session).create_task_run("原运行", {"provider": "mock"})
+    second_run = await RunUnitOfWork(session).create_task_run("其他运行", {"provider": "mock"})
     foreign = await PlanRepository(session).create(first_run.id, weather_plan())
     with pytest.raises(PlanStateError, match="earlier Plan"):
         await PlanRepository(session).create(
@@ -205,7 +202,7 @@ async def test_plan_lineage_must_reference_the_same_run(session):
 
 
 async def test_scheduler_blocks_dependencies_and_releases_successors(session):
-    run = await RunRepository(session).create_task_run("查询天气", {"provider": "mock"})
+    run = await RunUnitOfWork(session).create_task_run("查询天气", {"provider": "mock"})
     repository = PlanRepository(session)
     plan = await repository.create(run.id, weather_plan())
     scheduler = PlanScheduler(repository)
@@ -219,7 +216,7 @@ async def test_scheduler_blocks_dependencies_and_releases_successors(session):
 
 
 async def test_scheduler_selects_branch_nodes_deterministically(session):
-    run = await RunRepository(session).create_task_run("并行候选", {"provider": "mock"})
+    run = await RunUnitOfWork(session).create_task_run("并行候选", {"provider": "mock"})
     contract = build_default_contract("并行候选")
     draft = PlanDraft(
         nodes=[
@@ -247,7 +244,7 @@ async def test_scheduler_selects_branch_nodes_deterministically(session):
 
 
 async def test_illegal_node_transition_is_rejected(session):
-    run = await RunRepository(session).create_task_run("状态转换", {"provider": "mock"})
+    run = await RunUnitOfWork(session).create_task_run("状态转换", {"provider": "mock"})
     repository = PlanRepository(session)
     plan = await repository.create(run.id, weather_plan())
     with pytest.raises(PlanStateError, match="pending -> completed"):
@@ -255,7 +252,7 @@ async def test_illegal_node_transition_is_rejected(session):
 
 
 async def test_plan_patch_creates_version_and_preserves_lineage(session):
-    run = await RunRepository(session).create_task_run("重规划", {"provider": "mock"})
+    run = await RunUnitOfWork(session).create_task_run("重规划", {"provider": "mock"})
     contract = build_default_contract("重规划")
     repository = PlanRepository(session)
     service = PlanService(repository)
@@ -308,7 +305,7 @@ async def test_plan_patch_creates_version_and_preserves_lineage(session):
 
 
 async def test_stale_plan_patch_is_rejected(session):
-    run = await RunRepository(session).create_task_run("过期补丁", {"provider": "mock"})
+    run = await RunUnitOfWork(session).create_task_run("过期补丁", {"provider": "mock"})
     contract = build_default_contract("过期补丁")
     repository = PlanRepository(session)
     service = PlanService(repository)
@@ -333,7 +330,7 @@ async def test_stale_plan_patch_is_rejected(session):
 
 
 async def test_plan_patch_preserves_completed_nodes_and_evidence(session):
-    run = await RunRepository(session).create_task_run("保留成果", {"provider": "mock"})
+    run = await RunUnitOfWork(session).create_task_run("保留成果", {"provider": "mock"})
     contract = build_default_contract("保留成果")
     repository = PlanRepository(session)
     service = PlanService(repository)
@@ -378,7 +375,7 @@ async def test_plan_patch_preserves_completed_nodes_and_evidence(session):
 
 
 async def test_plan_patch_rejects_running_node_and_cyclic_update(session):
-    run = await RunRepository(session).create_task_run("补丁保护", {"provider": "mock"})
+    run = await RunUnitOfWork(session).create_task_run("补丁保护", {"provider": "mock"})
     contract = build_default_contract("补丁保护")
     repository = PlanRepository(session)
     service = PlanService(repository)
@@ -406,7 +403,7 @@ async def test_plan_patch_rejects_running_node_and_cyclic_update(session):
             contract=contract,
             capabilities={"weather.lookup"},
         )
-    cycle_run = await RunRepository(session).create_task_run("循环补丁", {"provider": "mock"})
+    cycle_run = await RunUnitOfWork(session).create_task_run("循环补丁", {"provider": "mock"})
     cycle_plan = await service.create(
         cycle_run.id,
         weather_plan(),

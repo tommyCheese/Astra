@@ -3,31 +3,50 @@ from __future__ import annotations
 import base64
 import difflib
 import html
-import json
 import re
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Query
 from fastapi.responses import Response
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent_profile import load_agent_profile
+from app.api.skill_diff import skill_git_diff as _git_diff
+from app.api.skill_metrics import build_skill_metrics
+from app.api.skill_views import (
+    skill_detail_view as _detail,
+)
+from app.api.skill_views import (
+    skill_diagnostics as _diagnostics,
+)
+from app.api.skill_views import (
+    skill_file_view as _file_view,
+)
+from app.api.skill_views import (
+    skill_revision_file_view as _revision_file_view,
+)
+from app.api.skill_views import (
+    skill_revision_view as _revision_view,
+)
+from app.api.skill_views import (
+    skill_summary_view as _summary,
+)
 from app.core.config import Settings, get_settings
 from app.core.errors import ResourceError, StateError, ValidationError
-from app.db.models import (
-    ModelInvocationRecord,
-    RunEventRecord,
+from app.db.models.runs import RunEventRecord
+from app.db.models.skills import (
     RunSkillSnapshotRecord,
     SkillAuditRecord,
-    SkillRecord,
-    SkillRevisionRecord,
 )
 from app.db.session import get_session
-from app.repositories.runs import RunRepository
+from app.platform.http.dependencies import ApplicationServices, get_application_container
+from app.repositories.run_unit_of_work import RunUnitOfWork
 from app.runner.model_reasoning import normalize_model_thinking
 from app.runner.reasoning import RunProfileResolver, compile_subagent_policy
-from app.schemas.agent import CreateRunResponse, PlanExecution, RequestedReasoningPolicy
+from app.schemas.agent.api_views import CreateRunResponse
+from app.schemas.agent.run_policy import RequestedReasoningPolicy
+from app.schemas.agent.types import PlanExecution
 from app.schemas.skills import (
     RunSkillsView,
     SkillCatalogView,
@@ -38,7 +57,6 @@ from app.schemas.skills import (
     SkillDraftFilesView,
     SkillDraftUpdateRequest,
     SkillFileContentView,
-    SkillFileView,
     SkillImportRequest,
     SkillPublishRequest,
     SkillRevisionDetailView,
@@ -50,9 +68,11 @@ from app.schemas.skills import (
     SkillTestRunRequest,
     SkillValidationView,
 )
-from app.skills.catalog import SkillActivationService, SkillCatalogBuilder
+from app.skills.activation import SkillActivationService
+from app.skills.catalog import SkillCatalogBuilder
+from app.skills.errors import SkillStorageError
 from app.skills.packages import SkillPackageError, normalize_skill_path
-from app.skills.storage import SkillService, SkillStorageError
+from app.skills.storage import SkillService
 
 router = APIRouter(prefix="/api", tags=["skills"])
 
@@ -76,122 +96,6 @@ def _raise_skill_error(exc: Exception) -> None:
             raise StateError(exc.code, str(exc), exc.details) from exc
         raise ValidationError(exc.code, str(exc), exc.details) from exc
     raise exc
-
-
-def _diagnostics(report: dict[str, Any] | None) -> list[dict[str, Any]]:
-    return list((report or {}).get("diagnostics", []))
-
-
-async def _revision_view(
-    session: AsyncSession, revision_id: str | None
-) -> SkillRevisionView | None:
-    if not revision_id:
-        return None
-    revision = await session.get(SkillRevisionRecord, revision_id)
-    if revision is None:
-        return None
-    return SkillRevisionView(
-        id=revision.id,
-        version=revision.version,
-        digest=revision.digest,
-        published_at=revision.published_at.isoformat() if revision.published_at else None,
-        revoked_at=revision.revoked_at.isoformat() if revision.revoked_at else None,
-        test_only=revision.test_only,
-        diagnostics=_diagnostics(revision.validation_report),
-    )
-
-
-async def _summary(session: AsyncSession, skill: SkillRecord) -> SkillSummaryView:
-    report = skill.draft.validation_report if skill.draft is not None else {}
-    if skill.deleted_at is not None:
-        state = "removed"
-    elif not skill.enabled:
-        state = "disabled"
-    elif skill.active_revision_id:
-        state = "published"
-    else:
-        state = "draft"
-    return SkillSummaryView(
-        id=skill.id,
-        name=skill.name,
-        qualified_identity=f"{skill.origin}:{skill.name}",
-        origin=skill.origin,
-        description=skill.description,
-        enabled=skill.enabled,
-        readonly=skill.origin == "builtin",
-        lifecycle_state=state,
-        active_revision=await _revision_view(session, skill.active_revision_id),
-        draft_revision_token=skill.draft.revision_token if skill.draft else None,
-        diagnostics=_diagnostics(report),
-        created_at=skill.created_at.isoformat(),
-        updated_at=skill.updated_at.isoformat(),
-    )
-
-
-def _file_view(skill: SkillRecord, item: dict[str, Any]) -> SkillFileView:
-    revision_key = skill.draft.revision_token if skill.draft else skill.active_revision_id
-    scheme = "skill-draft" if skill.draft else "skill-revision"
-    return SkillFileView(
-        path=item["path"],
-        uri=f"{scheme}://{skill.id}/{revision_key}/{item['path']}",
-        digest=item["digest"],
-        size_bytes=item["size_bytes"],
-        media_type=item["media_type"],
-        kind=item["kind"],
-        text=item["text"],
-        readonly=skill.origin == "builtin",
-    )
-
-
-def _revision_file_view(
-    skill: SkillRecord, revision: SkillRevisionRecord, item: dict[str, Any]
-) -> SkillFileView:
-    return SkillFileView(
-        path=item["path"],
-        uri=f"skill-revision://{skill.id}/{revision.id}/{item['path']}",
-        digest=item["digest"],
-        size_bytes=item["size_bytes"],
-        media_type=item["media_type"],
-        kind=item["kind"],
-        text=item["text"],
-        readonly=True,
-    )
-
-
-def _git_diff(
-    before_files: dict[str, bytes],
-    after_files: dict[str, bytes],
-) -> tuple[str, list[dict[str, Any]]]:
-    patches: list[str] = []
-    changes: list[dict[str, Any]] = []
-    for path in sorted(set(before_files) | set(after_files)):
-        before = before_files.get(path)
-        after = after_files.get(path)
-        if before == after:
-            continue
-        status = "added" if before is None else "removed" if after is None else "modified"
-        header = [f"diff --git a/{path} b/{path}\n"]
-        if status == "added":
-            header.append("new file mode 100644\n")
-        elif status == "removed":
-            header.append("deleted file mode 100644\n")
-        try:
-            patch = "".join(
-                header
-                + list(
-                    difflib.unified_diff(
-                        [] if before is None else before.decode("utf-8").splitlines(keepends=True),
-                        [] if after is None else after.decode("utf-8").splitlines(keepends=True),
-                        fromfile="/dev/null" if before is None else f"a/{path}",
-                        tofile="/dev/null" if after is None else f"b/{path}",
-                    )
-                )
-            )
-        except UnicodeDecodeError:
-            patch = "".join(header) + f"Binary files a/{path} and b/{path} differ\n"
-        patches.append(patch)
-        changes.append({"path": path, "status": status, "patch": patch})
-    return "\n".join(patches), changes
 
 
 @router.get("/skills", response_model=list[SkillSummaryView])
@@ -541,7 +445,7 @@ async def revoke_skill_revision(
         skill = await service.require_skill(skill_id)
         revision = await service.require_revision(skill_id, revision_id)
         if revision.revoked_at is None:
-            from app.db.models import utc_now
+            from app.db.model_base import utc_now
 
             revision.revoked_at = utc_now()
             if skill.active_revision_id == revision.id:
@@ -723,6 +627,7 @@ async def delete_skill(
 async def create_skill_test_run(
     skill_id: str,
     payload: SkillTestRunRequest,
+    container: ApplicationServices = Depends(get_application_container),
     session: AsyncSession = Depends(get_session),
     settings: Settings = Depends(get_settings),
 ) -> CreateRunResponse:
@@ -740,7 +645,7 @@ async def create_skill_test_run(
             model=settings.model_name,
             selection=None,
         )
-        run = await RunRepository(session).create_task_run(
+        run = await RunUnitOfWork(session).create_task_run(
             payload.goal.strip(),
             {
                 **settings.model_policy,
@@ -790,9 +695,7 @@ async def create_skill_test_run(
         )
         await session.commit()
 
-        from app.api.runs import _schedule_run
-
-        _schedule_run(run.id, settings)
+        container.run_dispatcher.start(run.id, settings)
         return CreateRunResponse(
             task_id=run.task_id,
             run_id=run.id,
@@ -874,113 +777,4 @@ async def get_skill_audit(
 async def get_skill_metrics(
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
-    skills = int(await session.scalar(select(func.count()).select_from(SkillRecord)) or 0)
-    revisions = int(
-        await session.scalar(
-            select(func.count())
-            .select_from(SkillRevisionRecord)
-            .where(SkillRevisionRecord.test_only.is_(False))
-        )
-        or 0
-    )
-    draft_tests = int(
-        await session.scalar(
-            select(func.count())
-            .select_from(SkillRevisionRecord)
-            .where(SkillRevisionRecord.test_only.is_(True))
-        )
-        or 0
-    )
-    snapshots = int(
-        await session.scalar(select(func.count()).select_from(RunSkillSnapshotRecord)) or 0
-    )
-    snapshot_rows = list((await session.scalars(select(RunSkillSnapshotRecord))).all())
-    catalog_chars = [
-        len(json.dumps(item.catalog, ensure_ascii=False, sort_keys=True)) for item in snapshot_rows
-    ]
-    mode_counts = {
-        mode: sum(item.answer_mode == mode for item in snapshot_rows)
-        for mode in ("standard", "trusted")
-    }
-    first_invocations = dict(
-        (
-            await session.execute(
-                select(
-                    ModelInvocationRecord.run_id,
-                    func.min(ModelInvocationRecord.started_at),
-                ).group_by(ModelInvocationRecord.run_id)
-            )
-        ).all()
-    )
-    startup_ms: dict[str, list[int]] = {"standard": [], "trusted": []}
-    for item in snapshot_rows:
-        first = first_invocations.get(item.run_id)
-        if first is not None:
-            startup_ms.setdefault(item.answer_mode, []).append(
-                max(0, int((first - item.created_at).total_seconds() * 1000))
-            )
-    event_counts = dict(
-        (
-            await session.execute(
-                select(RunEventRecord.type, func.count())
-                .where(RunEventRecord.type.like("skill.%"))
-                .group_by(RunEventRecord.type)
-            )
-        ).all()
-    )
-    return {
-        "skills": skills,
-        "published_revisions": revisions,
-        "draft_tests": draft_tests,
-        "run_snapshots": snapshots,
-        "catalog_entries": int(
-            sum(len(items) for items in (item.catalog for item in snapshot_rows))
-        ),
-        "activations": int(
-            sum(len(items) for items in (item.activations for item in snapshot_rows))
-        ),
-        "resource_bytes": int(
-            sum(
-                sum(int(item.get("size_bytes", 0)) for item in items)
-                for items in (item.resource_reads for item in snapshot_rows)
-            )
-        ),
-        "catalog_metadata_chars": {
-            "total": sum(catalog_chars),
-            "max": max(catalog_chars, default=0),
-        },
-        "answer_modes": mode_counts,
-        "catalog_to_first_model_ms": {
-            mode: {
-                "samples": len(values),
-                "average": round(sum(values) / len(values), 2) if values else None,
-                "max": max(values, default=None),
-            }
-            for mode, values in startup_ms.items()
-        },
-        "activation_conflicts": int(event_counts.get("skill.activation_conflict", 0)),
-        "attributed_actions": int(event_counts.get("skill.attributed_action", 0)),
-    }
-
-
-async def _detail(session: AsyncSession, settings: Settings, skill: SkillRecord) -> SkillDetailView:
-    service = SkillService(session, settings)
-    summary = await _summary(session, skill)
-    files = await service.draft_files(skill)
-    frontmatter: dict[str, Any] = {}
-    if skill.active_revision_id:
-        frontmatter = (await service.require_active_revision(skill)).frontmatter or {}
-    elif skill.draft:
-        try:
-            text = (await service.read_file(skill, "SKILL.md")).decode("utf-8")
-            import yaml
-
-            frontmatter = yaml.safe_load(text.split("---", 2)[1]) or {}
-        except (UnicodeDecodeError, ValueError):
-            frontmatter = {}
-    return SkillDetailView(
-        **summary.model_dump(),
-        files=[_file_view(skill, item) for _, item in sorted(files.items())],
-        requested_tool_patterns=str(frontmatter.get("allowed-tools", "")).split(),
-        compatibility=frontmatter.get("compatibility"),
-    )
+    return await build_skill_metrics(session)

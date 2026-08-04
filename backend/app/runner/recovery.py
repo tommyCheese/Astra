@@ -5,10 +5,10 @@ from datetime import timedelta
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.db.models import utc_now
+from app.db.model_base import utc_now
 from app.repositories.executions import NodeExecutionRepository
-from app.repositories.runs import RunRepository
-from app.schemas.agent import NodeExecutionPhase, NodeExecutionStatus
+from app.repositories.run_unit_of_work import RunUnitOfWork
+from app.schemas.agent.types import NodeExecutionPhase, NodeExecutionStatus
 from app.subagents.recovery import SubagentExecutionRecovery
 
 
@@ -72,7 +72,7 @@ class ExecutionRecovery:
                         wait_reason="non_idempotent_result_unknown",
                         checkpoint=checkpoint,
                     )
-                    await RunRepository(session).add_event(
+                    await RunUnitOfWork(session).add_event(
                         execution.run_id,
                         "plan.node.result_unknown",
                         {

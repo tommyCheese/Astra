@@ -8,16 +8,16 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import (
+from app.db.model_base import utc_now
+from app.db.models.conversations import TaskRecord
+from app.db.models.permissions import (
     AgentDelegationRecord,
     AgentIdentityRecord,
     CredentialGrantRecord,
     DataFlowStateRecord,
-    RunRecord,
-    TaskRecord,
     ToolCatalogSnapshotRecord,
-    utc_now,
 )
+from app.db.models.runs import RunRecord
 from app.permissions.engine import PermissionEngine
 from app.schemas.permissions import (
     PermissionDecisionKind,

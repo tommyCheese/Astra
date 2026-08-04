@@ -8,7 +8,9 @@ from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import AgentExecutionRecord, RunRecord, utc_now
+from app.db.model_base import utc_now
+from app.db.models.executions import AgentExecutionRecord
+from app.db.models.runs import RunRecord
 from app.schemas.subagents import DelegationContract, SubagentExecutionStatus
 
 

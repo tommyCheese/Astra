@@ -19,8 +19,24 @@ from app.skills.contracts import (
 NAME_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$")
 FRONTMATTER_RE = re.compile(r"\A---[ \t]*\r?\n(.*?)\r?\n---[ \t]*(?:\r?\n|\Z)", re.S)
 TEXT_EXTENSIONS = {
-    ".md", ".txt", ".py", ".js", ".mjs", ".cjs", ".ts", ".tsx", ".jsx",
-    ".sh", ".bash", ".json", ".yaml", ".yml", ".toml", ".csv", ".html", ".css",
+    ".md",
+    ".txt",
+    ".py",
+    ".js",
+    ".mjs",
+    ".cjs",
+    ".ts",
+    ".tsx",
+    ".jsx",
+    ".sh",
+    ".bash",
+    ".json",
+    ".yaml",
+    ".yml",
+    ".toml",
+    ".csv",
+    ".html",
+    ".css",
     ".svg",
 }
 DISALLOWED_EXTENSIONS = {".exe", ".dll", ".dylib", ".so", ".class", ".jar", ".wasm"}
@@ -104,13 +120,60 @@ def parse_skill_package(
     reject_reserved_custom_identity: bool = True,
     raise_on_safety: bool = True,
 ) -> tuple[SkillPackage, dict[str, bytes]]:
+    diagnostics, normalized = _normalize_files(
+        files,
+        max_files=max_files,
+        max_file_bytes=max_file_bytes,
+        max_package_bytes=max_package_bytes,
+    )
+    skill_text = _skill_document(normalized, diagnostics)
+    raw_frontmatter, instructions = _parse_frontmatter(skill_text, diagnostics)
+    _validate_frontmatter(
+        raw_frontmatter,
+        diagnostics,
+        origin=origin,
+        directory_name=directory_name,
+        reject_reserved_custom_identity=reject_reserved_custom_identity,
+    )
+    _validate_package_content(
+        normalized,
+        instructions,
+        raw_frontmatter,
+        diagnostics,
+        max_instruction_chars=max_instruction_chars,
+    )
+    _raise_for_diagnostics(diagnostics, raise_on_safety=raise_on_safety)
+    frontmatter = SkillFrontmatter.model_validate(raw_frontmatter)
+    resources = _resources(normalized)
+    return (
+        SkillPackage(
+            origin=origin,
+            qualified_identity=f"{origin.value}:{frontmatter.name}",
+            frontmatter=frontmatter,
+            instructions=instructions,
+            digest=_content_digest(normalized),
+            resources=resources,
+            diagnostics=diagnostics,
+            requested_tool_patterns=(frontmatter.allowed_tools or "").split(),
+        ),
+        normalized,
+    )
+
+
+def _normalize_files(
+    files: Mapping[str, bytes | str],
+    *,
+    max_files: int,
+    max_file_bytes: int,
+    max_package_bytes: int,
+) -> tuple[list[SkillDiagnostic], dict[str, bytes]]:
+    if len(files) > max_files:
+        raise SkillPackageError(
+            [SkillDiagnostic(code="skill.too_many_files", message="Skill 文件数量超过限制。")]
+        )
     diagnostics: list[SkillDiagnostic] = []
     normalized: dict[str, bytes] = {}
-    if len(files) > max_files:
-        raise SkillPackageError([
-            SkillDiagnostic(code="skill.too_many_files", message="Skill 文件数量超过限制。")
-        ])
-    total = 0
+    total_bytes = 0
     for raw_path, raw_content in files.items():
         try:
             path = normalize_skill_path(str(raw_path))
@@ -124,8 +187,10 @@ def parse_skill_package(
                 )
             )
             continue
-        content = raw_content.encode("utf-8") if isinstance(raw_content, str) else bytes(raw_content)
-        total += len(content)
+        content = (
+            raw_content.encode("utf-8") if isinstance(raw_content, str) else bytes(raw_content)
+        )
+        total_bytes += len(content)
         if len(content) > max_file_bytes:
             diagnostics.append(
                 SkillDiagnostic(
@@ -144,7 +209,7 @@ def parse_skill_package(
                 )
             )
         normalized[path] = content
-    if total > max_package_bytes:
+    if total_bytes > max_package_bytes:
         diagnostics.append(
             SkillDiagnostic(
                 code="skill.package_too_large",
@@ -152,6 +217,10 @@ def parse_skill_package(
                 severity="critical",
             )
         )
+    return diagnostics, normalized
+
+
+def _skill_document(normalized: dict[str, bytes], diagnostics: list[SkillDiagnostic]) -> str:
     skill_bytes = normalized.get("SKILL.md")
     if skill_bytes is None:
         diagnostics.append(
@@ -159,7 +228,7 @@ def parse_skill_package(
         )
         raise SkillPackageError(diagnostics)
     try:
-        skill_text = skill_bytes.decode("utf-8")
+        return skill_bytes.decode("utf-8")
     except UnicodeDecodeError as exc:
         diagnostics.append(
             SkillDiagnostic(
@@ -169,6 +238,11 @@ def parse_skill_package(
             )
         )
         raise SkillPackageError(diagnostics) from exc
+
+
+def _parse_frontmatter(
+    skill_text: str, diagnostics: list[SkillDiagnostic]
+) -> tuple[dict[str, object], str]:
     match = FRONTMATTER_RE.match(skill_text)
     if not match:
         diagnostics.append(
@@ -201,84 +275,117 @@ def parse_skill_package(
             )
         )
         raise SkillPackageError(diagnostics)
-    name = raw_frontmatter.get("name")
-    description = raw_frontmatter.get("description")
-    if not isinstance(name, str) or not NAME_RE.fullmatch(name) or "--" in name:
+    return raw_frontmatter, skill_text[match.end() :].strip()
+
+
+def _validate_frontmatter(
+    frontmatter: dict[str, object],
+    diagnostics: list[SkillDiagnostic],
+    *,
+    origin: SkillOrigin,
+    directory_name: str | None,
+    reject_reserved_custom_identity: bool,
+) -> None:
+    name, description = frontmatter.get("name"), frontmatter.get("description")
+    _validate_identity(
+        name,
+        diagnostics,
+        origin=origin,
+        directory_name=directory_name,
+        reject_reserved_custom_identity=reject_reserved_custom_identity,
+    )
+    if not isinstance(description, str) or not 1 <= len(description) <= 1024:
         diagnostics.append(
-            SkillDiagnostic(
-                code="skill.name_invalid",
-                message="Skill name 必须为 1–64 位小写字母、数字或单连字符。",
-                path="SKILL.md",
+            _frontmatter_diagnostic(
+                "skill.description_invalid", "Skill description 必须为 1–1024 个字符。"
+            )
+        )
+    _validate_optional_frontmatter(frontmatter, diagnostics)
+
+
+def _validate_identity(
+    name: object,
+    diagnostics: list[SkillDiagnostic],
+    *,
+    origin: SkillOrigin,
+    directory_name: str | None,
+    reject_reserved_custom_identity: bool,
+) -> None:
+    if not _valid_skill_name(name):
+        diagnostics.append(
+            _frontmatter_diagnostic(
+                "skill.name_invalid", "Skill name 必须为 1–64 位小写字母、数字或单连字符。"
             )
         )
     if isinstance(name, str) and directory_name and name != directory_name:
         diagnostics.append(
-            SkillDiagnostic(
-                code="skill.directory_name_mismatch",
-                message="Skill name 必须与父目录名称一致。",
-                path="SKILL.md",
+            _frontmatter_diagnostic(
+                "skill.directory_name_mismatch", "Skill name 必须与父目录名称一致。"
             )
         )
-    if (
+    if _reserved_identity(name, origin, reject_reserved_custom_identity):
+        diagnostics.append(
+            _frontmatter_diagnostic(
+                "skill.identity_reserved", "astra- 前缀仅供 Astra 内建 Skill 使用。"
+            )
+        )
+
+
+def _valid_skill_name(name: object) -> bool:
+    return isinstance(name, str) and bool(NAME_RE.fullmatch(name)) and "--" not in name
+
+
+def _reserved_identity(name: object, origin: SkillOrigin, reject_reserved: bool) -> bool:
+    return (
         origin == SkillOrigin.custom
-        and reject_reserved_custom_identity
+        and reject_reserved
         and isinstance(name, str)
         and name.startswith("astra-")
-    ):
-        diagnostics.append(
-            SkillDiagnostic(
-                code="skill.identity_reserved",
-                message="astra- 前缀仅供 Astra 内建 Skill 使用。",
-                path="SKILL.md",
-            )
-        )
-    if not isinstance(description, str) or not 1 <= len(description) <= 1024:
-        diagnostics.append(
-            SkillDiagnostic(
-                code="skill.description_invalid",
-                message="Skill description 必须为 1–1024 个字符。",
-                path="SKILL.md",
-            )
-        )
-    compatibility = raw_frontmatter.get("compatibility")
+    )
+
+
+def _validate_optional_frontmatter(
+    frontmatter: dict[str, object], diagnostics: list[SkillDiagnostic]
+) -> None:
+    compatibility = frontmatter.get("compatibility")
     if compatibility is not None and (
         not isinstance(compatibility, str) or len(compatibility) > 500
     ):
         diagnostics.append(
-            SkillDiagnostic(
-                code="skill.compatibility_invalid",
-                message="Skill compatibility 必须是至多 500 字符的字符串。",
-                path="SKILL.md",
+            _frontmatter_diagnostic(
+                "skill.compatibility_invalid", "Skill compatibility 必须是至多 500 字符的字符串。"
             )
         )
-    metadata = raw_frontmatter.get("metadata", {})
-    if not isinstance(metadata, dict):
+    if not isinstance(frontmatter.get("metadata", {}), dict):
         diagnostics.append(
-            SkillDiagnostic(
-                code="skill.metadata_invalid",
-                message="Skill metadata 必须是对象。",
-                path="SKILL.md",
-            )
+            _frontmatter_diagnostic("skill.metadata_invalid", "Skill metadata 必须是对象。")
         )
-    allowed_tools = raw_frontmatter.get("allowed-tools")
+    allowed_tools = frontmatter.get("allowed-tools")
     if allowed_tools is not None and not isinstance(allowed_tools, str):
         diagnostics.append(
-            SkillDiagnostic(
-                code="skill.allowed_tools_invalid",
-                message="allowed-tools 必须是空格分隔的字符串。",
-                path="SKILL.md",
+            _frontmatter_diagnostic(
+                "skill.allowed_tools_invalid", "allowed-tools 必须是空格分隔的字符串。"
             )
         )
-    instructions = skill_text[match.end():].strip()
+
+
+def _frontmatter_diagnostic(code: str, message: str) -> SkillDiagnostic:
+    return SkillDiagnostic(code=code, message=message, path="SKILL.md")
+
+
+def _validate_package_content(
+    normalized: dict[str, bytes],
+    instructions: str,
+    frontmatter: dict[str, object],
+    diagnostics: list[SkillDiagnostic],
+    *,
+    max_instruction_chars: int,
+) -> None:
     if len(instructions) > max_instruction_chars:
         diagnostics.append(
-            SkillDiagnostic(
-                code="skill.instructions_too_large",
-                message="SKILL.md 指令超过上下文限制。",
-                path="SKILL.md",
-            )
+            _frontmatter_diagnostic("skill.instructions_too_large", "SKILL.md 指令超过上下文限制。")
         )
-    if compatibility is None and any(
+    if frontmatter.get("compatibility") is None and any(
         _resource_kind(path) == "script" for path in normalized
     ):
         diagnostics.append(
@@ -290,28 +397,35 @@ def parse_skill_package(
             )
         )
     for path, content in normalized.items():
-        if not _is_text(path, content):
-            if _resource_kind(path) not in {"asset"}:
-                diagnostics.append(
-                    SkillDiagnostic(
-                        code="skill.unexpected_binary",
-                        message="二进制文件仅允许位于 assets/。",
-                        severity="critical",
-                        path=path,
-                    )
+        _validate_resource(path, content, diagnostics)
+
+
+def _validate_resource(path: str, content: bytes, diagnostics: list[SkillDiagnostic]) -> None:
+    if not _is_text(path, content):
+        if _resource_kind(path) != "asset":
+            diagnostics.append(
+                SkillDiagnostic(
+                    code="skill.unexpected_binary",
+                    message="二进制文件仅允许位于 assets/。",
+                    severity="critical",
+                    path=path,
                 )
-            continue
-        text = content.decode("utf-8")
-        for code, pattern in SUSPICIOUS_PATTERNS.items():
-            if pattern.search(text):
-                diagnostics.append(
-                    SkillDiagnostic(
-                        code=code,
-                        message="检测到需要人工确认的高风险指令或代码模式。",
-                        severity="critical",
-                        path=path,
-                    )
+            )
+        return
+    text = content.decode("utf-8")
+    for code, pattern in SUSPICIOUS_PATTERNS.items():
+        if pattern.search(text):
+            diagnostics.append(
+                SkillDiagnostic(
+                    code=code,
+                    message="检测到需要人工确认的高风险指令或代码模式。",
+                    severity="critical",
+                    path=path,
                 )
+            )
+
+
+def _raise_for_diagnostics(diagnostics: list[SkillDiagnostic], *, raise_on_safety: bool) -> None:
     safety_codes = {
         "skill.policy_bypass",
         "skill.secret_exfiltration",
@@ -320,39 +434,27 @@ def parse_skill_package(
         "skill.unexpected_binary",
     }
     errors = [
-        item
-        for item in diagnostics
-        if item.severity in {"error", "critical"}
-        and (raise_on_safety or item.code not in safety_codes)
+        diagnostic
+        for diagnostic in diagnostics
+        if diagnostic.severity in {"error", "critical"}
+        and (raise_on_safety or diagnostic.code not in safety_codes)
     ]
     if errors:
         raise SkillPackageError(diagnostics)
-    frontmatter = SkillFrontmatter.model_validate(raw_frontmatter)
-    resources = []
+
+
+def _resources(normalized: dict[str, bytes]) -> list[SkillResource]:
+    resources: list[SkillResource] = []
     for path in sorted(normalized):
         content = normalized[path]
-        media_type = mimetypes.guess_type(path)[0] or "application/octet-stream"
         resources.append(
             SkillResource(
                 path=path,
                 digest=f"sha256:{hashlib.sha256(content).hexdigest()}",
                 size_bytes=len(content),
-                media_type=media_type,
+                media_type=mimetypes.guess_type(path)[0] or "application/octet-stream",
                 kind=_resource_kind(path),
                 text=_is_text(path, content),
             )
         )
-    package_digest = _content_digest(normalized)
-    return (
-        SkillPackage(
-            origin=origin,
-            qualified_identity=f"{origin.value}:{frontmatter.name}",
-            frontmatter=frontmatter,
-            instructions=instructions,
-            digest=package_digest,
-            resources=resources,
-            diagnostics=diagnostics,
-            requested_tool_patterns=(frontmatter.allowed_tools or "").split(),
-        ),
-        normalized,
-    )
+    return resources

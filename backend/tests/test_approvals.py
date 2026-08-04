@@ -1,12 +1,14 @@
 import pytest
 
 from app.core.config import Settings
-from app.repositories.runs import RunRepository, run_to_view
+from app.model_clients.mock import MockModelClient
+from app.repositories.run_unit_of_work import RunUnitOfWork
+from app.repositories.run_view_projection import RunViewProjector
 from app.runner.agent_loop import AgentLoop
 from app.runner.approvals import matcher_matches, similar_matcher
-from app.runner.model_client import MockModelClient
 from app.runner.reasoning import PolicyCompiler
-from app.schemas.agent import AgentDecision, RequestedReasoningPolicy
+from app.schemas.agent.execution_state import AgentDecision
+from app.schemas.agent.run_policy import RequestedReasoningPolicy
 from app.tools.base import Tool, ToolExecutionError, ToolRegistry, ToolSpec
 
 
@@ -71,7 +73,7 @@ def policy(mode: str) -> dict:
 
 async def test_request_approval_freezes_tool_before_execution(session):
     settings = Settings(model_provider="mock")
-    repo = RunRepository(session)
+    repo = RunUnitOfWork(session)
     run = await repo.create_task_run(
         "查询批准流程", settings.model_policy, reasoning_policy=policy("request_approval")
     )
@@ -81,7 +83,7 @@ async def test_request_approval_freezes_tool_before_execution(session):
         settings, model_client=WriteModelClient(), tool_registry=registry
     ).run(repo, run.id, run.task.description)
     loaded = await repo.require_run(run.id)
-    view = run_to_view(loaded)
+    view = RunViewProjector().payload(loaded)
 
     assert result["status"] == "waiting_user"
     assert loaded.tool_calls[0].status == "awaiting_approval"
@@ -94,7 +96,7 @@ async def test_request_approval_freezes_tool_before_execution(session):
 
 async def test_approve_once_resumes_exact_frozen_call(session):
     settings = Settings(model_provider="mock")
-    repo = RunRepository(session)
+    repo = RunUnitOfWork(session)
     run = await repo.create_task_run(
         "查询批准恢复", settings.model_policy, reasoning_policy=policy("request_approval")
     )
@@ -122,7 +124,7 @@ async def test_approve_once_resumes_exact_frozen_call(session):
 
 async def test_approval_resume_preserves_tool_budget_and_does_not_execute_twice(session):
     settings = Settings(model_provider="mock", agent_max_tool_calls=1)
-    repo = RunRepository(session)
+    repo = RunUnitOfWork(session)
     run = await repo.create_task_run(
         "只写入一次 report.txt",
         settings.model_policy,
@@ -161,7 +163,7 @@ async def test_approval_resume_preserves_tool_budget_and_does_not_execute_twice(
 
 async def test_rejection_never_executes_rejected_call_and_replay_fails(session):
     settings = Settings(model_provider="mock")
-    repo = RunRepository(session)
+    repo = RunUnitOfWork(session)
     run = await repo.create_task_run(
         "拒绝工具", settings.model_policy, reasoning_policy=policy("request_approval")
     )
@@ -185,7 +187,7 @@ async def test_rejection_never_executes_rejected_call_and_replay_fails(session):
 
 async def test_approved_action_fails_closed_when_frozen_input_is_tampered(session):
     settings = Settings(model_provider="mock")
-    repo = RunRepository(session)
+    repo = RunUnitOfWork(session)
     run = await repo.create_task_run(
         "验证冻结输入", settings.model_policy, reasoning_policy=policy("request_approval")
     )

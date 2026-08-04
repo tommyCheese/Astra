@@ -5,7 +5,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.api.memory_consolidation import router
 from app.core.config import Settings, get_settings
-from app.db.models import Base
+from app.db.model_base import Base
 from app.db.session import get_session
 from app.memory.domain import MemoryNamespace, MemoryNamespaceType
 from app.repositories.memories import MemoryRepository

@@ -97,24 +97,43 @@ class ArtifactCollector:
         data = resolved.read_bytes()
         if not data or (prefix and not data.lstrip().startswith(prefix)):
             raise ToolExecutionError("invalid_artifact", "Artifact content does not match its type")
-        lowered = data.lower()
+        self._validate_content(resolved, suffix, data)
+        guessed = mimetypes.guess_type(resolved.name)[0]
+        return {
+            "path": resolved,
+            "mime_type": expected_mime or guessed,
+            "size_bytes": len(data),
+            "checksum": hashlib.sha256(data).hexdigest(),
+        }
+
+    def _validate_content(self, path: Path, suffix: str, data: bytes) -> None:
         if suffix == ".json":
             try:
                 json.loads(data)
             except (json.JSONDecodeError, UnicodeDecodeError) as exc:
                 raise ToolExecutionError("invalid_artifact", "JSON artifact is malformed") from exc
-        if suffix in {
-            ".txt", ".md", ".csv", ".tsv", ".py", ".js", ".ts", ".tsx", ".css", ".xml"
-        }:
-            if b"\x00" in data:
-                raise ToolExecutionError("invalid_artifact", "Text artifact contains binary data")
-            try:
-                data.decode("utf-8")
-            except UnicodeDecodeError as exc:
-                raise ToolExecutionError("invalid_artifact", "Text artifact must be UTF-8") from exc
+        if suffix in {".txt", ".md", ".csv", ".tsv", ".py", ".js", ".ts", ".tsx", ".css", ".xml"}:
+            self._validate_text(data)
         if suffix in {".docx", ".xlsx"}:
-            self._validate_office_archive(resolved, suffix)
-        if suffix == ".svg" and any(
+            self._validate_office_archive(path, suffix)
+        if suffix == ".svg":
+            self._validate_svg(data)
+        if suffix == ".html":
+            self._validate_html(data)
+
+    @staticmethod
+    def _validate_text(data: bytes) -> None:
+        if b"\x00" in data:
+            raise ToolExecutionError("invalid_artifact", "Text artifact contains binary data")
+        try:
+            data.decode("utf-8")
+        except UnicodeDecodeError as error:
+            raise ToolExecutionError("invalid_artifact", "Text artifact must be UTF-8") from error
+
+    @staticmethod
+    def _validate_svg(data: bytes) -> None:
+        lowered = data.lower()
+        contains_active_content = any(
             token in lowered
             for token in (
                 b"<script",
@@ -124,26 +143,21 @@ class ArtifactCollector:
                 b"http://",
                 b"https://",
             )
-        ):
+        )
+        if contains_active_content:
             raise ToolExecutionError("invalid_artifact", "SVG contains active or external content")
-        if suffix == ".html":
-            csp_index = lowered.find(b"content-security-policy")
-            script_index = lowered.find(b"<script")
-            if (
-                csp_index < 0
-                or b"default-src 'none'" not in lowered
-                or (script_index >= 0 and csp_index > script_index)
-            ):
-                raise ToolExecutionError(
-                    "invalid_artifact", "HTML artifact is missing an effective restrictive CSP"
-                )
-        guessed = mimetypes.guess_type(resolved.name)[0]
-        return {
-            "path": resolved,
-            "mime_type": expected_mime or guessed,
-            "size_bytes": len(data),
-            "checksum": hashlib.sha256(data).hexdigest(),
-        }
+
+    @staticmethod
+    def _validate_html(data: bytes) -> None:
+        lowered = data.lower()
+        csp_index = lowered.find(b"content-security-policy")
+        script_index = lowered.find(b"<script")
+        missing_restrictive_csp = csp_index < 0 or b"default-src 'none'" not in lowered
+        script_precedes_csp = script_index >= 0 and csp_index > script_index
+        if missing_restrictive_csp or script_precedes_csp:
+            raise ToolExecutionError(
+                "invalid_artifact", "HTML artifact is missing an effective restrictive CSP"
+            )
 
     def _validate_office_archive(self, path: Path, suffix: str) -> None:
         try:

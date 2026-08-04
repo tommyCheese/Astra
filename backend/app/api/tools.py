@@ -5,7 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import Settings, get_settings
 from app.db.session import get_session
 from app.repositories.tool_settings import ToolSettingsRepository, default_tool_states
-from app.schemas.agent import EXECUTABLE_SUBAGENT_COHORTS
+from app.schemas.agent.run_policy import EXECUTABLE_SUBAGENT_COHORTS
 from app.tools.registry import sandbox_available
 
 router = APIRouter(prefix="/api/tools", tags=["tools"])

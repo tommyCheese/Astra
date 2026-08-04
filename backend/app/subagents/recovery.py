@@ -6,7 +6,10 @@ from datetime import timedelta
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import AgentExecutionRecord, RunEventRecord, ToolCallRecord, utc_now
+from app.db.model_base import utc_now
+from app.db.models.executions import AgentExecutionRecord
+from app.db.models.permissions import ToolCallRecord
+from app.db.models.runs import RunEventRecord
 from app.repositories.agent_executions import TERMINAL_AGENT_STATUSES, AgentExecutionRepository
 from app.schemas.context_compaction import parse_child_checkpoint
 
@@ -61,9 +64,7 @@ class SubagentExecutionRecovery:
                         select(ToolCallRecord).where(
                             ToolCallRecord.agent_execution_id == execution.id,
                             ToolCallRecord.status == "running",
-                            ToolCallRecord.side_effect_level.not_in(
-                                ["none", "read", "read_only"]
-                            ),
+                            ToolCallRecord.side_effect_level.not_in(["none", "read", "read_only"]),
                         )
                     )
                 ).all()
@@ -92,9 +93,7 @@ class SubagentExecutionRecovery:
             tuple(incompatible),
         )
 
-    def _incompatibility(
-        self, execution: AgentExecutionRecord, checkpoint: dict
-    ) -> str | None:
+    def _incompatibility(self, execution: AgentExecutionRecord, checkpoint: dict) -> str | None:
         if checkpoint.get("resume_safe") is False:
             return "checkpoint_marked_unsafe"
         if checkpoint.get("schema_version", 1) != 1:

@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings, get_settings
-from app.db.models import MemoryConsolidationJobRecord
+from app.db.models.memory import MemoryConsolidationJobRecord
 from app.db.session import get_session
 from app.memory.autodream import AutoDreamProcessor
 from app.memory.consolidation import (
@@ -16,6 +16,9 @@ from app.memory.consolidation import (
 from app.repositories.memory_consolidation import (
     MemoryConsolidationRepository,
     generated_manual_idempotency_key,
+)
+from app.repositories.memory_consolidation_publication import (
+    MemoryConsolidationPublicationService,
 )
 from app.schemas.memory_consolidation import (
     ConsolidationJobAction,
@@ -167,7 +170,8 @@ async def publish_consolidation_job(
     session: AsyncSession = Depends(get_session),
 ) -> ConsolidationJobView:
     try:
-        job = await MemoryConsolidationRepository(session).publish(
+        repository = MemoryConsolidationRepository(session)
+        job = await MemoryConsolidationPublicationService(repository).publish(
             job_id,
             expected_state_version=payload.expected_state_version,
             actor=payload.actor,
@@ -185,7 +189,8 @@ async def rollback_consolidation_job(
     session: AsyncSession = Depends(get_session),
 ) -> ConsolidationJobView:
     try:
-        job = await MemoryConsolidationRepository(session).rollback_published(
+        repository = MemoryConsolidationRepository(session)
+        job = await MemoryConsolidationPublicationService(repository).rollback_published(
             job_id,
             expected_state_version=payload.expected_state_version,
             actor=payload.actor,

@@ -7,10 +7,12 @@ from app.memory.consolidation import (
     ConsolidationValidationError,
     FrozenMemoryInput,
     FrozenSourceReference,
+)
+from app.memory.consolidation_generation import (
     deterministic_duplicate_proposal,
     normalize_model_output,
-    validate_proposal,
 )
+from app.memory.consolidation_validation import validate_proposal
 
 
 def frozen_memory(

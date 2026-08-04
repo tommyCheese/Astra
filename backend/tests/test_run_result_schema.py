@@ -1,7 +1,8 @@
 import pytest
 from pydantic import ValidationError
 
-from app.schemas.agent import RunResult, RunView
+from app.schemas.agent.api_views import RunView
+from app.schemas.agent.run_result import RunResult
 
 
 def test_verification_report_defaults_optional_validation_outcomes():

@@ -106,20 +106,37 @@ def validate_json_schema(value: Any, schema: dict[str, Any], *, path: str = "val
     """Validate the bounded JSON Schema subset accepted by ToolSpec manifests."""
     if not schema:
         return
-    alternatives = schema.get("anyOf")
-    if alternatives is not None:
-        if not isinstance(alternatives, list) or not alternatives:
+    _validate_alternatives(value, schema.get("anyOf"), path)
+    _validate_declared_type(value, schema, path)
+    if "enum" in schema and value not in schema["enum"]:
+        raise ValueError(f"{path} is not an allowed value")
+    if isinstance(value, dict):
+        _validate_object(value, schema, path)
+    elif isinstance(value, list):
+        _validate_array(value, schema, path)
+    elif isinstance(value, str):
+        _validate_string(value, schema, path)
+    elif isinstance(value, (int, float)) and not isinstance(value, bool):
+        _validate_number(value, schema, path)
+
+
+def _validate_alternatives(value: Any, alternatives: Any, path: str) -> None:
+    if alternatives is None:
+        return
+    if not isinstance(alternatives, list) or not alternatives:
+        raise ValueError(f"{path} has an invalid anyOf declaration")
+    for alternative in alternatives:
+        if not isinstance(alternative, dict):
             raise ValueError(f"{path} has an invalid anyOf declaration")
-        for alternative in alternatives:
-            if not isinstance(alternative, dict):
-                raise ValueError(f"{path} has an invalid anyOf declaration")
-            try:
-                validate_json_schema(value, alternative, path=path)
-                break
-            except ValueError:
-                continue
-        else:
-            raise ValueError(f"{path} does not match any allowed schema")
+        try:
+            validate_json_schema(value, alternative, path=path)
+            return
+        except ValueError:
+            continue
+    raise ValueError(f"{path} does not match any allowed schema")
+
+
+def _validate_declared_type(value: Any, schema: dict[str, Any], path: str) -> None:
     expected = schema.get("type")
     type_checks = {
         "object": lambda item: isinstance(item, dict),
@@ -134,48 +151,56 @@ def validate_json_schema(value: Any, schema: dict[str, Any], *, path: str = "val
         raise ValueError(f"{path} has an unsupported type declaration")
     if expected in type_checks and not type_checks[expected](value):
         raise ValueError(f"{path} does not match type {expected}")
-    if "enum" in schema and value not in schema["enum"]:
-        raise ValueError(f"{path} is not an allowed value")
-    if isinstance(value, dict):
-        required = schema.get("required", [])
-        if not isinstance(required, list) or not all(isinstance(item, str) for item in required):
-            raise ValueError(f"{path} has an invalid required declaration")
-        missing = [key for key in required if key not in value]
-        if missing:
-            raise ValueError(f"{path} is missing required properties")
-        properties = schema.get("properties", {})
-        if not isinstance(properties, dict):
-            raise ValueError(f"{path} has invalid properties")
-        for key, child_schema in properties.items():
-            if key in value:
-                if not isinstance(child_schema, dict):
-                    raise ValueError(f"{path}.{key} has an invalid schema")
-                validate_json_schema(value[key], child_schema, path=f"{path}.{key}")
-        if schema.get("additionalProperties") is False:
-            unknown = set(value) - set(properties)
-            if unknown:
-                raise ValueError(f"{path} has additional properties")
-    if isinstance(value, list) and "items" in schema:
+
+
+def _validate_object(value: dict, schema: dict[str, Any], path: str) -> None:
+    required = schema.get("required", [])
+    if not isinstance(required, list) or not all(isinstance(item, str) for item in required):
+        raise ValueError(f"{path} has an invalid required declaration")
+    if any(key not in value for key in required):
+        raise ValueError(f"{path} is missing required properties")
+    properties = schema.get("properties", {})
+    if not isinstance(properties, dict):
+        raise ValueError(f"{path} has invalid properties")
+    _validate_properties(value, properties, path)
+    if schema.get("additionalProperties") is False and set(value) - set(properties):
+        raise ValueError(f"{path} has additional properties")
+
+
+def _validate_properties(value: dict, properties: dict, path: str) -> None:
+    for key, child_schema in properties.items():
+        if key not in value:
+            continue
+        if not isinstance(child_schema, dict):
+            raise ValueError(f"{path}.{key} has an invalid schema")
+        validate_json_schema(value[key], child_schema, path=f"{path}.{key}")
+
+
+def _validate_array(value: list, schema: dict[str, Any], path: str) -> None:
+    if "items" in schema:
         item_schema = schema["items"]
         if not isinstance(item_schema, dict):
             raise ValueError(f"{path} has invalid items")
         for index, item in enumerate(value):
             validate_json_schema(item, item_schema, path=f"{path}[{index}]")
-    if isinstance(value, list):
-        if "minItems" in schema and len(value) < int(schema["minItems"]):
-            raise ValueError(f"{path} has too few items")
-        if "maxItems" in schema and len(value) > int(schema["maxItems"]):
-            raise ValueError(f"{path} has too many items")
-    if isinstance(value, str):
-        if "minLength" in schema and len(value) < int(schema["minLength"]):
-            raise ValueError(f"{path} is shorter than allowed")
-        if "maxLength" in schema and len(value) > int(schema["maxLength"]):
-            raise ValueError(f"{path} is longer than allowed")
-    if isinstance(value, (int, float)) and not isinstance(value, bool):
-        if "minimum" in schema and value < schema["minimum"]:
-            raise ValueError(f"{path} is below the minimum")
-        if "maximum" in schema and value > schema["maximum"]:
-            raise ValueError(f"{path} is above the maximum")
+    if "minItems" in schema and len(value) < int(schema["minItems"]):
+        raise ValueError(f"{path} has too few items")
+    if "maxItems" in schema and len(value) > int(schema["maxItems"]):
+        raise ValueError(f"{path} has too many items")
+
+
+def _validate_string(value: str, schema: dict[str, Any], path: str) -> None:
+    if "minLength" in schema and len(value) < int(schema["minLength"]):
+        raise ValueError(f"{path} is shorter than allowed")
+    if "maxLength" in schema and len(value) > int(schema["maxLength"]):
+        raise ValueError(f"{path} is longer than allowed")
+
+
+def _validate_number(value: int | float, schema: dict[str, Any], path: str) -> None:
+    if "minimum" in schema and value < schema["minimum"]:
+        raise ValueError(f"{path} is below the minimum")
+    if "maximum" in schema and value > schema["maximum"]:
+        raise ValueError(f"{path} is above the maximum")
 
 
 class CapabilityAvailability(BaseModel):

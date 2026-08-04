@@ -7,28 +7,23 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.db.models import (
-    PlanEdgeRecord,
-    PlanNodeRecord,
-    PlanRecord,
-    RunRecord,
-    utc_now,
-)
-from app.schemas.agent import (
+from app.db.model_base import utc_now
+from app.db.models.plans import PlanEdgeRecord, PlanNodeRecord, PlanRecord
+from app.db.models.runs import RunRecord
+from app.schemas.agent.planning import (
     ExpectedObservation,
     PlanDraft,
     PlanEdgeDiff,
     PlanEdgeView,
     PlanGraphDiff,
     PlanNodeDiff,
-    PlanNodeStatus,
     PlanNodeTransitionEvent,
     PlanNodeView,
-    PlanStatus,
     PlanVersionEvent,
     PlanVersionSummary,
     PlanView,
 )
+from app.schemas.agent.types import PlanNodeStatus, PlanStatus
 
 NODE_TRANSITIONS: dict[str, set[str]] = {
     PlanNodeStatus.pending.value: {
@@ -71,35 +66,8 @@ class PlanRepository:
         if run is None:
             raise ValueError(f"Run not found: {run_id}")
         lineage = lineage or {}
-        draft_keys = {item.node_key for item in draft.nodes}
-        if unknown_lineage_keys := set(lineage) - draft_keys:
-            raise PlanStateError(
-                f"Lineage references unknown new nodes: {sorted(unknown_lineage_keys)}"
-            )
-        if lineage:
-            lineage_ids = set(lineage.values())
-            result = await self.session.execute(
-                select(PlanNodeRecord.id)
-                .join(PlanRecord, PlanRecord.id == PlanNodeRecord.plan_id)
-                .where(
-                    PlanNodeRecord.id.in_(lineage_ids),
-                    PlanRecord.run_id == run_id,
-                )
-            )
-            valid_lineage_ids = set(result.scalars().all())
-            if valid_lineage_ids != lineage_ids:
-                raise PlanStateError("Lineage must reference nodes from an earlier Plan in the Run")
-        next_version = (
-            int(
-                (
-                    await self.session.scalar(
-                        select(func.max(PlanRecord.version)).where(PlanRecord.run_id == run_id)
-                    )
-                )
-                or 0
-            )
-            + 1
-        )
+        await self._validate_lineage(run_id, draft, lineage)
+        next_version = await self._next_version(run_id)
         plan = PlanRecord(
             run_id=run_id,
             agent_execution_id=agent_execution_id,
@@ -110,43 +78,9 @@ class PlanRepository:
         )
         self.session.add(plan)
         await self.session.flush()
-        nodes_by_key: dict[str, PlanNodeRecord] = {}
-        node_state = node_state or {}
-        for index, item in enumerate(draft.nodes, start=1):
-            preserved = node_state.get(item.node_key, {})
-            node = PlanNodeRecord(
-                plan_id=plan.id,
-                agent_execution_id=agent_execution_id,
-                node_key=item.node_key,
-                index=index,
-                title=item.title,
-                intent=item.intent,
-                status=preserved.get("status", PlanNodeStatus.pending.value),
-                required_capabilities=list(item.required_capabilities),
-                required_skill_ids=list(item.required_skill_ids),
-                success_criteria_refs=list(item.success_criteria_refs),
-                expected_outcome=item.expected_outcome.model_dump(mode="json"),
-                risk_level=item.risk_level,
-                optional=item.optional,
-                lineage_node_id=lineage.get(item.node_key),
-                evidence_refs=list(preserved.get("evidence_refs", [])),
-                failure=preserved.get("failure"),
-                started_at=preserved.get("started_at"),
-                completed_at=preserved.get("completed_at"),
-            )
-            self.session.add(node)
-            nodes_by_key[item.node_key] = node
+        nodes_by_key = self._add_nodes(plan, draft, lineage, node_state or {}, agent_execution_id)
         await self.session.flush()
-        for item in draft.nodes:
-            for predecessor_key in item.depends_on:
-                self.session.add(
-                    PlanEdgeRecord(
-                        plan_id=plan.id,
-                        predecessor_id=nodes_by_key[predecessor_key].id,
-                        successor_id=nodes_by_key[item.node_key].id,
-                        dependency_type="hard",
-                    )
-                )
+        self._add_edges(plan, draft, nodes_by_key)
         if status == PlanStatus.active and agent_execution_id is None:
             if run.active_plan_id:
                 previous = await self.session.get(PlanRecord, run.active_plan_id)
@@ -173,12 +107,12 @@ class PlanRepository:
             "plan.version.created",
             {
                 **PlanVersionEvent(
-                plan_id=plan.id,
-                plan_version=plan.version,
-                status=plan.status,
-                supersedes_plan_id=supersedes_plan_id,
-                node_count=len(draft.nodes),
-                lineage_count=len(lineage),
+                    plan_id=plan.id,
+                    plan_version=plan.version,
+                    status=plan.status,
+                    supersedes_plan_id=supersedes_plan_id,
+                    node_count=len(draft.nodes),
+                    lineage_count=len(lineage),
                 ).model_dump(mode="json"),
                 "agent_execution_id": agent_execution_id,
             },
@@ -189,15 +123,76 @@ class PlanRepository:
                 "plan.version.activated",
                 {
                     **PlanVersionEvent(
-                    plan_id=plan.id,
-                    plan_version=plan.version,
-                    supersedes_plan_id=supersedes_plan_id,
-                    lineage_count=len(lineage),
+                        plan_id=plan.id,
+                        plan_version=plan.version,
+                        supersedes_plan_id=supersedes_plan_id,
+                        lineage_count=len(lineage),
                     ).model_dump(mode="json"),
                     "agent_execution_id": agent_execution_id,
                 },
             )
         return loaded
+
+    async def _validate_lineage(self, run_id, draft, lineage) -> None:
+        unknown_keys = set(lineage) - {item.node_key for item in draft.nodes}
+        if unknown_keys:
+            raise PlanStateError(f"Lineage references unknown new nodes: {sorted(unknown_keys)}")
+        if not lineage:
+            return
+        lineage_ids = set(lineage.values())
+        result = await self.session.execute(
+            select(PlanNodeRecord.id)
+            .join(PlanRecord, PlanRecord.id == PlanNodeRecord.plan_id)
+            .where(PlanNodeRecord.id.in_(lineage_ids), PlanRecord.run_id == run_id)
+        )
+        if set(result.scalars().all()) != lineage_ids:
+            raise PlanStateError("Lineage must reference nodes from an earlier Plan in the Run")
+
+    async def _next_version(self, run_id: str) -> int:
+        latest = await self.session.scalar(
+            select(func.max(PlanRecord.version)).where(PlanRecord.run_id == run_id)
+        )
+        return int(latest or 0) + 1
+
+    def _add_nodes(self, plan, draft, lineage, node_state, agent_execution_id):
+        nodes = {}
+        for index, item in enumerate(draft.nodes, start=1):
+            preserved = node_state.get(item.node_key, {})
+            node = PlanNodeRecord(
+                plan_id=plan.id,
+                agent_execution_id=agent_execution_id,
+                node_key=item.node_key,
+                index=index,
+                title=item.title,
+                intent=item.intent,
+                status=preserved.get("status", PlanNodeStatus.pending.value),
+                required_capabilities=list(item.required_capabilities),
+                required_skill_ids=list(item.required_skill_ids),
+                success_criteria_refs=list(item.success_criteria_refs),
+                expected_outcome=item.expected_outcome.model_dump(mode="json"),
+                risk_level=item.risk_level,
+                optional=item.optional,
+                lineage_node_id=lineage.get(item.node_key),
+                evidence_refs=list(preserved.get("evidence_refs", [])),
+                failure=preserved.get("failure"),
+                started_at=preserved.get("started_at"),
+                completed_at=preserved.get("completed_at"),
+            )
+            self.session.add(node)
+            nodes[item.node_key] = node
+        return nodes
+
+    def _add_edges(self, plan, draft, nodes_by_key) -> None:
+        for item in draft.nodes:
+            for predecessor_key in item.depends_on:
+                self.session.add(
+                    PlanEdgeRecord(
+                        plan_id=plan.id,
+                        predecessor_id=nodes_by_key[predecessor_key].id,
+                        successor_id=nodes_by_key[item.node_key].id,
+                        dependency_type="hard",
+                    )
+                )
 
     async def require(self, plan_id: str) -> PlanRecord:
         result = await self.session.execute(
@@ -307,14 +302,14 @@ class PlanRepository:
             "plan.node.updated",
             {
                 **PlanNodeTransitionEvent(
-                plan_id=plan.id,
-                plan_version=plan.version,
-                plan_node_id=node.id,
-                node_key=node.node_key,
-                previous_status=previous_status,
-                status=node.status,
-                evidence_refs=node.evidence_refs,
-                failure=_safe_graph_failure(node.failure),
+                    plan_id=plan.id,
+                    plan_version=plan.version,
+                    plan_node_id=node.id,
+                    node_key=node.node_key,
+                    previous_status=previous_status,
+                    status=node.status,
+                    evidence_refs=node.evidence_refs,
+                    failure=_safe_graph_failure(node.failure),
                 ).model_dump(mode="json"),
                 "agent_execution_id": plan.agent_execution_id,
             },
@@ -354,7 +349,7 @@ class PlanRepository:
         return plan
 
     async def _event(self, run_id: str, event_type: str, payload: dict[str, Any]) -> None:
-        from app.db.models import RunEventRecord
+        from app.db.models.runs import RunEventRecord
 
         agent_execution_id = payload.get("agent_execution_id")
         self.session.add(
@@ -441,10 +436,19 @@ def plan_to_summary(plan: PlanRecord) -> PlanVersionSummary:
 
 
 def diff_plans(before: PlanRecord, after: PlanRecord) -> PlanGraphDiff:
+    return PlanGraphDiff(
+        from_plan_id=before.id,
+        to_plan_id=after.id,
+        from_version=before.version,
+        to_version=after.version,
+        nodes=_node_diffs(before, after),
+        edges=_edge_diffs(before, after),
+    )
+
+
+def _node_diffs(before: PlanRecord, after: PlanRecord) -> list[PlanNodeDiff]:
     before_by_id = {node.id: node for node in before.nodes}
-    after_by_lineage = {
-        node.lineage_node_id: node for node in after.nodes if node.lineage_node_id
-    }
+    after_by_lineage = {node.lineage_node_id: node for node in after.nodes if node.lineage_node_id}
     node_diffs: list[PlanNodeDiff] = []
     compared_fields = (
         "node_key",
@@ -486,6 +490,10 @@ def diff_plans(before: PlanRecord, after: PlanRecord) -> PlanGraphDiff:
                 )
             )
 
+    return node_diffs
+
+
+def _edge_diffs(before: PlanRecord, after: PlanRecord) -> list[PlanEdgeDiff]:
     before_edges = {(edge.predecessor_id, edge.successor_id) for edge in before.edges}
     after_edges_by_previous: dict[tuple[str, str], tuple[str, str]] = {}
     edge_diffs: list[PlanEdgeDiff] = []
@@ -516,14 +524,7 @@ def diff_plans(before: PlanRecord, after: PlanRecord) -> PlanGraphDiff:
                     change="removed",
                 )
             )
-    return PlanGraphDiff(
-        from_plan_id=before.id,
-        to_plan_id=after.id,
-        from_version=before.version,
-        to_version=after.version,
-        nodes=node_diffs,
-        edges=edge_diffs,
-    )
+    return edge_diffs
 
 
 def _safe_graph_failure(failure: dict[str, Any] | None) -> dict[str, Any] | None:

@@ -3,7 +3,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-from app.schemas.agent import RunView
+from app.schemas.agent.api_views import RunView
 
 
 class ConversationSummary(BaseModel):

@@ -7,9 +7,10 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from app.db.models import AgentBudgetReservationRecord, AgentExecutionRecord, Base
+from app.db.model_base import Base
+from app.db.models.executions import AgentBudgetReservationRecord, AgentExecutionRecord
 from app.repositories.agent_executions import AgentExecutionRepository
-from app.repositories.runs import RunRepository
+from app.repositories.run_unit_of_work import RunUnitOfWork
 from app.schemas.subagents import (
     DelegationContract,
     DelegationRequest,
@@ -68,7 +69,7 @@ async def _database(tmp_path, name: str):
 async def test_atomic_hierarchical_budget_race_preserves_parent_reserve(tmp_path):
     engine, sessions = await _database(tmp_path, "budget-race.db")
     async with sessions() as session:
-        run = await RunRepository(session).create_task_run("Budget race", {})
+        run = await RunUnitOfWork(session).create_task_run("Budget race", {})
         root = await AgentExecutionRepository(session).root_for_run(run.id)
         root.budget_envelope = {
             "max_tokens": 100,
@@ -130,7 +131,7 @@ async def test_atomic_hierarchical_budget_race_preserves_parent_reserve(tmp_path
 
 
 async def test_budget_settlement_is_exact_once_and_returns_unused_capacity(session):
-    run = await RunRepository(session).create_task_run("Budget settlement", {})
+    run = await RunUnitOfWork(session).create_task_run("Budget settlement", {})
     root = await AgentExecutionRepository(session).root_for_run(run.id)
     root.budget_envelope = {
         "max_tokens": 100,
@@ -185,7 +186,7 @@ async def test_budget_settlement_is_exact_once_and_returns_unused_capacity(sessi
 async def test_agent_coordinator_bounds_parallelism_and_dynamic_node_allowance(tmp_path):
     engine, sessions = await _database(tmp_path, "agent-coordinator.db")
     async with sessions() as session:
-        run = await RunRepository(session).create_task_run("Coordinator", {})
+        run = await RunUnitOfWork(session).create_task_run("Coordinator", {})
         root = await AgentExecutionRepository(session).root_for_run(run.id)
         children = [
             await AgentExecutionRepository(session).create_child(
@@ -270,7 +271,7 @@ async def test_agent_coordinator_bounds_parallelism_and_dynamic_node_allowance(t
 async def test_provider_semaphore_prevents_child_node_slot_multiplication(tmp_path):
     engine, sessions = await _database(tmp_path, "provider-cap.db")
     async with sessions() as session:
-        run = await RunRepository(session).create_task_run("Provider cap", {})
+        run = await RunUnitOfWork(session).create_task_run("Provider cap", {})
         root = await AgentExecutionRepository(session).root_for_run(run.id)
         for index in range(3):
             await AgentExecutionRepository(session).create_child(
@@ -369,7 +370,7 @@ def test_adaptive_delegation_gate_accepts_breadth_and_rejects_negative_cases():
 async def test_configured_maximum_child_load_remains_bounded(tmp_path):
     engine, sessions = await _database(tmp_path, "bounded-load.db")
     async with sessions() as session:
-        run = await RunRepository(session).create_task_run("Bounded load", {})
+        run = await RunUnitOfWork(session).create_task_run("Bounded load", {})
         root = await AgentExecutionRepository(session).root_for_run(run.id)
         for index in range(12):
             await AgentExecutionRepository(session).create_child(

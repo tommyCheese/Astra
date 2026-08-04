@@ -1,6 +1,7 @@
 import pytest
 
-from app.db.models import RunRecord, TaskRecord
+from app.db.models.conversations import TaskRecord
+from app.db.models.runs import RunRecord
 from app.grounding.fragments import fragments_from_web_result
 from app.grounding.identity import (
     canonical_url,
@@ -15,15 +16,11 @@ from app.grounding.projection import project_grounded_answer
 from app.grounding.repository import EvidenceRepository, EvidenceWriter
 from app.grounding.schemas import EvidenceFragment, EvidenceKind
 from app.grounding.validators import grounding_validation_outcomes
-from app.runner.reasoning import CompletionGate, apply_validation_outcomes, build_default_contract
-from app.schemas.agent import (
-    AgentState,
-    FinalAnswer,
-    Finding,
-    SourceReference,
-    TerminalState,
-    ValidationOutcome,
-)
+from app.runner.completion import CompletionGate
+from app.runner.reasoning import apply_validation_outcomes, build_default_contract
+from app.schemas.agent.execution_state import AgentState
+from app.schemas.agent.run_result import FinalAnswer, Finding, SourceReference, ValidationOutcome
+from app.schemas.agent.types import TerminalState
 
 
 def test_grounding_identities_are_stable_and_tracking_parameters_are_removed():

@@ -10,22 +10,19 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.db.models import (
-    NodeExecutionRecord,
-    PlanNodeRecord,
-    PlanRecord,
-    RunRecord,
-    RunSkillSnapshotRecord,
-    utc_now,
-)
+from app.db.model_base import utc_now
+from app.db.models.executions import NodeExecutionRecord
+from app.db.models.plans import PlanNodeRecord, PlanRecord
+from app.db.models.runs import RunRecord
+from app.db.models.skills import RunSkillSnapshotRecord
 from app.repositories.executions import (
     NodeExecutionRepository,
     NodeExecutionStateError,
 )
 from app.repositories.plans import PlanRepository
-from app.repositories.runs import RunRepository
-from app.runner.planning import PlanScheduler
-from app.schemas.agent import (
+from app.repositories.run_unit_of_work import RunUnitOfWork
+from app.runner.plan_scheduler import PlanScheduler
+from app.schemas.agent.types import (
     NodeExecutionPhase,
     NodeExecutionStatus,
     PlanNodeStatus,
@@ -72,7 +69,7 @@ class NodeExecutionResult(BaseModel):
 
 
 NodeExecutor = Callable[
-    [RunRepository, NodeContextSnapshot],
+    [RunUnitOfWork, NodeContextSnapshot],
     Awaitable[NodeExecutionResult],
 ]
 
@@ -113,7 +110,7 @@ class NodeWorker:
                 expected_version=execution.state_version,
                 phase=NodeExecutionPhase.running,
             )
-            await RunRepository(session).add_event(
+            await RunUnitOfWork(session).add_event(
                 execution.run_id,
                 "plan.node.execution_started",
                 _execution_event(execution),
@@ -129,7 +126,7 @@ class NodeWorker:
             async with self.session_factory() as worker_session:
                 result = await asyncio.wait_for(
                     self.executor(
-                        RunRepository(worker_session),
+                        RunUnitOfWork(worker_session),
                         context,
                     ),
                     timeout=self.attempt_timeout_seconds,
@@ -179,7 +176,10 @@ class NodeWorker:
 
         if result.status == NodeExecutionStatus.waiting:
             return result
+        await self._record_result(execution_id, result)
+        return result
 
+    async def _record_result(self, execution_id, result) -> None:
         async with self.session_factory() as session:
             executions = NodeExecutionRepository(session)
             execution = await executions.require(execution_id)
@@ -195,13 +195,12 @@ class NodeWorker:
                     result=result.model_dump(mode="json"),
                     failure=result.failure,
                 )
-                await RunRepository(session).add_event(
+                await RunUnitOfWork(session).add_event(
                     execution.run_id,
                     "plan.node.execution_result_recorded",
                     _execution_event(execution),
                 )
                 await session.commit()
-        return result
 
     async def _heartbeat(self, execution_id: str, stop: asyncio.Event) -> None:
         while True:
@@ -327,7 +326,7 @@ class RunCoordinator:
 
     async def _claim_contexts(self, run_id: str) -> list[NodeContextSnapshot]:
         async with self.session_factory() as session:
-            run_repository = RunRepository(session)
+            run_repository = RunUnitOfWork(session)
             run = await run_repository.require_run(run_id)
             if run.status in {"cancelled", "draining_for_replan"}:
                 return []
@@ -418,11 +417,9 @@ class RunCoordinator:
             retried = await self._merge_result(run_id, item)
             if retried:
                 continue
-            (
-                completed
-                if item.status == NodeExecutionStatus.completed
-                else failed
-            ).append(item.execution_id)
+            (completed if item.status == NodeExecutionStatus.completed else failed).append(
+                item.execution_id
+            )
         return completed, failed
 
     async def _merge_result(
@@ -433,21 +430,9 @@ class RunCoordinator:
         async with self.session_factory() as session:
             execution_repository = NodeExecutionRepository(session)
             execution = await execution_repository.require(result.execution_id)
-            if (
-                execution.run_id != run_id
-                or execution.plan_version != result.plan_version
-                or execution.plan_node_id != result.plan_node_id
-                or execution.attempt != result.attempt
-                or execution.current_slot != "current"
-                or execution.phase != NodeExecutionPhase.committing.value
-            ):
-                raise NodeExecutionStateError("Stale NodeExecution result")
             node = await session.get(PlanNodeRecord, result.plan_node_id)
-            if node is None or node.status != PlanNodeStatus.running.value:
-                raise NodeExecutionStateError("Plan node is not owned by the current execution")
             run = await session.get(RunRecord, run_id)
-            if run is None or run.active_plan_id != execution.plan_id:
-                raise NodeExecutionStateError("Run Plan changed before result commit")
+            _validate_merge_context(execution, result, node, run, run_id)
 
             should_retry = (
                 result.status == NodeExecutionStatus.failed
@@ -455,55 +440,12 @@ class RunCoordinator:
                 and result.attempt <= self.max_safe_retries
             )
             if should_retry:
-                await execution_repository.settle_budgets(
-                    execution.id,
-                    consumed=result.budget_consumed,
-                    status="settled",
+                await self._schedule_retry(
+                    session, execution_repository, execution, node, run, result
                 )
-                await execution_repository.release_leases(
-                    execution.id,
-                    reason="retry",
-                )
-                execution = await execution_repository.transition(
-                    execution.id,
-                    expected_version=execution.state_version,
-                    phase=NodeExecutionPhase.failed,
-                    status=NodeExecutionStatus.failed,
-                    checkpoint=result.checkpoint,
-                    result=result.model_dump(mode="json"),
-                    failure=result.failure,
-                )
-                node.status = PlanNodeStatus.pending.value
-                node.started_at = None
-                node.completed_at = None
-                node.failure = None
-                _merge_run_state(run, result)
-                await RunRepository(session).add_event(
-                    run_id,
-                    "plan.node.execution_retry_scheduled",
-                    {
-                        **_execution_event(execution),
-                        "next_attempt": result.attempt + 1,
-                        "reason": (result.failure or {}).get("category", "retryable_failure"),
-                    },
-                )
-                await session.commit()
                 return True
 
-            terminal_phase = (
-                NodeExecutionPhase.completed
-                if result.status == NodeExecutionStatus.completed
-                else NodeExecutionPhase.cancelled
-                if result.status == NodeExecutionStatus.cancelled
-                else NodeExecutionPhase.failed
-            )
-            target_node_status = (
-                PlanNodeStatus.completed.value
-                if result.status == NodeExecutionStatus.completed
-                else PlanNodeStatus.blocked.value
-                if result.status in {NodeExecutionStatus.cancelled, NodeExecutionStatus.blocked}
-                else PlanNodeStatus.failed.value
-            )
+            terminal_phase, target_node_status = _terminal_outcome(result.status)
             changed = await session.execute(
                 update(PlanNodeRecord)
                 .where(
@@ -567,7 +509,7 @@ class RunCoordinator:
                 failure=result.failure,
             )
             _merge_run_state(run, result)
-            await RunRepository(session).add_event(
+            await RunUnitOfWork(session).add_event(
                 run_id,
                 f"plan.node.execution_{result.status.value}",
                 _execution_event(execution),
@@ -575,9 +517,69 @@ class RunCoordinator:
             await session.commit()
             return False
 
+    async def _schedule_retry(
+        self, session, execution_repository, execution, node, run, result
+    ) -> None:
+        await execution_repository.settle_budgets(
+            execution.id, consumed=result.budget_consumed, status="settled"
+        )
+        await execution_repository.release_leases(execution.id, reason="retry")
+        execution = await execution_repository.transition(
+            execution.id,
+            expected_version=execution.state_version,
+            phase=NodeExecutionPhase.failed,
+            status=NodeExecutionStatus.failed,
+            checkpoint=result.checkpoint,
+            result=result.model_dump(mode="json"),
+            failure=result.failure,
+        )
+        node.status = PlanNodeStatus.pending.value
+        node.started_at = node.completed_at = node.failure = None
+        _merge_run_state(run, result)
+        await RunUnitOfWork(session).add_event(
+            run.id,
+            "plan.node.execution_retry_scheduled",
+            {
+                **_execution_event(execution),
+                "next_attempt": result.attempt + 1,
+                "reason": (result.failure or {}).get("category", "retryable_failure"),
+            },
+        )
+        await session.commit()
+
     async def _persist_cancellation(self, run_id: str) -> None:
         async with self.session_factory() as session:
-            await RunRepository(session).cancel_run(run_id)
+            await RunUnitOfWork(session).cancel_run(run_id)
+
+
+def _validate_merge_context(execution, result, node, run, run_id) -> None:
+    execution_matches = (
+        execution.run_id == run_id
+        and execution.plan_version == result.plan_version
+        and execution.plan_node_id == result.plan_node_id
+        and execution.attempt == result.attempt
+        and execution.current_slot == "current"
+        and execution.phase == NodeExecutionPhase.committing.value
+    )
+    if not execution_matches:
+        raise NodeExecutionStateError("Stale NodeExecution result")
+    if node is None or node.status != PlanNodeStatus.running.value:
+        raise NodeExecutionStateError("Plan node is not owned by the current execution")
+    if run is None or run.active_plan_id != execution.plan_id:
+        raise NodeExecutionStateError("Run Plan changed before result commit")
+
+
+def _terminal_outcome(status):
+    if status == NodeExecutionStatus.completed:
+        return NodeExecutionPhase.completed, PlanNodeStatus.completed.value
+    if status == NodeExecutionStatus.cancelled:
+        return NodeExecutionPhase.cancelled, PlanNodeStatus.blocked.value
+    node_status = (
+        PlanNodeStatus.blocked.value
+        if status == NodeExecutionStatus.blocked
+        else PlanNodeStatus.failed.value
+    )
+    return NodeExecutionPhase.failed, node_status
 
 
 async def _build_context(
@@ -590,47 +592,22 @@ async def _build_context(
     node = await session.get(PlanNodeRecord, execution.plan_node_id)
     if node is None:
         raise ValueError(f"Plan node not found: {execution.plan_node_id}")
-    dependencies = (
-        await PlanRepository(session).require(execution.plan_id)
-    ).edges
+    dependencies = (await PlanRepository(session).require(execution.plan_id)).edges
     predecessor_ids = {
-        edge.predecessor_id
-        for edge in dependencies
-        if edge.successor_id == execution.plan_node_id
+        edge.predecessor_id for edge in dependencies if edge.successor_id == execution.plan_node_id
     }
     evidence_result = await session.execute(
         select(PlanNodeRecord.evidence_refs).where(PlanNodeRecord.id.in_(predecessor_ids))
     )
     evidence = tuple(
-        dict.fromkeys(
-            ref
-            for refs in evidence_result.scalars().all()
-            for ref in (refs or [])
-        )
+        dict.fromkeys(ref for refs in evidence_result.scalars().all() for ref in (refs or []))
     )
     state = run.agent_state or {}
     execution = await NodeExecutionRepository(session).require(execution.id)
     skill_snapshot = await session.scalar(
-        select(RunSkillSnapshotRecord).where(
-            RunSkillSnapshotRecord.run_id == run.id
-        )
+        select(RunSkillSnapshotRecord).where(RunSkillSnapshotRecord.run_id == run.id)
     )
-    required_skill_ids = set(node.required_skill_ids or [])
-    skill_catalog = tuple(
-        {
-            "qualified_identity": item["qualified_identity"],
-            "name": item["name"],
-            "description": item["description"],
-            "revision_id": item["revision_id"],
-            "digest": item["digest"],
-        }
-        for item in (skill_snapshot.catalog if skill_snapshot else [])
-        if item["qualified_identity"] in required_skill_ids
-    )
-    active_identities = {
-        item["qualified_identity"]
-        for item in (skill_snapshot.activations if skill_snapshot else [])
-    }
+    skill_catalog, active_skills = _skill_context(node, skill_snapshot)
     return NodeContextSnapshot(
         run_id=run.id,
         execution_id=execution.id,
@@ -638,40 +615,61 @@ async def _build_context(
         plan_version=execution.plan_version,
         plan_node_id=execution.plan_node_id,
         attempt=execution.attempt,
-        node={
-            "id": node.id,
-            "node_key": node.node_key,
-            "index": node.index,
-            "title": node.title,
-            "intent": node.intent,
-            "required_capabilities": list(node.required_capabilities or []),
-            "required_skill_ids": list(node.required_skill_ids or []),
-            "success_criteria_refs": list(node.success_criteria_refs or []),
-            "expected_outcome": dict(node.expected_outcome or {}),
-            "risk_level": node.risk_level,
-            "optional": node.optional,
-        },
+        node=_node_context_payload(node),
         dependency_evidence=evidence,
         task_contract=dict(run.task_contract or {}),
         policy=dict(run.reasoning_policy or {}),
         skill_catalog=skill_catalog,
-        active_skills=tuple(
-            item
-            for item in skill_catalog
-            if item["qualified_identity"] in active_identities
-        ),
+        active_skills=active_skills,
         skill_draft_test=bool(skill_snapshot and skill_snapshot.draft_test),
         accepted_facts=tuple(state.get("accepted_facts", [])),
         reserved_budgets={
             reservation.budget_kind: reservation.reserved
             for reservation in execution.budget_reservations
         },
-        retry_safe=not node.required_capabilities
-        or (
-            parallel_safe_capabilities is not None
-            and set(node.required_capabilities) <= parallel_safe_capabilities
-        ),
+        retry_safe=_retry_safe(node, parallel_safe_capabilities),
         state_version=run.state_version,
+    )
+
+
+def _skill_context(node, skill_snapshot):
+    required_ids = set(node.required_skill_ids or [])
+    catalog = tuple(
+        {
+            key: item[key]
+            for key in ("qualified_identity", "name", "description", "revision_id", "digest")
+        }
+        for item in (skill_snapshot.catalog if skill_snapshot else [])
+        if item["qualified_identity"] in required_ids
+    )
+    active_ids = {
+        item["qualified_identity"]
+        for item in (skill_snapshot.activations if skill_snapshot else [])
+    }
+    return catalog, tuple(item for item in catalog if item["qualified_identity"] in active_ids)
+
+
+def _node_context_payload(node):
+    return {
+        "id": node.id,
+        "node_key": node.node_key,
+        "index": node.index,
+        "title": node.title,
+        "intent": node.intent,
+        "required_capabilities": list(node.required_capabilities or []),
+        "required_skill_ids": list(node.required_skill_ids or []),
+        "success_criteria_refs": list(node.success_criteria_refs or []),
+        "expected_outcome": dict(node.expected_outcome or {}),
+        "risk_level": node.risk_level,
+        "optional": node.optional,
+    }
+
+
+def _retry_safe(node, parallel_safe_capabilities) -> bool:
+    if not node.required_capabilities:
+        return True
+    return parallel_safe_capabilities is not None and (
+        set(node.required_capabilities) <= parallel_safe_capabilities
     )
 
 
@@ -727,7 +725,5 @@ def _execution_event(execution: NodeExecutionRecord) -> dict[str, Any]:
         "state_version": execution.state_version,
         "started_at": execution.started_at.isoformat(),
         "heartbeat_at": execution.heartbeat_at.isoformat(),
-        "finished_at": execution.finished_at.isoformat()
-        if execution.finished_at
-        else None,
+        "finished_at": execution.finished_at.isoformat() if execution.finished_at else None,
     }

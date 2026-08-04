@@ -4,7 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_session
 from app.repositories.conversation_strategy import ConversationStrategyRepository
-from app.schemas.agent import (
+from app.schemas.agent.types import (
     TOOL_CALL_LIMIT_DEFAULTS,
     AnswerMode,
     ReasoningEffort,

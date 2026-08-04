@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, Query, Request, Response
+from fastapi import APIRouter, Depends, Query, Response
 from fastapi.responses import FileResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -8,13 +8,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.artifacts import LocalArtifactStore
 from app.core.config import Settings, get_settings
 from app.core.errors import ResourceError, StateError, ValidationError
-from app.db.models import (
-    ArtifactRecord,
-    ScheduledJobRunRecord,
-)
+from app.db.models.scheduling import ScheduledJobRunRecord
+from app.db.models.workspaces import ArtifactRecord
 from app.db.session import get_session
 from app.deliverables import DeliverableCatalog
+from app.platform.http.dependencies import ApplicationServices, get_application_container
 from app.repositories.conversations import ConversationRepository
+from app.repositories.heartbeats import HeartbeatRepository
 from app.repositories.schedules import (
     ScheduleNotFoundError,
     ScheduleRepository,
@@ -38,6 +38,7 @@ from app.schemas.schedules import (
 )
 
 router = APIRouter(prefix="/api", tags=["scheduled-tasks"])
+
 
 def _translate_schedule_error(exc: Exception) -> Exception:
     if isinstance(exc, ScheduleNotFoundError):
@@ -114,9 +115,9 @@ async def update_schedule(
         if await ConversationRepository(session).get(payload.target_task_id) is None:
             raise ResourceError("CONVERSATION_NOT_FOUND", "找不到定时任务的目标对话。")
         if payload.execution is None:
-            execution = await ScheduledExecutionResolver(
-                session, settings
-            ).from_task_or_workspace(payload.target_task_id)
+            execution = await ScheduledExecutionResolver(session, settings).from_task_or_workspace(
+                payload.target_task_id
+            )
             payload = payload.model_copy(update={"execution": execution})
     try:
         return await ScheduleRepository(session).update(job_id, payload)
@@ -176,7 +177,7 @@ async def resume_schedule(
 async def run_schedule(
     job_id: str,
     payload: ScheduledJobManualRunRequest,
-    request: Request,
+    container: ApplicationServices = Depends(get_application_container),
     session: AsyncSession = Depends(get_session),
     settings: Settings = Depends(get_settings),
 ):
@@ -192,7 +193,8 @@ async def run_schedule(
         )
         return await ScheduledRunDispatcher(
             settings,
-            request.app.state.session_factory,
+            container.session_factory,
+            container.run_dispatcher,
         ).dispatch(schedule_run.id)
     except Exception as exc:
         _raise_schedule_error(exc)
@@ -246,11 +248,7 @@ async def scheduled_deliverable_content(
             ArtifactRecord.id == artifact_id,
         )
     )
-    if (
-        artifact is None
-        or not artifact.storage_key
-        or artifact.security_status != "verified"
-    ):
+    if artifact is None or not artifact.storage_key or artifact.security_status != "verified":
         raise ResourceError("SCHEDULE_DELIVERABLE_NOT_FOUND", "找不到可访问的制品。")
     path = LocalArtifactStore(settings.artifact_store_path).resolve(artifact.storage_key)
     if not path.is_file():
@@ -265,7 +263,7 @@ async def scheduled_deliverable_content(
 
 @router.get("/heartbeat", response_model=ScheduledJobView | None)
 async def get_heartbeat(session: AsyncSession = Depends(get_session)):
-    return await ScheduleRepository(session).get_heartbeat()
+    return await HeartbeatRepository(session).get()
 
 
 @router.put("/heartbeat", response_model=ScheduledJobView)
@@ -286,7 +284,7 @@ async def put_heartbeat(
     resolved = HeartbeatConfig.model_validate(
         {**payload.model_dump(exclude={"execution"}), "execution": execution}
     )
-    return await ScheduleRepository(session).upsert_heartbeat(
+    return await HeartbeatRepository(session).upsert(
         resolved,
         owner_principal="local-user",
     )
@@ -295,6 +293,6 @@ async def put_heartbeat(
 @router.post("/heartbeat/disable", response_model=ScheduledJobView)
 async def disable_heartbeat(session: AsyncSession = Depends(get_session)):
     try:
-        return await ScheduleRepository(session).disable_heartbeat()
+        return await HeartbeatRepository(session).disable()
     except Exception as exc:
         _raise_schedule_error(exc)

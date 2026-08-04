@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field
 
 from app.core.config import Settings
 from app.sandbox.runtime import SandboxError, SandboxRequest, sanitize_log
-from app.schemas.agent import BashExecuteResult
+from app.schemas.agent.tool_invocation import BashExecuteResult
 from app.tools.base import (
     Tool,
     ToolExecutionError,
@@ -88,9 +88,7 @@ class BashExecuteTool(Tool):
     def __init__(self, settings: Settings):
         self.settings = settings
 
-    async def run(
-        self, tool_input: dict[str, Any], *, context=None
-    ) -> dict[str, Any]:
+    async def run(self, tool_input: dict[str, Any], *, context=None) -> dict[str, Any]:
         if context is None:
             raise ToolExecutionError("invalid_decision", "bash_execute requires execution context")
         if context.workspace_path is None:
@@ -175,12 +173,7 @@ class BashExecuteTool(Tool):
                     "network": "none",
                 },
             )
-            payload = json.loads(result.stdout)
-            normalized = BashExecuteResult(
-                exit_code=int(payload["exit_code"]),
-                stdout=sanitize_log(str(payload.get("stdout", "")), self.settings.bash_output_max_chars),
-                stderr=sanitize_log(str(payload.get("stderr", "")), self.settings.bash_output_max_chars),
-            )
+            normalized = _parse_bash_result(result.stdout, self.settings.bash_output_max_chars)
         except SandboxError as exc:
             raise ToolExecutionError(exc.category, exc.safe_message) from exc
         except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
@@ -192,3 +185,12 @@ class BashExecuteTool(Tool):
         return ToolResultEnvelope(data=normalized.model_dump()).model_dump(
             mode="json", exclude_none=True
         )
+
+
+def _parse_bash_result(stdout: str, output_limit: int) -> BashExecuteResult:
+    payload = json.loads(stdout)
+    return BashExecuteResult(
+        exit_code=int(payload["exit_code"]),
+        stdout=sanitize_log(str(payload.get("stdout", "")), output_limit),
+        stderr=sanitize_log(str(payload.get("stderr", "")), output_limit),
+    )

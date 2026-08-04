@@ -8,7 +8,7 @@ from app.sandbox.runtime import SandboxResult
 from app.tools.base import ToolExecutionContext, ToolExecutionError
 from app.tools.registry import build_tool_registry
 from app.tools.sandboxed import SandboxedWebTool, _web_runtime_config
-from app.tools.web import WebFetchTool
+from app.tools.web_fetch import WebFetchTool
 
 
 class RecordingSandboxService:

@@ -9,18 +9,17 @@ from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.db.models import (
+from app.db.model_base import utc_now
+from app.db.models.conversations import TaskRecord
+from app.db.models.evolution import (
     AgentEvolutionAuditRecord,
     AgentEvolutionCandidateRecord,
     AgentEvolutionEvaluationRecord,
     AgentEvolutionSourceRecord,
-    AgentTurnRecord,
-    ArtifactRecord,
-    MemoryRecord,
-    RunRecord,
-    TaskRecord,
-    utc_now,
 )
+from app.db.models.memory import MemoryRecord
+from app.db.models.runs import AgentTurnRecord, RunRecord
+from app.db.models.workspaces import ArtifactRecord
 from app.evolution import (
     EvaluationManifest,
     EvaluationThresholds,
@@ -104,6 +103,23 @@ def _state_from_record(
     )
 
 
+def _candidate_created_audit(record, candidate, actor, now):
+    return AgentEvolutionAuditRecord(
+        candidate_id=record.id,
+        event_type="candidate_created",
+        actor=actor,
+        actual_state_version=1,
+        payload={
+            "candidate_digest": candidate.digest,
+            "candidate_type": candidate.candidate_type.value,
+            "target": candidate.target.value,
+            "source_count": len(candidate.source_refs),
+            "executable": False,
+        },
+        created_at=now,
+    )
+
+
 class EvolutionRepository:
     """Persistence boundary for immutable, non-executable evolution candidates."""
 
@@ -131,18 +147,14 @@ class EvolutionRepository:
         elif namespace_type == "workspace":
             exists = (
                 await self.session.scalar(
-                    select(TaskRecord.id)
-                    .where(TaskRecord.workspace_id == normalized_id)
-                    .limit(1)
+                    select(TaskRecord.id).where(TaskRecord.workspace_id == normalized_id).limit(1)
                 )
                 is not None
             )
         elif namespace_type == "user":
             exists = (
                 await self.session.scalar(
-                    select(TaskRecord.id)
-                    .where(TaskRecord.created_by == normalized_id)
-                    .limit(1)
+                    select(TaskRecord.id).where(TaskRecord.created_by == normalized_id).limit(1)
                 )
                 is not None
             )
@@ -214,38 +226,8 @@ class EvolutionRepository:
         normalized_namespace_id = namespace_id.strip()
         await self._validate_namespace(namespace_type, normalized_namespace_id)
 
-        existing = await self.session.scalar(
-            select(AgentEvolutionCandidateRecord.id).where(
-                AgentEvolutionCandidateRecord.namespace_type == namespace_type,
-                AgentEvolutionCandidateRecord.namespace_id == normalized_namespace_id,
-                AgentEvolutionCandidateRecord.candidate_key == candidate.candidate_key,
-                AgentEvolutionCandidateRecord.revision == candidate.revision,
-            )
-        )
-        if existing is not None:
-            raise EvolutionDomainError(
-                "EVOLUTION_CANDIDATE_EXISTS",
-                "This immutable candidate revision already exists in the namespace.",
-                {"candidate_id": existing},
-            )
-
-        if candidate.supersedes_id is not None:
-            previous = await self.session.get(
-                AgentEvolutionCandidateRecord,
-                candidate.supersedes_id,
-            )
-            if (
-                previous is None
-                or previous.namespace_type != namespace_type
-                or previous.namespace_id != normalized_namespace_id
-                or previous.candidate_key != candidate.candidate_key
-                or previous.revision != candidate.revision - 1
-            ):
-                raise EvolutionDomainError(
-                    "EVOLUTION_LINEAGE_INVALID",
-                    "Candidate supersession must reference the immediately preceding "
-                    "revision in the same namespace.",
-                )
+        await self._ensure_revision_available(namespace_type, normalized_namespace_id, candidate)
+        await self._validate_supersession(namespace_type, normalized_namespace_id, candidate)
 
         source_values = [
             await self._source_record_values(
@@ -259,9 +241,7 @@ class EvolutionRepository:
         candidate_payload = candidate.model_dump(mode="json")
         source_manifest = {
             "schema_version": 1,
-            "sources": [
-                source.model_dump(mode="json") for source in candidate.source_refs
-            ],
+            "sources": [source.model_dump(mode="json") for source in candidate.source_refs],
         }
         record = AgentEvolutionCandidateRecord(
             candidate_key=candidate.candidate_key,
@@ -279,8 +259,7 @@ class EvolutionRepository:
             source_manifest_digest=_stable_digest(source_manifest),
             environment_constraints={
                 "items": [
-                    item.model_dump(mode="json")
-                    for item in candidate.environment_constraints
+                    item.model_dump(mode="json") for item in candidate.environment_constraints
                 ]
             },
             created_by=actor,
@@ -292,32 +271,49 @@ class EvolutionRepository:
         for values in source_values:
             self.session.add(
                 AgentEvolutionSourceRecord(
-                    candidate_id=record.id,
-                    **values,
-                    accessible=True,
-                    created_at=now,
+                    candidate_id=record.id, **values, accessible=True, created_at=now
                 )
             )
-        self.session.add(
-            AgentEvolutionAuditRecord(
-                candidate_id=record.id,
-                event_type="candidate_created",
-                actor=actor,
-                actual_state_version=1,
-                payload={
-                    "candidate_digest": candidate.digest,
-                    "candidate_type": candidate.candidate_type.value,
-                    "target": candidate.target.value,
-                    "source_count": len(candidate.source_refs),
-                    "executable": False,
-                },
-                created_at=now,
-            )
-        )
+        self.session.add(_candidate_created_audit(record, candidate, actor, now))
         await self.session.flush()
         if commit:
             await self.session.commit()
         return await self.require(record.id)
+
+    async def _ensure_revision_available(self, namespace_type, namespace_id, candidate):
+        existing = await self.session.scalar(
+            select(AgentEvolutionCandidateRecord.id).where(
+                AgentEvolutionCandidateRecord.namespace_type == namespace_type,
+                AgentEvolutionCandidateRecord.namespace_id == namespace_id,
+                AgentEvolutionCandidateRecord.candidate_key == candidate.candidate_key,
+                AgentEvolutionCandidateRecord.revision == candidate.revision,
+            )
+        )
+        if existing is not None:
+            raise EvolutionDomainError(
+                "EVOLUTION_CANDIDATE_EXISTS",
+                "This immutable candidate revision already exists in the namespace.",
+                {"candidate_id": existing},
+            )
+
+    async def _validate_supersession(self, namespace_type, namespace_id, candidate):
+        if candidate.supersedes_id is not None:
+            previous = await self.session.get(
+                AgentEvolutionCandidateRecord,
+                candidate.supersedes_id,
+            )
+            if (
+                previous is None
+                or previous.namespace_type != namespace_type
+                or previous.namespace_id != namespace_id
+                or previous.candidate_key != candidate.candidate_key
+                or previous.revision != candidate.revision - 1
+            ):
+                raise EvolutionDomainError(
+                    "EVOLUTION_LINEAGE_INVALID",
+                    "Candidate supersession must reference the immediately preceding "
+                    "revision in the same namespace.",
+                )
 
     async def require(
         self,
@@ -440,32 +436,9 @@ class EvolutionRepository:
                 "EVOLUTION_EVALUATION_MISMATCH",
                 "Evaluation manifest belongs to a different candidate revision.",
             )
-        current_status = EvolutionCandidateStatus(record.status)
-        if current_status not in {
-            EvolutionCandidateStatus.draft,
-            EvolutionCandidateStatus.evaluating,
-        }:
-            raise EvolutionDomainError(
-                "EVOLUTION_TRANSITION_INVALID",
-                "Evaluations may only be attached to draft or evaluating candidates.",
-                {"status": current_status.value},
-            )
-        if current_status == EvolutionCandidateStatus.draft:
-            next_state = transition_candidate_state(
-                candidate,
-                _state_from_record(record, await self._current_evaluation(record)),
-                EvolutionCandidateStatus.evaluating,
-                expected_state_version=expected_state_version,
-                available_tools=available_tools,
-            )
-        else:
-            assert_candidate_authority(candidate, available_tools=available_tools)
-            next_state = EvolutionCandidateState(
-                candidate_digest=candidate.digest,
-                status=EvolutionCandidateStatus.evaluating,
-                state_version=expected_state_version + 1,
-                evaluation_digest=manifest.digest,
-            )
+        next_state = await self._evaluation_next_state(
+            record, candidate, manifest, expected_state_version, available_tools
+        )
 
         decision = evaluate_manifest(
             manifest,
@@ -496,8 +469,7 @@ class EvolutionRepository:
             update(AgentEvolutionCandidateRecord)
             .where(
                 AgentEvolutionCandidateRecord.id == candidate_id,
-                AgentEvolutionCandidateRecord.state_version
-                == expected_state_version,
+                AgentEvolutionCandidateRecord.state_version == expected_state_version,
             )
             .values(
                 status=next_state.status.value,
@@ -534,6 +506,35 @@ class EvolutionRepository:
         if commit:
             await self.session.commit()
         return await self.require(candidate_id)
+
+    async def _evaluation_next_state(
+        self, record, candidate, manifest, expected_state_version, available_tools
+    ) -> EvolutionCandidateState:
+        current_status = EvolutionCandidateStatus(record.status)
+        if current_status not in {
+            EvolutionCandidateStatus.draft,
+            EvolutionCandidateStatus.evaluating,
+        }:
+            raise EvolutionDomainError(
+                "EVOLUTION_TRANSITION_INVALID",
+                "Evaluations may only be attached to draft or evaluating candidates.",
+                {"status": current_status.value},
+            )
+        if current_status == EvolutionCandidateStatus.draft:
+            return transition_candidate_state(
+                candidate,
+                _state_from_record(record, await self._current_evaluation(record)),
+                EvolutionCandidateStatus.evaluating,
+                expected_state_version=expected_state_version,
+                available_tools=available_tools,
+            )
+        assert_candidate_authority(candidate, available_tools=available_tools)
+        return EvolutionCandidateState(
+            candidate_digest=candidate.digest,
+            status=EvolutionCandidateStatus.evaluating,
+            state_version=expected_state_version + 1,
+            evaluation_digest=manifest.digest,
+        )
 
     async def review(
         self,
@@ -575,8 +576,7 @@ class EvolutionRepository:
             update(AgentEvolutionCandidateRecord)
             .where(
                 AgentEvolutionCandidateRecord.id == candidate_id,
-                AgentEvolutionCandidateRecord.state_version
-                == expected_state_version,
+                AgentEvolutionCandidateRecord.state_version == expected_state_version,
             )
             .values(
                 status=next_state.status.value,
@@ -704,8 +704,7 @@ class EvolutionRepository:
             update(AgentEvolutionCandidateRecord)
             .where(
                 AgentEvolutionCandidateRecord.id == candidate_id,
-                AgentEvolutionCandidateRecord.state_version
-                == expected_state_version,
+                AgentEvolutionCandidateRecord.state_version == expected_state_version,
             )
             .values(
                 status=next_state.status.value,

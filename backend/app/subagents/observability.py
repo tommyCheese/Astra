@@ -9,14 +9,9 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import (
-    AgentExecutionRecord,
-    AgentJoinRecord,
-    ModelInvocationRecord,
-    RunEventRecord,
-    RunRecord,
-    ToolCallRecord,
-)
+from app.db.models.executions import AgentExecutionRecord, AgentJoinRecord, ModelInvocationRecord
+from app.db.models.permissions import ToolCallRecord
+from app.db.models.runs import RunEventRecord, RunRecord
 from app.subagents.governance import stable_digest
 
 
@@ -30,115 +25,111 @@ class SubagentTelemetryRepository:
         run = await self.session.get(RunRecord, run_id)
         if run is None:
             raise ValueError(f"Run not found: {run_id}")
-        executions = list(
-            (
-                await self.session.scalars(
-                    select(AgentExecutionRecord).where(
-                        AgentExecutionRecord.run_id == run_id
-                    )
-                )
-            ).all()
-        )
+        executions, events, invocations, tools, joins = await self._records(run_id)
         children = [item for item in executions if item.parent_execution_id is not None]
-        events = list(
-            (
-                await self.session.scalars(
-                    select(RunEventRecord).where(RunEventRecord.run_id == run_id)
-                )
-            ).all()
+        return _telemetry_summary(run, children, events, invocations, tools, joins)
+
+    async def _records(self, run_id):
+        async def rows(model, *conditions):
+            return list((await self.session.scalars(select(model).where(*conditions))).all())
+
+        executions = await rows(AgentExecutionRecord, AgentExecutionRecord.run_id == run_id)
+        events = await rows(RunEventRecord, RunEventRecord.run_id == run_id)
+        invocations = await rows(
+            ModelInvocationRecord,
+            ModelInvocationRecord.run_id == run_id,
+            ModelInvocationRecord.agent_execution_id.is_not(None),
         )
-        invocations = list(
-            (
-                await self.session.scalars(
-                    select(ModelInvocationRecord).where(
-                        ModelInvocationRecord.run_id == run_id,
-                        ModelInvocationRecord.agent_execution_id.is_not(None),
-                    )
-                )
-            ).all()
+        tools = await rows(
+            ToolCallRecord,
+            ToolCallRecord.run_id == run_id,
+            ToolCallRecord.agent_execution_id.is_not(None),
         )
-        tools = list(
-            (
-                await self.session.scalars(
-                    select(ToolCallRecord).where(
-                        ToolCallRecord.run_id == run_id,
-                        ToolCallRecord.agent_execution_id.is_not(None),
-                    )
-                )
-            ).all()
-        )
-        joins = list(
-            (
-                await self.session.scalars(
-                    select(AgentJoinRecord).where(AgentJoinRecord.run_id == run_id)
-                )
-            ).all()
-        )
-        policy = (((run.reasoning_policy or {}).get("effective") or {}).get("subagents") or {})
-        siblings = Counter(item.parent_execution_id for item in children)
-        durations = [
-            max(0, int((item.finished_at - item.claimed_at).total_seconds() * 1000))
-            for item in children
-            if item.claimed_at is not None and item.finished_at is not None
-        ]
-        outcome_counts = Counter(item.status for item in children)
-        rejection_counts = Counter(
-            str(event.payload.get("reason_code") or "unknown")
-            for event in events
-            if event.type == "subagent.delegation_rejected"
-        )
-        scopes = [
-            stable_digest(
-                {
-                    "scope": (item.contract or {}).get("request", {}).get("scope"),
-                    "tools": (item.contract or {}).get("request", {}).get("requested_tools"),
-                }
-            )
-            for item in children
-        ]
-        total_tokens = sum(item.total_tokens or 0 for item in invocations)
-        total_cost = sum(
-            float((item.raw_usage or {}).get("cost_usd") or 0) for item in invocations
-        )
-        return {
-            "schema_version": 1,
-            "run_id": run.id,
-            "cohort": str(policy.get("rollout_cohort") or "disabled"),
-            "profile": str(run.answer_mode or "standard"),
-            "policy_digest": stable_digest(policy),
-            "model": {
-                "provider": str((run.model_policy or {}).get("provider") or "unknown"),
-                "name": str((run.model_policy or {}).get("model") or "unknown"),
-            },
-            "delegation": {
-                "accepted": len(children),
-                "rejected": sum(rejection_counts.values()),
-                "rejection_reasons": dict(sorted(rejection_counts.items())),
-                "max_fan_out": max(siblings.values(), default=0),
-                "max_depth": max((item.depth for item in children), default=0),
-                "duplicate_scope_count": len(scopes) - len(set(scopes)),
-            },
-            "outcomes": dict(sorted(outcome_counts.items())),
-            "joins": {
-                "total": len(joins),
-                "merge_failures": sum(item.status == "failed" for item in joins),
-            },
-            "usage": {
-                "model_calls": len(invocations),
-                "tool_calls": len(tools),
-                "tokens": total_tokens,
-                "cost_usd": round(total_cost, 6),
-            },
-            "latency_ms": _percentiles(durations),
-            "parallel_overlap_ms": _overlap_ms(children),
-            "cancellation_count": sum(item.status == "cancelled" for item in children),
-            "recovery_count": sum(
-                event.type.startswith("subagent.recover") for event in events
-            ),
-            "permission_denial_count": sum(
-                event.type == "subagent.permission_denied" for event in events
-            ),
-        }
+        joins = await rows(AgentJoinRecord, AgentJoinRecord.run_id == run_id)
+        return executions, events, invocations, tools, joins
+
+
+def _telemetry_summary(run, children, events, invocations, tools, joins):
+    policy = ((run.reasoning_policy or {}).get("effective") or {}).get("subagents") or {}
+    return {
+        "schema_version": 1,
+        "run_id": run.id,
+        "cohort": str(policy.get("rollout_cohort") or "disabled"),
+        "profile": str(run.answer_mode or "standard"),
+        "policy_digest": stable_digest(policy),
+        "model": _model_identity(run),
+        "delegation": _delegation_metrics(children, events),
+        "outcomes": dict(sorted(Counter(item.status for item in children).items())),
+        "joins": _join_metrics(joins),
+        "usage": _usage_metrics(invocations, tools),
+        "latency_ms": _percentiles(_durations(children)),
+        "parallel_overlap_ms": _overlap_ms(children),
+        **_terminal_event_metrics(children, events),
+    }
+
+
+def _model_identity(run):
+    policy = run.model_policy or {}
+    return {
+        "provider": str(policy.get("provider") or "unknown"),
+        "name": str(policy.get("model") or "unknown"),
+    }
+
+
+def _delegation_metrics(children, events):
+    siblings = Counter(item.parent_execution_id for item in children)
+    rejections = Counter(
+        str(event.payload.get("reason_code") or "unknown")
+        for event in events
+        if event.type == "subagent.delegation_rejected"
+    )
+    scopes = [_scope_digest(item) for item in children]
+    return {
+        "accepted": len(children),
+        "rejected": sum(rejections.values()),
+        "rejection_reasons": dict(sorted(rejections.items())),
+        "max_fan_out": max(siblings.values(), default=0),
+        "max_depth": max((item.depth for item in children), default=0),
+        "duplicate_scope_count": len(scopes) - len(set(scopes)),
+    }
+
+
+def _scope_digest(execution):
+    request = (execution.contract or {}).get("request", {})
+    return stable_digest({"scope": request.get("scope"), "tools": request.get("requested_tools")})
+
+
+def _join_metrics(joins):
+    return {"total": len(joins), "merge_failures": sum(item.status == "failed" for item in joins)}
+
+
+def _usage_metrics(invocations, tools):
+    return {
+        "model_calls": len(invocations),
+        "tool_calls": len(tools),
+        "tokens": sum(item.total_tokens or 0 for item in invocations),
+        "cost_usd": round(
+            sum(float((item.raw_usage or {}).get("cost_usd") or 0) for item in invocations), 6
+        ),
+    }
+
+
+def _durations(children):
+    return [
+        max(0, int((item.finished_at - item.claimed_at).total_seconds() * 1000))
+        for item in children
+        if item.claimed_at is not None and item.finished_at is not None
+    ]
+
+
+def _terminal_event_metrics(children, events):
+    return {
+        "cancellation_count": sum(item.status == "cancelled" for item in children),
+        "recovery_count": sum(event.type.startswith("subagent.recover") for event in events),
+        "permission_denial_count": sum(
+            event.type == "subagent.permission_denied" for event in events
+        ),
+    }
 
 
 def _percentiles(values: list[int]) -> dict[str, int]:

@@ -73,7 +73,7 @@ class WebEffectAnalyzer(ToolEffectAnalyzer):
             if "query" in tool_input and not tool_input.get("url")
             else str(tool_input.get("url", "web://unknown"))
         )
-        return DefaultEffectAnalyzer._plan(
+        return _effect_plan(
             spec,
             "读取公开网络内容",
             [EffectItem(kind=EffectKind.network_read, resource=resource)],
@@ -111,7 +111,7 @@ class ChartEffectAnalyzer(ToolEffectAnalyzer):
                     resource=_workspace_resource(task_id, str(tool_input["input_workspace_path"])),
                 )
             )
-        return DefaultEffectAnalyzer._plan(
+        return _effect_plan(
             spec,
             "读取任务数据并生成图表交付物",
             effects,
@@ -128,113 +128,26 @@ class DefaultEffectAnalyzer(ToolEffectAnalyzer):
         *,
         task_id: str,
     ) -> ActionEffectPlan:
-        if spec.name in {"web_search", "web_fetch"}:
-            return WebEffectAnalyzer().analyze(spec, tool_input, task_id=task_id)
-        if spec.name == "bash_execute":
-            return BashEffectAnalyzer().analyze(spec, tool_input, task_id=task_id)
-        if spec.name == "chart.render":
-            return ChartEffectAnalyzer().analyze(spec, tool_input, task_id=task_id)
+        specialized = _specialized_effect_plan(spec, tool_input, task_id)
+        if specialized is not None:
+            return specialized
         declared = set(spec.permissions)
-        mapped: list[EffectItem] = []
-        path = str(
-            tool_input.get("path")
-            or tool_input.get("relative_path")
-            or tool_input.get("output_path")
-            or "**"
-        )
-        if "workspace_delete" in declared:
-            mapped.append(
-                EffectItem(
-                    kind=EffectKind.workspace_delete,
-                    resource=_workspace_resource(task_id, path),
-                    risk="high",
-                    reversible=False,
-                    persistent=True,
-                )
-            )
-        elif "workspace_write" in declared:
-            mapped.append(
-                EffectItem(
-                    kind=EffectKind.workspace_write,
-                    resource=_workspace_resource(task_id, path),
-                    risk="moderate",
-                    persistent=True,
-                )
-            )
-        elif "workspace_read" in declared:
-            mapped.append(
-                EffectItem(
-                    kind=EffectKind.workspace_read,
-                    resource=_workspace_resource(task_id, path),
-                )
-            )
-        if "network_read" in declared:
-            mapped.append(
-                EffectItem(
-                    kind=EffectKind.network_read,
-                    resource=str(
-                        tool_input.get("url")
-                        or f"provider://{spec.provider_id}/{spec.name}"
-                    ),
-                )
-            )
-        mappings = {
-            "artifact_write": (
-                EffectKind.artifact_write,
-                f"artifact://task/{task_id}/{tool_input.get('name', spec.name)}",
-            ),
-            "dependency_change": (
-                EffectKind.dependency_change,
-                f"task://{task_id}/dependencies/{tool_input.get('package', '**')}",
-            ),
-            "credential_use": (
-                EffectKind.credential_use,
-                f"credential://{tool_input.get('service', spec.name)}",
-            ),
-            "delegation_create": (
-                EffectKind.delegation_create,
-                f"identity://{tool_input.get('delegate', 'new-agent')}",
-            ),
-            "external_write": (
-                EffectKind.external_write,
-                str(tool_input.get("destination") or tool_input.get("url") or "external://unknown"),
-            ),
-        }
-        for permission, (kind, resource) in mappings.items():
-            if permission in declared:
-                mapped.append(
-                    EffectItem(
-                        kind=kind,
-                        resource=resource,
-                        risk="high"
-                        if kind
-                        in {
-                            EffectKind.credential_use,
-                            EffectKind.delegation_create,
-                            EffectKind.external_write,
-                        }
-                        else "moderate",
-                        reversible=False,
-                        persistent=kind != EffectKind.credential_use,
-                        data_labels=list(tool_input.get("data_labels", [])),
-                    )
-                )
+        mapped = _declared_effects(spec, tool_input, task_id, declared)
         if mapped:
-            return self._plan(
+            classification = ActionEffectPlan(
+                tool_name=spec.name,
+                tool_version=spec.version,
+                summary="classification",
+                effects=mapped,
+                required_permissions=list(spec.permissions),
+                analyzer_version=ANALYZER_VERSION,
+            )
+            return _effect_plan(
                 spec,
                 f"执行 {spec.name} 的声明式资源操作",
                 _deduplicate_effects(mapped),
                 list(spec.permissions),
-                approval_required=is_side_effecting(
-                    ActionEffectPlan(
-                        tool_name=spec.name,
-                        tool_version=spec.version,
-                        summary="classification",
-                        effects=mapped,
-                        required_permissions=list(spec.permissions),
-                        analyzer_version=ANALYZER_VERSION,
-                    )
-                ),
+                approval_required=is_side_effecting(classification),
             )
         effects = [
             EffectItem(
@@ -245,7 +158,7 @@ class DefaultEffectAnalyzer(ToolEffectAnalyzer):
                 persistent=True,
             )
         ]
-        return self._plan(
+        return _effect_plan(
             spec,
             f"执行无法精确分类的工具 {spec.name}",
             effects,
@@ -253,28 +166,107 @@ class DefaultEffectAnalyzer(ToolEffectAnalyzer):
             approval_required=True,
         )
 
-    @staticmethod
-    def _plan(
-        spec: ToolSpec,
-        summary: str,
-        effects: list[EffectItem],
-        permissions: list[str],
-        *,
-        approval_required: bool,
-        network_scope: dict[str, Any] | None = None,
-    ) -> ActionEffectPlan:
-        return ActionEffectPlan(
-            tool_name=spec.name,
-            tool_version=spec.version,
-            summary=summary,
-            cwd="/workspace" if any("workspace" in item.kind.value for item in effects) else None,
-            effects=effects,
-            required_permissions=permissions,
-            network_scope=network_scope or {"mode": "none"},
-            analyzer_version=ANALYZER_VERSION,
-            analyzer_digest=ANALYZER_DIGEST,
-            approval_required=approval_required,
+
+def _specialized_effect_plan(spec, tool_input, task_id) -> ActionEffectPlan | None:
+    analyzers = {
+        "web_search": WebEffectAnalyzer,
+        "web_fetch": WebEffectAnalyzer,
+        "bash_execute": BashEffectAnalyzer,
+        "chart.render": ChartEffectAnalyzer,
+    }
+    analyzer = analyzers.get(spec.name)
+    return analyzer().analyze(spec, tool_input, task_id=task_id) if analyzer else None
+
+
+def _declared_effects(spec, tool_input, task_id, declared) -> list[EffectItem]:
+    effects = []
+    workspace_effect = _declared_workspace_effect(tool_input, task_id, declared)
+    if workspace_effect:
+        effects.append(workspace_effect)
+    if "network_read" in declared:
+        effects.append(
+            EffectItem(
+                kind=EffectKind.network_read,
+                resource=str(tool_input.get("url") or f"provider://{spec.provider_id}/{spec.name}"),
+            )
         )
+    effects.extend(_mapped_declared_effects(spec, tool_input, task_id, declared))
+    return effects
+
+
+def _declared_workspace_effect(tool_input, task_id, declared) -> EffectItem | None:
+    path = str(
+        tool_input.get("path")
+        or tool_input.get("relative_path")
+        or tool_input.get("output_path")
+        or "**"
+    )
+    if "workspace_delete" in declared:
+        return EffectItem(
+            kind=EffectKind.workspace_delete,
+            resource=_workspace_resource(task_id, path),
+            risk="high",
+            reversible=False,
+            persistent=True,
+        )
+    if "workspace_write" in declared:
+        return EffectItem(
+            kind=EffectKind.workspace_write,
+            resource=_workspace_resource(task_id, path),
+            risk="moderate",
+            persistent=True,
+        )
+    if "workspace_read" in declared:
+        return EffectItem(
+            kind=EffectKind.workspace_read,
+            resource=_workspace_resource(task_id, path),
+        )
+    return None
+
+
+def _mapped_declared_effects(spec, tool_input, task_id, declared) -> list[EffectItem]:
+    mappings = {
+        "artifact_write": (EffectKind.artifact_write, f"artifact://task/{task_id}/{tool_input.get('name', spec.name)}"),
+        "dependency_change": (EffectKind.dependency_change, f"task://{task_id}/dependencies/{tool_input.get('package', '**')}"),
+        "credential_use": (EffectKind.credential_use, f"credential://{tool_input.get('service', spec.name)}"),
+        "delegation_create": (EffectKind.delegation_create, f"identity://{tool_input.get('delegate', 'new-agent')}"),
+        "external_write": (EffectKind.external_write, str(tool_input.get("destination") or tool_input.get("url") or "external://unknown")),
+    }
+    high_risk = {EffectKind.credential_use, EffectKind.delegation_create, EffectKind.external_write}
+    return [
+        EffectItem(
+            kind=kind,
+            resource=resource,
+            risk="high" if kind in high_risk else "moderate",
+            reversible=False,
+            persistent=kind != EffectKind.credential_use,
+            data_labels=list(tool_input.get("data_labels", [])),
+        )
+        for permission, (kind, resource) in mappings.items()
+        if permission in declared
+    ]
+
+def _effect_plan(
+    spec: ToolSpec,
+    summary: str,
+    effects: list[EffectItem],
+    permissions: list[str],
+    *,
+    approval_required: bool,
+    network_scope: dict[str, Any] | None = None,
+) -> ActionEffectPlan:
+    return ActionEffectPlan(
+        tool_name=spec.name,
+        tool_version=spec.version,
+        summary=summary,
+        cwd="/workspace" if any("workspace" in item.kind.value for item in effects) else None,
+        effects=effects,
+        required_permissions=permissions,
+        network_scope=network_scope or {"mode": "none"},
+        analyzer_version=ANALYZER_VERSION,
+        analyzer_digest=ANALYZER_DIGEST,
+        approval_required=approval_required,
+    )
 
 
 class BashEffectAnalyzer(ToolEffectAnalyzer):
@@ -301,145 +293,152 @@ class BashEffectAnalyzer(ToolEffectAnalyzer):
             effects.append(
                 _path_mutation_effect(task_id, _clean_shell_path(match.group(1)), delete=False)
             )
-        if complex_shell:
-            effects.append(_unknown_process_effect(task_id))
-            summary = "执行行为复杂的 Bash 命令"
-        elif trusted_executable and executable in DELETE_COMMANDS:
-            targets = _simple_operands(tokens)
-            if not targets:
-                targets = ["**"]
-            effects.extend(
-                _path_mutation_effect(task_id, _clean_shell_path(target), delete=True)
-                for target in targets
-            )
-            summary = "删除任务工作区文件"
-        elif trusted_executable and executable == "find" and "-delete" in tokens:
-            effects.append(_path_mutation_effect(task_id, "**", delete=True))
-            summary = "删除 find 匹配的任务工作区文件"
-        elif (
-            trusted_executable
-            and executable == "sed"
-            and any(token == "-i" or token.startswith("-i") for token in tokens[1:])
-        ):
-            target = next(
-                (token for token in reversed(tokens[1:]) if not token.startswith("-")),
-                "**",
-            )
-            effects.append(_path_mutation_effect(task_id, target, delete=False))
-            summary = "原地修改任务工作区文件"
-        elif trusted_executable and executable in WRITE_COMMANDS:
-            operands = _simple_operands(tokens)
-            if operands is None:
-                effects.append(_unknown_process_effect(task_id))
-                summary = "执行目标范围不明确的文件修改命令"
-            elif executable == "mv" and len(operands) >= 2:
-                sources, destination = operands[:-1], operands[-1]
-                effects.extend(
-                    _path_mutation_effect(task_id, _clean_shell_path(source), delete=True)
-                    for source in sources
-                )
-                if len(sources) > 1:
-                    destination = f"{destination.rstrip('/')}/**"
-                effects.append(
-                    _path_mutation_effect(task_id, _clean_shell_path(destination), delete=False)
-                )
-                summary = "移动任务工作区文件"
-            elif executable in {"cp", "install"} and len(operands) >= 2:
-                sources, destination = operands[:-1], operands[-1]
-                effects.extend(
-                    EffectItem(
-                        kind=EffectKind.workspace_read,
-                        resource=_workspace_resource(task_id, _clean_shell_path(source)),
-                    )
-                    for source in sources
-                )
-                if len(sources) > 1:
-                    destination = f"{destination.rstrip('/')}/**"
-                effects.append(
-                    _path_mutation_effect(task_id, _clean_shell_path(destination), delete=False)
-                )
-                summary = "复制或安装任务工作区文件"
-            elif executable in {"mkdir", "tee", "touch", "truncate"} and operands:
-                effects.extend(
-                    _path_mutation_effect(task_id, _clean_shell_path(target), delete=False)
-                    for target in operands
-                )
-                summary = "创建或修改任务工作区文件"
-            else:
-                effects.append(_unknown_process_effect(task_id))
-                summary = "执行目标范围不明确的文件修改命令"
-        elif trusted_executable and executable in NETWORK_COMMANDS:
-            effects.append(
-                EffectItem(
-                    kind=EffectKind.network_write,
-                    resource="network://untrusted-destination",
-                    risk="high",
-                    reversible=False,
-                )
-            )
-            summary = "通过 Bash 访问外部网络"
-        elif trusted_executable and executable == "git" and _safe_git_invocation(tokens):
-            effects.append(
-                EffectItem(
-                    kind=EffectKind.workspace_read,
-                    resource=_workspace_resource(task_id, "**"),
-                )
-            )
-            summary = "读取 Git 工作区状态"
-        elif (
-            trusted_executable
-            and executable in READ_ONLY_COMMANDS
-            and not complex_shell
-            and _safe_read_only_invocation(executable, tokens)
-        ):
-            effects.append(
-                EffectItem(
-                    kind=EffectKind.workspace_read,
-                    resource=_workspace_resource(task_id, "**"),
-                )
-            )
-            summary = "读取任务工作区"
-        elif trusted_executable and executable in SAFE_SHELL_BUILTINS and not complex_shell:
-            effects.append(
-                EffectItem(
-                    kind=EffectKind.temporary_compute,
-                    resource="sandbox://stdout",
-                )
-            )
-            summary = "执行临时 Bash 计算"
-        else:
-            effects.append(_unknown_process_effect(task_id))
-            summary = "执行行为未知的 Bash 命令"
-        effects = _deduplicate_effects(effects)
-        if any(item.kind == EffectKind.workspace_delete for item in effects):
-            summary = "删除任务工作区文件"
-        elif any(item.kind == EffectKind.workspace_write for item in effects):
-            summary = "创建或修改任务工作区文件"
-        side_effecting = any(
-            item.kind
-            in {
-                EffectKind.workspace_write,
-                EffectKind.workspace_delete,
-                EffectKind.artifact_write,
-                EffectKind.network_write,
-                EffectKind.external_write,
-                EffectKind.process_execute_unknown,
-            }
-            for item in effects
+        classified = _classify_mutating_command(
+            task_id, tokens, executable, trusted_executable, complex_shell
+        ) or _classify_nonmutating_command(
+            task_id, tokens, executable, trusted_executable
         )
-        permissions = ["process_execute", *sorted({item.kind.value for item in effects})]
-        return DefaultEffectAnalyzer._plan(
-            spec,
-            summary,
-            effects,
-            permissions,
-            approval_required=side_effecting,
-            network_scope={
-                "mode": "none"
-                if not any(item.kind == EffectKind.network_write for item in effects)
-                else "blocked"
-            },
+        classified_effects, summary = classified
+        effects.extend(classified_effects)
+        return _bash_effect_plan(spec, summary, effects)
+
+
+def _classify_mutating_command(task_id, tokens, executable, trusted, complex_shell):
+    if complex_shell:
+        return [_unknown_process_effect(task_id)], "执行行为复杂的 Bash 命令"
+    if not trusted:
+        return None
+    if executable in DELETE_COMMANDS:
+        targets = _simple_operands(tokens) or ["**"]
+        effects = [
+            _path_mutation_effect(task_id, _clean_shell_path(target), delete=True)
+            for target in targets
+        ]
+        return effects, "删除任务工作区文件"
+    if executable in WRITE_COMMANDS:
+        return _write_command_effects(task_id, executable, tokens)
+    return _special_file_mutation(task_id, tokens, executable)
+
+
+def _special_file_mutation(task_id, tokens, executable):
+    if executable == "find" and "-delete" in tokens:
+        return [_path_mutation_effect(task_id, "**", delete=True)], "删除 find 匹配的任务工作区文件"
+    if executable == "sed" and _sed_edits_in_place(tokens):
+        target = next(
+            (token for token in reversed(tokens[1:]) if not token.startswith("-")), "**"
         )
+        return [_path_mutation_effect(task_id, target, delete=False)], "原地修改任务工作区文件"
+    return None
+
+
+def _sed_edits_in_place(tokens: list[str]) -> bool:
+    return any(token == "-i" or token.startswith("-i") for token in tokens[1:])
+
+
+def _classify_nonmutating_command(task_id, tokens, executable, trusted):
+    if not trusted:
+        return [_unknown_process_effect(task_id)], "执行行为未知的 Bash 命令"
+    if executable in NETWORK_COMMANDS:
+        effect = EffectItem(
+            kind=EffectKind.network_write,
+            resource="network://untrusted-destination",
+            risk="high",
+            reversible=False,
+        )
+        return [effect], "通过 Bash 访问外部网络"
+    if executable == "git" and _safe_git_invocation(tokens):
+        return [_workspace_read_effect(task_id)], "读取 Git 工作区状态"
+    is_safe_read = (
+        executable in READ_ONLY_COMMANDS
+        and _safe_read_only_invocation(executable, tokens)
+    )
+    if is_safe_read:
+        return [_workspace_read_effect(task_id)], "读取任务工作区"
+    if executable in SAFE_SHELL_BUILTINS:
+        effect = EffectItem(kind=EffectKind.temporary_compute, resource="sandbox://stdout")
+        return [effect], "执行临时 Bash 计算"
+    return [_unknown_process_effect(task_id)], "执行行为未知的 Bash 命令"
+
+
+def _workspace_read_effect(task_id: str) -> EffectItem:
+    return EffectItem(
+        kind=EffectKind.workspace_read,
+        resource=_workspace_resource(task_id, "**"),
+    )
+
+
+def _bash_effect_plan(spec: ToolSpec, summary: str, effects: list[EffectItem]):
+    effects = _deduplicate_effects(effects)
+    effect_kinds = {item.kind for item in effects}
+    if EffectKind.workspace_delete in effect_kinds:
+        summary = "删除任务工作区文件"
+    elif EffectKind.workspace_write in effect_kinds:
+        summary = "创建或修改任务工作区文件"
+    side_effects = {
+        EffectKind.workspace_write,
+        EffectKind.workspace_delete,
+        EffectKind.artifact_write,
+        EffectKind.network_write,
+        EffectKind.external_write,
+        EffectKind.process_execute_unknown,
+    }
+    permissions = ["process_execute", *sorted(item.value for item in effect_kinds)]
+    return _effect_plan(
+        spec,
+        summary,
+        effects,
+        permissions,
+        approval_required=bool(effect_kinds & side_effects),
+        network_scope={
+            "mode": "blocked" if EffectKind.network_write in effect_kinds else "none"
+        },
+    )
+
+
+def _write_command_effects(task_id: str, executable: str, tokens: list[str]):
+    operands = _simple_operands(tokens)
+    if operands is None:
+        return [_unknown_process_effect(task_id)], "执行目标范围不明确的文件修改命令"
+    if executable == "mv":
+        return _move_command_effects(task_id, operands)
+    if executable in {"cp", "install"}:
+        return _copy_command_effects(task_id, operands)
+    if executable in {"mkdir", "tee", "touch", "truncate"} and operands:
+        effects = [
+            _path_mutation_effect(task_id, _clean_shell_path(target), delete=False)
+            for target in operands
+        ]
+        return effects, "创建或修改任务工作区文件"
+    return [_unknown_process_effect(task_id)], "执行目标范围不明确的文件修改命令"
+
+
+def _move_command_effects(task_id: str, operands: list[str]):
+    if len(operands) < 2:
+        return [_unknown_process_effect(task_id)], "执行目标范围不明确的文件修改命令"
+    sources, destination = operands[:-1], operands[-1]
+    effects = [
+        _path_mutation_effect(task_id, _clean_shell_path(source), delete=True)
+        for source in sources
+    ]
+    destination = f"{destination.rstrip('/')}/**" if len(sources) > 1 else destination
+    effects.append(_path_mutation_effect(task_id, _clean_shell_path(destination), delete=False))
+    return effects, "移动任务工作区文件"
+
+
+def _copy_command_effects(task_id: str, operands: list[str]):
+    if len(operands) < 2:
+        return [_unknown_process_effect(task_id)], "执行目标范围不明确的文件修改命令"
+    sources, destination = operands[:-1], operands[-1]
+    effects = [
+        EffectItem(
+            kind=EffectKind.workspace_read,
+            resource=_workspace_resource(task_id, _clean_shell_path(source)),
+        )
+        for source in sources
+    ]
+    destination = f"{destination.rstrip('/')}/**" if len(sources) > 1 else destination
+    effects.append(_path_mutation_effect(task_id, _clean_shell_path(destination), delete=False))
+    return effects, "复制或安装任务工作区文件"
 
 
 def workspace_mount_mode(plan: ActionEffectPlan) -> str:

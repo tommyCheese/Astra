@@ -16,7 +16,7 @@ from app.plugins.interfaces import (
     ResultProcessor,
     ToolExecutor,
 )
-from app.schemas.agent import AgentObservation
+from app.schemas.agent.execution_state import AgentObservation
 from app.schemas.permissions import ActionEffectPlan
 from app.tools.base import (
     Tool,
@@ -150,6 +150,39 @@ class InProcessToolExecutor(ToolExecutor):
         return await self.tool.run(tool_input, context=context)
 
 
+def _authorization_outcome(authorization, tool_name, effect_plan, effect_hash):
+    if authorization.disposition == AuthorizationDisposition.ask:
+        return InvocationOutcome(
+            status=InvocationStatus.waiting_approval,
+            tool_name=tool_name,
+            effect_plan=effect_plan,
+            effect_plan_hash=effect_hash,
+            approval_payload=authorization.approval_payload,
+        )
+    if authorization.disposition == AuthorizationDisposition.deny:
+        return InvocationOutcome(
+            status=InvocationStatus.blocked,
+            tool_name=tool_name,
+            effect_plan=effect_plan,
+            effect_plan_hash=effect_hash,
+            error={"category": authorization.reason_code, "message": authorization.summary},
+        )
+    return None
+
+
+def _phase_error_category(phase: str) -> str:
+    return {
+        "authorization": "authorization_failed",
+        "recording": "recording_failed",
+        "execution": "tool_failed",
+        "result_adaptation": "invalid_result",
+        "result_validation": "invalid_result",
+        "result_persistence": "result_persistence_failed",
+        "result_processing": "result_processing_failed",
+        "evidence_persistence": "evidence_persistence_failed",
+    }.get(phase, "invocation_failed")
+
+
 class InvocationPipeline:
     def __init__(
         self,
@@ -198,25 +231,10 @@ class InvocationPipeline:
             authorization = await self.authorization.authorize(
                 request, effect_plan, effect_hash=effect_hash
             )
-            if authorization.disposition == AuthorizationDisposition.ask:
-                return InvocationOutcome(
-                    status=InvocationStatus.waiting_approval,
-                    tool_name=tool.spec.name,
-                    effect_plan=effect_plan,
-                    effect_plan_hash=effect_hash,
-                    approval_payload=authorization.approval_payload,
-                )
-            if authorization.disposition == AuthorizationDisposition.deny:
-                return InvocationOutcome(
-                    status=InvocationStatus.blocked,
-                    tool_name=tool.spec.name,
-                    effect_plan=effect_plan,
-                    effect_plan_hash=effect_hash,
-                    error={
-                        "category": authorization.reason_code,
-                        "message": authorization.summary,
-                    },
-                )
+            if authorization_outcome := _authorization_outcome(
+                authorization, tool.spec.name, effect_plan, effect_hash
+            ):
+                return authorization_outcome
             phase = "execution"
             executor = self._executor(tool)
             raw = await executor.execute(
@@ -236,20 +254,7 @@ class InvocationPipeline:
             processed = self._process(tool, request, envelope)
             if self.evidence_writer is not None:
                 phase = "evidence_persistence"
-                fragments = [
-                    EvidenceFragment.model_validate(fragment)
-                    for item in processed
-                    for fragment in item.evidence.get("fragments", [])
-                ]
-                if fragments:
-                    await self.evidence_writer.write(
-                        request.run_id,
-                        fragments,
-                        plan_node_id=request.plan_node_id,
-                        node_execution_id=request.node_execution_id,
-                        tool_call_id=request.tool_call_id,
-                        artifact_ids=[artifact.id for artifact in envelope.artifacts],
-                    )
+                await self._persist_evidence(request, processed, envelope)
             outcome = InvocationOutcome(
                 status=InvocationStatus.succeeded,
                 tool_name=tool.spec.name,
@@ -277,6 +282,7 @@ class InvocationPipeline:
                 tool_name=request.tool_name,
                 error=error.to_payload(),
             )
+
         except TimeoutError:
             error = ToolExecutionError("tool_timeout", "Tool execution timed out")
             error = await self._record_failure(request, error)
@@ -286,16 +292,7 @@ class InvocationPipeline:
                 error=error.to_payload(),
             )
         except Exception:
-            category = {
-                "authorization": "authorization_failed",
-                "recording": "recording_failed",
-                "execution": "tool_failed",
-                "result_adaptation": "invalid_result",
-                "result_validation": "invalid_result",
-                "result_persistence": "result_persistence_failed",
-                "result_processing": "result_processing_failed",
-                "evidence_persistence": "evidence_persistence_failed",
-            }.get(phase, "invocation_failed")
+            category = _phase_error_category(phase)
             error = ToolExecutionError(category, f"Invocation failed during {phase}")
             error = await self._record_failure(request, error)
             return InvocationOutcome(
@@ -303,6 +300,23 @@ class InvocationPipeline:
                 tool_name=request.tool_name,
                 error=error.to_payload(),
             )
+
+    async def _persist_evidence(self, request, processed, envelope) -> None:
+        fragments = [
+            EvidenceFragment.model_validate(fragment)
+            for item in processed
+            for fragment in item.evidence.get("fragments", [])
+        ]
+        if not fragments:
+            return
+        await self.evidence_writer.write(
+            request.run_id,
+            fragments,
+            plan_node_id=request.plan_node_id,
+            node_execution_id=request.node_execution_id,
+            tool_call_id=request.tool_call_id,
+            artifact_ids=[artifact.id for artifact in envelope.artifacts],
+        )
 
     @staticmethod
     def _validate_runtime_context(

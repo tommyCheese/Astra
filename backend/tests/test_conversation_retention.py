@@ -10,19 +10,17 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from app.conversation_lifecycle import ConversationLifecycleService
 from app.conversation_retention import ConversationRetentionService
 from app.core.config import Settings
-from app.db.models import (
+from app.db.model_base import Base
+from app.db.models.conversations import ConversationShareRecord, TaskRecord
+from app.db.models.evolution import (
     AgentEvolutionAuditRecord,
     AgentEvolutionCandidateRecord,
     AgentEvolutionSourceRecord,
-    Base,
-    ConversationShareRecord,
-    MemoryAuditRecord,
-    MemorySourceRecord,
-    TaskRecord,
 )
+from app.db.models.memory import MemoryAuditRecord, MemorySourceRecord
 from app.repositories.conversations import ConversationRepository
 from app.repositories.memories import MemoryRepository
-from app.repositories.runs import RunRepository
+from app.repositories.run_unit_of_work import RunUnitOfWork
 
 
 @pytest.fixture
@@ -45,8 +43,8 @@ async def create_conversation(
     shared: bool = False,
 ) -> str:
     async with factory() as session:
-        run = await RunRepository(session).create_task_run(goal, {"provider": "mock"})
-        await RunRepository(session).update_run_status(run.id, status, summary=goal)
+        run = await RunUnitOfWork(session).create_task_run(goal, {"provider": "mock"})
+        await RunUnitOfWork(session).update_run_status(run.id, status, summary=goal)
         task = await session.get(TaskRecord, run.task_id)
         assert task is not None
         task.updated_at = updated_at
@@ -140,7 +138,7 @@ async def test_terminal_run_transition_refreshes_conversation_activity(
 ):
     old = datetime.now(timezone.utc) - timedelta(days=90)
     async with retention_database() as session:
-        repo = RunRepository(session)
+        repo = RunUnitOfWork(session)
         run = await repo.create_task_run("long-running", {"provider": "mock"})
         task = await session.get(TaskRecord, run.task_id)
         assert task is not None
@@ -170,7 +168,7 @@ async def test_lifecycle_deletes_database_artifact_and_workspace(retention_datab
         task = await ConversationRepository(session).get(conversation_id)
         assert task is not None
         run = task.runs[0]
-        await RunRepository(session).create_artifact(
+        await RunUnitOfWork(session).create_artifact(
             run.id,
             "test",
             storage_key=artifact_key,
@@ -193,7 +191,7 @@ async def test_lifecycle_revalidates_memory_and_evolution_sources_before_deletio
 ):
     settings = retention_settings(tmp_path)
     async with retention_database() as session:
-        runs = RunRepository(session)
+        runs = RunUnitOfWork(session)
         deleted_run = await runs.create_task_run(
             "待删除来源",
             {"provider": "mock"},

@@ -5,7 +5,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
-from app.db.models import CredentialGrantRecord
+from app.db.models.permissions import CredentialGrantRecord
 from app.permissions.engine import PermissionEngine
 from app.repositories.permissions import PermissionRepository
 from app.schemas.permissions import (

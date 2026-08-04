@@ -6,7 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import EvidenceRecord
+from app.db.models.runs import EvidenceRecord
 from app.grounding.ledger import EvidenceConflictError, EvidenceLedger
 from app.grounding.schemas import EvidenceFragment, EvidenceLineage
 

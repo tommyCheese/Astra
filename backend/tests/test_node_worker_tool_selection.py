@@ -1,5 +1,5 @@
 from app.core.config import Settings
-from app.runner.model_client import MockModelClient
+from app.model_clients.mock import MockModelClient
 from app.runner.node_worker import ReadOnlyAgentNodeExecutor
 from app.tools.base import Tool, ToolRegistry, ToolSpec
 

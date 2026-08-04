@@ -10,7 +10,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.db.models import AgentExecutionRecord
+from app.db.models.executions import AgentExecutionRecord
 from app.repositories.agent_executions import (
     AgentExecutionRepository,
     AgentExecutionStateError,
@@ -127,16 +127,10 @@ class AgentCoordinator:
                 (), (), (), tuple(item.id for item in queued), 0, self.run_max_nodes
             )
         node_allowance = max(1, self.run_max_nodes // len(selected))
-        limits = {
-            "deployment:agents": self.deployment_max_agents,
-            f"run:{run_id}:agents": self.run_max_agents,
-        }
-        if provider and provider_limit:
-            limits[f"provider:{provider}"] = provider_limit
-        if tool_group and tool_limit:
-            limits[f"tool:{tool_group}"] = tool_limit
-        if capability and capability_limit:
-            limits[f"capability:{capability}"] = capability_limit
+        limits = self._limits(
+            run_id, provider, provider_limit, tool_group, tool_limit,
+            capability, capability_limit,
+        )
         peak = 0
         active = 0
         active_lock = asyncio.Lock()
@@ -154,9 +148,7 @@ class AgentCoordinator:
                         active -= 1
 
         tasks = {
-            asyncio.create_task(
-                run_one(item.id), name=f"subagent-worker:{item.id}"
-            )
+            asyncio.create_task(run_one(item.id), name=f"subagent-worker:{item.id}")
             for item in selected
         }
         self._tasks.update(tasks)
@@ -179,6 +171,22 @@ class AgentCoordinator:
             peak_concurrency=peak,
             dynamic_node_allowance=node_allowance,
         )
+
+    def _limits(
+        self, run_id, provider, provider_limit, tool_group, tool_limit,
+        capability, capability_limit,
+    ):
+        limits = {
+            "deployment:agents": self.deployment_max_agents,
+            f"run:{run_id}:agents": self.run_max_agents,
+        }
+        optional = (
+            (f"provider:{provider}", provider_limit, provider),
+            (f"tool:{tool_group}", tool_limit, tool_group),
+            (f"capability:{capability}", capability_limit, capability),
+        )
+        limits.update({key: limit for key, limit, name in optional if name and limit})
+        return limits
 
     async def _run_one(
         self,

@@ -2,9 +2,10 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from app.db.models import ModelInvocationRecord, RunEventRecord
+from app.db.models.executions import ModelInvocationRecord
+from app.db.models.runs import RunEventRecord
 from app.repositories.agent_executions import AgentExecutionRepository
-from app.repositories.runs import RunRepository
+from app.repositories.run_unit_of_work import RunUnitOfWork
 from app.schemas.subagents import DelegationContract, DelegationRequest
 from app.subagents.observability import (
     DELEGATION_BEHAVIOR_CASES,
@@ -18,7 +19,7 @@ from app.subagents.observability import (
 
 
 async def test_telemetry_is_aggregate_and_does_not_expose_sensitive_content(session):
-    run = await RunRepository(session).create_task_run(
+    run = await RunUnitOfWork(session).create_task_run(
         "secret user prompt",
         {"provider": "mock", "model": "test-model", "api_key": "secret"},
         reasoning_policy={

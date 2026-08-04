@@ -1,20 +1,19 @@
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 
 from app.agent_profile import AgentProfile
 from app.core.config import Settings
+from app.model_clients.contracts import ModelOutputError
+from app.model_clients.factory import build_model_client
 from app.repositories.plans import PlanRepository
-from app.repositories.runs import RunRepository
-from app.runner.model_client import ModelOutputError, build_model_client
-from app.runner.planning import PlanValidationError, PlanValidator
-from app.schemas.agent import (
-    PlanDraft,
-    PlanNodeStatus,
-    PlanStatus,
-    ReasoningPolicySnapshot,
-    TaskContract,
-)
+from app.repositories.run_unit_of_work import RunUnitOfWork
+from app.runner.plan_errors import PlanValidationError
+from app.runner.planning import PlanValidator
+from app.schemas.agent.planning import PlanDraft, TaskContract
+from app.schemas.agent.run_policy import ReasoningPolicySnapshot
+from app.schemas.agent.types import PlanNodeStatus, PlanStatus
 from app.tools.registry import build_tool_registry
 from app.tools.selection import forbidden_plan_bindings, task_capability_catalog
 from app.usage_metering import DatabaseUsageRecorder
@@ -26,8 +25,19 @@ class PlanRevisionError(ValueError):
         self.code = code
 
 
+@dataclass(frozen=True)
+class RevisionEnvironment:
+    contract: TaskContract
+    policy: ReasoningPolicySnapshot
+    validator: PlanValidator
+    available_capabilities: set[str]
+    forbidden_capabilities: set[str]
+    criterion_ids: list[str]
+    prompt_context: dict[str, object]
+
+
 async def revise_waiting_plan(
-    repository: RunRepository,
+    repository: RunUnitOfWork,
     settings: Settings,
     *,
     run_id: str,
@@ -45,84 +55,15 @@ async def revise_waiting_plan(
         expected_plan_version=expected_plan_version,
         expected_state_version=expected_state_version,
     )
+    # Persist revision ownership before the model wait so recovery can restore it.
+    await repository.commit()
     current_plan_id = current.id
     current_plan_version = current.version
     try:
-        contract = TaskContract.model_validate(run.task_contract)
-        policy = ReasoningPolicySnapshot.model_validate(run.reasoning_policy)
         client = build_model_client(settings)
-        if hasattr(client, "usage_recorder"):
-            client.usage_recorder = DatabaseUsageRecorder(run_id)
-        profile = AgentProfile.from_snapshot(run.agent_profile_snapshot)
-        client.bind_agent_profile(profile)
-        client.bind_reasoning_effort(policy.effective.reasoning_effort)
-        client.bind_model_thinking((run.model_policy or {}).get("thinking"))
-        registry = build_tool_registry(settings)
-        tool_specs = registry.specs()
-        capabilities = task_capability_catalog(tool_specs)
-        forbidden_capabilities = forbidden_plan_bindings(tool_specs)
-        criterion_ids = [item.id for item in contract.success_criteria]
-        revision_context = {
-            "original_goal": contract.original_goal,
-            "revision_request": request.strip(),
-            "current_plan": [
-                {
-                    "node_key": node.node_key,
-                    "title": node.title,
-                    "intent": node.intent,
-                    "depends_on": _dependency_keys(current, node.id),
-                    "status": node.status,
-                }
-                for node in sorted(current.nodes, key=lambda item: item.index)
-            ],
-            "instruction": (
-                "Generate a complete replacement plan. Preserve a node_key only when the "
-                "revised node represents the same logical work. Use only the supplied success "
-                "criterion IDs and provider-neutral task capabilities. Never bind a Plan node "
-                "to a concrete tool, provider, permission, executor, or backend. Every listed "
-                "task capability must be satisfied during that node's lifecycle. Keep the "
-                "dependency graph acyclic and within the supplied maximum depth."
-            ),
-            "validation_constraints": {
-                "success_criteria_ids": criterion_ids,
-                "available_capabilities": sorted(capabilities),
-                "maximum_plan_depth": policy.effective.budgets.max_plan_depth,
-                "maximum_nodes": max(1, policy.effective.budgets.max_plan_depth * 4),
-            },
-        }
-        validator = PlanValidator()
-        draft: PlanDraft | None = None
-        validation_error: str | None = None
-        for attempt in range(2):
-            attempt_context = dict(revision_context)
-            if validation_error:
-                attempt_context["validation_feedback"] = (
-                    f"The previous replacement plan was rejected: {validation_error}. "
-                    "Return a corrected complete PlanDraft."
-                )
-            try:
-                candidate = await client.plan(
-                    json.dumps(attempt_context, ensure_ascii=False, separators=(",", ":")),
-                    contract=contract,
-                )
-                candidate = _normalize_revision_metadata(
-                    candidate,
-                    criterion_ids=criterion_ids,
-                )
-                draft = validator.validate(
-                    candidate,
-                    task_contract=contract,
-                    available_capabilities=capabilities,
-                    forbidden_capabilities=forbidden_capabilities,
-                    budgets=policy.effective.budgets,
-                )
-                break
-            except (ModelOutputError, PlanValidationError) as exc:
-                validation_error = str(exc)
-                if attempt == 1:
-                    raise
-        if draft is None:
-            raise PlanRevisionError("Plan revision did not produce a validated draft")
+        environment = _build_revision_environment(run, current, settings, request)
+        _configure_revision_client(client, run, environment.policy, run_id)
+        draft = await _request_validated_draft(client, environment)
         current_by_key = {node.node_key: node for node in current.nodes}
         lineage = {
             node.node_key: current_by_key[node.node_key].id
@@ -165,6 +106,90 @@ async def revise_waiting_plan(
     finally:
         if client is not None:
             await client.aclose()
+
+
+def _configure_revision_client(client, run, policy, run_id: str) -> None:
+    if hasattr(client, "usage_recorder"):
+        client.usage_recorder = DatabaseUsageRecorder(run_id)
+    client.bind_agent_profile(AgentProfile.from_snapshot(run.agent_profile_snapshot))
+    client.bind_reasoning_effort(policy.effective.reasoning_effort)
+    client.bind_model_thinking((run.model_policy or {}).get("thinking"))
+
+
+def _build_revision_environment(run, current, settings, request: str) -> RevisionEnvironment:
+    contract = TaskContract.model_validate(run.task_contract)
+    policy = ReasoningPolicySnapshot.model_validate(run.reasoning_policy)
+    tool_specs = build_tool_registry(settings).specs()
+    capabilities = task_capability_catalog(tool_specs)
+    criterion_ids = [criterion.id for criterion in contract.success_criteria]
+    prompt_context = {
+        "original_goal": contract.original_goal,
+        "revision_request": request.strip(),
+        "current_plan": [
+            {
+                "node_key": node.node_key,
+                "title": node.title,
+                "intent": node.intent,
+                "depends_on": _dependency_keys(current, node.id),
+                "status": node.status,
+            }
+            for node in sorted(current.nodes, key=lambda item: item.index)
+        ],
+        "instruction": (
+            "Generate a complete replacement plan. Preserve a node_key only when the revised "
+            "node represents the same logical work. Use only supplied success criterion IDs "
+            "and provider-neutral task capabilities. Never bind a Plan node to a concrete tool, "
+            "provider, permission, executor, or backend. Satisfy every listed capability and "
+            "keep the dependency graph acyclic and within the supplied maximum depth."
+        ),
+        "validation_constraints": {
+            "success_criteria_ids": criterion_ids,
+            "available_capabilities": sorted(capabilities),
+            "maximum_plan_depth": policy.effective.budgets.max_plan_depth,
+            "maximum_nodes": max(1, policy.effective.budgets.max_plan_depth * 4),
+        },
+    }
+    return RevisionEnvironment(
+        contract=contract,
+        policy=policy,
+        validator=PlanValidator(),
+        available_capabilities=capabilities,
+        forbidden_capabilities=forbidden_plan_bindings(tool_specs),
+        criterion_ids=criterion_ids,
+        prompt_context=prompt_context,
+    )
+
+
+async def _request_validated_draft(client, environment: RevisionEnvironment) -> PlanDraft:
+    validation_error: str | None = None
+    for attempt in range(2):
+        attempt_context = dict(environment.prompt_context)
+        if validation_error:
+            attempt_context["validation_feedback"] = (
+                f"The previous replacement plan was rejected: {validation_error}. "
+                "Return a corrected complete PlanDraft."
+            )
+        try:
+            candidate = await client.plan(
+                json.dumps(attempt_context, ensure_ascii=False, separators=(",", ":")),
+                contract=environment.contract,
+            )
+            normalized = _normalize_revision_metadata(
+                candidate,
+                criterion_ids=environment.criterion_ids,
+            )
+            return environment.validator.validate(
+                normalized,
+                task_contract=environment.contract,
+                available_capabilities=environment.available_capabilities,
+                forbidden_capabilities=environment.forbidden_capabilities,
+                budgets=environment.policy.effective.budgets,
+            )
+        except (ModelOutputError, PlanValidationError) as error:
+            validation_error = str(error)
+            if attempt == 1:
+                raise
+    raise PlanRevisionError("Plan revision did not produce a validated draft")
 
 
 def _dependency_keys(plan, node_id: str) -> list[str]:

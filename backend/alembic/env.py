@@ -6,13 +6,13 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 
 from alembic import context
 from app.core.config import get_settings
-from app.db.base import Base
+from app.db.base import metadata
 
 config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-target_metadata = Base.metadata
+target_metadata = metadata
 CURRENT_BASELINE_REVISION = "0001_current_baseline"
 SUPPORTED_REVISIONS = {
     CURRENT_BASELINE_REVISION,

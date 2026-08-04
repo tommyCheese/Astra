@@ -5,7 +5,8 @@ from typing import ClassVar
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import RuntimeBuildRecord, RuntimeProfileRecord, utc_now
+from app.db.model_base import utc_now
+from app.db.models.executions import RuntimeBuildRecord, RuntimeProfileRecord
 
 
 class RuntimeBuildStateError(RuntimeError):

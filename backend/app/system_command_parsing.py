@@ -4,16 +4,14 @@ import re
 import shlex
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Literal
+from typing import Literal, cast
 
 from pydantic import ValidationError as PydanticValidationError
 
 from app.schemas.schedules import ActiveHours, ScheduleSpec
 
 DURATION_RE = re.compile(r"^(?P<value>[1-9][0-9]*)(?P<unit>[smhdw])$")
-ACTIVE_HOURS_RE = re.compile(
-    r"^(?P<start>[0-9]{1,2}:[0-9]{2})-(?P<end>[0-9]{1,2}:[0-9]{2})$"
-)
+ACTIVE_HOURS_RE = re.compile(r"^(?P<start>[0-9]{1,2}:[0-9]{2})-(?P<end>[0-9]{1,2}:[0-9]{2})$")
 
 
 class CommandUsageError(ValueError):
@@ -101,69 +99,11 @@ def parse_schedule_command(arguments: str) -> ScheduleCommand:
         _require_flags(flags, allowed=set(), usage=usage)
         return ScheduleCommand(action="show", job_id=_single_positional(positionals, usage))
     if action == "create":
-        _require_flags(
-            flags,
-            allowed={"--every", "--cron", "--at", "--tz", "--name"},
-            usage=usage,
-        )
-        schedule_flags = [
-            flag for flag in ("--every", "--cron", "--at") if flag in flags
-        ]
-        if len(schedule_flags) != 1:
-            raise CommandUsageError(
-                "create 必须且只能指定 --every、--cron 或 --at 之一。",
-                usage=usage,
-            )
-        schedule_flag = schedule_flags[0]
-        if schedule_flag == "--every":
-            schedule = ScheduleSpec(
-                type="interval",
-                interval_seconds=parse_duration(flags[schedule_flag], usage=usage),
-            )
-        elif schedule_flag == "--cron":
-            try:
-                schedule = ScheduleSpec(
-                    type="cron", expression=flags[schedule_flag]
-                )
-            except PydanticValidationError as exc:
-                raise CommandUsageError(
-                    "--cron 必须是有效的标准五字段表达式。",
-                    usage=usage,
-                ) from exc
-        else:
-            try:
-                at = datetime.fromisoformat(flags[schedule_flag].replace("Z", "+00:00"))
-                schedule = ScheduleSpec(type="once", at=at)
-            except ValueError as exc:
-                raise CommandUsageError(
-                    "--at 必须是带时区的 RFC 3339 时间。",
-                    usage=usage,
-                ) from exc
-        prompt = " ".join(positionals).strip()
-        if not prompt:
-            raise CommandUsageError("create 必须提供任务 prompt。", usage=usage)
-        return ScheduleCommand(
-            action="create",
-            schedule=schedule,
-            timezone=flags.get("--tz", "UTC"),
-            name=flags.get("--name"),
-            prompt=prompt,
-        )
+        return _create_schedule_command(flags, positionals, usage)
 
     job_id = _single_positional(positionals, usage)
     if action in {"pause", "resume", "delete"}:
-        _require_flags(flags, allowed={"--version"}, usage=usage)
-        raw_version = flags.get("--version")
-        if raw_version is None or not raw_version.isdigit() or int(raw_version) < 1:
-            raise CommandUsageError(
-                f"{action} 必须提供正整数 --version。",
-                usage=usage,
-            )
-        return ScheduleCommand(
-            action=action,  # type: ignore[arg-type]
-            job_id=job_id,
-            version=int(raw_version),
-        )
+        return _versioned_schedule_command(action, job_id, flags, usage)
 
     _require_flags(flags, allowed={"--idempotency-key"}, usage=usage)
     _validate_idempotency_key(flags.get("--idempotency-key"), usage)
@@ -171,6 +111,59 @@ def parse_schedule_command(arguments: str) -> ScheduleCommand:
         action="run",
         job_id=job_id,
         idempotency_key=flags.get("--idempotency-key"),
+    )
+
+
+def _create_schedule_command(flags, positionals, usage) -> ScheduleCommand:
+    _require_flags(
+        flags, allowed={"--every", "--cron", "--at", "--tz", "--name"}, usage=usage
+    )
+    schedule_flags = [flag for flag in ("--every", "--cron", "--at") if flag in flags]
+    if len(schedule_flags) != 1:
+        raise CommandUsageError(
+            "create 必须且只能指定 --every、--cron 或 --at 之一。", usage=usage
+        )
+    prompt = " ".join(positionals).strip()
+    if not prompt:
+        raise CommandUsageError("create 必须提供任务 prompt。", usage=usage)
+    return ScheduleCommand(
+        action="create",
+        schedule=_schedule_spec(schedule_flags[0], flags, usage),
+        timezone=flags.get("--tz", "UTC"),
+        name=flags.get("--name"),
+        prompt=prompt,
+    )
+
+
+def _schedule_spec(schedule_flag, flags, usage) -> ScheduleSpec:
+    if schedule_flag == "--every":
+        return ScheduleSpec(
+            type="interval",
+            interval_seconds=parse_duration(flags[schedule_flag], usage=usage),
+        )
+    try:
+        if schedule_flag == "--cron":
+            return ScheduleSpec(type="cron", expression=flags[schedule_flag])
+        at = datetime.fromisoformat(flags[schedule_flag].replace("Z", "+00:00"))
+        return ScheduleSpec(type="once", at=at)
+    except (PydanticValidationError, ValueError) as error:
+        message = (
+            "--cron 必须是有效的标准五字段表达式。"
+            if schedule_flag == "--cron"
+            else "--at 必须是带时区的 RFC 3339 时间。"
+        )
+        raise CommandUsageError(message, usage=usage) from error
+
+
+def _versioned_schedule_command(action, job_id, flags, usage) -> ScheduleCommand:
+    _require_flags(flags, allowed={"--version"}, usage=usage)
+    raw_version = flags.get("--version")
+    if raw_version is None or not raw_version.isdigit() or int(raw_version) < 1:
+        raise CommandUsageError(f"{action} 必须提供正整数 --version。", usage=usage)
+    return ScheduleCommand(
+        action=cast(Literal["pause", "resume", "delete"], action),
+        job_id=job_id,
+        version=int(raw_version),
     )
 
 
@@ -193,7 +186,7 @@ def parse_heartbeat_command(arguments: str) -> HeartbeatCommand:
     )
     if action in {"status", "off"}:
         _require_no_parameters(flags, positionals, usage)
-        return HeartbeatCommand(action=action)  # type: ignore[arg-type]
+        return HeartbeatCommand(action=cast(Literal["status", "off"], action))
     if action == "run":
         _require_flags(flags, allowed={"--idempotency-key"}, usage=usage)
         if positionals:

@@ -11,7 +11,8 @@ from app.subagents.context import (
     SubagentExchangeService,
 )
 from app.subagents.coordinator import AgentCoordinator, HierarchicalSemaphoreRegistry
-from app.subagents.executor import AgentExecutor, AgentExecutorRuntime, LocalAstraAgentExecutor
+from app.subagents.executor import LocalAstraAgentExecutor
+from app.subagents.executor_contracts import AgentExecutor, AgentExecutorRuntime
 from app.subagents.fan_in import (
     SubagentJoinService,
     SubagentResultMerger,

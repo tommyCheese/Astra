@@ -2,17 +2,15 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from app.db.models import (
-    AgentDelegationRecord,
-    AgentIdentityRecord,
-    AgentJoinRecord,
-    ToolCallRecord,
-)
+from app.db.models.executions import AgentJoinRecord
+from app.db.models.permissions import AgentDelegationRecord, AgentIdentityRecord, ToolCallRecord
 from app.repositories.agent_executions import (
     AgentExecutionRepository,
     AgentExecutionStateError,
 )
-from app.repositories.runs import RunRepository, run_to_view
+from app.repositories.approval_contracts import ApprovalRequestCreate
+from app.repositories.run_unit_of_work import RunUnitOfWork
+from app.repositories.run_view_projection import RunViewProjector
 from app.schemas.subagents import DelegationContract, DelegationRequest
 from app.subagents.lifecycle import SubagentCancellationService
 from app.subagents.recovery import SubagentExecutionRecovery
@@ -39,7 +37,7 @@ def _contract(run, root, request_id: str) -> DelegationContract:
 
 
 async def _child(session, request_id: str = "child"):
-    run = await RunRepository(session).create_task_run("Lifecycle", {})
+    run = await RunUnitOfWork(session).create_task_run("Lifecycle", {})
     executions = AgentExecutionRepository(session)
     root = await executions.root_for_run(run.id)
     assert root is not None
@@ -60,7 +58,7 @@ async def test_cancellation_fences_worker_terminates_sandbox_and_reports_effects
     old_version = child.state_version
     old_fence = child.fencing_token
     old_epoch = child.cancellation_epoch
-    runs = RunRepository(session)
+    runs = RunUnitOfWork(session)
     uncertain = await runs.start_tool_call(
         run.id,
         None,
@@ -116,8 +114,8 @@ async def test_cancellation_fences_worker_terminates_sandbox_and_reports_effects
 
 async def test_run_cancellation_epoch_prevents_new_child_claim(session):
     run, _, child = await _child(session)
-    await RunRepository(session).cancel_run(run.id)
-    cancelled_run = await RunRepository(session).require_run(run.id)
+    await RunUnitOfWork(session).cancel_run(run.id)
+    cancelled_run = await RunUnitOfWork(session).require_run(run.id)
     cancelled_child = await AgentExecutionRepository(session).require(child.id)
 
     assert cancelled_run.cancellation_epoch == 1
@@ -161,7 +159,7 @@ async def test_child_approval_is_exactly_bound_without_blocking_run(session):
     child.status = "waiting_approval"
     root.status = "running"
     run.status = "executing"
-    runs = RunRepository(session)
+    runs = RunUnitOfWork(session)
     turn = await runs.create_agent_turn(
         run.id,
         1,
@@ -181,25 +179,27 @@ async def test_child_approval_is_exactly_bound_without_blocking_run(session):
         agent_execution_id=child.id,
     )
     request = await runs.create_approval_request(
-        run_id=run.id,
-        turn_id=turn.id,
-        tool_call_id=call.id,
-        tool_name="external.write",
-        tool_version="1",
-        frozen_input={"target": "record-1"},
-        input_hash="sha256:input",
-        frozen_effect_plan={"effects": [{"kind": "external_write"}]},
-        effect_plan_hash="sha256:effect",
-        preview="write record-1",
-        permission="external_write",
-        impact="high",
-        similar_matcher=None,
-        agent_execution_id=child.id,
-        requester_identity_id=child_identity.id,
-        delegation_id=delegation.id,
-        catalog_digest="sha256:catalog",
-        continuation_token="approval-token",
-        grant_scope={"parent_identity_id": parent_identity.id},
+        ApprovalRequestCreate(
+            run_id=run.id,
+            turn_id=turn.id,
+            tool_call_id=call.id,
+            tool_name="external.write",
+            tool_version="1",
+            frozen_input={"target": "record-1"},
+            input_hash="sha256:input",
+            frozen_effect_plan={"effects": [{"kind": "external_write"}]},
+            effect_plan_hash="sha256:effect",
+            preview="write record-1",
+            permission="external_write",
+            impact="high",
+            similar_matcher=None,
+            agent_execution_id=child.id,
+            requester_identity_id=child_identity.id,
+            delegation_id=delegation.id,
+            catalog_digest="sha256:catalog",
+            continuation_token="approval-token",
+            grant_scope={"parent_identity_id": parent_identity.id},
+        )
     )
 
     assert run.status == "executing"
@@ -213,7 +213,7 @@ async def test_child_approval_is_exactly_bound_without_blocking_run(session):
         reviewer_identity={"id": "human-1", "identity_type": "human"},
     )
     assert (await AgentExecutionRepository(session).require(child.id)).status == "queued"
-    assert (await RunRepository(session).require_run(run.id)).status == "executing"
+    assert (await RunUnitOfWork(session).require_run(run.id)).status == "executing"
 
 
 async def test_recovery_resumes_safe_checkpoint_and_fails_closed_on_drift(session):
@@ -271,7 +271,7 @@ async def test_recovery_never_replays_unknown_non_idempotent_call(session):
         expected_state_version=child.state_version,
     )
     child.heartbeat_at = datetime.now(UTC) - timedelta(minutes=5)
-    call = await RunRepository(session).start_tool_call(
+    call = await RunUnitOfWork(session).start_tool_call(
         run.id,
         None,
         "external.write",
@@ -323,9 +323,9 @@ async def test_run_projection_exposes_sanitized_nested_agent_tree(session):
     child.phase = "terminal"
     await session.commit()
 
-    loaded = await RunRepository(session).get_run(run.id)
+    loaded = await RunUnitOfWork(session).get_run(run.id)
     assert loaded is not None
-    payload = run_to_view(loaded)
+    payload = RunViewProjector().payload(loaded)
     projected_root = payload["agent_executions"][0]
     projected_child = projected_root["children"][0]
     assert projected_root["id"] == root.id

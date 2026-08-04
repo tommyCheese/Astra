@@ -3,37 +3,41 @@ import json
 from collections.abc import Iterable
 from typing import Any, ClassVar, Literal
 
-from app.schemas.agent import (
+from app.schemas.agent.execution_state import (
     AgentObservation,
     AgentState,
-    AnswerMode,
-    AssuranceLevel,
-    CompletionDecision,
-    ContractMode,
-    CriterionStatus,
+    Evaluation,
+    ReflectionPatch,
+)
+from app.schemas.agent.planning import (
+    ExpectedObservation,
+    SuccessCriterion,
+    TaskContract,
+    VerificationRequirement,
+)
+from app.schemas.agent.run_policy import (
     EffectiveReasoningPolicy,
     EffectiveSubagentPolicy,
-    Evaluation,
-    EvaluationOutcome,
-    ExecutionMode,
-    ExpectedObservation,
-    PlanExecution,
     PolicyAdjustment,
-    ReasoningEffort,
     ReasoningPolicySnapshot,
-    ReflectionPatch,
-    ReflectionTrigger,
     RequestedReasoningPolicy,
     RunBudgets,
     RunExecutionProfile,
     SubagentBudgetPolicy,
     SubagentModelRoutingPolicy,
-    SuccessCriterion,
-    TaskContract,
-    TerminalState,
-    ValidationOutcome,
+)
+from app.schemas.agent.run_result import ValidationOutcome
+from app.schemas.agent.types import (
+    AnswerMode,
+    AssuranceLevel,
+    ContractMode,
+    CriterionStatus,
+    EvaluationOutcome,
+    ExecutionMode,
+    PlanExecution,
+    ReasoningEffort,
+    ReflectionTrigger,
     VerificationLevel,
-    VerificationRequirement,
 )
 
 
@@ -106,6 +110,7 @@ class PolicyCompiler:
         return ReasoningPolicySnapshot(
             requested=requested, effective=effective, adjustments=adjustments
         )
+
     def _raise(
         self,
         data: dict[str, Any],
@@ -128,10 +133,7 @@ class PolicyCompiler:
 
 def compile_subagent_policy(settings: Any) -> EffectiveSubagentPolicy:
     """Freeze deployment settings into a Run-scoped, non-escalating subagent policy."""
-    enabled = (
-        bool(settings.tool_swarm_enabled)
-        and not bool(settings.agent_subagent_kill_switch)
-    )
+    enabled = bool(settings.tool_swarm_enabled) and not bool(settings.agent_subagent_kill_switch)
     return EffectiveSubagentPolicy(
         enabled=enabled,
         kill_switch=bool(settings.agent_subagent_kill_switch),
@@ -143,9 +145,7 @@ def compile_subagent_policy(settings: Any) -> EffectiveSubagentPolicy:
             max_children_per_parent=(
                 settings.agent_subagent_max_children_per_parent if enabled else 0
             ),
-            max_parallel_children=(
-                settings.agent_subagent_max_parallel_children if enabled else 0
-            ),
+            max_parallel_children=(settings.agent_subagent_max_parallel_children if enabled else 0),
             max_depth=settings.agent_subagent_max_depth,
             max_parent_round_trips=settings.agent_subagent_max_parent_round_trips,
             max_wall_time_seconds=settings.agent_subagent_max_wall_time_seconds,
@@ -249,9 +249,7 @@ class RunProfileResolver:
                 update={"max_turns": None, "max_tool_calls": None}
             )
             policy = policy.model_copy(
-                update={
-                    "effective": policy.effective.model_copy(update={"budgets": budgets})
-                }
+                update={"effective": policy.effective.model_copy(update={"budgets": budgets})}
             )
         return RunExecutionProfile(
             answer_mode=answer_mode,
@@ -440,235 +438,3 @@ def failure_fingerprint(
         ensure_ascii=False,
     )
     return hashlib.sha256(payload.encode()).hexdigest()
-
-
-class CompletionGate:
-    def evaluate_basic(
-        self,
-        *,
-        validation_outcomes: list[ValidationOutcome],
-        required_user_action: str | None = None,
-        runtime_error: str | None = None,
-    ) -> CompletionDecision:
-        if runtime_error:
-            return CompletionDecision(state=TerminalState.failed, reason=runtime_error)
-        if required_user_action:
-            return CompletionDecision(
-                state=TerminalState.waiting_user,
-                reason="需要用户输入后才能继续。",
-                required_user_action=required_user_action,
-            )
-        blocking = [
-            outcome.validator
-            for outcome in validation_outcomes
-            if not outcome.passed and outcome.blocking
-        ]
-        warnings = list(
-            dict.fromkeys(
-                [
-                    warning
-                    for outcome in validation_outcomes
-                    for warning in outcome.warnings
-                ]
-                + [
-                    issue.message
-                    for outcome in validation_outcomes
-                    for issue in outcome.issues
-                    if issue.severity == "warning"
-                ]
-            )
-        )
-        if blocking:
-            return CompletionDecision(
-                state=TerminalState.blocked,
-                reason="基础保障存在阻塞问题。",
-                unmet_criteria=[f"validator:{validator}" for validator in blocking],
-                warnings=warnings,
-            )
-        return CompletionDecision(
-            state=TerminalState.completed_with_warnings
-            if warnings
-            else TerminalState.completed,
-            reason="快速回答已完成基础保障检查。",
-            warnings=warnings,
-        )
-
-    def evaluate(
-        self,
-        state: AgentState,
-        *,
-        validation_outcomes: list[ValidationOutcome],
-        plan: Any | None = None,
-        warnings: list[str] | None = None,
-        required_user_action: str | None = None,
-        runtime_error: str | None = None,
-        active_executions: list[Any] | None = None,
-        unresolved_approvals: int = 0,
-        unmerged_budgets: int = 0,
-        descendant_executions: list[Any] | None = None,
-        required_joins: list[Any] | None = None,
-    ) -> CompletionDecision:
-        combined_warnings = list(warnings or [])
-        for outcome in validation_outcomes:
-            combined_warnings.extend(outcome.warnings)
-            combined_warnings.extend(
-                issue.message for issue in outcome.issues if issue.severity == "warning"
-            )
-        combined_warnings = list(dict.fromkeys(combined_warnings))
-        if runtime_error:
-            return CompletionDecision(state=TerminalState.failed, reason=runtime_error)
-        descendant_barriers = [
-            item
-            for item in (descendant_executions or [])
-            if (
-                getattr(item, "status", None)
-                if not isinstance(item, dict)
-                else item.get("status")
-            )
-            not in {
-                "completed",
-                "completed_with_warnings",
-                "blocked",
-                "failed",
-                "cancelled",
-            }
-        ]
-        blocked_joins = [
-            item
-            for item in (required_joins or [])
-            if (
-                getattr(item, "status", None)
-                if not isinstance(item, dict)
-                else item.get("status")
-            )
-            == "blocked"
-        ]
-        waiting_joins = [
-            item
-            for item in (required_joins or [])
-            if (
-                getattr(item, "status", None)
-                if not isinstance(item, dict)
-                else item.get("status")
-            )
-            not in {"ready", "blocked"}
-        ]
-        if blocked_joins:
-            return CompletionDecision(
-                state=TerminalState.blocked,
-                reason="必需的子 Agent 汇合失败。",
-                unmet_criteria=[
-                    f"agent-join:{item.get('id') if isinstance(item, dict) else getattr(item, 'id', None)}"
-                    for item in blocked_joins
-                ],
-            )
-        if descendant_barriers or waiting_joins:
-            return CompletionDecision(
-                state=TerminalState.continue_run,
-                reason="子 Agent 终态或必需汇合屏障尚未清空。",
-                unmet_criteria=[
-                    *[
-                        f"agent-execution:{item.get('id') if isinstance(item, dict) else getattr(item, 'id', None)}"
-                        for item in descendant_barriers
-                    ],
-                    *[
-                        f"agent-join:{item.get('id') if isinstance(item, dict) else getattr(item, 'id', None)}"
-                        for item in waiting_joins
-                    ],
-                ],
-            )
-        execution_barriers = [
-            execution
-            for execution in (active_executions or [])
-            if getattr(execution, "status", None) in {"active", "waiting"}
-            or (
-                isinstance(execution, dict)
-                and execution.get("status") in {"active", "waiting"}
-            )
-        ]
-        if execution_barriers or unresolved_approvals or unmerged_budgets:
-            return CompletionDecision(
-                state=TerminalState.continue_run,
-                reason="并行执行屏障尚未清空。",
-                unmet_criteria=[
-                    *(
-                        f"node-execution:{getattr(item, 'id', None) or item.get('execution_id')}"
-                        for item in execution_barriers
-                    ),
-                    *(["approval:pending"] if unresolved_approvals else []),
-                    *(["budget:unmerged"] if unmerged_budgets else []),
-                ],
-            )
-        if required_user_action or state.task_contract.ambiguity_status != "clear":
-            return CompletionDecision(
-                state=TerminalState.waiting_user,
-                reason="需要用户输入后才能继续。",
-                required_user_action=required_user_action
-                or state.task_contract.clarification_question,
-            )
-        if plan is not None:
-            nodes = list(getattr(plan, "nodes", []) or [])
-            failed_nodes = [
-                node.node_key
-                for node in nodes
-                if not node.optional and node.status.value in {"failed", "blocked"}
-            ]
-            if failed_nodes:
-                return CompletionDecision(
-                    state=TerminalState.blocked,
-                    reason="活动计划存在失败或阻塞的必需节点。",
-                    unmet_criteria=[f"plan-node:{key}" for key in failed_nodes],
-                )
-            unfinished_nodes = [
-                node.node_key
-                for node in nodes
-                if not node.optional and node.status.value in {"pending", "running"}
-            ]
-            if unfinished_nodes:
-                return CompletionDecision(
-                    state=TerminalState.continue_run,
-                    reason="活动计划仍有未完成的必需节点。",
-                    unmet_criteria=[f"plan-node:{key}" for key in unfinished_nodes],
-                )
-        mandatory = [item for item in state.task_contract.success_criteria if item.mandatory]
-        unmet = [item.id for item in mandatory if item.status != CriterionStatus.satisfied]
-        missing_or_failed_requirements: list[str] = []
-        for requirement in state.task_contract.verification_requirements:
-            if not requirement.mandatory:
-                continue
-            matches = [
-                outcome
-                for outcome in validation_outcomes
-                if outcome.validator == requirement.validator
-                or requirement.id in outcome.requirement_ids
-            ]
-            if not matches or not any(outcome.passed for outcome in matches):
-                missing_or_failed_requirements.append(f"verification:{requirement.id}")
-        blocking_failures = [
-            outcome.validator
-            for outcome in validation_outcomes
-            if not outcome.passed and outcome.blocking
-        ]
-        unmet = list(
-            dict.fromkeys(
-                [
-                    *unmet,
-                    *missing_or_failed_requirements,
-                    *(f"validator:{validator}" for validator in blocking_failures),
-                ]
-            )
-        )
-        if not unmet:
-            return CompletionDecision(
-                state=TerminalState.completed_with_warnings
-                if combined_warnings
-                else TerminalState.completed,
-                reason="任务契约与验证要求已满足。",
-                warnings=combined_warnings,
-            )
-        return CompletionDecision(
-            state=TerminalState.blocked,
-            reason="仍有强制成功准则或验证要求未满足。",
-            unmet_criteria=unmet,
-            warnings=combined_warnings,
-        )

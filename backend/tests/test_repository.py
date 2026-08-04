@@ -3,13 +3,15 @@ from pydantic import ValidationError
 from sqlalchemy import event as sqlalchemy_event
 
 from app.agent_profile import load_agent_profile
-from app.db.models import ModelInvocationRecord
+from app.db.models.executions import ModelInvocationRecord
 from app.repositories.conversation_strategy import ConversationStrategyRepository
-from app.repositories.runs import RunRepository, run_to_initial_view, run_to_view
+from app.repositories.run_unit_of_work import RunUnitOfWork
+from app.repositories.run_view_projection import RunViewProjector
 from app.repositories.tool_settings import ToolSettingsRepository
 from app.repositories.usage import UsageRepository
 from app.runner.reasoning import build_default_contract
-from app.schemas.agent import AgentState, RunView
+from app.schemas.agent.api_views import RunView
+from app.schemas.agent.execution_state import AgentState
 
 
 async def test_tool_settings_are_created_and_persisted(session):
@@ -82,7 +84,7 @@ async def test_conversation_strategy_is_created_and_persisted(session):
 
 
 async def test_run_lifecycle_persistence(session):
-    repo = RunRepository(session)
+    repo = RunUnitOfWork(session)
     run = await repo.create_task_run("查询一个主题", {"provider": "mock", "model": "mock"})
 
     await repo.update_run_status(run.id, "planning")
@@ -102,7 +104,7 @@ async def test_run_lifecycle_persistence(session):
     await repo.update_run_status(run.id, "completed_with_warnings", result={"summary": "done"})
 
     loaded = await repo.require_run(run.id)
-    view = run_to_view(loaded)
+    view = RunViewProjector().payload(loaded)
 
     assert view["status"] == "completed_with_warnings"
     assert view["answer_mode"] == "standard"
@@ -119,7 +121,7 @@ async def test_run_lifecycle_persistence(session):
 
 
 async def test_cancel_run_is_idempotent_and_preserves_partial_answer(session):
-    repo = RunRepository(session)
+    repo = RunUnitOfWork(session)
     run = await repo.create_task_run("生成一份长回答", {"provider": "mock", "model": "mock"})
     await repo.update_run_status(run.id, "executing")
     step = await repo.create_step(run.id, 1, "检索", "收集证据")
@@ -137,7 +139,7 @@ async def test_cancel_run_is_idempotent_and_preserves_partial_answer(session):
 
     cancelled = await repo.cancel_run(run.id)
     cancelled_again = await repo.cancel_run(run.id)
-    view = run_to_view(cancelled_again)
+    view = RunViewProjector().payload(cancelled_again)
 
     assert cancelled.status == cancelled_again.status == "cancelled"
     assert cancelled.summary == "已经生成一部分回答。"
@@ -155,7 +157,7 @@ async def test_cancel_run_is_idempotent_and_preserves_partial_answer(session):
 
 
 async def test_cancel_run_does_not_overwrite_a_natural_completion(session):
-    repo = RunRepository(session)
+    repo = RunUnitOfWork(session)
     run = await repo.create_task_run("快速完成", {"provider": "mock"})
     await repo.update_run_status(
         run.id, "completed", summary="自然完成", result={"summary": "自然完成"}
@@ -169,7 +171,7 @@ async def test_cancel_run_does_not_overwrite_a_natural_completion(session):
 
 
 async def test_run_view_rejects_obsolete_persisted_result_contract(session):
-    repo = RunRepository(session)
+    repo = RunUnitOfWork(session)
     run = await repo.create_task_run("兼容旧结果", {"provider": "mock"})
     await repo.update_run_status(
         run.id,
@@ -188,11 +190,11 @@ async def test_run_view_rejects_obsolete_persisted_result_contract(session):
 
     loaded = await repo.require_run(run.id)
     with pytest.raises(ValidationError):
-        run_to_view(loaded)
+        RunViewProjector().payload(loaded)
 
 
 async def test_follow_up_run_reuses_task(session):
-    repo = RunRepository(session)
+    repo = RunUnitOfWork(session)
     first = await repo.create_task_run("第一轮问题", {"provider": "mock"})
     follow_up = await repo.create_task_run("继续追问", {"provider": "mock"}, first.task_id)
 
@@ -202,14 +204,14 @@ async def test_follow_up_run_reuses_task(session):
 
 
 async def test_agent_profile_snapshot_is_immutable_and_public_view_is_redacted(session):
-    repo = RunRepository(session)
+    repo = RunUnitOfWork(session)
     snapshot = load_agent_profile().snapshot()
     run = await repo.create_task_run(
         "Profile 测试", {"provider": "mock"}, agent_profile_snapshot=snapshot
     )
 
     loaded = await repo.require_run(run.id)
-    view = run_to_view(loaded)
+    view = RunViewProjector().payload(loaded)
 
     assert loaded.agent_profile_snapshot["documents"]["identity"]["content"]
     assert view["agent_profile"]["version"] == snapshot["version"]
@@ -221,7 +223,7 @@ async def test_agent_profile_snapshot_is_immutable_and_public_view_is_redacted(s
 
 
 async def test_repository_freezes_profile_once_for_unversioned_new_run(session):
-    repo = RunRepository(session)
+    repo = RunUnitOfWork(session)
     run = await repo.create_task_run("冻结测试", {"provider": "mock"})
     snapshot = load_agent_profile().snapshot()
 
@@ -235,7 +237,7 @@ async def test_repository_freezes_profile_once_for_unversioned_new_run(session):
 
 
 async def test_list_events_with_status_uses_one_query_for_all_result_shapes(session):
-    repo = RunRepository(session)
+    repo = RunUnitOfWork(session)
     run = await repo.create_task_run("流查询测试", {"provider": "mock"})
     first = await repo.add_event(run.id, "test.first", {"index": 1})
     second = await repo.add_event(run.id, "test.second", {"index": 2})
@@ -272,7 +274,7 @@ async def test_list_events_with_status_uses_one_query_for_all_result_shapes(sess
 
 
 async def test_initial_run_view_uses_one_query_and_terminal_falls_back_to_full(session):
-    repo = RunRepository(session)
+    repo = RunUnitOfWork(session)
     run = await repo.create_task_run(
         "首屏快照测试",
         {"provider": "mock"},
@@ -291,7 +293,7 @@ async def test_initial_run_view_uses_one_query_and_terminal_falls_back_to_full(s
     try:
         loaded, loaded_full = await repo.get_run_initial(run_id)
         assert loaded is not None
-        view = RunView.model_validate(run_to_initial_view(loaded))
+        view = RunView.model_validate(RunViewProjector().initial_payload(loaded))
         assert loaded_full is False
         assert view.chat_messages[0].content == "首屏快照测试"
         assert view.events == []
@@ -310,14 +312,14 @@ async def test_initial_run_view_uses_one_query_and_terminal_falls_back_to_full(s
 
     terminal, loaded_full = await repo.get_run_initial(run_id)
     assert terminal is not None
-    terminal_view = RunView.model_validate(run_to_view(terminal))
+    terminal_view = RunView.model_validate(RunViewProjector().payload(terminal))
     assert loaded_full is True
     assert terminal_view.result is not None
     assert terminal_view.result.summary == "完整终态"
 
 
 async def test_runtime_resume_context_loads_in_two_queries(session):
-    repo = RunRepository(session)
+    repo = RunUnitOfWork(session)
     run = await repo.create_task_run("运行时上下文", {"provider": "mock"})
     run_id = run.id
     await session.commit()
@@ -340,7 +342,7 @@ async def test_runtime_resume_context_loads_in_two_queries(session):
 
 
 async def test_loading_autodream_protocol_has_no_database_side_effect(session):
-    repo = RunRepository(session)
+    repo = RunUnitOfWork(session)
     run = await repo.create_task_run("AutoDream 协议测试", {"provider": "mock"})
 
     profile = load_agent_profile()
@@ -354,7 +356,7 @@ async def test_loading_autodream_protocol_has_no_database_side_effect(session):
 
 
 async def test_agent_turn_and_memory_persistence(session):
-    repo = RunRepository(session)
+    repo = RunUnitOfWork(session)
     run = await repo.create_task_run("记住一个来源", {"provider": "mock", "model": "mock"})
 
     turn = await repo.create_agent_turn(
@@ -381,7 +383,7 @@ async def test_agent_turn_and_memory_persistence(session):
     )
 
     loaded = await repo.require_run(run.id)
-    view = run_to_view(loaded)
+    view = RunViewProjector().payload(loaded)
 
     assert view["turns"][0]["selected_tool"] == "web_search"
     assert view["memories"][0]["content"] == "本次任务找到一个来源。"
@@ -389,7 +391,7 @@ async def test_agent_turn_and_memory_persistence(session):
 
 
 async def test_persistent_memory_requires_provenance(session):
-    repo = RunRepository(session)
+    repo = RunUnitOfWork(session)
     run = await repo.create_task_run("偏好测试", {"provider": "mock", "model": "mock"})
 
     try:
@@ -408,7 +410,7 @@ async def test_persistent_memory_requires_provenance(session):
 
 
 async def test_reasoning_state_is_versioned_and_waiting_run_resumes(session):
-    repo = RunRepository(session)
+    repo = RunUnitOfWork(session)
     run = await repo.create_task_run("需要选择", {"provider": "mock"})
     contract = build_default_contract("需要选择")
     state = AgentState(task_contract=contract)
@@ -431,7 +433,7 @@ async def test_reasoning_state_is_versioned_and_waiting_run_resumes(session):
     await repo.update_agent_turn(turn.id, status="ask_user")
     await repo.set_waiting_state(run.id, {"paused_node": "build_contract", "request": "请选择"})
     waiting = await repo.require_run(run.id)
-    waiting_view = run_to_view(waiting)
+    waiting_view = RunViewProjector().payload(waiting)
     assert any(
         message["role"] == "assistant" and message["content"] == "请选择"
         for message in waiting_view["chat_messages"]
@@ -445,7 +447,7 @@ async def test_reasoning_state_is_versioned_and_waiting_run_resumes(session):
     assert resumed.status == "executing"
     assert resumed.state_version == 2
     assert resumed.agent_state["observations"][-1]["summary"] == "选 A"
-    resumed_view = run_to_view(await repo.require_run(run.id))
+    resumed_view = RunViewProjector().payload(await repo.require_run(run.id))
     dialogue = [
         (message["role"], message["content"])
         for message in resumed_view["chat_messages"]
@@ -460,7 +462,7 @@ async def test_reasoning_state_is_versioned_and_waiting_run_resumes(session):
 
 
 async def test_reasoning_state_rejects_stale_version(session):
-    repo = RunRepository(session)
+    repo = RunUnitOfWork(session)
     run = await repo.create_task_run("版本测试", {"provider": "mock"})
     contract = build_default_contract("版本测试")
     state = AgentState(task_contract=contract)

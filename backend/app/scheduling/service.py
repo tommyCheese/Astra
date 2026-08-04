@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.config import Settings
 from app.repositories.schedules import ScheduleRepository
+from app.run_management.contracts import RunDispatcher
 from app.scheduling.dispatcher import ScheduledRunDispatcher
 
 logger = logging.getLogger("astra.scheduler")
@@ -20,9 +21,11 @@ class SchedulerService:
         self,
         settings: Settings,
         session_factory: async_sessionmaker[AsyncSession],
+        run_dispatcher: RunDispatcher,
     ):
         self.settings = settings
         self.session_factory = session_factory
+        self.run_dispatcher = run_dispatcher
         self.instance_id = f"scheduler:{uuid.uuid4()}"
         self._task: asyncio.Task[None] | None = None
         self._stopping = asyncio.Event()
@@ -94,6 +97,7 @@ class SchedulerService:
             await ScheduledRunDispatcher(
                 self.settings,
                 self.session_factory,
+                self.run_dispatcher,
             ).dispatch(schedule_run_id)
 
     async def _run(self) -> None:

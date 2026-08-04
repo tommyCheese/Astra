@@ -348,7 +348,24 @@ def evaluate_memory_eligibility(
     query: MemoryRetrievalQuery,
     policy: MemoryRetrievalPolicy,
 ) -> MemoryEligibilityDecision:
-    reasons: list[str] = []
+    reasons = [
+        *_namespace_reasons(candidate, query),
+        *_lifecycle_reasons(candidate, query),
+        *_kind_reasons(candidate, policy),
+        *_content_reasons(candidate, policy),
+        *_provenance_reasons(candidate, policy),
+        *_tag_reasons(candidate, query),
+    ]
+    normalized_kind = normalize_memory_kind(_string_value(candidate.kind))
+    return MemoryEligibilityDecision(
+        memory_id=candidate.id,
+        eligible=not reasons,
+        reasons=tuple(reasons),
+        normalized_kind=normalized_kind.value if normalized_kind is not None else None,
+    )
+
+
+def _namespace_reasons(candidate, query) -> list[str]:
     namespace_pairs = {(namespace.type.value, namespace.id) for namespace in query.namespaces}
     namespace_type = _string_value(candidate.namespace_type).strip()
     namespace_id = _string_value(candidate.namespace_id).strip()
@@ -361,8 +378,12 @@ def evaluate_memory_eligibility(
         )
         not in namespace_pairs
     ):
-        reasons.append("namespace_not_allowed")
+        return ["namespace_not_allowed"]
+    return []
 
+
+def _lifecycle_reasons(candidate, query) -> list[str]:
+    reasons = []
     if _string_value(candidate.status) != MemoryStatus.active.value:
         reasons.append("lifecycle_ineligible")
 
@@ -375,7 +396,11 @@ def evaluate_memory_eligibility(
         reasons.append("expired")
     if candidate.revoked_at is not None and as_utc(candidate.revoked_at) <= as_of:
         reasons.append("revoked")
+    return reasons
 
+
+def _kind_reasons(candidate, policy) -> list[str]:
+    reasons = []
     raw_kind = _string_value(candidate.kind)
     normalized_kind = normalize_memory_kind(raw_kind)
     if normalized_kind is None:
@@ -394,32 +419,37 @@ def evaluate_memory_eligibility(
         normalized_kind is None or normalized_kind.value not in normalized_allowed_kinds
     ):
         reasons.append("kind_not_allowed")
+    return reasons
 
+
+def _content_reasons(candidate, policy) -> list[str]:
+    reasons = []
     confidence = _clamp(candidate.confidence, 0.0, 1.0)
     if confidence < policy.minimum_confidence:
         reasons.append("confidence_below_minimum")
     if not str(candidate.content or "").strip():
         reasons.append("empty_content")
+    return reasons
 
+
+def _provenance_reasons(candidate, policy) -> list[str]:
+    reasons = []
     has_provenance = bool(candidate.provenance) or candidate.accessible_source_count > 0
     if policy.require_provenance and not has_provenance:
         reasons.append("missing_provenance")
     if policy.require_accessible_source and candidate.accessible_source_count <= 0:
         reasons.append("source_inaccessible")
+    return reasons
 
+
+def _tag_reasons(candidate, query) -> list[str]:
     candidate_tags = structural_tags(candidate.structured_data)
     required_tags = {
         normalized for tag in query.required_tags if (normalized := _normalize_tag(tag))
     }
     if required_tags and not required_tags.issubset(candidate_tags):
-        reasons.append("required_tags_missing")
-
-    return MemoryEligibilityDecision(
-        memory_id=candidate.id,
-        eligible=not reasons,
-        reasons=tuple(reasons),
-        normalized_kind=normalized_kind.value if normalized_kind is not None else None,
-    )
+        return ["required_tags_missing"]
+    return []
 
 
 def _normalized_kind_affinities(query: MemoryRetrievalQuery) -> dict[str, float]:

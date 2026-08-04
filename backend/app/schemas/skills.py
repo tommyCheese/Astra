@@ -4,7 +4,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.schemas.agent import AnswerMode
+from app.schemas.agent.types import AnswerMode
 
 
 class SkillCreateRequest(BaseModel):

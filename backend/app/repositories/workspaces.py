@@ -8,15 +8,15 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import (
+from app.db.model_base import utc_now
+from app.db.models.conversations import TaskRecord
+from app.db.models.runs import RunRecord
+from app.db.models.workspaces import (
     ArtifactRecord,
-    RunRecord,
-    TaskRecord,
     TaskWorkspaceRecord,
     WorkspaceChangeRecord,
     WorkspaceCheckpointRecord,
     WorkspaceFileRecord,
-    utc_now,
 )
 
 DEFAULT_WORKSPACE_QUOTAS = {

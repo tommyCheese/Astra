@@ -6,14 +6,16 @@ import pytest
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from app.db.models import AgentJoinRecord, Base, NodeExecutionRecord, utc_now
+from app.db.model_base import Base, utc_now
+from app.db.models.executions import AgentJoinRecord, NodeExecutionRecord
 from app.repositories.agent_executions import AgentExecutionRepository
 from app.repositories.executions import (
     NodeExecutionRepository,
     NodeExecutionStateError,
 )
 from app.repositories.plans import PlanRepository
-from app.repositories.runs import RunRepository, run_to_view
+from app.repositories.run_unit_of_work import RunUnitOfWork
+from app.repositories.run_view_projection import RunViewProjector
 from app.runner.concurrency import (
     ResourceClaim,
     acquire_resource_claims,
@@ -21,19 +23,19 @@ from app.runner.concurrency import (
     resource_claims_from_effect_plan,
 )
 from app.runner.coordinator import NodeExecutionResult, RunCoordinator
-from app.runner.planning import PlanScheduler, PlanService
+from app.runner.plan_scheduler import PlanScheduler
+from app.runner.planning import PlanService
 from app.runner.reasoning import build_default_contract
 from app.runner.recovery import ExecutionRecovery
-from app.schemas.agent import (
-    AgentState,
+from app.schemas.agent.execution_state import AgentState
+from app.schemas.agent.planning import (
     ExpectedObservation,
-    NodeExecutionPhase,
-    NodeExecutionStatus,
     PlanDraft,
     PlanNodeDraft,
     PlanPatch,
     PlanPatchOperation,
 )
+from app.schemas.agent.types import NodeExecutionPhase, NodeExecutionStatus
 from app.schemas.permissions import ActionEffectPlan, EffectItem, EffectKind
 
 
@@ -64,7 +66,7 @@ def parallel_plan() -> PlanDraft:
 
 
 async def test_execution_lease_budget_round_trip_and_run_projection(session):
-    run = await RunRepository(session).create_task_run(
+    run = await RunUnitOfWork(session).create_task_run(
         "parallel", {"provider": "mock"}, answer_mode="trusted"
     )
     plan = await PlanRepository(session).create(run.id, parallel_plan())
@@ -99,7 +101,7 @@ async def test_execution_lease_budget_round_trip_and_run_projection(session):
         "tool_calls",
     }
 
-    projected = run_to_view(await RunRepository(session).require_run(run.id))
+    projected = RunViewProjector().payload(await RunUnitOfWork(session).require_run(run.id))
     assert projected["node_executions"][0]["execution_id"] == execution.id
     assert (
         projected["node_executions"][0]["resource_leases"][0]["resource_summary"]
@@ -109,7 +111,7 @@ async def test_execution_lease_budget_round_trip_and_run_projection(session):
 
 
 async def test_only_one_current_execution_attempt_is_allowed(session):
-    run = await RunRepository(session).create_task_run("attempts", {"provider": "mock"})
+    run = await RunUnitOfWork(session).create_task_run("attempts", {"provider": "mock"})
     plan = await PlanRepository(session).create(run.id, parallel_plan())
     repository = NodeExecutionRepository(session)
     first = await repository.create_claim(
@@ -156,7 +158,7 @@ async def test_only_one_current_execution_attempt_is_allowed(session):
 
 
 async def test_execution_transition_uses_state_version_compare_and_swap(session):
-    run = await RunRepository(session).create_task_run("cas", {"provider": "mock"})
+    run = await RunUnitOfWork(session).create_task_run("cas", {"provider": "mock"})
     plan = await PlanRepository(session).create(run.id, parallel_plan())
     repository = NodeExecutionRepository(session)
     execution = await repository.create_claim(
@@ -192,7 +194,7 @@ def test_obsolete_active_node_field_is_rejected():
 
 
 async def test_scheduler_claims_independent_nodes_as_one_batch(session):
-    run = await RunRepository(session).create_task_run("batch", {"provider": "mock"})
+    run = await RunUnitOfWork(session).create_task_run("batch", {"provider": "mock"})
     plan = await PlanRepository(session).create(run.id, parallel_plan())
     scheduler = PlanScheduler(PlanRepository(session))
 
@@ -213,7 +215,7 @@ async def test_scheduler_claims_independent_nodes_as_one_batch(session):
 
 
 async def test_scheduler_holds_join_consumer_without_blocking_unrelated_nodes(session):
-    run = await RunRepository(session).create_task_run(
+    run = await RunUnitOfWork(session).create_task_run(
         "join barrier", {"provider": "mock"}, answer_mode="trusted"
     )
     plan = await PlanRepository(session).create(run.id, parallel_plan())
@@ -239,7 +241,7 @@ async def test_scheduler_holds_join_consumer_without_blocking_unrelated_nodes(se
 
 
 async def test_scheduler_releases_consumed_join_and_blocks_failed_join(session):
-    run = await RunRepository(session).create_task_run(
+    run = await RunUnitOfWork(session).create_task_run(
         "join outcomes", {"provider": "mock"}, answer_mode="trusted"
     )
     plan = await PlanRepository(session).create(run.id, parallel_plan())
@@ -278,7 +280,7 @@ async def test_scheduler_releases_consumed_join_and_blocks_failed_join(session):
 
 
 async def test_scheduler_single_slot_matches_serial_order(session):
-    run = await RunRepository(session).create_task_run("serial", {"provider": "mock"})
+    run = await RunUnitOfWork(session).create_task_run("serial", {"provider": "mock"})
     await PlanRepository(session).create(run.id, parallel_plan())
     scheduler = PlanScheduler(
         PlanRepository(session),
@@ -287,13 +289,13 @@ async def test_scheduler_single_slot_matches_serial_order(session):
     selected = await scheduler.select_next(run.id)
     assert selected is not None
     assert selected.node_key == "root-a"
-    loaded = await RunRepository(session).require_run(run.id)
+    loaded = await RunUnitOfWork(session).require_run(run.id)
     assert len(loaded.agent_state["active_executions"]) == 1
     assert loaded.agent_state["active_executions"][0]["plan_node_id"] == selected.id
 
 
 async def test_scheduler_respects_budget_and_capability_limits(session):
-    run = await RunRepository(session).create_task_run("limits", {"provider": "mock"})
+    run = await RunUnitOfWork(session).create_task_run("limits", {"provider": "mock"})
     draft = parallel_plan()
     draft.nodes[0].required_capabilities = ["provider:search"]
     draft.nodes[1].required_capabilities = ["provider:search"]
@@ -357,7 +359,7 @@ async def test_coordinator_workers_overlap_and_keep_execution_ownership(tmp_path
         await connection.run_sync(Base.metadata.create_all)
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
     async with session_factory() as setup_session:
-        run = await RunRepository(setup_session).create_task_run("overlap", {"provider": "mock"})
+        run = await RunUnitOfWork(setup_session).create_task_run("overlap", {"provider": "mock"})
         await PlanRepository(setup_session).create(run.id, parallel_plan())
         run_id = run.id
         await setup_session.commit()
@@ -423,7 +425,7 @@ async def test_coordinator_workers_overlap_and_keep_execution_ownership(tmp_path
     assert len(result.completed_execution_ids) == 3
     assert elapsed < 1
     async with session_factory() as verification_session:
-        loaded = await RunRepository(verification_session).require_run(run_id)
+        loaded = await RunUnitOfWork(verification_session).require_run(run_id)
         assert {node.status for plan in loaded.plans for node in plan.nodes} == {"completed"}
         assert len(loaded.node_executions) == 3
         assert all(item.status == "completed" for item in loaded.node_executions)
@@ -468,7 +470,7 @@ def test_unknown_and_non_idempotent_effects_become_safe_exclusive_claims():
 async def test_resource_leases_allow_reads_and_reject_hierarchical_write_conflicts(
     session,
 ):
-    run = await RunRepository(session).create_task_run("leases", {"provider": "mock"})
+    run = await RunUnitOfWork(session).create_task_run("leases", {"provider": "mock"})
     plan = await PlanRepository(session).create(run.id, parallel_plan())
     repository = NodeExecutionRepository(session)
     first = await repository.create_claim(
@@ -507,7 +509,7 @@ async def test_resource_leases_allow_reads_and_reject_hierarchical_write_conflic
 async def test_run_cancellation_terminates_executions_and_releases_reservations(
     session,
 ):
-    run = await RunRepository(session).create_task_run("cancel", {"provider": "mock"})
+    run = await RunUnitOfWork(session).create_task_run("cancel", {"provider": "mock"})
     plan = await PlanRepository(session).create(run.id, parallel_plan())
     repository = NodeExecutionRepository(session)
     execution = await repository.create_claim(
@@ -531,14 +533,14 @@ async def test_run_cancellation_terminates_executions_and_releases_reservations(
     )
     await session.commit()
 
-    await RunRepository(session).cancel_run(run.id)
+    await RunUnitOfWork(session).cancel_run(run.id)
     loaded = await repository.require(execution.id)
     assert loaded.status == "cancelled"
     assert loaded.current_slot is None
     assert loaded.slot_index is None
     assert loaded.resource_leases[0].release_reason == "user_cancelled"
     assert loaded.budget_reservations[0].status == "cancelled"
-    cancelled_run = await RunRepository(session).require_run(run.id)
+    cancelled_run = await RunUnitOfWork(session).require_run(run.id)
     cancelled_event = next(
         event for event in cancelled_run.events if event.type == "plan.node.execution_cancelled"
     )
@@ -585,7 +587,7 @@ async def test_failure_blocks_all_descendants_but_not_unrelated_branch(tmp_path)
         ]
     )
     async with session_factory() as session:
-        run = await RunRepository(session).create_task_run("failure scope", {"provider": "mock"})
+        run = await RunUnitOfWork(session).create_task_run("failure scope", {"provider": "mock"})
         await PlanRepository(session).create(run.id, draft)
         run_id = run.id
         await session.commit()
@@ -623,7 +625,7 @@ async def test_safe_timeout_creates_one_new_attempt_and_reuses_dag_position(tmp_
         await connection.run_sync(Base.metadata.create_all)
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
     async with session_factory() as session:
-        run = await RunRepository(session).create_task_run("retry", {"provider": "mock"})
+        run = await RunUnitOfWork(session).create_task_run("retry", {"provider": "mock"})
         await PlanRepository(session).create(
             run.id,
             PlanDraft(
@@ -676,7 +678,7 @@ async def test_recovery_classifies_resume_replay_and_unknown_outcomes(tmp_path):
         await connection.run_sync(Base.metadata.create_all)
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
     async with session_factory() as session:
-        run = await RunRepository(session).create_task_run("recover", {"provider": "mock"})
+        run = await RunUnitOfWork(session).create_task_run("recover", {"provider": "mock"})
         plan = await PlanRepository(session).create(run.id, parallel_plan())
         repository = NodeExecutionRepository(session)
         resume = await repository.create_claim(
@@ -733,7 +735,7 @@ async def test_concurrent_schedulers_cannot_overclaim_run_slots(tmp_path):
         await connection.run_sync(Base.metadata.create_all)
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
     async with session_factory() as session:
-        run = await RunRepository(session).create_task_run("race", {"provider": "mock"})
+        run = await RunUnitOfWork(session).create_task_run("race", {"provider": "mock"})
         await PlanRepository(session).create(run.id, parallel_plan())
         run_id = run.id
         await session.commit()
@@ -760,7 +762,7 @@ async def test_concurrent_schedulers_cannot_overclaim_run_slots(tmp_path):
 
 
 async def test_replan_drains_owned_attempt_before_activating_new_version(session):
-    run = await RunRepository(session).create_task_run("replan drain", {"provider": "mock"})
+    run = await RunUnitOfWork(session).create_task_run("replan drain", {"provider": "mock"})
     repository = PlanRepository(session)
     plan = await repository.create(run.id, parallel_plan())
     selected = await PlanScheduler(
@@ -787,7 +789,7 @@ async def test_replan_drains_owned_attempt_before_activating_new_version(session
 
     assert revised.version == 2
     assert revised.status == "active"
-    loaded = await RunRepository(session).require_run(run.id)
+    loaded = await RunUnitOfWork(session).require_run(run.id)
     assert loaded.status == "executing"
     assert loaded.active_plan_id == revised.id
     old_execution = loaded.node_executions[0]

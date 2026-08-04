@@ -12,7 +12,8 @@ from app.plugins.interfaces import (
 )
 from app.runner.adapters import WebTaskAdapter
 from app.runner.approvals import safe_preview, similar_matcher
-from app.schemas.agent import AgentObservation, ValidationIssue, ValidationOutcome
+from app.schemas.agent.execution_state import AgentObservation
+from app.schemas.agent.run_result import ValidationIssue, ValidationOutcome
 from app.tools.base import ToolResultEnvelope, ToolSpec
 
 

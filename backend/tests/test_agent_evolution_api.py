@@ -15,13 +15,10 @@ from app.api.evolution import (
     router as evolution_router,
 )
 from app.core.errors import AstraError, ErrorEnvelope
-from app.db.models import (
-    AgentEvolutionCandidateRecord,
-    Base,
-    RunRecord,
-    TaskRecord,
-    utc_now,
-)
+from app.db.model_base import Base, utc_now
+from app.db.models.conversations import TaskRecord
+from app.db.models.evolution import AgentEvolutionCandidateRecord
+from app.db.models.runs import RunRecord
 from app.db.session import get_session
 from app.evolution import (
     EvaluationCaseResult,

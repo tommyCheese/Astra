@@ -3,7 +3,7 @@ import time
 import httpx
 from fastapi import APIRouter, Depends
 
-from app.conversation_context import resolve_context_window
+from app.context_windows import resolve_context_window
 from app.core.config import Settings, get_settings
 from app.model_providers import API_KEY_OPTIONAL_MODEL_PROVIDERS, SUPPORTED_MODEL_PROVIDERS
 from app.runner.model_reasoning import model_thinking_capability
@@ -77,10 +77,7 @@ async def probe_model_connection(
             message="连接失败：当前模型供应商尚未接入通用运行时。",
             error_code="provider_unsupported",
         )
-    if (
-        payload.provider not in API_KEY_OPTIONAL_MODEL_PROVIDERS
-        and not payload.api_key
-    ):
+    if payload.provider not in API_KEY_OPTIONAL_MODEL_PROVIDERS and not payload.api_key:
         return ModelConnectionTestResponse(
             connected=False,
             provider=payload.provider,

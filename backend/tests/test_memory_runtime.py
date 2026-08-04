@@ -1,11 +1,14 @@
 from sqlalchemy import select
 
+from app.agent_runtime.context import ContextAssembler
+from app.agent_runtime.memory_candidates import MemoryCandidateWriter
 from app.core.config import Settings
-from app.db.models import MemoryRecallEventRecord, RunEventRecord
+from app.db.models.memory import MemoryRecallEventRecord
+from app.db.models.runs import RunEventRecord
 from app.repositories.memories import MemoryRepository
-from app.repositories.runs import RunRepository
-from app.runner.agent_loop import ContextAssembler, MemoryManager
-from app.schemas.agent import MemoryRecord
+from app.repositories.memory_recall import MemoryRecallRepository
+from app.repositories.run_unit_of_work import RunUnitOfWork
+from app.schemas.agent.run_result import MemoryRecord
 from app.tools.base import ToolRegistry
 
 
@@ -18,7 +21,7 @@ class CandidateModelClient:
 
 
 async def test_cross_session_retrieval_injects_task_memory_and_persists_safe_audit(session):
-    run_repo = RunRepository(session)
+    run_repo = RunUnitOfWork(session)
     source_run = await run_repo.create_task_run(
         "记住项目使用 PostgreSQL",
         {"provider": "mock", "model": "mock"},
@@ -77,7 +80,7 @@ async def test_cross_session_retrieval_injects_task_memory_and_persists_safe_aud
 
 
 async def test_session_retrieval_crosses_tasks_with_matching_identity(session):
-    run_repo = RunRepository(session)
+    run_repo = RunUnitOfWork(session)
     source_run = await run_repo.create_task_run(
         "记住偏好",
         {"provider": "mock", "model": "mock"},
@@ -146,7 +149,7 @@ async def test_session_retrieval_crosses_tasks_with_matching_identity(session):
 
 
 async def test_memory_manager_leaves_safe_candidate_pending_and_isolates_rejections(session):
-    run_repo = RunRepository(session)
+    run_repo = RunUnitOfWork(session)
     run = await run_repo.create_task_run(
         "记住运行结论",
         {"provider": "mock", "model": "mock"},
@@ -171,7 +174,7 @@ async def test_memory_manager_leaves_safe_candidate_pending_and_isolates_rejecti
             confidence=0.9,
         ),
     ]
-    manager = MemoryManager(
+    manager = MemoryCandidateWriter(
         Settings(agent_memory_write_enabled=True),
         run_repo,
         CandidateModelClient(candidates),
@@ -195,12 +198,12 @@ async def test_memory_manager_leaves_safe_candidate_pending_and_isolates_rejecti
 
 
 async def test_recall_feedback_is_bounded_and_audit_safe(session):
-    run = await RunRepository(session).create_task_run(
+    run = await RunUnitOfWork(session).create_task_run(
         "反馈测试",
         {"provider": "mock", "model": "mock"},
     )
-    memory_repo = MemoryRepository(session)
-    recall = await memory_repo.record_recall_event(
+    recall_repository = MemoryRecallRepository(session)
+    recall = await recall_repository.record_event(
         run_id=run.id,
         query_hash="a" * 64,
         policy_version="v1",
@@ -210,7 +213,7 @@ async def test_recall_feedback_is_bounded_and_audit_safe(session):
         excluded=[],
     )
 
-    updated = await memory_repo.record_recall_feedback(
+    updated = await recall_repository.record_feedback(
         recall.id,
         outcome="helpful",
         utility_delta=0.25,

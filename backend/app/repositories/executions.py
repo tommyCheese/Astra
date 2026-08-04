@@ -9,13 +9,13 @@ from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.db.models import (
+from app.db.model_base import utc_now
+from app.db.models.executions import (
     BudgetReservationRecord,
     NodeExecutionRecord,
     ResourceLeaseRecord,
-    utc_now,
 )
-from app.schemas.agent import NodeExecutionPhase, NodeExecutionStatus
+from app.schemas.agent.types import NodeExecutionPhase, NodeExecutionStatus
 
 TERMINAL_EXECUTION_STATUSES = frozenset(
     {

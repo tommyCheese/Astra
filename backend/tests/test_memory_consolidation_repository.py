@@ -4,12 +4,12 @@ import pytest
 from sqlalchemy import select
 
 from app.core.config import Settings
-from app.db.models import (
+from app.db.model_base import utc_now
+from app.db.models.memory import (
     MemoryAuditRecord,
     MemoryConsolidationJobRecord,
     MemoryRecord,
     MemorySourceRecord,
-    utc_now,
 )
 from app.memory.autodream import AutoDreamProcessor
 from app.memory.consolidation import ConsolidationConflictError
@@ -17,6 +17,9 @@ from app.memory.domain import MemoryNamespace, MemoryNamespaceType
 from app.repositories.memories import MemoryRepository
 from app.repositories.memory_consolidation import (
     MemoryConsolidationRepository,
+)
+from app.repositories.memory_consolidation_publication import (
+    MemoryConsolidationPublicationService,
 )
 
 
@@ -81,7 +84,7 @@ async def test_prepare_publish_and_audited_rollback_are_atomic(session):
     assert proposed.input_hash == proposed.input_manifest["input_hash"]
     assert proposed.model_usage["calls"] == 0
 
-    published = await repository.publish(
+    published = await MemoryConsolidationPublicationService(repository).publish(
         proposed.id,
         expected_state_version=proposed.state_version,
         actor="tester",
@@ -100,7 +103,7 @@ async def test_prepare_publish_and_audited_rollback_are_atomic(session):
     for memory_id in input_ids:
         assert (await session.get(MemoryRecord, memory_id)).status == "superseded"
 
-    rollback = await repository.rollback_published(
+    rollback = await MemoryConsolidationPublicationService(repository).rollback_published(
         published_id,
         expected_state_version=published_state_version,
         actor="tester",
@@ -146,7 +149,7 @@ async def test_publication_conflict_changes_no_memory_projection(session):
     await session.commit()
 
     with pytest.raises(ConsolidationConflictError, match="changed"):
-        await repository.publish(
+        await MemoryConsolidationPublicationService(repository).publish(
             proposed_id,
             expected_state_version=proposed_state_version,
             actor="tester",
@@ -177,7 +180,7 @@ async def test_rollback_fails_atomically_when_source_support_is_revoked(session)
         job.id,
         owner="test-worker",
     )
-    published = await repository.publish(
+    published = await MemoryConsolidationPublicationService(repository).publish(
         proposed.id,
         expected_state_version=proposed.state_version,
         actor="tester",
@@ -197,7 +200,7 @@ async def test_rollback_fails_atomically_when_source_support_is_revoked(session)
     await session.commit()
 
     with pytest.raises(ConsolidationConflictError, match="lost its supporting"):
-        await repository.rollback_published(
+        await MemoryConsolidationPublicationService(repository).rollback_published(
             published_id,
             expected_state_version=published_version,
             actor="tester",

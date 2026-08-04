@@ -3,7 +3,7 @@ from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.core.config import Settings
-from app.db.models import Base
+from app.db.model_base import Base
 from app.memory import autodream as autodream_module
 from app.memory.autodream import AutoDreamService
 from app.memory.domain import MemoryNamespace, MemoryNamespaceType

@@ -1,13 +1,15 @@
 from datetime import datetime, timedelta, timezone
 
 from app.api.usage import _as_utc
-from app.db.models import AgentTurnRecord, ToolCallRecord, utc_now
-from app.repositories.runs import RunRepository
+from app.db.model_base import utc_now
+from app.db.models.permissions import ToolCallRecord
+from app.db.models.runs import AgentTurnRecord
+from app.repositories.run_unit_of_work import RunUnitOfWork
 from app.repositories.usage import UsageRepository, normalize_usage
 
 
 async def test_usage_summary_persists_exact_provider_tokens(session):
-    run = await RunRepository(session).create_task_run("统计测试", {"provider": "openai"})
+    run = await RunUnitOfWork(session).create_task_run("统计测试", {"provider": "openai"})
     usage = UsageRepository(session)
     invocation_id = await usage.create_invocation(
         run_id=run.id, provider="openai", model="gpt-5", operation="decision", attempt=1
@@ -61,7 +63,7 @@ def test_usage_range_boundaries_are_normalized_to_utc():
 
 
 async def test_reconcile_interrupted_invocations(session):
-    run = await RunRepository(session).create_task_run("重启测试", {})
+    run = await RunUnitOfWork(session).create_task_run("重启测试", {})
     usage = UsageRepository(session)
     await usage.create_invocation(run_id=run.id, provider="compatible", model="local", operation="plan", attempt=1)
     assert await usage.reconcile_interrupted() == 1

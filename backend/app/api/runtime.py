@@ -1,15 +1,18 @@
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.agent_profile import AgentProfileConfigurationError
 from app.core.errors import StateError, ValidationError
+from app.platform.http.dependencies import ApplicationServices, get_application_container
 from app.runtime_profiles import RuntimeProfileService
 
 router = APIRouter(prefix="/api/runtime", tags=["runtime"])
 
 
-def get_runtime_profile_service(request: Request) -> RuntimeProfileService:
-    return request.app.state.runtime_profile_service
+def get_runtime_profile_service(
+    container: ApplicationServices = Depends(get_application_container),
+) -> RuntimeProfileService:
+    return container.runtime_profile_service
 
 
 class Dependency(BaseModel):
@@ -100,8 +103,8 @@ async def reset_runtime_agent_profile(
 @router.put("/memory-settings")
 async def update_runtime_memory_settings(
     payload: MemorySettingsUpdateRequest,
-    request: Request,
     service: RuntimeProfileService = Depends(get_runtime_profile_service),
+    container: ApplicationServices = Depends(get_application_container),
 ):
     previous = service.memory_settings()
     try:
@@ -109,7 +112,7 @@ async def update_runtime_memory_settings(
     except ValueError as exc:
         raise ValidationError("MEMORY_SETTINGS_INVALID", str(exc)) from exc
     try:
-        autodream = request.app.state.autodream_service
+        autodream = container.autodream_service
         if updated["autodream_enabled"] and not previous["autodream_enabled"]:
             await autodream.startup()
         elif previous["autodream_enabled"] and not updated["autodream_enabled"]:

@@ -1,4 +1,5 @@
-from app.skills.catalog import SkillActivationService, SkillCatalog, SkillCatalogBuilder
+from app.skills.activation import SkillActivationService
+from app.skills.catalog import SkillCatalog, SkillCatalogBuilder
 from app.skills.contracts import (
     SkillDiagnostic,
     SkillFrontmatter,

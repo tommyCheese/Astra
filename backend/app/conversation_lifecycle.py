@@ -7,7 +7,7 @@ from pathlib import Path
 
 from app.artifacts import ArtifactStore, LocalArtifactStore
 from app.core.config import Settings
-from app.db.models import TaskRecord
+from app.db.models.conversations import TaskRecord
 from app.repositories.conversations import ConversationRepository
 
 logger = logging.getLogger("astra.conversation_lifecycle")

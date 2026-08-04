@@ -16,16 +16,8 @@ from app.schemas.context_compaction import (
 def deterministic_emergency_checkpoint(envelope: ContextEnvelope):
     now = datetime.now(timezone.utc)
     trust = CheckpointTrustMetadata(generated_from_canonical_state=True)
-    summaries = tuple(
-        text
-        for item in (*envelope.compactable_body, *envelope.recent_tail)
-        if (text := (item.summary or (item.content if isinstance(item.content, str) else "")))
-    )[-20:]
-    canonical_text = tuple(
-        text
-        for item in envelope.protected_prefix
-        if (text := (item.summary or (item.content if isinstance(item.content, str) else "")))
-    )
+    summaries = _item_summaries((*envelope.compactable_body, *envelope.recent_tail))[-20:]
+    canonical_text = _item_summaries(envelope.protected_prefix)
     if envelope.owner_type == ContextOwnerRole.conversation:
         return ConversationContextCheckpointV2(
             user_intent=canonical_text[-1] if canonical_text else envelope.purpose,
@@ -40,22 +32,32 @@ def deterministic_emergency_checkpoint(envelope: ContextEnvelope):
             trust=trust,
             created_at=now,
         )
-    refs = {ref.ref for ref in envelope.reference_manifest if ref.accessible}
+    artifact_refs = _accessible_refs(envelope, "artifact")
+    evidence_refs = _accessible_refs(envelope, "evidence")
     return ChildContextCheckpointV2(
         agent_execution_id=envelope.owner_id,
         manifest_hash=envelope.continuation.manifest_hash or "missing",
         contract_hash=envelope.continuation.contract_hash or "missing",
-        local_facts=tuple(
-            ChildLocalFact(text=text, confidence=0.0)
-            for text in summaries
-        ),
+        local_facts=tuple(ChildLocalFact(text=text, confidence=0.0) for text in summaries),
         remaining_budget=envelope.continuation.remaining_budget,
         trust=trust,
         created_at=now,
-        artifact_refs=tuple(
-            ref.ref for ref in envelope.reference_manifest if ref.kind == "artifact" and ref.ref in refs
-        ),
-        evidence_refs=tuple(
-            ref.ref for ref in envelope.reference_manifest if ref.kind == "evidence" and ref.ref in refs
-        ),
+        artifact_refs=artifact_refs,
+        evidence_refs=evidence_refs,
+    )
+
+
+def _item_summaries(items) -> tuple[str, ...]:
+    return tuple(text for item in items if (text := _item_text(item)))
+
+
+def _item_text(item) -> str:
+    return item.summary or (item.content if isinstance(item.content, str) else "")
+
+
+def _accessible_refs(envelope: ContextEnvelope, kind: str) -> tuple[str, ...]:
+    return tuple(
+        reference.ref
+        for reference in envelope.reference_manifest
+        if reference.accessible and reference.kind == kind
     )

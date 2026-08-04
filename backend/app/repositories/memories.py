@@ -2,28 +2,24 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Iterable
 from datetime import datetime, timezone
 from typing import Any
 
-from sqlalchemy import and_, or_, select, update
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.db.models import (
-    AgentTurnRecord,
-    ArtifactRecord,
+from app.db.model_base import utc_now, uuid_str
+from app.db.models.conversations import TaskRecord
+from app.db.models.memory import (
     MemoryAuditRecord,
     MemoryLinkRecord,
-    MemoryRecallEventRecord,
     MemoryRecord,
     MemorySourceRecord,
-    RunRecord,
-    TaskRecord,
-    ToolCallRecord,
-    utc_now,
-    uuid_str,
 )
+from app.db.models.permissions import ToolCallRecord
+from app.db.models.runs import AgentTurnRecord, RunRecord
+from app.db.models.workspaces import ArtifactRecord
 from app.memory.domain import (
     MemoryConflictError,
     MemoryNamespace,
@@ -52,6 +48,71 @@ def _as_utc(value: datetime | None) -> datetime | None:
     if value.tzinfo is None:
         return value.replace(tzinfo=timezone.utc)
     return value.astimezone(timezone.utc)
+
+
+def _copied_memory_source(source, memory_id: str, now: datetime) -> MemorySourceRecord:
+    return MemorySourceRecord(
+        memory_id=memory_id,
+        source_kind=source.source_kind,
+        source_ref=source.source_ref,
+        source_hash=source.source_hash,
+        run_id=source.run_id,
+        turn_id=source.turn_id,
+        tool_call_id=source.tool_call_id,
+        artifact_id=source.artifact_id,
+        source_data=source.source_data,
+        accessible=True,
+        created_at=now,
+    )
+
+
+def _memory_source_from_spec(spec, memory_id: str, now: datetime) -> MemorySourceRecord:
+    return MemorySourceRecord(
+        memory_id=memory_id,
+        source_kind=spec["source_kind"],
+        source_ref=spec["source_ref"],
+        source_hash=_canonical_digest(spec),
+        run_id=spec.get("run_id"),
+        turn_id=spec.get("turn_id"),
+        tool_call_id=spec.get("tool_call_id"),
+        artifact_id=spec.get("artifact_id"),
+        source_data=spec["source_data"],
+        accessible=True,
+        created_at=now,
+    )
+
+
+def _validate_new_memory(
+    content, confidence, importance, utility_score, status, scope, provenance
+) -> MemoryStatus:
+    if not content:
+        raise MemoryValidationError("Memory content must be non-empty")
+    if len(content) > 50_000:
+        raise MemoryValidationError("Memory content exceeds the 50000 character limit")
+    score_ranges = (
+        (confidence, 0.0, 1.0, "confidence"),
+        (importance, 0.0, 1.0, "importance"),
+        (utility_score, -1.0, 1.0, "utility"),
+    )
+    for value, minimum, maximum, label in score_ranges:
+        if not minimum <= value <= maximum:
+            raise MemoryValidationError(
+                f"Memory {label} must be between {minimum:g} and {maximum:g}"
+            )
+    try:
+        initial_status = MemoryStatus(status)
+    except ValueError as exc:
+        raise MemoryValidationError(f"Unsupported Memory status: {status}") from exc
+    if initial_status not in {MemoryStatus.candidate, MemoryStatus.active}:
+        raise MemoryValidationError("New Memory must start in candidate or active state")
+    if scope in {"task", "session", "user"} and not provenance:
+        raise MemoryValidationError("Persistent Memory requires provenance")
+    return initial_status
+
+
+def _require_persistent_sources(scope: str, source_specs: list[dict[str, Any]]) -> None:
+    if scope in {"task", "session", "user"} and not source_specs:
+        raise MemoryValidationError("Persistent Memory requires a valid source reference")
 
 
 class MemoryRepository:
@@ -206,50 +267,18 @@ class MemoryRepository:
         commit: bool = True,
     ) -> MemoryRecord:
         normalized_content = str(content or "").strip()
-        if not normalized_content:
-            raise MemoryValidationError("Memory content must be non-empty")
-        if len(normalized_content) > 50_000:
-            raise MemoryValidationError("Memory content exceeds the 50000 character limit")
-        if not 0.0 <= confidence <= 1.0:
-            raise MemoryValidationError("Memory confidence must be between 0 and 1")
-        if not 0.0 <= importance <= 1.0:
-            raise MemoryValidationError("Memory importance must be between 0 and 1")
-        if not -1.0 <= utility_score <= 1.0:
-            raise MemoryValidationError("Memory utility must be between -1 and 1")
-        try:
-            initial_status = MemoryStatus(status)
-        except ValueError as exc:
-            raise MemoryValidationError(f"Unsupported Memory status: {status}") from exc
-        if initial_status not in {MemoryStatus.candidate, MemoryStatus.active}:
-            raise MemoryValidationError("New Memory must start in candidate or active state")
-        if scope in {"task", "session", "user"} and not provenance:
-            raise MemoryValidationError("Persistent Memory requires provenance")
+        initial_status = _validate_new_memory(
+            normalized_content, confidence, importance, utility_score, status, scope, provenance
+        )
 
-        task: TaskRecord | None = None
-        if run_id is not None:
-            derived_namespace, task = await self.namespace_for_write(
-                run_id=run_id,
-                scope=scope,
-            )
-            if namespace is not None and namespace != derived_namespace:
-                raise MemoryValidationError(
-                    "Explicit Memory namespace does not match the source Run"
-                )
-            namespace = derived_namespace
-        elif namespace is None:
-            raise MemoryValidationError(
-                "Memory without a source Run requires an explicit isolated namespace"
-            )
-        if namespace is None:
-            raise MemoryValidationError("Memory namespace is required")
+        namespace, task = await self._resolve_write_namespace(run_id, scope, namespace)
 
         normalized_kind = normalize_memory_kind(kind)
         if normalize_kind and normalized_kind is None:
             raise MemoryValidationError(f"Unsupported cross-Session Memory kind: {kind}")
         stored_kind = normalized_kind.value if normalize_kind and normalized_kind else kind
         source_specs = await self._source_specs(run_id=run_id, provenance=provenance)
-        if scope in {"task", "session", "user"} and not source_specs:
-            raise MemoryValidationError("Persistent Memory requires a valid source reference")
+        _require_persistent_sources(scope, source_specs)
 
         now = utc_now()
         record = MemoryRecord(
@@ -310,6 +339,18 @@ class MemoryRepository:
         if commit:
             await self.session.commit()
         return record
+
+    async def _resolve_write_namespace(self, run_id, scope, namespace):
+        if run_id is None:
+            if namespace is None:
+                raise MemoryValidationError(
+                    "Memory without a source Run requires an explicit isolated namespace"
+                )
+            return namespace, None
+        derived_namespace, task = await self.namespace_for_write(run_id=run_id, scope=scope)
+        if namespace is not None and namespace != derived_namespace:
+            raise MemoryValidationError("Explicit Memory namespace does not match the source Run")
+        return derived_namespace, task
 
     async def require(self, memory_id: str, *, include_sources: bool = False) -> MemoryRecord:
         query = select(MemoryRecord).where(MemoryRecord.id == memory_id)
@@ -404,6 +445,62 @@ class MemoryRepository:
             await self.session.commit()
         return await self.require(memory_id, include_sources=True)
 
+    def _replacement_record(
+        self,
+        current,
+        *,
+        run_id,
+        status,
+        content,
+        structured_data,
+        provenance,
+        confidence,
+        importance,
+        valid_from,
+        now,
+    ) -> MemoryRecord:
+        replacement = MemoryRecord(
+            run_id=run_id,
+            created_by=current.created_by,
+            memory_key=current.memory_key,
+            namespace_type=current.namespace_type,
+            namespace_id=current.namespace_id,
+            scope=current.scope,
+            kind=current.kind,
+            status=status.value,
+            version=current.version + 1,
+            state_version=1,
+            content=str(content or "").strip(),
+            structured_data=structured_data or {},
+            provenance=provenance,
+            confidence=current.confidence if confidence is None else confidence,
+            importance=current.importance if importance is None else importance,
+            utility_score=current.utility_score,
+            observed_at=now,
+            valid_from=_as_utc(valid_from) or now,
+            supersedes_id=current.id,
+            consolidation_generation=current.consolidation_generation,
+            created_at=now,
+            updated_at=now,
+        )
+        if not replacement.content:
+            raise MemoryValidationError("Memory content must be non-empty")
+        return replacement
+
+    def _copy_version_sources(self, current, replacement, source_specs, now) -> None:
+        copied_refs = {
+            (source.source_kind, source.source_ref)
+            for source in current.sources
+            if source.accessible and source.revoked_at is None
+        }
+        for source in current.sources:
+            if (source.source_kind, source.source_ref) not in copied_refs:
+                continue
+            self.session.add(_copied_memory_source(source, replacement.id, now))
+        for spec in source_specs:
+            if (spec["source_kind"], spec["source_ref"]) not in copied_refs:
+                self.session.add(_memory_source_from_spec(spec, replacement.id, now))
+
     async def create_version(
         self,
         memory_id: str,
@@ -429,73 +526,21 @@ class MemoryRepository:
             provenance=provenance,
         )
         now = utc_now()
-        replacement = MemoryRecord(
+        replacement = self._replacement_record(
+            current,
             run_id=current.run_id,
-            created_by=current.created_by,
-            memory_key=current.memory_key,
-            namespace_type=current.namespace_type,
-            namespace_id=current.namespace_id,
-            scope=current.scope,
-            kind=current.kind,
-            status=MemoryStatus.active.value,
-            version=current.version + 1,
-            state_version=1,
-            content=str(content or "").strip(),
-            structured_data=structured_data or {},
+            status=MemoryStatus.active,
+            content=content,
+            structured_data=structured_data,
             provenance=provenance,
-            confidence=current.confidence if confidence is None else confidence,
-            importance=current.importance if importance is None else importance,
-            utility_score=current.utility_score,
-            observed_at=now,
-            valid_from=_as_utc(valid_from) or now,
-            supersedes_id=current.id,
-            consolidation_generation=current.consolidation_generation,
-            created_at=now,
-            updated_at=now,
+            confidence=confidence,
+            importance=importance,
+            valid_from=valid_from,
+            now=now,
         )
-        if not replacement.content:
-            raise MemoryValidationError("Memory content must be non-empty")
         self.session.add(replacement)
         await self.session.flush()
-        copied_refs: set[tuple[str, str]] = set()
-        for source in current.sources:
-            if not source.accessible or source.revoked_at is not None:
-                continue
-            copied_refs.add((source.source_kind, source.source_ref))
-            self.session.add(
-                MemorySourceRecord(
-                    memory_id=replacement.id,
-                    source_kind=source.source_kind,
-                    source_ref=source.source_ref,
-                    source_hash=source.source_hash,
-                    run_id=source.run_id,
-                    turn_id=source.turn_id,
-                    tool_call_id=source.tool_call_id,
-                    artifact_id=source.artifact_id,
-                    source_data=source.source_data,
-                    accessible=True,
-                    created_at=now,
-                )
-            )
-        for spec in source_specs:
-            ref = (spec["source_kind"], spec["source_ref"])
-            if ref in copied_refs:
-                continue
-            self.session.add(
-                MemorySourceRecord(
-                    memory_id=replacement.id,
-                    source_kind=spec["source_kind"],
-                    source_ref=spec["source_ref"],
-                    source_hash=_canonical_digest(spec),
-                    run_id=spec.get("run_id"),
-                    turn_id=spec.get("turn_id"),
-                    tool_call_id=spec.get("tool_call_id"),
-                    artifact_id=spec.get("artifact_id"),
-                    source_data=spec["source_data"],
-                    accessible=True,
-                    created_at=now,
-                )
-            )
+        self._copy_version_sources(current, replacement, source_specs, now)
         result = await self.session.execute(
             update(MemoryRecord)
             .where(
@@ -572,73 +617,21 @@ class MemoryRepository:
             provenance=provenance,
         )
         now = utc_now()
-        replacement = MemoryRecord(
+        replacement = self._replacement_record(
+            current,
             run_id=source_run_id,
-            created_by=current.created_by,
-            memory_key=current.memory_key,
-            namespace_type=current.namespace_type,
-            namespace_id=current.namespace_id,
-            scope=current.scope,
-            kind=current.kind,
-            status=MemoryStatus.candidate.value,
-            version=current.version + 1,
-            state_version=1,
-            content=str(content or "").strip(),
-            structured_data=structured_data or {},
+            status=MemoryStatus.candidate,
+            content=content,
+            structured_data=structured_data,
             provenance=provenance,
-            confidence=current.confidence if confidence is None else confidence,
-            importance=current.importance if importance is None else importance,
-            utility_score=current.utility_score,
-            observed_at=now,
-            valid_from=_as_utc(valid_from) or now,
-            supersedes_id=current.id,
-            consolidation_generation=current.consolidation_generation,
-            created_at=now,
-            updated_at=now,
+            confidence=confidence,
+            importance=importance,
+            valid_from=valid_from,
+            now=now,
         )
-        if not replacement.content:
-            raise MemoryValidationError("Memory content must be non-empty")
         self.session.add(replacement)
         await self.session.flush()
-        copied_refs: set[tuple[str, str]] = set()
-        for source in current.sources:
-            if not source.accessible or source.revoked_at is not None:
-                continue
-            copied_refs.add((source.source_kind, source.source_ref))
-            self.session.add(
-                MemorySourceRecord(
-                    memory_id=replacement.id,
-                    source_kind=source.source_kind,
-                    source_ref=source.source_ref,
-                    source_hash=source.source_hash,
-                    run_id=source.run_id,
-                    turn_id=source.turn_id,
-                    tool_call_id=source.tool_call_id,
-                    artifact_id=source.artifact_id,
-                    source_data=source.source_data,
-                    accessible=True,
-                    created_at=now,
-                )
-            )
-        for spec in source_specs:
-            ref = (spec["source_kind"], spec["source_ref"])
-            if ref in copied_refs:
-                continue
-            self.session.add(
-                MemorySourceRecord(
-                    memory_id=replacement.id,
-                    source_kind=spec["source_kind"],
-                    source_ref=spec["source_ref"],
-                    source_hash=_canonical_digest(spec),
-                    run_id=spec.get("run_id"),
-                    turn_id=spec.get("turn_id"),
-                    tool_call_id=spec.get("tool_call_id"),
-                    artifact_id=spec.get("artifact_id"),
-                    source_data=spec["source_data"],
-                    accessible=True,
-                    created_at=now,
-                )
-            )
+        self._copy_version_sources(current, replacement, source_specs, now)
         self.session.add(
             MemoryLinkRecord(
                 source_memory_id=replacement.id,
@@ -670,48 +663,14 @@ class MemoryRepository:
         reason: str,
     ) -> MemoryRecord:
         candidate = await self.require(memory_id, include_sources=True)
-        if candidate.state_version != expected_state_version:
-            raise MemoryConflictError("Memory state version changed")
-        if candidate.status != MemoryStatus.candidate.value:
-            raise MemoryValidationError("Only candidate Memory can be human-activated")
-        if not any(
-            source.accessible and source.revoked_at is None for source in candidate.sources
-        ):
-            raise MemoryValidationError("Active persistent Memory requires an accessible source")
         normalized_reason = str(reason or "").strip()
         normalized_actor = str(actor or "").strip()
-        if not normalized_actor or len(normalized_reason) < 3:
-            raise MemoryValidationError("Human activation requires an actor and audit reason")
+        self._validate_candidate_activation(
+            candidate, expected_state_version, normalized_actor, normalized_reason
+        )
 
         now = utc_now()
-        base = None
-        if candidate.supersedes_id:
-            base = await self.require(candidate.supersedes_id)
-            if (
-                base.status != MemoryStatus.active.value
-                or base.namespace_type != candidate.namespace_type
-                or base.namespace_id != candidate.namespace_id
-                or base.memory_key != candidate.memory_key
-                or candidate.version != base.version + 1
-            ):
-                raise MemoryConflictError("Candidate base version changed")
-            result = await self.session.execute(
-                update(MemoryRecord)
-                .where(
-                    MemoryRecord.id == base.id,
-                    MemoryRecord.status == MemoryStatus.active.value,
-                    MemoryRecord.state_version == base.state_version,
-                )
-                .values(
-                    status=MemoryStatus.superseded.value,
-                    state_version=base.state_version + 1,
-                    valid_to=now,
-                    updated_at=now,
-                )
-            )
-            if result.rowcount != 1:
-                await self.session.rollback()
-                raise MemoryConflictError("Candidate base version changed")
+        base = await self._supersede_candidate_base(candidate, now)
 
         result = await self.session.execute(
             update(MemoryRecord)
@@ -758,6 +717,50 @@ class MemoryRepository:
         await self.session.commit()
         return await self.require(candidate.id, include_sources=True)
 
+    def _validate_candidate_activation(
+        self, candidate, expected_state_version, actor, reason
+    ) -> None:
+        if candidate.state_version != expected_state_version:
+            raise MemoryConflictError("Memory state version changed")
+        if candidate.status != MemoryStatus.candidate.value:
+            raise MemoryValidationError("Only candidate Memory can be human-activated")
+        if not any(source.accessible and source.revoked_at is None for source in candidate.sources):
+            raise MemoryValidationError("Active persistent Memory requires an accessible source")
+        if not actor or len(reason) < 3:
+            raise MemoryValidationError("Human activation requires an actor and audit reason")
+
+    async def _supersede_candidate_base(self, candidate, now):
+        if not candidate.supersedes_id:
+            return None
+        base = await self.require(candidate.supersedes_id)
+        same_lineage = (
+            base.status == MemoryStatus.active.value
+            and base.namespace_type == candidate.namespace_type
+            and base.namespace_id == candidate.namespace_id
+            and base.memory_key == candidate.memory_key
+            and candidate.version == base.version + 1
+        )
+        if not same_lineage:
+            raise MemoryConflictError("Candidate base version changed")
+        result = await self.session.execute(
+            update(MemoryRecord)
+            .where(
+                MemoryRecord.id == base.id,
+                MemoryRecord.status == MemoryStatus.active.value,
+                MemoryRecord.state_version == base.state_version,
+            )
+            .values(
+                status=MemoryStatus.superseded.value,
+                state_version=base.state_version + 1,
+                valid_to=now,
+                updated_at=now,
+            )
+        )
+        if result.rowcount != 1:
+            await self.session.rollback()
+            raise MemoryConflictError("Candidate base version changed")
+        return base
+
     async def add_link(
         self,
         *,
@@ -787,198 +790,3 @@ class MemoryRepository:
         if commit:
             await self.session.commit()
         return record
-
-    async def list_records(
-        self,
-        *,
-        scope: str | None = None,
-        kind: str | None = None,
-        run_id: str | None = None,
-        namespaces: Iterable[MemoryNamespace] | None = None,
-        statuses: Iterable[str | MemoryStatus] | None = None,
-        min_confidence: float = 0.0,
-        include_expired: bool = True,
-        include_sources: bool = False,
-        limit: int = 100,
-    ) -> list[MemoryRecord]:
-        query = select(MemoryRecord).where(MemoryRecord.confidence >= min_confidence)
-        if include_sources:
-            query = query.options(selectinload(MemoryRecord.sources))
-        if scope:
-            query = query.where(MemoryRecord.scope == scope)
-        if kind:
-            query = query.where(MemoryRecord.kind == kind)
-        if run_id:
-            query = query.where(MemoryRecord.run_id == run_id)
-        namespace_list = list(namespaces or [])
-        if namespace_list:
-            query = query.where(
-                or_(
-                    *[
-                        and_(
-                            MemoryRecord.namespace_type == namespace.type.value,
-                            MemoryRecord.namespace_id == namespace.id,
-                        )
-                        for namespace in namespace_list
-                    ]
-                )
-            )
-        status_list = [
-            MemoryStatus(status).value if not isinstance(status, MemoryStatus) else status.value
-            for status in statuses or []
-        ]
-        if status_list:
-            query = query.where(MemoryRecord.status.in_(status_list))
-        if not include_expired:
-            now = utc_now()
-            query = query.where(
-                or_(MemoryRecord.expires_at.is_(None), MemoryRecord.expires_at > now),
-                or_(MemoryRecord.valid_to.is_(None), MemoryRecord.valid_to > now),
-            )
-        query = query.order_by(MemoryRecord.updated_at.desc(), MemoryRecord.id).limit(limit)
-        return list((await self.session.execute(query)).scalars().all())
-
-    async def history(
-        self,
-        *,
-        namespace: MemoryNamespace,
-        memory_key: str,
-        as_of: datetime | None = None,
-    ) -> list[MemoryRecord]:
-        query = select(MemoryRecord).where(
-            MemoryRecord.namespace_type == namespace.type.value,
-            MemoryRecord.namespace_id == namespace.id,
-            MemoryRecord.memory_key == memory_key,
-        )
-        if as_of is not None:
-            instant = _as_utc(as_of)
-            query = query.where(
-                MemoryRecord.valid_from <= instant,
-                or_(MemoryRecord.valid_to.is_(None), MemoryRecord.valid_to > instant),
-            )
-        query = query.order_by(MemoryRecord.version)
-        return list((await self.session.execute(query)).scalars().all())
-
-    async def record_recall_event(
-        self,
-        *,
-        run_id: str,
-        query_hash: str,
-        policy_version: str,
-        namespace_manifest: list[dict[str, str]],
-        candidates: list[dict[str, Any]],
-        selected: list[dict[str, Any]],
-        excluded: list[dict[str, Any]],
-        turn_id: str | None = None,
-        commit: bool = True,
-    ) -> MemoryRecallEventRecord:
-        await self._run_identity(run_id)
-        if len(query_hash) != 64:
-            raise MemoryValidationError("Memory recall query hash must be a SHA-256 digest")
-        event = MemoryRecallEventRecord(
-            run_id=run_id,
-            turn_id=turn_id,
-            query_hash=query_hash,
-            policy_version=str(policy_version or "").strip(),
-            namespace_manifest=namespace_manifest,
-            candidates=candidates,
-            selected=selected,
-            excluded=excluded,
-            feedback={},
-            created_at=utc_now(),
-            updated_at=utc_now(),
-        )
-        if not event.policy_version:
-            raise MemoryValidationError("Memory recall policy version is required")
-        self.session.add(event)
-        await self.session.flush()
-        if commit:
-            await self.session.commit()
-        return event
-
-    async def record_recall_feedback(
-        self,
-        recall_event_id: str,
-        *,
-        outcome: str,
-        utility_delta: float,
-        details: dict[str, Any] | None = None,
-        commit: bool = True,
-    ) -> MemoryRecallEventRecord:
-        if outcome not in {"helpful", "neutral", "harmful"}:
-            raise MemoryValidationError("Unsupported Memory recall outcome")
-        if not -1.0 <= utility_delta <= 1.0:
-            raise MemoryValidationError("Memory recall utility delta must be between -1 and 1")
-        event = await self.session.get(MemoryRecallEventRecord, recall_event_id)
-        if event is None:
-            raise MemoryValidationError(f"Memory recall event not found: {recall_event_id}")
-        event.feedback = {
-            "outcome": outcome,
-            "utility_delta": utility_delta,
-            "details": details or {},
-        }
-        event.updated_at = utc_now()
-        await self.session.flush()
-        if commit:
-            await self.session.commit()
-        return event
-
-    async def materialize_expired(
-        self,
-        *,
-        as_of: datetime | None = None,
-        limit: int = 500,
-        commit: bool = True,
-    ) -> int:
-        instant = _as_utc(as_of) or utc_now()
-        records = list(
-            (
-                await self.session.execute(
-                    select(MemoryRecord)
-                    .where(
-                        MemoryRecord.status == MemoryStatus.active.value,
-                        MemoryRecord.expires_at.is_not(None),
-                        MemoryRecord.expires_at <= instant,
-                    )
-                    .order_by(MemoryRecord.expires_at, MemoryRecord.id)
-                    .limit(max(0, limit))
-                )
-            )
-            .scalars()
-            .all()
-        )
-        materialized = 0
-        for memory in records:
-            result = await self.session.execute(
-                update(MemoryRecord)
-                .where(
-                    MemoryRecord.id == memory.id,
-                    MemoryRecord.status == MemoryStatus.active.value,
-                    MemoryRecord.state_version == memory.state_version,
-                )
-                .values(
-                    status=MemoryStatus.expired.value,
-                    state_version=memory.state_version + 1,
-                    valid_to=instant,
-                    updated_at=instant,
-                )
-            )
-            if result.rowcount != 1:
-                continue
-            materialized += 1
-            self.session.add(
-                MemoryAuditRecord(
-                    memory_id=memory.id,
-                    event_type="expiration_materialized",
-                    actor="memory-retention",
-                    reason="expires_at_elapsed",
-                    payload={
-                        "expires_at": memory.expires_at.isoformat() if memory.expires_at else None
-                    },
-                    created_at=instant,
-                )
-            )
-        await self.session.flush()
-        if commit:
-            await self.session.commit()
-        return materialized

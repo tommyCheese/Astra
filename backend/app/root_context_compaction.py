@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from dataclasses import dataclass
 from typing import Any
 
 from app.context_compaction import (
@@ -11,12 +12,12 @@ from app.context_compaction import (
     evaluate_compaction_trigger,
     project_shadow_compaction,
 )
-from app.conversation_context import resolve_context_window
+from app.context_windows import resolve_context_window
 from app.core.config import Settings
+from app.model_clients.contracts import ModelClient
 from app.repositories.agent_executions import AgentExecutionRepository
 from app.repositories.context_compaction import ContextCompactionAttemptRepository
-from app.repositories.runs import RunRepository
-from app.runner.model_client import ModelClient
+from app.repositories.run_unit_of_work import RunUnitOfWork
 from app.schemas.context_compaction import (
     ContextEnvelope,
     ContextItem,
@@ -24,6 +25,16 @@ from app.schemas.context_compaction import (
     ContextReference,
     ContinuationManifest,
 )
+
+
+@dataclass
+class RootCompactionState:
+    envelope: ContextEnvelope
+    accounting: TokenAccountingService
+    body: list[ContextItem]
+    observations_by_id: dict[str, dict[str, Any]]
+    prior_checkpoint: dict[str, Any] | None
+    metadata: dict[str, Any]
 
 
 def _item_id(observation: dict[str, Any], index: int) -> str:
@@ -114,7 +125,7 @@ def _protected_prefix(
 
 async def compact_root_context(
     *,
-    repo: RunRepository,
+    repo: RunUnitOfWork,
     settings: Settings,
     model_client: ModelClient,
     run_id: str,
@@ -134,6 +145,16 @@ async def compact_root_context(
     root = await AgentExecutionRepository(repo.session).root_for_run(run_id)
     if root is None:
         return context
+    state = await _prepare_compaction_state(
+        repo, settings, root, run_id, goal, context, observations
+    )
+    await _perform_compaction(repo, model_client, run_id, context, policy, state)
+    return _project_compacted_context(context, state)
+
+
+async def _prepare_compaction_state(
+    repo, settings, root, run_id, goal, context, observations
+) -> RootCompactionState:
     accounting = TokenAccountingService()
     prefix = _protected_prefix(
         goal=goal,
@@ -141,36 +162,11 @@ async def compact_root_context(
         trusted=context.get("answer_mode") != "standard",
         accounting=accounting,
     )
-    body = []
-    observation_by_id: dict[str, dict[str, Any]] = {}
-    for index, observation in enumerate(observations):
-        item_id = _item_id(observation, index)
-        count, _, _ = accounting.count_value(observation)
-        body.append(
-            ContextItem(
-                id=item_id,
-                kind=str(observation.get("kind") or "observation"),
-                content=observation,
-                summary=str(observation.get("summary") or "")[:8_000] or None,
-                token_count=count,
-            )
-        )
-        observation_by_id[item_id] = observation
-
+    body, observations_by_id = _observation_items(observations, accounting)
     root_checkpoint = root.checkpoint if isinstance(root.checkpoint, dict) else {}
     prior_checkpoint = root_checkpoint.get("context_checkpoint")
     metadata = root_checkpoint.get("context_compaction") or {}
-    checkpoint_items: tuple[ContextItem, ...] = ()
-    if isinstance(prior_checkpoint, dict):
-        checkpoint_count, _, _ = accounting.count_value(prior_checkpoint)
-        checkpoint_items = (
-            ContextItem(
-                id=f"root-checkpoint:{root.id}",
-                kind="root_context_checkpoint_v2",
-                content=prior_checkpoint,
-                token_count=checkpoint_count,
-            ),
-        )
+    checkpoint_items = _checkpoint_items(root.id, prior_checkpoint, accounting)
     window = resolve_context_window(
         settings.model_provider,
         settings.model_name,
@@ -188,6 +184,17 @@ async def compact_root_context(
         checkpoint=checkpoint_items,
         body=body,
     )
+    run = await repo.require_run_core(run_id)
+    continuation = ContinuationManifest(
+        owner_type=ContextOwnerRole.root_execution,
+        owner_id=root.id,
+        state_version=root.state_version,
+        cancellation_epoch=root.cancellation_epoch,
+        window_number=int(metadata.get("window_number", 0)),
+        source_item_ids=tuple(item.id for item in body),
+        waiting_state=dict(run.waiting_state or {}),
+        remaining_budget=dict(root.budget_envelope or {}),
+    )
     envelope = ContextEnvelope(
         owner_type=ContextOwnerRole.root_execution,
         owner_id=root.id,
@@ -197,70 +204,101 @@ async def compact_root_context(
         compactable_body=tuple(body),
         reference_manifest=_reference_manifest(observations),
         accounting=token_accounting,
-        continuation=ContinuationManifest(
-            owner_type=ContextOwnerRole.root_execution,
-            owner_id=root.id,
-            state_version=root.state_version,
-            cancellation_epoch=root.cancellation_epoch,
-            window_number=int(metadata.get("window_number", 0)),
-            source_item_ids=tuple(item.id for item in body),
-            waiting_state=dict((await repo.require_run_core(run_id)).waiting_state or {}),
-            remaining_budget=dict(root.budget_envelope or {}),
+        continuation=continuation,
+    )
+    return RootCompactionState(
+        envelope, accounting, body, observations_by_id, prior_checkpoint, metadata
+    )
+
+
+def _observation_items(observations, accounting):
+    body = []
+    observations_by_id = {}
+    for index, observation in enumerate(observations):
+        item_id = _item_id(observation, index)
+        count, _, _ = accounting.count_value(observation)
+        body.append(
+            ContextItem(
+                id=item_id,
+                kind=str(observation.get("kind") or "observation"),
+                content=observation,
+                summary=str(observation.get("summary") or "")[:8_000] or None,
+                token_count=count,
+            )
+        )
+        observations_by_id[item_id] = observation
+    return body, observations_by_id
+
+
+def _checkpoint_items(root_id, checkpoint, accounting):
+    if not isinstance(checkpoint, dict):
+        return ()
+    checkpoint_count, _, _ = accounting.count_value(checkpoint)
+    return (
+        ContextItem(
+            id=f"root-checkpoint:{root_id}",
+            kind="root_context_checkpoint_v2",
+            content=checkpoint,
+            token_count=checkpoint_count,
         ),
     )
-    decision = evaluate_compaction_trigger(token_accounting, policy)
-    result = None
-    if decision.should_compact:
-        attempts = ContextCompactionAttemptRepository(repo.session)
-        if policy.shadow_mode:
-            projection = project_shadow_compaction(
-                token_accounting,
-                policy,
-                expected_checkpoint_tokens=max(256, token_accounting.protected_prefix_tokens // 4),
-            )
-            context["context_compaction"] = projection.model_dump(mode="json")
-        else:
-            result = await AgentContextCompactionService(attempts, accounting=accounting).compact(
-                envelope,
-                policy,
-                generate=model_client.generate_context_checkpoint,
-                install=attempts.install_agent_checkpoint,
-            )
-            await repo.add_event(
-                run_id,
-                "context.compaction",
-                {
-                    "owner_role": "root_execution",
-                    "status": result.status.value,
-                    "reasons": list(decision.reasons),
-                    "token_before": result.token_before,
-                    "token_after": result.token_after,
-                    "implementation": result.implementation.value
-                    if result.implementation
-                    else None,
-                    "retained_tail_size": len(result.retained_tail_ids),
-                    "failure_code": result.failure_code,
-                },
-            )
-            await repo.session.commit()
-            if result.checkpoint is not None:
-                prior_checkpoint = result.checkpoint.model_dump(mode="json")
-                metadata = {
-                    "source_item_ids": [item.id for item in body],
-                    "retained_tail_ids": list(result.retained_tail_ids),
-                }
 
-    if not isinstance(prior_checkpoint, dict):
-        return context
-    source_ids = set(metadata.get("source_item_ids", []))
-    retained_ids = set(metadata.get("retained_tail_ids", []))
-    visible_ids = retained_ids | (set(observation_by_id) - source_ids)
-    visible_observations = [observation_by_id[item.id] for item in body if item.id in visible_ids]
-    context["context_checkpoint"] = prior_checkpoint
-    context["observations"] = visible_observations
-    if isinstance(context.get("agent_state"), dict):
-        context["agent_state"] = {
-            **context["agent_state"],
-            "observations": visible_observations,
+
+async def _perform_compaction(repo, model_client, run_id, context, policy, state) -> None:
+    decision = evaluate_compaction_trigger(state.envelope.accounting, policy)
+    if not decision.should_compact:
+        return
+    attempts = ContextCompactionAttemptRepository(repo.session)
+    if policy.shadow_mode:
+        projection = project_shadow_compaction(
+            state.envelope.accounting,
+            policy,
+            expected_checkpoint_tokens=max(
+                256, state.envelope.accounting.protected_prefix_tokens // 4
+            ),
+        )
+        context["context_compaction"] = projection.model_dump(mode="json")
+        return
+    result = await AgentContextCompactionService(attempts, accounting=state.accounting).compact(
+        state.envelope,
+        policy,
+        generate=model_client.generate_context_checkpoint,
+        install=attempts.install_agent_checkpoint,
+    )
+    await repo.add_event(
+        run_id,
+        "context.compaction",
+        {
+            "owner_role": "root_execution",
+            "status": result.status.value,
+            "reasons": list(decision.reasons),
+            "token_before": result.token_before,
+            "token_after": result.token_after,
+            "implementation": result.implementation.value if result.implementation else None,
+            "retained_tail_size": len(result.retained_tail_ids),
+            "failure_code": result.failure_code,
+        },
+    )
+    await repo.session.commit()
+    if result.checkpoint is not None:
+        state.prior_checkpoint = result.checkpoint.model_dump(mode="json")
+        state.metadata = {
+            "source_item_ids": [item.id for item in state.body],
+            "retained_tail_ids": list(result.retained_tail_ids),
         }
+
+
+def _project_compacted_context(context, state: RootCompactionState):
+    if not isinstance(state.prior_checkpoint, dict):
+        return context
+    source_ids = set(state.metadata.get("source_item_ids", []))
+    retained_ids = set(state.metadata.get("retained_tail_ids", []))
+    visible_ids = retained_ids | (set(state.observations_by_id) - source_ids)
+    visible = [
+        state.observations_by_id[item.id] for item in state.body if item.id in visible_ids
+    ]
+    context["context_checkpoint"] = state.prior_checkpoint
+    context["observations"] = visible
+    if isinstance(context.get("agent_state"), dict):
+        context["agent_state"] = {**context["agent_state"], "observations": visible}
     return context

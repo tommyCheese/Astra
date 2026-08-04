@@ -2,10 +2,12 @@ from datetime import timedelta
 
 import pytest
 
-from app.db.models import ApprovalGrantRecord, utc_now
+from app.db.model_base import utc_now
+from app.db.models.permissions import ApprovalGrantRecord
 from app.permissions.engine import PermissionEngine
-from app.repositories.runs import RunRepository
-from app.schemas.agent import ExecutionMode
+from app.repositories.approval_contracts import ApprovalRequestCreate
+from app.repositories.run_unit_of_work import RunUnitOfWork
+from app.schemas.agent.types import ExecutionMode
 from app.schemas.permissions import (
     ActionEffectPlan,
     EffectItem,
@@ -260,7 +262,7 @@ def test_multi_effect_authorization_returns_every_consumed_lease():
 
 
 async def test_permission_lease_consumption_revocation_and_integrity_invalidation(session):
-    repository = RunRepository(session)
+    repository = RunUnitOfWork(session)
     run = await repository.create_task_run("Lease lifecycle", {})
     turn = await repository.create_agent_turn(
         run.id,
@@ -281,22 +283,24 @@ async def test_permission_lease_consumption_revocation_and_integrity_invalidatio
         status="awaiting_approval",
     )
     approval = await repository.create_approval_request(
-        run_id=run.id,
-        turn_id=turn.id,
-        tool_call_id=call.id,
-        tool_name="file_write",
-        tool_version="1",
-        frozen_input={"path": "reports/summary.md"},
-        input_hash="sha256:input",
-        preview="Write report",
-        permission="workspace_write",
-        impact="persistent_side_effect",
-        similar_matcher={
-            "kind": "resource_glob",
-            "resource_matcher": {"glob": "task://*/workspace/reports/**"},
-            "tool_version": "1",
-            "analyzer_digest": "sha256:one",
-        },
+        ApprovalRequestCreate(
+            run_id=run.id,
+            turn_id=turn.id,
+            tool_call_id=call.id,
+            tool_name="file_write",
+            tool_version="1",
+            frozen_input={"path": "reports/summary.md"},
+            input_hash="sha256:input",
+            preview="Write report",
+            permission="workspace_write",
+            impact="persistent_side_effect",
+            similar_matcher={
+                "kind": "resource_glob",
+                "resource_matcher": {"glob": "task://*/workspace/reports/**"},
+                "tool_version": "1",
+                "analyzer_digest": "sha256:one",
+            },
+        )
     )
     waiting = await repository.set_waiting_state(
         run.id,
@@ -342,7 +346,7 @@ async def test_permission_lease_consumption_revocation_and_integrity_invalidatio
 
 
 async def test_multiple_approval_grants_are_consumed_together(session):
-    repository = RunRepository(session)
+    repository = RunUnitOfWork(session)
     run = await repository.create_task_run("Atomic lease consumption", {})
     turn = await repository.create_agent_turn(
         run.id, 1, "call_tool", "compound", selected_tool="compound", phase="prepared"
@@ -358,17 +362,19 @@ async def test_multiple_approval_grants_are_consumed_together(session):
         status="awaiting_approval",
     )
     approval = await repository.create_approval_request(
-        run_id=run.id,
-        turn_id=turn.id,
-        tool_call_id=call.id,
-        tool_name="compound",
-        tool_version="1",
-        frozen_input={},
-        input_hash="hash",
-        preview="compound",
-        permission="workspace_write, artifact_write",
-        impact="moderate",
-        similar_matcher=None,
+        ApprovalRequestCreate(
+            run_id=run.id,
+            turn_id=turn.id,
+            tool_call_id=call.id,
+            tool_name="compound",
+            tool_version="1",
+            frozen_input={},
+            input_hash="hash",
+            preview="compound",
+            permission="workspace_write, artifact_write",
+            impact="moderate",
+            similar_matcher=None,
+        )
     )
     grants = [
         ApprovalGrantRecord(

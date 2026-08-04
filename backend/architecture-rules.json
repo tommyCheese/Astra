@@ -1,0 +1,35 @@
+{
+  "default_budget": {
+    "module_lines": 500,
+    "function_lines": 60,
+    "function_complexity": 10
+  },
+  "hard_limit": {
+    "module_lines": 800,
+    "function_lines": 100,
+    "function_complexity": 15
+  },
+  "forbidden_dependencies": [
+    {
+      "importer": "app.scheduling",
+      "imported": "app.api"
+    },
+    {
+      "importer": "app.repositories",
+      "imported": "app.runner"
+    },
+    {
+      "importer": "app.runner",
+      "imported": "app.subagents"
+    },
+    {
+      "importer": "app.subagents",
+      "imported": "app.runner"
+    }
+  ],
+  "typed_module_prefixes": [
+    "app.bootstrap",
+    "app.agent_runtime.contracts",
+    "app.run_management"
+  ]
+}

@@ -2,7 +2,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass, field
 from typing import Any
 
-from app.schemas.agent import NodeResult
+from app.schemas.agent.execution_state import NodeResult
 
 TRANSITIONS: dict[str, set[str]] = {
     "init": {"compile_policy"},

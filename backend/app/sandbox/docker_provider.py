@@ -82,7 +82,22 @@ class DockerSandboxProvider(SandboxProvider):
 
     async def create(self, request: SandboxRequest) -> SandboxHandle:
         network = "none" if not request.allow_internet_access else "bridge"
-        create_args = [
+        create_args = self._base_create_args(network)
+        create_args.extend(self._workspace_mount_args(request))
+        create_args.extend([request.template, "sleep", "infinity"])
+        _, stdout, _ = await self._run(*create_args)
+        container_id = stdout.decode().strip()
+        if not container_id:
+            raise SandboxError("render_failed", "Docker did not return a container ID")
+        try:
+            await self._run("start", container_id)
+        except BaseException:
+            await self._run("rm", "--force", container_id, timeout=10, check=False)
+            raise
+        return SandboxHandle(container_id, self.name)
+
+    def _base_create_args(self, network: str) -> list[str]:
+        return [
             "create",
             "--rm",
             "--network",
@@ -139,64 +154,47 @@ class DockerSandboxProvider(SandboxProvider):
             "--env",
             "PYTHONSAFEPATH=1",
         ]
+
+    def _workspace_mount_args(self, request: SandboxRequest) -> list[str]:
         if request.workspace_mode not in {"none", "read_only", "read_write"}:
             raise SandboxError("sandbox_policy_violation", "Invalid Workspace mount mode")
-        if request.workspace_mode != "none":
-            if request.workspace_dir is None:
+        if request.workspace_mode == "none":
+            return ["--tmpfs", "/workspace:rw,nosuid,nodev,mode=1777"]
+        workspace_dir = self._workspace_directory(request)
+        mount = f"type=bind,src={workspace_dir},dst=/workspace"
+        if request.workspace_mode == "read_only":
+            return ["--mount", f"{mount},readonly"]
+        return ["--mount", mount, *self._protected_mount_args(workspace_dir)]
+
+    @staticmethod
+    def _workspace_directory(request: SandboxRequest) -> Path:
+        if request.workspace_dir is None:
+            raise SandboxError("sandbox_policy_violation", "Workspace mount path is required")
+        workspace_dir = request.workspace_dir.resolve(strict=True)
+        if workspace_dir.is_symlink() or not workspace_dir.is_dir():
+            raise SandboxError("sandbox_policy_violation", "Workspace mount path is invalid")
+        return workspace_dir
+
+    @staticmethod
+    def _protected_mount_args(workspace_dir: Path) -> list[str]:
+        discovered = {
+            candidate
+            for candidate in workspace_dir.rglob("*")
+            if candidate.name in PROTECTED_WORKSPACE_PATHS
+        }
+        entries = discovered | {workspace_dir / path for path in PROTECTED_WORKSPACE_PATHS}
+        mounts = []
+        for candidate in sorted(entries):
+            protected = candidate.resolve(strict=True)
+            if not protected.is_relative_to(workspace_dir):
                 raise SandboxError(
-                    "sandbox_policy_violation", "Workspace mount path is required"
+                    "sandbox_policy_violation", "Protected Workspace path escaped its root"
                 )
-            workspace_dir = request.workspace_dir.resolve(strict=True)
-            if workspace_dir.is_symlink() or not workspace_dir.is_dir():
-                raise SandboxError(
-                    "sandbox_policy_violation", "Workspace mount path is invalid"
-                )
-            mount = f"type=bind,src={workspace_dir},dst=/workspace"
-            if request.workspace_mode == "read_only":
-                mount += ",readonly"
-            create_args.extend(["--mount", mount])
-            if request.workspace_mode == "read_write":
-                protected_entries = {
-                    candidate
-                    for candidate in workspace_dir.rglob("*")
-                    if candidate.name in PROTECTED_WORKSPACE_PATHS
-                } | {
-                    workspace_dir / relative
-                    for relative in PROTECTED_WORKSPACE_PATHS
-                }
-                for candidate in sorted(protected_entries):
-                    protected = candidate.resolve(strict=True)
-                    if not protected.is_relative_to(workspace_dir):
-                        raise SandboxError(
-                            "sandbox_policy_violation",
-                            "Protected Workspace path escaped its root",
-                        )
-                    relative = protected.relative_to(workspace_dir).as_posix()
-                    create_args.extend(
-                        [
-                            "--mount",
-                            f"type=bind,src={protected},dst=/workspace/{relative},readonly",
-                        ]
-                    )
-        else:
-            create_args.extend(["--tmpfs", "/workspace:rw,nosuid,nodev,mode=1777"])
-        create_args.extend(
-            [
-            request.template,
-            "sleep",
-            "infinity",
-            ]
-        )
-        _, stdout, _ = await self._run(*create_args)
-        container_id = stdout.decode().strip()
-        if not container_id:
-            raise SandboxError("render_failed", "Docker did not return a container ID")
-        try:
-            await self._run("start", container_id)
-        except BaseException:
-            await self._run("rm", "--force", container_id, timeout=10, check=False)
-            raise
-        return SandboxHandle(container_id, self.name)
+            relative = protected.relative_to(workspace_dir).as_posix()
+            mounts.extend(
+                ["--mount", f"type=bind,src={protected},dst=/workspace/{relative},readonly"]
+            )
+        return mounts
 
     async def upload(self, handle: SandboxHandle, local_path: Path, remote_path: str) -> None:
         await self._run(
@@ -220,9 +218,19 @@ class DockerSandboxProvider(SandboxProvider):
                 for key, value in environment.items()
                 if key
                 not in {
-                    "PATH", "HOME", "LANG", "LC_ALL", "BASH_ENV", "ENV",
-                    "PYTHONPATH", "PYTHONHOME", "NODE_OPTIONS", "RUBYOPT",
-                    "GIT_CONFIG_COUNT", "GIT_CONFIG_KEY_0", "GIT_CONFIG_VALUE_0",
+                    "PATH",
+                    "HOME",
+                    "LANG",
+                    "LC_ALL",
+                    "BASH_ENV",
+                    "ENV",
+                    "PYTHONPATH",
+                    "PYTHONHOME",
+                    "NODE_OPTIONS",
+                    "RUBYOPT",
+                    "GIT_CONFIG_COUNT",
+                    "GIT_CONFIG_KEY_0",
+                    "GIT_CONFIG_VALUE_0",
                 }
             },
             "PATH": "/usr/local/bin:/usr/bin:/bin",

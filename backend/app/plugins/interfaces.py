@@ -5,7 +5,8 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from app.plugins.contracts import PluginContribution, PluginDescriptor
-from app.schemas.agent import AgentObservation, ValidationOutcome
+from app.schemas.agent.execution_state import AgentObservation
+from app.schemas.agent.run_result import ValidationOutcome
 from app.schemas.permissions import ActionEffectPlan
 from app.tools.base import ToolExecutionContext, ToolSpec
 

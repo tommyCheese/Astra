@@ -55,31 +55,8 @@ class ChartRequest(BaseModel):
 
     @staticmethod
     def _normalize_inline_data(data: Any) -> Any:
-        if isinstance(data, list) and data and all(isinstance(row, dict) for row in data):
-            columns = list(data[0])
-            if columns and all(set(row) == set(columns) for row in data):
-                return {
-                    "columns": columns,
-                    "rows": [[row[column] for column in columns] for row in data],
-                }
-        if (
-            isinstance(data, dict)
-            and "columns" not in data
-            and "rows" not in data
-            and data
-            and all(isinstance(column, list) for column in data.values())
-        ):
-            lengths = {len(column) for column in data.values()}
-            if len(lengths) == 1 and lengths != {0}:
-                columns = list(data)
-                return {
-                    "columns": columns,
-                    "rows": [
-                        list(row)
-                        for row in zip(*(data[column] for column in columns), strict=True)
-                    ],
-                }
-        return data
+        records = _normalize_record_rows(data)
+        return records if records is not None else _normalize_column_data(data)
 
     @model_validator(mode="after")
     def validate_request(self):
@@ -304,34 +281,11 @@ class ChartRenderTool(Tool):
             raise ToolExecutionError(
                 "sandbox_policy_violation", "chart.render requires a Task Workspace"
             )
-        normalized = validate_workspace_path(relative_path)
-        root = workspace_path.resolve(strict=True)
-        try:
-            path = (root / normalized).resolve(strict=True)
-        except FileNotFoundError as exc:
-            raise ToolExecutionError("invalid_input", "Workspace CSV was not found") from exc
-        if (
-            not path.is_relative_to(root)
-            or path.is_symlink()
-            or not path.is_file()
-            or path.suffix.lower() != ".csv"
-        ):
-            raise ToolExecutionError("sandbox_policy_violation", "Invalid Workspace CSV path")
+        path = _validated_workspace_csv_path(relative_path, workspace_path)
         if path.stat().st_size > 5 * 1024 * 1024:
             raise ToolExecutionError("invalid_input", "Workspace CSV is too large")
         try:
-            with path.open("r", encoding="utf-8-sig", newline="") as handle:
-                reader = csv.reader(handle)
-                columns = next(reader)
-                if not columns or len(columns) > 64 or len(set(columns)) != len(columns):
-                    raise ValueError("Invalid CSV columns")
-                rows = []
-                for index, row in enumerate(reader):
-                    if index >= 10_000:
-                        raise ValueError("Too many CSV rows")
-                    if len(row) != len(columns):
-                        raise ValueError("CSV row width mismatch")
-                    rows.append([ChartRenderTool._coerce_csv_value(value) for value in row])
+            columns, rows = _read_chart_csv(path)
         except (OSError, UnicodeError, csv.Error, ValueError) as exc:
             raise ToolExecutionError("invalid_input", "Workspace CSV is invalid") from exc
         if not rows:
@@ -350,3 +304,65 @@ class ChartRenderTool(Tool):
                 return float(stripped)
             except ValueError:
                 return value
+
+
+def _normalize_record_rows(data: Any) -> dict | None:
+    if not isinstance(data, list) or not data or not all(isinstance(row, dict) for row in data):
+        return None
+    columns = list(data[0])
+    if not columns or not all(set(row) == set(columns) for row in data):
+        return None
+    return {"columns": columns, "rows": [[row[column] for column in columns] for row in data]}
+
+
+def _normalize_column_data(data: Any) -> Any:
+    if not _is_column_data(data):
+        return data
+    lengths = {len(column) for column in data.values()}
+    if len(lengths) != 1 or lengths == {0}:
+        return data
+    columns = list(data)
+    rows = [list(row) for row in zip(*(data[column] for column in columns), strict=True)]
+    return {"columns": columns, "rows": rows}
+
+
+def _is_column_data(data: Any) -> bool:
+    if not isinstance(data, dict) or not data:
+        return False
+    if "columns" in data or "rows" in data:
+        return False
+    return all(isinstance(column, list) for column in data.values())
+
+
+def _validated_workspace_csv_path(relative_path: str, workspace_path: Path) -> Path:
+    normalized = validate_workspace_path(relative_path)
+    root = workspace_path.resolve(strict=True)
+    try:
+        path = (root / normalized).resolve(strict=True)
+    except FileNotFoundError as error:
+        raise ToolExecutionError("invalid_input", "Workspace CSV was not found") from error
+    invalid_path = (
+        not path.is_relative_to(root)
+        or path.is_symlink()
+        or not path.is_file()
+        or path.suffix.lower() != ".csv"
+    )
+    if invalid_path:
+        raise ToolExecutionError("sandbox_policy_violation", "Invalid Workspace CSV path")
+    return path
+
+
+def _read_chart_csv(path: Path) -> tuple[list[str], list[list[Any]]]:
+    with path.open("r", encoding="utf-8-sig", newline="") as handle:
+        reader = csv.reader(handle)
+        columns = next(reader)
+        if not columns or len(columns) > 64 or len(set(columns)) != len(columns):
+            raise ValueError("Invalid CSV columns")
+        rows = []
+        for index, row in enumerate(reader):
+            if index >= 10_000:
+                raise ValueError("Too many CSV rows")
+            if len(row) != len(columns):
+                raise ValueError("CSV row width mismatch")
+            rows.append([ChartRenderTool._coerce_csv_value(value) for value in row])
+    return columns, rows

@@ -7,7 +7,8 @@ from urllib.parse import urlsplit, urlunsplit
 
 from sqlalchemy import select
 
-from app.db.models import ResourceLeaseRecord, utc_now
+from app.db.model_base import utc_now
+from app.db.models.executions import ResourceLeaseRecord
 from app.repositories.executions import NodeExecutionRepository
 from app.schemas.permissions import ActionEffectPlan, EffectKind
 

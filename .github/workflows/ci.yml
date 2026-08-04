@@ -38,9 +38,13 @@ jobs:
           python-version: "3.12"
           cache: pip
           cache-dependency-path: backend/pyproject.toml
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
       - run: python -m pip install --upgrade pip
       - run: python -m pip install -e ".[dev]"
-      - run: ruff check app tests
+      - run: npm install --global @fission-ai/openspec@1.4.1
+      - run: bash scripts/check_backend_quality.sh
       - run: pytest -q
 
   frontend:

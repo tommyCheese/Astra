@@ -2,9 +2,10 @@ import asyncio
 
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from app.db.models import Base, RunEventRecord
+from app.db.model_base import Base
+from app.db.models.runs import RunEventRecord
 from app.db.session import EventAwareAsyncSession
-from app.repositories.runs import RunRepository
+from app.repositories.run_unit_of_work import RunUnitOfWork
 from app.runtime_events import (
     MAX_PUBLISHED_EVENTS_PER_RUN,
     PublishedRunEvent,
@@ -131,7 +132,7 @@ async def test_event_aware_session_notifies_only_after_commit():
         class_=EventAwareAsyncSession,
     )
     async with sessions() as session:
-        repo = RunRepository(session)
+        repo = RunUnitOfWork(session)
         run = await repo.create_task_run("通知测试", {"provider": "mock"})
         version = run_event_broker.subscribe(run.id)
 
@@ -176,7 +177,7 @@ async def test_event_aware_session_discards_rolled_back_notifications():
         class_=EventAwareAsyncSession,
     )
     async with sessions() as session:
-        repo = RunRepository(session)
+        repo = RunUnitOfWork(session)
         run = await repo.create_task_run("回滚测试", {"provider": "mock"})
         run_id = run.id
         version = run_event_broker.subscribe(run_id)

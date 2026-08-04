@@ -5,14 +5,16 @@ from pydantic import ValidationError as PydanticValidationError
 
 from app.context_commands import execute_system_command
 from app.context_compaction.service import AgentContextCompactionService, CompactionResult
+from app.context_windows import resolve_context_window
 from app.conversation_context import (
     ConversationContextManager,
     estimate_tokens,
-    resolve_context_window,
 )
 from app.core.config import Settings
 from app.core.errors import StateError
-from app.db.models import RunRecord, TaskRecord, utc_now
+from app.db.model_base import utc_now
+from app.db.models.conversations import TaskRecord
+from app.db.models.runs import RunRecord
 from app.schemas.context_compaction import CompactionLifecycleStatus
 from app.schemas.models import RunModelConfig
 
@@ -31,16 +33,12 @@ def test_context_window_resolution_tracks_official_catalog_and_fallback_metadata
     assert latest.max_output_tokens == 128_000
     assert latest.source == "catalog"
     assert latest.verified is True
-    assert latest.documentation_url == (
-        "https://developers.openai.com/api/docs/models/gpt-5.6-sol"
-    )
+    assert latest.documentation_url == ("https://developers.openai.com/api/docs/models/gpt-5.6-sol")
 
     deepseek = resolve_context_window("deepseek", "deepseek-v4-pro")
     assert deepseek.tokens == 1_000_000
     assert deepseek.max_output_tokens == 384_000
-    assert deepseek.documentation_url == (
-        "https://api-docs.deepseek.com/quick_start/pricing/"
-    )
+    assert deepseek.documentation_url == ("https://api-docs.deepseek.com/quick_start/pricing/")
 
     grok = resolve_context_window("xai", "grok-4.5")
     assert grok.tokens == 500_000
@@ -261,8 +259,7 @@ async def test_status_reports_adaptive_context_breakdown(session):
     assert breakdown["conversation"]["tokens"] > 0
     assert breakdown["draft"]["tokens"] > 0
     assert breakdown["output_reserve"]["tokens"] == settings.context_output_reserve_tokens
-    assert sum(
-        item["tokens"]
-        for item in status["breakdown"]
-        if item["kind"] != "output_reserve"
-    ) == status["used_tokens"]
+    assert (
+        sum(item["tokens"] for item in status["breakdown"] if item["kind"] != "output_reserve")
+        == status["used_tokens"]
+    )

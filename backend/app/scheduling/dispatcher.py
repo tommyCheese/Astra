@@ -7,13 +7,16 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.api.runs import _schedule_run
 from app.core.config import Settings
 from app.core.errors import AstraError
-from app.db.models import RunRecord, ScheduledJobRecord, ScheduledJobRunRecord, utc_now
+from app.db.model_base import utc_now
+from app.db.models.runs import RunRecord
+from app.db.models.scheduling import ScheduledJobRecord, ScheduledJobRunRecord
 from app.repositories.workspaces import WorkspaceRepository
-from app.run_creation import RunCreationService
-from app.schemas.agent import AnswerMode, CreateRunRequest
+from app.run_management.application import RunApplicationService
+from app.run_management.contracts import RunDispatcher
+from app.schemas.agent.api_views import CreateRunRequest
+from app.schemas.agent.types import AnswerMode
 from app.schemas.models import RunModelConfig
 from app.schemas.schedules import ScheduledExecutionConfig
 
@@ -43,9 +46,11 @@ class ScheduledRunDispatcher:
         self,
         settings: Settings,
         session_factory: async_sessionmaker[AsyncSession],
+        run_dispatcher: RunDispatcher,
     ):
         self.settings = settings
         self.session_factory = session_factory
+        self.run_dispatcher = run_dispatcher
 
     async def dispatch(self, schedule_run_id: str) -> ScheduledJobRunRecord:
         async with self.session_factory() as session:
@@ -64,36 +69,18 @@ class ScheduledRunDispatcher:
                     code="SCHEDULE_TARGET_REQUIRED",
                     message="任务没有可用的结果对话，请先重新绑定。",
                 )
-            if job.kind == "heartbeat":
-                if not self._heartbeat_is_active(job, schedule_run.scheduled_for):
-                    return await self._defer(
-                        session,
-                        schedule_run,
-                        status="deferred_inactive",
-                        reason="outside_active_hours",
-                    )
-                busy = await session.scalar(
-                    select(RunRecord.id)
-                    .where(
-                        RunRecord.task_id == job.target_task_id,
-                        RunRecord.status.not_in(TERMINAL_RUN_STATUSES),
-                    )
-                    .limit(1)
-                )
-                if busy is not None:
-                    return await self._defer(
-                        session,
-                        schedule_run,
-                        status="deferred_busy",
-                        reason="target_conversation_busy",
-                    )
+            heartbeat_deferral = await self._defer_unavailable_heartbeat(
+                session,
+                job,
+                schedule_run,
+            )
+            if heartbeat_deferral is not None:
+                return heartbeat_deferral
 
             # A task workspace is unique by task_id. Creating or resolving it before
             # the Run makes workspace reuse an explicit dispatch invariant.
             try:
-                workspace = await WorkspaceRepository(session).get_or_create(
-                    job.target_task_id
-                )
+                workspace = await WorkspaceRepository(session).get_or_create(job.target_task_id)
             except ValueError:
                 return await self._block(
                     session,
@@ -113,9 +100,11 @@ class ScheduledRunDispatcher:
                     permission_bundle=execution.permission_bundle,
                     skill_ids=execution.skill_ids,
                 )
-                created, run_settings = await RunCreationService(
-                    session, self.settings
-                ).create(request, commit=False)
+                prepared_run = await RunApplicationService(
+                    session,
+                    self.settings,
+                    self.run_dispatcher,
+                ).prepare(request, commit=False)
             except (AstraError, ValueError) as exc:
                 await session.rollback()
                 return await self._block(
@@ -125,6 +114,7 @@ class ScheduledRunDispatcher:
                     message=getattr(getattr(exc, "payload", None), "message", str(exc)),
                 )
 
+            created = prepared_run.response
             run = await session.get(RunRecord, created.run_id)
             assert run is not None
             trigger = {
@@ -146,7 +136,7 @@ class ScheduledRunDispatcher:
             schedule_run.outcome = {"trigger": trigger}
             await session.commit()
 
-            engine_task = _schedule_run(created.run_id, run_settings)
+            engine_task = self.run_dispatcher.start(created.run_id, prepared_run.settings)
             engine_task.add_done_callback(
                 lambda _completed: self._schedule_finalizer(
                     schedule_run.id,
@@ -163,6 +153,38 @@ class ScheduledRunDispatcher:
         _finalizer_tasks.add(task)
         task.add_done_callback(_finalizer_tasks.discard)
 
+    async def _defer_unavailable_heartbeat(
+        self,
+        session: AsyncSession,
+        job: ScheduledJobRecord,
+        schedule_run: ScheduledJobRunRecord,
+    ) -> ScheduledJobRunRecord | None:
+        if job.kind != "heartbeat":
+            return None
+        if not self._heartbeat_is_active(job, schedule_run.scheduled_for):
+            return await self._defer(
+                session,
+                schedule_run,
+                status="deferred_inactive",
+                reason="outside_active_hours",
+            )
+        active_run_id = await session.scalar(
+            select(RunRecord.id)
+            .where(
+                RunRecord.task_id == job.target_task_id,
+                RunRecord.status.not_in(TERMINAL_RUN_STATUSES),
+            )
+            .limit(1)
+        )
+        if active_run_id is None:
+            return None
+        return await self._defer(
+            session,
+            schedule_run,
+            status="deferred_busy",
+            reason="target_conversation_busy",
+        )
+
     async def _finalize(self, schedule_run_id: str, run_id: str) -> None:
         async with self.session_factory() as session:
             schedule_run = await session.get(ScheduledJobRunRecord, schedule_run_id)
@@ -172,8 +194,7 @@ class ScheduledRunDispatcher:
             status = run.status if run.status in TERMINAL_RUN_STATUSES else "failed"
             trigger = (run.execution_profile or {}).get("trigger") or {}
             silent_heartbeat = (
-                trigger.get("type") == "heartbeat"
-                and (run.summary or "").strip() == "HEARTBEAT_OK"
+                trigger.get("type") == "heartbeat" and (run.summary or "").strip() == "HEARTBEAT_OK"
             )
             schedule_run.status = (
                 "silent_ok"

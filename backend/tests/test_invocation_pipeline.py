@@ -25,7 +25,7 @@ from app.runner.invocation import (
     InvocationRuntimeContext,
     InvocationStatus,
 )
-from app.schemas.agent import AgentObservation
+from app.schemas.agent.execution_state import AgentObservation
 from app.tools.base import Tool, ToolExecutionContext, ToolResultEnvelope, ToolSpec
 
 

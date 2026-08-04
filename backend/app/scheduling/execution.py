@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings
 from app.core.errors import ValidationError
-from app.db.models import RunRecord
+from app.db.models.runs import RunRecord
 from app.permissions.governance import verify_permission_bundle
 from app.schemas.permissions import PermissionBundle
 from app.schemas.schedules import ScheduledExecutionConfig

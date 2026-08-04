@@ -6,7 +6,10 @@ from sqlalchemy import select
 from app.api.permissions import library_deliverables
 from app.api.schedules import list_schedule_deliverables
 from app.artifacts import LocalArtifactStore
-from app.db.models import ArtifactRecord, RunRecord, TaskRecord, ToolCallRecord
+from app.db.models.conversations import TaskRecord
+from app.db.models.permissions import ToolCallRecord
+from app.db.models.runs import RunRecord
+from app.db.models.workspaces import ArtifactRecord
 from app.repositories.schedules import ScheduleRepository
 from app.repositories.workspaces import WorkspaceRepository
 from app.schemas.schedules import ScheduledJobCreate

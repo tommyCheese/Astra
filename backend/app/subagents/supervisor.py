@@ -9,11 +9,11 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.artifacts import ArtifactService, LocalArtifactStore
 from app.core.config import Settings
-from app.db.models import AgentExecutionRecord
+from app.db.models.executions import AgentExecutionRecord
 from app.repositories.agent_executions import AgentExecutionRepository
-from app.repositories.runs import RunRepository
+from app.repositories.run_unit_of_work import RunUnitOfWork
 from app.repositories.tool_settings import ToolSettingsRepository, default_tool_states
-from app.schemas.agent import EffectiveSubagentPolicy
+from app.schemas.agent.run_policy import EffectiveSubagentPolicy
 from app.schemas.subagents import (
     DelegationContract,
     SubagentContextManifest,
@@ -149,7 +149,7 @@ class SubagentSupervisor:
             execution.id,
             worker_id=execution.worker_id or f"subagent:{execution.id}",
             artifact_service=ArtifactService(
-                RunRepository(session),
+                RunUnitOfWork(session),
                 LocalArtifactStore(self.settings.artifact_store_path),
                 max_files=self.settings.artifact_max_files,
                 max_bytes=self.settings.artifact_max_bytes,
@@ -241,7 +241,7 @@ class SubagentSupervisor:
                 parent_state_version=parent_state_version,
                 result=payload,
             )
-            await RunRepository(self.session).add_event(
+            await RunUnitOfWork(self.session).add_event(
                 self.run_id,
                 "subagent.join.consumed",
                 {
@@ -264,9 +264,7 @@ class SubagentSupervisor:
         return observations
 
     async def has_pending(self) -> bool:
-        joins = await SubagentJoinService(self.session).ready_for_parent(
-            self.parent_execution_id
-        )
+        joins = await SubagentJoinService(self.session).ready_for_parent(self.parent_execution_id)
         return any(join.status != "consumed" for join in joins)
 
     async def wait(self) -> None:

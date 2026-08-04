@@ -5,7 +5,8 @@ import pytest
 from app.automation_commands import AutomationCommandService
 from app.core.config import Settings
 from app.core.errors import ValidationError
-from app.db.models import RunRecord, TaskRecord
+from app.db.models.conversations import TaskRecord
+from app.db.models.runs import RunRecord
 from app.permissions.governance import permission_bundle_digest
 from app.schemas.permissions import PermissionBundle
 
@@ -34,9 +35,7 @@ async def conversation_with_permission_bundle(session, *, secret="test-secret"):
         expires_at=now + timedelta(days=1),
         digest="",
     )
-    bundle = bundle.model_copy(
-        update={"digest": permission_bundle_digest(bundle, secret)}
-    )
+    bundle = bundle.model_copy(update={"digest": permission_bundle_digest(bundle, secret)})
     session.add(
         RunRecord(
             task_id=task.id,
@@ -130,7 +129,7 @@ async def test_heartbeat_commands_upsert_stable_system_schedule(session):
     other_task = await conversation_with_permission_bundle(session)
     _, moved = await service.execute_heartbeat(other_task, "on --every 2h")
     assert moved["heartbeat"]["id"] == heartbeat_id
-    stored = await service.repo.get_heartbeat()
+    stored = await service.heartbeats.get()
     assert stored is not None
     assert stored.system_key == "heartbeat:global"
     assert stored.target_task_id == other_task.id

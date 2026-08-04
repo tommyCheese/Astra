@@ -7,14 +7,11 @@ from typing import Any
 from sqlalchemy import or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import (
-    AgentExecutionRecord,
-    AgentJoinRecord,
-    ArtifactRecord,
-    EvidenceRecord,
-    ToolCallRecord,
-    utc_now,
-)
+from app.db.model_base import utc_now
+from app.db.models.executions import AgentExecutionRecord, AgentJoinRecord
+from app.db.models.permissions import ToolCallRecord
+from app.db.models.runs import EvidenceRecord
+from app.db.models.workspaces import ArtifactRecord
 from app.repositories.agent_executions import TERMINAL_AGENT_STATUSES, AgentExecutionRepository
 from app.schemas.subagents import (
     DelegationContract,
@@ -29,6 +26,74 @@ from app.tools.base import validate_json_schema
 
 class SubagentResultValidationError(ValueError):
     pass
+
+
+def _validated_execution_result(execution):
+    if execution is None or execution.parent_execution_id is None:
+        raise SubagentResultValidationError("Child AgentExecution is unavailable")
+    contract = DelegationContract.model_validate(execution.contract)
+    if not execution.result:
+        raise SubagentResultValidationError("Child result is missing")
+    result = SubagentResult.model_validate(execution.result)
+    if result.status.value != execution.status:
+        raise SubagentResultValidationError("Child result status does not match execution")
+    if result.provenance.get("agent_execution_id") not in {None, execution.id}:
+        raise SubagentResultValidationError("Child result provenance crosses execution lineage")
+    if result.provenance.get("contract_hash") not in {None, contract.contract_hash}:
+        raise SubagentResultValidationError("Child result contract hash is invalid")
+    if result.status not in {
+        SubagentExecutionStatus.completed, SubagentExecutionStatus.completed_with_warnings,
+    }:
+        raise SubagentResultValidationError(
+            f"Child is not successfully complete: {result.status.value}"
+        )
+    try:
+        validate_json_schema(result.outputs, contract.request.output_schema, path="outputs")
+    except ValueError as exc:
+        raise SubagentResultValidationError("Child output schema is invalid") from exc
+    return contract, result
+
+
+def _validate_claims_and_completion(result, found_evidence) -> None:
+    for claim in result.claims:
+        if claim.get("material", True) and not claim.get("evidence_refs"):
+            raise SubagentResultValidationError(
+                "Material child claim is missing Evidence references"
+            )
+        if any(ref not in found_evidence for ref in claim.get("evidence_refs", [])):
+            raise SubagentResultValidationError(
+                "Child claim references Evidence outside the validated result"
+            )
+    if result.completion.get("state") not in {"completed", "completed_with_warnings"}:
+        raise SubagentResultValidationError("Child Completion Gate did not approve success")
+
+
+def _join_partitions(child_ids, policy, required_ids, optional_ids):
+    required_source = required_ids
+    if required_source is None:
+        required_source = child_ids if policy == SubagentJoinPolicy.required else []
+    required = list(dict.fromkeys(required_source))
+    optional_source = optional_ids
+    if optional_source is None:
+        optional_source = [item for item in child_ids if item not in required]
+    optional = list(dict.fromkeys(optional_source))
+    if set(required) | set(optional) != set(child_ids) or set(required) & set(optional):
+        raise ValueError("Join required/optional sets must partition child executions")
+    return required, optional
+
+
+def _join_status(join, successful, failed, waiting):
+    if join.policy == SubagentJoinPolicy.first_success.value:
+        if successful:
+            losers = [item for item in join.child_execution_ids if item not in successful]
+            return "ready", losers
+        return ("waiting" if waiting else "blocked"), []
+    required = set(join.required_execution_ids)
+    if required & set(failed):
+        return "blocked", []
+    if required & set(waiting):
+        return "waiting", []
+    return "ready", []
 
 
 @dataclass(frozen=True)
@@ -47,81 +112,13 @@ class SubagentResultValidator:
 
     async def validate(self, execution_id: str) -> ValidatedSubagentResult:
         execution = await self.session.get(AgentExecutionRecord, execution_id)
-        if execution is None or execution.parent_execution_id is None:
-            raise SubagentResultValidationError("Child AgentExecution is unavailable")
-        contract = DelegationContract.model_validate(execution.contract)
-        if not execution.result:
-            raise SubagentResultValidationError("Child result is missing")
-        result = SubagentResult.model_validate(execution.result)
-        if result.status.value != execution.status:
-            raise SubagentResultValidationError("Child result status does not match execution")
-        if result.provenance.get("agent_execution_id") not in {None, execution.id}:
-            raise SubagentResultValidationError("Child result provenance crosses execution lineage")
-        if result.provenance.get("contract_hash") not in {None, contract.contract_hash}:
-            raise SubagentResultValidationError("Child result contract hash is invalid")
-        if result.status not in {
-            SubagentExecutionStatus.completed,
-            SubagentExecutionStatus.completed_with_warnings,
-        }:
-            raise SubagentResultValidationError(
-                f"Child is not successfully complete: {result.status.value}"
-            )
-        try:
-            validate_json_schema(result.outputs, contract.request.output_schema, path="outputs")
-        except ValueError as exc:
-            raise SubagentResultValidationError("Child output schema is invalid") from exc
+        contract, result = _validated_execution_result(execution)
         artifact_ids = [item.id for item in result.artifacts]
-        artifacts = list(
-            (
-                await self.session.scalars(
-                    select(ArtifactRecord).where(ArtifactRecord.id.in_(artifact_ids))
-                )
-            ).all()
-        ) if artifact_ids else []
-        if {item.id for item in artifacts} != set(artifact_ids):
-            raise SubagentResultValidationError("Child result references a missing Artifact")
-        if any(
-            item.run_id != execution.run_id
-            or item.agent_execution_id != execution.id
-            or item.security_status != "verified"
-            for item in artifacts
-        ):
-            raise SubagentResultValidationError(
-                "Child Artifact is unverified or outside execution lineage"
-            )
+        await self._validate_artifacts(execution, artifact_ids)
         evidence_ids = [item.id for item in result.evidence_refs]
-        evidence = list(
-            (
-                await self.session.scalars(
-                    select(EvidenceRecord).where(
-                        or_(
-                            EvidenceRecord.id.in_(evidence_ids),
-                            EvidenceRecord.evidence_id.in_(evidence_ids),
-                        )
-                    )
-                )
-            ).all()
-        ) if evidence_ids else []
+        evidence = await self._validated_evidence(execution, evidence_ids)
         found_evidence = {value for item in evidence for value in (item.id, item.evidence_id)}
-        if any(item not in found_evidence for item in evidence_ids):
-            raise SubagentResultValidationError("Child result references missing Evidence")
-        if any(
-            item.run_id != execution.run_id or item.agent_execution_id != execution.id
-            for item in evidence
-        ):
-            raise SubagentResultValidationError("Child Evidence crosses execution lineage")
-        for claim in result.claims:
-            if claim.get("material", True) and not claim.get("evidence_refs"):
-                raise SubagentResultValidationError(
-                    "Material child claim is missing Evidence references"
-                )
-            if any(ref not in found_evidence for ref in claim.get("evidence_refs", [])):
-                raise SubagentResultValidationError(
-                    "Child claim references Evidence outside the validated result"
-                )
-        completion_state = result.completion.get("state")
-        if completion_state not in {"completed", "completed_with_warnings"}:
-            raise SubagentResultValidationError("Child Completion Gate did not approve success")
+        _validate_claims_and_completion(result, found_evidence)
         return ValidatedSubagentResult(
             execution_id=execution.id,
             contract=contract,
@@ -132,6 +129,37 @@ class SubagentResultValidator:
             if result.status == SubagentExecutionStatus.completed_with_warnings
             else (),
         )
+
+    async def _validate_artifacts(self, execution, artifact_ids) -> None:
+        artifacts = list((await self.session.scalars(
+            select(ArtifactRecord).where(ArtifactRecord.id.in_(artifact_ids))
+        )).all()) if artifact_ids else []
+        if {item.id for item in artifacts} != set(artifact_ids):
+            raise SubagentResultValidationError("Child result references a missing Artifact")
+        if any(
+            item.run_id != execution.run_id
+            or item.agent_execution_id != execution.id
+            or item.security_status != "verified" for item in artifacts
+        ):
+            raise SubagentResultValidationError(
+                "Child Artifact is unverified or outside execution lineage"
+            )
+
+    async def _validated_evidence(self, execution, evidence_ids):
+        evidence = list((await self.session.scalars(
+            select(EvidenceRecord).where(or_(
+                EvidenceRecord.id.in_(evidence_ids), EvidenceRecord.evidence_id.in_(evidence_ids),
+            ))
+        )).all()) if evidence_ids else []
+        found = {value for item in evidence for value in (item.id, item.evidence_id)}
+        if any(item not in found for item in evidence_ids):
+            raise SubagentResultValidationError("Child result references missing Evidence")
+        if any(
+            item.run_id != execution.run_id or item.agent_execution_id != execution.id
+            for item in evidence
+        ):
+            raise SubagentResultValidationError("Child Evidence crosses execution lineage")
+        return evidence
 
 
 @dataclass(frozen=True)
@@ -187,24 +215,9 @@ class SubagentJoinService:
             raise ValueError("Join parent or child is unavailable")
         if any(item.parent_execution_id != parent.id for item in children):
             raise ValueError("Join cannot cross direct parent lineage")
-        required = list(
-            dict.fromkeys(
-                required_execution_ids
-                if required_execution_ids is not None
-                else child_ids
-                if policy == SubagentJoinPolicy.required
-                else []
-            )
+        required, optional = _join_partitions(
+            child_ids, policy, required_execution_ids, optional_execution_ids
         )
-        optional = list(
-            dict.fromkeys(
-                optional_execution_ids
-                if optional_execution_ids is not None
-                else [item for item in child_ids if item not in required]
-            )
-        )
-        if set(required) | set(optional) != set(child_ids) or set(required) & set(optional):
-            raise ValueError("Join required/optional sets must partition child executions")
         join = AgentJoinRecord(
             run_id=parent.run_id,
             parent_execution_id=parent.id,
@@ -335,24 +348,7 @@ class SubagentJoinService:
             except SubagentResultValidationError as exc:
                 failed.append(child_id)
                 validation_errors[child_id] = str(exc)
-        losers: list[str] = []
-        if join.policy == SubagentJoinPolicy.first_success.value:
-            if successful:
-                status = "ready"
-                losers = [item for item in join.child_execution_ids if item not in successful]
-            elif waiting:
-                status = "waiting"
-            else:
-                status = "blocked"
-        else:
-            required_failed = set(join.required_execution_ids) & set(failed)
-            required_waiting = set(join.required_execution_ids) & set(waiting)
-            if required_failed:
-                status = "blocked"
-            elif required_waiting:
-                status = "waiting"
-            else:
-                status = "ready"
+        status, losers = _join_status(join, successful, failed, waiting)
         result = {
             "successful_ids": successful,
             "failed_ids": failed,
@@ -446,53 +442,9 @@ class SubagentResultMerger:
         for item in results:
             source = item.execution_id
             for key, value in item.result.outputs.items():
-                fact = {
-                    "key": key,
-                    "value": deepcopy(value),
-                    "verified": bool(item.evidence_ids),
-                    "source_agent_execution_id": source,
-                    "evidence_refs": list(item.evidence_ids),
-                }
-                previous = facts_by_key.get(key)
-                if previous is not None and previous["value"] != fact["value"]:
-                    conflicts.append(
-                        {
-                            "kind": "fact_conflict",
-                            "key": key,
-                            "values": [previous, fact],
-                        }
-                    )
-                elif previous is None:
-                    facts_by_key[key] = fact
+                _merge_fact(facts_by_key, conflicts, key, value, item)
             for claim in item.result.claims:
-                key = str(claim.get("key") or claim.get("id") or claim.get("subject") or claim.get("text"))
-                normalized = {
-                    **deepcopy(claim),
-                    "source_agent_execution_ids": [source],
-                }
-                previous = claims_by_key.get(key)
-                previous_value = (previous or {}).get("value", (previous or {}).get("text"))
-                value = normalized.get("value", normalized.get("text"))
-                if previous is not None and previous_value != value:
-                    conflicts.append(
-                        {
-                            "kind": "claim_conflict",
-                            "key": key,
-                            "values": [previous, normalized],
-                        }
-                    )
-                elif previous is not None:
-                    previous["evidence_refs"] = list(
-                        dict.fromkeys(
-                            [
-                                *previous.get("evidence_refs", []),
-                                *normalized.get("evidence_refs", []),
-                            ]
-                        )
-                    )
-                    previous["source_agent_execution_ids"].append(source)
-                else:
-                    claims_by_key[key] = normalized
+                _merge_claim(claims_by_key, conflicts, claim, source)
             artifacts.extend(item.artifact_ids)
             evidence.extend(item.evidence_ids)
             open_issues.extend(item.result.open_issues)
@@ -507,6 +459,38 @@ class SubagentResultMerger:
             warnings=tuple(dict.fromkeys(warnings)),
             source_execution_ids=tuple(item.execution_id for item in results),
         )
+
+
+def _merge_fact(facts, conflicts, key, value, item) -> None:
+    fact = {
+        "key": key, "value": deepcopy(value), "verified": bool(item.evidence_ids),
+        "source_agent_execution_id": item.execution_id,
+        "evidence_refs": list(item.evidence_ids),
+    }
+    previous = facts.get(key)
+    if previous is not None and previous["value"] != fact["value"]:
+        conflicts.append({"kind": "fact_conflict", "key": key, "values": [previous, fact]})
+    elif previous is None:
+        facts[key] = fact
+
+
+def _merge_claim(claims, conflicts, claim, source) -> None:
+    key = str(claim.get("key") or claim.get("id") or claim.get("subject") or claim.get("text"))
+    normalized = {**deepcopy(claim), "source_agent_execution_ids": [source]}
+    previous = claims.get(key)
+    previous_value = (previous or {}).get("value", (previous or {}).get("text"))
+    value = normalized.get("value", normalized.get("text"))
+    if previous is not None and previous_value != value:
+        conflicts.append({
+            "kind": "claim_conflict", "key": key, "values": [previous, normalized],
+        })
+    elif previous is not None:
+        previous["evidence_refs"] = list(dict.fromkeys([
+            *previous.get("evidence_refs", []), *normalized.get("evidence_refs", []),
+        ]))
+        previous["source_agent_execution_ids"].append(source)
+    else:
+        claims[key] = normalized
 
 
 class SubagentFailureManager:

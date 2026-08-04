@@ -4,17 +4,15 @@ from datetime import datetime, timezone
 
 import pytest
 
-from app.db.models import EvidenceRecord
+from app.db.models.runs import EvidenceRecord
 from app.repositories.agent_executions import AgentExecutionRepository
 from app.repositories.permissions import PermissionRepository
-from app.repositories.runs import RunRepository
-from app.runner.reasoning import CompletionGate, build_default_contract
-from app.schemas.agent import (
-    AgentState,
-    EffectiveSubagentPolicy,
-    SubagentBudgetPolicy,
-    ValidationOutcome,
-)
+from app.repositories.run_unit_of_work import RunUnitOfWork
+from app.runner.completion import CompletionGate
+from app.runner.reasoning import build_default_contract
+from app.schemas.agent.execution_state import AgentState
+from app.schemas.agent.run_policy import EffectiveSubagentPolicy, SubagentBudgetPolicy
+from app.schemas.agent.run_result import ValidationOutcome
 from app.schemas.permissions import PermissionPolicySet, PermissionRule
 from app.schemas.subagents import (
     DelegationContract,
@@ -81,7 +79,7 @@ async def _complete(
 ):
     artifact_refs = []
     if artifact:
-        record = await RunRepository(session).create_artifact(
+        record = await RunUnitOfWork(session).create_artifact(
             child.run_id,
             "child_report",
             agent_execution_id=child.id,
@@ -151,7 +149,7 @@ async def _complete(
 
 
 async def test_result_validator_checks_schema_lineage_artifacts_evidence_and_completion(session):
-    run = await RunRepository(session).create_task_run("Validate children", {})
+    run = await RunUnitOfWork(session).create_task_run("Validate children", {})
     root = await AgentExecutionRepository(session).root_for_run(run.id)
     valid = await _child(session, root, "valid")
     await _complete(session, valid, finding="verified", artifact=True)
@@ -190,7 +188,7 @@ async def test_result_validator_checks_schema_lineage_artifacts_evidence_and_com
 
 
 async def test_required_optional_and_first_success_join_semantics(session):
-    run = await RunRepository(session).create_task_run("Join children", {})
+    run = await RunUnitOfWork(session).create_task_run("Join children", {})
     root = await AgentExecutionRepository(session).root_for_run(run.id)
     first = await _child(session, root, "first")
     second = await _child(session, root, "second")
@@ -247,7 +245,7 @@ async def test_required_optional_and_first_success_join_semantics(session):
 
 
 async def test_result_merger_deduplicates_and_preserves_conflicts_and_warnings(session):
-    run = await RunRepository(session).create_task_run("Merge children", {})
+    run = await RunUnitOfWork(session).create_task_run("Merge children", {})
     root = await AgentExecutionRepository(session).root_for_run(run.id)
     first = await _child(session, root, "merge-one")
     second = await _child(session, root, "merge-two")
@@ -285,7 +283,7 @@ def test_root_completion_gate_waits_for_descendants_and_required_joins():
 
 
 async def test_safe_retry_preserves_failed_attempt_and_creates_new_identity(session):
-    run = await RunRepository(session).create_task_run("Retry child", {})
+    run = await RunUnitOfWork(session).create_task_run("Retry child", {})
     root = await AgentExecutionRepository(session).root_for_run(run.id)
     permissions = PermissionRepository(session)
     parent = await permissions.create_identity(

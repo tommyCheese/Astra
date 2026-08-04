@@ -7,21 +7,23 @@ from fastapi.responses import FileResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.permission_views import permission_center_view
 from app.artifacts import LocalArtifactStore
 from app.core.config import Settings, get_settings
 from app.core.errors import ResourceError
-from app.db.models import (
+from app.db.models.conversations import TaskRecord
+from app.db.models.permissions import (
     AgentDelegationRecord,
     AgentIdentityRecord,
     ApprovalGrantRecord,
-    ArtifactRecord,
     CredentialGrantRecord,
     DataFlowStateRecord,
-    RunEventRecord,
-    RunRecord,
-    TaskRecord,
-    TaskWorkspaceRecord,
     ToolCatalogSnapshotRecord,
+)
+from app.db.models.runs import RunEventRecord, RunRecord
+from app.db.models.workspaces import (
+    ArtifactRecord,
+    TaskWorkspaceRecord,
     WorkspaceChangeRecord,
     WorkspaceCheckpointRecord,
     WorkspaceFileRecord,
@@ -29,7 +31,7 @@ from app.db.models import (
 from app.db.session import get_session
 from app.deliverables import DeliverableCatalog
 from app.permissions.engine import PermissionEngine
-from app.repositories.runs import RunRepository
+from app.repositories.run_unit_of_work import RunUnitOfWork
 from app.repositories.workspaces import WorkspaceRepository
 from app.schemas.permissions import PolicySimulationRequest, PolicySimulationResult
 from app.schemas.schedules import ScheduledDeliverableView
@@ -96,85 +98,15 @@ async def permission_center(
             ).order_by(RunEventRecord.created_at.desc()).limit(50)
         )
     ).all()
-    return {
-        "grants": [
-            {
-                "id": item.id,
-                "scope": item.scope,
-                "tool_name": item.tool_name,
-                "tool_version": item.tool_version,
-                "effect_kinds": item.effect_kinds,
-                "resource_matcher": item.resource_matcher,
-                "invocation_constraints": item.invocation_constraints,
-                "status": item.status,
-                "use_count": item.use_count,
-                "max_uses": item.max_uses,
-                "expires_at": item.expires_at,
-                "created_at": item.created_at,
-            }
-            for item in grants
-        ],
-        "identities": [
-            {
-                "id": item.id,
-                "type": item.identity_type,
-                "principal": item.principal,
-                "task_id": item.task_id,
-                "run_id": item.run_id,
-                "parent_identity_id": item.parent_identity_id,
-                "trust_level": item.trust_level,
-                "attributes": item.attributes,
-                "created_at": item.created_at,
-                "revoked_at": item.revoked_at,
-            }
-            for item in identities
-        ],
-        "delegations": [
-            {
-                "id": item.id,
-                "parent_identity_id": item.parent_identity_id,
-                "child_identity_id": item.child_identity_id,
-                "delegated_scope": item.delegated_scope,
-                "expires_at": item.expires_at,
-                "revoked_at": item.revoked_at,
-            }
-            for item in delegations
-        ],
-        "credentials": [
-            {
-                "id": item.id,
-                "service": item.service,
-                "scopes": item.scopes,
-                "resources": item.resources,
-                "actions": item.actions,
-                "expires_at": item.expires_at,
-                "revoked_at": item.revoked_at,
-                "metadata": item.metadata_,
-            }
-            for item in credentials
-        ],
-        "data_flow": {
-            "trust_sources": data_flow.trust_sources,
-            "data_labels": data_flow.data_labels,
-            "allowed_destinations": data_flow.allowed_destinations,
-            "prohibited_destinations": data_flow.prohibited_destinations,
-            "state_version": data_flow.state_version,
-        } if data_flow else None,
-        "tool_catalog": {
-            "digest": catalog.digest,
-            "catalog": catalog.catalog,
-            "created_at": catalog.created_at,
-        } if catalog else None,
-        "policy_explanations": [
-            {
-                "id": item.id,
-                "type": item.type,
-                "payload": item.payload,
-                "created_at": item.created_at,
-            }
-            for item in explanations
-        ],
-    }
+    return permission_center_view(
+        grants=grants,
+        identities=identities,
+        delegations=delegations,
+        credentials=credentials,
+        data_flow=data_flow,
+        catalog=catalog,
+        explanations=explanations,
+    )
 
 
 @router.delete("/permission-grants/{grant_id}")
@@ -182,7 +114,7 @@ async def revoke_permission_grant(
     grant_id: str,
     session: AsyncSession = Depends(get_session),
 ) -> dict:
-    grant = await RunRepository(session).revoke_approval_grant(grant_id)
+    grant = await RunUnitOfWork(session).revoke_approval_grant(grant_id)
     return {"id": grant.id, "status": grant.status, "revoked_at": grant.revoked_at}
 
 

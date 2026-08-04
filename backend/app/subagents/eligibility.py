@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from app.schemas.agent import EXECUTABLE_SUBAGENT_COHORTS, EffectiveSubagentPolicy
+from app.schemas.agent.run_policy import EXECUTABLE_SUBAGENT_COHORTS, EffectiveSubagentPolicy
 
 
 @dataclass(frozen=True, slots=True)

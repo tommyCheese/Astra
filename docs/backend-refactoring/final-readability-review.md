@@ -1,0 +1,35 @@
+# 后端最终可读性评审
+
+评审日期：2026-08-04。评审范围为 `backend/app` 的生产代码，以及 HTTP、持久化、调度、
+Agent runtime、Subagent、权限、Workspace/Artifact 和外部 provider 边界。
+
+## 主要用例入口
+
+| 用例 | 可连续阅读的调用链 | 事务与副作用所有者 |
+| --- | --- | --- |
+| 创建与派发 Run | API/command/schedule → `RunApplicationService` → `RunUnitOfWork` → `RunDispatcher` | application service 先提交，dispatcher 后启动 |
+| 执行 Agent | `RunEngine` → `AgentLoop` 组装 → `AgentRunOrchestrator` → typed iteration stage | 阶段返回穷尽 outcome；外部等待不持有写事务 |
+| 计划执行 | `PlanService` → `PlanScheduler` → node worker/coordinator | validation、调度和错误分别由 `planning.py`、`plan_scheduler.py`、`plan_errors.py` 拥有 |
+| 审批恢复 | Run application service → approval store/grant store → dispatcher | 冻结输入、授权消费和恢复状态在显式 UoW 中完成 |
+| Subagent 委派 | `SubagentSupervisor` → runtime operations → contract/budget/context → executor/join | catalog、scope、预算和 lineage 在创建 child 前冻结 |
+| 取消与恢复 | Run/Subagent cancellation service → tool/sandbox fencing → execution transition | 不可逆 effect 和 result-unknown 明确进入取消报告 |
+| Scheduled job | scheduling service/dispatcher → Run application port → deliverable catalog | scheduling 不依赖 HTTP；交付查询与 view projection 分离 |
+| Workspace/Artifact | workspace runtime → change/checkpoint store → artifact collector | Workspace 是可变工作区；Artifact 是验证后不可变成果 |
+
+## 命名与职责复核
+
+- Task/Conversation、Run、Execution、Turn、Step、Node、Result、Outcome、Profile 和 Policy
+  均按领域术语表使用；跨边界 payload 由 schema 或显式 mapper 校验。
+- 旧巨型 `RunRepository`、单文件 ORM/schema、旧 Run 创建模块和模型客户端聚合模块已删除。
+- 计划调度与错误不再从 `planning.py` 兼容导出；消费者直接导入概念所有者。
+- `DeliverableCatalog.list` 仅编排 source loading 和 projection；scheduled/library 投影及单项 view
+  构造具有独立名称。
+- Repository/store 不再隐式提交；提交、回滚和 commit-aware event publish 由用例/UoW 所有。
+- 架构例外列表为空；当前冻结基线只减不增，且不可豁免硬阈值为模块 800 行、函数 100 行、
+  圈复杂度 15。
+
+## 验收结论
+
+主要入口可以在不理解旧架构的前提下沿命名后的 application、runtime、port/store 和 projection
+边界导航。HTTP/OpenAPI、SSE、历史 JSON、ORM metadata 与 Alembic schema 没有发现意外外部语义
+变化；本次无需创建额外外部变更提案。

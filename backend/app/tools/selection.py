@@ -51,6 +51,20 @@ def _as_mapping(value: Any) -> Mapping[str, Any] | None:
     return None
 
 
+def _candidate_rejection(
+    tool_name, spec, required, matched, excluded, require_read_only, require_idempotent
+):
+    if required and not matched:
+        return "not_matched"
+    if tool_name in excluded:
+        return "excluded"
+    if require_read_only and spec.side_effect_level != "read_only":
+        return "side_effect_not_read_only"
+    if require_idempotent and not spec.idempotent:
+        return "non_idempotent"
+    return None
+
+
 @dataclass(frozen=True)
 class CapabilityToolCandidate:
     tool_name: str
@@ -155,86 +169,18 @@ class CapabilityToolResolver:
         unresolved = tuple(sorted(set(required) - set(satisfied)))
         unresolved_set = frozenset(unresolved)
 
-        candidates: list[CapabilityToolCandidate] = []
-        rejections: list[CapabilityToolRejection] = []
-        for tool_name, spec in eligible_specs.items():
-            matched = self._matched_capabilities(
-                tool_name,
-                spec,
-                required=required,
-                unresolved=unresolved_set,
-            )
-            if required and not matched:
-                continue
-            if tool_name in excluded:
-                rejections.append(CapabilityToolRejection(tool_name, "excluded", matched))
-                continue
-            if require_read_only and spec.side_effect_level != "read_only":
-                rejections.append(
-                    CapabilityToolRejection(tool_name, "side_effect_not_read_only", matched)
-                )
-                continue
-            if require_idempotent and not spec.idempotent:
-                rejections.append(CapabilityToolRejection(tool_name, "non_idempotent", matched))
-                continue
-            candidates.append(
-                CapabilityToolCandidate(
-                    tool_name=tool_name,
-                    matched_capabilities=matched,
-                    task_capabilities=_normalized_values(spec.task_capabilities),
-                    tool_version=spec.version,
-                    provider_id=spec.provider_id,
-                    provider_digest=spec.provider_digest,
-                    spec=spec,
-                )
-            )
-
-        for tool_name, availability in unavailable.items():
-            spec = all_specs.get(tool_name)
-            if spec is None:
-                continue
-            matched = self._matched_capabilities(
-                tool_name,
-                spec,
-                required=required,
-                unresolved=unresolved_set,
-            )
-            if required and not matched:
-                continue
-            rejections.append(
-                CapabilityToolRejection(
-                    tool_name,
-                    str(availability.get("reason") or "unavailable"),
-                    matched,
-                )
-            )
-
-        side_effect_rank = {
-            "read_only": 0,
-            "temporary": 1,
-            "workspace_write": 2,
-            "external_write": 3,
-            "destructive": 4,
-        }
-        risk_rank = {"low": 0, "sandboxed": 1, "high": 2}
-        candidates.sort(
-            key=lambda candidate: (
-                -len(candidate.matched_capabilities) if required else 0,
-                side_effect_rank.get(candidate.spec.side_effect_level, 99),
-                risk_rank.get(candidate.spec.risk, 99),
-                candidate.provider_id,
-                candidate.tool_name,
-                candidate.tool_version,
-                candidate.provider_digest,
-            )
+        candidates, rejections = self._eligible_candidates(
+            eligible_specs,
+            required,
+            unresolved_set,
+            excluded,
+            require_read_only,
+            require_idempotent,
         )
-        rejections.sort(
-            key=lambda rejection: (
-                rejection.tool_name,
-                rejection.reason,
-                rejection.matched_capabilities,
-            )
+        rejections.extend(
+            self._unavailable_rejections(unavailable, all_specs, required, unresolved_set)
         )
+        self._sort_resolution(candidates, rejections, bool(required))
         covered = {
             capability for candidate in candidates for capability in candidate.matched_capabilities
         }
@@ -250,6 +196,85 @@ class CapabilityToolResolver:
             require_idempotent=require_idempotent,
             excluded_tools=tuple(sorted(excluded)),
             rejections=tuple(rejections),
+        )
+
+    def _eligible_candidates(
+        self, specs, required, unresolved, excluded, require_read_only, require_idempotent
+    ):
+        candidates, rejections = [], []
+        for tool_name, spec in specs.items():
+            matched = self._matched_capabilities(
+                tool_name, spec, required=required, unresolved=unresolved
+            )
+            reason = _candidate_rejection(
+                tool_name,
+                spec,
+                required,
+                matched,
+                excluded,
+                require_read_only,
+                require_idempotent,
+            )
+            if reason == "not_matched":
+                continue
+            if reason:
+                rejections.append(CapabilityToolRejection(tool_name, reason, matched))
+                continue
+            candidates.append(
+                CapabilityToolCandidate(
+                    tool_name=tool_name,
+                    matched_capabilities=matched,
+                    task_capabilities=_normalized_values(spec.task_capabilities),
+                    tool_version=spec.version,
+                    provider_id=spec.provider_id,
+                    provider_digest=spec.provider_digest,
+                    spec=spec,
+                )
+            )
+        return candidates, rejections
+
+    def _unavailable_rejections(self, unavailable, specs, required, unresolved):
+        rejections = []
+        for tool_name, availability in unavailable.items():
+            spec = specs.get(tool_name)
+            if spec is None:
+                continue
+            matched = self._matched_capabilities(
+                tool_name, spec, required=required, unresolved=unresolved
+            )
+            if required and not matched:
+                continue
+            reason = str(availability.get("reason") or "unavailable")
+            rejections.append(CapabilityToolRejection(tool_name, reason, matched))
+        return rejections
+
+    @staticmethod
+    def _sort_resolution(candidates, rejections, required) -> None:
+        side_effect_rank = {
+            "read_only": 0,
+            "temporary": 1,
+            "workspace_write": 2,
+            "external_write": 3,
+            "destructive": 4,
+        }
+        risk_rank = {"low": 0, "sandboxed": 1, "high": 2}
+        candidates.sort(
+            key=lambda item: (
+                -len(item.matched_capabilities) if required else 0,
+                side_effect_rank.get(item.spec.side_effect_level, 99),
+                risk_rank.get(item.spec.risk, 99),
+                item.provider_id,
+                item.tool_name,
+                item.tool_version,
+                item.provider_digest,
+            )
+        )
+        rejections.sort(
+            key=lambda item: (
+                item.tool_name,
+                item.reason,
+                item.matched_capabilities,
+            )
         )
 
     @staticmethod

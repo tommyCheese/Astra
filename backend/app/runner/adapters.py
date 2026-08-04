@@ -6,7 +6,8 @@ from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 from app.grounding.fragments import fragments_from_web_result
 from app.grounding.ledger import EvidenceLedger
 from app.grounding.schemas import EvidenceLineage
-from app.schemas.agent import AgentObservation, ValidationIssue, ValidationOutcome
+from app.schemas.agent.execution_state import AgentObservation
+from app.schemas.agent.run_result import ValidationIssue, ValidationOutcome
 
 
 class TaskAdapter(ABC):

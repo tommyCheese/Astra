@@ -5,12 +5,9 @@ from typing import Any
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import (
-    AgentExecutionRecord,
-    ContextCompactionAttemptRecord,
-    TaskRecord,
-    utc_now,
-)
+from app.db.model_base import utc_now
+from app.db.models.conversations import TaskRecord
+from app.db.models.executions import AgentExecutionRecord, ContextCompactionAttemptRecord
 from app.schemas.context_compaction import CompactionMetadata, ContextEnvelope
 
 

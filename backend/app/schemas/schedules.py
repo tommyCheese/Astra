@@ -41,28 +41,38 @@ class ScheduleSpec(BaseModel):
     @model_validator(mode="after")
     def validate_shape(self) -> ScheduleSpec:
         if self.type == ScheduleType.once:
-            if self.at is None or self.at.tzinfo is None:
-                raise ValueError("once 计划必须提供带时区的 at")
-            if any(
-                value is not None
-                for value in (self.interval_seconds, self.anchor_at, self.expression)
-            ):
-                raise ValueError("once 计划只能提供 at")
+            _validate_once_schedule(self)
         elif self.type == ScheduleType.interval:
-            if self.interval_seconds is None:
-                raise ValueError("interval 计划必须提供 interval_seconds")
-            if self.anchor_at is not None and self.anchor_at.tzinfo is None:
-                raise ValueError("anchor_at 必须包含时区")
-            if self.at is not None or self.expression is not None:
-                raise ValueError("interval 计划不接受 at 或 expression")
+            _validate_interval_schedule(self)
         else:
-            expression = (self.expression or "").strip()
-            if len(expression.split()) != 5 or not croniter.is_valid(expression):
-                raise ValueError("cron expression 必须是有效的标准五字段表达式")
-            if any(value is not None for value in (self.at, self.interval_seconds, self.anchor_at)):
-                raise ValueError("cron 计划只能提供 expression")
-            self.expression = expression
+            self.expression = _validate_cron_schedule(self)
         return self
+
+
+def _validate_once_schedule(schedule: ScheduleSpec) -> None:
+    if schedule.at is None or schedule.at.tzinfo is None:
+        raise ValueError("once 计划必须提供带时区的 at")
+    extras = (schedule.interval_seconds, schedule.anchor_at, schedule.expression)
+    if any(value is not None for value in extras):
+        raise ValueError("once 计划只能提供 at")
+
+
+def _validate_interval_schedule(schedule: ScheduleSpec) -> None:
+    if schedule.interval_seconds is None:
+        raise ValueError("interval 计划必须提供 interval_seconds")
+    if schedule.anchor_at is not None and schedule.anchor_at.tzinfo is None:
+        raise ValueError("anchor_at 必须包含时区")
+    if schedule.at is not None or schedule.expression is not None:
+        raise ValueError("interval 计划不接受 at 或 expression")
+
+
+def _validate_cron_schedule(schedule: ScheduleSpec) -> str:
+    expression = (schedule.expression or "").strip()
+    if len(expression.split()) != 5 or not croniter.is_valid(expression):
+        raise ValueError("cron expression 必须是有效的标准五字段表达式")
+    if any(value is not None for value in (schedule.at, schedule.interval_seconds, schedule.anchor_at)):
+        raise ValueError("cron 计划只能提供 expression")
+    return expression
 
 
 class ActiveHours(BaseModel):

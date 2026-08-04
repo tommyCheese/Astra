@@ -1,6 +1,7 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import ConversationStrategyPreferenceRecord, utc_now
+from app.db.model_base import utc_now
+from app.db.models.conversations import ConversationStrategyPreferenceRecord
 
 DEFAULT_CONVERSATION_STRATEGY = {
     "preferred_answer_mode": "standard",

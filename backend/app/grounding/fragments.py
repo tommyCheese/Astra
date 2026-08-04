@@ -62,69 +62,100 @@ def _search_fragments(
     *,
     lineage: EvidenceLineage | None,
 ) -> list[EvidenceFragment]:
-    trace_payloads = list(data.get("search_traces") or [])
-    if not trace_payloads:
-        invocation_scope = lineage.tool_call_id if lineage is not None else None
-        trace_payloads = [
-            {
-                "id": search_trace_id(
-                    str(data.get("query") or ""),
-                    0,
-                    invocation_scope,
-                ),
-                "query": str(data.get("query") or ""),
-                "provider": str(data.get("provider") or "unknown"),
-                "constraints": data.get("constraints") or {},
-                "constraint_audit": data.get("constraint_audit") or {},
-                "retrieved_at": data.get("retrieved_at"),
-            }
-        ]
-    traces: dict[str, SearchTrace] = {}
-    fragments: list[EvidenceFragment] = []
-    for index, raw in enumerate(trace_payloads):
-        query = str(raw.get("query") or "")
-        invocation_scope = lineage.tool_call_id if lineage is not None else None
-        trace = SearchTrace(
-            id=str(
-                raw.get("id")
-                or search_trace_id(query, index, invocation_scope)
-            ),
-            query=query,
-            purpose=raw.get("purpose"),
-            provider=str(raw.get("provider") or data.get("provider") or "unknown"),
-            constraints=SearchConstraints.model_validate(raw.get("constraints") or {}),
-            constraint_audit=ConstraintAudit.model_validate(
-                raw.get("constraint_audit") or data.get("constraint_audit") or {}
-            ),
-            **({"retrieved_at": raw["retrieved_at"]} if raw.get("retrieved_at") else {}),
-        )
-        traces[trace.id] = trace
-        fragments.append(_fragment(EvidenceKind.search_trace, trace, lineage=lineage))
-
+    traces = _build_search_traces(data, lineage)
+    fragments = [
+        _fragment(EvidenceKind.search_trace, trace, lineage=lineage)
+        for trace in traces.values()
+    ]
     fallback_trace = next(iter(traces.values()))
-    for rank, raw in enumerate(data.get("candidates") or [], start=1):
-        url = str(raw.get("url") or "")
-        if not url:
-            continue
-        trace_id = str(raw.get("search_trace_id") or fallback_trace.id)
-        trace = traces.get(trace_id, fallback_trace)
-        candidate = SearchCandidate(
-            id=str(raw.get("candidate_id") or candidate_id(trace.id, url)),
-            search_trace_id=trace.id,
-            url=url,
-            canonical_url=str(raw.get("canonical_url") or canonical_url(url)),
-            title=str(raw.get("title") or ""),
-            snippet=str(raw.get("snippet") or ""),
-            provider=str(raw.get("provider") or trace.provider),
-            provider_rank=int(raw.get("provider_rank") or raw.get("rank") or rank),
-            display_link=raw.get("display_link"),
-            published_at=raw.get("published_at"),
-            source_type=str(raw.get("source_type") or "web"),
-            **({"retrieved_at": raw["retrieved_at"]} if raw.get("retrieved_at") else {}),
-            metadata=dict(raw.get("metadata") or {}),
-        )
-        fragments.append(_fragment(EvidenceKind.search_candidate, candidate, lineage=lineage))
+    fragments.extend(
+        _fragment(EvidenceKind.search_candidate, candidate, lineage=lineage)
+        for rank, raw in enumerate(data.get("candidates") or [], start=1)
+        if (candidate := _build_search_candidate(raw, rank, traces, fallback_trace))
+    )
     return fragments
+
+
+def _build_search_traces(
+    data: dict[str, Any], lineage: EvidenceLineage | None
+) -> dict[str, SearchTrace]:
+    raw_traces = list(data.get("search_traces") or [_fallback_trace(data, lineage)])
+    traces = [
+        _build_search_trace(raw, index, data, lineage)
+        for index, raw in enumerate(raw_traces)
+    ]
+    return {trace.id: trace for trace in traces}
+
+
+def _fallback_trace(
+    data: dict[str, Any], lineage: EvidenceLineage | None
+) -> dict[str, Any]:
+    query = str(data.get("query") or "")
+    invocation_scope = lineage.tool_call_id if lineage else None
+    return {
+        "id": search_trace_id(query, 0, invocation_scope),
+        "query": query,
+        "provider": str(data.get("provider") or "unknown"),
+        "constraints": data.get("constraints") or {},
+        "constraint_audit": data.get("constraint_audit") or {},
+        "retrieved_at": data.get("retrieved_at"),
+    }
+
+
+def _build_search_trace(
+    raw: dict[str, Any],
+    index: int,
+    data: dict[str, Any],
+    lineage: EvidenceLineage | None,
+) -> SearchTrace:
+    query = str(raw.get("query") or "")
+    invocation_scope = lineage.tool_call_id if lineage else None
+    retrieved_at = {"retrieved_at": raw["retrieved_at"]} if raw.get("retrieved_at") else {}
+    return SearchTrace(
+        id=str(raw.get("id") or search_trace_id(query, index, invocation_scope)),
+        query=query,
+        purpose=raw.get("purpose"),
+        provider=str(raw.get("provider") or data.get("provider") or "unknown"),
+        constraints=SearchConstraints.model_validate(raw.get("constraints") or {}),
+        constraint_audit=ConstraintAudit.model_validate(
+            raw.get("constraint_audit") or data.get("constraint_audit") or {}
+        ),
+        **retrieved_at,
+    )
+
+
+def _build_search_candidate(
+    raw: dict[str, Any],
+    rank: int,
+    traces: dict[str, SearchTrace],
+    fallback: SearchTrace,
+) -> SearchCandidate | None:
+    url = str(raw.get("url") or "")
+    if not url:
+        return None
+    trace = traces.get(str(raw.get("search_trace_id") or fallback.id), fallback)
+    retrieved_at = _optional_timestamp(raw)
+    identity = str(raw.get("candidate_id") or candidate_id(trace.id, url))
+    provider_rank = int(raw.get("provider_rank") or raw.get("rank") or rank)
+    return SearchCandidate(
+        id=identity,
+        search_trace_id=trace.id,
+        url=url,
+        canonical_url=str(raw.get("canonical_url") or canonical_url(url)),
+        title=str(raw.get("title") or ""),
+        snippet=str(raw.get("snippet") or ""),
+        provider=str(raw.get("provider") or trace.provider),
+        provider_rank=provider_rank,
+        display_link=raw.get("display_link"),
+        published_at=raw.get("published_at"),
+        source_type=str(raw.get("source_type") or "web"),
+        metadata=dict(raw.get("metadata") or {}),
+        **retrieved_at,
+    )
+
+
+def _optional_timestamp(payload: dict[str, Any]) -> dict[str, Any]:
+    return {"retrieved_at": payload["retrieved_at"]} if payload.get("retrieved_at") else {}
 
 
 def _read_fragments(
@@ -132,24 +163,59 @@ def _read_fragments(
     *,
     lineage: EvidenceLineage | None,
 ) -> list[EvidenceFragment]:
+    model, passages = _build_source_snapshot(data)
+    fragments = [_fragment(EvidenceKind.source_snapshot, model, lineage=lineage)]
+    fragments.extend(
+        _fragment(EvidenceKind.passage, passage, lineage=lineage) for passage in passages
+    )
+    return fragments
+
+
+def _build_source_snapshot(data: dict[str, Any]):
+    identity = _snapshot_identity(data)
+    passages = _snapshot_passages(data, **identity)
+    return _snapshot_model(data, passages, **identity), passages
+
+
+def _snapshot_identity(data: dict[str, Any]) -> dict[str, str]:
     content = str(data.get("content") or "")
     url = str(data.get("final_url") or data.get("url") or "")
     canonical = canonical_url(str(data.get("canonical_url") or url))
     source = str(data.get("source_id") or source_id(canonical))
     content_hash = str(data.get("content_digest") or digest_text(content))
     snapshot = str(data.get("snapshot_id") or snapshot_id(source, content_hash))
-    raw_passages = list(data.get("passages") or [])
-    passages = (
-        segment_passages(content, source=source, snapshot=snapshot)
-        if not raw_passages
-        else []
-    )
-    if raw_passages:
-        from app.grounding.schemas import Passage
+    return {
+        "content": content,
+        "url": url,
+        "canonical": canonical,
+        "source": source,
+        "content_hash": content_hash,
+        "snapshot": snapshot,
+    }
 
-        passages = [Passage.model_validate(item) for item in raw_passages]
+
+def _snapshot_passages(data: dict[str, Any], *, content: str, source: str, snapshot: str, **_):
+    from app.grounding.schemas import Passage
+
+    raw_passages = list(data.get("passages") or [])
+    if raw_passages:
+        return [Passage.model_validate(item) for item in raw_passages]
+    return segment_passages(content, source=source, snapshot=snapshot)
+
+
+def _snapshot_model(
+    data: dict[str, Any],
+    passages,
+    *,
+    content: str,
+    url: str,
+    canonical: str,
+    source: str,
+    content_hash: str,
+    snapshot: str,
+):
     metadata = dict(data.get("metadata") or {})
-    model = SourceSnapshot(
+    return SourceSnapshot(
         id=snapshot,
         source_id=source,
         requested_url=str(data.get("requested_url") or url),
@@ -157,7 +223,7 @@ def _read_fragments(
         title=data.get("title"),
         description=data.get("description"),
         published_at=metadata.get("published_at"),
-        **({"retrieved_at": data["retrieved_at"]} if data.get("retrieved_at") else {}),
+        **_optional_timestamp(data),
         content_digest=content_hash,
         content_length=int(data.get("content_length") or len(content)),
         segmentation_version=str(data.get("segmentation_version") or "passages.v1"),
@@ -169,8 +235,3 @@ def _read_fragments(
         signals=dict(data.get("signals") or {}),
         warnings=list(data.get("warnings") or []),
     )
-    fragments = [_fragment(EvidenceKind.source_snapshot, model, lineage=lineage)]
-    fragments.extend(
-        _fragment(EvidenceKind.passage, passage, lineage=lineage) for passage in passages
-    )
-    return fragments

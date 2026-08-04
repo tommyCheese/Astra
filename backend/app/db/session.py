@@ -11,7 +11,8 @@ from sqlalchemy.ext.asyncio import (
 from sqlalchemy.orm import Session
 
 from app.core.config import Settings, get_settings
-from app.db.models import RunEventRecord
+from app.db.models.metadata import metadata as metadata
+from app.db.models.runs import RunEventRecord
 from app.runtime_events import PublishedRunEvent, run_event_broker
 
 PENDING_RUN_EVENTS = "astra_pending_run_events"
@@ -95,5 +96,5 @@ SessionLocal = async_sessionmaker(
 
 
 async def get_session() -> AsyncIterator[AsyncSession]:
-    async with SessionLocal() as session:
+    async with SessionLocal.begin() as session:
         yield session

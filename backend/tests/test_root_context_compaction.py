@@ -1,10 +1,10 @@
 import pytest
 
 from app.core.config import Settings
+from app.model_clients.mock import MockModelClient
 from app.repositories.agent_executions import AgentExecutionRepository
-from app.repositories.runs import RunRepository
+from app.repositories.run_unit_of_work import RunUnitOfWork
 from app.root_context_compaction import compact_root_context
-from app.runner.model_client import MockModelClient
 
 
 def root_context(observations):
@@ -21,7 +21,7 @@ def root_context(observations):
 
 @pytest.mark.asyncio
 async def test_disabled_root_compaction_does_not_change_model_context(session):
-    repo = RunRepository(session)
+    repo = RunUnitOfWork(session)
     run = await repo.create_task_run("keep context", {})
     observations = [{"kind": "note", "summary": "unchanged", "data": {}}]
     context = root_context(observations)
@@ -43,7 +43,7 @@ async def test_disabled_root_compaction_does_not_change_model_context(session):
 
 @pytest.mark.asyncio
 async def test_root_compaction_installs_checkpoint_and_bounds_model_projection(session):
-    repo = RunRepository(session)
+    repo = RunUnitOfWork(session)
     run = await repo.create_task_run("compact root", {})
     observations = [
         {"kind": "note", "summary": f"old-{index}", "data": {"text": "界" * 2_000}}

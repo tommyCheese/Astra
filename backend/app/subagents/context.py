@@ -13,10 +13,13 @@ from typing import Any
 from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import AgentExecutionRecord, ArtifactRecord, EvidenceRecord, utc_now
+from app.db.model_base import utc_now
+from app.db.models.executions import AgentExecutionRecord
+from app.db.models.runs import EvidenceRecord
+from app.db.models.workspaces import ArtifactRecord
 from app.grounding.repository import EvidenceRepository
 from app.grounding.schemas import EvidenceFragment
-from app.repositories.runs import RunRepository
+from app.repositories.run_unit_of_work import RunUnitOfWork
 from app.repositories.workspaces import WorkspaceRepository
 from app.schemas.subagents import (
     DelegationContract,
@@ -54,9 +57,90 @@ class ComposedSubagentContext:
     gaps: tuple[SubagentContextGap, ...] = ()
 
 
-class SubagentContextComposer:
-    """Builds a reference-first context without accepting parent conversation state."""
+class _ContextCollector:
+    def __init__(self):
+        self.items: list[SubagentContextItem] = []
+        self.gaps: list[SubagentContextGap] = []
 
+    def add(
+        self,
+        *,
+        kind: str,
+        summary: str,
+        ref: str | None = None,
+        content: Any | None = None,
+        provenance: dict[str, Any] | None = None,
+        data_labels: list[str] | None = None,
+        allowed_purposes: list[str] | None = None,
+    ) -> None:
+        rendered = None
+        if content is not None:
+            rendered = (
+                content
+                if isinstance(content, str)
+                else json.dumps(content, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+            )
+        payload = rendered if rendered is not None else ref or ""
+        item_hash = stable_digest(
+            {"kind": kind, "ref": ref, "content": rendered, "summary": summary}
+        )
+        self.items.append(
+            SubagentContextItem(
+                id=f"ctx_{item_hash.removeprefix('sha256:')[:24]}",
+                kind=kind,
+                ref=ref,
+                content=rendered,
+                summary=summary,
+                content_hash=item_hash,
+                provenance=provenance or {},
+                data_labels=data_labels or [],
+                allowed_purposes=allowed_purposes or [],
+                estimated_tokens=max(1, (len(payload) + 3) // 4),
+                size_bytes=len(payload.encode("utf-8")),
+            )
+        )
+
+
+def _input_denial(item, labels, purposes, purpose, scope, permission_check):
+    if purposes and purpose not in purposes:
+        return SubagentContextGap(
+            input_ref=item.ref,
+            reason_code="purpose_mismatch",
+            summary="Input purpose does not include this delegation.",
+        )
+    if labels and not _patterns_cover(labels, scope.data_labels):
+        return SubagentContextGap(
+            input_ref=item.ref,
+            reason_code="data_label_denied",
+            summary="Input data labels exceed the delegated scope.",
+        )
+    if permission_check and not permission_check(item.ref, labels, purpose):
+        return SubagentContextGap(
+            input_ref=item.ref,
+            reason_code="permission_denied",
+            summary="Input reference is not readable by the child identity.",
+        )
+    return None
+
+
+def _inline_size(value) -> int:
+    if value is None:
+        return 0
+    rendered = value if isinstance(value, str) else json.dumps(value)
+    return len(rendered.encode("utf-8"))
+
+
+def _delegation_purpose(contract, scope) -> str:
+    purpose = contract.request.objective
+    allowed = scope.allowed_purposes
+    if allowed and not any(purpose == item or purpose.startswith(f"{item}:") for item in allowed):
+        purpose = str(contract.request.resource_scope.get("purpose", ""))
+    if allowed and purpose not in allowed:
+        raise ValueError("Delegation purpose is outside the effective child scope")
+    return purpose
+
+
+class SubagentContextComposer:
     def __init__(
         self,
         *,
@@ -79,59 +163,13 @@ class SubagentContextComposer:
         permission_check: Callable[[str, tuple[str, ...], str], bool] | None = None,
         created_at: datetime | None = None,
     ) -> ComposedSubagentContext:
-        purpose = contract.request.objective
-        if effective_scope.allowed_purposes and not any(
-            purpose == allowed or purpose.startswith(f"{allowed}:")
-            for allowed in effective_scope.allowed_purposes
-        ):
-            # The contract objective remains human-readable; resource_scope can
-            # provide a stable machine purpose such as "research".
-            purpose = str(contract.request.resource_scope.get("purpose", ""))
-        if effective_scope.allowed_purposes and purpose not in effective_scope.allowed_purposes:
-            raise ValueError("Delegation purpose is outside the effective child scope")
+        purpose = _delegation_purpose(contract, effective_scope)
         selected_facts = deepcopy(selected_facts or {})
         if _contains_forbidden(selected_facts) or _contains_forbidden(profile_layers or []):
             raise ValueError("Forbidden parent-private context was supplied to the child composer")
         now = created_at or utc_now()
-        items: list[SubagentContextItem] = []
-        gaps: list[SubagentContextGap] = []
-
-        def add(
-            *,
-            kind: str,
-            summary: str,
-            ref: str | None = None,
-            content: Any | None = None,
-            provenance: dict[str, Any] | None = None,
-            data_labels: list[str] | None = None,
-            allowed_purposes: list[str] | None = None,
-        ) -> None:
-            rendered = None
-            if content is not None:
-                rendered = content if isinstance(content, str) else json.dumps(
-                    content, ensure_ascii=False, sort_keys=True, separators=(",", ":")
-                )
-            payload = rendered if rendered is not None else ref or ""
-            size_bytes = len(payload.encode("utf-8"))
-            estimate = max(1, (len(payload) + 3) // 4)
-            item_hash = stable_digest(
-                {"kind": kind, "ref": ref, "content": rendered, "summary": summary}
-            )
-            items.append(
-                SubagentContextItem(
-                    id=f"ctx_{item_hash.removeprefix('sha256:')[:24]}",
-                    kind=kind,
-                    ref=ref,
-                    content=rendered,
-                    summary=summary,
-                    content_hash=item_hash,
-                    provenance=provenance or {},
-                    data_labels=data_labels or [],
-                    allowed_purposes=allowed_purposes or [],
-                    estimated_tokens=estimate,
-                    size_bytes=size_bytes,
-                )
-            )
+        collector = _ContextCollector()
+        add = collector.add
 
         add(
             kind="delegation_contract",
@@ -157,58 +195,9 @@ class SubagentContextComposer:
                 content=layer,
                 provenance={"source": "effective_profile", "ordinal": index},
             )
-        for delegated_input in contract.request.inputs:
-            labels = tuple(delegated_input.data_labels)
-            purposes = tuple(delegated_input.allowed_purposes)
-            if purposes and purpose not in purposes:
-                gaps.append(
-                    SubagentContextGap(
-                        input_ref=delegated_input.ref,
-                        reason_code="purpose_mismatch",
-                        summary="Input purpose does not include this delegation.",
-                    )
-                )
-                continue
-            if labels and not _patterns_cover(labels, effective_scope.data_labels):
-                gaps.append(
-                    SubagentContextGap(
-                        input_ref=delegated_input.ref,
-                        reason_code="data_label_denied",
-                        summary="Input data labels exceed the delegated scope.",
-                    )
-                )
-                continue
-            if permission_check and not permission_check(delegated_input.ref, labels, purpose):
-                gaps.append(
-                    SubagentContextGap(
-                        input_ref=delegated_input.ref,
-                        reason_code="permission_denied",
-                        summary="Input reference is not readable by the child identity.",
-                    )
-                )
-                continue
-            inline = selected_facts.get(delegated_input.ref)
-            if inline is not None:
-                rendered = inline if isinstance(inline, str) else json.dumps(inline)
-                if len(rendered.encode("utf-8")) > self.max_inline_bytes:
-                    gaps.append(
-                        SubagentContextGap(
-                            input_ref=delegated_input.ref,
-                            reason_code="inline_too_large",
-                            summary="Large input must be supplied as an Artifact or Evidence reference.",
-                        )
-                    )
-                    continue
-            kind = delegated_input.kind
-            add(
-                kind=kind,
-                summary=delegated_input.summary or f"Delegated {kind} input",
-                ref=delegated_input.ref,
-                content=inline if kind in {"fact", "structured_data"} else None,
-                provenance={"content_hash": delegated_input.content_hash},
-                data_labels=list(labels),
-                allowed_purposes=list(purposes),
-            )
+        self._add_delegated_inputs(
+            collector, contract, effective_scope, selected_facts, purpose, permission_check
+        )
         add(
             kind="catalog",
             summary="Attenuated immutable Tool and Skill Catalog references.",
@@ -240,31 +229,7 @@ class SubagentContextComposer:
                 "deadline_at": contract.request.deadline_at,
             },
         )
-        accepted: list[SubagentContextItem] = []
-        total = 0
-        for item in items:
-            if total + item.estimated_tokens > self.max_total_tokens:
-                gaps.append(
-                    SubagentContextGap(
-                        input_ref=item.ref or item.id,
-                        reason_code="token_budget_exceeded",
-                        summary="Context item exceeded the child context token limit.",
-                    )
-                )
-                continue
-            accepted.append(item)
-            total += item.estimated_tokens
-        required_kinds = {
-            "delegation_contract",
-            "role_protocol",
-            "catalog",
-            "workspace_view",
-            "budget",
-            "termination",
-        }
-        present_kinds = {item.kind for item in accepted}
-        if not required_kinds <= present_kinds:
-            raise ValueError("Child context budget cannot fit the mandatory protocol items")
+        accepted, total = self._accepted_items(collector)
         manifest = SubagentContextManifest(
             agent_execution_id=agent_execution_id,
             purpose=purpose,
@@ -278,8 +243,67 @@ class SubagentContextComposer:
         return ComposedSubagentContext(
             manifest=manifest,
             manifest_hash=stable_digest(manifest.model_dump(mode="json")),
-            gaps=tuple(gaps),
+            gaps=tuple(collector.gaps),
         )
+
+    def _add_delegated_inputs(
+        self, collector, contract, effective_scope, selected_facts, purpose, permission_check
+    ) -> None:
+        for delegated_input in contract.request.inputs:
+            labels = tuple(delegated_input.data_labels)
+            purposes = tuple(delegated_input.allowed_purposes)
+            denial = _input_denial(
+                delegated_input, labels, purposes, purpose, effective_scope, permission_check
+            )
+            if denial:
+                collector.gaps.append(denial)
+                continue
+            inline = selected_facts.get(delegated_input.ref)
+            if _inline_size(inline) > self.max_inline_bytes:
+                collector.gaps.append(
+                    SubagentContextGap(
+                        input_ref=delegated_input.ref,
+                        reason_code="inline_too_large",
+                        summary="Large input must be supplied as an Artifact or Evidence reference.",
+                    )
+                )
+                continue
+            kind = delegated_input.kind
+            collector.add(
+                kind=kind,
+                summary=delegated_input.summary or f"Delegated {kind} input",
+                ref=delegated_input.ref,
+                content=inline if kind in {"fact", "structured_data"} else None,
+                provenance={"content_hash": delegated_input.content_hash},
+                data_labels=list(labels),
+                allowed_purposes=list(purposes),
+            )
+
+    def _accepted_items(self, collector):
+        accepted, total = [], 0
+        for item in collector.items:
+            if total + item.estimated_tokens > self.max_total_tokens:
+                collector.gaps.append(
+                    SubagentContextGap(
+                        input_ref=item.ref or item.id,
+                        reason_code="token_budget_exceeded",
+                        summary="Context item exceeded the child context token limit.",
+                    )
+                )
+                continue
+            accepted.append(item)
+            total += item.estimated_tokens
+        required = {
+            "delegation_contract",
+            "role_protocol",
+            "catalog",
+            "workspace_view",
+            "budget",
+            "termination",
+        }
+        if not required <= {item.kind for item in accepted}:
+            raise ValueError("Child context budget cannot fit the mandatory protocol items")
+        return accepted, total
 
 
 class SubagentContextCheckpointService:
@@ -393,7 +417,7 @@ class SubagentExchangeService:
 
     def __init__(self, session: AsyncSession):
         self.session = session
-        self.runs = RunRepository(session)
+        self.runs = RunUnitOfWork(session)
 
     async def stage_artifact(
         self,
@@ -504,10 +528,7 @@ class SubagentExchangeService:
         checkpoint = deepcopy(parent.checkpoint or {})
         checkpoint["promoted_child_facts"] = [
             *(checkpoint.get("promoted_child_facts") or []),
-            *[
-                {**item, "source_agent_execution_id": child.id}
-                for item in verified
-            ],
+            *[{**item, "source_agent_execution_id": child.id} for item in verified],
         ]
         outcome = await self.session.execute(
             update(AgentExecutionRecord)
@@ -549,8 +570,7 @@ def _patterns_cover(children: tuple[str, ...], parents: tuple[str, ...]) -> bool
     from fnmatch import fnmatchcase
 
     return bool(parents) and all(
-        any(parent == "*" or fnmatchcase(child, parent) for parent in parents)
-        for child in children
+        any(parent == "*" or fnmatchcase(child, parent) for parent in parents) for child in children
     )
 
 

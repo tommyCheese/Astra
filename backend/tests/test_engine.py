@@ -7,28 +7,21 @@ from sqlalchemy import event, select
 
 from app.agent_profile import load_agent_profile
 from app.core.config import Settings
-from app.db.models import (
-    AgentIdentityRecord,
-    TaskWorkspaceRecord,
-    ToolCatalogSnapshotRecord,
-    WorkspaceCheckpointRecord,
-)
+from app.db.models.permissions import AgentIdentityRecord, ToolCatalogSnapshotRecord
+from app.db.models.workspaces import TaskWorkspaceRecord, WorkspaceCheckpointRecord
+from app.model_clients.contracts import ModelOutputError
+from app.model_clients.mock import MockModelClient
 from app.repositories.plans import PlanRepository, plan_to_view
-from app.repositories.runs import RunRepository
+from app.repositories.run_unit_of_work import RunUnitOfWork
 from app.runner.engine import RunEngine
-from app.runner.model_client import MockModelClient, ModelOutputError
-from app.runner.planning import PlanScheduler, PlanService, canonical_agent_state
+from app.runner.plan_scheduler import PlanScheduler
+from app.runner.planning import PlanService, canonical_agent_state
 from app.runner.reasoning import RunProfileResolver, build_default_contract
-from app.schemas.agent import (
-    AgentDecision,
-    AnswerMode,
-    ExpectedObservation,
-    FinalAnswer,
-    PlanDraft,
-    PlanExecution,
-    PlanNodeDraft,
-    RequestedReasoningPolicy,
-)
+from app.schemas.agent.execution_state import AgentDecision
+from app.schemas.agent.planning import ExpectedObservation, PlanDraft, PlanNodeDraft
+from app.schemas.agent.run_policy import RequestedReasoningPolicy
+from app.schemas.agent.run_result import FinalAnswer
+from app.schemas.agent.types import AnswerMode, PlanExecution
 from app.tools.base import Tool, ToolRegistry, ToolSpec
 
 
@@ -345,7 +338,7 @@ class QuickForbiddenToolClient(QuickStreamingClient):
 
 async def test_engine_completes_mock_web_query(session):
     settings = Settings(model_provider="mock", web_search_provider="mock")
-    repo = RunRepository(session)
+    repo = RunUnitOfWork(session)
     profile = RunProfileResolver().resolve(
         AnswerMode.trusted,
         RequestedReasoningPolicy(execution_mode="auto_approval"),
@@ -449,7 +442,7 @@ async def test_trusted_skill_checks_become_provenanced_completion_criteria():
 
 async def test_weather_plan_executes_nodes_in_dependency_order(session):
     settings = Settings(model_provider="mock")
-    repo = RunRepository(session)
+    repo = RunUnitOfWork(session)
     profile = RunProfileResolver().resolve(
         AnswerMode.trusted,
         RequestedReasoningPolicy(execution_mode="auto_approval"),
@@ -480,7 +473,7 @@ async def test_weather_plan_executes_nodes_in_dependency_order(session):
 
 async def test_trusted_confirmation_activates_exact_plan_once_before_execution(session):
     settings = Settings(model_provider="mock")
-    repo = RunRepository(session)
+    repo = RunUnitOfWork(session)
     profile = RunProfileResolver().resolve(
         AnswerMode.trusted,
         RequestedReasoningPolicy(execution_mode="auto_approval"),
@@ -551,7 +544,7 @@ async def test_trusted_confirmation_activates_exact_plan_once_before_execution(s
 
 async def test_answer_delta_batching_flushes_first_and_final_content(session):
     settings = Settings(model_provider="mock", web_search_provider="mock")
-    repo = RunRepository(session)
+    repo = RunUnitOfWork(session)
     run = await repo.create_task_run("流式批处理", settings.model_policy)
     engine = RunEngine(settings, model_client=MockModelClient(), tool_registry=fake_web_registry())
     commit = AsyncMock(wraps=session.commit)
@@ -589,7 +582,7 @@ async def test_streamed_answer_is_not_replaced_after_late_model_validation_error
         RequestedReasoningPolicy(execution_mode="auto_approval"),
         plan_execution=PlanExecution.auto if answer_mode == AnswerMode.trusted else None,
     )
-    repo = RunRepository(session)
+    repo = RunUnitOfWork(session)
     run = await repo.create_task_run(
         "生成一个不会被替换的回答",
         settings.model_policy,
@@ -625,7 +618,7 @@ async def test_streamed_answer_is_not_resynthesized_when_answer_object_is_missin
         RequestedReasoningPolicy(execution_mode="auto_approval"),
         plan_execution=PlanExecution.auto if answer_mode == AnswerMode.trusted else None,
     )
-    repo = RunRepository(session)
+    repo = RunUnitOfWork(session)
     run = await repo.create_task_run(
         "生成一份最终回答",
         settings.model_policy,
@@ -657,7 +650,7 @@ async def test_final_plan_node_answer_is_regenerated_as_canonical_stream(session
         RequestedReasoningPolicy(),
         plan_execution=PlanExecution.auto,
     )
-    repo = RunRepository(session)
+    repo = RunUnitOfWork(session)
     run = await repo.create_task_run(
         "生成一个流式回答",
         settings.model_policy,
@@ -680,12 +673,10 @@ async def test_final_plan_node_answer_is_regenerated_as_canonical_stream(session
     assert deltas == ["真正的", "流式回答"]
     event_types = [event.type for event in events]
     assert event_types.index("answer.delta") < event_types.index("answer.content.completed")
-    assert event_types.index("answer.content.completed") < event_types.index(
-        "verification.created"
-    )
-    assert next(
-        event for event in events if event.type == "answer.content.completed"
-    ).payload == {"background_verification": True}
+    assert event_types.index("answer.content.completed") < event_types.index("verification.created")
+    assert next(event for event in events if event.type == "answer.content.completed").payload == {
+        "background_verification": True
+    }
     assert event_types.index("verification.created") < event_types.index("answer.completed")
 
 
@@ -694,7 +685,7 @@ async def test_standard_fast_path_skips_plan_state_and_all_quality_gates(session
     profile = RunProfileResolver().resolve(
         AnswerMode.standard, RequestedReasoningPolicy(execution_mode="auto_approval")
     )
-    repo = RunRepository(session)
+    repo = RunUnitOfWork(session)
     run = await repo.create_task_run(
         "快速回答",
         settings.model_policy,
@@ -788,7 +779,7 @@ async def test_standard_ask_user_uses_a_user_facing_fallback_question(session):
     profile = RunProfileResolver().resolve(
         AnswerMode.standard, RequestedReasoningPolicy(execution_mode="auto_approval")
     )
-    repo = RunRepository(session)
+    repo = RunUnitOfWork(session)
     run = await repo.create_task_run(
         "！",
         settings.model_policy,
@@ -819,7 +810,7 @@ async def test_standard_fast_path_defers_permission_records_until_after_first_de
     profile = RunProfileResolver().resolve(
         AnswerMode.standard, RequestedReasoningPolicy(execution_mode="auto_approval")
     )
-    repo = RunRepository(session)
+    repo = RunUnitOfWork(session)
     run = await repo.create_task_run(
         "快速回答",
         settings.model_policy,
@@ -873,7 +864,7 @@ async def test_standard_fast_path_reuses_tool_router_without_creating_steps(sess
     profile = RunProfileResolver().resolve(
         AnswerMode.standard, RequestedReasoningPolicy(execution_mode="auto_approval")
     )
-    repo = RunRepository(session)
+    repo = RunUnitOfWork(session)
     run = await repo.create_task_run(
         "查询天气",
         settings.model_policy,
@@ -902,7 +893,7 @@ async def test_standard_fast_path_reuses_tool_router_without_creating_steps(sess
 async def test_standard_fast_path_keeps_tool_router_security_boundary(session):
     settings = Settings(model_provider="mock")
     profile = RunProfileResolver().resolve(AnswerMode.standard, RequestedReasoningPolicy())
-    repo = RunRepository(session)
+    repo = RunUnitOfWork(session)
     run = await repo.create_task_run(
         "调用禁止工具",
         settings.model_policy,
@@ -925,7 +916,7 @@ async def test_standard_fast_path_keeps_tool_router_security_boundary(session):
 
 
 async def test_engine_resumes_with_current_frozen_profile(session):
-    repo = RunRepository(session)
+    repo = RunUnitOfWork(session)
     frozen = load_agent_profile()
     run = await repo.create_task_run(
         "恢复 Profile", {"provider": "mock"}, agent_profile_snapshot=frozen.snapshot()
@@ -993,7 +984,7 @@ class EffortSpyClient(MockModelClient):
 
 async def test_engine_binds_effective_reasoning_effort_before_model_operations(session):
     settings = Settings(model_provider="mock", web_search_provider="mock")
-    repo = RunRepository(session)
+    repo = RunUnitOfWork(session)
     profile = RunProfileResolver().resolve(
         AnswerMode.trusted,
         RequestedReasoningPolicy(reasoning_effort="deep"),
@@ -1039,7 +1030,7 @@ async def test_disabled_model_thinking_does_not_suppress_public_process_events(s
         AnswerMode.standard,
         RequestedReasoningPolicy(),
     )
-    repo = RunRepository(session)
+    repo = RunUnitOfWork(session)
     run = await repo.create_task_run(
         "快速回答",
         {
@@ -1078,7 +1069,7 @@ async def test_standard_profile_skips_planning_and_quality_assurance_objects(ses
         AnswerMode.standard,
         RequestedReasoningPolicy(reasoning_effort="deep", execution_mode="auto_approval"),
     )
-    repo = RunRepository(session)
+    repo = RunUnitOfWork(session)
     run = await repo.create_task_run(
         "快速回答",
         settings.model_policy,
@@ -1106,7 +1097,7 @@ async def test_standard_profile_skips_planning_and_quality_assurance_objects(ses
 
 async def test_trusted_engine_always_builds_contract_and_complete_plan(session):
     settings = Settings(model_provider="mock", web_search_provider="mock")
-    repo = RunRepository(session)
+    repo = RunUnitOfWork(session)
     profile = RunProfileResolver().resolve(
         AnswerMode.trusted,
         RequestedReasoningPolicy(),
@@ -1131,7 +1122,7 @@ async def test_trusted_engine_always_builds_contract_and_complete_plan(session):
 
 async def test_follow_up_contract_excludes_private_conversation_transcript(session):
     settings = Settings(model_provider="mock", web_search_provider="mock")
-    repo = RunRepository(session)
+    repo = RunUnitOfWork(session)
     profile = RunProfileResolver().resolve(
         AnswerMode.trusted,
         RequestedReasoningPolicy(),
@@ -1168,7 +1159,7 @@ async def test_follow_up_contract_excludes_private_conversation_transcript(sessi
 
 async def test_engine_falls_back_when_model_returns_empty_plan(session):
     settings = Settings(model_provider="mock", web_search_provider="mock")
-    repo = RunRepository(session)
+    repo = RunUnitOfWork(session)
     profile = RunProfileResolver().resolve(
         AnswerMode.trusted,
         RequestedReasoningPolicy(),
@@ -1194,7 +1185,7 @@ async def test_engine_falls_back_when_model_returns_empty_plan(session):
 
 async def test_trusted_engine_falls_back_when_plan_requests_unavailable_capability(session):
     settings = Settings(model_provider="mock", web_search_provider="mock")
-    repo = RunRepository(session)
+    repo = RunUnitOfWork(session)
     profile = RunProfileResolver().resolve(
         AnswerMode.trusted,
         RequestedReasoningPolicy(),
@@ -1223,7 +1214,7 @@ async def test_trusted_engine_falls_back_when_plan_requests_unavailable_capabili
 
 async def test_engine_replays_recorded_checkpoint_without_duplicate_tool_call(session):
     settings = Settings(model_provider="mock", web_search_provider="mock")
-    repo = RunRepository(session)
+    repo = RunUnitOfWork(session)
     profile = RunProfileResolver().resolve(
         AnswerMode.trusted,
         RequestedReasoningPolicy(),

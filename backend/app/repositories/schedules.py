@@ -7,10 +7,10 @@ from sqlalchemy import delete, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import ScheduledJobRecord, ScheduledJobRunRecord, utc_now
+from app.db.model_base import utc_now
+from app.db.models.scheduling import ScheduledJobRecord, ScheduledJobRunRecord
 from app.scheduling.calculations import initial_fire_time, next_fire_time
 from app.schemas.schedules import (
-    HeartbeatConfig,
     ScheduledJobCreate,
     ScheduledJobKind,
     ScheduledJobUpdate,
@@ -29,8 +29,28 @@ class SystemManagedScheduleError(RuntimeError):
     pass
 
 
+def _refresh_existing_claim(existing, claimed_by, reference):
+    if existing.status != "claimed" or existing.run_id is not None:
+        return None
+    existing.claimed_by = claimed_by
+    existing.claimed_at = reference
+    existing.updated_at = reference
+    return existing
+
+
+def _schedule_skip_outcome(job, lateness, skipped_misfire, skipped_overlap):
+    if skipped_misfire:
+        return {
+            "reason": "misfire_grace_exceeded",
+            "lateness_seconds": lateness,
+            "grace_seconds": job.misfire_grace_seconds,
+        }
+    if skipped_overlap:
+        return {"reason": "overlap_policy", "policy": job.overlap_policy}
+    return {}
+
+
 class ScheduleRepository:
-    GLOBAL_HEARTBEAT_KEY = "heartbeat:global"
     ACTIVE_RUN_STATUSES = frozenset({"claimed", "running"})
 
     def __init__(self, session: AsyncSession):
@@ -106,9 +126,7 @@ class ScheduleRepository:
         kind: ScheduledJobKind | None = None,
         limit: int = 100,
     ) -> list[ScheduledJobRecord]:
-        query = select(ScheduledJobRecord).where(
-            ScheduledJobRecord.deleted_at.is_(None)
-        )
+        query = select(ScheduledJobRecord).where(ScheduledJobRecord.deleted_at.is_(None))
         if not include_disabled:
             query = query.where(ScheduledJobRecord.enabled.is_(True))
         if target_task_id is not None:
@@ -131,10 +149,7 @@ class ScheduleRepository:
         current = await self.require(job_id)
         self._ensure_user_managed(current)
         reference = (now or utc_now()).astimezone(timezone.utc)
-        values = {
-            key: getattr(payload, key)
-            for key in payload.model_fields_set
-        }
+        values = {key: getattr(payload, key) for key in payload.model_fields_set}
         values.pop("version")
 
         schedule = payload.schedule or self._schedule_from_record(current)
@@ -144,9 +159,7 @@ class ScheduleRepository:
         for key, value in values.items():
             if key == "schedule":
                 mapped["schedule_type"] = value.type.value
-                mapped["schedule"] = value.model_dump(
-                    mode="json", exclude_none=True
-                )
+                mapped["schedule"] = value.model_dump(mode="json", exclude_none=True)
             elif key in {"misfire_policy", "overlap_policy"}:
                 mapped[key] = value.value
             elif key == "execution":
@@ -270,9 +283,7 @@ class ScheduleRepository:
         )
         existing = (
             await self.session.execute(
-                select(ScheduledJobRunRecord).where(
-                    ScheduledJobRunRecord.idempotency_key == key
-                )
+                select(ScheduledJobRunRecord).where(ScheduledJobRunRecord.idempotency_key == key)
             )
         ).scalar_one_or_none()
         if existing is not None:
@@ -288,9 +299,7 @@ class ScheduleRepository:
             claimed_at=reference,
             completed_at=reference if overlapping else None,
             outcome=(
-                {"reason": "overlap_policy", "policy": job.overlap_policy}
-                if overlapping
-                else {}
+                {"reason": "overlap_policy", "policy": job.overlap_policy} if overlapping else {}
             ),
             created_at=reference,
             updated_at=reference,
@@ -342,120 +351,101 @@ class ScheduleRepository:
         )
         claimed: list[ScheduledJobRunRecord] = []
         for job in candidates:
-            scheduled_for = job.next_fire_at
-            if scheduled_for is None:
-                continue
-            if scheduled_for.tzinfo is None:
-                scheduled_for = scheduled_for.replace(tzinfo=timezone.utc)
-            lease_until = reference + timedelta(seconds=lease_seconds)
-            result = await self.session.execute(
-                update(ScheduledJobRecord)
-                .where(
-                    ScheduledJobRecord.id == job.id,
-                    ScheduledJobRecord.enabled.is_(True),
-                    ScheduledJobRecord.next_fire_at == job.next_fire_at,
-                    or_(
-                        ScheduledJobRecord.lease_expires_at.is_(None),
-                        ScheduledJobRecord.lease_expires_at < reference,
-                    ),
-                )
-                .values(
-                    lease_owner=claimed_by,
-                    lease_expires_at=lease_until,
-                    updated_at=reference,
-                )
-            )
-            if result.rowcount != 1:
-                continue
-            key = f"scheduled:{job.id}:{scheduled_for.isoformat()}"
-            schedule = self._schedule_from_record(job)
-            next_fire = self._next_after_reference(
-                schedule,
-                job.timezone,
-                scheduled_for=scheduled_for,
-                reference=reference,
-            )
-            existing = await self.session.scalar(
-                select(ScheduledJobRunRecord).where(
-                    ScheduledJobRunRecord.idempotency_key == key
-                )
-            )
-            if existing is not None:
-                await self.session.execute(
-                    update(ScheduledJobRecord)
-                    .where(ScheduledJobRecord.id == job.id)
-                    .values(
-                        enabled=next_fire is not None,
-                        last_fire_at=scheduled_for,
-                        next_fire_at=next_fire,
-                        lease_owner=None,
-                        lease_expires_at=None,
-                        updated_at=reference,
-                    )
-                )
-                if existing.status == "claimed" and existing.run_id is None:
-                    existing.claimed_by = claimed_by
-                    existing.claimed_at = reference
-                    existing.updated_at = reference
-                    claimed.append(existing)
-                continue
-            lateness = max(0.0, (reference - scheduled_for).total_seconds())
-            skipped_misfire = (
-                lateness > job.misfire_grace_seconds
-                and job.misfire_policy == "skip"
-            )
-            skipped_overlap = (
-                not skipped_misfire
-                and job.overlap_policy == "skip"
-                and await self._has_active_run(job.id)
-            )
-            status = (
-                "skipped_misfire"
-                if skipped_misfire
-                else "skipped_overlap"
-                if skipped_overlap
-                else "claimed"
-            )
-            schedule_run = ScheduledJobRunRecord(
-                job_id=job.id,
-                scheduled_for=scheduled_for,
-                idempotency_key=key,
-                trigger_type="scheduled",
-                status=status,
-                claimed_by=claimed_by,
-                claimed_at=reference,
-                completed_at=reference if status != "claimed" else None,
-                outcome=(
-                    {
-                        "reason": "misfire_grace_exceeded",
-                        "lateness_seconds": lateness,
-                        "grace_seconds": job.misfire_grace_seconds,
-                    }
-                    if skipped_misfire
-                    else {"reason": "overlap_policy", "policy": job.overlap_policy}
-                    if skipped_overlap
-                    else {}
-                ),
-                created_at=reference,
-                updated_at=reference,
-            )
-            self.session.add(schedule_run)
-            await self.session.execute(
-                update(ScheduledJobRecord)
-                .where(ScheduledJobRecord.id == job.id)
-                .values(
-                    enabled=next_fire is not None,
-                    last_fire_at=scheduled_for,
-                    next_fire_at=next_fire,
-                    lease_owner=None,
-                    lease_expires_at=None,
-                    updated_at=reference,
-                )
-            )
-            if status == "claimed":
+            if schedule_run := await self._claim_candidate(
+                job, claimed_by, lease_seconds, reference
+            ):
                 claimed.append(schedule_run)
         await self.session.commit()
         return claimed
+
+    async def _claim_candidate(self, job, claimed_by, lease_seconds, reference):
+        scheduled_for = job.next_fire_at
+        if scheduled_for is None:
+            return None
+        if scheduled_for.tzinfo is None:
+            scheduled_for = scheduled_for.replace(tzinfo=timezone.utc)
+        if not await self._acquire_job_lease(job, claimed_by, lease_seconds, reference):
+            return None
+        next_fire = self._next_after_reference(
+            self._schedule_from_record(job),
+            job.timezone,
+            scheduled_for=scheduled_for,
+            reference=reference,
+        )
+        key = f"scheduled:{job.id}:{scheduled_for.isoformat()}"
+        existing = await self.session.scalar(
+            select(ScheduledJobRunRecord).where(ScheduledJobRunRecord.idempotency_key == key)
+        )
+        await self._advance_job(job.id, scheduled_for, next_fire, reference)
+        if existing is not None:
+            return _refresh_existing_claim(existing, claimed_by, reference)
+        schedule_run = await self._new_schedule_run(job, key, scheduled_for, claimed_by, reference)
+        self.session.add(schedule_run)
+        return schedule_run if schedule_run.status == "claimed" else None
+
+    async def _acquire_job_lease(self, job, claimed_by, lease_seconds, reference) -> bool:
+        result = await self.session.execute(
+            update(ScheduledJobRecord)
+            .where(
+                ScheduledJobRecord.id == job.id,
+                ScheduledJobRecord.enabled.is_(True),
+                ScheduledJobRecord.next_fire_at == job.next_fire_at,
+                or_(
+                    ScheduledJobRecord.lease_expires_at.is_(None),
+                    ScheduledJobRecord.lease_expires_at < reference,
+                ),
+            )
+            .values(
+                lease_owner=claimed_by,
+                lease_expires_at=reference + timedelta(seconds=lease_seconds),
+                updated_at=reference,
+            )
+        )
+        return result.rowcount == 1
+
+    async def _advance_job(self, job_id, scheduled_for, next_fire, reference) -> None:
+        await self.session.execute(
+            update(ScheduledJobRecord)
+            .where(ScheduledJobRecord.id == job_id)
+            .values(
+                enabled=next_fire is not None,
+                last_fire_at=scheduled_for,
+                next_fire_at=next_fire,
+                lease_owner=None,
+                lease_expires_at=None,
+                updated_at=reference,
+            )
+        )
+
+    async def _new_schedule_run(self, job, key, scheduled_for, claimed_by, reference):
+        lateness = max(0.0, (reference - scheduled_for).total_seconds())
+        skipped_misfire = lateness > job.misfire_grace_seconds and job.misfire_policy == "skip"
+        skipped_overlap = (
+            not skipped_misfire
+            and job.overlap_policy == "skip"
+            and await self._has_active_run(job.id)
+        )
+        status = (
+            "skipped_misfire"
+            if skipped_misfire
+            else "skipped_overlap"
+            if skipped_overlap
+            else "claimed"
+        )
+        outcome = _schedule_skip_outcome(job, lateness, skipped_misfire, skipped_overlap)
+        return ScheduledJobRunRecord(
+            job_id=job.id,
+            scheduled_for=scheduled_for,
+            idempotency_key=key,
+            trigger_type="scheduled",
+            status=status,
+            claimed_by=claimed_by,
+            claimed_at=reference,
+            completed_at=reference if status != "claimed" else None,
+            outcome=outcome,
+            created_at=reference,
+            updated_at=reference,
+        )
 
     async def recover_claimed(
         self,
@@ -564,149 +554,6 @@ class ScheduleRepository:
                 return candidate
             cursor = candidate
 
-    async def get_heartbeat(
-        self,
-        target_task_id: str | None = None,
-    ) -> ScheduledJobRecord | None:
-        global_job = (
-            await self.session.execute(
-                select(ScheduledJobRecord).where(
-                    ScheduledJobRecord.system_key == self.GLOBAL_HEARTBEAT_KEY,
-                    ScheduledJobRecord.deleted_at.is_(None),
-                )
-            )
-        ).scalar_one_or_none()
-        if global_job is not None:
-            return global_job
-        # Compatibility with the original conversation-scoped implementation.
-        # The next write adopts the newest legacy record as the global desired state.
-        return (
-            await self.session.execute(
-                select(ScheduledJobRecord)
-                .where(
-                    ScheduledJobRecord.kind == ScheduledJobKind.heartbeat.value,
-                    ScheduledJobRecord.deleted_at.is_(None),
-                )
-                .order_by(
-                    ScheduledJobRecord.updated_at.desc(),
-                    ScheduledJobRecord.created_at.desc(),
-                )
-                .limit(1)
-            )
-        ).scalar_one_or_none()
-
-    async def upsert_heartbeat(
-        self,
-        payload: HeartbeatConfig,
-        *,
-        owner_principal: str | None = None,
-        now: datetime | None = None,
-    ) -> ScheduledJobRecord:
-        reference = (now or utc_now()).astimezone(timezone.utc)
-        job = await self.get_heartbeat()
-        schedule = {
-            "type": "interval",
-            "interval_seconds": payload.interval_seconds,
-        }
-        next_fire_at = (
-            initial_fire_time(
-                self._schedule_from_dict(schedule),
-                payload.timezone,
-                now=reference,
-            )
-            if payload.enabled
-            else None
-        )
-        heartbeat = {
-            "active_hours": (
-                payload.active_hours.model_dump(mode="json")
-                if payload.active_hours
-                else None
-            ),
-            "prompt": payload.prompt,
-        }
-        if job is None:
-            job = ScheduledJobRecord(
-                name="Heartbeat",
-                kind=ScheduledJobKind.heartbeat.value,
-                system_key=self.GLOBAL_HEARTBEAT_KEY,
-                system_managed=True,
-                owner_principal=owner_principal,
-                target_task_id=payload.target_task_id,
-                prompt=payload.prompt,
-                schedule_type="interval",
-                schedule=schedule,
-                timezone=payload.timezone,
-                enabled=payload.enabled,
-                misfire_policy="skip",
-                misfire_grace_seconds=min(300, payload.interval_seconds),
-                overlap_policy="skip",
-                execution=payload.execution.model_dump(mode="json"),
-                heartbeat=heartbeat,
-                next_fire_at=next_fire_at,
-                version=1,
-                created_at=reference,
-                updated_at=reference,
-            )
-            self.session.add(job)
-        else:
-            job.system_key = self.GLOBAL_HEARTBEAT_KEY
-            job.target_task_id = payload.target_task_id
-            job.prompt = payload.prompt
-            job.schedule_type = "interval"
-            job.schedule = schedule
-            job.timezone = payload.timezone
-            job.enabled = payload.enabled
-            job.misfire_grace_seconds = min(300, payload.interval_seconds)
-            job.execution = payload.execution.model_dump(mode="json")
-            job.heartbeat = heartbeat
-            job.next_fire_at = next_fire_at
-            job.lease_owner = None
-            job.lease_expires_at = None
-            job.version += 1
-            job.updated_at = reference
-        await self.session.flush()
-        legacy_jobs = list(
-            (
-                await self.session.scalars(
-                    select(ScheduledJobRecord).where(
-                        ScheduledJobRecord.kind == ScheduledJobKind.heartbeat.value,
-                        ScheduledJobRecord.id != job.id,
-                        ScheduledJobRecord.deleted_at.is_(None),
-                    )
-                )
-            ).all()
-        )
-        for legacy in legacy_jobs:
-            legacy.enabled = False
-            legacy.next_fire_at = None
-            legacy.lease_owner = None
-            legacy.lease_expires_at = None
-            legacy.deleted_at = reference
-            legacy.updated_at = reference
-            legacy.version += 1
-        await self.session.commit()
-        return job
-
-    async def disable_heartbeat(
-        self,
-        target_task_id: str | None = None,
-        *,
-        now: datetime | None = None,
-    ) -> ScheduledJobRecord:
-        job = await self.get_heartbeat()
-        if job is None:
-            raise ScheduleNotFoundError(self.GLOBAL_HEARTBEAT_KEY)
-        reference = (now or utc_now()).astimezone(timezone.utc)
-        job.enabled = False
-        job.next_fire_at = None
-        job.lease_owner = None
-        job.lease_expires_at = None
-        job.version += 1
-        job.updated_at = reference
-        await self.session.commit()
-        return job
-
     @staticmethod
     def _ensure_user_managed(job: ScheduledJobRecord) -> None:
         if job.system_managed:
@@ -717,9 +564,3 @@ class ScheduleRepository:
         from app.schemas.schedules import ScheduleSpec
 
         return ScheduleSpec.model_validate(job.schedule)
-
-    @staticmethod
-    def _schedule_from_dict(value: dict):
-        from app.schemas.schedules import ScheduleSpec
-
-        return ScheduleSpec.model_validate(value)

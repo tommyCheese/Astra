@@ -18,10 +18,10 @@ from app.evolution.domain import (
     SafetyMetricDirection,
     SafetyMetricResult,
     assert_candidate_authority,
-    evaluate_manifest,
-    transition_candidate_state,
     validate_candidate_authority,
 )
+from app.evolution.evaluation import evaluate_manifest
+from app.evolution.lifecycle import transition_candidate_state
 
 __all__ = [
     "AuthorityIssue",

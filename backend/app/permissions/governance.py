@@ -27,63 +27,91 @@ class PermissionBundleEvaluator:
     ) -> tuple[bool, str]:
         if not unattended:
             return True, "interactive_run"
-        if bundle is None:
-            return False, "permission_bundle_required"
-        if not verify_permission_bundle(bundle, self.signing_secret):
-            return False, "permission_bundle_signature_invalid"
         now = now or datetime.now(timezone.utc)
-        if bundle.expires_at is not None and _utc(bundle.expires_at) <= _utc(now):
-            return False, "permission_bundle_expired"
-        if tool_identity not in bundle.allowed_tool_identities:
-            return False, "tool_identity_not_in_bundle"
-        if bundle.max_tool_calls is not None and tool_call_count >= bundle.max_tool_calls:
-            return False, "permission_bundle_budget_exhausted"
-        if bundle.max_runtime_seconds is not None:
-            if run_started_at is None:
-                return False, "permission_bundle_runtime_origin_missing"
-            elapsed = (_utc(now) - _utc(run_started_at)).total_seconds()
-            if elapsed >= bundle.max_runtime_seconds:
-                return False, "permission_bundle_runtime_exhausted"
-        if not set(plan.required_permissions) <= set(bundle.allowed_actions):
-            return False, "action_not_in_bundle"
-        kinds = {effect.kind for effect in plan.effects}
-        if not kinds <= set(bundle.allowed_effect_kinds):
-            return False, "effect_not_in_bundle"
-        for effect in plan.effects:
-            if not any(fnmatchcase(effect.resource, item) for item in bundle.allowed_resources):
-                return False, "resource_not_in_bundle"
-        labels = {label for effect in plan.effects for label in effect.data_labels}
-        if not labels <= set(bundle.allowed_data_labels):
-            return False, "data_label_not_in_bundle"
-        credential_scopes = {
-            str(scope)
-            for effect in plan.effects
-            for scope in effect.metadata.get("credential_scopes", [])
-        }
-        if not credential_scopes <= set(bundle.allowed_credential_scopes):
-            return False, "credential_scope_not_in_bundle"
-        outputs = [
-            effect.resource
-            for effect in plan.effects
-            if effect.kind.value in {"artifact_write", "external_write"}
-        ]
-        if outputs and not all(
-            any(fnmatchcase(output, pattern) for pattern in bundle.output_destinations)
-            for output in outputs
-        ):
-            return False, "output_destination_not_in_bundle"
-        destinations = plan.network_scope.get("destinations", [])
-        if destinations and not all(
-            any(fnmatchcase(destination, pattern) for pattern in bundle.network_destinations)
-            for destination in destinations
-        ):
-            return False, "network_destination_not_in_bundle"
+        checks = (
+            _bundle_identity_denial(bundle, self.signing_secret, tool_identity, now),
+            _bundle_budget_denial(bundle, tool_call_count, run_started_at, now),
+            _bundle_effect_denial(bundle, plan),
+            _bundle_destination_denial(bundle, plan),
+        )
+        if denial := next((reason for reason in checks if reason), None):
+            return False, denial
         return True, "permission_bundle_allowed"
 
 
-def permission_bundle_digest(
-    bundle: PermissionBundle | dict[str, Any], signing_secret: str
-) -> str:
+def _bundle_identity_denial(bundle, signing_secret, tool_identity, now) -> str | None:
+    if bundle is None:
+        return "permission_bundle_required"
+    if not verify_permission_bundle(bundle, signing_secret):
+        return "permission_bundle_signature_invalid"
+    if bundle.expires_at is not None and _utc(bundle.expires_at) <= _utc(now):
+        return "permission_bundle_expired"
+    if tool_identity not in bundle.allowed_tool_identities:
+        return "tool_identity_not_in_bundle"
+    return None
+
+
+def _bundle_budget_denial(bundle, tool_call_count, run_started_at, now) -> str | None:
+    if bundle is None:
+        return None
+    if bundle.max_tool_calls is not None and tool_call_count >= bundle.max_tool_calls:
+        return "permission_bundle_budget_exhausted"
+    if bundle.max_runtime_seconds is None:
+        return None
+    if run_started_at is None:
+        return "permission_bundle_runtime_origin_missing"
+    elapsed = (_utc(now) - _utc(run_started_at)).total_seconds()
+    return "permission_bundle_runtime_exhausted" if elapsed >= bundle.max_runtime_seconds else None
+
+
+def _bundle_effect_denial(bundle, plan) -> str | None:
+    if bundle is None:
+        return None
+    if not set(plan.required_permissions) <= set(bundle.allowed_actions):
+        return "action_not_in_bundle"
+    if not {effect.kind for effect in plan.effects} <= set(bundle.allowed_effect_kinds):
+        return "effect_not_in_bundle"
+    if any(
+        not any(fnmatchcase(effect.resource, item) for item in bundle.allowed_resources)
+        for effect in plan.effects
+    ):
+        return "resource_not_in_bundle"
+    labels = {label for effect in plan.effects for label in effect.data_labels}
+    if not labels <= set(bundle.allowed_data_labels):
+        return "data_label_not_in_bundle"
+    scopes = {
+        str(scope)
+        for effect in plan.effects
+        for scope in effect.metadata.get("credential_scopes", [])
+    }
+    return (
+        None
+        if scopes <= set(bundle.allowed_credential_scopes)
+        else "credential_scope_not_in_bundle"
+    )
+
+
+def _bundle_destination_denial(bundle, plan) -> str | None:
+    if bundle is None:
+        return None
+    outputs = [
+        effect.resource
+        for effect in plan.effects
+        if effect.kind.value in {"artifact_write", "external_write"}
+    ]
+    if outputs and not _all_match(outputs, bundle.output_destinations):
+        return "output_destination_not_in_bundle"
+    destinations = plan.network_scope.get("destinations", [])
+    if destinations and not _all_match(destinations, bundle.network_destinations):
+        return "network_destination_not_in_bundle"
+    return None
+
+
+def _all_match(values, patterns) -> bool:
+    return all(any(fnmatchcase(value, pattern) for pattern in patterns) for value in values)
+
+
+def permission_bundle_digest(bundle: PermissionBundle | dict[str, Any], signing_secret: str) -> str:
     if not signing_secret:
         raise ValueError("Permission Bundle signing secret is not configured")
     payload = (
@@ -131,7 +159,13 @@ class ExtensionTrustPolicy:
         inventory: list[dict[str, Any]] = []
         for descriptor in entries:
             if descriptor.extension_type not in {
-                "tool", "mcp", "plugin", "skill", "hook", "custom_agent", "marketplace"
+                "tool",
+                "mcp",
+                "plugin",
+                "skill",
+                "hook",
+                "custom_agent",
+                "marketplace",
             }:
                 raise ValueError("Unsupported extension type")
             trusted, reason = self.validate_catalog_entry(

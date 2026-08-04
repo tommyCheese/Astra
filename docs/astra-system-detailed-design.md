@@ -783,3 +783,8 @@ child scope ⊆ parent scope ∩ task policy ∩ explicit delegated scope
 | 15 | 数据结构发生变化时必须同步的测试与代码位置 |
 | 16 | Credential、Delegation、DataFlowState 等尚需扩展的数据 |
 | 17 | 各类数据的推荐源码阅读入口 |
+# 当前后端架构说明
+
+后端重构后的模块地图、Agent 阶段、事务边界和组合根规范见
+[`backend-refactoring/target-architecture.md`](backend-refactoring/target-architecture.md)。
+该文档是代码结构与贡献约束的当前规范来源；本文其余章节保留产品与系统行为的详细设计。

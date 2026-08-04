@@ -1,14 +1,11 @@
 from __future__ import annotations
 
 import base64
-import io
 import json
 import uuid
-import zipfile
 from collections.abc import Mapping
 from copy import deepcopy
 from datetime import timedelta
-from importlib import resources
 from typing import Any
 
 from sqlalchemy import func, select
@@ -16,23 +13,18 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.config import Settings
-from app.db.models import (
+from app.db.model_base import utc_now
+from app.db.models.skills import (
     SkillAuditRecord,
     SkillBlobRecord,
     SkillDraftRecord,
     SkillRecord,
     SkillRevisionRecord,
-    utc_now,
 )
+from app.skills.archive import read_skill_archive, write_skill_archive
 from app.skills.contracts import SkillOrigin, SkillPackage
+from app.skills.errors import SkillStorageError
 from app.skills.packages import SkillPackageError, normalize_skill_path, parse_skill_package
-
-
-class SkillStorageError(ValueError):
-    def __init__(self, code: str, message: str, details: dict[str, Any] | None = None):
-        self.code = code
-        self.details = details or {}
-        super().__init__(message)
 
 
 def _blob_digest(files: dict[str, dict[str, Any]], path: str) -> str:
@@ -125,56 +117,7 @@ class SkillService:
         return skill
 
     async def import_zip(self, archive: bytes, *, filename: str = "skill.zip") -> SkillRecord:
-        if len(archive) > self.settings.skills_max_package_bytes:
-            raise SkillStorageError("SKILL_ARCHIVE_TOO_LARGE", "Skill 压缩包超过大小限制。")
-        try:
-            with zipfile.ZipFile(io.BytesIO(archive)) as bundle:
-                infos = bundle.infolist()
-                if len(infos) > self.settings.skills_max_files + 8:
-                    raise SkillStorageError("SKILL_ARCHIVE_TOO_MANY_FILES", "Skill 文件过多。")
-                total = sum(item.file_size for item in infos)
-                if total > self.settings.skills_max_package_bytes:
-                    raise SkillStorageError("SKILL_ARCHIVE_EXPANDS_TOO_LARGE", "Skill 解压后超过大小限制。")
-                raw_files: dict[str, bytes] = {}
-                roots: set[str] = set()
-                for info in infos:
-                    if info.is_dir():
-                        continue
-                    if info.file_size > self.settings.skills_max_file_bytes:
-                        raise SkillStorageError("SKILL_FILE_TOO_LARGE", "Skill 文件超过大小限制。")
-                    file_kind = info.external_attr >> 16 & 0o170000
-                    if file_kind not in {0, 0o100000}:
-                        raise SkillStorageError(
-                            "SKILL_SPECIAL_FILE_NOT_ALLOWED",
-                            "Skill 压缩包不允许符号链接或特殊文件。",
-                        )
-                    try:
-                        path = normalize_skill_path(info.filename)
-                    except ValueError as exc:
-                        raise SkillStorageError(
-                            "SKILL_ARCHIVE_PATH_INVALID",
-                            "Skill 压缩包包含越界路径。",
-                        ) from exc
-                    if path in raw_files:
-                        raise SkillStorageError(
-                            "SKILL_ARCHIVE_DUPLICATE_PATH",
-                            "Skill 压缩包包含重复文件路径。",
-                        )
-                    roots.add(path.split("/", 1)[0])
-                    raw_files[path] = bundle.read(info)
-        except (zipfile.BadZipFile, RuntimeError) as exc:
-            raise SkillStorageError("SKILL_ARCHIVE_INVALID", "Skill 压缩包无效。") from exc
-        prefix = ""
-        if "SKILL.md" not in raw_files:
-            candidates = [path for path in raw_files if path.endswith("/SKILL.md")]
-            if len(candidates) != 1:
-                raise SkillStorageError("SKILL_ARCHIVE_ROOT_INVALID", "压缩包必须包含一个 Skill 根目录。")
-            prefix = candidates[0][:-len("SKILL.md")]
-        files = {
-            path[len(prefix):]: content
-            for path, content in raw_files.items()
-            if path.startswith(prefix)
-        }
+        files = read_skill_archive(archive, self.settings)
         skill_text = files.get("SKILL.md", b"").decode("utf-8", errors="ignore")
         provisional_name = _frontmatter_name(skill_text)
         skill = await self.create_custom(provisional_name, provisional_name, files=files)
@@ -233,32 +176,7 @@ class SkillService:
                 {"current_revision_token": skill.draft.revision_token},
             )
         current = await self.materialize_manifest({"files": skill.draft.files})
-        next_files = dict(current)
-        for operation in operations:
-            action = str(operation.get("action", "write"))
-            path = normalize_skill_path(str(operation.get("path", "")))
-            if action == "write":
-                if "content_base64" in operation:
-                    try:
-                        content = base64.b64decode(operation["content_base64"], validate=True)
-                    except ValueError as exc:
-                        raise SkillStorageError("SKILL_FILE_ENCODING_INVALID", "文件编码无效。") from exc
-                else:
-                    content = str(operation.get("content", "")).encode("utf-8")
-                next_files[path] = content
-            elif action == "delete":
-                if path == "SKILL.md":
-                    raise SkillStorageError("SKILL_INSTRUCTIONS_REQUIRED", "不能删除 SKILL.md。")
-                next_files.pop(path, None)
-            elif action == "move":
-                target = normalize_skill_path(str(operation.get("target", "")))
-                if path not in next_files:
-                    raise SkillStorageError("SKILL_FILE_NOT_FOUND", "找不到需要移动的文件。")
-                if target in next_files:
-                    raise SkillStorageError("SKILL_FILE_CONFLICT", "目标文件已存在。")
-                next_files[target] = next_files.pop(path)
-            else:
-                raise SkillStorageError("SKILL_FILE_OPERATION_INVALID", "不支持的文件操作。")
+        next_files = self._apply_draft_operations(current, operations)
         package, normalized = self._parse(
             next_files,
             SkillOrigin.custom,
@@ -282,6 +200,40 @@ class SkillService:
             },
         )
         return skill.draft
+
+    @staticmethod
+    def _apply_draft_operations(
+        current: dict[str, bytes], operations: list[dict[str, Any]]
+    ) -> dict[str, bytes]:
+        next_files = dict(current)
+        for operation in operations:
+            action = str(operation.get("action", "write"))
+            path = normalize_skill_path(str(operation.get("path", "")))
+            if action == "write":
+                if "content_base64" in operation:
+                    try:
+                        content = base64.b64decode(operation["content_base64"], validate=True)
+                    except ValueError as exc:
+                        raise SkillStorageError(
+                            "SKILL_FILE_ENCODING_INVALID", "文件编码无效。"
+                        ) from exc
+                else:
+                    content = str(operation.get("content", "")).encode("utf-8")
+                next_files[path] = content
+            elif action == "delete":
+                if path == "SKILL.md":
+                    raise SkillStorageError("SKILL_INSTRUCTIONS_REQUIRED", "不能删除 SKILL.md。")
+                next_files.pop(path, None)
+            elif action == "move":
+                target = normalize_skill_path(str(operation.get("target", "")))
+                if path not in next_files:
+                    raise SkillStorageError("SKILL_FILE_NOT_FOUND", "找不到需要移动的文件。")
+                if target in next_files:
+                    raise SkillStorageError("SKILL_FILE_CONFLICT", "目标文件已存在。")
+                next_files[target] = next_files.pop(path)
+            else:
+                raise SkillStorageError("SKILL_FILE_OPERATION_INVALID", "不支持的文件操作。")
+        return next_files
 
     async def validate_draft(self, skill: SkillRecord) -> dict[str, Any]:
         files = await self.materialize_manifest({"files": await self.draft_files(skill)})
@@ -307,9 +259,7 @@ class SkillService:
             {
                 "valid": report["valid"],
                 "publishable": report["publishable"],
-                "diagnostic_codes": [
-                    item["code"] for item in report.get("diagnostics", [])
-                ],
+                "diagnostic_codes": [item["code"] for item in report.get("diagnostics", [])],
             },
         )
         return report
@@ -326,9 +276,7 @@ class SkillService:
                 {"current_revision_token": skill.draft.revision_token},
             )
         files = await self.materialize_manifest({"files": skill.draft.files})
-        package, normalized = self._parse(
-            files, SkillOrigin.custom, directory_name=skill.name
-        )
+        package, normalized = self._parse(files, SkillOrigin.custom, directory_name=skill.name)
         manifest_files = await self._store_files(normalized, package)
         maximum = await self.session.scalar(
             select(func.max(SkillRevisionRecord.version)).where(
@@ -343,9 +291,10 @@ class SkillService:
             version=int(maximum or 0) + 1,
             digest=package.digest,
             frontmatter=package.frontmatter.model_dump(by_alias=True, mode="json"),
-            manifest={"files": manifest_files, "resources": [
-                item.model_dump(mode="json") for item in package.resources
-            ]},
+            manifest={
+                "files": manifest_files,
+                "resources": [item.model_dump(mode="json") for item in package.resources],
+            },
             validation_report=self._report(package),
             predecessor_id=predecessor_id,
             test_only=False,
@@ -371,9 +320,7 @@ class SkillService:
         )
         return revision
 
-    async def create_test_revision(
-        self, skill_id: str, expected_token: str
-    ) -> SkillRevisionRecord:
+    async def create_test_revision(self, skill_id: str, expected_token: str) -> SkillRevisionRecord:
         self._require_custom_authoring()
         skill = await self.require_skill(skill_id)
         if skill.draft is None or skill.draft.revision_token != expected_token:
@@ -396,9 +343,7 @@ class SkillService:
                 {"limit": self.settings.skills_max_draft_tests_per_hour},
             )
         files = await self.materialize_manifest({"files": skill.draft.files})
-        package, normalized = self._parse(
-            files, SkillOrigin.custom, directory_name=skill.name
-        )
+        package, normalized = self._parse(files, SkillOrigin.custom, directory_name=skill.name)
         manifest_files = await self._store_files(normalized, package)
         minimum = await self.session.scalar(
             select(func.min(SkillRevisionRecord.version)).where(
@@ -411,9 +356,10 @@ class SkillService:
             version=min(int(minimum or 0) - 1, -1),
             digest=package.digest,
             frontmatter=package.frontmatter.model_dump(by_alias=True, mode="json"),
-            manifest={"files": manifest_files, "resources": [
-                item.model_dump(mode="json") for item in package.resources
-            ]},
+            manifest={
+                "files": manifest_files,
+                "resources": [item.model_dump(mode="json") for item in package.resources],
+            },
             validation_report=self._report(package),
             test_only=True,
             created_at=utc_now(),
@@ -428,14 +374,18 @@ class SkillService:
         return revision
 
     async def revisions(self, skill_id: str) -> list[SkillRevisionRecord]:
-        return list((await self.session.scalars(
-            select(SkillRevisionRecord)
-            .where(
-                SkillRevisionRecord.skill_id == skill_id,
-                SkillRevisionRecord.test_only.is_(False),
-            )
-            .order_by(SkillRevisionRecord.version.desc())
-        )).all())
+        return list(
+            (
+                await self.session.scalars(
+                    select(SkillRevisionRecord)
+                    .where(
+                        SkillRevisionRecord.skill_id == skill_id,
+                        SkillRevisionRecord.test_only.is_(False),
+                    )
+                    .order_by(SkillRevisionRecord.version.desc())
+                )
+            ).all()
+        )
 
     async def restore(self, skill_id: str, revision_id: str) -> SkillDraftRecord:
         self._require_custom_authoring()
@@ -491,9 +441,7 @@ class SkillService:
             result[path] = bytes(blob.content)
         return result
 
-    async def export_zip(
-        self, skill: SkillRecord, *, revision_id: str | None = None
-    ) -> bytes:
+    async def export_zip(self, skill: SkillRecord, *, revision_id: str | None = None) -> bytes:
         if revision_id:
             revision = await self.require_revision(skill.id, revision_id)
             files = await self.materialize_manifest(revision.manifest)
@@ -503,23 +451,15 @@ class SkillService:
             files = await self.materialize_manifest(
                 (await self.require_active_revision(skill)).manifest
             )
-        buffer = io.BytesIO()
-        with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_DEFLATED) as bundle:
-            for path in sorted(files):
-                bundle.writestr(f"{skill.name}/{path}", files[path])
-        return buffer.getvalue()
+        return write_skill_archive(skill.name, files)
 
     async def _by_name(self, name: str) -> SkillRecord | None:
         return await self.session.scalar(
-            select(SkillRecord).where(
-                SkillRecord.name == name, SkillRecord.deleted_at.is_(None)
-            )
+            select(SkillRecord).where(SkillRecord.name == name, SkillRecord.deleted_at.is_(None))
         )
 
     def _audit(self, skill_id: str | None, type_: str, payload: dict[str, Any]) -> None:
-        self.session.add(
-            SkillAuditRecord(skill_id=skill_id, type=type_, payload=payload)
-        )
+        self.session.add(SkillAuditRecord(skill_id=skill_id, type=type_, payload=payload))
 
     def _parse(
         self,
@@ -575,81 +515,6 @@ class SkillService:
             "digest": package.digest,
             "diagnostics": [item.model_dump(mode="json") for item in package.diagnostics],
         }
-
-
-async def ensure_builtin_skills(session: AsyncSession, settings: Settings) -> None:
-    if not settings.skills_enabled:
-        return
-    root = resources.files("app.builtin_skills")
-    for child in sorted(root.iterdir(), key=lambda item: item.name):
-        if not child.is_dir():
-            continue
-        files: dict[str, bytes] = {}
-        _collect_traversable(child, "", files)
-        if "SKILL.md" not in files:
-            continue
-        package, normalized = parse_skill_package(
-            files,
-            origin=SkillOrigin.builtin,
-            directory_name=child.name,
-            max_files=settings.skills_max_files,
-            max_file_bytes=settings.skills_max_file_bytes,
-            max_package_bytes=settings.skills_max_package_bytes,
-            max_instruction_chars=settings.skills_max_instruction_chars,
-            reject_reserved_custom_identity=False,
-        )
-        existing = await session.scalar(select(SkillRecord).where(SkillRecord.name == package.frontmatter.name))
-        if existing is not None:
-            if existing.origin != SkillOrigin.builtin.value:
-                raise RuntimeError("Custom Skill conflicts with reserved built-in identity")
-            active = await session.get(SkillRevisionRecord, existing.active_revision_id)
-            if active is not None and active.digest == package.digest:
-                continue
-            skill = existing
-        else:
-            skill = SkillRecord(
-                name=package.frontmatter.name,
-                origin=SkillOrigin.builtin.value,
-                description=package.frontmatter.description,
-                enabled=True,
-            )
-            session.add(skill)
-            await session.flush()
-        service = SkillService(session, settings)
-        stored = await service._store_files(normalized, package)
-        maximum = await session.scalar(
-            select(func.max(SkillRevisionRecord.version)).where(
-                SkillRevisionRecord.skill_id == skill.id
-            )
-        )
-        revision = SkillRevisionRecord(
-            skill_id=skill.id,
-            version=int(maximum or 0) + 1,
-            digest=package.digest,
-            frontmatter=package.frontmatter.model_dump(by_alias=True, mode="json"),
-            manifest={"files": stored, "resources": [
-                item.model_dump(mode="json") for item in package.resources
-            ]},
-            validation_report=service._report(package),
-            predecessor_id=skill.active_revision_id,
-            published_at=utc_now(),
-        )
-        session.add(revision)
-        await session.flush()
-        skill.active_revision_id = revision.id
-        skill.description = package.frontmatter.description
-        skill.updated_at = utc_now()
-
-
-def _collect_traversable(root: Any, prefix: str, result: dict[str, bytes]) -> None:
-    for child in root.iterdir():
-        if child.name == "__pycache__" or child.name.endswith((".pyc", ".pyo")):
-            continue
-        path = f"{prefix}{child.name}"
-        if child.is_dir():
-            _collect_traversable(child, f"{path}/", result)
-        elif child.is_file():
-            result[path] = child.read_bytes()
 
 
 def _frontmatter_name(skill_text: str) -> str:

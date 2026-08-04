@@ -22,6 +22,46 @@ class LatencySample:
     complete_ms: float
 
 
+@dataclass
+class RunTiming:
+    started: float
+    submit_at: float | None = None
+    ready_at: float | None = None
+    first_visible_at: float | None = None
+    first_answer_at: float | None = None
+    completed_at: float | None = None
+
+    def observe(self, event_type: str | None, now: float) -> None:
+        if event_type == "stream.ready" and self.ready_at is None:
+            self.ready_at = now
+        if event_type in {"reasoning.summary.delta", "answer.delta"}:
+            self.first_visible_at = self.first_visible_at or now
+        if event_type == "answer.delta" and self.first_answer_at is None:
+            self.first_answer_at = now
+        if event_type == "answer.completed":
+            self.completed_at = now
+
+    def sample(self, run_id: str) -> LatencySample:
+        required = {
+            "stream.ready": self.ready_at,
+            "visible output": self.first_visible_at,
+            "answer.delta": self.first_answer_at,
+            "answer.completed": self.completed_at,
+        }
+        missing = next((name for name, timestamp in required.items() if timestamp is None), None)
+        if missing:
+            raise RuntimeError(f"Run {run_id} ended without {missing}")
+        if self.submit_at is None:
+            raise RuntimeError(f"Run {run_id} ended without submission timestamp")
+        return LatencySample(
+            submit_ms=(self.submit_at - self.started) * 1000,
+            stream_ready_ms=(self.ready_at - self.started) * 1000,
+            visible_ttft_ms=(self.first_visible_at - self.started) * 1000,
+            answer_ttft_ms=(self.first_answer_at - self.started) * 1000,
+            complete_ms=(self.completed_at - self.started) * 1000,
+        )
+
+
 async def iter_sse_payloads(lines: AsyncIterator[str]) -> AsyncIterator[dict[str, Any]]:
     data_lines: list[str] = []
     async for line in lines:
@@ -86,7 +126,7 @@ async def measure_run(
             keep_run=keep_run,
             cleanup_queue=cleanup_queue,
         )
-    started = time.perf_counter()
+    timing = RunTiming(started=time.perf_counter())
     created = await client.post(
         "/api/runs",
         json={"goal": goal, "answer_mode": answer_mode},
@@ -95,42 +135,13 @@ async def measure_run(
     create_payload = created.json()
     run_id = create_payload["run_id"]
     task_id = create_payload["task_id"]
-    submit_at = time.perf_counter()
-    ready_at: float | None = None
-    first_visible_at: float | None = None
-    first_answer_at: float | None = None
-    completed_at: float | None = None
+    timing.submit_at = time.perf_counter()
     try:
         async with client.stream("GET", f"/api/runs/{run_id}/events") as response:
             response.raise_for_status()
             async for payload in iter_sse_payloads(response.aiter_lines()):
-                now = time.perf_counter()
-                event_type = payload.get("type")
-                if event_type == "stream.ready" and ready_at is None:
-                    ready_at = now
-                elif event_type in {"reasoning.summary.delta", "answer.delta"}:
-                    if first_visible_at is None:
-                        first_visible_at = now
-                    if event_type == "answer.delta" and first_answer_at is None:
-                        first_answer_at = now
-                elif event_type == "answer.completed":
-                    completed_at = now
-        ended = completed_at or time.perf_counter()
-        if ready_at is None:
-            raise RuntimeError(f"Run {run_id} ended without stream.ready")
-        if first_answer_at is None:
-            raise RuntimeError(f"Run {run_id} ended without answer.delta")
-        if first_visible_at is None:
-            raise RuntimeError(f"Run {run_id} ended without visible output")
-        if completed_at is None:
-            raise RuntimeError(f"Run {run_id} ended without answer.completed")
-        sample = LatencySample(
-            submit_ms=(submit_at - started) * 1000,
-            stream_ready_ms=(ready_at - started) * 1000,
-            visible_ttft_ms=(first_visible_at - started) * 1000,
-            answer_ttft_ms=(first_answer_at - started) * 1000,
-            complete_ms=(ended - started) * 1000,
-        )
+                timing.observe(payload.get("type"), time.perf_counter())
+        sample = timing.sample(run_id)
         run_response = await client.get(f"/api/runs/{run_id}")
         run_response.raise_for_status()
         return sample, run_response.json().get("model_policy", {})
@@ -150,13 +161,9 @@ async def measure_streaming_run(
     keep_run: bool,
     cleanup_queue: list[tuple[str, str]] | None = None,
 ) -> tuple[LatencySample, dict[str, Any]]:
-    started = time.perf_counter()
+    timing = RunTiming(started=time.perf_counter())
     run_id = ""
     task_id = ""
-    ready_at: float | None = None
-    first_visible_at: float | None = None
-    first_answer_at: float | None = None
-    completed_at: float | None = None
     try:
         async with client.stream(
             "POST",
@@ -164,39 +171,18 @@ async def measure_streaming_run(
             json={"goal": goal, "answer_mode": answer_mode},
         ) as response:
             response.raise_for_status()
-            submit_at = time.perf_counter()
+            timing.submit_at = time.perf_counter()
             async for payload in iter_sse_payloads(response.aiter_lines()):
-                now = time.perf_counter()
                 event_type = payload.get("type")
-                if event_type == "stream.ready" and ready_at is None:
-                    ready_at = now
+                timing.observe(event_type, time.perf_counter())
+                if event_type == "stream.ready":
                     ready_payload = payload.get("payload", {})
                     if isinstance(ready_payload, dict):
                         run_id = str(ready_payload.get("run_id", ""))
                         task_id = str(ready_payload.get("task_id", ""))
-                elif event_type in {"reasoning.summary.delta", "answer.delta"}:
-                    if first_visible_at is None:
-                        first_visible_at = now
-                    if event_type == "answer.delta" and first_answer_at is None:
-                        first_answer_at = now
-                elif event_type == "answer.completed":
-                    completed_at = now
-        ended = completed_at or time.perf_counter()
-        if not run_id or not task_id or ready_at is None:
+        if not run_id or not task_id:
             raise RuntimeError("Single-stream run ended without creation metadata")
-        if first_answer_at is None:
-            raise RuntimeError(f"Run {run_id} ended without answer.delta")
-        if first_visible_at is None:
-            raise RuntimeError(f"Run {run_id} ended without visible output")
-        if completed_at is None:
-            raise RuntimeError(f"Run {run_id} ended without answer.completed")
-        sample = LatencySample(
-            submit_ms=(submit_at - started) * 1000,
-            stream_ready_ms=(ready_at - started) * 1000,
-            visible_ttft_ms=(first_visible_at - started) * 1000,
-            answer_ttft_ms=(first_answer_at - started) * 1000,
-            complete_ms=(ended - started) * 1000,
-        )
+        sample = timing.sample(run_id)
         run_response = await client.get(f"/api/runs/{run_id}")
         run_response.raise_for_status()
         return sample, run_response.json().get("model_policy", {})
@@ -235,11 +221,7 @@ async def run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
         base_url=args.base_url.rstrip("/"),
         timeout=timeout,
         limits=limits,
-        event_hooks=(
-            {"request": [simulate_client_rtt]}
-            if args.client_rtt_ms
-            else None
-        ),
+        event_hooks=({"request": [simulate_client_rtt]} if args.client_rtt_ms else None),
     ) as client:
         for index in range(args.warmup):
             sample, measured_policy = await measure_run(
@@ -266,9 +248,7 @@ async def run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
                     transport=args.transport,
                 )
 
-        measured = await asyncio.gather(
-            *(measure_index(index) for index in range(args.runs))
-        )
+        measured = await asyncio.gather(*(measure_index(index) for index in range(args.runs)))
         samples.extend(sample for sample, _ in measured)
         if not model_policy:
             model_policy = next(
@@ -312,12 +292,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main() -> None:
     args = build_parser().parse_args()
-    if (
-        args.runs < 1
-        or args.warmup < 0
-        or args.concurrency < 1
-        or args.client_rtt_ms < 0
-    ):
+    if args.runs < 1 or args.warmup < 0 or args.concurrency < 1 or args.client_rtt_ms < 0:
         raise SystemExit(
             "--runs and --concurrency must be positive; warmup and client RTT cannot be negative"
         )

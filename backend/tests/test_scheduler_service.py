@@ -4,7 +4,8 @@ import pytest
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.core.config import Settings
-from app.db.models import Base
+from app.db.model_base import Base
+from app.run_management.dispatcher import InProcessRunDispatcher
 from app.scheduling.service import SchedulerService
 
 
@@ -17,6 +18,7 @@ async def test_scheduler_lifecycle_reports_readiness_and_stops_cleanly(tmp_path)
     service = SchedulerService(
         Settings(scheduler_poll_seconds=0.1, scheduler_history_retention_days=1),
         sessions,
+        InProcessRunDispatcher(),
     )
 
     assert service.health()["ready"] is False
@@ -39,6 +41,10 @@ async def test_scheduler_lifecycle_reports_readiness_and_stops_cleanly(tmp_path)
 
 
 def test_disabled_scheduler_is_ready_without_a_worker():
-    service = SchedulerService(Settings(scheduler_enabled=False), None)
+    service = SchedulerService(
+        Settings(scheduler_enabled=False),
+        None,
+        InProcessRunDispatcher(),
+    )
     assert service.health()["ready"] is True
     assert service.health()["running"] is False

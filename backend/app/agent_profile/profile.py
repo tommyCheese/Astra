@@ -323,27 +323,32 @@ def _normalize_role_documents(
                 f"Agent Profile role document selection is invalid: {operation}"
             )
         names = tuple(str(name) for name in raw_names)
-        if (
-            not names
-            or len(names) != len(set(names))
-            or any(name not in DOCUMENT_FILES for name in names)
-        ):
-            raise AgentProfileConfigurationError(
-                f"Agent Profile role document selection is unsafe: {operation}"
-            )
-        if operation == ModelOperation.AUTODREAM.value:
-            if names != ROLE_DOCUMENTS[ModelOperation.AUTODREAM]:
-                raise AgentProfileConfigurationError(
-                    "Agent Profile AutoDream document selection is unsafe"
-                )
-        elif "autodream" in names:
-            raise AgentProfileConfigurationError(
-                f"Agent Profile role document selection is unsafe: {operation}"
-            )
+        _validate_role_names(operation, names)
         normalized.append((operation, names))
     if {operation for operation, _ in normalized} != expected_operations:
         raise AgentProfileConfigurationError("Agent Profile role matrix is incomplete")
     return tuple(sorted(normalized))
+
+
+def _validate_role_names(operation: str, names: tuple[str, ...]) -> None:
+    names_are_unsafe = (
+        not names
+        or len(names) != len(set(names))
+        or any(name not in DOCUMENT_FILES for name in names)
+    )
+    if names_are_unsafe:
+        raise AgentProfileConfigurationError(
+            f"Agent Profile role document selection is unsafe: {operation}"
+        )
+    if operation == ModelOperation.AUTODREAM.value:
+        if names != ROLE_DOCUMENTS[ModelOperation.AUTODREAM]:
+            raise AgentProfileConfigurationError(
+                "Agent Profile AutoDream document selection is unsafe"
+            )
+    elif "autodream" in names:
+        raise AgentProfileConfigurationError(
+            f"Agent Profile role document selection is unsafe: {operation}"
+        )
 
 
 def _profile_version(

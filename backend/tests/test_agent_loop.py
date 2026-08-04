@@ -5,19 +5,19 @@ from fake_web_tools import fake_web_registry
 
 from app.agent_profile import ModelOperation, load_agent_profile
 from app.agent_profile.prompts import PromptComposer
+from app.agent_runtime.completion import (
+    INVALID_ARTIFACT_REFERENCE_WARNING,
+    CompletionVerificationStage,
+    normalize_final_answer_artifact_references,
+    quick_workspace_change_completes_goal,
+)
 from app.core.config import Settings
+from app.model_clients.contracts import ModelOutputError
+from app.model_clients.mock import MockModelClient
 from app.repositories.agent_executions import AgentExecutionRepository
 from app.repositories.plans import PlanRepository, plan_to_view
-from app.repositories.runs import RunRepository
-from app.runner.agent_loop import (
-    INVALID_ARTIFACT_REFERENCE_WARNING,
-    AgentLoop,
-    ToolRouter,
-    VerificationEngine,
-    _quick_workspace_change_completes_goal,
-    normalize_final_answer_artifact_references,
-)
-from app.runner.model_client import MockModelClient, ModelOutputError
+from app.repositories.run_unit_of_work import RunUnitOfWork
+from app.runner.agent_loop import AgentLoop, ToolRouter
 from app.runner.planning import PlanService, canonical_agent_state
 from app.runner.reasoning import (
     PolicyCompiler,
@@ -25,19 +25,16 @@ from app.runner.reasoning import (
     build_default_contract,
     compile_subagent_policy,
 )
-from app.schemas.agent import (
+from app.schemas.agent.execution_state import (
     AcceptedFact,
     AgentDecision,
     AgentReflection,
-    AnswerMode,
-    ExpectedObservation,
-    FinalAnswer,
-    PlanDraft,
-    PlanNodeDraft,
     ReflectionPatch,
-    RequestedReasoningPolicy,
-    ValidationOutcome,
 )
+from app.schemas.agent.planning import ExpectedObservation, PlanDraft, PlanNodeDraft
+from app.schemas.agent.run_policy import RequestedReasoningPolicy
+from app.schemas.agent.run_result import FinalAnswer, ValidationOutcome
+from app.schemas.agent.types import AnswerMode
 from app.tools.base import ToolExecutionError
 from app.tools.runtime import SwarmTool
 from app.tools.web import build_web_registry
@@ -88,15 +85,9 @@ def artifact_stub(
 def test_quick_file_completion_requires_the_requested_file_and_skips_visual_workflows():
     change = [{"kind": "created", "path": "test2.csv"}]
 
-    assert _quick_workspace_change_completes_goal(
-        "把相同数据保存到 test2.csv", change
-    )
-    assert not _quick_workspace_change_completes_goal(
-        "把 test2.csv 渲染成图表", change
-    )
-    assert not _quick_workspace_change_completes_goal(
-        "创建另一个数据文件", change
-    )
+    assert quick_workspace_change_completes_goal("把相同数据保存到 test2.csv", change)
+    assert not quick_workspace_change_completes_goal("把 test2.csv 渲染成图表", change)
+    assert not quick_workspace_change_completes_goal("创建另一个数据文件", change)
 
 
 def test_artifact_reference_normalization_keeps_valid_ids_and_deduplicates():
@@ -156,7 +147,7 @@ def test_artifact_reference_normalization_removes_all_inaccessible_ids_safely():
 
 
 def test_verification_engine_aggregates_artifact_warning_without_overwriting_outcomes():
-    report = VerificationEngine().verify(
+    report = CompletionVerificationStage().verify(
         FinalAnswer(summary="完成"),
         {},
         validation_outcomes=[ValidationOutcome(validator="task_adapter", passed=True)],
@@ -174,7 +165,7 @@ def test_verification_engine_aggregates_artifact_warning_without_overwriting_out
 
 async def test_agent_loop_completes_mock_web_run(session):
     settings = Settings(model_provider="mock", web_search_provider="mock", agent_max_turns=8)
-    repo = RunRepository(session)
+    repo = RunUnitOfWork(session)
     run = await repo.create_task_run(
         "查询 mock 数据", settings.model_policy, reasoning_policy=compiled_policy()
     )
@@ -196,7 +187,7 @@ async def test_agent_loop_completes_mock_web_run(session):
 
 async def test_agent_loop_injects_auditable_tool_execution_context(session):
     settings = Settings(model_provider="mock")
-    repo = RunRepository(session)
+    repo = RunUnitOfWork(session)
     run = await repo.create_task_run(
         "查询上下文", settings.model_policy, reasoning_policy=compiled_policy()
     )
@@ -215,7 +206,7 @@ async def test_agent_loop_injects_auditable_tool_execution_context(session):
 
 async def test_agent_loop_persists_only_current_run_accessible_artifact_references(session):
     settings = Settings(model_provider="mock")
-    repo = RunRepository(session)
+    repo = RunUnitOfWork(session)
     run = await repo.create_task_run(
         "生成图表结论", settings.model_policy, reasoning_policy=compiled_policy()
     )
@@ -255,7 +246,7 @@ async def test_agent_loop_persists_only_current_run_accessible_artifact_referenc
 
 async def test_agent_loop_keeps_verification_status_separate_from_blocked_run(session):
     settings = Settings(model_provider="mock", web_search_provider="mock", agent_max_turns=8)
-    repo = RunRepository(session)
+    repo = RunUnitOfWork(session)
     run = await repo.create_task_run(
         "查询 mock 数据", settings.model_policy, reasoning_policy=compiled_policy()
     )
@@ -280,7 +271,7 @@ async def test_agent_loop_blocks_at_turn_limit(session):
         agent_max_turns=1,
         agent_max_tool_calls=1,
     )
-    repo = RunRepository(session)
+    repo = RunUnitOfWork(session)
     run = await repo.create_task_run(
         "查询 mock 数据", settings.model_policy, reasoning_policy=compiled_policy()
     )
@@ -531,7 +522,7 @@ def compiled_policy(**updates):
 )
 async def test_agent_loop_uses_reasoning_effort_turn_budget(session, effort, expected_turns):
     settings = Settings(model_provider="mock", agent_max_turns=20, agent_max_tool_calls=16)
-    repo = RunRepository(session)
+    repo = RunUnitOfWork(session)
     run = await repo.create_task_run(
         "持续处理",
         settings.model_policy,
@@ -551,7 +542,7 @@ async def test_agent_loop_uses_reasoning_effort_turn_budget(session, effort, exp
 
 async def test_fast_policy_limits_tool_calls(session):
     settings = Settings(model_provider="mock", web_search_provider="mock", agent_max_tool_calls=16)
-    repo = RunRepository(session)
+    repo = RunUnitOfWork(session)
     run = await repo.create_task_run(
         "重复搜索",
         settings.model_policy,
@@ -575,7 +566,7 @@ async def test_standard_mode_uses_deployment_turn_limit(session):
         AnswerMode.standard,
         RequestedReasoningPolicy(execution_mode="auto_approval"),
     )
-    repo = RunRepository(session)
+    repo = RunUnitOfWork(session)
     run = await repo.create_task_run(
         "持续处理",
         settings.model_policy,
@@ -598,7 +589,7 @@ async def test_standard_mode_releases_read_transaction_before_model_wait(session
         AnswerMode.standard,
         RequestedReasoningPolicy(execution_mode="auto_approval"),
     )
-    repo = RunRepository(session)
+    repo = RunUnitOfWork(session)
     run = await repo.create_task_run(
         "快速回答",
         settings.model_policy,
@@ -630,7 +621,7 @@ async def test_root_loop_externalizes_oversized_model_observation_but_keeps_tool
         AnswerMode.standard,
         RequestedReasoningPolicy(execution_mode="auto_approval"),
     )
-    repo = RunRepository(session)
+    repo = RunUnitOfWork(session)
     run = await repo.create_task_run(
         "搜索并总结",
         settings.model_policy,
@@ -660,7 +651,7 @@ async def test_standard_mode_reuses_swarm_supervisor_without_creating_a_dag(sess
         RequestedReasoningPolicy(execution_mode="auto_approval"),
         subagent_policy=compile_subagent_policy(settings),
     )
-    repo = RunRepository(session)
+    repo = RunUnitOfWork(session)
     run = await repo.create_task_run(
         "快速并发能力检查",
         settings.model_policy,
@@ -699,7 +690,7 @@ async def test_required_standard_mode_cannot_finalize_without_a_swarm_group(sess
         subagent_policy=compile_subagent_policy(settings),
         subagent_mode="required",
     )
-    repo = RunRepository(session)
+    repo = RunUnitOfWork(session)
     run = await repo.create_task_run(
         "必须快速并发",
         settings.model_policy,
@@ -718,10 +709,7 @@ async def test_required_standard_mode_cannot_finalize_without_a_swarm_group(sess
 
     loaded = await repo.require_run(run.id)
     assert result["status"] == "blocked"
-    assert any(
-        (turn.observation or {}).get("kind") == "subagent_required"
-        for turn in loaded.turns
-    )
+    assert any((turn.observation or {}).get("kind") == "subagent_required" for turn in loaded.turns)
 
 
 async def test_standard_mode_uses_deployment_tool_limit(session):
@@ -735,7 +723,7 @@ async def test_standard_mode_uses_deployment_tool_limit(session):
         AnswerMode.standard,
         RequestedReasoningPolicy(execution_mode="auto_approval"),
     )
-    repo = RunRepository(session)
+    repo = RunUnitOfWork(session)
     run = await repo.create_task_run(
         "重复搜索",
         settings.model_policy,
@@ -745,9 +733,9 @@ async def test_standard_mode_uses_deployment_tool_limit(session):
     )
     client = RepeatedToolClient()
 
-    result = await AgentLoop(
-        settings, model_client=client, tool_registry=fake_web_registry()
-    ).run(repo, run.id, run.task.description)
+    result = await AgentLoop(settings, model_client=client, tool_registry=fake_web_registry()).run(
+        repo, run.id, run.task.description
+    )
     loaded = await repo.require_run(run.id)
 
     assert len(loaded.tool_calls) == 7
@@ -762,7 +750,7 @@ async def test_deep_trusted_mode_has_no_tool_call_limit(session):
         agent_max_turns=10,
         agent_max_tool_calls=2,
     )
-    repo = RunRepository(session)
+    repo = RunUnitOfWork(session)
     run = await repo.create_task_run(
         "持续搜索",
         settings.model_policy,
@@ -788,7 +776,7 @@ async def test_custom_balanced_policy_can_reach_fifteen_tool_calls(session):
         agent_max_turns=60,
         agent_max_tool_calls=50,
     )
-    repo = RunRepository(session)
+    repo = RunUnitOfWork(session)
     run = await repo.create_task_run(
         "执行完整工具预算",
         settings.model_policy,
@@ -810,7 +798,7 @@ async def test_custom_balanced_policy_can_reach_fifteen_tool_calls(session):
 
 async def test_deployment_hard_cap_can_lower_deep_turn_budget(session):
     settings = Settings(model_provider="mock", agent_max_turns=3)
-    repo = RunRepository(session)
+    repo = RunUnitOfWork(session)
     run = await repo.create_task_run(
         "受部署限制",
         settings.model_policy,
@@ -840,7 +828,7 @@ async def test_model_failure_reflection_obeys_policy(
     session, enabled, trigger, expected_reflections
 ):
     settings = Settings(model_provider="mock")
-    repo = RunRepository(session)
+    repo = RunUnitOfWork(session)
     run = await repo.create_task_run(
         "恢复错误",
         settings.model_policy,
@@ -857,7 +845,7 @@ async def test_model_failure_reflection_obeys_policy(
 
 async def test_invalid_reflection_is_skipped_without_blocking_answer(session):
     settings = Settings(model_provider="mock")
-    repo = RunRepository(session)
+    repo = RunUnitOfWork(session)
     run = await repo.create_task_run(
         "你好，吃橘子可以治疗口腔溃疡吗？",
         settings.model_policy,
@@ -881,7 +869,7 @@ async def test_invalid_reflection_is_skipped_without_blocking_answer(session):
 
 async def test_reflection_patch_updates_persisted_agent_state(session):
     settings = Settings(model_provider="mock")
-    repo = RunRepository(session)
+    repo = RunUnitOfWork(session)
     policy = compiled_policy(reflection_enabled=True, reflection_trigger="failure_only")
     run = await repo.create_task_run("恢复错误", settings.model_policy, reasoning_policy=policy)
     contract = build_default_contract(run.task.description)
@@ -904,7 +892,7 @@ async def test_reflection_patch_updates_persisted_agent_state(session):
 
 async def test_finalize_node_completion_persists_success_criteria(session):
     settings = Settings(model_provider="mock")
-    repo = RunRepository(session)
+    repo = RunUnitOfWork(session)
     run = await repo.create_task_run(
         "请直接回复：可信模式运行正常。",
         settings.model_policy,
@@ -926,7 +914,7 @@ async def test_finalize_node_completion_persists_success_criteria(session):
 
 async def test_every_turn_reflection_runs_after_successful_non_terminal_turn(session):
     settings = Settings(model_provider="mock", web_search_provider="mock")
-    repo = RunRepository(session)
+    repo = RunUnitOfWork(session)
     run = await repo.create_task_run(
         "搜索后回答",
         settings.model_policy,
@@ -943,7 +931,7 @@ async def test_every_turn_reflection_runs_after_successful_non_terminal_turn(ses
 
 async def test_every_turn_reflection_stops_at_user_budget(session):
     settings = Settings(model_provider="mock", web_search_provider="mock", agent_max_reflections=6)
-    repo = RunRepository(session)
+    repo = RunUnitOfWork(session)
     run = await repo.create_task_run(
         "搜索抓取后回答",
         settings.model_policy,

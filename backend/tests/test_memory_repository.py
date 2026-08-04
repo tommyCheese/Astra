@@ -3,7 +3,9 @@ from datetime import timedelta
 import pytest
 from sqlalchemy import select, update
 
-from app.db.models import MemoryAuditRecord, MemorySourceRecord, TaskRecord, utc_now
+from app.db.model_base import utc_now
+from app.db.models.conversations import TaskRecord
+from app.db.models.memory import MemoryAuditRecord, MemorySourceRecord
 from app.memory.domain import (
     MemoryConflictError,
     MemoryNamespace,
@@ -12,7 +14,9 @@ from app.memory.domain import (
     MemoryValidationError,
 )
 from app.repositories.memories import MemoryRepository
-from app.repositories.runs import RunRepository
+from app.repositories.memory_queries import MemoryQueryRepository
+from app.repositories.memory_retention import MemoryRetentionRepository
+from app.repositories.run_unit_of_work import RunUnitOfWork
 
 
 async def _run_with_identity(
@@ -21,7 +25,7 @@ async def _run_with_identity(
     memory_session_id: str | None = None,
     created_by: str | None = None,
 ):
-    run = await RunRepository(session).create_task_run(
+    run = await RunUnitOfWork(session).create_task_run(
         "Memory repository test",
         {"provider": "mock", "model": "mock"},
         session_id=memory_session_id,
@@ -148,7 +152,7 @@ async def test_create_version_supersedes_without_overwriting_history(session):
     assert replacement.supersedes_id == original.id
     assert replacement.content == "The project uses Python 3.12"
 
-    history = await repository.history(
+    history = await MemoryQueryRepository(session).history(
         namespace=MemoryNamespace(MemoryNamespaceType.session, "session-a"),
         memory_key="project.runtime",
     )
@@ -160,7 +164,7 @@ async def test_create_version_supersedes_without_overwriting_history(session):
 
 async def test_human_activation_atomically_supersedes_candidate_base(session):
     first_run = await _run_with_identity(session, memory_session_id="session-a")
-    second_run = await RunRepository(session).create_task_run(
+    second_run = await RunUnitOfWork(session).create_task_run(
         "Memory replacement",
         {"provider": "mock", "model": "mock"},
         task_id=first_run.task_id,
@@ -277,7 +281,7 @@ async def test_list_filters_expired_inactive_and_other_namespaces(session):
         confidence=0.9,
     )
 
-    records = await repository.list_records(
+    records = await MemoryQueryRepository(session).list_records(
         namespaces=[MemoryNamespace(MemoryNamespaceType.session, "session-a")],
         statuses=[MemoryStatus.active],
         include_expired=False,
@@ -343,18 +347,19 @@ async def test_expiration_is_query_time_safe_before_bounded_materialization(sess
     )
 
     assert (
-        await repository.list_records(
+        await MemoryQueryRepository(session).list_records(
             run_id=run.id,
             statuses=[MemoryStatus.active],
             include_expired=False,
         )
         == []
     )
-    assert await repository.materialize_expired(limit=0) == 0
+    retention = MemoryRetentionRepository(session)
+    assert await retention.materialize_expired(limit=0) == 0
     assert (await repository.require(expired.id)).status == "active"
 
-    assert await repository.materialize_expired(limit=1) == 1
+    assert await retention.materialize_expired(limit=1) == 1
     materialized = await repository.require(expired.id)
     assert materialized.status == "expired"
     assert materialized.state_version == 2
-    assert await repository.materialize_expired(limit=1) == 0
+    assert await retention.materialize_expired(limit=1) == 0

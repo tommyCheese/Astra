@@ -10,7 +10,17 @@ def project_grounded_answer(final_answer, ledger: EvidenceLedger):
     if not ledger.records(EvidenceKind.passage):
         return final_answer
     valid_evidence = ledger.evidence_ids()
-    claims = [
+    claims = _valid_claims(final_answer.claims, valid_evidence)
+    passage_records = ledger.records(EvidenceKind.passage)
+    snapshots = _snapshots_by_source(ledger)
+    passage_by_url = _passages_by_url(passage_records, snapshots)
+    claims = _ensure_claims(final_answer, claims, passage_records, passage_by_url)
+    citations = _build_citations(final_answer.citations, claims, ledger, snapshots)
+    return final_answer.model_copy(update={"claims": claims, "citations": citations})
+
+
+def _valid_claims(claims, valid_evidence: set[str]):
+    return [
         claim.model_copy(
             update={
                 "evidence_refs": [
@@ -18,13 +28,18 @@ def project_grounded_answer(final_answer, ledger: EvidenceLedger):
                 ]
             }
         )
-        for claim in final_answer.claims
+        for claim in claims
     ]
-    passage_records = ledger.records(EvidenceKind.passage)
-    snapshots = {
+
+
+def _snapshots_by_source(ledger: EvidenceLedger):
+    return {
         item.payload["source_id"]: item
         for item in ledger.records(EvidenceKind.source_snapshot)
     }
+
+
+def _passages_by_url(passage_records, snapshots):
     passage_by_url: dict[str, list] = {}
     for record in passage_records:
         snapshot = snapshots.get(record.payload.get("source_id"))
@@ -32,44 +47,53 @@ def project_grounded_answer(final_answer, ledger: EvidenceLedger):
             continue
         passage_by_url.setdefault(str(snapshot.payload.get("canonical_url")), []).append(record)
         passage_by_url.setdefault(str(snapshot.payload.get("requested_url")), []).append(record)
+    return passage_by_url
 
+
+def _ensure_claims(final_answer, claims, passage_records, passage_by_url):
     if not claims:
-        material = list(final_answer.findings)
-        if not material and final_answer.summary.strip():
-            material = [type("_Finding", (), {"text": final_answer.summary, "source_urls": []})()]
-        for index, finding in enumerate(material):
-            candidates = [
-                record
-                for url in getattr(finding, "source_urls", [])
-                for record in passage_by_url.get(url, [])
-            ]
-            if not candidates and len(passage_records) == 1:
-                candidates = passage_records
-            refs = [item.id for item in candidates[:2]]
-            claims.append(
-                Claim(
-                    id=stable_id("claim", str(index), finding.text),
-                    text=finding.text,
-                    evidence_refs=refs,
-                    material=True,
-                    support_status="supported" if refs else "unsupported",
-                )
-            )
-    else:
-        claims = [
-            claim.model_copy(
-                update={
-                    "support_status": (
-                        "supported" if claim.evidence_refs else "unsupported"
-                    )
-                }
-            )
-            for claim in claims
-        ]
+        return _synthesized_claims(final_answer, passage_records, passage_by_url)
+    return [
+        claim.model_copy(
+            update={"support_status": "supported" if claim.evidence_refs else "unsupported"}
+        )
+        for claim in claims
+    ]
 
+
+def _synthesized_claims(final_answer, passage_records, passage_by_url):
+    material = list(final_answer.findings)
+    if not material and final_answer.summary.strip():
+        material = [type("_Finding", (), {"text": final_answer.summary, "source_urls": []})()]
+    return [
+        _claim_from_finding(index, finding, passage_records, passage_by_url)
+        for index, finding in enumerate(material)
+    ]
+
+
+def _claim_from_finding(index, finding, passage_records, passage_by_url):
+    candidates = [
+        record
+        for url in getattr(finding, "source_urls", [])
+        for record in passage_by_url.get(url, [])
+    ]
+    if not candidates and len(passage_records) == 1:
+        candidates = passage_records
+    refs = [item.id for item in candidates[:2]]
+    return Claim(
+        id=stable_id("claim", str(index), finding.text),
+        text=finding.text,
+        evidence_refs=refs,
+        material=True,
+        support_status="supported" if refs else "unsupported",
+    )
+
+
+def _build_citations(existing_citations, claims, ledger, snapshots):
+    valid_evidence = ledger.evidence_ids()
     existing = {
         (citation.claim_id, citation.evidence_ref): citation
-        for citation in final_answer.citations
+        for citation in existing_citations
         if citation.evidence_ref in valid_evidence
     }
     citations: list[Citation] = []
@@ -94,4 +118,4 @@ def project_grounded_answer(final_answer, ledger: EvidenceLedger):
                 )).model_copy(update={"ordinal": ordinal})
             )
             ordinal += 1
-    return final_answer.model_copy(update={"claims": claims, "citations": citations})
+    return citations

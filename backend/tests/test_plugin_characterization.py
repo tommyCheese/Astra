@@ -1,20 +1,20 @@
 from fake_web_tools import fake_web_registry
 
 from app.core.config import Settings
+from app.model_clients.mock import MockModelClient
 from app.permissions.effects import DefaultEffectAnalyzer
-from app.repositories.runs import RunRepository
+from app.repositories.run_unit_of_work import RunUnitOfWork
 from app.runner.agent_loop import AgentLoop
 from app.runner.approvals import safe_preview, similar_matcher
-from app.runner.model_client import MockModelClient
 from app.runner.reasoning import PolicyCompiler
-from app.schemas.agent import RequestedReasoningPolicy
+from app.schemas.agent.run_policy import RequestedReasoningPolicy
 from app.tools.bash import BashExecuteTool
 
 
 async def test_web_runtime_characterization_freezes_calls_events_observations_and_results(session):
     settings = Settings(model_provider="mock", web_search_provider="mock", agent_max_turns=8)
     policy = PolicyCompiler().compile(RequestedReasoningPolicy(execution_mode="auto_approval"))
-    repo = RunRepository(session)
+    repo = RunUnitOfWork(session)
     run = await repo.create_task_run(
         "查询插件化前的 Web 行为",
         settings.model_policy,

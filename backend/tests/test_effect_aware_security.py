@@ -7,7 +7,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.db.models import ApprovalGrantRecord, utc_now
+from app.db.model_base import utc_now
+from app.db.models.permissions import ApprovalGrantRecord
 from app.permissions.credentials import CredentialBroker
 from app.permissions.effects import (
     ANALYZER_DIGEST,
@@ -22,10 +23,11 @@ from app.permissions.governance import (
     PermissionBundleEvaluator,
     permission_bundle_digest,
 )
+from app.repositories.approval_contracts import ApprovalRequestCreate
 from app.repositories.permissions import PermissionRepository
-from app.repositories.runs import RunRepository
+from app.repositories.run_unit_of_work import RunUnitOfWork
 from app.repositories.workspaces import WorkspaceRepository
-from app.schemas.agent import ExecutionMode
+from app.schemas.agent.types import ExecutionMode
 from app.schemas.permissions import (
     ActionEffectPlan,
     EffectItem,
@@ -355,7 +357,7 @@ def test_unattended_permission_bundle_fails_closed_and_enforces_identity_budget(
 
 
 async def test_credential_broker_scopes_redacts_and_revokes(session):
-    run = await RunRepository(session).create_task_run("Credential broker", {})
+    run = await RunUnitOfWork(session).create_task_run("Credential broker", {})
     repository = PermissionRepository(session)
     identity = await repository.create_identity(
         identity_type="tool_runtime",
@@ -421,7 +423,7 @@ async def test_credential_broker_scopes_redacts_and_revokes(session):
 
 
 async def test_delegation_attenuation_and_self_approval_are_rejected(session):
-    run = await RunRepository(session).create_task_run("Delegation", {})
+    run = await RunUnitOfWork(session).create_task_run("Delegation", {})
     permissions = PermissionRepository(session)
     parent = await permissions.create_identity(
         identity_type="main_agent",
@@ -448,7 +450,7 @@ async def test_delegation_attenuation_and_self_approval_are_rejected(session):
                 "max_uses": 3,
             },
         )
-    repository = RunRepository(session)
+    repository = RunUnitOfWork(session)
     turn = await repository.create_agent_turn(
         run.id, 1, "call_tool", "write", selected_tool="file_write", phase="prepared"
     )
@@ -463,17 +465,19 @@ async def test_delegation_attenuation_and_self_approval_are_rejected(session):
         status="awaiting_approval",
     )
     approval = await repository.create_approval_request(
-        run_id=run.id,
-        turn_id=turn.id,
-        tool_call_id=call.id,
-        tool_name="file_write",
-        tool_version="1",
-        frozen_input={"path": "x"},
-        input_hash="hash",
-        preview="write",
-        permission="workspace_write",
-        impact="moderate",
-        similar_matcher=None,
+        ApprovalRequestCreate(
+            run_id=run.id,
+            turn_id=turn.id,
+            tool_call_id=call.id,
+            tool_name="file_write",
+            tool_version="1",
+            frozen_input={"path": "x"},
+            input_hash="hash",
+            preview="write",
+            permission="workspace_write",
+            impact="moderate",
+            similar_matcher=None,
+        )
     )
     waiting = await repository.set_waiting_state(
         run.id, {"approval_id": approval.id, "tool_call_id": call.id}
@@ -489,7 +493,7 @@ async def test_delegation_attenuation_and_self_approval_are_rejected(session):
 
 
 async def test_task_grant_crosses_runs_but_never_crosses_tasks(session):
-    repository = RunRepository(session)
+    repository = RunUnitOfWork(session)
     first = await repository.create_task_run("Task grant", {})
     second = await repository.create_task_run("Same task", {}, task_id=first.task_id)
     other = await repository.create_task_run("Other task", {})
@@ -507,29 +511,31 @@ async def test_task_grant_crosses_runs_but_never_crosses_tasks(session):
         status="awaiting_approval",
     )
     approval = await repository.create_approval_request(
-        run_id=first.id,
-        turn_id=turn.id,
-        tool_call_id=call.id,
-        tool_name="file_write",
-        tool_version="1",
-        frozen_input={"path": "report.txt"},
-        input_hash="hash",
-        preview="write report",
-        permission="workspace_write",
-        impact="moderate",
-        frozen_effect_plan={
-            "effects": [
-                {
-                    "kind": "workspace_write",
-                    "resource": f"task://{first.task_id}/workspace/report.txt",
-                }
-            ]
-        },
-        similar_matcher={
-            "effect_kinds": ["workspace_write"],
-            "resource_matcher": {"exact": f"task://{first.task_id}/workspace/report.txt"},
-            "invocation_constraints": {"tool_name": "file_write", "tool_version": "1"},
-        },
+        ApprovalRequestCreate(
+            run_id=first.id,
+            turn_id=turn.id,
+            tool_call_id=call.id,
+            tool_name="file_write",
+            tool_version="1",
+            frozen_input={"path": "report.txt"},
+            input_hash="hash",
+            preview="write report",
+            permission="workspace_write",
+            impact="moderate",
+            frozen_effect_plan={
+                "effects": [
+                    {
+                        "kind": "workspace_write",
+                        "resource": f"task://{first.task_id}/workspace/report.txt",
+                    }
+                ]
+            },
+            similar_matcher={
+                "effect_kinds": ["workspace_write"],
+                "resource_matcher": {"exact": f"task://{first.task_id}/workspace/report.txt"},
+                "invocation_constraints": {"tool_name": "file_write", "tool_version": "1"},
+            },
+        )
     )
     waiting = await repository.set_waiting_state(
         first.id, {"approval_id": approval.id, "tool_call_id": call.id}
@@ -589,7 +595,7 @@ def test_extension_allowlist_detects_provider_and_supply_chain_drift():
 async def test_workspace_security_rejects_links_archives_and_enforces_checkpoints(
     session, tmp_path
 ):
-    run = await RunRepository(session).create_task_run("Workspace security", {})
+    run = await RunUnitOfWork(session).create_task_run("Workspace security", {})
     runtime = WorkspaceRuntimeService(
         WorkspaceRepository(session),
         str(tmp_path / "store"),

@@ -12,20 +12,19 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import (
-    AgentExecutionRecord,
-    AgentIdentityRecord,
-    RunSkillSnapshotRecord,
-    ToolCatalogSnapshotRecord,
-    utc_now,
-)
-from app.permissions.engine import InvocationAuthorizationResult, PermissionEngine
+from app.db.model_base import utc_now
+from app.db.models.executions import AgentExecutionRecord
+from app.db.models.permissions import AgentIdentityRecord, ToolCatalogSnapshotRecord
+from app.db.models.skills import RunSkillSnapshotRecord
+from app.permissions.engine import PermissionEngine
+from app.permissions.invocation import InvocationAuthorizationResult
 from app.repositories.agent_executions import (
     TERMINAL_AGENT_STATUSES,
     AgentExecutionRepository,
 )
 from app.repositories.permissions import PermissionRepository
-from app.schemas.agent import EffectiveSubagentPolicy, ExecutionMode
+from app.schemas.agent.run_policy import EffectiveSubagentPolicy
+from app.schemas.agent.types import ExecutionMode
 from app.schemas.permissions import (
     ActionEffectPlan,
     PermissionBundle,
@@ -37,9 +36,9 @@ from app.schemas.subagents import (
     DelegationContract,
     DelegationRejectionCode,
     DelegationRequest,
-    DelegationValidationIssue,
     EffectiveDelegationScope,
 )
+from app.subagents.scope import DelegationAuthorizationError, DelegationScopeAttenuator
 
 
 def stable_digest(payload: Any) -> str:
@@ -50,24 +49,6 @@ def stable_digest(payload: Any) -> str:
         separators=(",", ":"),
     ).encode("utf-8")
     return f"sha256:{hashlib.sha256(encoded).hexdigest()}"
-
-
-class DelegationAuthorizationError(RuntimeError):
-    def __init__(
-        self,
-        code: DelegationRejectionCode,
-        message: str,
-        *,
-        field: str | None = None,
-        details: dict[str, Any] | None = None,
-    ):
-        self.issue = DelegationValidationIssue(
-            code=code,
-            message=message,
-            field=field,
-            details=details or {},
-        )
-        super().__init__(f"{code.value}: {message}")
 
 
 @dataclass(frozen=True)
@@ -91,82 +72,6 @@ class FrozenChildCatalog:
                 DelegationRejectionCode.catalog_drift,
                 "The child Tool/Skill Catalog changed after it was frozen.",
             )
-
-
-class DelegationScopeAttenuator:
-    LIST_KEYS = (
-        "actions",
-        "resources",
-        "effect_kinds",
-        "tools",
-        "skills",
-        "credential_scopes",
-        "data_labels",
-        "allowed_purposes",
-        "network_destinations",
-        "workspace_read_roots",
-        "workspace_write_roots",
-    )
-    BUDGET_KEYS = ("max_uses", "max_tool_calls", "max_runtime_seconds")
-    WRITE_MARKERS = ("write", "delete", "execute", "change", "create", "mutation")
-
-    @classmethod
-    def attenuate(
-        cls,
-        *,
-        requested: dict[str, Any],
-        parent: dict[str, Any],
-        task_policy: dict[str, Any] | None,
-        server_policy: EffectiveSubagentPolicy,
-        execution_id: str,
-    ) -> EffectiveDelegationScope:
-        ceilings = [parent]
-        if task_policy:
-            ceilings.append(task_policy)
-        normalized: dict[str, Any] = {}
-        for key in cls.LIST_KEYS:
-            values = _unique_strings(requested.get(key, []))
-            if values and any(not _values_are_subset(values, ceiling.get(key, [])) for ceiling in ceilings):
-                raise DelegationAuthorizationError(
-                    DelegationRejectionCode.resource_not_delegated,
-                    f"Requested {key} exceeds an authority ceiling.",
-                    field=f"resource_scope.{key}",
-                    details={"requested": values},
-                )
-            if server_policy.read_only and key in {
-                "actions",
-                "effect_kinds",
-                "workspace_write_roots",
-            } and any(cls._is_write(value) for value in values):
-                raise DelegationAuthorizationError(
-                    DelegationRejectionCode.resource_not_delegated,
-                    "Read-only subagents cannot receive write or execution authority.",
-                    field=f"resource_scope.{key}",
-                )
-            normalized[key] = tuple(values)
-        for key in cls.BUDGET_KEYS:
-            requested_value = requested.get(key)
-            ceiling_values = [item.get(key) for item in ceilings if item.get(key) is not None]
-            if requested_value is not None and ceiling_values and requested_value > min(ceiling_values):
-                raise DelegationAuthorizationError(
-                    DelegationRejectionCode.budget_rejected,
-                    f"Requested {key} exceeds an authority ceiling.",
-                    field=f"resource_scope.{key}",
-                )
-            normalized[key] = (
-                min([requested_value, *ceiling_values])
-                if requested_value is not None
-                else min(ceiling_values, default=None)
-            )
-        normalized["private_staging_root"] = (
-            f".astra/subagents/{execution_id}/staging"
-        )
-        return EffectiveDelegationScope(**normalized)
-
-    @staticmethod
-    def _is_write(value: str) -> bool:
-        lowered = value.lower()
-        return any(marker in lowered for marker in DelegationScopeAttenuator.WRITE_MARKERS)
 
 
 class DelegationContractService:
@@ -277,7 +182,12 @@ class DelegationContractService:
     @staticmethod
     def normalize_request(request: DelegationRequest) -> DelegationRequest:
         payload = request.model_dump(mode="python")
-        for key in ("success_criteria", "required_capabilities", "requested_tools", "requested_skills"):
+        for key in (
+            "success_criteria",
+            "required_capabilities",
+            "requested_tools",
+            "requested_skills",
+        ):
             payload[key] = sorted(_unique_strings(payload.get(key, [])))
         payload["scope"]["included"] = sorted(_unique_strings(payload["scope"]["included"]))
         payload["scope"]["excluded"] = sorted(_unique_strings(payload["scope"].get("excluded", [])))
@@ -320,25 +230,7 @@ class DelegationContractService:
         run_id: str | None = None,
     ) -> FrozenChildCatalog:
         allowed_tools = set(scope.tools)
-        requested_tools = set(request.requested_tools)
-        tools = []
-        for item in (tool_snapshot.catalog if tool_snapshot else []):
-            name = str(item.get("name", ""))
-            if name not in requested_tools or name not in allowed_tools:
-                continue
-            if item.get("execution_backend") == "astra.runtime" or name == "swarm":
-                continue
-            if self.policy.read_only and self._tool_is_side_effecting(item):
-                continue
-            tools.append(deepcopy(item))
-        missing_tools = requested_tools - {str(item.get("name")) for item in tools}
-        if missing_tools:
-            raise DelegationAuthorizationError(
-                DelegationRejectionCode.capability_not_delegated,
-                "Requested tools are absent from the attenuated Tool Catalog.",
-                field="requested_tools",
-                details={"missing": sorted(missing_tools)},
-            )
+        tools = self._attenuated_tools(request, allowed_tools, tool_snapshot)
         resolved_run_id = run_id or (tool_snapshot.run_id if tool_snapshot is not None else None)
         skill_snapshot = None
         if resolved_run_id is not None:
@@ -347,24 +239,7 @@ class DelegationContractService:
                     RunSkillSnapshotRecord.run_id == resolved_run_id
                 )
             )
-        requested_skills = set(request.requested_skills)
-        allowed_skills = set(scope.skills)
-        skills = [
-            deepcopy(item)
-            for item in (skill_snapshot.catalog if skill_snapshot else [])
-            if item.get("qualified_identity") in requested_skills & allowed_skills
-            and self._skill_tools_are_attenuated(item, allowed_tools)
-        ]
-        missing_skills = requested_skills - {
-            str(item.get("qualified_identity")) for item in skills
-        }
-        if missing_skills:
-            raise DelegationAuthorizationError(
-                DelegationRejectionCode.capability_not_delegated,
-                "Requested skills are absent from the attenuated Skill Catalog.",
-                field="requested_skills",
-                details={"missing": sorted(missing_skills)},
-            )
+        skills = self._attenuated_skills(request, scope, allowed_tools, skill_snapshot)
         tools.sort(key=lambda item: (str(item.get("name")), str(item.get("version"))))
         skills.sort(key=lambda item: str(item.get("qualified_identity")))
         return FrozenChildCatalog(
@@ -374,6 +249,38 @@ class DelegationContractService:
             skill_digest=stable_digest(skills),
         )
 
+    def _attenuated_tools(self, request, allowed_tools, snapshot):
+        requested = set(request.requested_tools)
+        tools = [
+            deepcopy(item)
+            for item in (snapshot.catalog if snapshot else [])
+            if str(item.get("name", "")) in requested & allowed_tools
+            and item.get("execution_backend") != "astra.runtime"
+            and item.get("name") != "swarm"
+            and not (self.policy.read_only and self._tool_is_side_effecting(item))
+        ]
+        _require_catalog_entries(
+            requested - {str(item.get("name")) for item in tools},
+            field="requested_tools",
+            catalog_name="Tool",
+        )
+        return tools
+
+    def _attenuated_skills(self, request, scope, allowed_tools, snapshot):
+        requested = set(request.requested_skills)
+        skills = [
+            deepcopy(item)
+            for item in (snapshot.catalog if snapshot else [])
+            if item.get("qualified_identity") in requested & set(scope.skills)
+            and self._skill_tools_are_attenuated(item, allowed_tools)
+        ]
+        _require_catalog_entries(
+            requested - {str(item.get("qualified_identity")) for item in skills},
+            field="requested_skills",
+            catalog_name="Skill",
+        )
+        return skills
+
     async def catalog_for_run(
         self,
         *,
@@ -382,16 +289,14 @@ class DelegationContractService:
         scope: EffectiveDelegationScope,
     ) -> FrozenChildCatalog:
         tool_snapshot = await self.session.scalar(
-            select(ToolCatalogSnapshotRecord).where(
-                ToolCatalogSnapshotRecord.run_id == run_id
-            )
+            select(ToolCatalogSnapshotRecord).where(ToolCatalogSnapshotRecord.run_id == run_id)
         )
-        return await self._catalog_from_snapshots(
-            request, scope, tool_snapshot, run_id=run_id
-        )
+        return await self._catalog_from_snapshots(request, scope, tool_snapshot, run_id=run_id)
 
     @staticmethod
-    def require_skill_activation(catalog: FrozenChildCatalog, identity: str, revision_id: str) -> dict[str, Any]:
+    def require_skill_activation(
+        catalog: FrozenChildCatalog, identity: str, revision_id: str
+    ) -> dict[str, Any]:
         entry = next(
             (
                 item
@@ -534,89 +439,8 @@ class ChildInvocationAuthorizer:
         permission_bundle_signing_secret: str = "",
         **kwargs: Any,
     ) -> InvocationAuthorizationResult:
-        if context.tool_catalog_digest != frozen_catalog.tool_digest or (
-            context.skill_catalog_digest is not None
-            and context.skill_catalog_digest != frozen_catalog.skill_digest
-        ):
-            raise DelegationAuthorizationError(
-                DelegationRejectionCode.catalog_drift,
-                "Invocation Catalog digests do not match the frozen child context.",
-            )
-        if not any(
-            item.get("name") == tool_name and item.get("version") == tool_version
-            for item in frozen_catalog.tools
-        ):
-            raise DelegationAuthorizationError(
-                DelegationRejectionCode.capability_not_delegated,
-                "Tool invocation is outside the frozen child Catalog.",
-            )
-        allowed_effects = set(context.effective_scope.effect_kinds)
-        if effect_plan.effects and (
-            not allowed_effects
-            or any(
-                not _values_are_subset([effect.kind.value], allowed_effects)
-                for effect in effect_plan.effects
-            )
-        ):
-            raise DelegationAuthorizationError(
-                DelegationRejectionCode.resource_not_delegated,
-                "Tool effect kind exceeds the delegated child scope.",
-            )
-        allowed_resources = context.effective_scope.resources
-        if effect_plan.effects and (
-            not allowed_resources
-            or any(
-                not _values_are_subset([effect.resource], allowed_resources)
-                for effect in effect_plan.effects
-            )
-        ):
-            raise DelegationAuthorizationError(
-                DelegationRejectionCode.resource_not_delegated,
-                "Tool effect resource exceeds the delegated child scope.",
-            )
-        allowed_actions = context.effective_scope.actions
-        if declared_permissions and (
-            not allowed_actions
-            or not _values_are_subset(declared_permissions, allowed_actions)
-        ):
-            raise DelegationAuthorizationError(
-                DelegationRejectionCode.capability_not_delegated,
-                "Tool permissions exceed the delegated child action scope.",
-            )
-        for effect in effect_plan.effects:
-            if effect.data_labels and not _values_are_subset(
-                effect.data_labels, context.effective_scope.data_labels
-            ):
-                raise DelegationAuthorizationError(
-                    DelegationRejectionCode.resource_not_delegated,
-                    "Tool data labels exceed the delegated child scope.",
-                )
-            if effect.kind.value in {
-                "network_write",
-                "external_write",
-                "network_read",
-            } and not _values_are_subset(
-                [effect.resource], context.effective_scope.network_destinations
-            ):
-                raise DelegationAuthorizationError(
-                    DelegationRejectionCode.resource_not_delegated,
-                    "Tool network destination exceeds the delegated child scope.",
-                )
-            workspace_roots = (
-                context.effective_scope.workspace_write_roots
-                if effect.kind.value in {"workspace_write", "workspace_delete"}
-                else context.effective_scope.workspace_read_roots
-                if effect.kind.value == "workspace_read"
-                else ()
-            )
-            if effect.kind.value.startswith("workspace_") and (
-                not workspace_roots
-                or not _values_are_subset([effect.resource], workspace_roots)
-            ):
-                raise DelegationAuthorizationError(
-                    DelegationRejectionCode.resource_not_delegated,
-                    "Tool Workspace path exceeds the delegated child roots.",
-                )
+        _validate_catalog_binding(context, frozen_catalog, tool_name, tool_version)
+        _validate_effect_scope(context, effect_plan, declared_permissions)
         return self.engine.authorize_invocation(
             subject=PermissionSubject(
                 agent_id=context.identity_id,
@@ -649,12 +473,105 @@ class ChildInvocationAuthorizer:
         )
 
     @staticmethod
-    def validate_reviewer(*, reviewer_identity_id: str, executor_context: DelegatedExecutionContext) -> None:
+    def validate_reviewer(
+        *, reviewer_identity_id: str, executor_context: DelegatedExecutionContext
+    ) -> None:
         if reviewer_identity_id in executor_context.delegation_chain:
             raise DelegationAuthorizationError(
                 DelegationRejectionCode.identity_overlap,
                 "An executor or its delegation ancestors cannot approve their own action.",
             )
+
+
+def _require_catalog_entries(missing, *, field: str, catalog_name: str) -> None:
+    if missing:
+        raise DelegationAuthorizationError(
+            DelegationRejectionCode.capability_not_delegated,
+            f"Requested {field.removeprefix('requested_')} are absent from the attenuated "
+            f"{catalog_name} Catalog.",
+            field=field,
+            details={"missing": sorted(missing)},
+        )
+
+
+def _validate_catalog_binding(context, catalog, tool_name, tool_version) -> None:
+    digests_differ = context.tool_catalog_digest != catalog.tool_digest or (
+        context.skill_catalog_digest is not None
+        and context.skill_catalog_digest != catalog.skill_digest
+    )
+    if digests_differ:
+        raise DelegationAuthorizationError(
+            DelegationRejectionCode.catalog_drift,
+            "Invocation Catalog digests do not match the frozen child context.",
+        )
+    if not any(
+        item.get("name") == tool_name and item.get("version") == tool_version
+        for item in catalog.tools
+    ):
+        raise DelegationAuthorizationError(
+            DelegationRejectionCode.capability_not_delegated,
+            "Tool invocation is outside the frozen child Catalog.",
+        )
+
+
+def _validate_effect_scope(context, effect_plan, declared_permissions) -> None:
+    scope = context.effective_scope
+    _require_effect_values(effect_plan, "kind", scope.effect_kinds, "effect kind")
+    _require_effect_values(effect_plan, "resource", scope.resources, "effect resource")
+    if declared_permissions and not _values_are_subset(declared_permissions, scope.actions):
+        raise DelegationAuthorizationError(
+            DelegationRejectionCode.capability_not_delegated,
+            "Tool permissions exceed the delegated child action scope.",
+        )
+    for effect in effect_plan.effects:
+        _validate_effect_data_scope(effect, scope)
+
+
+def _require_effect_values(effect_plan, attribute, allowed, label) -> None:
+    values = [
+        getattr(effect, attribute).value
+        if hasattr(getattr(effect, attribute), "value")
+        else getattr(effect, attribute)
+        for effect in effect_plan.effects
+    ]
+    if values and not _values_are_subset(values, allowed):
+        raise DelegationAuthorizationError(
+            DelegationRejectionCode.resource_not_delegated,
+            f"Tool {label} exceeds the delegated child scope.",
+        )
+
+
+def _validate_effect_data_scope(effect, scope) -> None:
+    if effect.data_labels and not _values_are_subset(effect.data_labels, scope.data_labels):
+        raise DelegationAuthorizationError(
+            DelegationRejectionCode.resource_not_delegated,
+            "Tool data labels exceed the delegated child scope.",
+        )
+    if effect.kind.value in {
+        "network_write",
+        "external_write",
+        "network_read",
+    } and not _values_are_subset([effect.resource], scope.network_destinations):
+        raise DelegationAuthorizationError(
+            DelegationRejectionCode.resource_not_delegated,
+            "Tool network destination exceeds the delegated child scope.",
+        )
+    workspace_roots = _workspace_roots(effect.kind.value, scope)
+    if effect.kind.value.startswith("workspace_") and not _values_are_subset(
+        [effect.resource], workspace_roots
+    ):
+        raise DelegationAuthorizationError(
+            DelegationRejectionCode.resource_not_delegated,
+            "Tool Workspace path exceeds the delegated child roots.",
+        )
+
+
+def _workspace_roots(effect_kind, scope):
+    if effect_kind in {"workspace_write", "workspace_delete"}:
+        return scope.workspace_write_roots
+    if effect_kind == "workspace_read":
+        return scope.workspace_read_roots
+    return ()
 
 
 def _unique_strings(values: Iterable[Any]) -> list[str]:
@@ -665,9 +582,7 @@ def _values_are_subset(children: Iterable[str], parents: Iterable[str]) -> bool:
     parent_patterns = tuple(str(item) for item in parents)
     return bool(parent_patterns) and all(
         any(
-            pattern == "*"
-            or child == pattern
-            or fnmatchcase(child, pattern)
+            pattern == "*" or child == pattern or fnmatchcase(child, pattern)
             for pattern in parent_patterns
         )
         for child in children

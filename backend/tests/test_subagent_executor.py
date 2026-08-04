@@ -8,29 +8,21 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.core.config import Settings
-from app.db.models import (
-    AgentTurnRecord,
-    NodeExecutionRecord,
-    PlanRecord,
-    ToolCallRecord,
-)
+from app.db.models.executions import NodeExecutionRecord
+from app.db.models.permissions import ToolCallRecord
+from app.db.models.plans import PlanRecord
+from app.db.models.runs import AgentTurnRecord
+from app.model_clients.mock import MockModelClient
 from app.repositories.agent_executions import AgentExecutionRepository
 from app.repositories.permissions import PermissionRepository
-from app.repositories.runs import RunRepository
+from app.repositories.run_unit_of_work import RunUnitOfWork
 from app.repositories.tool_settings import (
     ToolSettingsRepository,
     default_tool_states,
 )
-from app.runner.model_client import MockModelClient
-from app.schemas.agent import (
-    AgentDecision,
-    AgentReflection,
-    EffectiveSubagentPolicy,
-    ExpectedObservation,
-    PlanDraft,
-    PlanNodeDraft,
-    SubagentBudgetPolicy,
-)
+from app.schemas.agent.execution_state import AgentDecision, AgentReflection
+from app.schemas.agent.planning import ExpectedObservation, PlanDraft, PlanNodeDraft
+from app.schemas.agent.run_policy import EffectiveSubagentPolicy, SubagentBudgetPolicy
 from app.schemas.permissions import PermissionPolicySet, PermissionRule
 from app.schemas.subagents import (
     DelegatedExecutionContext,
@@ -178,7 +170,7 @@ def _allow_delegation() -> PermissionPolicySet:
 
 
 async def _child_runtime(session, tool: Tool, *, max_model_calls: int = 5):
-    run = await RunRepository(session).create_task_run("Child executor", {})
+    run = await RunUnitOfWork(session).create_task_run("Child executor", {})
     root = await AgentExecutionRepository(session).root_for_run(run.id)
     assert root is not None
     permissions = PermissionRepository(session)
@@ -540,7 +532,7 @@ async def test_local_child_persists_blocked_and_waiting_resource_states(
 
 
 async def _operations_runtime(session, *, enabled: bool = True):
-    run = await RunRepository(session).create_task_run("Runtime operations", {})
+    run = await RunUnitOfWork(session).create_task_run("Runtime operations", {})
     root = await AgentExecutionRepository(session).root_for_run(run.id)
     assert root is not None
     permissions = PermissionRepository(session)

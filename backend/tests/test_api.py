@@ -10,25 +10,22 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from app.api import runs as runs_api
 from app.api.models import get_runtime_default_model
 from app.core.config import Settings, get_settings
-from app.db.models import Base, RunRecord, TaskRecord, utc_now
+from app.db.model_base import Base, utc_now
+from app.db.models.conversations import TaskRecord
+from app.db.models.runs import RunRecord
 from app.db.session import get_session
 from app.main import create_app
 from app.memory.domain import MemoryStatus
+from app.repositories.approval_contracts import ApprovalRequestCreate
 from app.repositories.memories import MemoryRepository
 from app.repositories.plans import PlanRepository, plan_to_view
-from app.repositories.runs import RunRepository
+from app.repositories.run_unit_of_work import RunUnitOfWork
 from app.runner import plan_revision as plan_revision_module
 from app.runner.planning import PlanService, canonical_agent_state
 from app.runner.reasoning import RunProfileResolver, build_default_contract
-from app.schemas.agent import (
-    AnswerMode,
-    ExpectedObservation,
-    PlanDraft,
-    PlanExecution,
-    PlanNodeDraft,
-    PlanNodeStatus,
-    RequestedReasoningPolicy,
-)
+from app.schemas.agent.planning import ExpectedObservation, PlanDraft, PlanNodeDraft
+from app.schemas.agent.run_policy import RequestedReasoningPolicy
+from app.schemas.agent.types import AnswerMode, PlanExecution, PlanNodeStatus
 
 
 @pytest.fixture
@@ -45,7 +42,6 @@ async def app_client(monkeypatch, tmp_path):
     async def noop_runner(run_id, settings):
         return None
 
-    monkeypatch.setattr(runs_api, "start_run_in_process", noop_runner)
     monkeypatch.setattr(
         plan_revision_module,
         "build_tool_registry",
@@ -58,14 +54,16 @@ async def app_client(monkeypatch, tmp_path):
         runtime_profile_path=str(tmp_path / "runtime-profile.json"),
     )
     app = create_app(settings, session_factory=Session)
+    monkeypatch.setattr(app.state.container.run_dispatcher, "_run_starter", noop_runner)
     app.dependency_overrides[get_session] = override_session
     app.dependency_overrides[get_settings] = lambda: settings
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         client._astra_session = Session
         client._astra_settings = settings
-        client._astra_runtime_service = app.state.runtime_profile_service
-        client._astra_autodream_service = app.state.autodream_service
+        client._astra_runtime_service = app.state.container.runtime_profile_service
+        client._astra_autodream_service = app.state.container.autodream_service
+        client._astra_run_dispatcher = app.state.container.run_dispatcher
         yield client
     await engine.dispose()
 
@@ -127,9 +125,7 @@ async def test_scheduled_tasks_api_is_global_and_versioned(app_client):
     assert [item["id"] for item in listed.json()] == [job["id"]]
     assert listed.json()[0]["target_task_id"] == target.json()["id"]
 
-    protected_target = await app_client.delete(
-        f"/api/conversations/{target.json()['id']}"
-    )
+    protected_target = await app_client.delete(f"/api/conversations/{target.json()['id']}")
     assert protected_target.status_code == 409
     assert protected_target.json()["error"]["code"] == "CONVERSATION_HAS_AUTOMATIONS"
 
@@ -179,9 +175,7 @@ async def test_scheduled_tasks_api_binds_result_conversation_and_resolves_execut
         return ScheduledExecutionConfig(permission_bundle={"token": "signed"})
 
     monkeypatch.setattr(ScheduledExecutionResolver, "from_task", resolve_execution)
-    monkeypatch.setattr(
-        ScheduledExecutionResolver, "from_workspace", resolve_workspace_execution
-    )
+    monkeypatch.setattr(ScheduledExecutionResolver, "from_workspace", resolve_workspace_execution)
     created = await app_client.post(
         "/api/schedules",
         json={
@@ -264,7 +258,7 @@ async def test_heartbeat_api_uses_one_global_desired_state(app_client):
 
 async def test_memory_management_api_lists_details_and_revokes_with_cas(app_client):
     async with app_client._astra_session() as session:
-        run_repo = RunRepository(session)
+        run_repo = RunUnitOfWork(session)
         source_run = await run_repo.create_task_run(
             "记住数据库",
             {"provider": "mock", "model": "mock"},
@@ -333,7 +327,7 @@ async def test_memory_management_api_lists_details_and_revokes_with_cas(app_clie
 
 async def test_memory_management_api_requires_explicit_human_activation(app_client):
     async with app_client._astra_session() as session:
-        run = await RunRepository(session).create_task_run(
+        run = await RunUnitOfWork(session).create_task_run(
             "人工确认记忆",
             {"provider": "mock", "model": "mock"},
         )
@@ -399,7 +393,7 @@ async def test_context_status_and_registered_commands_preserve_history(app_clien
     async with app_client._astra_session() as session:
         session.add(task)
         await session.flush()
-        repository = RunRepository(session)
+        repository = RunUnitOfWork(session)
         for index in range(6):
             run = await repository.create_task_run(
                 f"问题 {index}",
@@ -695,7 +689,7 @@ async def test_workspace_file_view_and_safe_download(app_client):
     from app.workspaces.runtime import WorkspaceRuntimeService
 
     async with app_client._astra_session() as session:
-        run = await RunRepository(session).create_task_run("生成文件", {})
+        run = await RunUnitOfWork(session).create_task_run("生成文件", {})
         runtime = WorkspaceRuntimeService(
             WorkspaceRepository(session),
             app_client._astra_settings.task_workspace_store_path,
@@ -732,7 +726,7 @@ async def test_library_lists_present_files_with_conversation_context(app_client)
     from app.workspaces.runtime import WorkspaceRuntimeService
 
     async with app_client._astra_session() as session:
-        run = await RunRepository(session).create_task_run("资料库测试", {})
+        run = await RunUnitOfWork(session).create_task_run("资料库测试", {})
         runtime = WorkspaceRuntimeService(
             WorkspaceRepository(session),
             app_client._astra_settings.task_workspace_store_path,
@@ -780,7 +774,7 @@ async def test_removed_plan_activation_route_is_absent(app_client):
 
 async def test_plan_confirmation_resume_consumes_bound_token_once(app_client):
     async with app_client._astra_session() as session:
-        repo = RunRepository(session)
+        repo = RunUnitOfWork(session)
         profile = RunProfileResolver().resolve(
             AnswerMode.trusted,
             RequestedReasoningPolicy(),
@@ -840,6 +834,7 @@ async def test_plan_confirmation_resume_consumes_bound_token_once(app_client):
             "expected_plan_version": plan.version,
             "expected_state_version": state.version,
         }
+        await repo.commit()
 
     confirmed = await app_client.post(f"/api/runs/{run_id}/resume", json=payload)
     replay = await app_client.post(f"/api/runs/{run_id}/resume", json=payload)
@@ -855,7 +850,7 @@ async def _create_waiting_confirmation(
     model_policy: dict | None = None,
 ):
     async with app_client._astra_session() as session:
-        repo = RunRepository(session)
+        repo = RunUnitOfWork(session)
         profile = RunProfileResolver().resolve(
             AnswerMode.trusted,
             RequestedReasoningPolicy(),
@@ -914,6 +909,7 @@ async def _create_waiting_confirmation(
             "expected_plan_version": plan.version,
             "expected_state_version": state.version,
         }
+        await repo.commit()
         return run.id, plan.id, payload
 
 
@@ -1149,7 +1145,7 @@ async def test_plan_revision_reuses_frozen_thinking_and_records_usage(app_client
 
 async def test_conversation_detail_eager_loads_canonical_plan(app_client):
     async with app_client._astra_session() as session:
-        repo = RunRepository(session)
+        repo = RunUnitOfWork(session)
         run = await repo.create_task_run(
             "读取规范计划对话", {"provider": "mock"}, answer_mode="trusted"
         )
@@ -1179,6 +1175,7 @@ async def test_conversation_detail_eager_loads_canonical_plan(app_client):
             agent_state=state.model_dump(mode="json"),
         )
         conversation_id = run.task_id
+        await repo.commit()
 
     response = await app_client.get(f"/api/conversations/{conversation_id}")
 
@@ -1196,7 +1193,7 @@ async def test_create_run_rejects_invalid_agent_profile_as_configuration_error(
     def invalid_profile():
         raise AgentProfileConfigurationError("invalid test profile")
 
-    monkeypatch.setattr("app.run_creation.load_agent_profile", invalid_profile)
+    monkeypatch.setattr("app.run_management.creation.load_agent_profile", invalid_profile)
     response = await app_client.post("/api/runs", json={"goal": "Profile 配置测试"})
 
     assert response.status_code == 503
@@ -1483,7 +1480,7 @@ async def test_new_run_uses_persisted_tool_settings(app_client, monkeypatch):
     async def capture_runner(run_id, settings):
         captured.append(settings)
 
-    monkeypatch.setattr(runs_api, "start_run_in_process", capture_runner)
+    monkeypatch.setattr(app_client._astra_run_dispatcher, "_run_starter", capture_runner)
     await app_client.put(
         "/api/tools",
         json={"web_search": False, "web_fetch": True, "chart_render": False},
@@ -1529,14 +1526,14 @@ async def test_artifact_content_enforces_workspace_scope_without_leaking_storage
     app_client, tmp_path
 ):
     from app.artifacts import LocalArtifactStore
-    from app.repositories.runs import RunRepository
+    from app.repositories.run_unit_of_work import RunUnitOfWork
 
     source = tmp_path / "chart.png"
     source.write_bytes(b"\x89PNG\r\n\x1a\nmock")
     store = LocalArtifactStore(app_client._astra_settings.artifact_store_path)
     key = store.put(source, ".png")
     async with app_client._astra_session() as session:
-        repo = RunRepository(session)
+        repo = RunUnitOfWork(session)
         run = await repo.create_task_run("workspace chart", {"provider": "mock"})
         run.task.workspace_id = "workspace-a"
         artifact = await repo.create_artifact(
@@ -1584,7 +1581,8 @@ async def test_run_api_preserves_grounding_result_and_legacy_defaults(app_client
     created = await app_client.post("/api/runs", json={"goal": "引用测试"})
     run_id = created.json()["run_id"]
     async with app_client._astra_session() as session:
-        await RunRepository(session).update_run_status(
+        repository = RunUnitOfWork(session)
+        await repository.update_run_status(
             run_id,
             "completed",
             summary="有证据的回答",
@@ -1612,6 +1610,7 @@ async def test_run_api_preserves_grounding_result_and_legacy_defaults(app_client
                 },
             },
         )
+        await repository.commit()
 
     grounded = (await app_client.get(f"/api/runs/{run_id}")).json()["result"]
     assert grounded["claims"][0]["evidence_refs"] == ["evidence-1"]
@@ -1621,11 +1620,13 @@ async def test_run_api_preserves_grounding_result_and_legacy_defaults(app_client
     legacy = await app_client.post("/api/runs", json={"goal": "历史结果"})
     legacy_run_id = legacy.json()["run_id"]
     async with app_client._astra_session() as session:
-        await RunRepository(session).update_run_status(
+        repository = RunUnitOfWork(session)
+        await repository.update_run_status(
             legacy_run_id,
             "completed",
             result={"summary": "历史回答"},
         )
+        await repository.commit()
     historical = (await app_client.get(f"/api/runs/{legacy_run_id}")).json()["result"]
     assert historical["claims"] == []
     assert historical["citations"] == []
@@ -1633,14 +1634,14 @@ async def test_run_api_preserves_grounding_result_and_legacy_defaults(app_client
 
 
 async def test_conversation_management_and_share_lifecycle(app_client):
-    from app.db.models import AgentTurnRecord
-    from app.repositories.runs import RunRepository
+    from app.db.models.runs import AgentTurnRecord
+    from app.repositories.run_unit_of_work import RunUnitOfWork
 
     created = await app_client.post("/api/runs", json={"goal": "需要安全分享的对话"})
     conversation_id = created.json()["task_id"]
     run_id = created.json()["run_id"]
     async with app_client._astra_session() as session:
-        await RunRepository(session).update_run_status(run_id, "completed", summary="公开回答")
+        await RunUnitOfWork(session).update_run_status(run_id, "completed", summary="公开回答")
         session.add(
             AgentTurnRecord(
                 run_id=run_id,
@@ -1708,13 +1709,13 @@ async def test_conversation_management_and_share_lifecycle(app_client):
 
 
 async def test_run_event_stream_starts_with_ready_signal(app_client, monkeypatch):
-    from app.repositories.runs import RunRepository
+    from app.repositories.run_unit_of_work import RunUnitOfWork
 
     created = await app_client.post("/api/runs", json={"goal": "流连接测试"})
     run_id = created.json()["run_id"]
     monkeypatch.setattr(runs_api, "SessionLocal", app_client._astra_session)
     async with app_client._astra_session() as session:
-        await RunRepository(session).update_run_status(run_id, "completed", summary="完成")
+        await RunUnitOfWork(session).update_run_status(run_id, "completed", summary="完成")
         await session.commit()
 
     response = await app_client.get(f"/api/runs/{run_id}/events")
@@ -1725,19 +1726,25 @@ async def test_run_event_stream_starts_with_ready_signal(app_client, monkeypatch
 
 
 async def test_create_run_stream_returns_identity_before_starting_engine(app_client, monkeypatch):
-    from app.schemas.agent import CreateRunRequest
+    from app.run_management.application import RunApplicationService
+    from app.schemas.agent.api_views import CreateRunRequest
 
     scheduled: list[str] = []
-    monkeypatch.setattr(
-        runs_api,
-        "_schedule_run",
-        lambda run_id, _settings: scheduled.append(run_id),
-    )
+
+    async def record_start(run_id, _settings):
+        scheduled.append(run_id)
+
+    monkeypatch.setattr(app_client._astra_run_dispatcher, "_run_starter", record_start)
     async with app_client._astra_session() as session:
+        service = RunApplicationService(
+            session,
+            app_client._astra_settings,
+            app_client._astra_run_dispatcher,
+        )
         response = await runs_api.create_run_stream(
             CreateRunRequest(goal="单连接流式创建"),
             session=session,
-            settings=app_client._astra_settings,
+            service=service,
         )
         ready = json.loads((await anext(response.body_iterator)).removeprefix("data: "))
         assert scheduled == []
@@ -1783,7 +1790,7 @@ async def test_run_event_stream_delivers_committed_broker_event_without_second_q
             return None
 
     class FakeRepository:
-        TERMINAL_STATUSES = RunRepository.TERMINAL_STATUSES
+        TERMINAL_STATUSES = RunUnitOfWork.TERMINAL_STATUSES
 
         def __init__(self, _session):
             pass
@@ -1796,7 +1803,7 @@ async def test_run_event_stream_delivers_committed_broker_event_without_second_q
     broker = RunEventBroker()
     monkeypatch.setattr(runs_api, "run_event_broker", broker)
     monkeypatch.setattr(runs_api, "SessionLocal", FakeSession)
-    monkeypatch.setattr(runs_api, "RunRepository", FakeRepository)
+    monkeypatch.setattr(runs_api, "RunUnitOfWork", FakeRepository)
     stream = runs_api._run_event_stream("run-live")
     assert '"type": "stream.ready"' in await anext(stream)
     pending = asyncio.create_task(anext(stream))
@@ -1833,7 +1840,7 @@ async def test_new_run_engine_gets_scheduled_before_event_replay(monkeypatch):
             return None
 
     class FakeRepository:
-        TERMINAL_STATUSES = RunRepository.TERMINAL_STATUSES
+        TERMINAL_STATUSES = RunUnitOfWork.TERMINAL_STATUSES
 
         def __init__(self, _session):
             pass
@@ -1851,7 +1858,7 @@ async def test_new_run_engine_gets_scheduled_before_event_replay(monkeypatch):
         task.add_done_callback(engine_tasks.discard)
 
     monkeypatch.setattr(runs_api, "SessionLocal", FakeSession)
-    monkeypatch.setattr(runs_api, "RunRepository", FakeRepository)
+    monkeypatch.setattr(runs_api, "RunUnitOfWork", FakeRepository)
     stream = runs_api._run_event_stream(
         "new-run",
         start_after_ready=schedule_engine,
@@ -1864,13 +1871,13 @@ async def test_new_run_engine_gets_scheduled_before_event_replay(monkeypatch):
 
 
 async def test_run_event_stream_resumes_after_event_id(app_client, monkeypatch):
-    from app.repositories.runs import RunRepository
+    from app.repositories.run_unit_of_work import RunUnitOfWork
 
     created = await app_client.post("/api/runs", json={"goal": "断流恢复测试"})
     run_id = created.json()["run_id"]
     monkeypatch.setattr(runs_api, "SessionLocal", app_client._astra_session)
     async with app_client._astra_session() as session:
-        repo = RunRepository(session)
+        repo = RunUnitOfWork(session)
         skipped = await repo.add_event(run_id, "reasoning.summary.delta", {"delta": "旧片段"})
         included = await repo.add_event(
             run_id, "reasoning.summary.completed", {"summary": "恢复后的摘要"}
@@ -1896,7 +1903,7 @@ async def test_plan_graph_events_replay_in_order_without_sensitive_failure_data(
 ):
     monkeypatch.setattr(runs_api, "SessionLocal", app_client._astra_session)
     async with app_client._astra_session() as session:
-        repo = RunRepository(session)
+        repo = RunUnitOfWork(session)
         run = await repo.create_task_run("图事件回放", {"provider": "mock"}, answer_mode="trusted")
         plan = await PlanRepository(session).create(
             run.id,
@@ -1958,16 +1965,16 @@ async def test_run_task_is_retained_until_background_execution_finishes(app_clie
         started.set()
         await release.wait()
 
-    monkeypatch.setattr(runs_api, "start_run_in_process", delayed_runner)
+    monkeypatch.setattr(app_client._astra_run_dispatcher, "_run_starter", delayed_runner)
     created = await app_client.post("/api/runs", json={"goal": "后台任务引用测试"})
     run_id = created.json()["run_id"]
     await started.wait()
 
-    assert any(task.get_name() == f"astra-run-{run_id}" for task in runs_api._background_tasks)
+    assert run_id in app_client._astra_run_dispatcher.active_run_ids()
     release.set()
     await asyncio.sleep(0)
     await asyncio.sleep(0)
-    assert not any(task.get_name() == f"astra-run-{run_id}" for task in runs_api._background_tasks)
+    assert run_id not in app_client._astra_run_dispatcher.active_run_ids()
 
 
 async def test_active_run_can_be_cancelled_idempotently(app_client, monkeypatch):
@@ -1977,7 +1984,7 @@ async def test_active_run_can_be_cancelled_idempotently(app_client, monkeypatch)
         started.set()
         await asyncio.Event().wait()
 
-    monkeypatch.setattr(runs_api, "start_run_in_process", delayed_runner)
+    monkeypatch.setattr(app_client._astra_run_dispatcher, "_run_starter", delayed_runner)
     created = await app_client.post("/api/runs", json={"goal": "持续生成回答"})
     run_id = created.json()["run_id"]
     await started.wait()
@@ -1989,7 +1996,7 @@ async def test_active_run_can_be_cancelled_idempotently(app_client, monkeypatch)
     assert cancelled.json()["status"] == cancelled_again.json()["status"] == "cancelled"
     assert cancelled.json()["terminal_reason"]["category"] == "user_cancelled"
     assert [event["type"] for event in cancelled_again.json()["events"]].count("run.cancelled") == 1
-    assert run_id not in runs_api._background_tasks_by_run
+    assert run_id not in app_client._astra_run_dispatcher.active_run_ids()
 
 
 async def test_cancel_run_survives_background_cleanup_failure(app_client, monkeypatch):
@@ -2002,7 +2009,11 @@ async def test_cancel_run_survives_background_cleanup_failure(app_client, monkey
         except asyncio.CancelledError as exc:
             raise RuntimeError("simulated cleanup failure") from exc
 
-    monkeypatch.setattr(runs_api, "start_run_in_process", cleanup_failing_runner)
+    monkeypatch.setattr(
+        app_client._astra_run_dispatcher,
+        "_run_starter",
+        cleanup_failing_runner,
+    )
     created = await app_client.post("/api/runs", json={"goal": "生成流式回答"})
     run_id = created.json()["run_id"]
     await started.wait()
@@ -2012,18 +2023,20 @@ async def test_cancel_run_survives_background_cleanup_failure(app_client, monkey
     assert cancelled.status_code == 200
     assert cancelled.json()["status"] == "cancelled"
     assert cancelled.json()["terminal_reason"]["category"] == "user_cancelled"
-    assert run_id not in runs_api._background_tasks_by_run
+    assert run_id not in app_client._astra_run_dispatcher.active_run_ids()
 
 
 async def test_cancel_run_returns_completed_snapshot_and_missing_run_is_404(app_client):
     created = await app_client.post("/api/runs", json={"goal": "已完成任务"})
     run_id = created.json()["run_id"]
     async with app_client._astra_session() as session:
-        from app.repositories.runs import RunRepository
+        from app.repositories.run_unit_of_work import RunUnitOfWork
 
-        await RunRepository(session).update_run_status(
+        repository = RunUnitOfWork(session)
+        await repository.update_run_status(
             run_id, "completed", summary="自然完成", result={"summary": "自然完成"}
         )
+        await repository.commit()
 
     completed = await app_client.post(f"/api/runs/{run_id}/cancel")
     missing = await app_client.post("/api/runs/missing/cancel")
@@ -2106,9 +2119,7 @@ async def test_required_subagent_run_can_use_the_standard_no_dag_profile(app_cli
     assert body["chat_messages"][0]["metadata"]["command"] == "/subagent"
     assert body["execution_profile"]["plan_execution"] is None
     assert body["reasoning_policy"]["effective"]["subagents"]["enabled"] is True
-    assert body["reasoning_policy"]["effective"]["subagents"]["budgets"][
-        "max_children_total"
-    ] == 2
+    assert body["reasoning_policy"]["effective"]["subagents"]["budgets"]["max_children_total"] == 2
     assert body["task_contract"] == {}
     assert body["plan_graph"] == {}
     assert body["state_version"] == 0
@@ -2137,7 +2148,7 @@ async def test_required_subagent_run_fails_closed_when_swarm_is_disabled(app_cli
 
 async def test_tool_approval_decision_api_consumes_token_once(app_client):
     async with app_client._astra_session() as session:
-        repo = RunRepository(session)
+        repo = RunUnitOfWork(session)
         run = await repo.create_task_run("批准命令", {"provider": "mock"})
         turn = await repo.create_agent_turn(
             run.id,
@@ -2165,17 +2176,19 @@ async def test_tool_approval_decision_api_consumes_token_once(app_client):
         )
         await repo.update_agent_turn(turn.id, tool_call_id=call.id, phase="awaiting_approval")
         approval = await repo.create_approval_request(
-            run_id=run.id,
-            turn_id=turn.id,
-            tool_call_id=call.id,
-            tool_name="bash_execute",
-            tool_version="1.0",
-            frozen_input={"command": "printf ok"},
-            input_hash="hash",
-            preview="printf ok",
-            permission="command_execute",
-            impact="external_side_effect",
-            similar_matcher={"kind": "command_prefix", "tokens": ["printf"]},
+            ApprovalRequestCreate(
+                run_id=run.id,
+                turn_id=turn.id,
+                tool_call_id=call.id,
+                tool_name="bash_execute",
+                tool_version="1.0",
+                frozen_input={"command": "printf ok"},
+                input_hash="hash",
+                preview="printf ok",
+                permission="command_execute",
+                impact="external_side_effect",
+                similar_matcher={"kind": "command_prefix", "tokens": ["printf"]},
+            )
         )
         waiting = await repo.set_waiting_state(
             run.id,
@@ -2183,6 +2196,7 @@ async def test_tool_approval_decision_api_consumes_token_once(app_client):
         )
         token = waiting.waiting_state["continuation_token"]
         run_id = run.id
+        await repo.commit()
 
     accepted = await app_client.post(
         f"/api/runs/{run_id}/approvals/{approval.id}/decision",
@@ -2197,7 +2211,7 @@ async def test_tool_approval_decision_api_consumes_token_once(app_client):
     assert accepted.json()["status"] == "executing"
     assert replay.status_code == 409
     async with app_client._astra_session() as session:
-        loaded = await RunRepository(session).require_run(run_id)
+        loaded = await RunUnitOfWork(session).require_run(run_id)
         assert loaded.tool_calls[0].status == "approved"
         assert len(loaded.approval_grants) == 1
 
@@ -2222,9 +2236,9 @@ async def test_create_run_rejects_unknown_model_provider(app_client):
 
 @pytest.mark.parametrize("provider", ["anthropic", "google", "azure", "groq", "qwen"])
 def test_model_config_accepts_supported_cloud_providers(provider):
-    from app.run_creation import RunCreationService
+    from app.run_management.application import RunApplicationService
 
-    configured = RunCreationService.apply_model_config(
+    configured = RunApplicationService.apply_model_config(
         Settings(model_provider="mock"),
         {
             "provider": provider,
@@ -2239,9 +2253,9 @@ def test_model_config_accepts_supported_cloud_providers(provider):
 
 @pytest.mark.parametrize("provider", ["ollama", "lmstudio", "vllm", "localai", "compatible"])
 def test_model_config_allows_keyless_local_providers(provider):
-    from app.run_creation import RunCreationService
+    from app.run_management.application import RunApplicationService
 
-    configured = RunCreationService.apply_model_config(
+    configured = RunApplicationService.apply_model_config(
         Settings(model_provider="mock"),
         {
             "provider": provider,
@@ -2285,21 +2299,19 @@ async def test_resume_rejects_switching_the_frozen_run_model(app_client, monkeyp
     created = await app_client.post("/api/runs", json={"goal": "需要补充信息"})
     run_id = created.json()["run_id"]
     async with app_client._astra_session() as session:
-        from app.repositories.runs import RunRepository
+        from app.repositories.run_unit_of_work import RunUnitOfWork
 
-        await RunRepository(session).set_waiting_state(
+        await RunUnitOfWork(session).set_waiting_state(
             run_id,
             {"request": "请补充", "continuation_token": "resume-token"},
         )
 
     scheduled = {}
-    monkeypatch.setattr(
-        runs_api,
-        "_schedule_run",
-        lambda scheduled_run_id, settings: scheduled.update(
-            run_id=scheduled_run_id, settings=settings
-        ),
-    )
+
+    async def record_start(scheduled_run_id, settings):
+        scheduled.update(run_id=scheduled_run_id, settings=settings)
+
+    monkeypatch.setattr(app_client._astra_run_dispatcher, "_run_starter", record_start)
     response = await app_client.post(
         f"/api/runs/{run_id}/resume",
         json={

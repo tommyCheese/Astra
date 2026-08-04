@@ -8,11 +8,8 @@ from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import (
-    AgentBudgetReservationRecord,
-    AgentExecutionRecord,
-    utc_now,
-)
+from app.db.model_base import utc_now
+from app.db.models.executions import AgentBudgetReservationRecord, AgentExecutionRecord
 from app.repositories.agent_executions import TERMINAL_AGENT_STATUSES
 from app.schemas.subagents import SubagentBudgetEnvelope
 
@@ -41,9 +38,7 @@ def envelope_amounts(value: SubagentBudgetEnvelope | dict[str, Any]) -> dict[str
             raw.get("max_wall_time_ms", float(raw.get("max_wall_time_seconds", 0)) * 1000)
         ),
         "cost_usd": float(raw.get("max_cost_usd", 0)),
-        "children": float(
-            max(1, int(raw.get("max_children", raw.get("max_children_total", 1))))
-        ),
+        "children": float(max(1, int(raw.get("max_children", raw.get("max_children_total", 1))))),
     }
 
 
@@ -78,49 +73,21 @@ class HierarchicalBudgetManager:
         requested = envelope_amounts(envelope)
         if existing is not None:
             if existing.envelope != requested:
-                raise HierarchicalBudgetError(
-                    "Child budget reservation is immutable"
-                )
+                raise HierarchicalBudgetError("Child budget reservation is immutable")
             return existing
-        parent = await self.session.get(AgentExecutionRecord, parent_execution_id)
-        child = await self.session.get(AgentExecutionRecord, child_execution_id)
-        if parent is None or child is None or child.parent_execution_id != parent.id:
-            raise HierarchicalBudgetError("Budget reservation must follow Agent lineage")
-        if child.depth != parent.depth + 1:
-            raise HierarchicalBudgetError("Child budget depth is invalid")
+        parent, child = await self._budget_lineage(parent_execution_id, child_execution_id)
         # A previous reservation in the same fan-out transaction may have
         # advanced the parent's CAS version through a SQL UPDATE.
         await self.session.refresh(parent)
-        run_children = int(
-            await self.session.scalar(
-                select(func.count(AgentExecutionRecord.id)).where(
-                    AgentExecutionRecord.run_id == parent.run_id,
-                    AgentExecutionRecord.parent_execution_id.is_not(None),
-                )
-            )
-            or 0
+        run_children, direct_children, active_children = await self._child_counts(parent)
+        self._validate_child_counts(
+            run_children,
+            direct_children,
+            active_children,
+            max_children_total,
+            max_children_per_parent,
+            max_parallel_children,
         )
-        direct_children = int(
-            await self.session.scalar(
-                select(func.count(AgentExecutionRecord.id)).where(
-                    AgentExecutionRecord.parent_execution_id == parent.id
-                )
-            )
-            or 0
-        )
-        active_children = int(
-            await self.session.scalar(
-                select(func.count(AgentExecutionRecord.id)).where(
-                    AgentExecutionRecord.parent_execution_id == parent.id,
-                    AgentExecutionRecord.status.not_in(TERMINAL_AGENT_STATUSES),
-                )
-            )
-            or 0
-        )
-        if run_children > max_children_total or direct_children > max_children_per_parent:
-            raise HierarchicalBudgetError("Child count budget is exhausted")
-        if active_children > max_parallel_children:
-            raise HierarchicalBudgetError("Parallel child budget is exhausted")
         active = list(
             (
                 await self.session.scalars(
@@ -132,33 +99,16 @@ class HierarchicalBudgetManager:
             ).all()
         )
         reserved = {
-            key: sum(float(item.envelope.get(key, 0)) for item in active)
-            for key in BUDGET_FIELDS
+            key: sum(float(item.envelope.get(key, 0)) for item in active) for key in BUDGET_FIELDS
         }
         limits = envelope_amounts(parent.budget_envelope or {})
         # A historical root may not carry subagent limits; fail closed rather
         # than treating absent limits as unlimited.
-        shortfalls = {}
-        own_usage = parent.budget_usage or {}
-        for key in BUDGET_FIELDS:
-            limit = limits[key]
-            reserve = float(self.parent_reserve.get(key, 0))
-            consumed = float(own_usage.get(key, 0)) + float(
-                (own_usage.get("descendant_usage") or {}).get(key, 0)
-            )
-            available = limit - reserve - consumed - reserved[key]
-            if requested[key] > max(0.0, available):
-                shortfalls[key] = {
-                    "requested": requested[key],
-                    "available": max(0.0, available),
-                    "parent_reserve": reserve,
-                }
+        shortfalls = self._budget_shortfalls(parent, requested, reserved, limits)
         if shortfalls:
             raise HierarchicalBudgetError(f"Parent budget cannot fund child: {shortfalls}")
         usage = deepcopy(parent.budget_usage or {})
-        usage["delegated_reserved"] = {
-            key: reserved[key] + requested[key] for key in BUDGET_FIELDS
-        }
+        usage["delegated_reserved"] = {key: reserved[key] + requested[key] for key in BUDGET_FIELDS}
         outcome = await self.session.execute(
             update(AgentExecutionRecord)
             .where(
@@ -194,11 +144,71 @@ class HierarchicalBudgetManager:
                 )
             )
             if existing is None or existing.envelope != requested:
-                raise HierarchicalBudgetError("Concurrent child budget reservation conflict") from exc
+                raise HierarchicalBudgetError(
+                    "Concurrent child budget reservation conflict"
+                ) from exc
             return existing
         if commit:
             await self.session.commit()
         return reservation
+
+    async def _child_counts(self, parent):
+        async def count(*conditions):
+            value = await self.session.scalar(
+                select(func.count(AgentExecutionRecord.id)).where(*conditions)
+            )
+            return int(value or 0)
+
+        return (
+            await count(
+                AgentExecutionRecord.run_id == parent.run_id,
+                AgentExecutionRecord.parent_execution_id.is_not(None),
+            ),
+            await count(AgentExecutionRecord.parent_execution_id == parent.id),
+            await count(
+                AgentExecutionRecord.parent_execution_id == parent.id,
+                AgentExecutionRecord.status.not_in(TERMINAL_AGENT_STATUSES),
+            ),
+        )
+
+    async def _budget_lineage(self, parent_execution_id, child_execution_id):
+        parent = await self.session.get(AgentExecutionRecord, parent_execution_id)
+        child = await self.session.get(AgentExecutionRecord, child_execution_id)
+        if parent is None or child is None or child.parent_execution_id != parent.id:
+            raise HierarchicalBudgetError("Budget reservation must follow Agent lineage")
+        if child.depth != parent.depth + 1:
+            raise HierarchicalBudgetError("Child budget depth is invalid")
+        return parent, child
+
+    @staticmethod
+    def _validate_child_counts(
+        run_children,
+        direct_children,
+        active_children,
+        max_children_total,
+        max_children_per_parent,
+        max_parallel_children,
+    ) -> None:
+        if run_children > max_children_total or direct_children > max_children_per_parent:
+            raise HierarchicalBudgetError("Child count budget is exhausted")
+        if active_children > max_parallel_children:
+            raise HierarchicalBudgetError("Parallel child budget is exhausted")
+
+    def _budget_shortfalls(self, parent, requested, reserved, limits):
+        shortfalls = {}
+        own_usage = parent.budget_usage or {}
+        descendants = own_usage.get("descendant_usage") or {}
+        for key in BUDGET_FIELDS:
+            reserve = float(self.parent_reserve.get(key, 0))
+            consumed = float(own_usage.get(key, 0)) + float(descendants.get(key, 0))
+            available = limits[key] - reserve - consumed - reserved[key]
+            if requested[key] > max(0.0, available):
+                shortfalls[key] = {
+                    "requested": requested[key],
+                    "available": max(0.0, available),
+                    "parent_reserve": reserve,
+                }
+        return shortfalls
 
     async def settle(
         self,
@@ -214,40 +224,17 @@ class HierarchicalBudgetManager:
         )
         if reservation is None:
             raise HierarchicalBudgetError("Child budget reservation does not exist")
-        normalized = {key: float(actual_usage.get(key, 0)) for key in BUDGET_FIELDS}
-        normalized["children"] = 1.0
+        normalized = self._normalized_actual_usage(actual_usage)
         if reservation.status == "settled":
             if reservation.actual_usage != normalized:
                 raise HierarchicalBudgetError("Child budget was already settled differently")
             return reservation
-        exceeded = {
-            key: {"actual": normalized[key], "reserved": reservation.envelope.get(key, 0)}
-            for key in BUDGET_FIELDS
-            if normalized[key] > float(reservation.envelope.get(key, 0))
-        }
-        if exceeded:
-            raise HierarchicalBudgetError(f"Child exceeded reserved budget: {exceeded}")
-        parent = await self.session.get(
-            AgentExecutionRecord, reservation.parent_execution_id
-        )
+        self._validate_reserved_usage(reservation, normalized)
+        parent = await self.session.get(AgentExecutionRecord, reservation.parent_execution_id)
         child = await self.session.get(AgentExecutionRecord, child_execution_id)
         if parent is None or child is None:
             raise HierarchicalBudgetError("Budget lineage is unavailable")
-        returned = {
-            key: float(reservation.envelope.get(key, 0)) - normalized[key]
-            for key in BUDGET_FIELDS
-        }
-        usage = deepcopy(parent.budget_usage or {})
-        active_reserved = dict(usage.get("delegated_reserved") or {})
-        usage["delegated_reserved"] = {
-            key: max(0.0, float(active_reserved.get(key, 0)) - float(reservation.envelope.get(key, 0)))
-            for key in BUDGET_FIELDS
-        }
-        descendant = dict(usage.get("descendant_usage") or {})
-        usage["descendant_usage"] = {
-            key: float(descendant.get(key, 0)) + normalized[key]
-            for key in BUDGET_FIELDS
-        }
+        returned, usage = self._settled_parent_usage(parent, reservation, normalized)
         changed = await self.session.execute(
             update(AgentExecutionRecord)
             .where(
@@ -273,6 +260,39 @@ class HierarchicalBudgetManager:
         else:
             await self.session.flush()
         return reservation
+
+    @staticmethod
+    def _normalized_actual_usage(actual_usage):
+        normalized = {key: float(actual_usage.get(key, 0)) for key in BUDGET_FIELDS}
+        normalized["children"] = 1.0
+        return normalized
+
+    @staticmethod
+    def _validate_reserved_usage(reservation, normalized) -> None:
+        exceeded = {
+            key: {"actual": normalized[key], "reserved": reservation.envelope.get(key, 0)}
+            for key in BUDGET_FIELDS
+            if normalized[key] > float(reservation.envelope.get(key, 0))
+        }
+        if exceeded:
+            raise HierarchicalBudgetError(f"Child exceeded reserved budget: {exceeded}")
+
+    @staticmethod
+    def _settled_parent_usage(parent, reservation, normalized):
+        returned = {
+            key: float(reservation.envelope.get(key, 0)) - normalized[key] for key in BUDGET_FIELDS
+        }
+        usage = deepcopy(parent.budget_usage or {})
+        active = dict(usage.get("delegated_reserved") or {})
+        usage["delegated_reserved"] = {
+            key: max(0.0, float(active.get(key, 0)) - float(reservation.envelope.get(key, 0)))
+            for key in BUDGET_FIELDS
+        }
+        descendant = dict(usage.get("descendant_usage") or {})
+        usage["descendant_usage"] = {
+            key: float(descendant.get(key, 0)) + normalized[key] for key in BUDGET_FIELDS
+        }
+        return returned, usage
 
 
 @dataclass(frozen=True)

@@ -183,55 +183,54 @@ def evaluate_memory_strategies(
 ) -> dict[str, MemoryStrategyMetrics]:
     effective_policy = policy or MemoryRetrievalPolicy(minimum_score=0.05)
     effective_budget = budget or MemoryRetrievalBudget()
-    observations: list[MemoryEvaluationObservation] = []
-    for fixture in fixtures:
-        for strategy in EVALUATION_STRATEGIES:
-            started = time.perf_counter()
-            if strategy == "no_memory":
-                selected: tuple[MemoryRetrievalCandidate, ...] = ()
-            else:
-                candidates = (
-                    fixture.candidates
-                    if strategy == "cross_session"
-                    else fixture.consolidated_candidates
-                )
-                result = retrieve_memories(
-                    candidates,
-                    MemoryRetrievalQuery(
-                        text=fixture.query,
-                        namespaces=fixture.namespaces,
-                        as_of=fixture.as_of,
-                    ),
-                    policy=effective_policy,
-                    budget=effective_budget,
-                )
-                selected = tuple(item.candidate for item in result.selected)
-            observations.append(
-                _observe(
-                    fixture,
-                    strategy,
-                    selected,
-                    (time.perf_counter() - started) * 1_000,
-                )
-            )
+    observations = [
+        _evaluate_strategy(fixture, strategy, effective_policy, effective_budget)
+        for fixture in fixtures
+        for strategy in EVALUATION_STRATEGIES
+    ]
+    return {
+        strategy: _strategy_metrics(strategy, observations) for strategy in EVALUATION_STRATEGIES
+    }
 
-    metrics: dict[str, MemoryStrategyMetrics] = {}
-    for strategy in EVALUATION_STRATEGIES:
-        rows = [item for item in observations if item.strategy == strategy]
-        selected_count = sum(len(item.selected_ids) for item in rows)
-        relevant_selected = sum(item.relevant_selected for item in rows)
-        relevant_total = sum(item.relevant_total for item in rows)
-        metrics[strategy] = MemoryStrategyMetrics(
-            strategy=strategy,
-            case_count=len(rows),
-            selected_count=selected_count,
-            precision=relevant_selected / selected_count if selected_count else 0.0,
-            recall=relevant_selected / relevant_total if relevant_total else 0.0,
-            task_success_rate=sum(item.task_success for item in rows) / len(rows) if rows else 0.0,
-            token_cost=sum(item.token_cost for item in rows),
-            mean_latency_ms=sum(item.latency_ms for item in rows) / len(rows) if rows else 0.0,
-            stale_use_count=sum(item.stale_use_count for item in rows),
-            harmful_feedback_count=sum(item.harmful_feedback_count for item in rows),
-            namespace_leakage_count=sum(item.namespace_leakage_count for item in rows),
+
+def _evaluate_strategy(fixture, strategy, policy, budget):
+    started = time.perf_counter()
+    selected: tuple[MemoryRetrievalCandidate, ...] = ()
+    if strategy != "no_memory":
+        candidates = (
+            fixture.candidates if strategy == "cross_session" else fixture.consolidated_candidates
         )
-    return metrics
+        result = retrieve_memories(
+            candidates,
+            MemoryRetrievalQuery(
+                text=fixture.query, namespaces=fixture.namespaces, as_of=fixture.as_of
+            ),
+            policy=policy,
+            budget=budget,
+        )
+        selected = tuple(item.candidate for item in result.selected)
+    return _observe(fixture, strategy, selected, (time.perf_counter() - started) * 1_000)
+
+
+def _strategy_metrics(strategy, observations):
+    rows = [item for item in observations if item.strategy == strategy]
+    selected_count = sum(len(item.selected_ids) for item in rows)
+    relevant_selected = sum(item.relevant_selected for item in rows)
+    relevant_total = sum(item.relevant_total for item in rows)
+    return MemoryStrategyMetrics(
+        strategy=strategy,
+        case_count=len(rows),
+        selected_count=selected_count,
+        precision=_ratio(relevant_selected, selected_count),
+        recall=_ratio(relevant_selected, relevant_total),
+        task_success_rate=_ratio(sum(item.task_success for item in rows), len(rows)),
+        token_cost=sum(item.token_cost for item in rows),
+        mean_latency_ms=_ratio(sum(item.latency_ms for item in rows), len(rows)),
+        stale_use_count=sum(item.stale_use_count for item in rows),
+        harmful_feedback_count=sum(item.harmful_feedback_count for item in rows),
+        namespace_leakage_count=sum(item.namespace_leakage_count for item in rows),
+    )
+
+
+def _ratio(numerator, denominator) -> float:
+    return numerator / denominator if denominator else 0.0
