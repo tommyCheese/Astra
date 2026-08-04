@@ -1,3 +1,5 @@
+from datetime import UTC, datetime, timedelta
+
 import pytest
 from pydantic import ValidationError
 from sqlalchemy import event as sqlalchemy_event
@@ -104,9 +106,13 @@ async def test_run_lifecycle_persistence(session):
     await repo.update_run_status(run.id, "completed_with_warnings", result={"summary": "done"})
 
     loaded = await repo.require_run(run.id)
+    loaded.created_at = datetime(2026, 8, 5, 1, 0, tzinfo=UTC)
+    loaded.started_at = loaded.created_at
+    loaded.completed_at = loaded.created_at + timedelta(minutes=1, seconds=24)
     view = RunViewProjector().payload(loaded)
 
     assert view["status"] == "completed_with_warnings"
+    assert view["processing_duration_ms"] == 84_000
     assert view["answer_mode"] == "standard"
     assert view["execution_profile"]["version"] == 2
     assert view["execution_profile"]["answer_mode"] == "standard"

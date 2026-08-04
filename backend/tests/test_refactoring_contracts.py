@@ -19,7 +19,7 @@ from app.schemas.agent.run_result import FinalAnswer
 from app.schemas.agent.types import AnswerMode
 from app.tools.base import ToolRegistry
 
-EXPECTED_OPENAPI_SHA256 = "904475c47d2d55691ee1e78df214d29579ba4b8461297213fa4e85aaeace8465"
+EXPECTED_OPENAPI_SHA256 = "b85baa9be39afdc6a7a984469df2c191b7c96aa05c689865db59758556d3e7f4"
 EXPECTED_ORM_TABLES = {
     "agent_budget_reservations",
     "agent_delegations",

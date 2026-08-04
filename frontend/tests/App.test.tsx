@@ -142,6 +142,7 @@ vi.mock('../src/api', () => ({
     task_id: 'task-1',
     status: 'completed',
     mode: 'web_agent',
+    processing_duration_ms: 84_000,
     answer_mode: 'standard',
     summary: '完成',
     result: {
@@ -523,6 +524,7 @@ describe('App', () => {
     expect(screen.getByRole('button', { name: '跳转到问题 1' })).toHaveClass('wave-distance-0');
     const completedProcessTitle = screen.getByText('思考完成');
     expect(completedProcessTitle).toBeInTheDocument();
+    expect(screen.getByText('· 已处理 1 分 24 秒')).toBeInTheDocument();
     expect(completedProcessTitle.closest('summary')?.querySelector('.process-thinking-dots')).not.toBeInTheDocument();
     expect(screen.getByText('至少一个抓取来源支撑了最终答案。')).toBeInTheDocument();
     expect(screen.getAllByText('已完成查询')).toHaveLength(1);

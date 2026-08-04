@@ -1,4 +1,4 @@
-import { Component, CSSProperties, FormEvent, KeyboardEvent as ReactKeyboardEvent, lazy, MouseEvent, PointerEvent as ReactPointerEvent, ReactNode, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { Component, CSSProperties, FormEvent, KeyboardEvent as ReactKeyboardEvent, lazy, memo, MouseEvent, PointerEvent as ReactPointerEvent, ReactNode, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { AstraApiError, ApiErrorPayload, buildRuntime, cancelRun, cancelRuntimeBuild, confirmPlanExecution, createConversationShare, createRun, decideToolApproval, deleteConversation, executeConversationCommand, getConversation, getConversationContext, getConversationStrategy, getPermissionCenter, getRun, getRuntimeDefaultModel, getRuntimeProfile, getToolSettings, listConversationShares, listConversations, listLibraryDeliverables, listRuns, listSkills, listSystemCommands, resetRuntimeAgentProfile, resolveModelContextCapabilities, resolveModelThinkingCapabilities, resumeRun, revisePlan, revokeConversationShare, revokePermissionGrant, streamRunEvents, takeCreatedRunStream, testModelConnection, updateConversation, updateConversationStrategy, updateRuntimeAgentProfile, updateRuntimeMemorySettings, updateToolSettings, type AgentProfileDocuments, type ContextWindowStatus, type ConversationStrategyPreferences, type Deliverable, type MemoryRuntimeSettings, type ModelConnectionTestResult, type ModelContextCapability, type ModelThinkingCapability, type ModelThinkingDepth, type ModelThinkingSelection, type PermissionCenterView, type RunModelConfig, type RunStreamEvent, type RunStreamHandle, type RuntimeDefaultModel, type SkillSummary, type SlashSystemCommand, type ToolSetting } from './api';
 import { cancelSubagent } from './api';
@@ -67,6 +67,24 @@ function compactTokenCount(value: number): string {
   if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(value >= 10_000_000 ? 0 : 1)}M`;
   if (value >= 1_000) return `${Math.round(value / 1_000)}K`;
   return String(value);
+}
+
+function formatProcessingDuration(value: number | null | undefined, t: (text: string) => string): string | undefined {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) return undefined;
+  const totalSeconds = Math.round(value / 1000);
+  let duration: string;
+  if (totalSeconds < 1) duration = t('少于 1 秒');
+  else if (totalSeconds < 60) duration = t('{count} 秒').replace('{count}', String(totalSeconds));
+  else if (totalSeconds < 3600) {
+    duration = t('{minutes} 分 {seconds} 秒')
+      .replace('{minutes}', String(Math.floor(totalSeconds / 60)))
+      .replace('{seconds}', String(totalSeconds % 60));
+  } else {
+    duration = t('{hours} 小时 {minutes} 分')
+      .replace('{hours}', String(Math.floor(totalSeconds / 3600)))
+      .replace('{minutes}', String(Math.floor((totalSeconds % 3600) / 60)));
+  }
+  return t('已处理 {duration}').replace('{duration}', duration);
 }
 
 function ContextUsageRing({ status, actionLabel = '', compact = false }: {
@@ -222,18 +240,19 @@ function usePacedStreamingText(target: string, streamId: string | undefined) {
       const backlog = nextTarget.length - current.length;
       if (backlog > 0) {
         const elapsed = Math.min(80, Math.max(0, now - lastPaintRef.current));
-        const charactersPerSecond = backlog > 240 ? 2400
-          : backlog > 80 ? 1200
-            : backlog > 24 ? 600
-              : 240;
+        const charactersPerSecond = backlog > 600 ? 9000
+          : backlog > 240 ? 4800
+            : backlog > 80 ? 2400
+              : backlog > 24 ? 1200
+                : 720;
         characterCreditRef.current += elapsed * charactersPerSecond / 1000;
         const characterCount = Math.min(
           backlog,
-          48,
-          Math.floor(characterCreditRef.current),
+          160,
+          Math.max(1, Math.floor(characterCreditRef.current)),
         );
         if (characterCount > 0) {
-          characterCreditRef.current -= characterCount;
+          characterCreditRef.current = Math.max(0, characterCreditRef.current - characterCount);
           const nextVisible = safeStreamingSlice(nextTarget, current.length + characterCount);
           visibleRef.current = nextVisible;
           setVisible(nextVisible);
@@ -4496,6 +4515,7 @@ function ProcessPanel({ run, messageId, liveState, open, isLatestRun, onInitiali
   const [historicalGraphOpen, setHistoricalGraphOpen] = useState(false);
   const live = Boolean(liveState?.active);
   const processTitle = live ? t('思考中') : t('思考完成');
+  const processingDuration = live ? undefined : formatProcessingDuration(run.processing_duration_ms, t);
   const processItems = liveState?.items ?? reconcileProcessSnapshot(null, run).items;
   const livePreview = live && !open
     ? [...processItems].reverse().find((item) => item.status === 'running' && item.detail)?.detail
@@ -4510,7 +4530,7 @@ function ProcessPanel({ run, messageId, liveState, open, isLatestRun, onInitiali
     event.preventDefault();
     onOpenChange(run.id, !open);
   };
-  return <article className={`process-entry ${live ? 'live' : ''} ${hasHistoricalGraph ? 'has-historical-graph' : ''}`} id={`message-${messageId}`}><details className="process-panel" open={open}><summary onClick={toggle} aria-expanded={open}><Icon name="brain" /><span className="process-title">{processTitle}{live && <span className="process-thinking-dots" aria-hidden="true"><i /><i /><i /></span>}</span>{livePreview && <small className="process-live-preview" aria-live="polite">{livePreview}</small>}</summary><div className="process-timeline" aria-live={live ? 'polite' : undefined}>
+  return <article className={`process-entry ${live ? 'live' : ''} ${hasHistoricalGraph ? 'has-historical-graph' : ''}`} id={`message-${messageId}`}><details className="process-panel" open={open}><summary onClick={toggle} aria-expanded={open}><Icon name="brain" /><span className="process-title">{processTitle}{live && <span className="process-thinking-dots" aria-hidden="true"><i /><i /><i /></span>}</span>{processingDuration && <small className="process-duration">· {processingDuration}</small>}{livePreview && <small className="process-live-preview" aria-live="polite">{livePreview}</small>}</summary><div className="process-timeline" aria-live={live ? 'polite' : undefined}>
     <ProcessTimeline items={processItems} run={run} />
     {!live && remainingNotes.map((note, index) => <div className="process-step verification" key={`verification-${index}`}><span className="process-dot"><Icon name="check" /></span><div><strong>{t('验证')}</strong><p>{note}</p></div></div>)}
   </div></details>
@@ -4625,7 +4645,7 @@ function ProcessTimeline({ items, run }: { items: ProcessStreamItem[]; run: RunV
   })}</>;
 }
 
-function ProcessTimelineRow({ item, run, anchor = false }: { item: ProcessStreamItem; run: RunView; anchor?: boolean }) {
+const ProcessTimelineRow = memo(function ProcessTimelineRow({ item, run, anchor = false }: { item: ProcessStreamItem; run: RunView; anchor?: boolean }) {
   const { t } = useI18n();
   const call = item.kind === 'tool' && item.toolCallId ? run.tool_calls.find((candidate) => candidate.id === item.toolCallId) : undefined;
   const outputs = call ? visibleArtifacts(run.artifacts).filter((artifact) => artifact.tool_call_id === call.id) : [];
@@ -4639,7 +4659,7 @@ function ProcessTimelineRow({ item, run, anchor = false }: { item: ProcessStream
       ? <ModelThinkingContent item={{ ...item, detail: itemDetail }} />
       : itemDetail && <p>{itemDetail}</p>}<small>{callDetail ?? statusLabel}</small>{outputs.length > 0 && <a className="process-output-link" href={`#${artifactDomId(outputs[0].id)}`}>{t('{count} 个输出 · 查看输出').replace('{count}', String(outputs.length))}</a>}</div>
   </div>;
-}
+});
 
 function toolCallStatusLabel(status: string, t: (value: string) => string) {
   if (status === 'running') return t('进行中');

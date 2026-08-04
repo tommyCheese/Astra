@@ -16,6 +16,11 @@
 - [x] 3.1 Extend frontend process-stream types and reducer to reconstruct model-thinking streams from live and snapshot events
 - [x] 3.2 Render model thinking as a separate expandable process item that preserves whitespace and labels summaries, unavailability, and truncation accurately
 - [x] 3.3 Update model-thinking documentation and localized UI copy to explain Provider-visible content and persistence boundaries
+- [x] 3.4 Refine the model-thinking card hierarchy, live status, dark theme, and responsive presentation
+- [x] 3.5 Auto-scroll expanded model-thinking content to the latest delta without moving collapsed content or the conversation viewport
+- [x] 3.6 Reduce streaming render work with frame-paced advancement and memoized unchanged process rows
+- [x] 3.7 Rebuild from authoritative snapshots so live model-thinking deltas are not duplicated during reconciliation
+- [x] 3.8 Expose persisted Run processing duration and show a Codex-style processed-time label after thinking completes
 
 ## 4. Verification
 
@@ -23,3 +28,5 @@
 - [x] 4.2 Add runtime tests for event ordering, buffering, unavailable/truncated states, persistence recovery, and no contamination of Astra reasoning summaries
 - [x] 4.3 Add frontend reducer/component tests for live streaming, history recovery, Provider summary labels, unavailable state, and preserved formatting
 - [x] 4.4 Run focused backend and frontend suites plus OpenSpec validation, and resolve all failures caused by this change
+- [x] 4.5 Add component coverage for expansion and follow-latest behavior, then visually verify a real streaming Run
+- [x] 4.6 Cover duration projection and localized compact formatting, then run frontend/backend focused validation

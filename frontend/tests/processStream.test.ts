@@ -85,6 +85,24 @@ describe('process stream reducer', () => {
     });
   });
 
+  it('does not duplicate model-thinking deltas when a live projection reconciles the same snapshot', () => {
+    const base = { stream_id: 'thinking-1', provider: 'deepseek', operation: 'decision', content_level: 'reasoning' };
+    let live = createOptimisticProcessState('run-thinking', 'standard');
+    live = reduceProcessEvent(live, { id: 1, type: 'model_thinking.started', payload: base });
+    live = reduceProcessEvent(live, { id: 2, type: 'model_thinking.delta', payload: { ...base, delta: '只显示一次' } });
+
+    const reconciled = reconcileProcessSnapshot(live, {
+      id: 'run-thinking', task_id: 'task-1', status: 'executing', mode: 'agent', answer_mode: 'standard', summary: null, result: null,
+      steps: [], tool_calls: [], artifacts: [], memories: [], chat_messages: [], turns: [],
+      events: [
+        { id: 1, type: 'model_thinking.started', payload: base, created_at: 'now' },
+        { id: 2, type: 'model_thinking.delta', payload: { ...base, delta: '只显示一次' }, created_at: 'now' },
+      ],
+    } as RunView);
+
+    expect(reconciled.items.find((item) => item.id === 'model-thinking-thinking-1')?.detail).toBe('只显示一次');
+  });
+
   it('tracks tools and terminal status without exposing tool input', () => {
     let state = createOptimisticProcessState('run-1');
     state = reduceProcessEvent(state, { id: 1, type: 'tool_call.started', payload: { tool_call_id: 'call-1', tool_name: 'web_search', input: { api_key: 'secret' } } });

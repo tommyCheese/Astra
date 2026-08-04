@@ -472,6 +472,7 @@ export type RunView = {
   task_id: string;
   status: string;
   mode: string;
+  processing_duration_ms?: number | null;
   answer_mode?: 'standard' | 'trusted';
   execution_profile?: {
     version: 2;

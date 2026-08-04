@@ -172,11 +172,21 @@ def _run_identity(run: RunRecord) -> dict[str, Any]:
         "task_id": run.task_id,
         "status": run.status,
         "mode": run.mode,
+        "processing_duration_ms": _processing_duration_ms(run),
         "answer_mode": run.answer_mode or "trusted",
         "execution_profile": run.execution_profile or {},
         "summary": run.summary,
         "result": _result_view(run),
     }
+
+
+def _processing_duration_ms(run: RunRecord) -> int | None:
+    if run.completed_at is None:
+        return None
+    started_at = run.started_at or run.created_at
+    completed_at = run.completed_at.replace(tzinfo=None)
+    normalized_started_at = started_at.replace(tzinfo=None)
+    return max(0, int((completed_at - normalized_started_at).total_seconds() * 1000))
 
 
 def _result_view(run: RunRecord) -> dict[str, Any] | None:

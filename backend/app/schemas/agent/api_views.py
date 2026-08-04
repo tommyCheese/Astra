@@ -317,6 +317,7 @@ class RunView(BaseModel):
     task_id: str
     status: str
     mode: str
+    processing_duration_ms: int | None = None
     answer_mode: AnswerMode = AnswerMode.trusted
     execution_profile: dict[str, Any] = Field(default_factory=dict)
     summary: str | None

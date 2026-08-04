@@ -59,18 +59,11 @@ export function createOptimisticProcessState(
   };
 }
 
-export function reconcileProcessSnapshot(state: ProcessStreamState | null, run: RunView): ProcessStreamState {
+export function reconcileProcessSnapshot(_state: ProcessStreamState | null, run: RunView): ProcessStreamState {
   const answerMode: ProcessStreamState['answerMode'] = run.answer_mode === 'standard' ? 'standard' : 'trusted';
-  let next: ProcessStreamState = state?.runId === run.id
-    ? {
-      ...state,
-      answerMode,
-      seenEventIds: [],
-      runCursor: 0,
-      agentCursors: {},
-      cursorGap: false,
-    }
-    : createOptimisticProcessState(run.id, answerMode);
+  // A Run snapshot is authoritative and already contains the persisted events.
+  // Replaying it on top of the live projection would append streaming deltas twice.
+  let next: ProcessStreamState = createOptimisticProcessState(run.id, answerMode);
   for (const event of [...(run.events ?? [])].sort((a, b) => a.id - b.id)) {
     next = reduceProcessEvent(next, event);
   }
