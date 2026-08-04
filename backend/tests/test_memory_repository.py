@@ -15,7 +15,6 @@ from app.memory.domain import (
 )
 from app.repositories.memories import MemoryRepository
 from app.repositories.memory_queries import MemoryQueryRepository
-from app.repositories.memory_retention import MemoryRetentionRepository
 from app.repositories.run_unit_of_work import RunUnitOfWork
 
 
@@ -333,7 +332,7 @@ async def test_memory_links_cannot_cross_namespaces(session):
         )
 
 
-async def test_expiration_is_query_time_safe_before_bounded_materialization(session):
+async def test_expiration_is_filtered_at_query_time(session):
     run = await _run_with_identity(session)
     repository = MemoryRepository(session)
     expired = await repository.create(
@@ -354,12 +353,4 @@ async def test_expiration_is_query_time_safe_before_bounded_materialization(sess
         )
         == []
     )
-    retention = MemoryRetentionRepository(session)
-    assert await retention.materialize_expired(limit=0) == 0
     assert (await repository.require(expired.id)).status == "active"
-
-    assert await retention.materialize_expired(limit=1) == 1
-    materialized = await repository.require(expired.id)
-    assert materialized.status == "expired"
-    assert materialized.state_version == 2
-    assert await retention.materialize_expired(limit=1) == 0

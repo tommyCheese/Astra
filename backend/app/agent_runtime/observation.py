@@ -5,10 +5,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from app.agent_runtime.result_adapters import ProcessorRegistry
 from app.context_compaction.tool_outputs import ToolOutputGovernanceService
 from app.core.config import Settings
 from app.db.models.permissions import ToolCallRecord
-from app.runner.adapters import ProcessorRegistry
 from app.schemas.agent.execution_state import AgentObservation
 from app.schemas.context_compaction import ContextOwnerRole, ContextReference
 from app.schemas.permissions import ActionEffectPlan

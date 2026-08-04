@@ -12,6 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent_profile import load_agent_profile
+from app.agent_runtime.reasoning import RunProfileResolver, compile_subagent_policy
 from app.api.skill_diff import skill_git_diff as _git_diff
 from app.api.skill_metrics import build_skill_metrics
 from app.api.skill_views import (
@@ -40,10 +41,9 @@ from app.db.models.skills import (
     SkillAuditRecord,
 )
 from app.db.session import get_session
+from app.model_clients.reasoning import normalize_model_thinking
 from app.platform.http.dependencies import ApplicationServices, get_application_container
 from app.repositories.run_unit_of_work import RunUnitOfWork
-from app.runner.model_reasoning import normalize_model_thinking
-from app.runner.reasoning import RunProfileResolver, compile_subagent_policy
 from app.schemas.agent.api_views import CreateRunResponse
 from app.schemas.agent.run_policy import RequestedReasoningPolicy
 from app.schemas.agent.types import PlanExecution

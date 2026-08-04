@@ -6,8 +6,11 @@ import pytest
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
+from app.agent_runtime.reasoning import build_default_contract
 from app.db.model_base import Base, utc_now
 from app.db.models.executions import AgentJoinRecord, NodeExecutionRecord
+from app.planning.scheduler import PlanScheduler
+from app.planning.service import PlanService
 from app.repositories.agent_executions import AgentExecutionRepository
 from app.repositories.executions import (
     NodeExecutionRepository,
@@ -16,6 +19,7 @@ from app.repositories.executions import (
 from app.repositories.plans import PlanRepository
 from app.repositories.run_unit_of_work import RunUnitOfWork
 from app.repositories.run_view_projection import RunViewProjector
+from app.run_management.recovery import ExecutionRecovery
 from app.runner.concurrency import (
     ResourceClaim,
     acquire_resource_claims,
@@ -23,10 +27,6 @@ from app.runner.concurrency import (
     resource_claims_from_effect_plan,
 )
 from app.runner.coordinator import NodeExecutionResult, RunCoordinator
-from app.runner.plan_scheduler import PlanScheduler
-from app.runner.planning import PlanService
-from app.runner.reasoning import build_default_contract
-from app.runner.recovery import ExecutionRecovery
 from app.schemas.agent.execution_state import AgentState
 from app.schemas.agent.planning import (
     ExpectedObservation,

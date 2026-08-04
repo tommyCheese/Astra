@@ -15,8 +15,8 @@ from app.model_clients.contracts import (
     ModelOutputError,
     StreamFieldCallbacks,
 )
+from app.model_clients.reasoning import ModelReasoningConfig, attach_reasoning_usage
 from app.model_clients.response_parsing import StreamingJsonFieldExtractor
-from app.runner.model_reasoning import ModelReasoningConfig, attach_reasoning_usage
 
 logger = logging.getLogger("astra.model")
 

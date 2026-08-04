@@ -7,10 +7,10 @@ import logging
 from dataclasses import dataclass
 
 from app.agent_runtime.progress import ExecutionProgress, ProgressEvaluationStage
+from app.agent_runtime.reasoning import failure_fingerprint
+from app.agent_runtime.result_adapters import ProcessorRegistry
 from app.db.models.runs import AgentTurnRecord
 from app.repositories.run_unit_of_work import RunUnitOfWork
-from app.runner.adapters import ProcessorRegistry
-from app.runner.reasoning import failure_fingerprint
 from app.schemas.agent.execution_state import AgentDecision, AgentObservation
 from app.tools.base import ToolExecutionError
 

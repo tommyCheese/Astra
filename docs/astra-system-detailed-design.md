@@ -63,13 +63,13 @@ Task / Conversation ── 1:N ── Run
 | 能力 | 当前状态 | 主要实现位置 |
 |---|---|---|
 | Task / Run 持久化与多轮 Conversation | 已进入主链路 | `db/models.py`、`repositories/runs.py`、`api/conversations.py` |
-| 结构化规划、AgentState、反思与完成闸门 | 已进入主链路 | `runner/engine.py`、`runner/planning.py`、`runner/agent_loop.py` |
+| 结构化规划、AgentState、反思与完成闸门 | 已进入主链路 | `runner/engine.py`、`planning/`、`agent_runtime/` |
 | Effect Plan 与统一权限入口 | 已进入主链路 | `permissions/effects.py`、`permissions/engine.py` |
 | 一次、Run 级、Task 级审批授权 | 已进入主链路 | `api/runs.py`、`repositories/runs.py` |
 | Task Workspace 与文件差异审计 | 已进入主链路 | `workspaces/runtime.py`、`repositories/workspaces.py` |
 | Docker 沙箱与 Artifact 收集 | 已进入主链路，受配置和 Docker 可用性影响 | `sandbox/`、`artifacts.py` |
-| Tool Catalog 冻结与 provider 信任检查 | 已进入主链路 | `runner/agent_loop.py`、`permissions/governance.py` |
-| DataFlowState 更新和外发加严基础 | 部分进入主链路 | `runner/agent_loop.py`、`permissions/engine.py` |
+| Tool Catalog 冻结与 provider 信任检查 | 已进入主链路 | `agent_runtime/`、`permissions/governance.py` |
+| DataFlowState 更新和外发加严基础 | 部分进入主链路 | `agent_runtime/invocation.py`、`permissions/engine.py` |
 | Credential Broker | 基础实现与测试已具备，未普遍接入工具调用 | `permissions/credentials.py` |
 | 子 Agent 权限衰减委托 | 数据模型、仓储和测试已具备，主循环尚未创建子 Agent | `repositories/permissions.py` |
 | MCP / 插件供应链治理 | 通用模型已设计；当前主要覆盖已注册 Tool provider | `permissions/governance.py` |
@@ -637,7 +637,7 @@ child scope ⊆ parent scope ∩ task policy ∩ explicit delegated scope
 
 1. `backend/app/api/runs.py`：请求如何变成 Run；
 2. `backend/app/runner/engine.py`：执行路径如何选择；
-3. `backend/app/runner/agent_loop.py`：主状态机；
+3. `backend/app/agent_runtime/service.py` 与 `orchestrator.py`：Root Agent 服务和主状态机；
 4. `backend/app/permissions/effects.py`：调用如何被解释成行为；
 5. `backend/app/permissions/engine.py`：行为如何被授权；
 6. `backend/app/sandbox/runtime.py` 与 `backend/app/workspaces/runtime.py`：能力如何被技术强制；

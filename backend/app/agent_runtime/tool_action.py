@@ -15,6 +15,7 @@ from app.agent_runtime.authorization import (
 from app.agent_runtime.completion import quick_workspace_change_completes_goal
 from app.agent_runtime.failure import ToolFailureInput, ToolFailureStage
 from app.agent_runtime.invocation import InvocationStageInput, ToolInvocationStage
+from app.agent_runtime.loop_control import LoopOrchestrator, NoProgressDetector
 from app.agent_runtime.memory_candidates import MemoryCandidateWriter
 from app.agent_runtime.observation import (
     NormalizedObservation,
@@ -22,13 +23,12 @@ from app.agent_runtime.observation import (
     ObservationStageInput,
 )
 from app.agent_runtime.progress import ExecutionProgress, ProgressEvaluationStage
+from app.agent_runtime.reasoning import ObservationEvaluator
 from app.db.models.permissions import AgentIdentityRecord, ToolCallRecord
 from app.db.models.plans import PlanNodeRecord
 from app.db.models.runs import AgentTurnRecord, RunRecord, StepRecord
 from app.execution.contracts import SubagentSupervisorPort
 from app.repositories.run_unit_of_work import RunUnitOfWork
-from app.runner.reasoning import ObservationEvaluator
-from app.runner.runtime import LoopOrchestrator, NoProgressDetector
 from app.schemas.agent.execution_state import AgentDecision, NodeResult
 from app.schemas.agent.planning import ExpectedObservation
 from app.tools.base import ToolExecutionError, ToolRegistry

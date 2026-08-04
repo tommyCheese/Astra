@@ -9,7 +9,6 @@ import pytest
 
 from app.db.model_base import utc_now
 from app.db.models.permissions import ApprovalGrantRecord
-from app.permissions.credentials import CredentialBroker
 from app.permissions.effects import (
     ANALYZER_DIGEST,
     BashEffectAnalyzer,
@@ -354,72 +353,6 @@ def test_unattended_permission_bundle_fails_closed_and_enforces_identity_budget(
         unattended=True,
         run_started_at=utc_now() - timedelta(seconds=2),
     ) == (False, "permission_bundle_runtime_exhausted")
-
-
-async def test_credential_broker_scopes_redacts_and_revokes(session):
-    run = await RunUnitOfWork(session).create_task_run("Credential broker", {})
-    repository = PermissionRepository(session)
-    identity = await repository.create_identity(
-        identity_type="tool_runtime",
-        principal="provider:tool",
-        run_id=run.id,
-    )
-    broker = CredentialBroker(repository)
-    subject = PermissionSubject(
-        agent_id=identity.id,
-        identity_type="tool_runtime",
-        task_id=run.task_id,
-        run_id=run.id,
-    )
-    policies = PermissionPolicySet(
-        version="credential-test",
-        rules=[
-            PermissionRule(
-                id="allow-records",
-                source="test",
-                tier="run",
-                decision="allow",
-                actions=["credential_use"],
-                resources=["credential://records"],
-                reason_code="test_credential_allow",
-            )
-        ],
-    )
-    with pytest.raises(PermissionError, match="not authorized"):
-        await broker.issue(
-            run_id=run.id,
-            agent_identity_id=identity.id,
-            service="records",
-            scopes=["read"],
-            allowed_scopes=["read"],
-            on_behalf_of="local-user",
-            subject=subject,
-            policies=PermissionPolicySet(version="deny-by-default"),
-        )
-    credential = await broker.issue(
-        run_id=run.id,
-        agent_identity_id=identity.id,
-        service="records",
-        scopes=["read"],
-        allowed_scopes=["read"],
-        on_behalf_of="local-user",
-        subject=subject,
-        policies=policies,
-    )
-    assert broker.redact(f"token={credential.token}") == "token=[REDACTED_CREDENTIAL]"
-    with pytest.raises(ValueError):
-        await broker.issue(
-            run_id=run.id,
-            agent_identity_id=identity.id,
-            service="records",
-            scopes=["admin"],
-            allowed_scopes=["read"],
-            on_behalf_of="local-user",
-            subject=subject,
-            policies=policies,
-        )
-    await broker.revoke(credential.grant_id)
-    assert broker.redact(credential.token) == "[REDACTED_CREDENTIAL]"
 
 
 async def test_delegation_attenuation_and_self_approval_are_rejected(session):

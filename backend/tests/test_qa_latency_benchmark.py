@@ -3,7 +3,7 @@ import asyncio
 
 import pytest
 
-from app.benchmarks.qa_latency import (
+from benchmarks.qa_latency import (
     LatencySample,
     iter_sse_payloads,
     percentile,
@@ -60,7 +60,7 @@ def test_latency_summary_rejects_missing_samples(values):
 
 
 def test_benchmark_arguments_default_to_standard_mode():
-    from app.benchmarks.qa_latency import build_parser
+    from benchmarks.qa_latency import build_parser
 
     args = build_parser().parse_args([])
 
@@ -73,7 +73,7 @@ def test_benchmark_arguments_default_to_standard_mode():
 
 
 async def test_benchmark_bounds_parallel_runs(monkeypatch):
-    from app.benchmarks import qa_latency
+    from benchmarks import qa_latency
 
     active = 0
     peak = 0
@@ -99,7 +99,7 @@ async def test_benchmark_bounds_parallel_runs(monkeypatch):
 
 
 async def test_benchmark_defers_cleanup_until_measurements_finish(monkeypatch):
-    from app.benchmarks import qa_latency
+    from benchmarks import qa_latency
 
     timeline = []
 

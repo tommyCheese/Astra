@@ -1,3 +1,5 @@
+"""Deterministic OpenAI-compatible server for local latency benchmarks."""
+
 from __future__ import annotations
 
 import argparse

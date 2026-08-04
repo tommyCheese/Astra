@@ -2,18 +2,26 @@ from __future__ import annotations
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.repositories.approval_store import ApprovalStore
 from app.repositories.run_artifact_sandbox_store import RunArtifactSandboxStore
+from app.repositories.run_cancellation_store import RunCancellationStore
+from app.repositories.run_core_store import RunCoreStore
 from app.repositories.run_event_store import RunEventStore
-from app.repositories.run_lifecycle_store import RunLifecycleStore
 from app.repositories.run_memory_store import RunMemoryStore
+from app.repositories.run_plan_revision_store import RunPlanRevisionStore
+from app.repositories.run_query_store import RunQueryStore
 from app.repositories.run_step_turn_store import RunStepTurnStore
-from app.repositories.run_tool_approval_store import RunToolApprovalStore
+from app.repositories.tool_call_store import ToolCallStore
 
 
 class RunUnitOfWork(
-    RunLifecycleStore,
+    RunCoreStore,
+    RunPlanRevisionStore,
+    RunQueryStore,
+    RunCancellationStore,
     RunStepTurnStore,
-    RunToolApprovalStore,
+    ToolCallStore,
+    ApprovalStore,
     RunArtifactSandboxStore,
     RunMemoryStore,
     RunEventStore,

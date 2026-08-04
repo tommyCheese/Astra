@@ -1,3 +1,5 @@
+"""Provider-specific model thinking capabilities and request configuration."""
+
 from __future__ import annotations
 
 import re

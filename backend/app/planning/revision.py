@@ -1,3 +1,5 @@
+"""Model-assisted revision of waiting Plans."""
+
 from __future__ import annotations
 
 import json
@@ -5,12 +7,12 @@ from dataclasses import dataclass
 
 from app.agent_profile import AgentProfile
 from app.core.config import Settings
+from app.db.models.runs import RunRecord
 from app.model_clients.contracts import ModelOutputError
 from app.model_clients.factory import build_model_client
+from app.planning.service import PlanValidationError, PlanValidator
 from app.repositories.plans import PlanRepository
 from app.repositories.run_unit_of_work import RunUnitOfWork
-from app.runner.plan_errors import PlanValidationError
-from app.runner.planning import PlanValidator
 from app.schemas.agent.planning import PlanDraft, TaskContract
 from app.schemas.agent.run_policy import ReasoningPolicySnapshot
 from app.schemas.agent.types import PlanNodeStatus, PlanStatus
@@ -46,7 +48,7 @@ async def revise_waiting_plan(
     plan_id: str,
     expected_plan_version: int,
     expected_state_version: int,
-):
+) -> RunRecord:
     client = None
     run, current = await repository.claim_plan_revision(
         run_id,

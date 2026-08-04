@@ -6,17 +6,17 @@ from fake_web_tools import fake_web_registry
 from sqlalchemy import event, select
 
 from app.agent_profile import load_agent_profile
+from app.agent_runtime.reasoning import RunProfileResolver, build_default_contract
 from app.core.config import Settings
 from app.db.models.permissions import AgentIdentityRecord, ToolCatalogSnapshotRecord
 from app.db.models.workspaces import TaskWorkspaceRecord, WorkspaceCheckpointRecord
 from app.model_clients.contracts import ModelOutputError
 from app.model_clients.mock import MockModelClient
+from app.planning.scheduler import PlanScheduler
+from app.planning.service import PlanService, canonical_agent_state
 from app.repositories.plans import PlanRepository, plan_to_view
 from app.repositories.run_unit_of_work import RunUnitOfWork
 from app.runner.engine import RunEngine
-from app.runner.plan_scheduler import PlanScheduler
-from app.runner.planning import PlanService, canonical_agent_state
-from app.runner.reasoning import RunProfileResolver, build_default_contract
 from app.schemas.agent.execution_state import AgentDecision
 from app.schemas.agent.planning import ExpectedObservation, PlanDraft, PlanNodeDraft
 from app.schemas.agent.run_policy import RequestedReasoningPolicy

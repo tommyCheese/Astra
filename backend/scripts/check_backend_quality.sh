@@ -8,7 +8,7 @@ openspec_change="${OPENSPEC_CHANGE:-refactor-backend-for-readability}"
 
 cd "$backend_root"
 "$python_command" scripts/check_backend_architecture.py
-"$python_command" -m ruff check app tests scripts
+"$python_command" -m ruff check app benchmarks tests scripts
 "$python_command" -m pytest -q \
   tests/test_refactoring_contracts.py \
   tests/test_runtime_events.py \

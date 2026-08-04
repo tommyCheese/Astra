@@ -3,13 +3,13 @@ from pydantic import ValidationError
 from sqlalchemy import event as sqlalchemy_event
 
 from app.agent_profile import load_agent_profile
+from app.agent_runtime.reasoning import build_default_contract
 from app.db.models.executions import ModelInvocationRecord
 from app.repositories.conversation_strategy import ConversationStrategyRepository
 from app.repositories.run_unit_of_work import RunUnitOfWork
 from app.repositories.run_view_projection import RunViewProjector
 from app.repositories.tool_settings import ToolSettingsRepository
 from app.repositories.usage import UsageRepository
-from app.runner.reasoning import build_default_contract
 from app.schemas.agent.api_views import RunView
 from app.schemas.agent.execution_state import AgentState
 

@@ -15,13 +15,13 @@ from app.db.models.executions import NodeExecutionRecord
 from app.db.models.plans import PlanNodeRecord, PlanRecord
 from app.db.models.runs import RunRecord
 from app.db.models.skills import RunSkillSnapshotRecord
+from app.planning.scheduler import PlanScheduler
 from app.repositories.executions import (
     NodeExecutionRepository,
     NodeExecutionStateError,
 )
 from app.repositories.plans import PlanRepository
 from app.repositories.run_unit_of_work import RunUnitOfWork
-from app.runner.plan_scheduler import PlanScheduler
 from app.schemas.agent.types import (
     NodeExecutionPhase,
     NodeExecutionStatus,

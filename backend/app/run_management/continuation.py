@@ -7,11 +7,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import Settings
 from app.core.errors import StateError, ValidationError
 from app.db.models.runs import RunRecord
+from app.planning.revision import PlanRevisionError, revise_waiting_plan
 from app.repositories.permissions import PermissionRepository
 from app.repositories.run_unit_of_work import RunUnitOfWork
 from app.run_management.contracts import RunDispatcher
 from app.run_management.settings import RunSettingsResolver
-from app.runner.plan_revision import PlanRevisionError, revise_waiting_plan
 from app.schemas.agent.api_views import ContinueRunRequest, CreateRunResponse
 from app.schemas.agent.tool_invocation import ApprovalDecisionRequest
 from app.schemas.agent.types import ContinuationAction

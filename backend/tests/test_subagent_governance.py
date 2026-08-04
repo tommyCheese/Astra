@@ -1,14 +1,9 @@
 from __future__ import annotations
 
-from datetime import timedelta
-
 import pytest
 from sqlalchemy import select
 
-from app.db.model_base import utc_now
-from app.db.models.permissions import CredentialGrantRecord
 from app.db.models.skills import RunSkillSnapshotRecord
-from app.permissions.credentials import CredentialBroker
 from app.repositories.agent_executions import AgentExecutionRepository
 from app.repositories.permissions import PermissionRepository
 from app.repositories.run_unit_of_work import RunUnitOfWork
@@ -524,39 +519,3 @@ def test_child_invocation_preserves_protected_workspace_boundary():
     )
     assert decision.decision.decision.value == "deny"
     assert decision.decision.explanation.reason_code == "protected_resource"
-
-
-async def test_child_credentials_are_fresh_scoped_short_lived_and_revocable(session):
-    run, _, parent, _ = await _runtime(session)
-    child = await PermissionRepository(session).create_identity(
-        identity_type="subagent",
-        principal="child",
-        run_id=run.id,
-        parent_identity_id=parent.id,
-    )
-    frozen = FrozenChildCatalog((), "sha256:tools", (), "sha256:skills")
-    context = _execution_context(frozen).model_copy(
-        update={
-            "task_id": run.task_id,
-            "run_id": run.id,
-            "identity_id": child.id,
-            "parent_identity_id": parent.id,
-            "delegation_chain": (parent.id, child.id),
-        }
-    )
-    broker = CredentialBroker(PermissionRepository(session))
-    credential = await broker.issue_for_child(
-        context=context,
-        service="records",
-        scopes=["records.read"],
-        on_behalf_of="user-1",
-        policies=_allow_policy("credential_use"),
-        ttl_seconds=900,
-    )
-    grant = await session.get(CredentialGrantRecord, credential.grant_id)
-    assert grant.agent_identity_id == child.id
-    assert grant.metadata_["parent_secret_inherited"] is False
-    assert credential.expires_at <= utc_now() + timedelta(seconds=301)
-    await broker.revoke(credential.grant_id)
-    await session.refresh(grant)
-    assert grant.revoked_at is not None

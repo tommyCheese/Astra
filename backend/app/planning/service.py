@@ -1,3 +1,5 @@
+"""Plan creation, validation, and mutation services."""
+
 from __future__ import annotations
 
 from typing import Any
@@ -10,7 +12,6 @@ from app.db.models.plans import PlanNodeRecord, PlanRecord
 from app.db.models.runs import RunRecord
 from app.repositories.executions import NodeExecutionRepository
 from app.repositories.plans import PlanRepository, PlanStateError, plan_to_view
-from app.runner.plan_errors import PlanValidationError as _PlanValidationError
 from app.schemas.agent.execution_state import AgentState, Evaluation
 from app.schemas.agent.planning import (
     PlanDraft,
@@ -26,6 +27,10 @@ from app.schemas.agent.types import (
     PlanNodeStatus,
     PlanStatus,
 )
+
+
+class PlanValidationError(ValueError):
+    """Raised when a Plan violates graph or runtime constraints."""
 
 __all__ = [
     "PlanService",
@@ -52,7 +57,7 @@ class PlanValidator:
     ) -> PlanDraft:
         keys = [node.node_key for node in draft.nodes]
         if len(keys) != len(set(keys)):
-            raise _PlanValidationError("Plan node keys must be unique")
+            raise PlanValidationError("Plan node keys must be unique")
         known = set(keys)
         criteria = {item.id for item in task_contract.success_criteria}
         contract_skills = {
@@ -80,20 +85,20 @@ class PlanValidator:
     ) -> None:
         unknown_dependencies = set(node.depends_on) - known
         if unknown_dependencies:
-            raise _PlanValidationError(
+            raise PlanValidationError(
                 f"Unknown dependencies for {node.node_key}: {sorted(unknown_dependencies)}"
             )
         if node.node_key in node.depends_on:
-            raise _PlanValidationError(f"Plan node {node.node_key} depends on itself")
+            raise PlanValidationError(f"Plan node {node.node_key} depends on itself")
         unknown_criteria = set(node.success_criteria_refs) - criteria
         if unknown_criteria:
-            raise _PlanValidationError(
+            raise PlanValidationError(
                 f"Unknown success criteria for {node.node_key}: {sorted(unknown_criteria)}"
             )
         PlanValidator._validate_bindings(node, available_capabilities, forbidden_capabilities)
         unknown_skills = set(node.required_skill_ids) - contract_skills
         if unknown_skills:
-            raise _PlanValidationError(
+            raise PlanValidationError(
                 f"Unbound Skills for {node.node_key}: {sorted(unknown_skills)}"
             )
 
@@ -105,7 +110,7 @@ class PlanValidator:
             item for item in node.required_capabilities if item.startswith(concrete_prefixes)
         }
         if forbidden or concrete:
-            raise _PlanValidationError(
+            raise PlanValidationError(
                 f"Concrete runtime bindings are not allowed for {node.node_key}: "
                 f"{sorted(forbidden | concrete)}"
             )
@@ -115,18 +120,18 @@ class PlanValidator:
             else set()
         )
         if unknown:
-            raise _PlanValidationError(
+            raise PlanValidationError(
                 f"Unavailable capabilities for {node.node_key}: {sorted(unknown)}"
             )
 
     @staticmethod
     def _validate_budgets(draft, depth, budgets) -> None:
         if not any(not node.depends_on for node in draft.nodes):
-            raise _PlanValidationError("Plan requires at least one root node")
+            raise PlanValidationError("Plan requires at least one root node")
         if budgets and len(draft.nodes) > max(1, budgets.max_plan_depth * 4):
-            raise _PlanValidationError("Plan node budget exceeded")
+            raise PlanValidationError("Plan node budget exceeded")
         if budgets and depth > budgets.max_plan_depth:
-            raise _PlanValidationError("Plan depth budget exceeded")
+            raise PlanValidationError("Plan depth budget exceeded")
 
     @staticmethod
     def _validate_acyclic(draft: PlanDraft) -> int:
@@ -140,7 +145,7 @@ class PlanValidator:
                 if key not in resolved and values <= resolved
             )
             if not ready:
-                raise _PlanValidationError("Plan contains a dependency cycle")
+                raise PlanValidationError("Plan contains a dependency cycle")
             for key in ready:
                 depth[key] = 1 + max((depth[item] for item in dependencies[key]), default=0)
                 resolved.add(key)
@@ -433,7 +438,7 @@ class PlanService:
             return
         node_key = operation.get("node_key")
         if not node_key or node_key not in nodes:
-            raise _PlanValidationError(f"Unknown plan node: {node_key}")
+            raise PlanValidationError(f"Unknown plan node: {node_key}")
         node = nodes[node_key]
         if node.get("status") in {PlanNodeStatus.completed.value, PlanNodeStatus.running.value}:
             raise PlanStateError(f"Cannot modify {node['status']} plan node: {node_key}")
@@ -445,17 +450,17 @@ class PlanService:
             "block_node": PlanService._block_node,
         }.get(kind)
         if handler is None:
-            raise _PlanValidationError(f"Unsupported plan patch operation: {kind}")
+            raise PlanValidationError(f"Unsupported plan patch operation: {kind}")
         handler(nodes, node, node_key, operation)
 
     @staticmethod
     def _add_node(nodes, operation) -> None:
         raw = operation.get("node")
         if not raw:
-            raise _PlanValidationError("add_node requires node")
+            raise PlanValidationError("add_node requires node")
         node = PlanNodeDraft.model_validate(raw).model_dump(mode="json")
         if node["node_key"] in nodes:
-            raise _PlanValidationError(f"Duplicate plan node: {node['node_key']}")
+            raise PlanValidationError(f"Duplicate plan node: {node['node_key']}")
         nodes[node["node_key"]] = node
 
     @staticmethod
@@ -478,7 +483,7 @@ class PlanService:
     def _add_dependency(nodes, node, _node_key, operation) -> None:
         predecessor = operation.get("predecessor_key")
         if predecessor not in nodes:
-            raise _PlanValidationError(f"Unknown predecessor: {predecessor}")
+            raise PlanValidationError(f"Unknown predecessor: {predecessor}")
         node["depends_on"] = list(dict.fromkeys([*node["depends_on"], predecessor]))
 
     @staticmethod

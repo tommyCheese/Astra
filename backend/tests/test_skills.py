@@ -5,12 +5,12 @@ import pytest
 from sqlalchemy import event as sqlalchemy_event
 from sqlalchemy import func, select
 
+from app.agent_runtime.reasoning import RunProfileResolver
 from app.core.config import Settings
 from app.db.models.skills import RunSkillSnapshotRecord, SkillBlobRecord
 from app.model_clients.mock import MockModelClient
 from app.repositories.run_unit_of_work import RunUnitOfWork
 from app.runner.engine import RunEngine
-from app.runner.reasoning import RunProfileResolver
 from app.schemas.agent.execution_state import AgentDecision
 from app.schemas.agent.run_policy import RequestedReasoningPolicy
 from app.schemas.agent.run_result import FinalAnswer

@@ -4,11 +4,15 @@ import hashlib
 import logging
 from typing import Any
 
+from app.agent_runtime.reasoning import (
+    build_default_contract,
+    normalize_contract,
+    validate_contract,
+)
 from app.conversation_context import ConversationContextManager
 from app.db.models.runs import RunRecord
 from app.model_clients.contracts import ModelOutputError
 from app.repositories.run_unit_of_work import RunUnitOfWork
-from app.runner.reasoning import build_default_contract, normalize_contract, validate_contract
 from app.schemas.agent.planning import (
     ExpectedObservation,
     PlanDraft,

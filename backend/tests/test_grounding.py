@@ -1,5 +1,7 @@
 import pytest
 
+from app.agent_runtime.completion_policy import CompletionGate
+from app.agent_runtime.reasoning import apply_validation_outcomes, build_default_contract
 from app.db.models.conversations import TaskRecord
 from app.db.models.runs import RunRecord
 from app.grounding.fragments import fragments_from_web_result
@@ -16,8 +18,6 @@ from app.grounding.projection import project_grounded_answer
 from app.grounding.repository import EvidenceRepository, EvidenceWriter
 from app.grounding.schemas import EvidenceFragment, EvidenceKind
 from app.grounding.validators import grounding_validation_outcomes
-from app.runner.completion import CompletionGate
-from app.runner.reasoning import apply_validation_outcomes, build_default_contract
 from app.schemas.agent.execution_state import AgentState
 from app.schemas.agent.run_result import FinalAnswer, Finding, SourceReference, ValidationOutcome
 from app.schemas.agent.types import TerminalState

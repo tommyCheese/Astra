@@ -7,7 +7,8 @@ from app.agent_runtime.action_resolution import (
     ActionResolutionInput,
     ActionResolutionStage,
 )
-from app.agent_runtime.contracts import (
+from app.agent_runtime.orchestrator import AgentRunOrchestrator
+from app.execution.contracts import (
     BlockedOutcome,
     CompletedOutcome,
     ContinueOutcome,
@@ -17,7 +18,6 @@ from app.agent_runtime.contracts import (
     StageOutcome,
     WaitingOutcome,
 )
-from app.agent_runtime.orchestrator import AgentRunOrchestrator
 from app.schemas.agent.execution_state import AgentDecision
 from app.schemas.agent.run_result import FinalAnswer
 

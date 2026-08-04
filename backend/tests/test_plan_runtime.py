@@ -1,14 +1,18 @@
 import pytest
 from sqlalchemy.exc import IntegrityError
 
+from app.agent_runtime.reasoning import build_default_contract
 from app.db.models.plans import PlanNodeRecord
+from app.planning.scheduler import PlanScheduler
+from app.planning.service import (
+    PlanService,
+    PlanValidationError,
+    PlanValidator,
+    canonical_agent_state,
+)
 from app.repositories.plans import PlanRepository, PlanStateError, diff_plans, plan_to_view
 from app.repositories.run_unit_of_work import RunUnitOfWork
 from app.repositories.run_view_projection import RunViewProjector
-from app.runner.plan_errors import PlanValidationError
-from app.runner.plan_scheduler import PlanScheduler
-from app.runner.planning import PlanService, PlanValidator, canonical_agent_state
-from app.runner.reasoning import build_default_contract
 from app.schemas.agent.planning import (
     ExpectedObservation,
     PlanDraft,

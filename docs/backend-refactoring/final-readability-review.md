@@ -33,3 +33,12 @@ Agent runtime、Subagent、权限、Workspace/Artifact 和外部 provider 边界
 主要入口可以在不理解旧架构的前提下沿命名后的 application、runtime、port/store 和 projection
 边界导航。HTTP/OpenAPI、SSE、历史 JSON、ORM metadata 与 Alembic schema 没有发现意外外部语义
 变化；本次无需创建额外外部变更提案。
+
+## 第二轮去碎片化
+
+后续 import-graph 审计将 `app` 从 327 个模块收敛到 313 个，并删除约 1,800 行未接入真实调用链、
+兼容转发或重复持久化代码。具体包括：兼容 execution contract、临时 Repository ports、第二套
+invocation pipeline、两个纯多重继承 Store 壳、重复 Runtime Profile Repository，以及生产包中的
+离线 Memory 评估。性能 benchmark 也移到生产包之外。Plan 统一归 `app.planning`，Agent 策略与
+执行阶段归 `app.agent_runtime`，provider thinking 归 `app.model_clients`；当前 import graph 没有
+生产模块循环或登记的 forbidden edge。

@@ -1,8 +1,8 @@
 import pytest
 
-from app.runner.adapters import WebTaskAdapter
-from app.runner.completion import CompletionGate
-from app.runner.reasoning import (
+from app.agent_runtime.completion_policy import CompletionGate
+from app.agent_runtime.loop_control import InvalidTransition, LoopOrchestrator, NoProgressDetector
+from app.agent_runtime.reasoning import (
     ObservationEvaluator,
     PolicyCompiler,
     ReflectionGate,
@@ -15,7 +15,7 @@ from app.runner.reasoning import (
     normalize_contract,
     validate_contract,
 )
-from app.runner.runtime import InvalidTransition, LoopOrchestrator, NoProgressDetector
+from app.agent_runtime.result_adapters import WebTaskAdapter
 from app.schemas.agent.execution_state import (
     AgentObservation,
     AgentState,

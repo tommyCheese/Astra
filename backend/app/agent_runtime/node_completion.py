@@ -12,9 +12,9 @@ from app.db.models.executions import AgentJoinRecord
 from app.db.models.plans import PlanNodeRecord
 from app.db.models.runs import AgentTurnRecord
 from app.execution.contracts import SubagentSupervisorPort
+from app.planning.service import PlanService
 from app.repositories.plans import PlanRepository
 from app.repositories.run_unit_of_work import RunUnitOfWork
-from app.runner.planning import PlanService
 from app.schemas.agent.execution_state import AgentDecision, AgentObservation
 from app.schemas.agent.run_result import FinalAnswer
 

@@ -1,3 +1,5 @@
+"""Recover stale root-node and delegated executions for persisted Runs."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass

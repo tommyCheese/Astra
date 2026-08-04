@@ -29,7 +29,8 @@
   ],
   "typed_module_prefixes": [
     "app.bootstrap",
-    "app.agent_runtime.contracts",
+    "app.execution",
+    "app.planning",
     "app.run_management"
   ]
 }

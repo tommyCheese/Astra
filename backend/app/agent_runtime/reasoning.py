@@ -1,3 +1,5 @@
+"""Agent reasoning policy, observation evaluation, and reflection rules."""
+
 import hashlib
 import json
 from collections.abc import Iterable

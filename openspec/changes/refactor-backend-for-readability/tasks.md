@@ -119,3 +119,13 @@
 - [x] 12.6 对关键 Run、审批、取消、恢复、scheduled job、subagent、sandbox 和 artifact 链路执行故障注入与性能回归测试
 - [x] 12.7 复核公开 HTTP/SSE 与持久化语义零意外变更，并为任何必要外部变更创建独立 OpenSpec proposal
 - [x] 12.8 完成最终可读性评审：从每个主要用例入口验证调用链、命名、事务、副作用和错误路径无需依赖旧架构知识即可理解
+
+## 13. 去碎片化与真实 Agent 能力归属
+
+- [x] 13.1 删除 `agent_runtime` 的兼容 contract re-export，让 root/subagent 只依赖 `execution` 的单一契约所有者
+- [x] 13.2 删除无消费者的临时 Repository ports、重复 invocation pipeline 及绑定旧实现的测试
+- [x] 13.3 将仅用于多重继承组合的 Run store 薄壳并入 Unit of Work，减少无业务语义的模块和类
+- [x] 13.4 统一 Runtime Profile 的持久化实现，删除未接入生产路径的重复 Repository
+- [x] 13.5 将离线 Memory 评估从生产 `memory` 能力移到 benchmark/test 支持边界
+- [x] 13.6 收敛 `runner`、`agent_runtime`、planning 与 model provider 的概念所有权，迁移调用方并删除旧模块路径
+- [x] 13.7 重新生成只减不增基线，更新模块地图并运行完整 lint、架构、OpenSpec、契约、数据库和 820+ 测试验收

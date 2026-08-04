@@ -3,9 +3,8 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import assert_never
+from typing import Protocol, assert_never
 
-from app.agent_runtime.stages import ExecutionStage
 from app.execution.contracts import (
     BlockedOutcome,
     CompletedOutcome,
@@ -15,6 +14,10 @@ from app.execution.contracts import (
     StageOutcome,
     WaitingOutcome,
 )
+
+
+class ExecutionStage(Protocol):
+    async def execute(self, context: ExecutionContext) -> StageOutcome: ...
 
 
 class AgentRunOrchestrator:

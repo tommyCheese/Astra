@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.agent_runtime.approval import safe_preview, similar_matcher
+from app.agent_runtime.result_adapters import WebTaskAdapter
 from app.grounding.fragments import fragments_from_web_result
 from app.plugins.interfaces import (
     ApprovalPresenter,
@@ -10,8 +12,6 @@ from app.plugins.interfaces import (
     ResultProcessor,
     Validator,
 )
-from app.runner.adapters import WebTaskAdapter
-from app.runner.approvals import safe_preview, similar_matcher
 from app.schemas.agent.execution_state import AgentObservation
 from app.schemas.agent.run_result import ValidationIssue, ValidationOutcome
 from app.tools.base import ToolResultEnvelope, ToolSpec

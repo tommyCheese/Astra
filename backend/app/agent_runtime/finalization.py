@@ -13,8 +13,10 @@ from app.agent_runtime.completion import (
     normalize_final_answer_artifact_references,
 )
 from app.agent_runtime.completion_gate import CompletionGateInput, CompletionGateStage
+from app.agent_runtime.completion_policy import CompletionGate
 from app.agent_runtime.memory_candidates import MemoryCandidateWriter
 from app.agent_runtime.progress import ExecutionProgress, ProgressEvaluationStage
+from app.agent_runtime.result_adapters import ChartTaskAdapter, WebTaskAdapter
 from app.db.models.workspaces import ArtifactRecord
 from app.grounding.projection import project_grounded_answer
 from app.grounding.repository import EvidenceRepository, EvidenceWriter
@@ -22,8 +24,6 @@ from app.grounding.validators import grounding_validation_outcomes
 from app.model_clients.contracts import ModelClient
 from app.repositories.plans import PlanRepository
 from app.repositories.run_unit_of_work import RunUnitOfWork
-from app.runner.adapters import ChartTaskAdapter, WebTaskAdapter
-from app.runner.completion import CompletionGate
 from app.schemas.agent.execution_state import CompletionDecision
 from app.schemas.agent.run_policy import RunExecutionProfile
 from app.schemas.agent.run_result import FinalAnswer, VerificationReport

@@ -7,17 +7,17 @@ import logging
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent_profile import AgentProfileConfigurationError, load_agent_profile
+from app.agent_runtime.reasoning import RunProfileResolver, compile_subagent_policy
 from app.context_windows import resolve_context_window
 from app.conversation_context import ConversationContextManager
 from app.core.config import Settings
 from app.core.errors import ConfigurationError, ResourceError, ValidationError
 from app.db.models.runs import RunRecord
+from app.model_clients.reasoning import normalize_model_thinking
 from app.permissions.governance import verify_permission_bundle
 from app.repositories.run_unit_of_work import RunUnitOfWork
 from app.run_management.contracts import PreparedRun
 from app.run_management.settings import RunSettingsResolver
-from app.runner.model_reasoning import normalize_model_thinking
-from app.runner.reasoning import RunProfileResolver, compile_subagent_policy
 from app.schemas.agent.api_views import CreateRunRequest, CreateRunResponse
 from app.schemas.agent.run_policy import RunExecutionProfile
 from app.schemas.permissions import PermissionBundle

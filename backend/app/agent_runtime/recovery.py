@@ -7,13 +7,13 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
+from app.agent_runtime.approval import input_hash
+from app.agent_runtime.result_adapters import ProcessorRegistry
 from app.db.models.permissions import ToolCallRecord
 from app.db.models.plans import PlanRecord
 from app.db.models.runs import AgentTurnRecord, RunRecord
 from app.repositories.plans import PlanRepository
 from app.repositories.run_unit_of_work import RunUnitOfWork
-from app.runner.adapters import ProcessorRegistry
-from app.runner.approvals import input_hash
 from app.schemas.agent.execution_state import AgentObservation
 from app.tools.base import ToolExecutionError
 

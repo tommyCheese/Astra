@@ -10,8 +10,8 @@ from app.model_clients.contracts import (
     DeferredUsageInvocation,
     StreamFieldCallbacks,
 )
+from app.model_clients.reasoning import ModelReasoningConfig
 from app.model_clients.response_parsing import StreamingJsonFieldExtractor
-from app.runner.model_reasoning import ModelReasoningConfig
 
 
 @dataclass(frozen=True)

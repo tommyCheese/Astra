@@ -10,8 +10,11 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
+from app.agent_runtime.completion_policy import CompletionGate
 from app.agent_runtime.progress import ExecutionProgress
+from app.agent_runtime.reasoning import ObservationEvaluator, ReflectionGate
 from app.agent_runtime.recovery import RunRecoveryStage
+from app.agent_runtime.result_adapters import ChartTaskAdapter, ProcessorRegistry, WebTaskAdapter
 from app.agent_runtime.runtime_assembly import RootRuntimeAssembly, RuntimeLimits
 from app.agent_runtime.runtime_composition import RootRuntimeComposer
 from app.artifacts import ArtifactService, LocalArtifactStore
@@ -27,9 +30,6 @@ from app.repositories.permissions import PermissionRepository
 from app.repositories.run_unit_of_work import RunUnitOfWork
 from app.repositories.tool_settings import ToolSettingsRepository, default_tool_states
 from app.repositories.workspaces import WorkspaceRepository
-from app.runner.adapters import ChartTaskAdapter, ProcessorRegistry, WebTaskAdapter
-from app.runner.completion import CompletionGate
-from app.runner.reasoning import ObservationEvaluator, ReflectionGate
 from app.sandbox.docker_provider import build_sandbox_provider
 from app.sandbox.runtime import SandboxJobService, SandboxSupervisor
 from app.schemas.agent.run_policy import (

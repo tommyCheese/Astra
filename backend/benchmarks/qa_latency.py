@@ -1,3 +1,5 @@
+"""Measure end-to-end Astra streaming latency against a running backend."""
+
 from __future__ import annotations
 
 import argparse

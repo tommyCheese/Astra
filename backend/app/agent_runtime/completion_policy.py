@@ -1,4 +1,4 @@
-"""Completion decisions for Run contracts, plans, and concurrency barriers."""
+"""Deterministic completion policy for Run contracts and concurrency barriers."""
 
 from __future__ import annotations
 

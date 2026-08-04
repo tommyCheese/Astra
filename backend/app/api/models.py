@@ -5,8 +5,8 @@ from fastapi import APIRouter, Depends
 
 from app.context_windows import resolve_context_window
 from app.core.config import Settings, get_settings
+from app.model_clients.reasoning import model_thinking_capability
 from app.model_providers import API_KEY_OPTIONAL_MODEL_PROVIDERS, SUPPORTED_MODEL_PROVIDERS
-from app.runner.model_reasoning import model_thinking_capability
 from app.schemas.models import (
     ModelConnectionTestRequest,
     ModelConnectionTestResponse,

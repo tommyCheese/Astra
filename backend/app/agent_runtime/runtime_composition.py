@@ -8,15 +8,19 @@ from typing import Any
 from app.agent_runtime.approval import ApprovalRoutingStage
 from app.agent_runtime.authorization import PermissionAuthorizationStage
 from app.agent_runtime.completion import CompletionVerificationStage
+from app.agent_runtime.completion_policy import CompletionGate
 from app.agent_runtime.context import ContextAssembler
 from app.agent_runtime.control_decisions import ControlDecisionStage
 from app.agent_runtime.failure import ToolFailureStage
 from app.agent_runtime.finalization import AgentFinalizationStage
 from app.agent_runtime.invocation import ToolInvocationStage
+from app.agent_runtime.loop_control import LoopOrchestrator, NoProgressDetector
 from app.agent_runtime.memory_candidates import MemoryCandidateWriter
 from app.agent_runtime.node_completion import NodeCompletionStage
 from app.agent_runtime.observation import ObservationNormalizationStage
 from app.agent_runtime.progress import ExecutionProgress, ProgressEvaluationStage
+from app.agent_runtime.reasoning import ObservationEvaluator, ReflectionGate
+from app.agent_runtime.result_adapters import ChartTaskAdapter, ProcessorRegistry, WebTaskAdapter
 from app.agent_runtime.root_decision import RootDecisionStage
 from app.agent_runtime.root_iteration import RootAgentIterationStage, RootRuntimeState
 from app.agent_runtime.runtime_assembly import RootRuntimeAssembly, RuntimeLimits
@@ -25,13 +29,9 @@ from app.agent_runtime.tool_action import RootToolActionStage
 from app.agent_runtime.turn_preparation import RootTurnPreparationStage
 from app.core.config import Settings
 from app.model_clients.contracts import ModelClient
+from app.planning.scheduler import PlanScheduler
 from app.repositories.plans import PlanRepository
 from app.repositories.run_unit_of_work import RunUnitOfWork
-from app.runner.adapters import ChartTaskAdapter, ProcessorRegistry, WebTaskAdapter
-from app.runner.completion import CompletionGate
-from app.runner.plan_scheduler import PlanScheduler
-from app.runner.reasoning import ObservationEvaluator, ReflectionGate
-from app.runner.runtime import LoopOrchestrator, NoProgressDetector
 from app.schemas.agent.run_policy import EffectiveReasoningPolicy
 from app.schemas.agent.types import AnswerMode
 from app.skills.activation import SkillActivationService

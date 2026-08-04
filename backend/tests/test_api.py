@@ -7,6 +7,7 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
+from app.agent_runtime.reasoning import RunProfileResolver, build_default_contract
 from app.api import runs as runs_api
 from app.api.models import get_runtime_default_model
 from app.core.config import Settings, get_settings
@@ -16,13 +17,12 @@ from app.db.models.runs import RunRecord
 from app.db.session import get_session
 from app.main import create_app
 from app.memory.domain import MemoryStatus
+from app.planning import revision as plan_revision_module
+from app.planning.service import PlanService, canonical_agent_state
 from app.repositories.approval_contracts import ApprovalRequestCreate
 from app.repositories.memories import MemoryRepository
 from app.repositories.plans import PlanRepository, plan_to_view
 from app.repositories.run_unit_of_work import RunUnitOfWork
-from app.runner import plan_revision as plan_revision_module
-from app.runner.planning import PlanService, canonical_agent_state
-from app.runner.reasoning import RunProfileResolver, build_default_contract
 from app.schemas.agent.planning import ExpectedObservation, PlanDraft, PlanNodeDraft
 from app.schemas.agent.run_policy import RequestedReasoningPolicy
 from app.schemas.agent.types import AnswerMode, PlanExecution, PlanNodeStatus

@@ -11,20 +11,20 @@ from app.agent_runtime.completion import (
     normalize_final_answer_artifact_references,
     quick_workspace_change_completes_goal,
 )
-from app.core.config import Settings
-from app.model_clients.contracts import ModelOutputError
-from app.model_clients.mock import MockModelClient
-from app.repositories.agent_executions import AgentExecutionRepository
-from app.repositories.plans import PlanRepository, plan_to_view
-from app.repositories.run_unit_of_work import RunUnitOfWork
-from app.runner.agent_loop import AgentLoop, ToolRouter
-from app.runner.planning import PlanService, canonical_agent_state
-from app.runner.reasoning import (
+from app.agent_runtime.reasoning import (
     PolicyCompiler,
     RunProfileResolver,
     build_default_contract,
     compile_subagent_policy,
 )
+from app.agent_runtime.service import AgentLoop, ToolRouter
+from app.core.config import Settings
+from app.model_clients.contracts import ModelOutputError
+from app.model_clients.mock import MockModelClient
+from app.planning.service import PlanService, canonical_agent_state
+from app.repositories.agent_executions import AgentExecutionRepository
+from app.repositories.plans import PlanRepository, plan_to_view
+from app.repositories.run_unit_of_work import RunUnitOfWork
 from app.schemas.agent.execution_state import (
     AcceptedFact,
     AgentDecision,

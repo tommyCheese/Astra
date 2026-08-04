@@ -1,12 +1,12 @@
 from fake_web_tools import fake_web_registry
 
+from app.agent_runtime.approval import safe_preview, similar_matcher
+from app.agent_runtime.reasoning import PolicyCompiler
+from app.agent_runtime.service import AgentLoop
 from app.core.config import Settings
 from app.model_clients.mock import MockModelClient
 from app.permissions.effects import DefaultEffectAnalyzer
 from app.repositories.run_unit_of_work import RunUnitOfWork
-from app.runner.agent_loop import AgentLoop
-from app.runner.approvals import safe_preview, similar_matcher
-from app.runner.reasoning import PolicyCompiler
 from app.schemas.agent.run_policy import RequestedReasoningPolicy
 from app.tools.bash import BashExecuteTool
 

@@ -13,6 +13,10 @@ from app.agent_profile import (
     AgentProfile,
     AgentProfileConfigurationError,
 )
+from app.agent_runtime.reasoning import (
+    build_default_contract,
+)
+from app.agent_runtime.service import AgentLoop
 from app.core.config import Settings
 from app.core.errors import run_error_from_exception
 from app.db.models.runs import RunRecord
@@ -24,19 +28,14 @@ from app.model_clients.contracts import (
     model_http_client_options,
 )
 from app.model_clients.factory import build_model_client
+from app.planning.service import PlanService, PlanValidationError, canonical_agent_state
 from app.repositories.plans import PlanRepository, plan_to_view
 from app.repositories.run_unit_of_work import RunUnitOfWork
-from app.runner.agent_loop import AgentLoop
+from app.run_management.recovery import ExecutionRecovery
 from app.runner.answer_stream import AnswerStreamMixin
 from app.runner.coordinator import RunCoordinator
 from app.runner.node_worker import ReadOnlyAgentNodeExecutor
-from app.runner.plan_errors import PlanValidationError
 from app.runner.plan_preparation import PlanPreparationMixin
-from app.runner.planning import PlanService, canonical_agent_state
-from app.runner.reasoning import (
-    build_default_contract,
-)
-from app.runner.recovery import ExecutionRecovery
 from app.schemas.agent.planning import (
     PlanGraphSnapshotEvent,
 )

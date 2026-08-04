@@ -4,12 +4,12 @@ from datetime import datetime, timezone
 
 import pytest
 
+from app.agent_runtime.completion_policy import CompletionGate
+from app.agent_runtime.reasoning import build_default_contract
 from app.db.models.runs import EvidenceRecord
 from app.repositories.agent_executions import AgentExecutionRepository
 from app.repositories.permissions import PermissionRepository
 from app.repositories.run_unit_of_work import RunUnitOfWork
-from app.runner.completion import CompletionGate
-from app.runner.reasoning import build_default_contract
 from app.schemas.agent.execution_state import AgentState
 from app.schemas.agent.run_policy import EffectiveSubagentPolicy, SubagentBudgetPolicy
 from app.schemas.agent.run_result import ValidationOutcome

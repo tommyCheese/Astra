@@ -27,7 +27,7 @@ class MockModelClient(ModelClient):
         raise ModelOutputError("Mock model has no semantic checkpoint generator")
 
     async def contract(self, goal: str) -> TaskContract:
-        from app.runner.reasoning import build_default_contract
+        from app.agent_runtime.reasoning import build_default_contract
 
         return build_default_contract(goal)
 

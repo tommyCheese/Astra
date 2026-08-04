@@ -1,3 +1,5 @@
+"""Ready-node selection and durable Plan scheduling."""
+
 from __future__ import annotations
 
 import uuid
@@ -10,9 +12,9 @@ from app.db.model_base import utc_now
 from app.db.models.executions import AgentJoinRecord, BudgetReservationRecord, NodeExecutionRecord
 from app.db.models.plans import PlanNodeRecord, PlanRecord
 from app.db.models.runs import RunRecord
+from app.planning.service import PlanValidationError
 from app.repositories.executions import NodeExecutionRepository
 from app.repositories.plans import PlanRepository
-from app.runner.plan_errors import PlanValidationError
 from app.schemas.agent.planning import ActiveExecutionSummary
 from app.schemas.agent.types import (
     NodeExecutionPhase,

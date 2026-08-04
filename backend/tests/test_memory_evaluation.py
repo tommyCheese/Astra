@@ -1,10 +1,11 @@
 from pathlib import Path
 
-from app.memory.evaluation import (
+from support.memory_evaluation import (
     EVALUATION_STRATEGIES,
     evaluate_memory_strategies,
     load_evaluation_fixtures,
 )
+
 from app.memory.retrieval import MemoryRetrievalBudget, MemoryRetrievalPolicy
 
 FIXTURE_PATH = Path(__file__).parent / "fixtures" / "deep_memory_retrieval_cases.json"

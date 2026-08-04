@@ -1,12 +1,12 @@
 import pytest
 
+from app.agent_runtime.approval import matcher_matches, similar_matcher
+from app.agent_runtime.reasoning import PolicyCompiler
+from app.agent_runtime.service import AgentLoop
 from app.core.config import Settings
 from app.model_clients.mock import MockModelClient
 from app.repositories.run_unit_of_work import RunUnitOfWork
 from app.repositories.run_view_projection import RunViewProjector
-from app.runner.agent_loop import AgentLoop
-from app.runner.approvals import matcher_matches, similar_matcher
-from app.runner.reasoning import PolicyCompiler
 from app.schemas.agent.execution_state import AgentDecision
 from app.schemas.agent.run_policy import RequestedReasoningPolicy
 from app.tools.base import Tool, ToolExecutionError, ToolRegistry, ToolSpec

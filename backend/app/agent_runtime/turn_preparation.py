@@ -17,10 +17,10 @@ from app.db.models.runs import RunRecord
 from app.db.models.skills import RunSkillSnapshotRecord
 from app.execution.contracts import SubagentSupervisorPort
 from app.model_clients.contracts import ModelClient
+from app.planning.scheduler import PlanScheduler
 from app.repositories.plans import PlanRepository
 from app.repositories.run_unit_of_work import RunUnitOfWork
 from app.root_context_compaction import compact_root_context
-from app.runner.plan_scheduler import PlanScheduler
 from app.schemas.agent.types import PlanNodeStatus
 from app.tools.base import ToolRegistry
 from app.tools.router import ToolRouter

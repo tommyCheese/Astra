@@ -18,12 +18,12 @@ from app.model_clients.contracts import (
     StreamFieldCallbacks,
 )
 from app.model_clients.openai_compatible import OpenAICompatibleModelClient
-from app.model_clients.response_parsing import parse_json_object
-from app.runner.model_reasoning import (
+from app.model_clients.reasoning import (
     ModelReasoningConfig,
     attach_reasoning_usage,
     resolve_model_reasoning,
 )
+from app.model_clients.response_parsing import parse_json_object
 
 logger = logging.getLogger("astra.model")
 

@@ -3,6 +3,7 @@ import json
 import pytest
 
 from app.agent_profile import ModelOperation
+from app.agent_runtime.reasoning import build_default_contract
 from app.core.config import Settings
 from app.model_clients.anthropic import AnthropicModelClient
 from app.model_clients.contracts import (
@@ -12,7 +13,6 @@ from app.model_clients.contracts import (
 from app.model_clients.factory import build_model_client
 from app.model_clients.mock import MockModelClient
 from app.model_clients.openai_compatible import OpenAICompatibleModelClient
-from app.runner.reasoning import build_default_contract
 
 
 async def test_mock_model_client_returns_structured_outputs():

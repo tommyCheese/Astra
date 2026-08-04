@@ -1,7 +1,7 @@
 import pytest
 
 from app.agent_profile import ModelOperation
-from app.runner.model_reasoning import attach_reasoning_usage, resolve_model_reasoning
+from app.model_clients.reasoning import attach_reasoning_usage, resolve_model_reasoning
 
 
 @pytest.mark.parametrize(

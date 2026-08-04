@@ -1,3 +1,5 @@
+"""Offline Memory strategy evaluation used by benchmark-oriented tests."""
+
 from __future__ import annotations
 
 import json

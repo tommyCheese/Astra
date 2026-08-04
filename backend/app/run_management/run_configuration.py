@@ -6,9 +6,9 @@ from copy import deepcopy
 from dataclasses import dataclass
 
 from app.agent_profile import AgentProfile, load_agent_profile
+from app.agent_runtime.reasoning import RunProfileResolver
 from app.contracts.json_values import JsonObject
-from app.runner.model_reasoning import normalize_model_thinking
-from app.runner.reasoning import RunProfileResolver
+from app.model_clients.reasoning import normalize_model_thinking
 from app.schemas.agent.run_policy import (
     ReasoningPolicySnapshot,
     RequestedReasoningPolicy,

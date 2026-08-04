@@ -2,7 +2,7 @@ import pytest
 from pydantic import ValidationError
 
 from app.agent_profile import ModelOperation
-from app.runner.model_reasoning import (
+from app.model_clients.reasoning import (
     model_thinking_capability,
     normalize_model_thinking,
     resolve_model_reasoning,

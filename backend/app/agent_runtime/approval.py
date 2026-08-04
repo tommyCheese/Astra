@@ -2,8 +2,13 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
+import re
+import shlex
 import uuid
 from dataclasses import dataclass
+from typing import Any
 
 from app.core.config import Settings
 from app.db.models.permissions import ToolCallRecord
@@ -14,11 +19,63 @@ from app.permissions.invocation import InvocationAuthorizationResult
 from app.repositories.approval_contracts import ApprovalRequestCreate
 from app.repositories.executions import NodeExecutionRepository
 from app.repositories.run_unit_of_work import RunUnitOfWork
-from app.runner.approvals import input_hash, safe_preview, similar_matcher
 from app.schemas.agent.execution_state import AgentDecision
 from app.schemas.agent.types import NodeExecutionPhase
 from app.schemas.permissions import ActionEffectPlan, PermissionDecisionKind
 from app.tools.base import Tool, ToolExecutionError
+
+SHELL_META = re.compile(r"(?:&&|\|\||[|;&<>`]|\$\(|\$\{|\n|\r)")
+SECRET_VALUE = re.compile(
+    r"(?i)\b(api[_-]?key|token|authorization|password)\s*[:=]\s*(?:bearer\s+)?\S+"
+)
+
+
+def canonical_input(tool_input: dict[str, Any]) -> str:
+    return json.dumps(tool_input, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+
+
+def input_hash(tool_input: dict[str, Any]) -> str:
+    return hashlib.sha256(canonical_input(tool_input).encode()).hexdigest()
+
+
+def safe_preview(tool_name: str, tool_input: dict[str, Any], limit: int = 1000) -> str:
+    value = (
+        str(tool_input.get("command", ""))
+        if tool_name == "bash_execute"
+        else canonical_input(tool_input)
+    )
+    return SECRET_VALUE.sub(r"\1=[REDACTED]", value)[:limit]
+
+
+def similar_matcher(tool_name: str, tool_input: dict[str, Any]) -> dict[str, Any] | None:
+    if tool_name != "bash_execute":
+        return None
+    tokens = _safe_shell_tokens(tool_input)
+    if not tokens or any("=" in token and index == 0 for index, token in enumerate(tokens)):
+        return None
+    multi_part_commands = {"npm", "pnpm", "yarn", "git", "python", "python3"}
+    prefix_length = 2 if tokens[0] in multi_part_commands and len(tokens) > 1 else 1
+    return {"kind": "command_prefix", "tokens": tokens[:prefix_length]}
+
+
+def matcher_matches(matcher: dict[str, Any], tool_input: dict[str, Any]) -> bool:
+    if matcher.get("kind") == "exact":
+        return matcher.get("input_hash") == input_hash(tool_input)
+    if matcher.get("kind") != "command_prefix":
+        return False
+    tokens = _safe_shell_tokens(tool_input)
+    prefix = matcher.get("tokens")
+    return bool(tokens and isinstance(prefix, list) and prefix and tokens[: len(prefix)] == prefix)
+
+
+def _safe_shell_tokens(tool_input: dict[str, Any]) -> list[str] | None:
+    command = str(tool_input.get("command", "")).strip()
+    if not command or SHELL_META.search(command):
+        return None
+    try:
+        return shlex.split(command, posix=True)
+    except ValueError:
+        return None
 
 
 @dataclass(frozen=True)

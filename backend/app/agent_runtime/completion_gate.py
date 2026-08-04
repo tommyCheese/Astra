@@ -6,13 +6,13 @@ from dataclasses import dataclass
 
 from sqlalchemy import select
 
+from app.agent_runtime.completion_policy import CompletionGate
 from app.agent_runtime.progress import ExecutionProgress
+from app.agent_runtime.reasoning import apply_validation_outcomes
 from app.db.models.executions import AgentJoinRecord
 from app.repositories.agent_executions import AgentExecutionRepository
 from app.repositories.plans import PlanRepository, plan_to_view
 from app.repositories.run_unit_of_work import RunUnitOfWork
-from app.runner.completion import CompletionGate
-from app.runner.reasoning import apply_validation_outcomes
 from app.schemas.agent.execution_state import AgentState, CompletionDecision
 from app.schemas.agent.run_policy import RunExecutionProfile
 from app.schemas.agent.run_result import VerificationReport

@@ -24,6 +24,11 @@ from app.model_clients.openai_transport import (
     OpenAIChatTransport,
 )
 from app.model_clients.prompts import COMBINED_DECISION_INSTRUCTIONS
+from app.model_clients.reasoning import (
+    ModelReasoningConfig,
+    attach_reasoning_usage,
+    resolve_model_reasoning,
+)
 from app.model_clients.request_mapping import (
     active_skill_identities,
     generate_context_checkpoint,
@@ -37,11 +42,6 @@ from app.model_clients.response_parsing import (
     parse_json_object,
 )
 from app.model_providers import API_KEY_OPTIONAL_MODEL_PROVIDERS
-from app.runner.model_reasoning import (
-    ModelReasoningConfig,
-    attach_reasoning_usage,
-    resolve_model_reasoning,
-)
 from app.schemas.agent.execution_state import AgentDecision, AgentReflection
 from app.schemas.agent.planning import PlanDraft, TaskContract
 from app.schemas.agent.run_result import FinalAnswer, MemoryRecord

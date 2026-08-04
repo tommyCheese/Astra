@@ -12,6 +12,8 @@
 | HTTP 平台 | `app.platform.http` | trace、本机访问、错误映射、请求日志 | 用例编排 |
 | Run 管理 | `app.run_management.application:RunApplicationService` | 创建、派发、恢复、审批决定、取消 | Agent 阶段实现、HTTP 映射 |
 | Agent runtime | `app.agent_runtime.orchestrator:AgentRunOrchestrator` | 类型化阶段顺序与 outcome 路由 | provider 细节、跨用例提交 |
+| Planning | `app.planning.service:PlanService` | Plan 校验、变更、revision 与 ready-node 调度 | Agent iteration、HTTP 映射 |
+| Model clients | `app.model_clients` | provider transport、thinking 能力、请求映射与响应归一化 | Run 生命周期、权限决策 |
 | Run 持久化 | `app.repositories.run_unit_of_work:RunUnitOfWork` | 组合窄 store、显式 commit/rollback | 自动提交、公共 read-model 拼装 |
 | Run 查询 | `app.repositories.run_view_projection:RunViewProjector` | ORM 到 typed public projection | 修改 ORM、触发事务提交 |
 | 权限 | `app.permissions` | effect analysis、allow/ask/deny、grant 与 credential scope | 工具执行 |

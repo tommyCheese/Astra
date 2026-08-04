@@ -1,10 +1,15 @@
+"""Root Agent runtime service assembled around the typed stage orchestrator."""
+
 import asyncio
 import logging
 from collections.abc import Awaitable, Callable
 from typing import Any
 
+from app.agent_runtime.completion_policy import CompletionGate
 from app.agent_runtime.finalization import FinalizationInput
 from app.agent_runtime.orchestrator import AgentRunOrchestrator
+from app.agent_runtime.reasoning import ObservationEvaluator, ReflectionGate
+from app.agent_runtime.result_adapters import ChartTaskAdapter, ProcessorRegistry, WebTaskAdapter
 from app.agent_runtime.runtime_builder import AgentRuntimeBuilder, RootRuntimeAssembly
 from app.core.config import Settings
 from app.db.models.runs import RunRecord
@@ -12,9 +17,6 @@ from app.db.models.skills import RunSkillSnapshotRecord
 from app.execution.contracts import BlockedOutcome, ExecutionBudget, ExecutionContext
 from app.model_clients.contracts import ModelClient
 from app.repositories.run_unit_of_work import RunUnitOfWork
-from app.runner.adapters import ChartTaskAdapter, ProcessorRegistry, WebTaskAdapter
-from app.runner.completion import CompletionGate
-from app.runner.reasoning import ObservationEvaluator, ReflectionGate
 from app.tools.base import ToolRegistry
 from app.tools.router import ToolRouter
 

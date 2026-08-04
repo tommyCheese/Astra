@@ -5,13 +5,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Literal
 
+from app.agent_runtime.loop_control import NoProgressDetector
 from app.agent_runtime.progress import ExecutionProgress, ProgressEvaluationStage
 from app.db.models.plans import PlanNodeRecord
 from app.db.models.runs import AgentTurnRecord
+from app.planning.scheduler import PlanScheduler
 from app.repositories.plans import PlanRepository
 from app.repositories.run_unit_of_work import RunUnitOfWork
-from app.runner.plan_scheduler import PlanScheduler
-from app.runner.runtime import NoProgressDetector
 from app.schemas.agent.execution_state import AgentDecision, AgentObservation
 from app.schemas.agent.types import PlanNodeStatus
 

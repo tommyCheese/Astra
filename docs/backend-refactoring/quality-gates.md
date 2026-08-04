@@ -39,7 +39,7 @@ PYTHON=.venv/bin/python bash scripts/check_backend_quality.sh
 
 ## 类型边界
 
-新架构的 `app.bootstrap`、`app.run_management` 和 `app.agent_runtime.contracts` 公共函数/方法必须完整标注参数与返回类型。范围随着能力迁移扩大。Ruff 同时拒绝无错误码的 `type: ignore` 和失效 suppression；架构基线禁止新增任何 `type: ignore`。
+新架构的 `app.bootstrap`、`app.execution`、`app.planning` 和 `app.run_management` 公共函数/方法必须完整标注参数与返回类型。范围随着能力迁移扩大。Ruff 同时拒绝无错误码的 `type: ignore` 和失效 suppression；架构基线禁止新增任何 `type: ignore`。
 
 ## 更新基线
 

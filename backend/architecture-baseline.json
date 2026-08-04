@@ -5,7 +5,10 @@
     "app.evolution.domain": 571,
     "app.memory.consolidation": 800,
     "app.memory.retrieval": 681,
+    "app.model_clients.reasoning": 658,
     "app.permissions.effects": 605,
+    "app.planning.scheduler": 545,
+    "app.planning.service": 516,
     "app.repositories.conversations": 619,
     "app.repositories.evolution": 753,
     "app.repositories.memories": 792,
@@ -13,11 +16,8 @@
     "app.repositories.plans": 534,
     "app.repositories.schedules": 566,
     "app.runner.coordinator": 729,
-    "app.runner.engine": 664,
-    "app.runner.model_reasoning": 656,
+    "app.runner.engine": 663,
     "app.runner.node_worker": 604,
-    "app.runner.plan_scheduler": 543,
-    "app.runner.planning": 511,
     "app.skills.storage": 542,
     "app.subagents.context": 589,
     "app.subagents.fan_in": 530,
@@ -25,6 +25,22 @@
     "app.subagents.runtime": 567
   },
   "legacy_functions": {
+    "app.agent_runtime.reasoning:normalize_contract": {
+      "lines": 37,
+      "complexity": 11
+    },
+    "app.agent_runtime.result_adapters:WebTaskAdapter.process": {
+      "lines": 38,
+      "complexity": 11
+    },
+    "app.agent_runtime.result_adapters:WebTaskAdapter.validate": {
+      "lines": 64,
+      "complexity": 15
+    },
+    "app.agent_runtime.service:AgentLoop.run": {
+      "lines": 62,
+      "complexity": 4
+    },
     "app.api.memories:list_memories": {
       "lines": 55,
       "complexity": 14
@@ -64,10 +80,6 @@
     "app.artifacts:ArtifactCollector._validate_office_archive": {
       "lines": 31,
       "complexity": 14
-    },
-    "app.benchmarks.qa_latency:run_benchmark": {
-      "lines": 66,
-      "complexity": 11
     },
     "app.context_compaction.policy:evaluate_compaction_trigger": {
       "lines": 46,
@@ -121,10 +133,6 @@
       "lines": 26,
       "complexity": 13
     },
-    "app.memory.evaluation:_strategy_metrics": {
-      "lines": 18,
-      "complexity": 12
-    },
     "app.memory.retrieval:retrieve_memories": {
       "lines": 69,
       "complexity": 15
@@ -135,6 +143,14 @@
     },
     "app.memory.retrieval:tokenize_text": {
       "lines": 33,
+      "complexity": 11
+    },
+    "app.model_clients.reasoning:_anthropic_thinking_profile": {
+      "lines": 61,
+      "complexity": 8
+    },
+    "app.model_clients.reasoning:_normalize_effective_thinking": {
+      "lines": 38,
       "complexity": 11
     },
     "app.permissions.engine:LeaseValidator.matches": {
@@ -148,6 +164,38 @@
     "app.permissions.governance:_bundle_effect_denial": {
       "lines": 25,
       "complexity": 14
+    },
+    "app.planning.revision:revise_waiting_plan": {
+      "lines": 70,
+      "complexity": 11
+    },
+    "app.planning.scheduler:PlanScheduler._capability_eligible_candidates": {
+      "lines": 47,
+      "complexity": 13
+    },
+    "app.planning.scheduler:PlanScheduler._filter_join_consumers": {
+      "lines": 35,
+      "complexity": 11
+    },
+    "app.planning.scheduler:PlanScheduler._finalize_batch": {
+      "lines": 94,
+      "complexity": 12
+    },
+    "app.planning.scheduler:PlanScheduler.claim_ready_batch": {
+      "lines": 77,
+      "complexity": 11
+    },
+    "app.planning.scheduler:PlanScheduler.ready_candidates": {
+      "lines": 30,
+      "complexity": 13
+    },
+    "app.planning.service:PlanService.apply_patch": {
+      "lines": 80,
+      "complexity": 15
+    },
+    "app.planning.service:PlanService.complete_node": {
+      "lines": 57,
+      "complexity": 12
     },
     "app.plugins.catalog:PluginCatalogBuilder._assemble": {
       "lines": 71,
@@ -269,21 +317,9 @@
       "lines": 25,
       "complexity": 13
     },
-    "app.runner.adapters:WebTaskAdapter.process": {
-      "lines": 38,
-      "complexity": 11
-    },
-    "app.runner.adapters:WebTaskAdapter.validate": {
-      "lines": 64,
-      "complexity": 15
-    },
-    "app.runner.agent_loop:AgentLoop.run": {
-      "lines": 62,
-      "complexity": 4
-    },
-    "app.runner.approvals:similar_matcher": {
-      "lines": 14,
-      "complexity": 11
+    "app.run_management.recovery:ExecutionRecovery.scan": {
+      "lines": 77,
+      "complexity": 10
     },
     "app.runner.concurrency:resource_claims_from_effect_plan": {
       "lines": 29,
@@ -329,65 +365,9 @@
       "lines": 98,
       "complexity": 12
     },
-    "app.runner.invocation:InvocationPipeline.invoke": {
-      "lines": 92,
-      "complexity": 15
-    },
-    "app.runner.model_reasoning:_anthropic_thinking_profile": {
-      "lines": 61,
-      "complexity": 8
-    },
-    "app.runner.model_reasoning:_normalize_effective_thinking": {
-      "lines": 38,
-      "complexity": 11
-    },
     "app.runner.node_worker:ReadOnlyAgentNodeExecutor.__call__": {
       "lines": 83,
       "complexity": 9
-    },
-    "app.runner.plan_revision:revise_waiting_plan": {
-      "lines": 70,
-      "complexity": 11
-    },
-    "app.runner.plan_scheduler:PlanScheduler._capability_eligible_candidates": {
-      "lines": 47,
-      "complexity": 13
-    },
-    "app.runner.plan_scheduler:PlanScheduler._filter_join_consumers": {
-      "lines": 35,
-      "complexity": 11
-    },
-    "app.runner.plan_scheduler:PlanScheduler._finalize_batch": {
-      "lines": 94,
-      "complexity": 12
-    },
-    "app.runner.plan_scheduler:PlanScheduler.claim_ready_batch": {
-      "lines": 77,
-      "complexity": 11
-    },
-    "app.runner.plan_scheduler:PlanScheduler.ready_candidates": {
-      "lines": 30,
-      "complexity": 13
-    },
-    "app.runner.planning:PlanService.apply_patch": {
-      "lines": 80,
-      "complexity": 15
-    },
-    "app.runner.planning:PlanService.complete_node": {
-      "lines": 57,
-      "complexity": 12
-    },
-    "app.runner.reasoning:RunProfileResolver.resolve": {
-      "lines": 61,
-      "complexity": 6
-    },
-    "app.runner.reasoning:normalize_contract": {
-      "lines": 37,
-      "complexity": 11
-    },
-    "app.runner.recovery:ExecutionRecovery.scan": {
-      "lines": 77,
-      "complexity": 10
     },
     "app.runtime_events:RunEventBroker.publish_events": {
       "lines": 34,
@@ -498,12 +478,7 @@
       "complexity": 15
     }
   },
-  "forbidden_edges": [
-    [
-      "app.runner.recovery",
-      "app.subagents.recovery"
-    ]
-  ],
+  "forbidden_edges": [],
   "cyclic_pairs": [],
   "type_ignore_counts": {}
 }

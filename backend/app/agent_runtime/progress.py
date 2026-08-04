@@ -6,13 +6,13 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any
 
+from app.agent_runtime.reasoning import ObservationEvaluator, ReflectionGate, apply_reflection_patch
 from app.db.models.plans import PlanNodeRecord, PlanRecord
 from app.db.models.runs import AgentTurnRecord
 from app.model_clients.contracts import ModelClient, ModelOutputError
+from app.planning.service import PlanService
 from app.repositories.plans import PlanRepository, plan_to_view
 from app.repositories.run_unit_of_work import RunUnitOfWork
-from app.runner.planning import PlanService
-from app.runner.reasoning import ObservationEvaluator, ReflectionGate, apply_reflection_patch
 from app.schemas.agent.execution_state import (
     AgentDecision,
     AgentObservation,

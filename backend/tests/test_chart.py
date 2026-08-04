@@ -1,11 +1,11 @@
 import pytest
 from pydantic import ValidationError
 
+from app.agent_runtime.reasoning import PolicyCompiler
+from app.agent_runtime.service import AgentLoop
 from app.core.config import Settings
 from app.model_clients.mock import MockModelClient
 from app.repositories.run_unit_of_work import RunUnitOfWork
-from app.runner.agent_loop import AgentLoop
-from app.runner.reasoning import PolicyCompiler
 from app.sandbox.runtime import SandboxHandle, SandboxProvider, SandboxResult
 from app.schemas.agent.execution_state import AgentDecision
 from app.schemas.agent.run_policy import RequestedReasoningPolicy
