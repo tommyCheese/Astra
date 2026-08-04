@@ -17,7 +17,7 @@ from app.db.models.memory import (
     MemoryRecord,
     MemorySourceRecord,
 )
-from app.memory.consolidation import (
+from app.memory.consolidation.models import (
     ConsolidationConflictError,
     ConsolidationInputManifest,
     ConsolidationProposal,

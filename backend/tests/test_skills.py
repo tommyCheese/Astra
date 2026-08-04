@@ -5,7 +5,7 @@ import pytest
 from sqlalchemy import event as sqlalchemy_event
 from sqlalchemy import func, select
 
-from app.agent_runtime.reasoning import RunProfileResolver
+from app.agent_runtime.policies.reasoning import RunProfileResolver
 from app.core.config import Settings
 from app.db.models.skills import RunSkillSnapshotRecord, SkillBlobRecord
 from app.model_clients.mock import MockModelClient

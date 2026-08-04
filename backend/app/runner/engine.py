@@ -13,10 +13,10 @@ from app.agent_profile import (
     AgentProfile,
     AgentProfileConfigurationError,
 )
-from app.agent_runtime.reasoning import (
+from app.agent_runtime.policies.reasoning import (
     build_default_contract,
 )
-from app.agent_runtime.service import AgentLoop
+from app.agent_runtime.services.loop import AgentLoop
 from app.core.config import Settings
 from app.core.errors import run_error_from_exception
 from app.db.models.runs import RunRecord

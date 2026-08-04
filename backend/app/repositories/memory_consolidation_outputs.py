@@ -6,7 +6,7 @@ from sqlalchemy import update
 
 from app.db.model_base import uuid_str
 from app.db.models.memory import MemoryRecord
-from app.memory.consolidation import ConsolidationConflictError, ConsolidationOperation
+from app.memory.consolidation.models import ConsolidationConflictError, ConsolidationOperation
 from app.memory.domain import MemoryStatus
 from app.repositories.memory_audit import record_memory_audit
 from app.repositories.memory_consolidation_sources import next_memory_version

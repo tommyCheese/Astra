@@ -3,10 +3,11 @@
     "app.api.skills": 780,
     "app.deliverables": 529,
     "app.evolution.domain": 571,
-    "app.memory.consolidation": 800,
+    "app.memory.consolidation.models": 800,
     "app.memory.retrieval": 681,
+    "app.model_clients.openai_compatible": 534,
     "app.model_clients.reasoning": 658,
-    "app.permissions.effects": 605,
+    "app.permissions.effects": 601,
     "app.planning.scheduler": 545,
     "app.planning.service": 516,
     "app.repositories.conversations": 619,
@@ -25,7 +26,7 @@
     "app.subagents.runtime": 567
   },
   "legacy_functions": {
-    "app.agent_runtime.reasoning:normalize_contract": {
+    "app.agent_runtime.policies.reasoning:normalize_contract": {
       "lines": 37,
       "complexity": 11
     },
@@ -37,7 +38,7 @@
       "lines": 64,
       "complexity": 15
     },
-    "app.agent_runtime.service:AgentLoop.run": {
+    "app.agent_runtime.services.loop:AgentLoop.run": {
       "lines": 62,
       "complexity": 4
     },
@@ -129,7 +130,7 @@
       "lines": 34,
       "complexity": 13
     },
-    "app.memory.consolidation:_normalize_json": {
+    "app.memory.consolidation.models:_normalize_json": {
       "lines": 26,
       "complexity": 13
     },

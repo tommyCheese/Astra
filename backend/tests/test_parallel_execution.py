@@ -6,7 +6,7 @@ import pytest
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from app.agent_runtime.reasoning import build_default_contract
+from app.agent_runtime.policies.reasoning import build_default_contract
 from app.db.model_base import Base, utc_now
 from app.db.models.executions import AgentJoinRecord, NodeExecutionRecord
 from app.planning.scheduler import PlanScheduler

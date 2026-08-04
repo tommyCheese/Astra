@@ -5,19 +5,19 @@ from fake_web_tools import fake_web_registry
 
 from app.agent_profile import ModelOperation, load_agent_profile
 from app.agent_profile.prompts import PromptComposer
-from app.agent_runtime.completion import (
-    INVALID_ARTIFACT_REFERENCE_WARNING,
-    CompletionVerificationStage,
-    normalize_final_answer_artifact_references,
-    quick_workspace_change_completes_goal,
-)
-from app.agent_runtime.reasoning import (
+from app.agent_runtime.policies.reasoning import (
     PolicyCompiler,
     RunProfileResolver,
     build_default_contract,
     compile_subagent_policy,
 )
-from app.agent_runtime.service import AgentLoop, ToolRouter
+from app.agent_runtime.services.completion import (
+    INVALID_ARTIFACT_REFERENCE_WARNING,
+    CompletionVerificationStage,
+    normalize_final_answer_artifact_references,
+    quick_workspace_change_completes_goal,
+)
+from app.agent_runtime.services.loop import AgentLoop, ToolRouter
 from app.core.config import Settings
 from app.model_clients.contracts import ModelOutputError
 from app.model_clients.mock import MockModelClient

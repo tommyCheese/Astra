@@ -3,7 +3,7 @@ from pydantic import ValidationError
 from sqlalchemy import event as sqlalchemy_event
 
 from app.agent_profile import load_agent_profile
-from app.agent_runtime.reasoning import build_default_contract
+from app.agent_runtime.policies.reasoning import build_default_contract
 from app.db.models.executions import ModelInvocationRecord
 from app.repositories.conversation_strategy import ConversationStrategyRepository
 from app.repositories.run_unit_of_work import RunUnitOfWork

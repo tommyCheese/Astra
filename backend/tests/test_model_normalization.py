@@ -3,11 +3,10 @@ from unittest.mock import AsyncMock
 import pytest
 
 from app.agent_profile import ModelOperation
-from app.agent_runtime.reasoning import build_default_contract
+from app.agent_runtime.policies.reasoning import build_default_contract
 from app.core.config import Settings
 from app.model_clients.factory import build_model_client
-from app.model_clients.openai_compatible import OpenAICompatibleModelClient
-from app.model_clients.response_parsing import (
+from app.model_clients.normalization import (
     StreamingJsonFieldExtractor,
     extract_partial_json_string,
     json_string_field_complete,
@@ -18,6 +17,7 @@ from app.model_clients.response_parsing import (
     normalize_reflection_payload,
     parse_json_object,
 )
+from app.model_clients.openai_compatible import OpenAICompatibleModelClient
 from app.schemas.agent.execution_state import AgentReflection
 from app.schemas.agent.planning import PlanDraft, TaskContract
 from app.schemas.agent.run_result import FinalAnswer, MemoryRecord

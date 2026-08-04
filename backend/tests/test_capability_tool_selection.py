@@ -5,8 +5,8 @@ from app.tools.bash import BashExecuteTool
 from app.tools.chart import ChartRenderTool
 from app.tools.router import ToolRouter
 from app.tools.selection import CapabilityToolResolver
-from app.tools.web_fetch import WebFetchTool
-from app.tools.web_search import WebSearchTool
+from app.tools.web.fetching import WebFetchTool
+from app.tools.web.search import WebSearchTool
 
 
 class StaticTool(Tool):

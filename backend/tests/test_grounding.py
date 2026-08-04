@@ -1,7 +1,7 @@
 import pytest
 
-from app.agent_runtime.completion_policy import CompletionGate
-from app.agent_runtime.reasoning import apply_validation_outcomes, build_default_contract
+from app.agent_runtime.policies.completion import CompletionGate
+from app.agent_runtime.policies.reasoning import apply_validation_outcomes, build_default_contract
 from app.db.models.conversations import TaskRecord
 from app.db.models.runs import RunRecord
 from app.grounding.fragments import fragments_from_web_result

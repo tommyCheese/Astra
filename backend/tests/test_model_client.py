@@ -3,7 +3,7 @@ import json
 import pytest
 
 from app.agent_profile import ModelOperation
-from app.agent_runtime.reasoning import build_default_contract
+from app.agent_runtime.policies.reasoning import build_default_contract
 from app.core.config import Settings
 from app.model_clients.anthropic import AnthropicModelClient
 from app.model_clients.contracts import (

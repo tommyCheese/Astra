@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.agent_profile import configure_agent_profile_resolver
 from app.conversation_retention import ConversationRetentionService
 from app.core.config import Settings
-from app.memory.autodream import AutoDreamService
+from app.memory.consolidation.service import AutoDreamService
 from app.run_management.dispatcher import InProcessRunDispatcher
 from app.runner.engine import (
     close_shared_model_http_clients,

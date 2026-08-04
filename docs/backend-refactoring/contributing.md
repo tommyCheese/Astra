@@ -18,6 +18,11 @@
   隔离 HTTP、ORM、provider 和工具边界。
 - 可选行为通过注入的 port 扩展，稳定领域对象不导入具体 provider。接口按调用者需要保持
   窄小，禁止重新形成全能 Repository。
+- 先按业务或 Agent 能力选择包；只有同一能力内形成多个同类模块时，才增加 `models`、
+  `validation`、`policies`、`services`、`normalization` 或 `transports` 二级包。禁止全局技术桶。
+- 不创建 `utils.py`、`helpers.py` 或 `common.py`；纯函数放在所属能力中并以具体转换或计算命名。
+- 类必须表达框架契约、领域语义、跨调用状态或多个可替换实现。纯函数包装类、单实现抽象、
+  一行转发方法和只为旧 import 存在的 facade 应删除。减少代码量不能以 dict/tuple 替代清晰值对象。
 
 ## 事务、错误与副作用
 

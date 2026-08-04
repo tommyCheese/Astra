@@ -12,14 +12,14 @@ from app.db.models.memory import (
     MemoryRecord,
     MemorySourceRecord,
 )
-from app.memory.consolidation import (
+from app.memory.consolidation.models import (
     ConsolidationConflictError,
     ConsolidationInputManifest,
     ConsolidationOperation,
     ConsolidationProposal,
     ConsolidationValidationError,
 )
-from app.memory.consolidation_validation import validate_proposal
+from app.memory.consolidation.validation import validate_proposal
 from app.memory.domain import MemoryStatus
 from app.repositories.memory_audit import record_memory_audit
 from app.repositories.memory_consolidation_outputs import (

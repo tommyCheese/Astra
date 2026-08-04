@@ -32,5 +32,16 @@
     "app.execution",
     "app.planning",
     "app.run_management"
+  ],
+  "forbidden_generic_module_names": [
+    "common",
+    "helpers",
+    "utils"
+  ],
+  "forbidden_top_level_packages": [
+    "models",
+    "services",
+    "utilities",
+    "validators"
   ]
 }

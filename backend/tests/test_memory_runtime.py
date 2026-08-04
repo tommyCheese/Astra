@@ -1,7 +1,7 @@
 from sqlalchemy import select
 
-from app.agent_runtime.context import ContextAssembler
-from app.agent_runtime.memory_candidates import MemoryCandidateWriter
+from app.agent_runtime.services.context import ContextAssembler
+from app.agent_runtime.services.memory_candidates import MemoryCandidateWriter
 from app.core.config import Settings
 from app.db.models.memory import MemoryRecallEventRecord
 from app.db.models.runs import RunEventRecord

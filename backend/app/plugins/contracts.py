@@ -101,13 +101,6 @@ class ComponentContribution:
     applicability: ApplicabilityBinding
     factory: Callable[[], Any]
 
-    def create(self) -> Any:
-        component = self.factory()
-        if component is None:
-            raise PluginContractError("component factory returned no component")
-        return component
-
-
 @dataclass(frozen=True)
 class RuntimeBackendContribution:
     identity: ComponentIdentity

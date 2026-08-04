@@ -7,7 +7,7 @@ from typing import Protocol
 from fastapi import Request
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.memory.autodream import AutoDreamService
+from app.memory.consolidation.service import AutoDreamService
 from app.run_management.contracts import RunDispatcher
 from app.runtime_profiles import RuntimeProfileService
 from app.scheduling.service import SchedulerService

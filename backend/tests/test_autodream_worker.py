@@ -4,8 +4,8 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.core.config import Settings
 from app.db.model_base import Base
-from app.memory import autodream as autodream_module
-from app.memory.autodream import AutoDreamService
+from app.memory.consolidation import service as autodream_module
+from app.memory.consolidation.service import AutoDreamService
 from app.memory.domain import MemoryNamespace, MemoryNamespaceType
 from app.repositories.memories import MemoryRepository
 

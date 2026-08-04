@@ -11,8 +11,8 @@ from app.db.models.memory import (
     MemoryRecord,
     MemorySourceRecord,
 )
-from app.memory.autodream import AutoDreamProcessor
-from app.memory.consolidation import ConsolidationConflictError
+from app.memory.consolidation.models import ConsolidationConflictError
+from app.memory.consolidation.service import AutoDreamProcessor
 from app.memory.domain import MemoryNamespace, MemoryNamespaceType
 from app.repositories.memories import MemoryRepository
 from app.repositories.memory_consolidation import (

@@ -4,8 +4,8 @@ from datetime import datetime, timezone
 
 import pytest
 
-from app.agent_runtime.completion_policy import CompletionGate
-from app.agent_runtime.reasoning import build_default_contract
+from app.agent_runtime.policies.completion import CompletionGate
+from app.agent_runtime.policies.reasoning import build_default_contract
 from app.db.models.runs import EvidenceRecord
 from app.repositories.agent_executions import AgentExecutionRepository
 from app.repositories.permissions import PermissionRepository

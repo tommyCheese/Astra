@@ -6,24 +6,24 @@ from typing import Any
 import httpx
 
 from app.agent_profile import ModelOperation
-from app.model_clients.anthropic_transport import (
-    AnthropicRequest,
-    AnthropicResponse,
-    AnthropicTransport,
-)
 from app.model_clients.contracts import (
     AnswerDeltaCallback,
     DeferredUsageInvocation,
     ModelOutputError,
     StreamFieldCallbacks,
 )
+from app.model_clients.normalization import parse_json_object
 from app.model_clients.openai_compatible import OpenAICompatibleModelClient
 from app.model_clients.reasoning import (
     ModelReasoningConfig,
     attach_reasoning_usage,
     resolve_model_reasoning,
 )
-from app.model_clients.response_parsing import parse_json_object
+from app.model_clients.transports.anthropic import (
+    AnthropicRequest,
+    AnthropicResponse,
+    AnthropicTransport,
+)
 
 logger = logging.getLogger("astra.model")
 

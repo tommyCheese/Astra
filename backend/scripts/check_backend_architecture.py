@@ -35,6 +35,8 @@ class ArchitectureRules:
     hard_limit: QualityBudget
     forbidden_dependencies: tuple[ForbiddenDependency, ...]
     typed_module_prefixes: tuple[str, ...]
+    forbidden_generic_module_names: tuple[str, ...]
+    forbidden_top_level_packages: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -59,6 +61,8 @@ def load_rules(path: Path) -> ArchitectureRules:
             for dependency in raw_rules["forbidden_dependencies"]
         ),
         typed_module_prefixes=tuple(raw_rules["typed_module_prefixes"]),
+        forbidden_generic_module_names=tuple(raw_rules["forbidden_generic_module_names"]),
+        forbidden_top_level_packages=tuple(raw_rules["forbidden_top_level_packages"]),
     )
 
 
@@ -298,6 +302,18 @@ def check_typed_boundaries(source_root: Path, rules: ArchitectureRules) -> Itera
                 yield f"{location} has no return annotation"
 
 
+def check_role_package_names(
+    inventory: ArchitectureInventory,
+    rules: ArchitectureRules,
+) -> Iterable[str]:
+    for module in inventory.modules:
+        parts = module.module.split(".")
+        if parts[-1] in rules.forbidden_generic_module_names:
+            yield f"{module.module} uses a generic module name"
+        if len(parts) > 1 and parts[1] in rules.forbidden_top_level_packages:
+            yield f"{module.module} creates a global technical package"
+
+
 def check_architecture(
     inventory: ArchitectureInventory,
     rules: ArchitectureRules,
@@ -309,6 +325,7 @@ def check_architecture(
         *check_module_budgets(inventory, rules, baseline, exceptions),
         *check_function_budgets(inventory, rules, baseline, exceptions),
         *check_typed_boundaries(source_root, rules),
+        *check_role_package_names(inventory, rules),
     ]
     current_forbidden = forbidden_edges(dependency_edges(inventory), rules)
     baseline_forbidden = {tuple(edge) for edge in baseline["forbidden_edges"]}

@@ -4,7 +4,7 @@ import hashlib
 import logging
 from typing import Any
 
-from app.agent_runtime.reasoning import (
+from app.agent_runtime.policies.reasoning import (
     build_default_contract,
     normalize_contract,
     validate_contract,

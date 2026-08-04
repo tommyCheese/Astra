@@ -7,8 +7,8 @@ from fake_web_tools import FakeSearch
 from sqlalchemy import create_mock_engine
 from support import DecisionStep, RunRequestBuilder, ScriptedDecisionClient
 
-from app.agent_runtime.reasoning import RunProfileResolver
-from app.agent_runtime.service import AgentLoop
+from app.agent_runtime.policies.reasoning import RunProfileResolver
+from app.agent_runtime.services.loop import AgentLoop
 from app.core.config import Settings
 from app.db.base import Base
 from app.main import create_app

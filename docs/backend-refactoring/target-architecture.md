@@ -11,13 +11,13 @@
 | 应用启动 | `app.bootstrap.application:create_application` | 组合依赖、路由、middleware、生命周期 | 业务规则、持久化查询 |
 | HTTP 平台 | `app.platform.http` | trace、本机访问、错误映射、请求日志 | 用例编排 |
 | Run 管理 | `app.run_management.application:RunApplicationService` | 创建、派发、恢复、审批决定、取消 | Agent 阶段实现、HTTP 映射 |
-| Agent runtime | `app.agent_runtime.orchestrator:AgentRunOrchestrator` | 类型化阶段顺序与 outcome 路由 | provider 细节、跨用例提交 |
+| Agent runtime | `app.agent_runtime.services.loop:AgentLoop` | `models` 共享对象、`policies` 纯决策、`services` 阶段与用例编排 | provider 细节、跨用例提交 |
 | Planning | `app.planning.service:PlanService` | Plan 校验、变更、revision 与 ready-node 调度 | Agent iteration、HTTP 映射 |
 | Model clients | `app.model_clients` | provider transport、thinking 能力、请求映射与响应归一化 | Run 生命周期、权限决策 |
 | Run 持久化 | `app.repositories.run_unit_of_work:RunUnitOfWork` | 组合窄 store、显式 commit/rollback | 自动提交、公共 read-model 拼装 |
 | Run 查询 | `app.repositories.run_view_projection:RunViewProjector` | ORM 到 typed public projection | 修改 ORM、触发事务提交 |
 | 权限 | `app.permissions` | effect analysis、allow/ask/deny、grant 与 credential scope | 工具执行 |
-| Subagent | `app.subagents.facade` | 委派、谱系、预算、权限衰减、join/cancel | 反向依赖 root runner 实现 |
+| Subagent | `app.subagents.supervisor:SubagentSupervisor` | 委派、谱系、预算、权限衰减、join/cancel | facade 转发层、反向依赖 root runner 实现 |
 | Workspace / Artifact | `app.workspaces` / `app.artifacts` | 受控可变工作区 / 不可变交付物 | 互相替代概念 |
 | Scheduling | `app.scheduling` | 定时配置、claim、投递、心跳 | 导入 HTTP handler |
 
@@ -72,3 +72,8 @@ analysis、authorization、invocation、observation/evidence、progress/reflecti
 入口连续读到副作用边界；禁止永久 `compat`/`legacy` facade、跨包 re-export、巨型
 `Manager`/`Repository` 和依赖私有函数的测试。默认预算为模块 500 行、函数 60 行、复杂度
 10；任何代码不得超过模块 800 行、函数 100 行或复杂度 15。
+
+包结构先表达业务/Agent 能力，再在大型能力内部使用 `models`、`validation`、`policies`、
+`services`、`normalization` 或 `transports` 表达代码角色。只有形成多个同类模块时才建立
+role 子包；禁止顶层技术桶和 `utils.py`、`helpers.py`、`common.py`。单一消费者的 dataclass
+与实现保持同文件，无状态包装类、单实现抽象和旧路径 re-export 应直接删除。

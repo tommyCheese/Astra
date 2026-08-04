@@ -12,7 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent_profile import load_agent_profile
-from app.agent_runtime.reasoning import RunProfileResolver, compile_subagent_policy
+from app.agent_runtime.policies.reasoning import RunProfileResolver, compile_subagent_policy
 from app.api.skill_diff import skill_git_diff as _git_diff
 from app.api.skill_metrics import build_skill_metrics
 from app.api.skill_views import (

@@ -2,12 +2,14 @@ import json
 import logging
 import re
 import time
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 import httpx
 
 from app.agent_profile import AgentProfile, ModelOperation, load_agent_profile
 from app.agent_profile.prompts import PromptComposer
+from app.context_compaction.service import CompactionGeneration
 from app.core.config import Settings
 from app.model_clients.contracts import (
     AnswerDeltaCallback,
@@ -18,10 +20,13 @@ from app.model_clients.contracts import (
     StreamFieldCallbacks,
     model_http_client_options,
 )
-from app.model_clients.openai_transport import (
-    OpenAIChatRequest,
-    OpenAIChatResponse,
-    OpenAIChatTransport,
+from app.model_clients.normalization import (
+    normalize_contract_payload,
+    normalize_final_answer_payload,
+    normalize_memory_payload,
+    normalize_plan_payload,
+    normalize_reflection_payload,
+    parse_json_object,
 )
 from app.model_clients.prompts import COMBINED_DECISION_INSTRUCTIONS
 from app.model_clients.reasoning import (
@@ -29,17 +34,10 @@ from app.model_clients.reasoning import (
     attach_reasoning_usage,
     resolve_model_reasoning,
 )
-from app.model_clients.request_mapping import (
-    active_skill_identities,
-    generate_context_checkpoint,
-)
-from app.model_clients.response_parsing import (
-    normalize_contract_payload,
-    normalize_final_answer_payload,
-    normalize_memory_payload,
-    normalize_plan_payload,
-    normalize_reflection_payload,
-    parse_json_object,
+from app.model_clients.transports.openai import (
+    OpenAIChatRequest,
+    OpenAIChatResponse,
+    OpenAIChatTransport,
 )
 from app.model_providers import API_KEY_OPTIONAL_MODEL_PROVIDERS
 from app.schemas.agent.execution_state import AgentDecision, AgentReflection
@@ -49,6 +47,44 @@ from app.schemas.agent.types import ReasoningEffort
 from app.schemas.models import ModelThinkingSnapshot
 
 logger = logging.getLogger("astra.model")
+
+ChatJson = Callable[..., Awaitable[dict[str, Any]]]
+
+
+def active_skill_identities(context: dict[str, Any]) -> set[str]:
+    identities: set[str] = set()
+    for active_skill in context.get("active_skills", []):
+        if isinstance(active_skill, str):
+            identities.add(active_skill)
+        elif isinstance(active_skill, dict):
+            identity = active_skill.get("qualified_identity")
+            if isinstance(identity, str):
+                identities.add(identity)
+    return identities
+
+
+async def generate_context_checkpoint(
+    chat_json: ChatJson,
+    prompt: str,
+    *,
+    provider: str,
+    model: str,
+) -> CompactionGeneration:
+    checkpoint = await chat_json(
+        [
+            {
+                "role": "system",
+                "content": (
+                    "You are executing Astra's Provider-neutral checkpoint prompt. "
+                    "Return one JSON object and do not emit hidden reasoning."
+                ),
+            },
+            {"role": "user", "content": prompt},
+        ],
+        operation=ModelOperation.MEMORY,
+        usage_operation="context_compaction",
+    )
+    return CompactionGeneration(output=checkpoint, provider=provider, model=model)
 
 
 class OpenAICompatibleModelClient(ModelClient):

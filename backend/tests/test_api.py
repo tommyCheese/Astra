@@ -7,7 +7,7 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from app.agent_runtime.reasoning import RunProfileResolver, build_default_contract
+from app.agent_runtime.policies.reasoning import RunProfileResolver, build_default_contract
 from app.api import runs as runs_api
 from app.api.models import get_runtime_default_model
 from app.core.config import Settings, get_settings
@@ -2236,9 +2236,9 @@ async def test_create_run_rejects_unknown_model_provider(app_client):
 
 @pytest.mark.parametrize("provider", ["anthropic", "google", "azure", "groq", "qwen"])
 def test_model_config_accepts_supported_cloud_providers(provider):
-    from app.run_management.application import RunApplicationService
+    from app.run_management.settings import RunSettingsResolver
 
-    configured = RunApplicationService.apply_model_config(
+    configured = RunSettingsResolver.apply_model_config(
         Settings(model_provider="mock"),
         {
             "provider": provider,
@@ -2253,9 +2253,9 @@ def test_model_config_accepts_supported_cloud_providers(provider):
 
 @pytest.mark.parametrize("provider", ["ollama", "lmstudio", "vllm", "localai", "compatible"])
 def test_model_config_allows_keyless_local_providers(provider):
-    from app.run_management.application import RunApplicationService
+    from app.run_management.settings import RunSettingsResolver
 
-    configured = RunApplicationService.apply_model_config(
+    configured = RunSettingsResolver.apply_model_config(
         Settings(model_provider="mock"),
         {
             "provider": provider,

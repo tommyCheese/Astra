@@ -16,7 +16,6 @@ from app.run_management.creation import RunCreator
 from app.run_management.settings import RunSettingsResolver
 from app.schemas.agent.api_views import ContinueRunRequest, CreateRunRequest, CreateRunResponse
 from app.schemas.agent.tool_invocation import ApprovalDecisionRequest
-from app.schemas.models import RunModelConfig
 
 
 class RunApplicationService:
@@ -89,11 +88,3 @@ class RunApplicationService:
             approval_id,
             request,
         )
-
-    @staticmethod
-    def apply_model_config(
-        settings: Settings,
-        model: RunModelConfig | dict | None,
-    ) -> Settings:
-        """Compatibility entry point while callers migrate to RunSettingsResolver."""
-        return RunSettingsResolver.apply_model_config(settings, model)

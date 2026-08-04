@@ -5,7 +5,7 @@ from datetime import datetime
 from typing import Any
 
 from app.db.models.memory import MemoryConsolidationJobRecord, MemoryRecord
-from app.memory.consolidation import ConsolidationInputManifest, ConsolidationProposal
+from app.memory.consolidation.models import ConsolidationInputManifest, ConsolidationProposal
 
 
 @dataclass(frozen=True)

@@ -7,7 +7,7 @@ import logging
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent_profile import AgentProfileConfigurationError, load_agent_profile
-from app.agent_runtime.reasoning import RunProfileResolver, compile_subagent_policy
+from app.agent_runtime.policies.reasoning import RunProfileResolver, compile_subagent_policy
 from app.context_windows import resolve_context_window
 from app.conversation_context import ConversationContextManager
 from app.core.config import Settings

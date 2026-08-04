@@ -6,7 +6,7 @@ from typing import Any
 from sqlalchemy import func, select
 
 from app.db.models.memory import MemoryLinkRecord, MemoryRecord, MemorySourceRecord
-from app.memory.consolidation import ConsolidationInputManifest, ConsolidationOperation
+from app.memory.consolidation.models import ConsolidationInputManifest, ConsolidationOperation
 
 
 async def next_memory_version(

@@ -56,11 +56,7 @@ def effect_plan_hash(plan: ActionEffectPlan) -> str:
     ).hexdigest()
 
 
-class ToolEffectAnalyzer(EffectAnalyzer):
-    """Compatibility name for the host effect-analyzer plugin contract."""
-
-
-class WebEffectAnalyzer(ToolEffectAnalyzer):
+class WebEffectAnalyzer(EffectAnalyzer):
     def analyze(
         self,
         spec: ToolSpec,
@@ -83,7 +79,7 @@ class WebEffectAnalyzer(ToolEffectAnalyzer):
         )
 
 
-class ChartEffectAnalyzer(ToolEffectAnalyzer):
+class ChartEffectAnalyzer(EffectAnalyzer):
     def analyze(
         self,
         spec: ToolSpec,
@@ -120,7 +116,7 @@ class ChartEffectAnalyzer(ToolEffectAnalyzer):
         )
 
 
-class DefaultEffectAnalyzer(ToolEffectAnalyzer):
+class DefaultEffectAnalyzer(EffectAnalyzer):
     def analyze(
         self,
         spec: ToolSpec,
@@ -269,7 +265,7 @@ def _effect_plan(
     )
 
 
-class BashEffectAnalyzer(ToolEffectAnalyzer):
+class BashEffectAnalyzer(EffectAnalyzer):
     def analyze(
         self,
         spec: ToolSpec,

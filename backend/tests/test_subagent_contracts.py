@@ -3,7 +3,11 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from pydantic import ValidationError
 
-from app.agent_runtime.reasoning import PolicyCompiler, RunProfileResolver, compile_subagent_policy
+from app.agent_runtime.policies.reasoning import (
+    PolicyCompiler,
+    RunProfileResolver,
+    compile_subagent_policy,
+)
 from app.core.config import Settings
 from app.schemas.agent.run_policy import RequestedReasoningPolicy
 from app.schemas.agent.types import AnswerMode, PlanExecution

@@ -1,7 +1,7 @@
 import pytest
 from sqlalchemy.exc import IntegrityError
 
-from app.agent_runtime.reasoning import build_default_contract
+from app.agent_runtime.policies.reasoning import build_default_contract
 from app.db.models.plans import PlanNodeRecord
 from app.planning.scheduler import PlanScheduler
 from app.planning.service import (

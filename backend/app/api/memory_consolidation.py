@@ -8,11 +8,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import Settings, get_settings
 from app.db.models.memory import MemoryConsolidationJobRecord
 from app.db.session import get_session
-from app.memory.autodream import AutoDreamProcessor
-from app.memory.consolidation import (
+from app.memory.consolidation.models import (
     ConsolidationConflictError,
     ConsolidationValidationError,
 )
+from app.memory.consolidation.service import AutoDreamProcessor
 from app.repositories.memory_consolidation import (
     MemoryConsolidationRepository,
     generated_manual_idempotency_key,

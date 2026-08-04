@@ -6,7 +6,7 @@ from fake_web_tools import fake_web_registry
 from sqlalchemy import event, select
 
 from app.agent_profile import load_agent_profile
-from app.agent_runtime.reasoning import RunProfileResolver, build_default_contract
+from app.agent_runtime.policies.reasoning import RunProfileResolver, build_default_contract
 from app.core.config import Settings
 from app.db.models.permissions import AgentIdentityRecord, ToolCatalogSnapshotRecord
 from app.db.models.workspaces import TaskWorkspaceRecord, WorkspaceCheckpointRecord

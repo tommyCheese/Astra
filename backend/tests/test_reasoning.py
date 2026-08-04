@@ -1,8 +1,8 @@
 import pytest
 
-from app.agent_runtime.completion_policy import CompletionGate
-from app.agent_runtime.loop_control import InvalidTransition, LoopOrchestrator, NoProgressDetector
-from app.agent_runtime.reasoning import (
+from app.agent_runtime.policies.completion import CompletionGate
+from app.agent_runtime.policies.loop import InvalidTransition, LoopOrchestrator, NoProgressDetector
+from app.agent_runtime.policies.reasoning import (
     ObservationEvaluator,
     PolicyCompiler,
     ReflectionGate,
