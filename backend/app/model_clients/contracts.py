@@ -18,6 +18,7 @@ logger = logging.getLogger("astra.model")
 
 AnswerDeltaCallback = Callable[[str], Awaitable[None]]
 StreamFieldCallbacks = dict[str, AnswerDeltaCallback]
+ModelThinkingObserver = Callable[[dict[str, Any]], Awaitable[None]]
 
 
 class DeferredUsageInvocation:
@@ -91,6 +92,10 @@ class ModelClient(ABC):
 
     def bind_model_thinking(self, thinking: ModelThinkingSnapshot | dict[str, Any] | None) -> None:
         """Bind the immutable effective model-thinking selection for the current Run."""
+        return None
+
+    def bind_model_thinking_observer(self, observer: ModelThinkingObserver | None) -> None:
+        """Observe Provider-visible thinking text without changing model method contracts."""
         return None
 
     def bind_skills(self, skills: list[dict[str, Any]]) -> None:

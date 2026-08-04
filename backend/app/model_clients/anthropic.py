@@ -49,6 +49,7 @@ class AnthropicModelClient(OpenAICompatibleModelClient):
         emitted_stream_fields: frozenset[str] = frozenset()
         if stream_field and on_field_delta:
             callbacks[stream_field] = on_field_delta
+        thinking_notifier = self._model_thinking_notifier(operation, attempt, reasoning_config)
         try:
             request = AnthropicRequest(
                 url=self.settings.model_base_url.rstrip("/") + "/messages",
@@ -57,9 +58,11 @@ class AnthropicModelClient(OpenAICompatibleModelClient):
                 messages=messages,
                 reasoning=reasoning_config,
                 callbacks=callbacks,
+                thinking_callback=thinking_notifier.callback,
             )
 
             response = await AnthropicTransport(self._client()).send(request, usage_invocation)
+            await thinking_notifier.finish()
             emitted_stream_fields = response.emitted_fields
             if not response.content:
                 raise ModelOutputError("Anthropic endpoint returned no text content")
@@ -67,6 +70,7 @@ class AnthropicModelClient(OpenAICompatibleModelClient):
             await self._finish_success(usage_invocation, response, reasoning_config, started)
             return payload
         except (httpx.HTTPError, json.JSONDecodeError, ValueError, ModelOutputError) as exc:
+            await thinking_notifier.finish(failed=True)
             return await self._handle_chat_error(
                 exc=exc,
                 messages=messages,

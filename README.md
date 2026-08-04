@@ -61,6 +61,22 @@ Profile 文档不保存实际用户记忆，也不授予工具权限。真实 ru
 
 ### 本地开发
 
+macOS / Linux 可以在仓库根目录直接运行：
+
+```bash
+./start.sh
+```
+
+Windows 可以双击 `start.bat`，或在命令提示符中运行：
+
+```bat
+start.bat
+```
+
+首次运行会安装缺失依赖、执行数据库迁移，并在尚无 `backend/.env` 时创建可直接使用的本地 mock 配置。两个脚本都要求 Python 3.10+ 与 Node.js/npm。
+
+也可以分别启动后端和前端：
+
 后端：
 
 ```bash

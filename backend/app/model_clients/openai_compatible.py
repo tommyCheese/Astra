@@ -2,6 +2,7 @@ import json
 import logging
 import re
 import time
+import uuid
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -17,6 +18,7 @@ from app.model_clients.contracts import (
     ModelClient,
     ModelConfigurationError,
     ModelOutputError,
+    ModelThinkingObserver,
     StreamFieldCallbacks,
     model_http_client_options,
 )
@@ -49,6 +51,59 @@ from app.schemas.models import ModelThinkingSnapshot
 logger = logging.getLogger("astra.model")
 
 ChatJson = Callable[..., Awaitable[dict[str, Any]]]
+
+
+class _ModelThinkingNotifier:
+    def __init__(
+        self,
+        observer: ModelThinkingObserver | None,
+        *,
+        provider: str,
+        model: str,
+        operation: ModelOperation,
+        attempt: int,
+        reasoning: ModelReasoningConfig,
+    ) -> None:
+        self._observer = observer if reasoning.enabled else None
+        self._metadata = {
+            "stream_id": uuid.uuid4().hex,
+            "provider": provider,
+            "model": model,
+            "operation": operation.value,
+            "attempt": attempt + 1,
+            "content_level": reasoning.thinking_content_visibility,
+        }
+        self._started = False
+        self._finished = False
+
+    @property
+    def callback(self) -> AnswerDeltaCallback | None:
+        return self.accept if self._observer is not None else None
+
+    async def accept(self, delta: str) -> None:
+        if self._observer is None or self._finished or not delta:
+            return
+        if not self._started:
+            await self._observer({**self._metadata, "phase": "started"})
+            self._started = True
+        await self._observer({**self._metadata, "phase": "delta", "delta": delta})
+
+    async def finish(self, *, failed: bool = False) -> None:
+        if self._observer is None or self._finished:
+            return
+        self._finished = True
+        if self._started:
+            await self._observer(
+                {**self._metadata, "phase": "completed", "status": "failed" if failed else "completed"}
+            )
+            return
+        await self._observer(
+            {
+                **self._metadata,
+                "phase": "unavailable",
+                "reason": "model_request_failed" if failed else "provider_did_not_return_visible_thinking",
+            }
+        )
 
 
 def active_skill_identities(context: dict[str, Any]) -> set[str]:
@@ -105,6 +160,7 @@ class OpenAICompatibleModelClient(ModelClient):
         self.prompt_composer = PromptComposer(self.agent_profile)
         self.reasoning_effort = ReasoningEffort.balanced
         self.model_thinking: ModelThinkingSnapshot | None = None
+        self.model_thinking_observer: ModelThinkingObserver | None = None
         self._http_client = http_client
         self._owns_http_client = http_client is None
 
@@ -133,6 +189,24 @@ class OpenAICompatibleModelClient(ModelClient):
             else ModelThinkingSnapshot.model_validate(thinking)
             if thinking is not None
             else None
+        )
+
+    def bind_model_thinking_observer(self, observer: ModelThinkingObserver | None) -> None:
+        self.model_thinking_observer = observer
+
+    def _model_thinking_notifier(
+        self,
+        operation: ModelOperation,
+        attempt: int,
+        reasoning: ModelReasoningConfig,
+    ) -> _ModelThinkingNotifier:
+        return _ModelThinkingNotifier(
+            self.model_thinking_observer,
+            provider=self.settings.model_provider,
+            model=self.settings.model_name,
+            operation=operation,
+            attempt=attempt,
+            reasoning=reasoning,
         )
 
     def bind_skills(self, skills: list[dict[str, Any]]) -> None:
@@ -446,19 +520,26 @@ class OpenAICompatibleModelClient(ModelClient):
         callbacks = dict(stream_callbacks or {})
         if stream_field and on_field_delta:
             callbacks[stream_field] = on_field_delta
-        response = await OpenAIChatTransport(self._client()).send(
-            OpenAIChatRequest(
-                url=self.settings.model_base_url.rstrip("/") + "/chat/completions",
-                provider=self.settings.model_provider,
-                model=self.settings.model_name,
-                api_key=self.settings.model_api_key,
-                operation=operation,
-                messages=messages,
-                reasoning=reasoning_config,
-                callbacks=callbacks,
-            ),
-            usage_invocation,
-        )
+        thinking_notifier = self._model_thinking_notifier(operation, attempt, reasoning_config)
+        try:
+            response = await OpenAIChatTransport(self._client()).send(
+                OpenAIChatRequest(
+                    url=self.settings.model_base_url.rstrip("/") + "/chat/completions",
+                    provider=self.settings.model_provider,
+                    model=self.settings.model_name,
+                    api_key=self.settings.model_api_key,
+                    operation=operation,
+                    messages=messages,
+                    reasoning=reasoning_config,
+                    callbacks=callbacks,
+                    thinking_callback=thinking_notifier.callback,
+                ),
+                usage_invocation,
+            )
+        except Exception:
+            await thinking_notifier.finish(failed=True)
+            raise
+        await thinking_notifier.finish()
         return await self._parse_chat_response(
             response=response,
             messages=messages,

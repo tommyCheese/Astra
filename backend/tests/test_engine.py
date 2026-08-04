@@ -4,10 +4,12 @@ from unittest.mock import AsyncMock
 import pytest
 from fake_web_tools import fake_web_registry
 from sqlalchemy import event, select
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.agent_profile import load_agent_profile
 from app.agent_runtime.policies.reasoning import build_default_contract, resolve_run_profile
 from app.core.config import Settings
+from app.db.model_base import Base
 from app.db.models.permissions import AgentIdentityRecord, ToolCatalogSnapshotRecord
 from app.db.models.workspaces import TaskWorkspaceRecord, WorkspaceCheckpointRecord
 from app.model_clients.contracts import ModelOutputError
@@ -16,6 +18,7 @@ from app.planning.scheduler import PlanScheduler
 from app.planning.service import PlanService, canonical_agent_state
 from app.repositories.plans import PlanRepository, plan_to_view
 from app.repositories.run_unit_of_work import RunUnitOfWork
+from app.runner import engine as engine_module
 from app.runner.engine import RunEngine
 from app.schemas.agent.execution_state import AgentDecision
 from app.schemas.agent.planning import ExpectedObservation, PlanDraft, PlanNodeDraft
@@ -68,6 +71,76 @@ async def test_cancelled_answer_flush_reuses_active_repository_session():
     )
     repo.session.commit.assert_awaited_once()
     assert "run-1" not in engine._answer_buffers
+
+
+async def test_engine_rolls_back_failed_stage_before_persisting_terminal_error(monkeypatch):
+    session = AsyncMock()
+    repository = AsyncMock()
+    repository.session = session
+
+    class SessionContext:
+        async def __aenter__(self):
+            return session
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            return None
+
+    monkeypatch.setattr(engine_module, "SessionLocal", lambda: SessionContext())
+    monkeypatch.setattr(engine_module, "RunUnitOfWork", lambda _session: repository)
+
+    engine = RunEngine(Settings(model_provider="mock"), model_client=MockModelClient())
+    engine._run_with_repo = AsyncMock(side_effect=RuntimeError("stage failed"))
+
+    await engine.run("run-1")
+
+    session.rollback.assert_awaited_once()
+    repository.add_event.assert_awaited_once()
+    assert repository.add_event.await_args.args[:2] == ("run-1", "run.error")
+    repository.update_run_status.assert_awaited_once()
+    assert repository.update_run_status.await_args.args[:2] == ("run-1", "failed")
+    session.commit.assert_awaited_once()
+
+
+async def test_engine_run_commits_terminal_status_for_a_new_session(monkeypatch, tmp_path):
+    database_path = tmp_path / "engine-terminal-status.db"
+    database_engine = create_async_engine(
+        f"sqlite+aiosqlite:///{database_path}",
+        future=True,
+    )
+    session_factory = async_sessionmaker(database_engine, expire_on_commit=False)
+    async with database_engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+
+    settings = Settings(
+        model_provider="mock",
+        task_workspace_store_path=str(tmp_path / "workspaces"),
+        artifact_store_path=str(tmp_path / "artifacts"),
+    )
+    profile = resolve_run_profile(
+        AnswerMode.standard,
+        RequestedReasoningPolicy(),
+    )
+    async with session_factory() as setup_session:
+        repository = RunUnitOfWork(setup_session)
+        run = await repository.create_task_run(
+            "你好",
+            settings.model_policy,
+            reasoning_policy=profile.reasoning_policy.model_dump(mode="json"),
+            answer_mode="standard",
+            execution_profile=profile.model_dump(mode="json"),
+        )
+        await setup_session.commit()
+        run_id = run.id
+
+    monkeypatch.setattr(engine_module, "SessionLocal", session_factory)
+    await RunEngine(settings, model_client=MockModelClient()).run(run_id)
+
+    async with session_factory() as verification_session:
+        completed = await RunUnitOfWork(verification_session).require_run(run_id)
+        assert completed.status == "completed"
+        assert completed.summary == "已围绕目标完成 Web 数据查询：你好"
+
+    await database_engine.dispose()
 
 
 class WeatherPlanClient(MockModelClient):
@@ -1061,6 +1134,7 @@ async def test_disabled_model_thinking_does_not_suppress_public_process_events(s
     summaries = [event for event in events if event.type == "reasoning.summary.completed"]
     assert summaries
     assert all("reasoning_content" not in event.payload for event in summaries)
+    assert all(not event.type.startswith("model_thinking.") for event in events)
 
 
 async def test_standard_profile_skips_planning_and_quality_assurance_objects(session):

@@ -229,7 +229,7 @@ def test_optional_models_keep_provider_specific_defaults():
             "claude-sonnet-4-6",
             "max",
             {
-                "thinking": {"type": "adaptive", "display": "omitted"},
+                "thinking": {"type": "adaptive", "display": "summarized"},
                 "output_config": {"effort": "max"},
             },
         ),

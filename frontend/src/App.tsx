@@ -16,6 +16,7 @@ import { createPlanGraphStreamState, reconcilePlanGraphSnapshot, reducePlanGraph
 import { detectSlashSkillCommand, filterSlashCommandOptions, normalizeSelectedSkillIds, type SlashSkillCommand } from './composerSkills';
 import { citationsForClaim, sourceAnchor, validatedCitations, type PresentedCitation } from './groundingPresentation';
 import { ScheduledTasksView } from './ScheduledTasksView';
+import { ModelThinkingContent } from './ModelThinkingContent';
 
 const QUESTION_SUBMIT_MARK = 'astra.question.submit';
 const FIRST_TOKEN_COMMIT_MARK = 'astra.answer.first_token_commit';
@@ -1673,7 +1674,7 @@ function AppContent() {
         scheduleRefresh(true);
         return;
       }
-      const isProcessEvent = event.type.startsWith('reasoning.') || ['agent_turn.created', 'tool_call.started', 'tool_call.completed', 'reflection.created', 'verification.created'].includes(event.type);
+      const isProcessEvent = event.type.startsWith('reasoning.') || event.type.startsWith('model_thinking.') || ['agent_turn.created', 'tool_call.started', 'tool_call.completed', 'reflection.created', 'verification.created'].includes(event.type);
       if (event.type.startsWith('plan.')) {
         queuePlanGraphEvent(event);
         if (event.type !== 'plan.node.updated' && event.type !== 'plan.graph.snapshot') scheduleRefresh();
@@ -1681,7 +1682,7 @@ function AppContent() {
       }
       if (isProcessEvent) {
         queueProcessEvent(event);
-        if (!['reasoning.phase.started', 'reasoning.summary.delta', 'reasoning.summary.completed'].includes(event.type)) scheduleRefresh();
+        if (!['reasoning.phase.started', 'reasoning.summary.delta', 'reasoning.summary.completed', 'model_thinking.started', 'model_thinking.delta', 'model_thinking.completed', 'model_thinking.unavailable'].includes(event.type)) scheduleRefresh();
         return;
       }
       if (event.type !== 'heartbeat' && event.type !== 'stream.ready') scheduleRefresh();
@@ -4634,7 +4635,9 @@ function ProcessTimelineRow({ item, run, anchor = false }: { item: ProcessStream
   const handoff = item.id.startsWith('phase-processing_result-');
   return <div className={`process-step process-${item.kind} status-${item.status} ${anchor ? 'process-group-anchor' : ''} ${handoff ? 'process-handoff' : ''}`}>
     <span className={`process-dot ${item.kind === 'tool' ? 'tool' : ''}`}><Icon name={item.kind === 'tool' ? 'tools' : item.kind === 'verification' ? 'check' : 'brain'} /></span>
-    <div><strong>{t(item.title)}</strong>{itemDetail && <p>{itemDetail}</p>}<small>{callDetail ?? statusLabel}</small>{outputs.length > 0 && <a className="process-output-link" href={`#${artifactDomId(outputs[0].id)}`}>{t('{count} 个输出 · 查看输出').replace('{count}', String(outputs.length))}</a>}</div>
+    <div><strong>{t(item.title)}</strong>{item.kind === 'model_thinking'
+      ? <ModelThinkingContent item={{ ...item, detail: itemDetail }} />
+      : itemDetail && <p>{itemDetail}</p>}<small>{callDetail ?? statusLabel}</small>{outputs.length > 0 && <a className="process-output-link" href={`#${artifactDomId(outputs[0].id)}`}>{t('{count} 个输出 · 查看输出').replace('{count}', String(outputs.length))}</a>}</div>
   </div>;
 }
 

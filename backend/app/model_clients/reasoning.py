@@ -53,7 +53,18 @@ class ModelReasoningConfig:
             "json_mode": self.include_json_mode,
             "reason": self.reason,
             "adjustments": self.adjustments,
+            "thinking_content_visibility": self.thinking_content_visibility,
         }
+
+    @property
+    def thinking_content_visibility(self) -> str:
+        if not self.enabled:
+            return "disabled"
+        if self.adapter.startswith("anthropic-"):
+            return "summary"
+        if self.adapter.startswith("qwen-") or self.adapter == "deepseek-v4-thinking":
+            return "reasoning"
+        return "unavailable"
 
 
 _QWEN_THINKING_BUDGET: dict[ModelThinkingDepth, int] = {
@@ -391,7 +402,7 @@ def _anthropic_reasoning_config(common, effective, reason, adapter):
         params = {"thinking": {"type": "disabled"}}
     elif adapter == "anthropic-adaptive-thinking":
         params = {
-            "thinking": {"type": "adaptive", "display": "omitted"},
+            "thinking": {"type": "adaptive", "display": "summarized"},
             "output_config": {"effort": effective.depth},
         }
     else:
@@ -401,7 +412,7 @@ def _anthropic_reasoning_config(common, effective, reason, adapter):
             "thinking": {
                 "type": "enabled",
                 "budget_tokens": _CLAUDE_MANUAL_THINKING_BUDGET[depth],
-                "display": "omitted",
+                "display": "summarized",
             },
         }
         if adapter == "anthropic-manual-thinking-effort":

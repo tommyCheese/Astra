@@ -366,6 +366,7 @@ function RuntimeSettingsArticle() {
 
     <DocumentSection id="runtime-settings-model-thinking" eyebrow="Model call" title="模型思考">
       <p>{t('模型思考是所选模型公开的调用参数。Astra 先读取该模型是否支持开关、允许哪些深度以及默认值，再只显示可用选项。')}</p>
+      <p>{t('开启后，Astra 会在过程面板保存并展示供应商明确返回的思考正文或摘要；部分供应商只提供摘要或 Token 用量，未公开的隐藏思维链无法展示。')}</p>
       <div className="documentation-boundary-list">
         <Boundary term={t('开启／关闭')} title="是否请求扩展思考" description="关闭时使用模型允许的非扩展思考路径；若供应商规定始终开启，界面会显示开启但不允许关闭。" />
         <Boundary term={t('最低／低／中／高／极高')} title="模型思考深度" description="深度只在供应商声明支持时出现；档位含义和实际 Token 消耗由具体模型决定，不等同于 Astra 的快速、均衡、深入。" />

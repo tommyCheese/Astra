@@ -13,6 +13,7 @@ import httpx
 
 from app.agent_profile import ModelOperation
 from app.model_clients.contracts import (
+    AnswerDeltaCallback,
     DeferredUsageInvocation,
     ModelOutputError,
     StreamFieldCallbacks,
@@ -33,6 +34,7 @@ class OpenAIChatRequest:
     messages: list[dict[str, str]]
     reasoning: ModelReasoningConfig
     callbacks: StreamFieldCallbacks = field(default_factory=dict)
+    thinking_callback: AnswerDeltaCallback | None = None
 
 
 @dataclass(frozen=True)
@@ -81,7 +83,12 @@ class OpenAIChatTransport:
                 raise ModelOutputError(
                     f"Model endpoint returned HTTP {response.status_code}"
                 ) from exc
-            parsed = await self._read_response(response, request.callbacks, usage_invocation)
+            parsed = await self._read_response(
+                response,
+                request.callbacks,
+                usage_invocation,
+                request.thinking_callback,
+            )
         elapsed_ms = (time.perf_counter() - started) * 1000
         logger.info(
             "model.request.complete operation=%s status=%s chunks=%s content_chars=%s duration_ms=%.1f",
@@ -133,16 +140,22 @@ class OpenAIChatTransport:
         response: httpx.Response,
         callbacks: StreamFieldCallbacks,
         usage_invocation: DeferredUsageInvocation,
+        thinking_callback: AnswerDeltaCallback | None,
     ) -> OpenAIChatResponse:
         if "text/event-stream" in response.headers.get("content-type", ""):
-            return await self._read_event_stream(response, callbacks, usage_invocation)
-        return await self._read_json_response(response)
+            return await self._read_event_stream(
+                response, callbacks, usage_invocation, thinking_callback
+            )
+        return await self._read_json_response(
+            response, thinking_callback, usage_invocation
+        )
 
     async def _read_event_stream(
         self,
         response: httpx.Response,
         callbacks: StreamFieldCallbacks,
         usage_invocation: DeferredUsageInvocation,
+        thinking_callback: AnswerDeltaCallback | None,
     ) -> OpenAIChatResponse:
         chunks: list[str] = []
         usage: dict[str, Any] | None = None
@@ -154,6 +167,10 @@ class OpenAIChatTransport:
                 continue
             if isinstance(event.get("usage"), dict):
                 usage = event["usage"]
+            thinking_delta = self._thinking_delta(event)
+            if thinking_delta and thinking_callback is not None:
+                await thinking_callback(thinking_delta)
+                usage_invocation.start()
             content_delta = self._content_delta(event)
             if not content_delta:
                 continue
@@ -193,6 +210,14 @@ class OpenAIChatTransport:
         return delta if isinstance(delta, str) else None
 
     @staticmethod
+    def _thinking_delta(event: dict[str, Any]) -> str | None:
+        try:
+            delta = event["choices"][0]["delta"].get("reasoning_content")
+        except (KeyError, IndexError, TypeError):
+            return None
+        return delta if isinstance(delta, str) else None
+
+    @staticmethod
     async def _publish_field_deltas(
         extractor: StreamingJsonFieldExtractor,
         content_delta: str,
@@ -207,15 +232,24 @@ class OpenAIChatTransport:
             usage_invocation.start()
 
     @staticmethod
-    async def _read_json_response(response: httpx.Response) -> OpenAIChatResponse:
+    async def _read_json_response(
+        response: httpx.Response,
+        thinking_callback: AnswerDeltaCallback | None,
+        usage_invocation: DeferredUsageInvocation,
+    ) -> OpenAIChatResponse:
         try:
             body = json.loads((await response.aread()).decode())
             usage = body.get("usage") if isinstance(body.get("usage"), dict) else None
-            content = body["choices"][0]["message"]["content"]
+            message = body["choices"][0]["message"]
+            content = message["content"]
             if not isinstance(content, str):
                 raise TypeError("message content is not text")
         except (KeyError, IndexError, TypeError, ValueError, UnicodeDecodeError) as exc:
             raise ModelOutputError("Model endpoint returned an unsupported response shape") from exc
+        reasoning_content = message.get("reasoning_content")
+        if isinstance(reasoning_content, str) and reasoning_content and thinking_callback:
+            await thinking_callback(reasoning_content)
+            usage_invocation.start()
         return OpenAIChatResponse(
             content=content,
             request_id=None,

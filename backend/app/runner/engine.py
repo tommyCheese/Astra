@@ -34,6 +34,7 @@ from app.repositories.run_unit_of_work import RunUnitOfWork
 from app.run_management.recovery import ExecutionRecovery
 from app.runner.answer_stream import AnswerStreamMixin
 from app.runner.coordinator import RunCoordinator
+from app.runner.model_thinking_stream import ModelThinkingEventWriter
 from app.runner.node_worker import ReadOnlyAgentNodeExecutor
 from app.runner.plan_preparation import PlanPreparationMixin
 from app.schemas.agent.planning import (
@@ -143,13 +144,19 @@ class RunEngine(PlanPreparationMixin, AnswerStreamMixin):
                 httpx.RequestError,
             ) as exc:
                 logger.exception("run.engine.model_error run_id=%s cause=%s", run_id, str(exc))
+                # The failed stage may have an open write transaction.  Clear it
+                # before recording the terminal failure so SQLite does not keep
+                # the Run (and unrelated scheduler writes) locked indefinitely.
+                await repo.session.rollback()
                 error = run_error_from_exception(exc)
                 await repo.add_event(run_id, "run.error", error)
                 await repo.update_run_status(
                     run_id, "blocked", summary=error["message"], result=error_result(error)
                 )
+                await repo.session.commit()
             except Exception as exc:
                 logger.exception("run.engine.failed run_id=%s cause=%s", run_id, type(exc).__name__)
+                await repo.session.rollback()
                 error = run_error_from_exception(exc)
                 await repo.add_event(run_id, "run.error", error)
                 await repo.update_run_status(
@@ -165,6 +172,7 @@ class RunEngine(PlanPreparationMixin, AnswerStreamMixin):
                         "error": error,
                     },
                 )
+                await repo.session.commit()
 
     async def _flush_cancelled_answer(self, repo: RunUnitOfWork, run_id: str) -> None:
         buffered = self._answer_buffers.pop(run_id, "")
@@ -184,7 +192,7 @@ class RunEngine(PlanPreparationMixin, AnswerStreamMixin):
         profile = await self._profile_for_run(repo, run_id, run.agent_profile_snapshot or {})
         self.model_client.bind_agent_profile(profile)
         self._bind_reasoning_effort(run)
-        self._bind_model_thinking(run)
+        self._bind_model_thinking(repo, run)
         skill_snapshot = await self._bind_skills(repo, run, skill_snapshot)
         goal = await self._conversation_goal(repo, run)
         execution_profile = RunExecutionProfile.model_validate(run.execution_profile or {})
@@ -457,11 +465,19 @@ class RunEngine(PlanPreparationMixin, AnswerStreamMixin):
             )
             self.model_client.bind_reasoning_effort("balanced")
 
-    def _bind_model_thinking(self, run: RunRecord) -> None:
+    def _bind_model_thinking(self, repo: RunUnitOfWork, run: RunRecord) -> None:
         thinking = (run.model_policy or {}).get("thinking")
         if not isinstance(thinking, dict):
             raise ValueError(f"Run {run.id} is missing the current model thinking snapshot")
-        self.model_client.bind_model_thinking(ModelThinkingSnapshot.model_validate(thinking))
+        snapshot = ModelThinkingSnapshot.model_validate(thinking)
+        self.model_client.bind_model_thinking(snapshot)
+        bind_observer = getattr(self.model_client, "bind_model_thinking_observer", None)
+        if bind_observer is not None:
+            bind_observer(
+                ModelThinkingEventWriter(repo, run.id).accept
+                if snapshot.effective.enabled
+                else None
+            )
 
     async def _execute_agent_loop(
         self,
@@ -544,6 +560,7 @@ class RunEngine(PlanPreparationMixin, AnswerStreamMixin):
     ) -> None:
         if status == "waiting_user":
             await repo.update_run_status(run_id, status, summary=final_answer.summary)
+            await repo.session.commit()
             logger.info("run.paused run_id=%s status=waiting_user", run_id)
             return
         if result.get("answer_mode") == AnswerMode.standard.value:
@@ -553,6 +570,7 @@ class RunEngine(PlanPreparationMixin, AnswerStreamMixin):
                 summary=final_answer.summary,
                 result=result,
             )
+            await repo.session.commit()
             logger.info(
                 "run.complete run_id=%s status=%s mode=standard fast_path=true",
                 run_id,
@@ -609,6 +627,7 @@ class RunEngine(PlanPreparationMixin, AnswerStreamMixin):
             summary=final_answer.summary,
             result=result,
         )
+        await repo.session.commit()
         logger.info(
             "run.complete run_id=%s status=%s findings=%s sources=%s",
             run_id,

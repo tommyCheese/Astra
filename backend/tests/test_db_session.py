@@ -1,7 +1,9 @@
+import pytest
 from sqlalchemy import text
-from sqlalchemy.ext.asyncio import create_async_engine
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.core.config import Settings
+from app.db import session as session_module
 from app.db.session import configure_sqlite_engine, engine_options_for_settings
 
 
@@ -39,3 +41,20 @@ def test_non_file_databases_keep_driver_pool_defaults():
     assert engine_options_for_settings(
         Settings(database_url="postgresql+asyncpg://astra@db/astra")
     ) == {}
+
+
+@pytest.mark.asyncio
+async def test_request_session_can_be_reused_after_service_owned_rollback(monkeypatch):
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:", future=True)
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+    monkeypatch.setattr(session_module, "SessionLocal", session_factory)
+
+    dependency = session_module.get_session()
+    request_session = await anext(dependency)
+    try:
+        assert await request_session.scalar(text("SELECT 1")) == 1
+        await request_session.rollback()
+        assert await request_session.scalar(text("SELECT 2")) == 2
+    finally:
+        await dependency.aclose()
+        await engine.dispose()

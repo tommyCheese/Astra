@@ -342,6 +342,173 @@ async def test_anthropic_stream_delivers_answer_before_response_completes():
     assert requests[0]["stream"] is True
 
 
+async def test_openai_compatible_stream_forwards_reasoning_content_separately():
+    content = '{"summary":"完成"}'
+
+    class StreamingResponse:
+        headers: ClassVar[dict[str, str]] = {"content-type": "text/event-stream"}
+        status_code = 200
+
+        def raise_for_status(self):
+            return None
+
+        async def aiter_lines(self):
+            for value in ("先分析\n", "再验证"):
+                yield "data: " + json.dumps(
+                    {"choices": [{"delta": {"reasoning_content": value, "content": ""}}]},
+                    ensure_ascii=False,
+                )
+            yield "data: " + json.dumps(
+                {"choices": [{"delta": {"reasoning_content": "", "content": content}}]},
+                ensure_ascii=False,
+            )
+            yield "data: [DONE]"
+
+    class StreamingContext:
+        async def __aenter__(self):
+            return StreamingResponse()
+
+        async def __aexit__(self, *args):
+            return None
+
+    class StreamingClient:
+        def stream(self, method, url, **kwargs):
+            return StreamingContext()
+
+    client = OpenAICompatibleModelClient(
+        Settings(model_provider="qwen", model_name="qwen3.7-plus", model_api_key="secret"),
+        http_client=StreamingClient(),
+    )
+    observed = []
+
+    async def observe(event):
+        observed.append(event)
+
+    client.bind_model_thinking_observer(observe)
+    payload = await client._chat_json(
+        [{"role": "user", "content": "返回 JSON"}],
+        operation=ModelOperation.SYNTHESIS,
+    )
+
+    assert payload == {"summary": "完成"}
+    assert [event["phase"] for event in observed] == ["started", "delta", "delta", "completed"]
+    assert "".join(event.get("delta", "") for event in observed) == "先分析\n再验证"
+    assert {event["content_level"] for event in observed} == {"reasoning"}
+    assert all("content" not in event for event in observed)
+
+
+async def test_anthropic_stream_forwards_only_visible_thinking_deltas():
+    content = '{"summary":"完成"}'
+    requests = []
+
+    class StreamingResponse:
+        headers: ClassVar[dict[str, str]] = {"request-id": "request-1"}
+
+        def raise_for_status(self):
+            return None
+
+        async def aiter_lines(self):
+            yield 'data: {"type":"content_block_delta","delta":{"type":"thinking_delta","thinking":"检查假设\\n"}}'
+            yield 'data: {"type":"content_block_delta","delta":{"type":"signature_delta","signature":"secret-signature"}}'
+            yield 'data: {"type":"content_block_start","content_block":{"type":"redacted_thinking","data":"secret-redacted"}}'
+            yield "data: " + json.dumps(
+                {"type": "content_block_delta", "delta": {"type": "text_delta", "text": content}},
+                ensure_ascii=False,
+            )
+
+    class StreamingContext:
+        async def __aenter__(self):
+            return StreamingResponse()
+
+        async def __aexit__(self, *args):
+            return None
+
+    class StreamingClient:
+        def stream(self, method, url, **kwargs):
+            requests.append(kwargs["json"])
+            return StreamingContext()
+
+    client = AnthropicModelClient(
+        Settings(model_provider="anthropic", model_name="claude-sonnet-4-6", model_api_key="secret"),
+        http_client=StreamingClient(),
+    )
+    client.bind_model_thinking(
+        {
+            "requested": {"enabled": True, "depth": "high", "capability_version": 2},
+            "effective": {"enabled": True, "depth": "high"},
+            "source": "explicit_model_control",
+            "adapter": "anthropic-adaptive-thinking",
+            "adjustments": [],
+            "capability_version": 2,
+        }
+    )
+    observed = []
+
+    async def observe(event):
+        observed.append(event)
+
+    client.bind_model_thinking_observer(observe)
+    payload = await client._chat_json(
+        [{"role": "user", "content": "返回 JSON"}],
+        operation=ModelOperation.SYNTHESIS,
+    )
+
+    assert payload == {"summary": "完成"}
+    assert requests[0]["thinking"]["display"] == "summarized"
+    assert "".join(event.get("delta", "") for event in observed) == "检查假设\n"
+    assert {event["content_level"] for event in observed} == {"summary"}
+    assert "secret-signature" not in json.dumps(observed)
+    assert "secret-redacted" not in json.dumps(observed)
+
+
+async def test_disabled_model_thinking_does_not_forward_provider_reasoning_content():
+    class JsonResponse(FakeOpenAIResponse):
+        async def aread(self):
+            return json.dumps(
+                {
+                    "choices": [{"message": {"content": '{"summary":"完成"}', "reasoning_content": "不应展示"}}],
+                    "usage": {},
+                },
+                ensure_ascii=False,
+            ).encode()
+
+    class JsonContext:
+        async def __aenter__(self):
+            return JsonResponse()
+
+        async def __aexit__(self, *args):
+            return None
+
+    class JsonClient:
+        def stream(self, method, url, **kwargs):
+            return JsonContext()
+
+    client = OpenAICompatibleModelClient(
+        Settings(model_provider="qwen", model_name="qwen3.7-plus", model_api_key="secret"),
+        http_client=JsonClient(),
+    )
+    client.bind_model_thinking(
+        {
+            "requested": {"enabled": False, "depth": None, "capability_version": 2},
+            "effective": {"enabled": False, "depth": None},
+            "source": "explicit_model_control",
+            "adapter": "qwen-hybrid-thinking",
+            "adjustments": [],
+            "capability_version": 2,
+        }
+    )
+    observed = []
+
+    async def observe(event):
+        observed.append(event)
+
+    client.bind_model_thinking_observer(observe)
+    await client._chat_json(
+        [{"role": "user", "content": "返回 JSON"}], operation=ModelOperation.SYNTHESIS
+    )
+    assert observed == []
+
+
 @pytest.mark.parametrize(
     ("provider", "model"),
     [("openai", "gpt-5"), ("anthropic", "claude-sonnet-4-6")],
@@ -477,7 +644,7 @@ async def test_anthropic_transport_applies_adaptive_thinking_and_effort(monkeypa
         )
     await client.aclose()
 
-    assert requests[0]["thinking"] == {"type": "adaptive", "display": "omitted"}
+    assert requests[0]["thinking"] == {"type": "adaptive", "display": "summarized"}
     assert requests[0]["output_config"] == {"effort": "high"}
     assert (
         usage.finished[0][1]["usage"]["astra_reasoning"]["adapter"]

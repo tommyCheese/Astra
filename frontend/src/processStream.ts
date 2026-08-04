@@ -5,13 +5,18 @@ type ProcessItemStatus = 'running' | 'completed' | 'failed' | 'cancelled';
 
 export type ProcessStreamItem = {
   id: string;
-  kind: 'phase' | 'reasoning' | 'tool' | 'reflection' | 'verification';
+  kind: 'phase' | 'reasoning' | 'model_thinking' | 'tool' | 'reflection' | 'verification';
   title: string;
   detail?: string;
   status: ProcessItemStatus;
   turnIndex?: number;
   toolCallId?: string;
   groupId?: string;
+  provider?: string;
+  operation?: string;
+  contentLevel?: 'reasoning' | 'summary' | 'unavailable';
+  truncated?: boolean;
+  unavailableReason?: string;
 };
 
 export type ProcessStreamState = {
@@ -200,6 +205,62 @@ export function reduceProcessEvent(state: ProcessStreamState, event: RunStreamEv
           : decisionGroupId(turnIndex),
       ...(completed && { toolCallId: safeString(payload.tool_call_id) || existing?.toolCallId }),
     });
+  } else if (event.type.startsWith('model_thinking.')) {
+    const streamId = safeString(payload.stream_id);
+    const id = `model-thinking-${streamId}`;
+    const existing = items.find((item) => item.id === id);
+    const contentLevel = payload.content_level === 'summary'
+      ? 'summary'
+      : payload.content_level === 'reasoning'
+        ? 'reasoning'
+        : 'unavailable';
+    const title = contentLevel === 'summary' ? '供应商思考摘要' : '模型思考';
+    if (streamId && event.type === 'model_thinking.started') {
+      items = upsert(items, {
+        id,
+        kind: 'model_thinking',
+        title,
+        detail: existing?.detail ?? '',
+        status: 'running',
+        provider: safeString(payload.provider),
+        operation: safeString(payload.operation),
+        contentLevel,
+      });
+    } else if (streamId && event.type === 'model_thinking.delta') {
+      items = upsert(items, {
+        id,
+        kind: 'model_thinking',
+        title,
+        detail: `${existing?.detail ?? ''}${safeString(payload.delta)}`,
+        status: 'running',
+        provider: safeString(payload.provider) || existing?.provider,
+        operation: safeString(payload.operation) || existing?.operation,
+        contentLevel: contentLevel === 'unavailable' ? existing?.contentLevel : contentLevel,
+      });
+    } else if (streamId && event.type === 'model_thinking.completed') {
+      items = upsert(items, {
+        id,
+        kind: 'model_thinking',
+        title: existing?.title ?? title,
+        detail: existing?.detail ?? '',
+        status: payload.status === 'failed' ? 'failed' : 'completed',
+        provider: safeString(payload.provider) || existing?.provider,
+        operation: safeString(payload.operation) || existing?.operation,
+        contentLevel: contentLevel === 'unavailable' ? existing?.contentLevel : contentLevel,
+        truncated: payload.truncated === true,
+      });
+    } else if (streamId && event.type === 'model_thinking.unavailable') {
+      items = upsert(items, {
+        id,
+        kind: 'model_thinking',
+        title: '模型思考不可见',
+        status: 'completed',
+        provider: safeString(payload.provider),
+        operation: safeString(payload.operation),
+        contentLevel: 'unavailable',
+        unavailableReason: safeString(payload.reason),
+      });
+    }
   } else if (event.type === 'tool_call.started') {
     const toolCallId = safeString(payload.tool_call_id);
     if (!quickMode && turnIndex !== undefined) items = ensureDecisionGroup(items, turnIndex);

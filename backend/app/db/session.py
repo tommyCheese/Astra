@@ -96,5 +96,9 @@ SessionLocal = async_sessionmaker(
 
 
 async def get_session() -> AsyncIterator[AsyncSession]:
-    async with SessionLocal.begin() as session:
+    # Application services and repositories own their transaction boundaries.
+    # Using ``SessionLocal.begin()`` here makes an explicit rollback terminal for
+    # the request-scoped context, so a service cannot roll back and then refresh
+    # state (the run-cancellation flow is one example).
+    async with SessionLocal() as session:
         yield session

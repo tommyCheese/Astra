@@ -46,6 +46,45 @@ describe('process stream reducer', () => {
     expect(state.seenEventIds).toEqual([1, 2, 3, 4]);
   });
 
+  it('keeps provider model thinking separate and preserves streamed whitespace', () => {
+    let state = createOptimisticProcessState('run-thinking');
+    const base = { stream_id: 'stream-1', provider: 'qwen', operation: 'decision_with_answer', content_level: 'reasoning' };
+    state = reduceProcessEvent(state, { id: 1, type: 'model_thinking.started', payload: base });
+    state = reduceProcessEvent(state, { id: 2, type: 'model_thinking.delta', payload: { ...base, delta: '第一行\n' } });
+    state = reduceProcessEvent(state, { id: 3, type: 'model_thinking.delta', payload: { ...base, delta: '  缩进内容' } });
+    state = reduceProcessEvent(state, { id: 4, type: 'reasoning.summary.completed', payload: { turn_index: 1, summary: '公开摘要' } });
+    state = reduceProcessEvent(state, { id: 5, type: 'model_thinking.completed', payload: { ...base, truncated: false } });
+
+    expect(state.items.find((item) => item.id === 'model-thinking-stream-1')).toMatchObject({
+      kind: 'model_thinking',
+      title: '模型思考',
+      detail: '第一行\n  缩进内容',
+      status: 'completed',
+      contentLevel: 'reasoning',
+    });
+    expect(state.items.find((item) => item.id === 'reasoning-1')?.detail).toBe('公开摘要');
+  });
+
+  it('restores provider summaries, unavailable states, and truncation from snapshot events', () => {
+    const state = reconcileProcessSnapshot(null, {
+      id: 'run-thinking', task_id: 'task-1', status: 'completed', mode: 'agent', summary: 'done', result: null,
+      steps: [], tool_calls: [], artifacts: [], memories: [], chat_messages: [], turns: [],
+      events: [
+        { id: 1, type: 'model_thinking.started', payload: { stream_id: 'summary-1', provider: 'anthropic', operation: 'contract', content_level: 'summary' }, created_at: 'now' },
+        { id: 2, type: 'model_thinking.delta', payload: { stream_id: 'summary-1', provider: 'anthropic', operation: 'contract', content_level: 'summary', delta: '供应商摘要' }, created_at: 'now' },
+        { id: 3, type: 'model_thinking.completed', payload: { stream_id: 'summary-1', provider: 'anthropic', operation: 'contract', content_level: 'summary', truncated: true }, created_at: 'now' },
+        { id: 4, type: 'model_thinking.unavailable', payload: { stream_id: 'none-1', provider: 'openai', operation: 'synthesis', content_level: 'unavailable', reason: 'provider_did_not_return_visible_thinking' }, created_at: 'now' },
+      ],
+    } as RunView);
+
+    expect(state.items.find((item) => item.id === 'model-thinking-summary-1')).toMatchObject({
+      title: '供应商思考摘要', detail: '供应商摘要', truncated: true, contentLevel: 'summary',
+    });
+    expect(state.items.find((item) => item.id === 'model-thinking-none-1')).toMatchObject({
+      title: '模型思考不可见', contentLevel: 'unavailable', unavailableReason: 'provider_did_not_return_visible_thinking',
+    });
+  });
+
   it('tracks tools and terminal status without exposing tool input', () => {
     let state = createOptimisticProcessState('run-1');
     state = reduceProcessEvent(state, { id: 1, type: 'tool_call.started', payload: { tool_call_id: 'call-1', tool_name: 'web_search', input: { api_key: 'secret' } } });

@@ -9,6 +9,7 @@ from typing import Any
 import httpx
 
 from app.model_clients.contracts import (
+    AnswerDeltaCallback,
     DeferredUsageInvocation,
     StreamFieldCallbacks,
 )
@@ -24,6 +25,7 @@ class AnthropicRequest:
     messages: list[dict[str, str]]
     reasoning: ModelReasoningConfig
     callbacks: StreamFieldCallbacks = field(default_factory=dict)
+    thinking_callback: AnswerDeltaCallback | None = None
 
 
 @dataclass(frozen=True)
@@ -45,9 +47,9 @@ class AnthropicTransport:
         request: AnthropicRequest,
         usage_invocation: DeferredUsageInvocation,
     ) -> AnthropicResponse:
-        if request.callbacks:
+        if request.callbacks or request.thinking_callback:
             return await self._stream(request, usage_invocation)
-        return await self._post(request)
+        return await self._post(request, usage_invocation)
 
     async def _stream(
         self,
@@ -57,7 +59,7 @@ class AnthropicTransport:
         chunks: list[str] = []
         usage: dict[str, Any] = {}
         emitted_fields: set[str] = set()
-        extractor = StreamingJsonFieldExtractor(request.callbacks)
+        extractor = StreamingJsonFieldExtractor(request.callbacks) if request.callbacks else None
         async with self.client.stream(
             "POST",
             request.url,
@@ -71,17 +73,22 @@ class AnthropicTransport:
                 if event is None:
                     continue
                 self._collect_usage(event, usage)
+                thinking_delta = self._thinking_delta(event)
+                if thinking_delta and request.thinking_callback is not None:
+                    await request.thinking_callback(thinking_delta)
+                    usage_invocation.start()
                 text_delta = self._text_delta(event)
                 if not text_delta:
                     continue
                 chunks.append(text_delta)
-                await self._publish_deltas(
-                    extractor,
-                    text_delta,
-                    request.callbacks,
-                    emitted_fields,
-                    usage_invocation,
-                )
+                if extractor is not None:
+                    await self._publish_deltas(
+                        extractor,
+                        text_delta,
+                        request.callbacks,
+                        emitted_fields,
+                        usage_invocation,
+                    )
         return AnthropicResponse(
             content="".join(chunks).strip(),
             request_id=request_id,
@@ -89,7 +96,11 @@ class AnthropicTransport:
             emitted_fields=frozenset(emitted_fields),
         )
 
-    async def _post(self, request: AnthropicRequest) -> AnthropicResponse:
+    async def _post(
+        self,
+        request: AnthropicRequest,
+        usage_invocation: DeferredUsageInvocation,
+    ) -> AnthropicResponse:
         response = await self.client.post(
             request.url,
             headers=self._headers(request, stream=False),
@@ -102,6 +113,14 @@ class AnthropicTransport:
             for block in body.get("content", [])
             if isinstance(block, dict) and block.get("type") == "text"
         ).strip()
+        thinking = "".join(
+            block.get("thinking", "")
+            for block in body.get("content", [])
+            if isinstance(block, dict) and block.get("type") == "thinking"
+        )
+        if thinking and request.thinking_callback:
+            await request.thinking_callback(thinking)
+            usage_invocation.start()
         usage = body.get("usage") if isinstance(body.get("usage"), dict) else {}
         return AnthropicResponse(
             content=content,
@@ -173,6 +192,14 @@ class AnthropicTransport:
             return None
         text = delta.get("text")
         return text if isinstance(text, str) else None
+
+    @staticmethod
+    def _thinking_delta(event: dict[str, Any]) -> str | None:
+        delta = event.get("delta")
+        if not isinstance(delta, dict) or delta.get("type") != "thinking_delta":
+            return None
+        thinking = delta.get("thinking")
+        return thinking if isinstance(thinking, str) else None
 
     @staticmethod
     async def _publish_deltas(

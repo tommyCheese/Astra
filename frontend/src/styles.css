@@ -1700,6 +1700,51 @@ h1 {
   position: relative;
 }
 
+.process-model_thinking > div {
+  min-width: 0;
+}
+
+.model-thinking-content {
+  background: rgba(93, 109, 134, .055);
+  border: 1px solid rgba(123, 139, 164, .18);
+  border-radius: 10px;
+  margin: 7px 0 5px;
+  max-width: 760px;
+  overflow: hidden;
+}
+
+.model-thinking-content > summary {
+  color: var(--app-muted);
+  cursor: pointer;
+  font-size: 11px;
+  list-style-position: inside;
+  padding: 7px 10px;
+}
+
+.model-thinking-content pre {
+  border-top: 1px solid rgba(123, 139, 164, .14);
+  color: var(--app-text);
+  font-family: inherit;
+  font-size: 12px;
+  line-height: 1.65;
+  margin: 0;
+  max-height: 420px;
+  overflow: auto;
+  padding: 10px 12px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.model-thinking-content > p {
+  margin: 0;
+  padding: 8px 12px 10px;
+}
+
+.model-thinking-content .model-thinking-warning {
+  color: var(--app-warning, #9a6500);
+  font-size: 11px;
+}
+
 .process-decision-group {
   display: grid;
   gap: 7px;
