@@ -2,25 +2,19 @@
 
 from __future__ import annotations
 
-from typing import Protocol
-
-from app.db.models.runs import RunRecord
+from app.repositories.run_unit_of_work import RunUnitOfWork
 from app.repositories.run_view_projection import RunViewProjector
 from app.schemas.agent.api_views import RunView
-
-
-class RunReader(Protocol):
-    async def get_run(self, run_id: str) -> RunRecord | None: ...
-
-    async def get_run_initial(self, run_id: str) -> tuple[RunRecord | None, bool]: ...
-
-    async def list_recent_runs(self, limit: int = 100) -> list[RunRecord]: ...
 
 
 class RunQueryService:
     """Load Runs and return validated public read models."""
 
-    def __init__(self, reader: RunReader, projector: RunViewProjector | None = None) -> None:
+    def __init__(
+        self,
+        reader: RunUnitOfWork,
+        projector: RunViewProjector | None = None,
+    ) -> None:
         self._reader = reader
         self._projector = projector or RunViewProjector()
 

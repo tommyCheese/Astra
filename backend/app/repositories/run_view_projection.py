@@ -16,6 +16,7 @@ from app.repositories.run_agent_projections import (
     subagent_summary,
 )
 from app.repositories.run_chat_projection import build_chat_messages
+from app.repositories.run_query_store import safe_agent_profile_manifest
 from app.repositories.run_record_projections import (
     artifact_views,
     event_views,
@@ -26,7 +27,6 @@ from app.repositories.run_record_projections import (
     tool_call_views,
     turn_views,
 )
-from app.repositories.run_store_support import safe_agent_profile_manifest
 from app.schemas.agent.api_views import RunView
 from app.schemas.agent.run_result import RunResult
 
@@ -41,7 +41,7 @@ class RunViewProjector:
         return RunView.model_validate(self.initial_payload(run))
 
     def payload(self, run: RunRecord) -> dict[str, Any]:
-        plan_projection = _plan_projection(run)
+        canonical_steps, plan_payload, plan_versions = _plan_projection(run)
         execution_views = [node_execution_view(execution) for execution in run.node_executions]
         parallelism = parallelism_summary(run)
         agent_tree = _agent_tree(run)
@@ -51,8 +51,8 @@ class RunViewProjector:
         )
         return {
             **_run_identity(run),
-            **_run_content(run, plan_projection.canonical_steps),
-            **_run_policies(run, plan_projection.plan_payload, plan_projection.plan_versions),
+            **_run_content(run, canonical_steps),
+            **_run_policies(run, plan_payload, plan_versions),
             "pending_approval": _pending_approval_view(pending_approval),
             "node_executions": execution_views,
             "parallelism": parallelism,
@@ -80,28 +80,17 @@ class RunViewProjector:
         }
 
 
-class _PlanProjection:
-    def __init__(
-        self,
-        *,
-        canonical_steps: list[dict[str, Any]] | None,
-        plan_payload: dict[str, Any],
-        plan_versions: list[dict[str, Any]],
-    ) -> None:
-        self.canonical_steps = canonical_steps
-        self.plan_payload = plan_payload
-        self.plan_versions = plan_versions
-
-
-def _plan_projection(run: RunRecord) -> _PlanProjection:
+def _plan_projection(
+    run: RunRecord,
+) -> tuple[list[dict[str, Any]] | None, dict[str, Any], list[dict[str, Any]]]:
     if not _is_trusted(run):
-        return _PlanProjection(canonical_steps=None, plan_payload={}, plan_versions=[])
+        return None, {}, []
     active_plan = _active_plan(run)
     plan_view = plan_to_view(active_plan) if active_plan is not None else None
-    return _PlanProjection(
-        canonical_steps=_canonical_steps(plan_view, active_plan),
-        plan_payload=_plan_payload(run, plan_view),
-        plan_versions=_plan_versions(run),
+    return (
+        _canonical_steps(plan_view, active_plan),
+        _plan_payload(run, plan_view),
+        _plan_versions(run),
     )
 
 

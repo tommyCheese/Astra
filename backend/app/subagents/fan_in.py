@@ -430,35 +430,34 @@ class SubagentMergeResult:
     source_execution_ids: tuple[str, ...]
 
 
-class SubagentResultMerger:
-    def merge(self, results: list[ValidatedSubagentResult]) -> SubagentMergeResult:
-        facts_by_key: dict[str, dict[str, Any]] = {}
-        claims_by_key: dict[str, dict[str, Any]] = {}
-        conflicts: list[dict[str, Any]] = []
-        artifacts: list[str] = []
-        evidence: list[str] = []
-        open_issues: list[str] = []
-        warnings: list[str] = []
-        for item in results:
-            source = item.execution_id
-            for key, value in item.result.outputs.items():
-                _merge_fact(facts_by_key, conflicts, key, value, item)
-            for claim in item.result.claims:
-                _merge_claim(claims_by_key, conflicts, claim, source)
-            artifacts.extend(item.artifact_ids)
-            evidence.extend(item.evidence_ids)
-            open_issues.extend(item.result.open_issues)
-            warnings.extend(item.warnings)
-        return SubagentMergeResult(
-            facts=tuple(facts_by_key.values()),
-            claims=tuple(claims_by_key.values()),
-            conflicts=tuple(conflicts),
-            artifact_ids=tuple(dict.fromkeys(artifacts)),
-            evidence_ids=tuple(dict.fromkeys(evidence)),
-            open_issues=tuple(dict.fromkeys(open_issues)),
-            warnings=tuple(dict.fromkeys(warnings)),
-            source_execution_ids=tuple(item.execution_id for item in results),
-        )
+def merge_subagent_results(results: list[ValidatedSubagentResult]) -> SubagentMergeResult:
+    facts_by_key: dict[str, dict[str, Any]] = {}
+    claims_by_key: dict[str, dict[str, Any]] = {}
+    conflicts: list[dict[str, Any]] = []
+    artifacts: list[str] = []
+    evidence: list[str] = []
+    open_issues: list[str] = []
+    warnings: list[str] = []
+    for item in results:
+        source = item.execution_id
+        for key, value in item.result.outputs.items():
+            _merge_fact(facts_by_key, conflicts, key, value, item)
+        for claim in item.result.claims:
+            _merge_claim(claims_by_key, conflicts, claim, source)
+        artifacts.extend(item.artifact_ids)
+        evidence.extend(item.evidence_ids)
+        open_issues.extend(item.result.open_issues)
+        warnings.extend(item.warnings)
+    return SubagentMergeResult(
+        facts=tuple(facts_by_key.values()),
+        claims=tuple(claims_by_key.values()),
+        conflicts=tuple(conflicts),
+        artifact_ids=tuple(dict.fromkeys(artifacts)),
+        evidence_ids=tuple(dict.fromkeys(evidence)),
+        open_issues=tuple(dict.fromkeys(open_issues)),
+        warnings=tuple(dict.fromkeys(warnings)),
+        source_execution_ids=tuple(item.execution_id for item in results),
+    )
 
 
 def _merge_fact(facts, conflicts, key, value, item) -> None:
@@ -493,38 +492,34 @@ def _merge_claim(claims, conflicts, claim, source) -> None:
         claims[key] = normalized
 
 
-class SubagentFailureManager:
-    def __init__(self, service: DelegationContractService):
-        self.service = service
-
-    async def retry(
-        self,
-        execution_id: str,
-        *,
-        retry_safe: bool,
-    ) -> AgentExecutionRecord:
-        execution = await self.service.executions.require(execution_id)
-        if execution.status not in {"failed", "blocked"}:
-            raise ValueError("Only failed or blocked child executions can be retried")
-        if not retry_safe:
-            raise ValueError("Child retry is not proven safe")
-        parent = await self.service.executions.require(str(execution.parent_execution_id))
-        if parent.identity_id is None:
-            raise ValueError("Parent identity is unavailable for retry")
-        contract = DelegationContract.model_validate(execution.contract)
-        attempt = int((execution.checkpoint or {}).get("attempt", 1)) + 1
-        request_payload = contract.request.model_dump(mode="python")
-        request_payload["request_id"] = f"{contract.request.request_id}:retry:{attempt}"
-        request_payload["dedupe_key"] = f"{contract.request.dedupe_key}:retry:{attempt}"
-        retry = await self.service.authorize_and_create(
-            parent_execution_id=parent.id,
-            parent_identity_id=parent.identity_id,
-            request=DelegationRequest.model_validate(request_payload),
-        )
-        retry.checkpoint = {
-            "retry_of_execution_id": execution.id,
-            "attempt": attempt,
-            "preserved_failure": deepcopy(execution.error or execution.result),
-        }
-        await self.service.session.commit()
-        return retry
+async def retry_subagent(
+    service: DelegationContractService,
+    execution_id: str,
+    *,
+    retry_safe: bool,
+) -> AgentExecutionRecord:
+    execution = await service.executions.require(execution_id)
+    if execution.status not in {"failed", "blocked"}:
+        raise ValueError("Only failed or blocked child executions can be retried")
+    if not retry_safe:
+        raise ValueError("Child retry is not proven safe")
+    parent = await service.executions.require(str(execution.parent_execution_id))
+    if parent.identity_id is None:
+        raise ValueError("Parent identity is unavailable for retry")
+    contract = DelegationContract.model_validate(execution.contract)
+    attempt = int((execution.checkpoint or {}).get("attempt", 1)) + 1
+    request_payload = contract.request.model_dump(mode="python")
+    request_payload["request_id"] = f"{contract.request.request_id}:retry:{attempt}"
+    request_payload["dedupe_key"] = f"{contract.request.dedupe_key}:retry:{attempt}"
+    retry = await service.authorize_and_create(
+        parent_execution_id=parent.id,
+        parent_identity_id=parent.identity_id,
+        request=DelegationRequest.model_validate(request_payload),
+    )
+    retry.checkpoint = {
+        "retry_of_execution_id": execution.id,
+        "attempt": attempt,
+        "preserved_failure": deepcopy(execution.error or execution.result),
+    }
+    await service.session.commit()
+    return retry

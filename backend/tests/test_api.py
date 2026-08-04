@@ -7,7 +7,7 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from app.agent_runtime.policies.reasoning import RunProfileResolver, build_default_contract
+from app.agent_runtime.policies.reasoning import build_default_contract, resolve_run_profile
 from app.api import runs as runs_api
 from app.api.models import get_runtime_default_model
 from app.core.config import Settings, get_settings
@@ -399,7 +399,6 @@ async def test_context_status_and_registered_commands_preserve_history(app_clien
                 f"问题 {index}",
                 app_client._astra_settings.model_policy,
                 task_id=task.id,
-                commit=False,
             )
             await repository.update_run_status(
                 run.id,
@@ -775,7 +774,7 @@ async def test_removed_plan_activation_route_is_absent(app_client):
 async def test_plan_confirmation_resume_consumes_bound_token_once(app_client):
     async with app_client._astra_session() as session:
         repo = RunUnitOfWork(session)
-        profile = RunProfileResolver().resolve(
+        profile = resolve_run_profile(
             AnswerMode.trusted,
             RequestedReasoningPolicy(),
             plan_execution=PlanExecution.confirm,
@@ -851,7 +850,7 @@ async def _create_waiting_confirmation(
 ):
     async with app_client._astra_session() as session:
         repo = RunUnitOfWork(session)
-        profile = RunProfileResolver().resolve(
+        profile = resolve_run_profile(
             AnswerMode.trusted,
             RequestedReasoningPolicy(),
             plan_execution=PlanExecution.confirm,

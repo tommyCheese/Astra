@@ -8,18 +8,12 @@ from app.grounding.fragments import fragments_from_web_result
 from app.plugins.interfaces import (
     ApprovalPresenter,
     ProcessorOutput,
-    ResultAdapter,
     ResultProcessor,
     Validator,
 )
 from app.schemas.agent.execution_state import AgentObservation
 from app.schemas.agent.run_result import ValidationIssue, ValidationOutcome
-from app.tools.base import ToolResultEnvelope, ToolSpec
-
-
-class LegacyRawResultAdapter(ResultAdapter):
-    def adapt(self, result: dict[str, Any]) -> dict[str, Any]:
-        return ToolResultEnvelope(data=result).model_dump(mode="json", exclude_none=True)
+from app.tools.base import ToolSpec
 
 
 class WebResultProcessor(ResultProcessor):

@@ -17,10 +17,10 @@ from app.schemas.subagents import (
     SubagentBudgetEnvelope,
 )
 from app.subagents.context import (
-    SubagentContextCheckpointService,
     SubagentContextComposer,
     SubagentContinuationService,
     SubagentExchangeService,
+    create_context_checkpoint,
 )
 from app.subagents.governance import FrozenChildCatalog
 
@@ -191,7 +191,7 @@ def test_context_checkpoint_and_continuation_are_child_local_bounded_and_version
         catalog=_catalog(),
         created_at=NOW,
     )
-    checkpoint = SubagentContextCheckpointService().compress(
+    checkpoint = create_context_checkpoint(
         composed=composed,
         local_summary="Inspected the delegated sources.",
         local_facts=[{"text": "local only"}],

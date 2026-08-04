@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Iterable
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -637,16 +636,3 @@ def proposal_failure_payload(exc: Exception) -> dict[str, str]:
         "code": type(exc).__name__,
         "message": str(exc)[:2_000],
     }
-
-
-def stable_source_digest(records: Iterable[MemoryRecord]) -> str:
-    return canonical_digest(
-        [
-            {
-                "id": record.id,
-                "version": record.version,
-                "state_version": record.state_version,
-            }
-            for record in records
-        ]
-    )

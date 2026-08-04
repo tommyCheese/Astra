@@ -7,7 +7,7 @@ import logging
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent_profile import AgentProfileConfigurationError, load_agent_profile
-from app.agent_runtime.policies.reasoning import RunProfileResolver, compile_subagent_policy
+from app.agent_runtime.policies.reasoning import compile_subagent_policy, resolve_run_profile
 from app.context_windows import resolve_context_window
 from app.conversation_context import ConversationContextManager
 from app.core.config import Settings
@@ -118,7 +118,7 @@ class RunCreator:
         request: CreateRunRequest,
         run_settings: Settings,
     ) -> RunExecutionProfile:
-        execution_profile = RunProfileResolver().resolve(
+        execution_profile = resolve_run_profile(
             request.answer_mode,
             request.reasoning_policy,
             plan_execution=request.plan_execution,
@@ -180,7 +180,6 @@ class RunCreator:
             execution_profile=execution_profile.model_dump(mode="json"),
             agent_profile_snapshot=load_agent_profile().snapshot(),
             session_id=request.session_id,
-            commit=False,
         )
         await self._freeze_skills(
             run.id,

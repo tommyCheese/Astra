@@ -7,7 +7,7 @@ from fake_web_tools import FakeSearch
 from sqlalchemy import create_mock_engine
 from support import DecisionStep, RunRequestBuilder, ScriptedDecisionClient
 
-from app.agent_runtime.policies.reasoning import RunProfileResolver
+from app.agent_runtime.policies.reasoning import resolve_run_profile
 from app.agent_runtime.services.loop import AgentLoop
 from app.core.config import Settings
 from app.db.base import Base
@@ -134,7 +134,7 @@ class TransactionInspectingSearch(FakeSearch):
 
 async def test_tool_execution_does_not_hold_a_database_transaction(session):
     settings = Settings(model_provider="mock", web_search_provider="mock")
-    execution_profile = RunProfileResolver().resolve(
+    execution_profile = resolve_run_profile(
         AnswerMode.standard,
         RequestedReasoningPolicy(execution_mode="auto_approval", reflection_enabled=False),
     )

@@ -24,7 +24,7 @@ from app.schemas.subagents import (
 from app.subagents.coordinator import AgentCoordinator, HierarchicalSemaphoreRegistry
 from app.subagents.eligibility import subagent_execution_eligibility
 from app.subagents.executor import LocalAstraAgentExecutor
-from app.subagents.fan_in import SubagentJoinService, SubagentResultMerger
+from app.subagents.fan_in import SubagentJoinService, merge_subagent_results
 from app.subagents.runtime import SubagentRuntimeOperations
 from app.tools.base import ToolRegistry
 from app.usage_metering import DatabaseUsageRecorder
@@ -224,7 +224,7 @@ class SubagentSupervisor:
                 await joins.validator.validate(execution_id)
                 for execution_id in evaluation.successful_ids
             ]
-            merged = SubagentResultMerger().merge(validated)
+            merged = merge_subagent_results(validated)
             payload = {
                 **deepcopy(merged.__dict__),
                 "group_id": join.group_id,

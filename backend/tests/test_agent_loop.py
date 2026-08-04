@@ -7,9 +7,9 @@ from app.agent_profile import ModelOperation, load_agent_profile
 from app.agent_profile.prompts import PromptComposer
 from app.agent_runtime.policies.reasoning import (
     PolicyCompiler,
-    RunProfileResolver,
     build_default_contract,
     compile_subagent_policy,
+    resolve_run_profile,
 )
 from app.agent_runtime.services.completion import (
     INVALID_ARTIFACT_REFERENCE_WARNING,
@@ -562,7 +562,7 @@ async def test_fast_policy_limits_tool_calls(session):
 
 async def test_standard_mode_uses_deployment_turn_limit(session):
     settings = Settings(model_provider="mock", agent_max_turns=10)
-    profile = RunProfileResolver().resolve(
+    profile = resolve_run_profile(
         AnswerMode.standard,
         RequestedReasoningPolicy(execution_mode="auto_approval"),
     )
@@ -585,7 +585,7 @@ async def test_standard_mode_uses_deployment_turn_limit(session):
 
 async def test_standard_mode_releases_read_transaction_before_model_wait(session):
     settings = Settings(model_provider="mock")
-    profile = RunProfileResolver().resolve(
+    profile = resolve_run_profile(
         AnswerMode.standard,
         RequestedReasoningPolicy(execution_mode="auto_approval"),
     )
@@ -617,7 +617,7 @@ async def test_root_loop_externalizes_oversized_model_observation_but_keeps_tool
             "context_compaction_root_inline_tokens": 1,
         }
     )
-    profile = RunProfileResolver().resolve(
+    profile = resolve_run_profile(
         AnswerMode.standard,
         RequestedReasoningPolicy(execution_mode="auto_approval"),
     )
@@ -646,7 +646,7 @@ async def test_root_loop_externalizes_oversized_model_observation_but_keeps_tool
 
 async def test_standard_mode_reuses_swarm_supervisor_without_creating_a_dag(session):
     settings = Settings(model_provider="mock", tool_swarm_enabled=True)
-    profile = RunProfileResolver().resolve(
+    profile = resolve_run_profile(
         AnswerMode.standard,
         RequestedReasoningPolicy(execution_mode="auto_approval"),
         subagent_policy=compile_subagent_policy(settings),
@@ -684,7 +684,7 @@ async def test_required_standard_mode_cannot_finalize_without_a_swarm_group(sess
         tool_swarm_enabled=True,
         agent_max_turns=2,
     )
-    profile = RunProfileResolver().resolve(
+    profile = resolve_run_profile(
         AnswerMode.standard,
         RequestedReasoningPolicy(execution_mode="auto_approval"),
         subagent_policy=compile_subagent_policy(settings),
@@ -719,7 +719,7 @@ async def test_standard_mode_uses_deployment_tool_limit(session):
         agent_max_turns=20,
         agent_max_tool_calls=7,
     )
-    profile = RunProfileResolver().resolve(
+    profile = resolve_run_profile(
         AnswerMode.standard,
         RequestedReasoningPolicy(execution_mode="auto_approval"),
     )

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -10,7 +10,6 @@ from sqlalchemy.orm import selectinload
 from app.db.model_base import utc_now
 from app.db.models.memory import MemoryRecord
 from app.memory.domain import MemoryNamespace, MemoryStatus
-from app.repositories.memory_time import as_utc
 
 
 class MemoryQueryRepository:
@@ -89,7 +88,7 @@ class MemoryQueryRepository:
             MemoryRecord.memory_key == memory_key,
         )
         if as_of is not None:
-            instant = as_utc(as_of)
+            instant = _as_utc(as_of)
             query = query.where(
                 MemoryRecord.valid_from <= instant,
                 or_(MemoryRecord.valid_to.is_(None), MemoryRecord.valid_to > instant),
@@ -109,3 +108,9 @@ def _status_value(status: str | MemoryStatus) -> str:
     if isinstance(status, MemoryStatus):
         return status.value
     return MemoryStatus(status).value
+
+
+def _as_utc(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)

@@ -21,17 +21,13 @@ from app.memory.consolidation.models import (
 )
 from app.memory.consolidation.validation import validate_proposal
 from app.memory.domain import MemoryStatus
-from app.repositories.memory_audit import record_memory_audit
 from app.repositories.memory_consolidation_outputs import (
-    create_output_memory,
-    supersede_replacements,
-)
-from app.repositories.memory_consolidation_sources import (
-    copy_sources_and_create_links,
-)
-from app.repositories.memory_consolidation_types import (
     PublicationContext,
     RollbackManifest,
+    copy_sources_and_create_links,
+    create_output_memory,
+    record_memory_audit,
+    supersede_replacements,
 )
 
 

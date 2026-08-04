@@ -12,7 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent_profile import load_agent_profile
-from app.agent_runtime.policies.reasoning import RunProfileResolver, compile_subagent_policy
+from app.agent_runtime.policies.reasoning import compile_subagent_policy, resolve_run_profile
 from app.api.skill_diff import skill_git_diff as _git_diff
 from app.api.skill_metrics import build_skill_metrics
 from app.api.skill_views import (
@@ -634,7 +634,7 @@ async def create_skill_test_run(
     service = SkillService(session, settings)
     try:
         test_revision = await service.create_test_revision(skill_id, payload.revision_token)
-        profile = RunProfileResolver().resolve(
+        profile = resolve_run_profile(
             payload.answer_mode,
             RequestedReasoningPolicy(),
             plan_execution=(PlanExecution.auto if payload.answer_mode.value == "trusted" else None),
@@ -655,7 +655,6 @@ async def create_skill_test_run(
             answer_mode=profile.answer_mode.value,
             execution_profile=profile.model_dump(mode="json"),
             agent_profile_snapshot=load_agent_profile().snapshot(),
-            commit=False,
         )
         catalog_builder = SkillCatalogBuilder(
             session, metadata_chars=settings.skills_catalog_metadata_chars

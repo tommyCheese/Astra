@@ -1,16 +1,130 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
 
-from sqlalchemy import update
+from sqlalchemy import func, select, update
 
 from app.db.model_base import uuid_str
-from app.db.models.memory import MemoryRecord
-from app.memory.consolidation.models import ConsolidationConflictError, ConsolidationOperation
+from app.db.models.memory import (
+    MemoryAuditRecord,
+    MemoryConsolidationJobRecord,
+    MemoryLinkRecord,
+    MemoryRecord,
+    MemorySourceRecord,
+)
+from app.memory.consolidation.models import (
+    ConsolidationConflictError,
+    ConsolidationInputManifest,
+    ConsolidationOperation,
+    ConsolidationProposal,
+)
 from app.memory.domain import MemoryStatus
-from app.repositories.memory_audit import record_memory_audit
-from app.repositories.memory_consolidation_sources import next_memory_version
-from app.repositories.memory_consolidation_types import PublicationContext
+
+
+@dataclass(frozen=True)
+class PublicationContext:
+    job: MemoryConsolidationJobRecord
+    manifest: ConsolidationInputManifest
+    proposal: ConsolidationProposal
+    source_by_id: dict[str, MemoryRecord]
+    published_at: datetime
+
+
+@dataclass(frozen=True)
+class RollbackManifest:
+    original: MemoryConsolidationJobRecord
+    outputs: list[dict[str, Any]]
+    replacements: list[dict[str, Any]]
+    rolled_back_at: datetime
+
+
+def record_memory_audit(
+    session: Any,
+    memory_id: str,
+    event_type: str,
+    actor: str | None,
+    reason: str | None,
+    payload: dict[str, Any],
+    created_at: datetime,
+) -> None:
+    session.add(
+        MemoryAuditRecord(
+            memory_id=memory_id,
+            event_type=event_type,
+            actor=actor,
+            reason=reason,
+            payload=payload,
+            created_at=created_at,
+        )
+    )
+
+
+async def next_memory_version(
+    session: Any, manifest: ConsolidationInputManifest, memory_key: str
+) -> int:
+    current = await session.scalar(
+        select(func.coalesce(func.max(MemoryRecord.version), 0)).where(
+            MemoryRecord.namespace_type == manifest.namespace_type,
+            MemoryRecord.namespace_id == manifest.namespace_id,
+            MemoryRecord.memory_key == memory_key,
+        )
+    )
+    return int(current) + 1
+
+
+def copy_sources_and_create_links(
+    session: Any,
+    operation: ConsolidationOperation,
+    source_memories: list[MemoryRecord],
+    output_id: str,
+    *,
+    job_id: str,
+    published_at: datetime,
+) -> None:
+    copied_sources: set[tuple[str, str]] = set()
+    for source_memory in source_memories:
+        for source in source_memory.sources:
+            identity = (source.source_kind, source.source_ref)
+            if identity in copied_sources or not source.accessible or source.revoked_at is not None:
+                continue
+            copied_sources.add(identity)
+            session.add(_copy_source(source, output_id, published_at))
+        session.add(
+            MemoryLinkRecord(
+                source_memory_id=output_id,
+                target_memory_id=source_memory.id,
+                relation=(
+                    "supersedes"
+                    if source_memory.id in operation.replace_memory_ids
+                    else "derived_from"
+                ),
+                link_data={
+                    "consolidation_job_id": job_id,
+                    "operation_id": operation.operation_id,
+                },
+                created_at=published_at,
+            )
+        )
+
+
+def _copy_source(
+    source: MemorySourceRecord, output_id: str, created_at: datetime
+) -> MemorySourceRecord:
+    return MemorySourceRecord(
+        memory_id=output_id,
+        source_kind=source.source_kind,
+        source_ref=source.source_ref,
+        source_hash=source.source_hash,
+        run_id=source.run_id,
+        turn_id=source.turn_id,
+        tool_call_id=source.tool_call_id,
+        artifact_id=source.artifact_id,
+        source_data=source.source_data,
+        accessible=True,
+        created_at=created_at,
+    )
 
 
 async def create_output_memory(

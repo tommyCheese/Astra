@@ -30,6 +30,15 @@ class ForbiddenDependency:
 
 
 @dataclass(frozen=True)
+class ComplexityBudget:
+    production_lines: int
+    modules: int
+    classes: int
+    functions: int
+    public_symbols: int
+
+
+@dataclass(frozen=True)
 class ArchitectureRules:
     default_budget: QualityBudget
     hard_limit: QualityBudget
@@ -37,6 +46,8 @@ class ArchitectureRules:
     typed_module_prefixes: tuple[str, ...]
     forbidden_generic_module_names: tuple[str, ...]
     forbidden_top_level_packages: tuple[str, ...]
+    forbidden_compatibility_symbol_terms: tuple[str, ...]
+    complexity_budget: ComplexityBudget
 
 
 @dataclass(frozen=True)
@@ -63,6 +74,10 @@ def load_rules(path: Path) -> ArchitectureRules:
         typed_module_prefixes=tuple(raw_rules["typed_module_prefixes"]),
         forbidden_generic_module_names=tuple(raw_rules["forbidden_generic_module_names"]),
         forbidden_top_level_packages=tuple(raw_rules["forbidden_top_level_packages"]),
+        forbidden_compatibility_symbol_terms=tuple(
+            raw_rules["forbidden_compatibility_symbol_terms"]
+        ),
+        complexity_budget=ComplexityBudget(**raw_rules["complexity_budget"]),
     )
 
 
@@ -188,7 +203,51 @@ def quality_baseline(
         "forbidden_edges": [list(edge) for edge in sorted(edges)],
         "cyclic_pairs": [list(pair) for pair in sorted(cyclic_pairs(inventory))],
         "type_ignore_counts": type_ignore_counts(source_root),
+        "one_operation_classes": one_operation_classes(source_root),
+        "compatibility_symbols": compatibility_symbols(source_root, rules),
     }
+
+
+def one_operation_classes(source_root: Path) -> list[str]:
+    """Find internal behavior classes whose boundary needs explicit justification."""
+    findings: list[str] = []
+    resolved_root = source_root.resolve()
+    for source_file in resolved_root.rglob("*.py"):
+        tree = ast.parse(source_file.read_text(encoding="utf-8"), filename=str(source_file))
+        module = ".".join(source_file.relative_to(resolved_root.parent).with_suffix("").parts)
+        for statement in tree.body:
+            if not isinstance(statement, ast.ClassDef) or statement.name.startswith("_"):
+                continue
+            bases = {ast.unparse(base).rsplit(".", 1)[-1] for base in statement.bases}
+            decorators = {ast.unparse(item).split("(", 1)[0] for item in statement.decorator_list}
+            if bases & {"Base", "BaseModel", "Protocol", "ABC", "Enum"}:
+                continue
+            if "dataclass" in decorators or statement.name.endswith(("Error", "Exception")):
+                continue
+            operations = [
+                item
+                for item in statement.body
+                if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))
+                and not item.name.startswith("_")
+            ]
+            if len(operations) == 1:
+                findings.append(f"{module}:{statement.name}")
+    return sorted(findings)
+
+
+def compatibility_symbols(source_root: Path, rules: ArchitectureRules) -> list[str]:
+    terms = tuple(term.lower() for term in rules.forbidden_compatibility_symbol_terms)
+    findings: list[str] = []
+    resolved_root = source_root.resolve()
+    for source_file in resolved_root.rglob("*.py"):
+        tree = ast.parse(source_file.read_text(encoding="utf-8"), filename=str(source_file))
+        module = ".".join(source_file.relative_to(resolved_root.parent).with_suffix("").parts)
+        for statement in tree.body:
+            if isinstance(
+                statement, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)
+            ) and any(term in statement.name.lower() for term in terms):
+                findings.append(f"{module}:{statement.name}")
+    return sorted(findings)
 
 
 def exception_is_valid(exception: QualityException | None) -> bool:
@@ -314,6 +373,31 @@ def check_role_package_names(
             yield f"{module.module} creates a global technical package"
 
 
+def check_structural_budget(
+    inventory: ArchitectureInventory,
+    rules: ArchitectureRules,
+    baseline: dict[str, Any],
+    source_root: Path,
+) -> Iterable[str]:
+    budget = rules.complexity_budget
+    metrics = {
+        "production lines": (inventory.production_lines, budget.production_lines),
+        "modules": (inventory.module_count, budget.modules),
+        "classes": (inventory.class_count, budget.classes),
+        "functions": (len(inventory.functions), budget.functions),
+        "public symbols": (inventory.public_symbol_count, budget.public_symbols),
+    }
+    for label, (actual, maximum) in metrics.items():
+        if actual > maximum:
+            yield f"{label} exceed complexity budget ({actual} > {maximum})"
+    existing_classes = set(baseline.get("one_operation_classes", []))
+    for symbol in sorted(set(one_operation_classes(source_root)) - existing_classes):
+        yield f"new one-operation internal class requires justification: {symbol}"
+    existing_compatibility = set(baseline.get("compatibility_symbols", []))
+    for symbol in sorted(set(compatibility_symbols(source_root, rules)) - existing_compatibility):
+        yield f"new compatibility symbol is forbidden: {symbol}"
+
+
 def check_architecture(
     inventory: ArchitectureInventory,
     rules: ArchitectureRules,
@@ -326,6 +410,7 @@ def check_architecture(
         *check_function_budgets(inventory, rules, baseline, exceptions),
         *check_typed_boundaries(source_root, rules),
         *check_role_package_names(inventory, rules),
+        *check_structural_budget(inventory, rules, baseline, source_root),
     ]
     current_forbidden = forbidden_edges(dependency_edges(inventory), rules)
     baseline_forbidden = {tuple(edge) for edge in baseline["forbidden_edges"]}

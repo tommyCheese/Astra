@@ -19,10 +19,10 @@ from app.schemas.subagents import (
     SubagentExecutionStatus,
 )
 from app.subagents.budget import (
-    AdaptiveDelegationGate,
     DelegationGateInput,
     HierarchicalBudgetError,
     HierarchicalBudgetManager,
+    evaluate_delegation,
 )
 from app.subagents.coordinator import AgentCoordinator, HierarchicalSemaphoreRegistry
 
@@ -327,8 +327,7 @@ async def test_provider_semaphore_prevents_child_node_slot_multiplication(tmp_pa
 
 
 def test_adaptive_delegation_gate_accepts_breadth_and_rejects_negative_cases():
-    gate = AdaptiveDelegationGate()
-    breadth = gate.evaluate(
+    breadth = evaluate_delegation(
         DelegationGateInput(
             complexity=0.9,
             independence=0.95,
@@ -339,7 +338,7 @@ def test_adaptive_delegation_gate_accepts_breadth_and_rejects_negative_cases():
             budget_fraction_remaining=0.8,
         )
     )
-    simple = gate.evaluate(
+    simple = evaluate_delegation(
         DelegationGateInput(
             complexity=0.2,
             independence=0.2,
@@ -351,7 +350,7 @@ def test_adaptive_delegation_gate_accepts_breadth_and_rejects_negative_cases():
             simple_atomic=True,
         )
     )
-    conflict = gate.evaluate(
+    conflict = evaluate_delegation(
         DelegationGateInput(
             complexity=1,
             independence=0.8,

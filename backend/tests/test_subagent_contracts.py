@@ -5,8 +5,8 @@ from pydantic import ValidationError
 
 from app.agent_runtime.policies.reasoning import (
     PolicyCompiler,
-    RunProfileResolver,
     compile_subagent_policy,
+    resolve_run_profile,
 )
 from app.core.config import Settings
 from app.schemas.agent.run_policy import RequestedReasoningPolicy
@@ -201,12 +201,12 @@ def test_swarm_tool_switch_is_the_product_enablement_gate():
 def test_standard_profile_uses_a_clamped_shared_subagent_policy():
     policy = compile_subagent_policy(Settings(tool_swarm_enabled=True))
 
-    standard = RunProfileResolver().resolve(
+    standard = resolve_run_profile(
         AnswerMode.standard,
         RequestedReasoningPolicy(),
         subagent_policy=policy,
     )
-    trusted = RunProfileResolver().resolve(
+    trusted = resolve_run_profile(
         AnswerMode.trusted,
         RequestedReasoningPolicy(),
         plan_execution=PlanExecution.auto,

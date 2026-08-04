@@ -30,10 +30,10 @@ from app.schemas.subagents import (
     SubagentQuestion,
 )
 from app.subagents.budget import (
-    AdaptiveDelegationGate,
     DelegationGateInput,
     HierarchicalBudgetError,
     HierarchicalBudgetManager,
+    evaluate_delegation,
 )
 from app.subagents.context import (
     SubagentContextComposer,
@@ -84,7 +84,6 @@ class SubagentRuntimeOperations:
                 "cost_usd": policy.budgets.parent_cost_reserve_usd,
             },
         )
-        self.delegation_gate = AdaptiveDelegationGate()
 
     async def delegate_task(
         self,
@@ -126,7 +125,7 @@ class SubagentRuntimeOperations:
                 DelegationRejectionCode.feature_disabled,
                 "Subagent execution is disabled by the frozen Run policy.",
             )
-        gate = self.delegation_gate.evaluate(self._gate_input(request))
+        gate = evaluate_delegation(self._gate_input(request))
         if not gate.allowed:
             await self._record_gate_decision(
                 parent_id, request, gate, "subagent.delegation_rejected", commit

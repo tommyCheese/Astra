@@ -43,5 +43,17 @@
     "services",
     "utilities",
     "validators"
-  ]
+  ],
+  "forbidden_compatibility_symbol_terms": [
+    "legacy",
+    "deprecated",
+    "compatibility"
+  ],
+  "complexity_budget": {
+    "production_lines": 61539,
+    "modules": 298,
+    "classes": 766,
+    "functions": 2473,
+    "public_symbols": 1249
+  }
 }

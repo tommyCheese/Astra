@@ -38,6 +38,7 @@ class ArchitectureInventory:
     source_root: str
     production_lines: int
     module_count: int
+    class_count: int
     public_symbol_count: int
     modules: tuple[ModuleMetric, ...]
     functions: tuple[FunctionMetric, ...]
@@ -213,10 +214,12 @@ def build_inventory(source_root: Path) -> ArchitectureInventory:
     resolved_root = source_root.resolve()
     modules: list[ModuleMetric] = []
     functions: list[FunctionMetric] = []
+    class_count = 0
 
     for source_file in sorted(resolved_root.rglob("*.py")):
         source_text = source_file.read_text(encoding="utf-8")
         module_tree = ast.parse(source_text, filename=str(source_file))
+        class_count += sum(isinstance(node, ast.ClassDef) for node in ast.walk(module_tree))
         current_module = module_name(resolved_root, source_file)
         modules.append(
             ModuleMetric(
@@ -235,6 +238,7 @@ def build_inventory(source_root: Path) -> ArchitectureInventory:
         source_root=str(resolved_root),
         production_lines=sum(module.lines for module in modules),
         module_count=len(modules),
+        class_count=class_count,
         public_symbol_count=sum(len(module.public_symbols) for module in modules),
         modules=tuple(modules),
         functions=tuple(functions),
@@ -257,6 +261,7 @@ def render_markdown(inventory: ArchitectureInventory, *, limit: int) -> str:
         "",
         f"- Production lines: {inventory.production_lines}",
         f"- Modules: {inventory.module_count}",
+        f"- Classes: {inventory.class_count}",
         f"- Public symbols: {inventory.public_symbol_count}",
         f"- Functions and methods: {len(inventory.functions)}",
         "",

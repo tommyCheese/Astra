@@ -6,7 +6,7 @@ from fake_web_tools import fake_web_registry
 from sqlalchemy import event, select
 
 from app.agent_profile import load_agent_profile
-from app.agent_runtime.policies.reasoning import RunProfileResolver, build_default_contract
+from app.agent_runtime.policies.reasoning import build_default_contract, resolve_run_profile
 from app.core.config import Settings
 from app.db.models.permissions import AgentIdentityRecord, ToolCatalogSnapshotRecord
 from app.db.models.workspaces import TaskWorkspaceRecord, WorkspaceCheckpointRecord
@@ -339,7 +339,7 @@ class QuickForbiddenToolClient(QuickStreamingClient):
 async def test_engine_completes_mock_web_query(session):
     settings = Settings(model_provider="mock", web_search_provider="mock")
     repo = RunUnitOfWork(session)
-    profile = RunProfileResolver().resolve(
+    profile = resolve_run_profile(
         AnswerMode.trusted,
         RequestedReasoningPolicy(execution_mode="auto_approval"),
         plan_execution=PlanExecution.auto,
@@ -409,7 +409,7 @@ async def test_engine_completes_mock_web_query(session):
 
 async def test_trusted_skill_checks_become_provenanced_completion_criteria():
     settings = Settings(model_provider="mock")
-    profile = RunProfileResolver().resolve(
+    profile = resolve_run_profile(
         AnswerMode.trusted,
         RequestedReasoningPolicy(execution_mode="auto_approval"),
         plan_execution=PlanExecution.auto,
@@ -443,7 +443,7 @@ async def test_trusted_skill_checks_become_provenanced_completion_criteria():
 async def test_weather_plan_executes_nodes_in_dependency_order(session):
     settings = Settings(model_provider="mock")
     repo = RunUnitOfWork(session)
-    profile = RunProfileResolver().resolve(
+    profile = resolve_run_profile(
         AnswerMode.trusted,
         RequestedReasoningPolicy(execution_mode="auto_approval"),
         plan_execution=PlanExecution.auto,
@@ -474,7 +474,7 @@ async def test_weather_plan_executes_nodes_in_dependency_order(session):
 async def test_trusted_confirmation_activates_exact_plan_once_before_execution(session):
     settings = Settings(model_provider="mock")
     repo = RunUnitOfWork(session)
-    profile = RunProfileResolver().resolve(
+    profile = resolve_run_profile(
         AnswerMode.trusted,
         RequestedReasoningPolicy(execution_mode="auto_approval"),
         plan_execution=PlanExecution.confirm,
@@ -577,7 +577,7 @@ async def test_streamed_answer_is_not_replaced_after_late_model_validation_error
     session, answer_mode
 ):
     settings = Settings(model_provider="mock")
-    profile = RunProfileResolver().resolve(
+    profile = resolve_run_profile(
         answer_mode,
         RequestedReasoningPolicy(execution_mode="auto_approval"),
         plan_execution=PlanExecution.auto if answer_mode == AnswerMode.trusted else None,
@@ -613,7 +613,7 @@ async def test_streamed_answer_is_not_resynthesized_when_answer_object_is_missin
     session, answer_mode
 ):
     settings = Settings(model_provider="mock")
-    profile = RunProfileResolver().resolve(
+    profile = resolve_run_profile(
         answer_mode,
         RequestedReasoningPolicy(execution_mode="auto_approval"),
         plan_execution=PlanExecution.auto if answer_mode == AnswerMode.trusted else None,
@@ -645,7 +645,7 @@ async def test_streamed_answer_is_not_resynthesized_when_answer_object_is_missin
 
 async def test_final_plan_node_answer_is_regenerated_as_canonical_stream(session):
     settings = Settings(model_provider="mock")
-    profile = RunProfileResolver().resolve(
+    profile = resolve_run_profile(
         AnswerMode.trusted,
         RequestedReasoningPolicy(),
         plan_execution=PlanExecution.auto,
@@ -682,7 +682,7 @@ async def test_final_plan_node_answer_is_regenerated_as_canonical_stream(session
 
 async def test_standard_fast_path_skips_plan_state_and_all_quality_gates(session):
     settings = Settings(model_provider="mock")
-    profile = RunProfileResolver().resolve(
+    profile = resolve_run_profile(
         AnswerMode.standard, RequestedReasoningPolicy(execution_mode="auto_approval")
     )
     repo = RunUnitOfWork(session)
@@ -776,7 +776,7 @@ async def test_standard_fast_path_skips_plan_state_and_all_quality_gates(session
 
 async def test_standard_ask_user_uses_a_user_facing_fallback_question(session):
     settings = Settings(model_provider="mock", tool_swarm_enabled=False)
-    profile = RunProfileResolver().resolve(
+    profile = resolve_run_profile(
         AnswerMode.standard, RequestedReasoningPolicy(execution_mode="auto_approval")
     )
     repo = RunUnitOfWork(session)
@@ -807,7 +807,7 @@ async def test_standard_ask_user_uses_a_user_facing_fallback_question(session):
 
 async def test_standard_fast_path_defers_permission_records_until_after_first_delta(session):
     settings = Settings(model_provider="mock")
-    profile = RunProfileResolver().resolve(
+    profile = resolve_run_profile(
         AnswerMode.standard, RequestedReasoningPolicy(execution_mode="auto_approval")
     )
     repo = RunUnitOfWork(session)
@@ -861,7 +861,7 @@ async def test_standard_fast_path_defers_permission_records_until_after_first_de
 
 async def test_standard_fast_path_reuses_tool_router_without_creating_steps(session):
     settings = Settings(model_provider="mock")
-    profile = RunProfileResolver().resolve(
+    profile = resolve_run_profile(
         AnswerMode.standard, RequestedReasoningPolicy(execution_mode="auto_approval")
     )
     repo = RunUnitOfWork(session)
@@ -892,7 +892,7 @@ async def test_standard_fast_path_reuses_tool_router_without_creating_steps(sess
 
 async def test_standard_fast_path_keeps_tool_router_security_boundary(session):
     settings = Settings(model_provider="mock")
-    profile = RunProfileResolver().resolve(AnswerMode.standard, RequestedReasoningPolicy())
+    profile = resolve_run_profile(AnswerMode.standard, RequestedReasoningPolicy())
     repo = RunUnitOfWork(session)
     run = await repo.create_task_run(
         "调用禁止工具",
@@ -985,7 +985,7 @@ class EffortSpyClient(MockModelClient):
 async def test_engine_binds_effective_reasoning_effort_before_model_operations(session):
     settings = Settings(model_provider="mock", web_search_provider="mock")
     repo = RunUnitOfWork(session)
-    profile = RunProfileResolver().resolve(
+    profile = resolve_run_profile(
         AnswerMode.trusted,
         RequestedReasoningPolicy(reasoning_effort="deep"),
         plan_execution=PlanExecution.auto,
@@ -1026,7 +1026,7 @@ async def test_engine_binds_effective_reasoning_effort_before_model_operations(s
 
 async def test_disabled_model_thinking_does_not_suppress_public_process_events(session):
     settings = Settings(model_provider="mock", web_search_provider="mock")
-    profile = RunProfileResolver().resolve(
+    profile = resolve_run_profile(
         AnswerMode.standard,
         RequestedReasoningPolicy(),
     )
@@ -1065,7 +1065,7 @@ async def test_disabled_model_thinking_does_not_suppress_public_process_events(s
 
 async def test_standard_profile_skips_planning_and_quality_assurance_objects(session):
     settings = Settings(model_provider="mock", web_search_provider="mock")
-    profile = RunProfileResolver().resolve(
+    profile = resolve_run_profile(
         AnswerMode.standard,
         RequestedReasoningPolicy(reasoning_effort="deep", execution_mode="auto_approval"),
     )
@@ -1098,7 +1098,7 @@ async def test_standard_profile_skips_planning_and_quality_assurance_objects(ses
 async def test_trusted_engine_always_builds_contract_and_complete_plan(session):
     settings = Settings(model_provider="mock", web_search_provider="mock")
     repo = RunUnitOfWork(session)
-    profile = RunProfileResolver().resolve(
+    profile = resolve_run_profile(
         AnswerMode.trusted,
         RequestedReasoningPolicy(),
         plan_execution=PlanExecution.auto,
@@ -1123,7 +1123,7 @@ async def test_trusted_engine_always_builds_contract_and_complete_plan(session):
 async def test_follow_up_contract_excludes_private_conversation_transcript(session):
     settings = Settings(model_provider="mock", web_search_provider="mock")
     repo = RunUnitOfWork(session)
-    profile = RunProfileResolver().resolve(
+    profile = resolve_run_profile(
         AnswerMode.trusted,
         RequestedReasoningPolicy(),
         plan_execution=PlanExecution.confirm,
@@ -1160,7 +1160,7 @@ async def test_follow_up_contract_excludes_private_conversation_transcript(sessi
 async def test_engine_falls_back_when_model_returns_empty_plan(session):
     settings = Settings(model_provider="mock", web_search_provider="mock")
     repo = RunUnitOfWork(session)
-    profile = RunProfileResolver().resolve(
+    profile = resolve_run_profile(
         AnswerMode.trusted,
         RequestedReasoningPolicy(),
         plan_execution=PlanExecution.confirm,
@@ -1186,7 +1186,7 @@ async def test_engine_falls_back_when_model_returns_empty_plan(session):
 async def test_trusted_engine_falls_back_when_plan_requests_unavailable_capability(session):
     settings = Settings(model_provider="mock", web_search_provider="mock")
     repo = RunUnitOfWork(session)
-    profile = RunProfileResolver().resolve(
+    profile = resolve_run_profile(
         AnswerMode.trusted,
         RequestedReasoningPolicy(),
         plan_execution=PlanExecution.confirm,
@@ -1215,7 +1215,7 @@ async def test_trusted_engine_falls_back_when_plan_requests_unavailable_capabili
 async def test_engine_replays_recorded_checkpoint_without_duplicate_tool_call(session):
     settings = Settings(model_provider="mock", web_search_provider="mock")
     repo = RunUnitOfWork(session)
-    profile = RunProfileResolver().resolve(
+    profile = resolve_run_profile(
         AnswerMode.trusted,
         RequestedReasoningPolicy(),
         plan_execution=PlanExecution.auto,

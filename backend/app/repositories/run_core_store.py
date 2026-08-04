@@ -1,18 +1,90 @@
 import uuid
 from copy import deepcopy
+from dataclasses import dataclass
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import and_, func, select
 
+from app.agent_profile import AgentProfile, load_agent_profile
+from app.agent_runtime.policies.reasoning import resolve_run_profile
+from app.contracts.json_values import JsonObject
 from app.db.model_base import utc_now
 from app.db.models.conversations import TaskRecord
 from app.db.models.executions import AgentExecutionRecord
-from app.db.models.runs import RunRecord
-from app.repositories.run_store_support import safe_agent_profile_manifest
-from app.run_management.run_configuration import (
-    PreparedRunConfiguration,
-    prepare_run_configuration,
+from app.db.models.runs import RunEventRecord, RunRecord
+from app.model_clients.reasoning import normalize_model_thinking
+from app.repositories.run_query_store import safe_agent_profile_manifest
+from app.schemas.agent.run_policy import (
+    ReasoningPolicySnapshot,
+    RequestedReasoningPolicy,
+    RunExecutionProfile,
 )
+from app.schemas.agent.types import AnswerMode, PlanExecution
+
+
+@dataclass(frozen=True)
+class PreparedRunConfiguration:
+    answer_mode: str
+    execution_profile: JsonObject
+    reasoning_policy: JsonObject
+    model_policy: JsonObject
+    agent_profile_snapshot: JsonObject
+
+
+def prepare_run_configuration(
+    *,
+    model_policy: JsonObject,
+    reasoning_policy: JsonObject | None,
+    answer_mode: str,
+    execution_profile: JsonObject | None,
+    agent_profile_snapshot: JsonObject | None,
+) -> PreparedRunConfiguration:
+    profile = _execution_profile(reasoning_policy, answer_mode, execution_profile)
+    frozen_reasoning = (
+        ReasoningPolicySnapshot.model_validate(reasoning_policy)
+        if reasoning_policy is not None
+        else profile.reasoning_policy
+    )
+    snapshot = agent_profile_snapshot or load_agent_profile().snapshot()
+    AgentProfile.from_snapshot(snapshot)
+    return PreparedRunConfiguration(
+        answer_mode=profile.answer_mode.value,
+        execution_profile=profile.model_dump(mode="json"),
+        reasoning_policy=frozen_reasoning.model_dump(mode="json"),
+        model_policy=_model_policy(model_policy),
+        agent_profile_snapshot=deepcopy(snapshot),
+    )
+
+
+def _execution_profile(
+    reasoning_policy: JsonObject | None,
+    answer_mode: str,
+    execution_profile: JsonObject | None,
+) -> RunExecutionProfile:
+    if execution_profile is not None:
+        return RunExecutionProfile.model_validate(execution_profile)
+    resolved_mode = AnswerMode.trusted if reasoning_policy is not None else AnswerMode(answer_mode)
+    profile = resolve_run_profile(
+        resolved_mode,
+        RequestedReasoningPolicy(),
+        plan_execution=PlanExecution.auto if resolved_mode == AnswerMode.trusted else None,
+    )
+    if reasoning_policy is None:
+        return profile
+    return profile.model_copy(
+        update={"reasoning_policy": ReasoningPolicySnapshot.model_validate(reasoning_policy)}
+    )
+
+
+def _model_policy(model_policy: JsonObject) -> JsonObject:
+    if isinstance(model_policy.get("thinking"), dict):
+        return deepcopy(model_policy)
+    thinking = normalize_model_thinking(
+        provider=str(model_policy.get("provider") or "mock"),
+        model=str(model_policy.get("model") or "mock"),
+        selection=None,
+    )
+    return {**model_policy, "thinking": thinking.model_dump(mode="json")}
 
 
 class RunCoreStore:
@@ -27,7 +99,6 @@ class RunCoreStore:
         execution_profile: dict[str, Any] | None = None,
         agent_profile_snapshot: dict[str, Any] | None = None,
         session_id: str | None = None,
-        commit: bool = True,
     ) -> RunRecord:
         now = utc_now()
         prepared = prepare_run_configuration(
@@ -43,7 +114,7 @@ class RunCoreStore:
         await self.session.flush()
         self.session.add(self._root_execution(run, task, prepared, now))
         await self.session.flush()
-        await self._record_created_run(run, goal, prepared, commit)
+        await self._record_created_run(run, goal, prepared)
         return run
 
     async def _task_for_run(
@@ -135,7 +206,6 @@ class RunCoreStore:
         run: RunRecord,
         goal: str,
         prepared: PreparedRunConfiguration,
-        commit: bool,
     ) -> None:
         await self.add_event(run.id, "run.created", {"goal": goal, "status": run.status})
         if prepared.agent_profile_snapshot:
@@ -144,10 +214,7 @@ class RunCoreStore:
                 "agent_profile.frozen",
                 {"profile": safe_agent_profile_manifest(prepared.agent_profile_snapshot)},
             )
-        if commit:
-            await self.session.flush()
-        else:
-            await self.session.flush()
+        await self.session.flush()
 
     async def freeze_agent_profile_snapshot(
         self,
@@ -286,3 +353,98 @@ class RunCoreStore:
         )
         await self.session.flush()
         return run
+
+    async def add_event(
+        self,
+        run_id: str,
+        event_type: str,
+        payload: dict[str, Any],
+        *,
+        flush: bool = True,
+        agent_execution_id: str | None = None,
+    ) -> RunEventRecord:
+        event_payload = deepcopy(payload)
+        if agent_execution_id is not None:
+            execution = await self.session.get(AgentExecutionRecord, agent_execution_id)
+            if execution is not None and execution.run_id == run_id:
+                event_payload = {
+                    **event_payload,
+                    "agent_execution_id": execution.id,
+                    "parent_execution_id": execution.parent_execution_id,
+                    "agent_status": execution.status,
+                    "agent_phase": execution.phase,
+                    "agent_wait_reason": execution.wait_reason,
+                    "agent_budget_usage": deepcopy(execution.budget_usage or {}),
+                    "causation_id": next(
+                        (
+                            str(event_payload[key])
+                            for key in (
+                                "tool_call_id",
+                                "node_execution_id",
+                                "approval_id",
+                                "request_id",
+                            )
+                            if event_payload.get(key) is not None
+                        ),
+                        None,
+                    ),
+                }
+        event = RunEventRecord(
+            run_id=run_id,
+            agent_execution_id=agent_execution_id,
+            type=event_type,
+            payload=event_payload,
+        )
+        self.session.add(event)
+        if flush:
+            await self.session.flush()
+        return event
+
+    async def list_events(self, run_id: str, after_id: int = 0) -> list[RunEventRecord]:
+        result = await self.session.execute(
+            select(RunEventRecord)
+            .where(RunEventRecord.run_id == run_id, RunEventRecord.id > after_id)
+            .order_by(RunEventRecord.id)
+        )
+        return list(result.scalars().all())
+
+    async def event_cursor_counts(
+        self, run_id: str, through_id: int = 0
+    ) -> tuple[int, dict[str, int]]:
+        conditions = [RunEventRecord.run_id == run_id]
+        if through_id > 0:
+            conditions.append(RunEventRecord.id <= through_id)
+        run_sequence = int(
+            await self.session.scalar(
+                select(func.count(RunEventRecord.id)).where(*conditions)
+            )
+            or 0
+        )
+        rows = (
+            await self.session.execute(
+                select(RunEventRecord.agent_execution_id, func.count(RunEventRecord.id))
+                .where(*conditions, RunEventRecord.agent_execution_id.is_not(None))
+                .group_by(RunEventRecord.agent_execution_id)
+            )
+        ).all()
+        return run_sequence, {str(agent_id): int(count) for agent_id, count in rows}
+
+    async def list_events_with_status(
+        self, run_id: str, after_id: int = 0
+    ) -> tuple[list[RunEventRecord], str | None]:
+        result = await self.session.execute(
+            select(RunRecord.status, RunEventRecord)
+            .outerjoin(
+                RunEventRecord,
+                and_(
+                    RunEventRecord.run_id == RunRecord.id,
+                    RunEventRecord.id > after_id,
+                ),
+            )
+            .where(RunRecord.id == run_id)
+            .order_by(RunEventRecord.id)
+        )
+        rows = result.all()
+        if not rows:
+            return [], None
+        return [event for _, event in rows if event is not None], rows[0][0]

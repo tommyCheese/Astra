@@ -306,24 +306,22 @@ class SubagentContextComposer:
         return accepted, total
 
 
-class SubagentContextCheckpointService:
-    def compress(
-        self,
-        *,
-        composed: ComposedSubagentContext,
-        local_summary: str,
-        local_facts: list[dict[str, Any]],
-        prior: SubagentContextCheckpoint | None = None,
-    ) -> SubagentContextCheckpoint:
-        return SubagentContextCheckpoint(
-            agent_execution_id=composed.manifest.agent_execution_id,
-            manifest_hash=composed.manifest_hash,
-            local_summary=local_summary,
-            local_facts=tuple(deepcopy(local_facts)),
-            continuation_round_trips=(prior.continuation_round_trips if prior else 0),
-            continuation_answers=(prior.continuation_answers if prior else ()),
-            created_at=utc_now(),
-        )
+def create_context_checkpoint(
+    *,
+    composed: ComposedSubagentContext,
+    local_summary: str,
+    local_facts: list[dict[str, Any]],
+    prior: SubagentContextCheckpoint | None = None,
+) -> SubagentContextCheckpoint:
+    return SubagentContextCheckpoint(
+        agent_execution_id=composed.manifest.agent_execution_id,
+        manifest_hash=composed.manifest_hash,
+        local_summary=local_summary,
+        local_facts=tuple(deepcopy(local_facts)),
+        continuation_round_trips=(prior.continuation_round_trips if prior else 0),
+        continuation_answers=(prior.continuation_answers if prior else ()),
+        created_at=utc_now(),
+    )
 
 
 class SubagentContinuationService:

@@ -9,7 +9,6 @@ from app.plugins.builtin_components import (
     BashResultProcessor,
     ChartArtifactValidator,
     ChartResultProcessor,
-    LegacyRawResultAdapter,
     WebEvidenceValidator,
     WebResultProcessor,
 )
@@ -96,13 +95,10 @@ def _provider(
                 "trust_level": descriptor.trust_level,
             }
         )
-        legacy_raw = provider_id == "astra.web"
         bound_tools.append(
             ToolContribution(
                 tool=tool,
                 executor_id="in_process",
-                result_adapter_id="legacy.raw.v0" if legacy_raw else "envelope.v1",
-                result_adapter_factory=LegacyRawResultAdapter if legacy_raw else None,
             )
         )
 

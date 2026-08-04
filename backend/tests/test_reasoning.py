@@ -6,13 +6,13 @@ from app.agent_runtime.policies.reasoning import (
     ObservationEvaluator,
     PolicyCompiler,
     ReflectionGate,
-    RunProfileResolver,
     StateVersionConflict,
     apply_reflection_patch,
     apply_validation_outcomes,
     build_default_contract,
     failure_fingerprint,
     normalize_contract,
+    resolve_run_profile,
     validate_contract,
 )
 from app.agent_runtime.result_adapters import WebTaskAdapter
@@ -50,7 +50,7 @@ def test_policy_defaults_and_safety_floor():
 
 
 def test_standard_profile_is_fixed_and_preserves_execution_approval():
-    profile = RunProfileResolver().resolve(
+    profile = resolve_run_profile(
         AnswerMode.standard,
         RequestedReasoningPolicy(
             reasoning_effort="deep",
@@ -73,7 +73,7 @@ def test_standard_profile_is_fixed_and_preserves_execution_approval():
 
 
 def test_trusted_profile_uses_complete_plan_and_full_assurance():
-    profile = RunProfileResolver().resolve(
+    profile = resolve_run_profile(
         AnswerMode.trusted,
         RequestedReasoningPolicy(
             reasoning_effort="deep",

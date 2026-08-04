@@ -25,11 +25,11 @@ from app.schemas.subagents import (
     SubagentResult,
 )
 from app.subagents.fan_in import (
-    SubagentFailureManager,
     SubagentJoinService,
-    SubagentResultMerger,
     SubagentResultValidationError,
     SubagentResultValidator,
+    merge_subagent_results,
+    retry_subagent,
 )
 from app.subagents.governance import DelegationContractService
 
@@ -252,7 +252,7 @@ async def test_result_merger_deduplicates_and_preserves_conflicts_and_warnings(s
     await _complete(session, first, finding="A", warnings=["limited coverage"])
     await _complete(session, second, finding="B")
     validator = SubagentResultValidator(session)
-    merged = SubagentResultMerger().merge(
+    merged = merge_subagent_results(
         [await validator.validate(first.id), await validator.validate(second.id)]
     )
     assert merged.conflicts[0]["kind"] == "fact_conflict"
@@ -334,7 +334,7 @@ async def test_safe_retry_preserves_failed_attempt_and_creates_new_identity(sess
             ],
         ),
     )
-    retry = await SubagentFailureManager(service).retry(failed.id, retry_safe=True)
+    retry = await retry_subagent(service, failed.id, retry_safe=True)
     assert retry.id != failed.id
     assert retry.identity_id is not None
     assert retry.checkpoint["retry_of_execution_id"] == failed.id

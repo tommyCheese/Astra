@@ -6,12 +6,10 @@ from app.repositories.approval_store import ApprovalStore
 from app.repositories.run_artifact_sandbox_store import RunArtifactSandboxStore
 from app.repositories.run_cancellation_store import RunCancellationStore
 from app.repositories.run_core_store import RunCoreStore
-from app.repositories.run_event_store import RunEventStore
 from app.repositories.run_memory_store import RunMemoryStore
 from app.repositories.run_plan_revision_store import RunPlanRevisionStore
 from app.repositories.run_query_store import RunQueryStore
 from app.repositories.run_step_turn_store import RunStepTurnStore
-from app.repositories.tool_call_store import ToolCallStore
 
 
 class RunUnitOfWork(
@@ -20,11 +18,9 @@ class RunUnitOfWork(
     RunQueryStore,
     RunCancellationStore,
     RunStepTurnStore,
-    ToolCallStore,
     ApprovalStore,
     RunArtifactSandboxStore,
     RunMemoryStore,
-    RunEventStore,
 ):
     """Explicit transaction boundary for one Run persistence use case.
 

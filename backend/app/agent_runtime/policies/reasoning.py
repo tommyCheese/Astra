@@ -197,71 +197,69 @@ def quick_subagent_policy(policy: EffectiveSubagentPolicy) -> EffectiveSubagentP
     )
 
 
-class RunProfileResolver:
+STANDARD_VALIDATORS = ("artifact_reference",)
+TRUSTED_VALIDATORS = ("task_adapter", "artifact_reference")
+
+
+def resolve_run_profile(
+    answer_mode: AnswerMode,
+    requested: RequestedReasoningPolicy,
+    *,
+    plan_execution: PlanExecution | None = None,
+    risk_level: str = "low",
+    complexity: str = "normal",
+    subagent_policy: EffectiveSubagentPolicy | None = None,
+    subagent_mode: Literal["auto", "required"] = "auto",
+) -> RunExecutionProfile:
     """Resolve product answer modes into immutable runtime facts."""
-
-    STANDARD_VALIDATORS: ClassVar[list[str]] = ["artifact_reference"]
-    TRUSTED_VALIDATORS: ClassVar[list[str]] = ["task_adapter", "artifact_reference"]
-
-    def resolve(
-        self,
-        answer_mode: AnswerMode,
-        requested: RequestedReasoningPolicy,
-        *,
-        plan_execution: PlanExecution | None = None,
-        risk_level: str = "low",
-        complexity: str = "normal",
-        subagent_policy: EffectiveSubagentPolicy | None = None,
-        subagent_mode: Literal["auto", "required"] = "auto",
-    ) -> RunExecutionProfile:
-        if answer_mode == AnswerMode.standard:
-            effective_request = requested.model_copy(
-                update={
-                    "reasoning_effort": ReasoningEffort.fast,
-                    "max_tool_calls": None,
-                    "reflection_enabled": False,
-                    "reflection_trigger": ReflectionTrigger.failure_only,
-                    "verification_level": VerificationLevel.basic,
-                }
-            )
-            contract_mode = ContractMode.system_minimal
-            assurance_level = AssuranceLevel.basic
-            validators = self.STANDARD_VALIDATORS
-            resolved_plan_execution = None
-            effective_subagent_policy = quick_subagent_policy(
-                subagent_policy or EffectiveSubagentPolicy()
-            )
-        else:
-            effective_request = requested.model_copy(
-                update={"verification_level": VerificationLevel.strict}
-            )
-            contract_mode = ContractMode.model
-            assurance_level = AssuranceLevel.full
-            validators = self.TRUSTED_VALIDATORS
-            resolved_plan_execution = plan_execution or PlanExecution.confirm
-            effective_subagent_policy = subagent_policy or EffectiveSubagentPolicy()
-        policy = PolicyCompiler().compile(
-            effective_request,
-            risk_level=risk_level,
-            complexity=complexity,
-            subagent_policy=effective_subagent_policy,
+    if answer_mode == AnswerMode.standard:
+        effective_request = requested.model_copy(
+            update={
+                "reasoning_effort": ReasoningEffort.fast,
+                "max_tool_calls": None,
+                "reflection_enabled": False,
+                "reflection_trigger": ReflectionTrigger.failure_only,
+                "verification_level": VerificationLevel.basic,
+            }
         )
-        if answer_mode == AnswerMode.standard:
-            budgets = policy.effective.budgets.model_copy(
-                update={"max_turns": None, "max_tool_calls": None}
-            )
-            policy = policy.model_copy(
-                update={"effective": policy.effective.model_copy(update={"budgets": budgets})}
-            )
-        return RunExecutionProfile(
-            answer_mode=answer_mode,
-            contract_mode=contract_mode,
-            assurance_level=assurance_level,
-            reasoning_policy=policy,
-            plan_execution=resolved_plan_execution,
-            validators=list(validators),
-            subagent_mode=subagent_mode,
+        contract_mode = ContractMode.system_minimal
+        assurance_level = AssuranceLevel.basic
+        validators = STANDARD_VALIDATORS
+        resolved_plan_execution = None
+        effective_subagent_policy = quick_subagent_policy(
+            subagent_policy or EffectiveSubagentPolicy()
         )
+    else:
+        effective_request = requested.model_copy(
+            update={"verification_level": VerificationLevel.strict}
+        )
+        contract_mode = ContractMode.model
+        assurance_level = AssuranceLevel.full
+        validators = TRUSTED_VALIDATORS
+        resolved_plan_execution = plan_execution or PlanExecution.confirm
+        effective_subagent_policy = subagent_policy or EffectiveSubagentPolicy()
+    policy = PolicyCompiler().compile(
+        effective_request,
+        risk_level=risk_level,
+        complexity=complexity,
+        subagent_policy=effective_subagent_policy,
+    )
+    if answer_mode == AnswerMode.standard:
+        budgets = policy.effective.budgets.model_copy(
+            update={"max_turns": None, "max_tool_calls": None}
+        )
+        policy = policy.model_copy(
+            update={"effective": policy.effective.model_copy(update={"budgets": budgets})}
+        )
+    return RunExecutionProfile(
+        answer_mode=answer_mode,
+        contract_mode=contract_mode,
+        assurance_level=assurance_level,
+        reasoning_policy=policy,
+        plan_execution=resolved_plan_execution,
+        validators=list(validators),
+        subagent_mode=subagent_mode,
+    )
 
 
 def build_default_contract(goal: str, *, risk_level: str = "low") -> TaskContract:

@@ -195,10 +195,7 @@ class PluginCatalogBuilder:
             raise PluginContractError(
                 "isolated providers cannot contribute executable host components"
             )
-        if any(
-            entry.executor_id == "in_process" or entry.result_adapter_factory is not None
-            for entry in contribution.tools
-        ):
+        if any(entry.executor_id == "in_process" for entry in contribution.tools):
             raise PluginContractError(
                 "isolated provider tools require a host-managed transport binding"
             )
@@ -353,7 +350,6 @@ class PluginCatalogBuilder:
                 {
                     "spec": tools[name].spec.model_dump(mode="json"),
                     "executor_id": tool_bindings[name].executor_id,
-                    "result_adapter_id": tool_bindings[name].result_adapter_id,
                 }
                 for name in sorted(tools)
             ],

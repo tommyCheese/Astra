@@ -14,13 +14,13 @@
 | `app/runner/reasoning.py` 等策略模块 | Agent 推理、完成、审批、循环与结果适配规则 | agent-runtime | `app/agent_runtime/policies/*`、`services/approval.py`、`result_adapters.py` | 已完成：纯决策与有副作用阶段分离，runner 只保留执行协调 |
 | `app/runner/model_reasoning.py` | provider thinking 能力与请求配置 | model-clients | `app/model_clients/reasoning.py` | 已完成：模型 provider 能力不再由 runner 拥有 |
 | `app/subagents/executor.py` | child loop、permission、tool runtime、completion | subagents + shared execution contracts | `app/subagents/*`、`app/execution/contracts.py` | 已完成：共享契约由 execution 拥有，subagent 无 facade 转发层 |
-| `app/repositories/runs.py` | Run、waiting、revision、step、tool、approval、artifact、event、projection | run-management + owning capabilities | `run_*_store.py`、`run_unit_of_work.py`、`run_view_projection.py` | 已完成：旧 Repository 与 projection facade 已删除，store 无内部 commit |
+| `app/repositories/runs.py` | Run、waiting、revision、step、tool、approval、artifact、event、projection | run-management + owning capabilities | `run_core_store.py`、`run_step_turn_store.py`、`run_unit_of_work.py`、`run_view_projection.py` | 已完成：Event 并入 Run core，ToolCall 并入 step/turn activity；旧 Repository、转发 store 与 projection facade 已删除 |
 | `app/db/models.py` | 全部 ORM records | 各能力 + platform-database | 各能力 `infrastructure/models.py`、metadata registry | 54 表 metadata/hash 等价，旧 re-export 零消费者 |
 | `app/schemas/agent.py` | policy、plan、execution state、requests、results、views | 对应能力 owner | `contracts/*` 与能力 API schemas | OpenAPI/hash 经审核等价，旧 re-export 零消费者 |
 | `app/runner/model_client.py` | transports、provider mapping、reasoning、retry、normalization | model-clients | `app/model_clients/transports/*`、`normalization/*`、`reasoning.py` | 已完成：transport 与纯响应归一化可从路径直接区分 |
 | `app/tools/web.py` | search providers、fetch security、extract、normalize | tools/web | `app/tools/web/{search,providers,results,fetching,security,content,output}.py` | 已完成：旧平铺路径和 registry facade 删除，安全测试等价 |
 | `app/memory/consolidation.py` | input freeze、candidate generation、normalization、validation | memory | `app/memory/consolidation/{models,generation,validation,service}.py` | 已完成：能力内按代码角色归类，publish/rollback 测试等价 |
-| `app/repositories/memory_consolidation.py` | job、lease、publish、rollback、audit persistence | memory | `app/memory/consolidation/store.py` | 单一事务所有者明确且旧 Repository 删除 |
+| `app/repositories/memory_consolidation.py` | job、lease、publish、rollback、audit persistence | memory | `memory_consolidation.py`、`memory_consolidation_publication.py`、`memory_consolidation_outputs.py` | 发布输出、来源复制和审计已归入同一发布聚合；时间、来源、审计、类型碎片模块已删除 |
 | `app/skills/storage.py` | package files、draft、revision、audit、builtin bootstrap | skills | `app/skills/packages/*`、`authoring/*`、`store.py` | import/publish/restore/revoke tests 等价 |
 | `app/api/skills.py` | HTTP、diff/export、test run、metrics projection | skills | `app/skills/api/*`、`application.py`、`queries.py` | API handlers 无业务事务和跨层组装 |
 | `app/scheduling/dispatcher.py` | scheduled delivery + API private dispatch | scheduling/run-management | scheduling application + Run application port | 已完成：`scheduling -> api` 边完全消失 |

@@ -59,20 +59,6 @@ class SubagentExecutionStatus(str, Enum):
     cancelled = "cancelled"
 
 
-class SubagentExecutionPhase(str, Enum):
-    proposed = "proposed"
-    authorizing = "authorizing"
-    claimed = "claimed"
-    planning = "planning"
-    executing = "executing"
-    waiting_parent = "waiting_parent"
-    waiting_approval = "waiting_approval"
-    waiting_resource = "waiting_resource"
-    checkpointing = "checkpointing"
-    completing = "completing"
-    terminal = "terminal"
-
-
 class DelegationScope(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 

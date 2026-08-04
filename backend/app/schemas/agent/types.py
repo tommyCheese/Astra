@@ -142,18 +142,6 @@ class TerminalState(str, Enum):
     failed = "failed"
 
 
-class RunStatus(str, Enum):
-    created = "created"
-    planning = "planning"
-    waiting_user = "waiting_user"
-    executing = "executing"
-    completed = "completed"
-    completed_with_warnings = "completed_with_warnings"
-    failed = "failed"
-    blocked = "blocked"
-    cancelled = "cancelled"
-
-
 class ApprovalDecision(str, Enum):
     approve_once = "approve_once"
     allow_similar = "allow_similar"

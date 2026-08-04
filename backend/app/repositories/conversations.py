@@ -59,7 +59,7 @@ from app.db.models.workspaces import (
 )
 from app.repositories.conversation_process_projection import build_public_process
 from app.repositories.run_chat_projection import build_chat_messages
-from app.repositories.run_store_support import run_detail_options
+from app.repositories.run_query_store import run_detail_options
 from app.repositories.run_view_projection import RunViewProjector
 
 TERMINAL_STATUSES = {"completed", "completed_with_warnings", "blocked", "failed", "cancelled"}

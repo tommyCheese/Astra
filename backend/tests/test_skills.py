@@ -5,7 +5,7 @@ import pytest
 from sqlalchemy import event as sqlalchemy_event
 from sqlalchemy import func, select
 
-from app.agent_runtime.policies.reasoning import RunProfileResolver
+from app.agent_runtime.policies.reasoning import resolve_run_profile
 from app.core.config import Settings
 from app.db.models.skills import RunSkillSnapshotRecord, SkillBlobRecord
 from app.model_clients.mock import MockModelClient
@@ -407,7 +407,7 @@ async def test_explicit_skill_is_bound_before_a_direct_finalize(session):
         files={"SKILL.md": skill_md("direct-finalize", "Always introduce Astra first.")},
     )
     revision = await service.publish(skill.id, skill.draft.revision_token)
-    profile = RunProfileResolver().resolve(
+    profile = resolve_run_profile(
         AnswerMode.standard,
         RequestedReasoningPolicy(execution_mode="auto_approval"),
     )

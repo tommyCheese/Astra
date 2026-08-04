@@ -1,6 +1,6 @@
 {
   "legacy_modules": {
-    "app.api.skills": 780,
+    "app.api.skills": 779,
     "app.deliverables": 529,
     "app.evolution.domain": 571,
     "app.memory.consolidation.models": 800,
@@ -13,17 +13,18 @@
     "app.repositories.conversations": 619,
     "app.repositories.evolution": 753,
     "app.repositories.memories": 792,
-    "app.repositories.memory_consolidation": 652,
+    "app.repositories.memory_consolidation": 638,
     "app.repositories.plans": 534,
     "app.repositories.schedules": 566,
     "app.runner.coordinator": 729,
     "app.runner.engine": 663,
     "app.runner.node_worker": 604,
     "app.skills.storage": 542,
-    "app.subagents.context": 589,
-    "app.subagents.fan_in": 530,
+    "app.subagents.context": 587,
+    "app.subagents.executor": 511,
+    "app.subagents.fan_in": 525,
     "app.subagents.governance": 597,
-    "app.subagents.runtime": 567
+    "app.subagents.runtime": 566
   },
   "legacy_functions": {
     "app.agent_runtime.policies.reasoning:normalize_contract": {
@@ -37,6 +38,10 @@
     "app.agent_runtime.result_adapters:WebTaskAdapter.validate": {
       "lines": 64,
       "complexity": 15
+    },
+    "app.agent_runtime.services.context:ContextAssembler.assemble": {
+      "lines": 79,
+      "complexity": 4
     },
     "app.agent_runtime.services.loop:AgentLoop.run": {
       "lines": 62,
@@ -67,7 +72,7 @@
       "complexity": 15
     },
     "app.api.skills:create_skill_test_run": {
-      "lines": 81,
+      "lines": 80,
       "complexity": 5
     },
     "app.api.skills:diff_skill": {
@@ -202,10 +207,6 @@
       "lines": 71,
       "complexity": 6
     },
-    "app.plugins.contracts:PluginContribution.validate": {
-      "lines": 28,
-      "complexity": 12
-    },
     "app.repositories.agent_executions:AgentExecutionRepository.create_child": {
       "lines": 81,
       "complexity": 13
@@ -297,6 +298,10 @@
     "app.repositories.plans:plan_to_view": {
       "lines": 57,
       "complexity": 13
+    },
+    "app.repositories.run_memory_store:RunMemoryStore.create_memory": {
+      "lines": 76,
+      "complexity": 7
     },
     "app.repositories.schedules:ScheduleRepository.update": {
       "lines": 52,
@@ -426,6 +431,10 @@
       "lines": 68,
       "complexity": 7
     },
+    "app.subagents.executor:_evaluate_basic_completion": {
+      "lines": 31,
+      "complexity": 12
+    },
     "app.subagents.fan_in:SubagentJoinService.evaluate": {
       "lines": 55,
       "complexity": 11
@@ -481,5 +490,91 @@
   },
   "forbidden_edges": [],
   "cyclic_pairs": [],
-  "type_ignore_counts": {}
+  "type_ignore_counts": {},
+  "one_operation_classes": [
+    "app.agent_profile.profile:AgentProfileLoader",
+    "app.agent_runtime.policies.reasoning:ObservationEvaluator",
+    "app.agent_runtime.policies.reasoning:PolicyCompiler",
+    "app.agent_runtime.policies.reasoning:ReflectionGate",
+    "app.agent_runtime.result_adapters:ProcessorRegistry",
+    "app.agent_runtime.services.action_resolution:ActionResolutionStage",
+    "app.agent_runtime.services.approval:ApprovalRoutingStage",
+    "app.agent_runtime.services.authorization:PermissionAuthorizationStage",
+    "app.agent_runtime.services.completion:CompletionVerificationStage",
+    "app.agent_runtime.services.completion_gate:CompletionGateStage",
+    "app.agent_runtime.services.context:ContextAssembler",
+    "app.agent_runtime.services.context_memory:MemoryContextProjector",
+    "app.agent_runtime.services.control_decisions:ControlDecisionStage",
+    "app.agent_runtime.services.failure:ToolFailureStage",
+    "app.agent_runtime.services.finalization:AgentFinalizationStage",
+    "app.agent_runtime.services.invocation:ToolInvocationStage",
+    "app.agent_runtime.services.loop:AgentLoop",
+    "app.agent_runtime.services.loop:AgentRunOrchestrator",
+    "app.agent_runtime.services.memory_candidates:MemoryCandidateWriter",
+    "app.agent_runtime.services.node_completion:NodeCompletionStage",
+    "app.agent_runtime.services.observation:ObservationNormalizationStage",
+    "app.agent_runtime.services.root_decision:RootDecisionStage",
+    "app.agent_runtime.services.root_iteration:RootAgentIterationStage",
+    "app.agent_runtime.services.runtime_builder:AgentRuntimeBuilder",
+    "app.agent_runtime.services.runtime_builder:RootPermissionRuntime",
+    "app.agent_runtime.services.runtime_composition:RootRuntimeComposer",
+    "app.agent_runtime.services.skill_actions:SkillActionStage",
+    "app.agent_runtime.services.tool_action:RootToolActionStage",
+    "app.agent_runtime.services.turn_preparation:RootTurnPreparationStage",
+    "app.artifacts:ArtifactService",
+    "app.context_compaction.service:AgentContextCompactionService",
+    "app.context_compaction.tool_outputs:ToolOutputGovernanceService",
+    "app.conversation_compaction:SemanticConversationCompactor",
+    "app.conversation_lifecycle:ConversationLifecycleService",
+    "app.deliverables:DeliverableCatalog",
+    "app.evolution.domain:SafetyMetricResult",
+    "app.grounding.repository:EvidenceWriter",
+    "app.memory.consolidation.service:AutoDreamProcessor",
+    "app.model_clients.normalization.streaming:StreamingJsonFieldExtractor",
+    "app.model_clients.transports.anthropic:AnthropicTransport",
+    "app.model_clients.transports.openai:OpenAIChatTransport",
+    "app.permissions.effects:BashEffectAnalyzer",
+    "app.permissions.effects:ChartEffectAnalyzer",
+    "app.permissions.effects:DefaultEffectAnalyzer",
+    "app.permissions.effects:WebEffectAnalyzer",
+    "app.permissions.engine:LeaseValidator",
+    "app.permissions.governance:PermissionBundleEvaluator",
+    "app.permissions.invocation:InvocationAuthorizationMixin",
+    "app.planning.service:PlanValidator",
+    "app.plugins.builtin_components:BashResultProcessor",
+    "app.plugins.builtin_components:ChartArtifactValidator",
+    "app.plugins.builtin_components:ChartResultProcessor",
+    "app.plugins.builtin_components:WebEvidenceValidator",
+    "app.plugins.builtin_components:WebResultProcessor",
+    "app.plugins.discovery:BuiltinDiscoverySource",
+    "app.plugins.discovery:IsolatedDescriptorDiscoverySource",
+    "app.plugins.discovery:ManagedPackageDiscoverySource",
+    "app.repositories.run_cancellation_store:RunCancellationStore",
+    "app.run_management.creation:RunCreator",
+    "app.run_management.recovery:ExecutionRecovery",
+    "app.runner.coordinator:NodeWorker",
+    "app.runner.engine:RunEngine",
+    "app.runner.node_worker:ReadOnlyAgentNodeExecutor",
+    "app.sandbox.runtime:SandboxJobService",
+    "app.sandbox.runtime:SandboxSupervisor",
+    "app.scheduling.dispatcher:ScheduledRunDispatcher",
+    "app.subagents.context:SubagentContextComposer",
+    "app.subagents.coordinator:HierarchicalSemaphoreRegistry",
+    "app.subagents.executor:LocalAstraAgentExecutor",
+    "app.subagents.fan_in:SubagentResultValidator",
+    "app.subagents.invocation:ChildToolInvocationStage",
+    "app.subagents.lifecycle:SubagentCancellationService",
+    "app.subagents.observability:SubagentTelemetryRepository",
+    "app.subagents.recovery:SubagentExecutionRecovery",
+    "app.subagents.run_loop:ChildAgentRun",
+    "app.subagents.scope:DelegationScopeAttenuator",
+    "app.tools.bash:BashExecuteTool",
+    "app.tools.chart:ChartRenderTool",
+    "app.tools.runtime:SwarmTool",
+    "app.tools.sandboxed:SandboxedWebTool",
+    "app.tools.selection:CapabilityToolResolver",
+    "app.tools.web.fetching:WebFetchTool",
+    "app.tools.web.search:WebSearchTool"
+  ],
+  "compatibility_symbols": []
 }

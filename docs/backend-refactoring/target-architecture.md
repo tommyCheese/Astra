@@ -77,3 +77,6 @@ analysis、authorization、invocation、observation/evidence、progress/reflecti
 `services`、`normalization` 或 `transports` 表达代码角色。只有形成多个同类模块时才建立
 role 子包；禁止顶层技术桶和 `utils.py`、`helpers.py`、`common.py`。单一消费者的 dataclass
 与实现保持同文件，无状态包装类、单实现抽象和旧路径 re-export 应直接删除。
+
+复杂度预算是只减不增的架构契约。当前上限为 61,539 行、298 个模块、766 个类、2,473 个
+函数/方法和 1,249 个公共 symbol；重构或新增能力不得通过修改预算掩盖净增长。

@@ -128,15 +128,6 @@ class Claim(BaseModel):
     support_status: Literal["unverified", "supported", "unsupported"] = "unverified"
 
 
-class SupportEdge(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    id: str
-    claim_id: str
-    evidence_ref: str
-    relation: Literal["supports", "contradicts", "context"] = "supports"
-
-
 class Citation(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

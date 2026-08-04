@@ -7,12 +7,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings
 from app.db.models.executions import AgentExecutionRecord
-from app.execution.completion import BasicCompletionGate
 from app.execution.contracts import InvocationIntent
 from app.execution.model_port import DelegatedModelPort
 from app.repositories.agent_executions import AgentExecutionRepository
 from app.repositories.executions import NodeExecutionRepository
 from app.repositories.run_unit_of_work import RunUnitOfWork
+from app.schemas.agent.execution_state import CompletionDecision
 from app.schemas.agent.planning import SuccessCriterion, TaskContract
 from app.schemas.agent.run_result import ValidationIssue, ValidationOutcome
 from app.schemas.agent.types import (
@@ -20,6 +20,7 @@ from app.schemas.agent.types import (
     NodeExecutionPhase,
     NodeExecutionStatus,
     PlanNodeStatus,
+    TerminalState,
 )
 from app.schemas.context_compaction import ChildCheckpoint
 from app.schemas.subagents import (
@@ -37,6 +38,39 @@ from app.subagents.run_loop import ChildAgentRun
 from app.tools.base import ToolRegistry, validate_json_schema
 
 
+def _evaluate_basic_completion(
+    validation_outcomes: list[ValidationOutcome],
+) -> CompletionDecision:
+    blocking = [
+        outcome.validator
+        for outcome in validation_outcomes
+        if not outcome.passed and outcome.blocking
+    ]
+    warnings = list(
+        dict.fromkeys(
+            [warning for outcome in validation_outcomes for warning in outcome.warnings]
+            + [
+                issue.message
+                for outcome in validation_outcomes
+                for issue in outcome.issues
+                if issue.severity == "warning"
+            ]
+        )
+    )
+    if blocking:
+        return CompletionDecision(
+            state=TerminalState.blocked,
+            reason="基础保障存在阻塞问题。",
+            unmet_criteria=[f"validator:{validator}" for validator in blocking],
+            warnings=warnings,
+        )
+    return CompletionDecision(
+        state=TerminalState.completed_with_warnings if warnings else TerminalState.completed,
+        reason="快速回答已完成基础保障检查。",
+        warnings=warnings,
+    )
+
+
 class LocalAstraAgentExecutor(AgentExecutor):
     """A child-local Astra loop for the conservative depth-one, read-only slice."""
 
@@ -51,7 +85,6 @@ class LocalAstraAgentExecutor(AgentExecutor):
         self.tool_registry = tool_registry
         self.settings = settings or Settings()
         self.authorizer = ChildInvocationAuthorizer()
-        self.completion_gate = BasicCompletionGate()
 
     async def execute(
         self,
@@ -148,7 +181,7 @@ class LocalAstraAgentExecutor(AgentExecutor):
                     ],
                 )
             )
-        completion = self.completion_gate.evaluate(validation_outcomes=outcomes)
+        completion = _evaluate_basic_completion(outcomes)
         if completion.state.value == "blocked":
             return SubagentResult(
                 status=SubagentExecutionStatus.failed,

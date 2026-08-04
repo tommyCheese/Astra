@@ -8,7 +8,7 @@ from app.plugins.contracts import PluginContribution, PluginDescriptor
 from app.schemas.agent.execution_state import AgentObservation
 from app.schemas.agent.run_result import ValidationOutcome
 from app.schemas.permissions import ActionEffectPlan
-from app.tools.base import ToolExecutionContext, ToolSpec
+from app.tools.base import ToolSpec
 
 
 @dataclass(frozen=True)
@@ -32,17 +32,6 @@ class ToolProviderPlugin(ABC):
     def contribute(self) -> PluginContribution: ...
 
 
-class ToolExecutor(ABC):
-    @abstractmethod
-    async def execute(
-        self,
-        spec: ToolSpec,
-        tool_input: dict[str, Any],
-        *,
-        context: ToolExecutionContext,
-    ) -> dict[str, Any]: ...
-
-
 class EffectAnalyzer(ABC):
     @abstractmethod
     def analyze(
@@ -62,11 +51,6 @@ class ResultProcessor(ABC):
         tool_input: dict[str, Any],
         result: dict[str, Any],
     ) -> ProcessorOutput: ...
-
-
-class ResultAdapter(ABC):
-    @abstractmethod
-    def adapt(self, result: dict[str, Any]) -> dict[str, Any]: ...
 
 
 class Validator(ABC):

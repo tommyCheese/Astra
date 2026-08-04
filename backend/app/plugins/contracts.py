@@ -91,8 +91,6 @@ class ApplicabilityBinding(BaseModel):
 class ToolContribution:
     tool: Tool
     executor_id: str
-    result_adapter_id: str = "envelope.v1"
-    result_adapter_factory: Callable[[], Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -125,10 +123,6 @@ class PluginContribution:
                 raise PluginContractError("tool provider identity does not match plugin")
             if not entry.executor_id:
                 raise PluginContractError("tool contribution requires an executor binding")
-            if entry.result_adapter_id != "envelope.v1" and not callable(
-                entry.result_adapter_factory
-            ):
-                raise PluginContractError("legacy tool contribution requires a result adapter")
         components = (
             *self.effect_analyzers,
             *self.result_processors,

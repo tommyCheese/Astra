@@ -316,32 +316,31 @@ class DelegationGateDecision:
     diagnostics: dict[str, float | bool]
 
 
-class AdaptiveDelegationGate:
-    def evaluate(self, item: DelegationGateInput) -> DelegationGateDecision:
-        score = (
-            0.22 * item.complexity
-            + 0.28 * item.independence
-            + 0.12 * item.context_pressure
-            + 0.28 * item.estimated_benefit
-            + 0.10 * item.budget_fraction_remaining
-            - 0.22 * item.write_conflict_risk
-            - 0.18 * item.execution_risk
-        )
-        if item.simple_atomic:
-            allowed, reason = False, "delegation_not_beneficial_simple"
-        elif item.strongly_sequential:
-            allowed, reason = False, "delegation_not_beneficial_sequential"
-        elif item.budget_fraction_remaining < 0.25:
-            allowed, reason = False, "delegation_budget_low"
-        elif item.write_conflict_risk >= 0.6:
-            allowed, reason = False, "delegation_write_conflict"
-        elif score < 0.45:
-            allowed, reason = False, "delegation_not_beneficial"
-        else:
-            allowed, reason = True, "delegation_beneficial"
-        return DelegationGateDecision(
-            allowed=allowed,
-            score=round(score, 6),
-            reason_code=reason,
-            diagnostics=dict(item.__dict__),
-        )
+def evaluate_delegation(item: DelegationGateInput) -> DelegationGateDecision:
+    score = (
+        0.22 * item.complexity
+        + 0.28 * item.independence
+        + 0.12 * item.context_pressure
+        + 0.28 * item.estimated_benefit
+        + 0.10 * item.budget_fraction_remaining
+        - 0.22 * item.write_conflict_risk
+        - 0.18 * item.execution_risk
+    )
+    if item.simple_atomic:
+        allowed, reason = False, "delegation_not_beneficial_simple"
+    elif item.strongly_sequential:
+        allowed, reason = False, "delegation_not_beneficial_sequential"
+    elif item.budget_fraction_remaining < 0.25:
+        allowed, reason = False, "delegation_budget_low"
+    elif item.write_conflict_risk >= 0.6:
+        allowed, reason = False, "delegation_write_conflict"
+    elif score < 0.45:
+        allowed, reason = False, "delegation_not_beneficial"
+    else:
+        allowed, reason = True, "delegation_beneficial"
+    return DelegationGateDecision(
+        allowed=allowed,
+        score=round(score, 6),
+        reason_code=reason,
+        diagnostics=dict(item.__dict__),
+    )
