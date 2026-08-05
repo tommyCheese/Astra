@@ -170,7 +170,14 @@ class RootAgentIterationStage:
         model_context: dict,
     ) -> StageOutcome:
         assert resolved.main_identity is not None
-        result = await self._tools.execute(
+        (
+            action,
+            workspace_path,
+            workspace_changed,
+            clear_approved_resume,
+            terminal_status,
+            terminal_summary,
+        ) = await self._tools.execute(
             ToolActionInput(
                 run=self._state.run,
                 run_id=context.run_id,
@@ -191,14 +198,14 @@ class RootAgentIterationStage:
                 subagent_supervisor=self._subagents,
             )
         )
-        self._state.workspace_path = result.workspace_path
-        self._state.workspace_changed |= result.workspace_changed
-        if result.clear_approved_resume:
+        self._state.workspace_path = workspace_path
+        self._state.workspace_changed |= workspace_changed
+        if clear_approved_resume:
             self._clear_approved_resume()
-        if result.action == "stop":
-            if result.terminal_status is None:
+        if action == "stop":
+            if terminal_status is None:
                 return CompletedOutcome(answer=FinalAnswer(summary=""))
-            return self._stop(result.terminal_status, result.terminal_summary)
+            return self._stop(terminal_status, terminal_summary)
         return ContinueOutcome()
 
     def _stop(self, status: str | None, summary: str | None) -> StageOutcome:

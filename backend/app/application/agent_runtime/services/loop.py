@@ -2,8 +2,8 @@
 
 import asyncio
 import logging
-from collections.abc import Awaitable, Callable, Sequence
-from typing import Any, Protocol, assert_never
+from collections.abc import Awaitable, Callable
+from typing import Any, assert_never
 
 from app.application.agent_runtime.policies.completion import CompletionGate
 from app.application.agent_runtime.policies.reasoning import ObservationEvaluator, ReflectionGate
@@ -38,43 +38,26 @@ from app.infrastructure.tools.router import ToolRouter
 logger = logging.getLogger("astra.agent_loop")
 
 
-class ExecutionStage(Protocol):
-    async def execute(self, context: ExecutionContext) -> StageOutcome: ...
+async def execute_turns(stage: Any, context: ExecutionContext) -> StageOutcome:
+    """Run the sole iteration stage until it yields a terminal outcome."""
+    for turn_index in range(context.turn_index, context.budget.max_turns):
+        context.turn_index = turn_index + 1
+        outcome = route_outcome(await stage.execute(context))
+        if not isinstance(outcome, ContinueOutcome):
+            return outcome
+    return BlockedOutcome(
+        reason="Agent turn budget exhausted before a terminal outcome.",
+        error_code="TURN_BUDGET_EXHAUSTED",
+    )
 
 
-class AgentRunOrchestrator:
-    """Route typed execution stages until one produces a terminal outcome."""
-
-    def __init__(self, stages: Sequence[ExecutionStage]) -> None:
-        self._stages = tuple(stages)
-
-    async def execute(self, context: ExecutionContext) -> StageOutcome:
-        for turn_index in range(context.turn_index, context.budget.max_turns):
-            context.turn_index = turn_index + 1
-            outcome = await self._execute_iteration(context)
-            routed = self._route(outcome)
-            if not isinstance(routed, ContinueOutcome):
-                return routed
-        return BlockedOutcome(
-            reason="Agent turn budget exhausted before a terminal outcome.",
-            error_code="TURN_BUDGET_EXHAUSTED",
-        )
-
-    async def _execute_iteration(self, context: ExecutionContext) -> StageOutcome:
-        for stage in self._stages:
-            outcome = await stage.execute(context)
-            if not isinstance(outcome, ContinueOutcome):
-                return outcome
-        return ContinueOutcome()
-
-    @staticmethod
-    def _route(outcome: StageOutcome) -> StageOutcome:
-        match outcome:
-            case ContinueOutcome() | WaitingOutcome() | CompletedOutcome():
-                return outcome
-            case BlockedOutcome() | FailedOutcome():
-                return outcome
-        assert_never(outcome)
+def route_outcome(outcome: StageOutcome) -> StageOutcome:
+    match outcome:
+        case ContinueOutcome() | WaitingOutcome() | CompletedOutcome():
+            return outcome
+        case BlockedOutcome() | FailedOutcome():
+            return outcome
+    assert_never(outcome)
 
 
 class AgentLoop:
@@ -144,7 +127,7 @@ class AgentLoop:
             observations=runtime.progress.observations,
             tool_outputs=runtime.tool_outputs,
         )
-        outcome = await AgentRunOrchestrator([runtime.iteration_stage]).execute(context)
+        outcome = await execute_turns(runtime.iteration_stage, context)
         if isinstance(outcome, BlockedOutcome) and runtime.state.terminal_status is None:
             runtime.state.terminal_status = "blocked"
             runtime.state.terminal_summary = outcome.reason

@@ -7,7 +7,6 @@ from typing import Any
 
 from app.application.agent_runtime.models import RootRuntimeAssembly, RuntimeLimits
 from app.application.agent_runtime.policies.completion import CompletionGate
-from app.application.agent_runtime.policies.loop import LoopOrchestrator, NoProgressDetector
 from app.application.agent_runtime.policies.reasoning import ObservationEvaluator, ReflectionGate
 from app.application.agent_runtime.result_adapters import (
     ChartTaskAdapter,
@@ -179,8 +178,6 @@ class RootRuntimeComposer:
                 progress,
                 progress_stage,
             ),
-            "no_progress": NoProgressDetector(),
-            "transition_rules": LoopOrchestrator(),
             "tool_outputs": [],
             "skill": SkillActionStage(repository, activation, self._model_client, progress),
         }
@@ -203,7 +200,6 @@ class RootRuntimeComposer:
             scheduler,
             progress,
             progress_stage,
-            collaborators["no_progress"],
             max_replans=limits.max_replans,
             max_tool_calls=limits.max_tool_calls,
         )
@@ -244,8 +240,6 @@ class RootRuntimeComposer:
             progress_stage=progress_stage,
             memory_writer=collaborators["memory_writer"],
             evaluator=self._evaluator,
-            no_progress=collaborators["no_progress"],
-            transition_validator=collaborators["transition_rules"],
             tool_outputs=collaborators["tool_outputs"],
         )
 

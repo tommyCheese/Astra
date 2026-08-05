@@ -6,7 +6,10 @@ import logging
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from app.application.agent_runtime.policies.loop import LoopOrchestrator, NoProgressDetector
+from app.application.agent_runtime.policies.loop import (
+    record_progress_signature,
+    validate_transition,
+)
 from app.application.agent_runtime.policies.reasoning import ObservationEvaluator
 from app.application.agent_runtime.services.approval import ApprovalRoutingStage, ApprovalStageInput
 from app.application.agent_runtime.services.authorization import (
@@ -41,6 +44,15 @@ from app.infrastructure.tools.base import ToolExecutionError, ToolRegistry
 
 logger = logging.getLogger("astra.agent_runtime.tool_action")
 
+ToolActionOutcome = tuple[
+    Literal["continue", "stop"],
+    str | None,
+    bool,
+    bool,
+    str | None,
+    str | None,
+]
+
 
 @dataclass(frozen=True)
 class ToolActionInput:
@@ -63,16 +75,6 @@ class ToolActionInput:
     subagent_supervisor: SubagentSupervisorPort | None
 
 
-@dataclass(frozen=True)
-class ToolActionResult:
-    action: Literal["continue", "stop"]
-    workspace_path: str | None
-    workspace_changed: bool = False
-    clear_approved_resume: bool = False
-    terminal_status: str | None = None
-    terminal_summary: str | None = None
-
-
 class RootToolActionStage:
     """Own the complete authorization-to-observation lifecycle for one tool call."""
 
@@ -90,8 +92,6 @@ class RootToolActionStage:
         progress_stage: ProgressEvaluationStage,
         memory_writer: MemoryCandidateWriter,
         evaluator: ObservationEvaluator,
-        no_progress: NoProgressDetector,
-        transition_validator: LoopOrchestrator,
         tool_outputs: list[dict[str, Any]],
     ) -> None:
         self._repository = repository
@@ -105,11 +105,9 @@ class RootToolActionStage:
         self._progress_stage = progress_stage
         self._memory_writer = memory_writer
         self._evaluator = evaluator
-        self._no_progress = no_progress
-        self._transitions = transition_validator
         self._tool_outputs = tool_outputs
 
-    async def execute(self, action: ToolActionInput) -> ToolActionResult:
+    async def execute(self, action: ToolActionInput) -> ToolActionOutcome:
         try:
             return await self._execute_authorized(action)
         except ToolExecutionError as error:
@@ -130,10 +128,50 @@ class RootToolActionStage:
                     quick_mode=action.quick_mode,
                 )
             )
-            return ToolActionResult("continue", action.workspace_path)
+            return "continue", action.workspace_path, False, False, None, None
 
-    async def _execute_authorized(self, action: ToolActionInput) -> ToolActionResult:
+    async def _execute_authorized(self, action: ToolActionInput) -> ToolActionOutcome:
         self._validate_execution_transition(action.quick_mode)
+        invocation, step, tool_call, waiting_summary = await self._prepare_tool_call(action)
+        if waiting_summary is not None:
+            return (
+                "stop",
+                action.workspace_path,
+                False,
+                False,
+                "waiting_user",
+                waiting_summary,
+            )
+        assert tool_call is not None
+        self._progress.tool_calls_used += 1
+        await self._repository.update_agent_turn(
+            action.turn.id,
+            phase="executing",
+            tool_call_id=tool_call.id,
+        )
+        result_action, workspace_path, workspace_changed = await self._invoke_and_normalize(
+            action,
+            invocation,
+            tool_call,
+            step,
+        )
+        return (
+            result_action,
+            workspace_path,
+            workspace_changed,
+            action.is_approved_resume,
+            None,
+            None,
+        )
+
+    async def _prepare_tool_call(
+        self, action: ToolActionInput
+    ) -> tuple[
+        AuthorizedInvocation,
+        PlanNodeRecord | StepRecord | None,
+        ToolCallRecord | None,
+        str | None,
+    ]:
         invocation = await self._authorization.execute(
             AuthorizationStageInput(
                 run=action.run,
@@ -148,16 +186,17 @@ class RootToolActionStage:
                 ),
             )
         )
-        step = await self._resolve_step(action, invocation.tool.spec.name)
-        approval = await self._approval.execute(
+        tool, _, runtime_identity, effect_plan, effect_hash, authorization = invocation
+        step = await self._resolve_step(action, tool.spec.name)
+        tool_call, waiting_summary = await self._approval.execute(
             ApprovalStageInput(
                 run_id=action.run_id,
                 turn=action.turn,
                 decision=action.decision,
-                tool=invocation.tool,
-                effect_plan=invocation.effect_plan,
-                effect_plan_hash=invocation.effect_plan_hash,
-                authorization=invocation.authorization,
+                tool=tool,
+                effect_plan=effect_plan,
+                effect_plan_hash=effect_hash,
+                authorization=authorization,
                 step=step,
                 active_node_execution_id=action.active_node_execution_id,
                 has_canonical_plan=self._progress.active_plan is not None,
@@ -165,33 +204,7 @@ class RootToolActionStage:
                 approved_tool_call=action.approved_tool_call,
             )
         )
-        if approval.is_waiting:
-            return ToolActionResult(
-                "stop",
-                action.workspace_path,
-                terminal_status="waiting_user",
-                terminal_summary=approval.waiting_summary,
-            )
-        tool_call = approval.tool_call
-        assert tool_call is not None
-        self._progress.tool_calls_used += 1
-        await self._repository.update_agent_turn(
-            action.turn.id,
-            phase="executing",
-            tool_call_id=tool_call.id,
-        )
-        result = await self._invoke_and_normalize(
-            action,
-            invocation,
-            tool_call,
-            step,
-        )
-        return ToolActionResult(
-            result.action,
-            result.workspace_path,
-            workspace_changed=result.workspace_changed,
-            clear_approved_resume=action.is_approved_resume,
-        )
+        return invocation, step, tool_call, waiting_summary
 
     async def _invoke_and_normalize(
         self,
@@ -199,7 +212,8 @@ class RootToolActionStage:
         authorized: AuthorizedInvocation,
         tool_call: ToolCallRecord,
         step: PlanNodeRecord | StepRecord | None,
-    ) -> ToolActionResult:
+    ) -> tuple[Literal["continue", "stop"], str | None, bool]:
+        tool, _, _, _, _, _ = authorized
         invocation = await self._invoke(action, authorized, tool_call, step)
         normalized = await self._normalize(action, authorized, tool_call, invocation.tool_output)
         self._tool_outputs.append(normalized.tool_output)
@@ -215,14 +229,10 @@ class RootToolActionStage:
             "tool.complete run_id=%s turn=%s tool=%s call_id=%s",
             action.run_id,
             action.turn_index,
-            authorized.tool.spec.name,
+            tool.spec.name,
             tool_call.id,
         )
-        return ToolActionResult(
-            result_action,
-            invocation.workspace_path,
-            workspace_changed=invocation.workspace_changed,
-        )
+        return result_action, invocation.workspace_path, invocation.workspace_changed
 
     async def _invoke(
         self,
@@ -231,6 +241,7 @@ class RootToolActionStage:
         tool_call: ToolCallRecord,
         step: PlanNodeRecord | StepRecord | None,
     ):
+        tool, _, runtime_identity, effect_plan, _, _ = authorized
         invocation = await self._invocation.execute(
             InvocationStageInput(
                 run_id=action.run_id,
@@ -238,10 +249,10 @@ class RootToolActionStage:
                 tool_call=tool_call,
                 step_id=step.id if step is not None else None,
                 plan_node_id=action.active_node.id if action.active_node is not None else None,
-                tool=authorized.tool,
+                tool=tool,
                 tool_input=action.decision.tool_input,
-                effect_plan=authorized.effect_plan,
-                runtime_identity_id=authorized.runtime_identity.id,
+                effect_plan=effect_plan,
+                runtime_identity_id=runtime_identity.id,
                 active_skills=tuple(action.model_context.get("active_skills", [])),
                 is_skill_draft_test=bool(action.model_context.get("skill_draft_test")),
                 workspace_path=action.workspace_path,
@@ -262,13 +273,14 @@ class RootToolActionStage:
         tool_call: ToolCallRecord,
         tool_output: dict[str, Any],
     ) -> NormalizedObservation:
+        tool, _, runtime_identity, effect_plan, _, _ = authorized
         return await self._observation.execute(
             ObservationStageInput(
-                tool_spec=authorized.tool.spec,
+                tool_spec=tool.spec,
                 tool_call=tool_call,
                 tool_output=tool_output,
-                effect_plan=authorized.effect_plan,
-                runtime_identity_id=authorized.runtime_identity.id,
+                effect_plan=effect_plan,
+                runtime_identity_id=runtime_identity.id,
                 active_plan_node_id=(
                     action.active_node.id
                     if self._progress.active_plan is not None and action.active_node is not None
@@ -284,10 +296,11 @@ class RootToolActionStage:
         tool_call: ToolCallRecord,
         normalized: NormalizedObservation,
     ) -> Literal["continue", "stop"]:
+        tool, _, _, _, _, _ = authorized
         if action.quick_mode:
             return await self._persist_quick_result(
                 action,
-                authorized.tool.spec.name,
+                tool.spec.name,
                 tool_call,
                 normalized,
             )
@@ -341,14 +354,14 @@ class RootToolActionStage:
             expected,
             criterion_refs,
         )
-        self._transitions.validate_result("evaluate", NodeResult(next_node="update_state"))
+        validate_transition("evaluate", NodeResult(next_node="update_state"))
         await self._repository.add_event(
             action.run_id,
             "reasoning.evaluation_created",
             {"turn_index": action.turn_index, **evaluation.model_dump(mode="json")},
         )
         await self._progress_stage.persist(evaluation)
-        self._transitions.validate_result(
+        validate_transition(
             "update_state",
             NodeResult(next_node="reflection_gate"),
         )
@@ -366,7 +379,8 @@ class RootToolActionStage:
             if self._progress.active_plan is not None and action.active_node is not None
             else [tool_call_id]
         )
-        if self._no_progress.record(
+        if record_progress_signature(
+            self._progress.no_progress_signatures,
             evidence_refs=evidence_refs,
             criterion_changes=evaluation.criterion_updates,
             completed_steps=[],
@@ -464,18 +478,18 @@ class RootToolActionStage:
     def _validate_execution_transition(self, quick_mode: bool) -> None:
         if quick_mode:
             return
-        self._transitions.validate_result(
+        validate_transition(
             "select_action",
             NodeResult(next_node="policy_gate"),
         )
-        self._transitions.validate_result("policy_gate", NodeResult(next_node="execute"))
+        validate_transition("policy_gate", NodeResult(next_node="execute"))
 
     def _validate_observation_transitions(self) -> None:
-        self._transitions.validate_result(
+        validate_transition(
             "execute",
             NodeResult(next_node="normalize_observation"),
         )
-        self._transitions.validate_result(
+        validate_transition(
             "normalize_observation",
             NodeResult(next_node="evaluate"),
         )

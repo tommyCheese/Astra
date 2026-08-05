@@ -7,7 +7,7 @@ from app.application.agent_runtime.services.action_resolution import (
     ActionResolutionInput,
     ActionResolutionStage,
 )
-from app.application.agent_runtime.services.loop import AgentRunOrchestrator
+from app.application.agent_runtime.services.loop import execute_turns
 from app.common.schemas.agent.execution_state import AgentDecision
 from app.common.schemas.agent.run_result import FinalAnswer
 from app.domain.execution.contracts import (
@@ -103,7 +103,7 @@ async def test_orchestrator_routes_every_terminal_outcome(outcome):
         budget=ExecutionBudget(2, 1, 0, 0),
     )
 
-    assert await AgentRunOrchestrator([OutcomeStage(outcome)]).execute(context) is outcome
+    assert await execute_turns(OutcomeStage(outcome), context) is outcome
 
 
 @pytest.mark.asyncio
@@ -115,7 +115,7 @@ async def test_orchestrator_blocks_when_turn_budget_is_exhausted():
         budget=ExecutionBudget(2, 1, 0, 0),
     )
 
-    outcome = await AgentRunOrchestrator([OutcomeStage(ContinueOutcome())]).execute(context)
+    outcome = await execute_turns(OutcomeStage(ContinueOutcome()), context)
 
     assert isinstance(outcome, BlockedOutcome)
     assert outcome.error_code == "TURN_BUDGET_EXHAUSTED"

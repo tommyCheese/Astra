@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from app.application.agent_runtime.policies.loop import NoProgressDetector
+from app.application.agent_runtime.policies.loop import record_progress_signature
 from app.application.agent_runtime.services.progress import (
     ExecutionProgress,
     ProgressEvaluationStage,
@@ -36,7 +36,6 @@ class ControlDecisionStage:
         scheduler: PlanScheduler,
         progress: ExecutionProgress,
         progress_stage: ProgressEvaluationStage,
-        no_progress: NoProgressDetector,
         *,
         max_replans: int,
         max_tool_calls: int | None,
@@ -46,7 +45,6 @@ class ControlDecisionStage:
         self._scheduler = scheduler
         self._progress = progress
         self._progress_stage = progress_stage
-        self._no_progress = no_progress
         self._max_replans = max_replans
         self._max_tool_calls = max_tool_calls
 
@@ -176,7 +174,8 @@ class ControlDecisionStage:
         )
         serialized = observation.model_dump(mode="json")
         self._progress.observations.append(serialized)
-        if self._no_progress.record(
+        if record_progress_signature(
+            self._progress.no_progress_signatures,
             evidence_refs=[],
             criterion_changes={},
             completed_steps=[],

@@ -39,14 +39,14 @@ class AuthorizationStageInput:
     approved_tool_call_id: str | None = None
 
 
-@dataclass(frozen=True)
-class AuthorizedInvocation:
-    tool: Tool
-    provider_identity: AgentIdentityRecord
-    runtime_identity: AgentIdentityRecord
-    effect_plan: ActionEffectPlan
-    effect_plan_hash: str
-    authorization: InvocationAuthorizationResult
+AuthorizedInvocation = tuple[
+    Tool,
+    AgentIdentityRecord,
+    AgentIdentityRecord,
+    ActionEffectPlan,
+    str,
+    InvocationAuthorizationResult,
+]
 
 
 class PermissionAuthorizationStage:
@@ -106,7 +106,7 @@ class PermissionAuthorizationStage:
             schema_digest,
         )
         await self._record_decision(stage_input.run.id, tool, effect_hash, authorization)
-        return AuthorizedInvocation(
+        return (
             tool,
             provider_identity,
             runtime_identity,

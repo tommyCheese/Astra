@@ -2,9 +2,9 @@ import pytest
 
 from app.application.agent_runtime.policies.completion import CompletionGate
 from app.application.agent_runtime.policies.loop import (
-    InvalidTransition,
-    LoopOrchestrator,
-    NoProgressDetector,
+    record_progress_signature,
+    recovery_action,
+    validate_transition,
 )
 from app.application.agent_runtime.policies.reasoning import (
     ObservationEvaluator,
@@ -290,37 +290,39 @@ def test_validation_outcomes_update_only_matching_success_criteria():
 
 
 def test_orchestrator_rejects_shortcuts_and_unauthorized_patches():
-    orchestrator = LoopOrchestrator()
-    with pytest.raises(InvalidTransition):
-        orchestrator.validate_result("select_action", NodeResult(next_node="completed"))
-    with pytest.raises(InvalidTransition):
-        orchestrator.validate_result(
+    with pytest.raises(RuntimeError):
+        validate_transition("select_action", NodeResult(next_node="completed"))
+    with pytest.raises(RuntimeError):
+        validate_transition(
             "evaluate", NodeResult(next_node="update_state", state_patch={"terminal_reason": {}})
         )
 
 
 def test_no_progress_detection():
-    detector = NoProgressDetector(threshold=2)
-    assert not detector.record(
+    signatures = []
+    assert not record_progress_signature(
+        signatures,
+        threshold=2,
         evidence_refs=[], criterion_changes={}, completed_steps=[], plan_version=1
     )
-    assert detector.record(
+    assert record_progress_signature(
+        signatures,
+        threshold=2,
         evidence_refs=[], criterion_changes={}, completed_steps=[], plan_version=1
     )
 
 
 def test_checkpoint_recovery_does_not_repeat_unknown_non_idempotent_action():
-    orchestrator = LoopOrchestrator()
     assert (
-        orchestrator.recovery_action(phase="prepared", idempotent=False, result_recorded=False)
+        recovery_action(phase="prepared", idempotent=False, result_recorded=False)
         == "execute"
     )
     assert (
-        orchestrator.recovery_action(phase="executing", idempotent=False, result_recorded=False)
+        recovery_action(phase="executing", idempotent=False, result_recorded=False)
         == "waiting_user"
     )
     assert (
-        orchestrator.recovery_action(phase="executing", idempotent=True, result_recorded=True)
+        recovery_action(phase="executing", idempotent=True, result_recorded=True)
         == "replay_result"
     )
 

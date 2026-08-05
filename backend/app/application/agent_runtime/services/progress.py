@@ -45,6 +45,7 @@ class ExecutionProgress:
     tool_calls_used: int = 0
     reflections_used: int = 0
     replans_used: int = 0
+    no_progress_signatures: list[str] = field(default_factory=list)
 
 
 class ProgressEvaluationStage:

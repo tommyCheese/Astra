@@ -1,7 +1,6 @@
 """Loop transition validation and no-progress detection."""
 
 from collections.abc import Iterable
-from dataclasses import dataclass, field
 from typing import Any
 
 from app.common.schemas.agent.execution_state import NodeResult
@@ -58,60 +57,50 @@ ERROR_EXITS: dict[str, set[str]] = {
 }
 
 
-class InvalidTransition(RuntimeError):
-    pass
-
-
-class LoopOrchestrator:
-    def validate_result(self, current_node: str, result: NodeResult) -> None:
-        if result.next_node not in TRANSITIONS.get(current_node, set()):
-            raise InvalidTransition(f"Invalid transition: {current_node} -> {result.next_node}")
-        allowed = PATCH_AUTHORITIES.get(current_node, set())
-        unauthorized = set(result.state_patch) - allowed
-        if unauthorized:
-            raise InvalidTransition(
-                f"Node {current_node} cannot patch: {', '.join(sorted(unauthorized))}"
-            )
-        if result.error:
-            category = result.error.get("category", "runtime_internal")
-            if result.next_node not in ERROR_EXITS.get(category, {"failed"}):
-                raise InvalidTransition(f"Error {category} cannot exit to {result.next_node}")
-
-    def recovery_action(self, *, phase: str, idempotent: bool, result_recorded: bool) -> str:
-        if result_recorded:
-            return "replay_result"
-        if phase == "prepared":
-            return "execute"
-        if phase == "executing" and idempotent:
-            return "retry_same_idempotency_key"
-        if phase == "executing":
-            return "waiting_user"
-        return "blocked"
-
-
-@dataclass
-class NoProgressDetector:
-    threshold: int = 3
-    signatures: list[str] = field(default_factory=list)
-
-    def record(
-        self,
-        *,
-        evidence_refs: Iterable[str],
-        criterion_changes: dict[str, Any],
-        completed_steps: Iterable[str],
-        plan_version: int,
-    ) -> bool:
-        signature = repr(
-            (
-                sorted(evidence_refs),
-                sorted(criterion_changes.items()),
-                sorted(completed_steps),
-                plan_version,
-            )
+def validate_transition(current_node: str, result: NodeResult) -> None:
+    """Validate the fixed runtime graph without manufacturing a service object."""
+    if result.next_node not in TRANSITIONS.get(current_node, set()):
+        raise RuntimeError(f"Invalid transition: {current_node} -> {result.next_node}")
+    allowed = PATCH_AUTHORITIES.get(current_node, set())
+    unauthorized = set(result.state_patch) - allowed
+    if unauthorized:
+        raise RuntimeError(
+            f"Node {current_node} cannot patch: {', '.join(sorted(unauthorized))}"
         )
-        self.signatures.append(signature)
-        return (
-            len(self.signatures) >= self.threshold
-            and len(set(self.signatures[-self.threshold :])) == 1
+    if result.error:
+        category = result.error.get("category", "runtime_internal")
+        if result.next_node not in ERROR_EXITS.get(category, {"failed"}):
+            raise RuntimeError(f"Error {category} cannot exit to {result.next_node}")
+
+
+def recovery_action(*, phase: str, idempotent: bool, result_recorded: bool) -> str:
+    if result_recorded:
+        return "replay_result"
+    if phase == "prepared":
+        return "execute"
+    if phase == "executing" and idempotent:
+        return "retry_same_idempotency_key"
+    if phase == "executing":
+        return "waiting_user"
+    return "blocked"
+
+
+def record_progress_signature(
+    signatures: list[str],
+    *,
+    evidence_refs: Iterable[str],
+    criterion_changes: dict[str, Any],
+    completed_steps: Iterable[str],
+    plan_version: int,
+    threshold: int = 3,
+) -> bool:
+    signature = repr(
+        (
+            sorted(evidence_refs),
+            sorted(criterion_changes.items()),
+            sorted(completed_steps),
+            plan_version,
         )
+    )
+    signatures.append(signature)
+    return len(signatures) >= threshold and len(set(signatures[-threshold:])) == 1

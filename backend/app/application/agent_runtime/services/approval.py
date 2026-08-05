@@ -94,22 +94,14 @@ class ApprovalStageInput:
     approved_tool_call: ToolCallRecord | None
 
 
-@dataclass(frozen=True)
-class ApprovalStageResult:
-    tool_call: ToolCallRecord | None
-    waiting_summary: str | None = None
-
-    @property
-    def is_waiting(self) -> bool:
-        return self.waiting_summary is not None
-
-
 class ApprovalRoutingStage:
     def __init__(self, settings: Settings, repository: RunUnitOfWork) -> None:
         self._settings = settings
         self._repository = repository
 
-    async def execute(self, stage_input: ApprovalStageInput) -> ApprovalStageResult:
+    async def execute(
+        self, stage_input: ApprovalStageInput
+    ) -> tuple[ToolCallRecord | None, str | None]:
         disposition = stage_input.authorization.decision.decision
         if disposition == PermissionDecisionKind.deny:
             await self._deny(stage_input)
@@ -117,7 +109,7 @@ class ApprovalRoutingStage:
             return await self._wait_for_approval(stage_input)
         if stage_input.authorization.grant_ids:
             await self._repository.consume_approval_grants(stage_input.authorization.grant_ids)
-        return ApprovalStageResult(await self._executable_tool_call(stage_input))
+        return await self._executable_tool_call(stage_input), None
 
     async def _deny(self, stage_input: ApprovalStageInput) -> None:
         explanation = stage_input.authorization.decision.explanation
@@ -134,7 +126,7 @@ class ApprovalRoutingStage:
     async def _wait_for_approval(
         self,
         stage_input: ApprovalStageInput,
-    ) -> ApprovalStageResult:
+    ) -> tuple[ToolCallRecord | None, str | None]:
         explanation = stage_input.authorization.decision.explanation
         if stage_input.is_approved_resume:
             if stage_input.approved_tool_call:
@@ -181,7 +173,7 @@ class ApprovalRoutingStage:
                 "continuation_token": continuation_token,
             },
         )
-        return ApprovalStageResult(tool_call, summary)
+        return tool_call, summary
 
     async def _start_waiting_tool_call(
         self,
