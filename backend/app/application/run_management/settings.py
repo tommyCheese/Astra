@@ -14,7 +14,9 @@ from app.infrastructure.model_clients.providers import (
     SUPPORTED_MODEL_PROVIDERS,
 )
 from app.infrastructure.repositories.tool_settings import (
+    ToolProviderSettingsRepository,
     ToolSettingsRepository,
+    apply_provider_states,
     apply_tool_states,
     default_tool_states,
 )
@@ -29,8 +31,17 @@ class RunSettingsResolver:
         tool_states = await ToolSettingsRepository(self._session).get_or_create(
             default_tool_states(self._base_settings)
         )
+        provider_defaults = {
+            provider_id: True for provider_id in self._base_settings.trusted_tool_provider_map
+        }
+        provider_states = await ToolProviderSettingsRepository(self._session).get_or_create(
+            provider_defaults
+        )
         return self.apply_model_config(
-            apply_tool_states(self._base_settings, tool_states),
+            apply_provider_states(
+                apply_tool_states(self._base_settings, tool_states),
+                provider_states,
+            ),
             model,
         )
 

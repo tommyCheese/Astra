@@ -2,7 +2,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { App, DocumentationPage } from '../src/App';
-import { buildRuntime, cancelRun, cancelRuntimeBuild, confirmPlanExecution, createConversationShare, createRun, decideToolApproval, deleteConversation, executeConversationCommand, getConversation, getConversationContext, getConversationStrategy, getRun, getRuntimeDefaultModel, getRuntimeProfile, listConversationShares, listConversations, listLibraryDeliverables, listRuns, listSkills, listSystemCommands, resetRuntimeAgentProfile, resolveModelContextCapabilities, resolveModelThinkingCapabilities, resumeRun, revisePlan, revokeConversationShare, streamRunEvents, takeCreatedRunStream, testModelConnection, updateConversation, updateConversationStrategy, updateRuntimeAgentProfile, updateRuntimeMemorySettings, updateToolSettings, type ModelThinkingCapability, type RunStreamEvent, type SkillSummary } from '../src/api';
+import { buildRuntime, cancelRun, cancelRuntimeBuild, confirmPlanExecution, createConversationShare, createRun, decideToolApproval, deleteConversation, executeConversationCommand, getConversation, getConversationContext, getConversationStrategy, getRun, getRuntimeDefaultModel, getRuntimeProfile, listConversationShares, listConversations, listLibraryDeliverables, listRuns, listSkills, listSystemCommands, resetRuntimeAgentProfile, resolveModelContextCapabilities, resolveModelThinkingCapabilities, resumeRun, revisePlan, revokeConversationShare, streamRunEvents, takeCreatedRunStream, testModelConnection, updateConversation, updateConversationStrategy, updateRuntimeAgentProfile, updateRuntimeMemorySettings, updateToolState, type ModelThinkingCapability, type RunStreamEvent, type SkillSummary } from '../src/api';
 import type { PlanGraphSnapshot, RunView } from '../src/types';
 
 vi.mock('../src/api', () => ({
@@ -48,13 +48,32 @@ vi.mock('../src/api', () => ({
   }))),
   updateConversationStrategy: vi.fn(async (strategy) => strategy),
   getToolSettings: vi.fn(async () => ({ tools: [
-    { name: 'web_search', label: 'Web Search', description: '搜索公开网页并生成候选来源', enabled: true, available: true },
-    { name: 'web_fetch', label: 'Web Fetch', description: '自适应提取页面主要内容', enabled: true, available: true },
-    { name: 'chart_render', label: 'Chart Render', description: '生成图表', enabled: true, available: false, unavailable_reason: '需要先启用安全运行环境。' },
-    { name: 'bash_execute', label: 'Bash Execute', description: '在隔离容器中执行命令', enabled: false, available: true },
-    { name: 'swarm', label: 'Swarm / 子 Agent', description: '并发创建受治理的子 Agent 并自动汇合结果', enabled: true, available: true, unavailable_reason: null },
+    { name: 'web_search', provider_id: 'astra.web', label: 'Web Search', description: '搜索公开网页并生成候选来源', enabled: true, available: true },
+    { name: 'web_fetch', provider_id: 'astra.web', label: 'Web Fetch', description: '自适应提取页面主要内容', enabled: true, available: true },
+    { name: 'chart.render', provider_id: 'astra.chart', label: 'Chart Render', description: '生成图表', enabled: true, available: false, unavailable_reason: '需要先启用安全运行环境。' },
+    { name: 'bash_execute', provider_id: 'astra.shell', label: 'Bash Execute', description: '在隔离容器中执行命令', enabled: false, available: true },
+    { name: 'swarm', provider_id: 'astra.builtin', label: 'Swarm / 子 Agent', description: '并发创建受治理的子 Agent 并自动汇合结果', enabled: true, available: true, unavailable_reason: null },
+  ], providers: [
+    { provider_id: 'astra.builtin', label: 'Builtin', version: '1', enabled: true, state: 'enabled', health: 'healthy', available: true, configuration_schema: {}, configuration: {}, configuration_revision: '1' },
+    { provider_id: 'astra.chart', label: 'Chart', version: '1', enabled: true, state: 'enabled', health: 'unhealthy', available: false, unavailable_reason: '需要先启用安全运行环境。', configuration_schema: {}, configuration: {}, configuration_revision: '1' },
+    { provider_id: 'astra.shell', label: 'Shell', version: '1', enabled: true, state: 'enabled', health: 'healthy', available: true, configuration_schema: {}, configuration: {}, configuration_revision: '1' },
+    { provider_id: 'astra.web', label: 'Web', version: '1', enabled: true, state: 'enabled', health: 'healthy', available: true, configuration_schema: {}, configuration: {}, configuration_revision: '1' },
   ] })),
   updateToolSettings: vi.fn(async (tools) => ({ tools })),
+  updateToolState: vi.fn(async (name, enabled) => ({ tools: [
+    { name: 'web_search', provider_id: 'astra.web', label: 'Web Search', description: '搜索公开网页并生成候选来源', enabled: name === 'web_search' ? enabled : true, available: true },
+    { name: 'web_fetch', provider_id: 'astra.web', label: 'Web Fetch', description: '自适应提取页面主要内容', enabled: true, available: true },
+    { name: 'chart.render', provider_id: 'astra.chart', label: 'Chart Render', description: '生成图表', enabled: true, available: false, unavailable_reason: '需要先启用安全运行环境。' },
+    { name: 'bash_execute', provider_id: 'astra.shell', label: 'Bash Execute', description: '在隔离容器中执行命令', enabled: false, available: true },
+    { name: 'swarm', provider_id: 'astra.builtin', label: 'Swarm / 子 Agent', description: '并发创建受治理的子 Agent 并自动汇合结果', enabled: name === 'swarm' ? enabled : true, available: true },
+  ], providers: [
+    { provider_id: 'astra.builtin', label: 'Builtin', version: '1', enabled: true, state: 'enabled', health: 'healthy', available: true, configuration_schema: {}, configuration: {}, configuration_revision: '1' },
+    { provider_id: 'astra.chart', label: 'Chart', version: '1', enabled: true, state: 'enabled', health: 'unhealthy', available: false, unavailable_reason: '需要先启用安全运行环境。', configuration_schema: {}, configuration: {}, configuration_revision: '1' },
+    { provider_id: 'astra.shell', label: 'Shell', version: '1', enabled: true, state: 'enabled', health: 'healthy', available: true, configuration_schema: {}, configuration: {}, configuration_revision: '1' },
+    { provider_id: 'astra.web', label: 'Web', version: '1', enabled: true, state: 'enabled', health: 'healthy', available: true, configuration_schema: {}, configuration: {}, configuration_revision: '1' },
+  ] })),
+  updateToolProviderState: vi.fn(),
+  updateToolProviderConfiguration: vi.fn(),
   getRuntimeProfile: vi.fn(async () => ({ dependencies: [], core_dependencies: [{ name: 'numpy', version: '2.2.6' }, { name: 'matplotlib', version: '3.10.3' }], active_image: 'astra-data-viz:0.1.0', dependency_digest: 'base', build: null, agent_profile: { source: 'default', version: 'profile-default', documents: { identity: '# Astra Identity\n\n## Identity\nDefault', soul: '# Astra Soul', memory: '# Astra Memory Protocol', autodream: '# Astra AutoDream Protocol' } }, memory_settings: { write_enabled: true, recall_enabled: false, retrieval_max_items: 8, retrieval_max_tokens: 2000, retrieval_min_confidence: 0.2, retrieval_min_score: 0.05, autodream_enabled: false, autodream_scan_seconds: 3600, autodream_min_candidates: 2 } })),
   updateRuntimeAgentProfile: vi.fn(async (documents) => ({ source: 'user', version: 'profile-user', documents })),
   resetRuntimeAgentProfile: vi.fn(async () => ({ source: 'default', version: 'profile-default', documents: { identity: '# Astra Identity\n\n## Identity\nDefault', soul: '# Astra Soul', memory: '# Astra Memory Protocol', autodream: '# Astra AutoDream Protocol' } })),
@@ -99,7 +118,7 @@ vi.mock('../src/api', () => ({
   })),
   executeConversationCommand: vi.fn(async (_id, command, _provider, _model, argumentsText = '') => ({
     command: `/${command}`,
-    message: command === 'clear' ? '模型将从当前消息重新开始，完整记录仍保留。' : '已整理较早的对话，完整记录仍保留。',
+    message: command === 'clear' ? '已清空模型上下文；后续请求将从零开始，完整记录仍保留。' : '已整理较早的对话，完整记录仍保留。',
     context: {
       provider: 'openai', model: 'gpt-5', window_tokens: 400000, max_output_tokens: 128000,
       context_source: 'catalog', context_verified: true, context_documentation_url: 'https://developers.openai.com/api/docs/models/gpt-5', available_input_tokens: 391808,
@@ -113,6 +132,7 @@ vi.mock('../src/api', () => ({
       command: `/${command}`,
       content: `/${command}${argumentsText ? ` ${argumentsText}` : ''}`,
       arguments: argumentsText,
+      assistant_content: command === 'clear' ? '已清空模型上下文；后续请求将从零开始，完整记录仍保留。' : '已整理较早的对话，完整记录仍保留。',
       after_run_count: 1,
       created_at: new Date().toISOString(),
     },
@@ -618,7 +638,7 @@ describe('App', () => {
 
   it('executes preset slash commands without submitting a model message and refreshes context status', async () => {
     vi.mocked(listSystemCommands).mockResolvedValueOnce([
-      { name: 'compact', command: '/compact', description: '整理较早的对话，保留近期内容和完整记录', effect: 'compact_context', argument_mode: 'optional', default_arguments: '保留后续任务所需的关键上下文', usage: '/compact [压缩方向]', side_effect: 'write', available: true, execution_mode: 'host', unavailable_reason: null },
+      { name: 'compact', command: '/compact', description: '整理较早的对话，保留近期内容和完整记录', effect: 'compact_context', argument_mode: 'optional', default_arguments: '', usage: '/compact [压缩方向]', side_effect: 'write', available: true, execution_mode: 'host', unavailable_reason: null },
       { name: 'clear', command: '/clear', description: '让模型从当前消息重新开始，完整记录仍会保留', effect: 'clear_context', argument_mode: 'none', usage: '/clear', side_effect: 'write', available: true, execution_mode: 'host', unavailable_reason: null },
     ]);
     render(<App />);
@@ -639,10 +659,10 @@ describe('App', () => {
     const command = screen.getByRole('option', { name: /\/compact/ });
     expect(command).toHaveTextContent('快捷操作');
     await userEvent.click(command);
-    expect(textbox).toHaveValue('/compact 保留后续任务所需的关键上下文');
+    expect(textbox).toHaveValue('/compact');
     await userEvent.click(screen.getByRole('button', { name: '发送' }));
 
-    await waitFor(() => expect(executeConversationCommand).toHaveBeenCalledWith('task-1', 'compact', 'openai', 'gpt-5', '保留后续任务所需的关键上下文'));
+    await waitFor(() => expect(executeConversationCommand).toHaveBeenCalledWith('task-1', 'compact', 'openai', 'gpt-5', ''));
     expect(vi.mocked(createRun).mock.calls).toHaveLength(runCalls);
     expect(textbox).toHaveValue('');
     expect(document.querySelector('.message-command-prefix')).toHaveTextContent('/compact');
@@ -654,7 +674,8 @@ describe('App', () => {
     expect(modelSelector.querySelector('.model-context-ring > .model-context-tooltip')).toBeInTheDocument();
     expect(modelSelector).toHaveAttribute('aria-describedby', 'model-thinking-summary-description model-context-status-description');
     expect(modelSelector).not.toHaveAttribute('title');
-    expect(document.getElementById('model-context-status-description')).toHaveTextContent('已整理较早的对话，完整记录仍保留。');
+    expect(document.getElementById('model-context-status-description')).not.toHaveTextContent('已整理较早的对话，完整记录仍保留。');
+    expect(screen.getByText('已整理较早的对话，完整记录仍保留。').closest('article')).toHaveClass('command-result-message');
     const contextControl = screen.getByRole('button', { name: /上下文：已使用 5K/ });
     await userEvent.click(contextControl);
     const capacityPanel = screen.getByRole('dialog', { name: '上下文容量' });
@@ -666,6 +687,76 @@ describe('App', () => {
     expect(capacityPanel).not.toHaveTextContent('回退');
     expect(document.querySelector('.context-window-status')).not.toBeInTheDocument();
     expect(document.querySelector('.chat-composer')).not.toHaveClass('has-context-status');
+  });
+
+  it('passes a custom /compact direction through unchanged', async () => {
+    vi.mocked(listSystemCommands).mockResolvedValueOnce([
+      { name: 'compact', command: '/compact', description: '整理较早的对话', effect: 'compact_context', argument_mode: 'optional', default_arguments: '', usage: '/compact [压缩方向]', side_effect: 'write', available: true, execution_mode: 'host', unavailable_reason: null },
+    ]);
+    render(<App />);
+    const textbox = screen.getByRole('textbox');
+
+    await userEvent.type(textbox, '先建立对话');
+    await userEvent.click(screen.getByRole('button', { name: '发送' }));
+    await waitFor(() => expect(getRun).toHaveBeenCalled());
+
+    await userEvent.type(textbox, '/compact 重点保留接口约束');
+    await userEvent.click(screen.getByRole('button', { name: '发送' }));
+
+    await waitFor(() => expect(executeConversationCommand).toHaveBeenLastCalledWith(
+      'task-1',
+      'compact',
+      'openai',
+      'gpt-5',
+      '重点保留接口约束',
+    ));
+    expect(screen.getByText('重点保留接口约束')).toHaveClass('message-command-arguments');
+  });
+
+  it('shows Astra progress while /compact is waiting for the model', async () => {
+    vi.mocked(listSystemCommands).mockResolvedValueOnce([
+      { name: 'compact', command: '/compact', description: '整理较早的对话', effect: 'compact_context', argument_mode: 'optional', default_arguments: '', usage: '/compact [压缩方向]', side_effect: 'write', available: true, execution_mode: 'host', unavailable_reason: null },
+    ]);
+    render(<App />);
+    const textbox = screen.getByRole('textbox');
+    await userEvent.type(textbox, '先建立对话');
+    await userEvent.click(screen.getByRole('button', { name: '发送' }));
+    await waitFor(() => expect(getRun).toHaveBeenCalled());
+
+    let finishCompact!: (result: Awaited<ReturnType<typeof executeConversationCommand>>) => void;
+    vi.mocked(executeConversationCommand).mockImplementationOnce(() => new Promise((resolve) => {
+      finishCompact = resolve;
+    }));
+    await userEvent.type(textbox, '/compact');
+    await userEvent.click(screen.getByRole('button', { name: '发送' }));
+
+    expect(await screen.findByText('正在检查并压缩主要信息上下文…')).toBeInTheDocument();
+    expect(screen.getByText('已用时 0 秒')).toBeInTheDocument();
+
+    act(() => finishCompact({
+      command: '/compact',
+      message: '已调用模型完成主要信息上下文压缩：折叠 3 轮，保留最近 4 轮；完整聊天记录仍保留。',
+      context: {
+        provider: 'openai', model: 'gpt-5', window_tokens: 400000, max_output_tokens: 128000,
+        context_source: 'catalog', context_verified: true, context_documentation_url: null, available_input_tokens: 391808,
+        used_tokens: 5000, remaining_tokens: 386808, usage_ratio: 0.0128, auto_compact_ratio: 0.8,
+        status: 'normal', estimated: true, summary_active: true, visible_run_count: 4,
+        folded_run_count: 3, last_action: 'compact', last_action_at: new Date().toISOString(),
+      },
+      details: { folded: 3, retained: 4, model_used: true },
+      user_message: {
+        id: 'command-compact-progress',
+        command: '/compact',
+        content: '/compact',
+        arguments: '',
+        assistant_content: '已调用模型完成主要信息上下文压缩：折叠 3 轮，保留最近 4 轮；完整聊天记录仍保留。',
+        after_run_count: 1,
+        created_at: new Date().toISOString(),
+      },
+    }));
+
+    expect(await screen.findByText(/已调用模型完成主要信息上下文压缩/)).toBeInTheDocument();
+    expect(screen.queryByText('正在检查并压缩主要信息上下文…')).not.toBeInTheDocument();
   });
 
   it('stages parameterized automation commands and submits them as host operations', async () => {
@@ -737,6 +828,7 @@ describe('App', () => {
     expect(vi.mocked(createRun).mock.calls).toHaveLength(runCalls);
     expect(textbox).toHaveValue('');
     expect(document.querySelector('.message-command-prefix')).toHaveTextContent('/clear');
+    expect(screen.getByText('已清空模型上下文；后续请求将从零开始，完整记录仍保留。').closest('article')).toHaveClass('command-result-message');
   });
 
   it('treats /clear as an idempotent local command before a conversation exists', async () => {
@@ -753,11 +845,12 @@ describe('App', () => {
     expect(textbox).toHaveValue('');
     expect(screen.queryByText('请先开始一段对话，再使用此快捷操作。')).not.toBeInTheDocument();
     expect(document.querySelector('.message-command-prefix')).toHaveTextContent('/clear');
+    expect(screen.getByText('当前没有模型上下文；已保持为空。').closest('article')).toHaveClass('command-result-message');
   });
 
   it('treats /compact as an idempotent local command before a conversation exists', async () => {
     vi.mocked(listSystemCommands).mockResolvedValueOnce([
-      { name: 'compact', command: '/compact', description: '整理较早的对话', effect: 'compact_context', argument_mode: 'optional', default_arguments: '保留后续任务所需的关键上下文', usage: '/compact [压缩方向]', side_effect: 'write', available: true, execution_mode: 'host', unavailable_reason: null },
+      { name: 'compact', command: '/compact', description: '整理较早的对话', effect: 'compact_context', argument_mode: 'optional', default_arguments: '', usage: '/compact [压缩方向]', side_effect: 'write', available: true, execution_mode: 'host', unavailable_reason: null },
     ]);
     render(<App />);
     const textbox = screen.getByRole('textbox');
@@ -769,7 +862,8 @@ describe('App', () => {
     expect(textbox).toHaveValue('');
     expect(screen.queryByText('请先开始一段对话，再使用此快捷操作。')).not.toBeInTheDocument();
     expect(document.querySelector('.message-command-prefix')).toHaveTextContent('/compact');
-    expect(document.querySelector('.message-command-arguments')).toHaveTextContent('保留后续任务所需的关键上下文');
+    expect(document.querySelector('.message-command-arguments')).not.toBeInTheDocument();
+    expect(screen.getByText('当前没有可整理的模型上下文。').closest('article')).toHaveClass('command-result-message');
   });
 
   it('routes /subagent to a quick required-subagent Run and preserves arguments on failure', async () => {
@@ -1685,6 +1779,24 @@ describe('App', () => {
     expect(screen.queryByRole('button', { name: '回到最新' })).not.toBeInTheDocument();
   });
 
+  it('uses an instant scroll while automatically following a growing conversation', async () => {
+    render(<App />);
+    const conversation = document.querySelector<HTMLElement>('.conversation');
+    expect(conversation).not.toBeNull();
+    Object.defineProperties(conversation!, {
+      scrollHeight: { configurable: true, value: 2400 },
+      clientHeight: { configurable: true, value: 600 },
+      scrollTop: { configurable: true, writable: true, value: 1800 },
+    });
+    const scrollTo = vi.fn();
+    Object.defineProperty(conversation!, 'scrollTo', { configurable: true, value: scrollTo });
+
+    await userEvent.type(screen.getByRole('textbox'), '继续生成内容');
+    await userEvent.click(screen.getByRole('button', { name: '发送' }));
+
+    await waitFor(() => expect(scrollTo).toHaveBeenCalledWith({ top: 2400, behavior: 'instant' }));
+  });
+
   it('keeps one independently controlled process panel when resuming a clarification', async () => {
     const completedFixture = await vi.mocked(getRun)('fixture');
     const waitingSnapshot: RunView = {
@@ -1789,19 +1901,17 @@ describe('App', () => {
     expect(screen.getByText('Swarm / 子 Agent')).toBeInTheDocument();
     expect(screen.queryByText('需要先启用受治理子 Agent 执行。')).not.toBeInTheDocument();
     expect(screen.queryByText('关闭 Swarm 会立即阻止创建新的子 Agent，但不会取消已经创建的子 Agent。')).not.toBeInTheDocument();
-    expect(screen.getByText('需要先启用安全运行环境。')).toBeInTheDocument();
+    expect(screen.getAllByText('需要先启用安全运行环境。')).toHaveLength(2);
     const searchSwitch = screen.getByRole('switch', { name: /Web Search/ });
     await userEvent.click(searchSwitch);
-    await waitFor(() => expect(updateToolSettings).toHaveBeenCalled());
+    await waitFor(() => expect(updateToolState).toHaveBeenCalledWith('web_search', false));
     expect(searchSwitch).toHaveAttribute('aria-checked', 'false');
     expect(screen.queryByText('工具已启用，将用于之后新建的任务。')).not.toBeInTheDocument();
     expect(screen.queryByText('工具已停用，之后新建的任务不会调用它。')).not.toBeInTheDocument();
     expect(screen.queryByText('设置已保存，并会应用于之后创建的任务。')).not.toBeInTheDocument();
     const swarmSwitch = screen.getByRole('switch', { name: /Swarm \/ 子 Agent/ });
     await userEvent.click(swarmSwitch);
-    await waitFor(() => expect(updateToolSettings).toHaveBeenLastCalledWith(
-      expect.arrayContaining([expect.objectContaining({ name: 'swarm', enabled: false })]),
-    ));
+    await waitFor(() => expect(updateToolState).toHaveBeenLastCalledWith('swarm', false));
     expect(swarmSwitch).toHaveAttribute('aria-checked', 'false');
   });
 

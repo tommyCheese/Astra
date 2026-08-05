@@ -788,3 +788,6 @@ child scope ⊆ parent scope ∩ task policy ∩ explicit delegated scope
 后端重构后的模块地图、Agent 阶段、事务边界和组合根规范见
 [`backend-refactoring/target-architecture.md`](backend-refactoring/target-architecture.md)。
 该文档是代码结构与贡献约束的当前规范来源；本文其余章节保留产品与系统行为的详细设计。
+
+Tool Provider Plugin 的目录冻结、组件绑定、隔离执行、动态设置、发布和回滚规范见
+[`tool-provider-plugins.md`](tool-provider-plugins.md)。新增工具应贡献完整 Provider 组件，不得在 Agent Loop、通用权限分析器、审批或完成门控中增加工具名分支。

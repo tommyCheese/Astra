@@ -75,8 +75,8 @@ class ToolActionInput:
     subagent_supervisor: SubagentSupervisorPort | None
 
 
-class RootToolActionStage:
-    """Own the complete authorization-to-observation lifecycle for one tool call."""
+class InvocationPipeline:
+    """Own the generic authorization-to-observation lifecycle for one invocation."""
 
     def __init__(
         self,
@@ -317,9 +317,9 @@ class RootToolActionStage:
         workspace_changes = list(
             normalized.tool_output.get("data", {}).get("workspace_changes", [])
         )
-        completed = tool_name == "bash_execute" and quick_workspace_change_completes_goal(
-            action.goal,
-            workspace_changes,
+        completed = (
+            "workspace_changed" in normalized.completion_signals
+            and quick_workspace_change_completes_goal(action.goal, workspace_changes)
         )
         await self._repository.update_agent_turn(
             action.turn.id,
@@ -493,3 +493,9 @@ class RootToolActionStage:
             "normalize_observation",
             NodeResult(next_node="evaluate"),
         )
+
+
+# One-version names retained for callers compiled against the pre-pipeline service split.
+InvocationRequest = ToolActionInput
+InvocationOutcome = ToolActionOutcome
+RootToolActionStage = InvocationPipeline

@@ -127,6 +127,80 @@ async def test_approve_once_resumes_exact_frozen_call(session):
     assert loaded.status in {"executing", "completed"}
 
 
+async def test_approval_resume_survives_runtime_restart_and_display_only_tool_change(session):
+    settings = AstraRuntimeSettings(model_provider="mock")
+    repo = RunUnitOfWork(session)
+    run = await repo.create_task_run(
+        "查询重启后的批准恢复",
+        settings.model_policy,
+        reasoning_policy=policy("request_approval"),
+    )
+    first_registry = fake_write_registry()
+    await AstraAgentLoop(
+        settings,
+        model_client=WriteModelClient(),
+        tool_registry=first_registry,
+    ).run(repo, run.id, run.task.description)
+    waiting = await repo.require_run(run.id)
+    approval = waiting.approval_requests[-1]
+    await repo.decide_approval(
+        run.id,
+        approval.id,
+        "approve_once",
+        continuation_token=waiting.waiting_state["continuation_token"],
+    )
+    restarted_tool = FakeWrite()
+    restarted_tool.spec = restarted_tool.spec.model_copy(
+        update={"description": "display text changed after restart"}
+    )
+    restarted_registry = AstraToolRegistry().extend([restarted_tool])
+
+    await AstraAgentLoop(
+        settings,
+        model_client=WriteModelClient(),
+        tool_registry=restarted_registry,
+    ).run(repo, run.id, run.task.description)
+    loaded = await repo.require_run(run.id)
+
+    assert loaded.tool_calls[0].status == "succeeded"
+    assert restarted_tool.last_context.tool_call_id == loaded.tool_calls[0].id
+
+
+async def test_approval_resume_fails_closed_after_tool_behavior_identity_drift(session):
+    settings = AstraRuntimeSettings(model_provider="mock")
+    repo = RunUnitOfWork(session)
+    run = await repo.create_task_run(
+        "拒绝漂移后的批准恢复",
+        settings.model_policy,
+        reasoning_policy=policy("request_approval"),
+    )
+    await AstraAgentLoop(
+        settings,
+        model_client=WriteModelClient(),
+        tool_registry=fake_write_registry(),
+    ).run(repo, run.id, run.task.description)
+    waiting = await repo.require_run(run.id)
+    approval = waiting.approval_requests[-1]
+    await repo.decide_approval(
+        run.id,
+        approval.id,
+        "approve_once",
+        continuation_token=waiting.waiting_state["continuation_token"],
+    )
+    drifted_tool = FakeWrite()
+    drifted_tool.spec = drifted_tool.spec.model_copy(update={"version": "behavior-changed"})
+    drifted_registry = AstraToolRegistry().extend([drifted_tool])
+
+    with pytest.raises(ValueError, match="behavioral identity changed"):
+        await AstraAgentLoop(
+            settings,
+            model_client=WriteModelClient(),
+            tool_registry=drifted_registry,
+        ).run(repo, run.id, run.task.description)
+
+    assert not hasattr(drifted_tool, "last_context")
+
+
 async def test_approval_resume_preserves_tool_budget_and_does_not_execute_twice(session):
     settings = AstraRuntimeSettings(model_provider="mock", agent_max_tool_calls=1)
     repo = RunUnitOfWork(session)

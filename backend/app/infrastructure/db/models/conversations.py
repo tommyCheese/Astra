@@ -32,6 +32,30 @@ class ToolSettingRecord(AstraOrmRecordBase):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
 
+class ToolProviderSettingRecord(AstraOrmRecordBase):
+    __tablename__ = "tool_provider_settings"
+
+    provider_id: Mapped[str] = mapped_column(String(200), primary_key=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    configuration: Mapped[dict] = mapped_column(JsonType, default=dict)
+    configuration_revision: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+class ToolSettingsAuditRecord(AstraOrmRecordBase):
+    __tablename__ = "tool_settings_audit"
+    __table_args__ = (Index("ix_tool_settings_audit_created", "created_at"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_str)
+    target_kind: Mapped[str] = mapped_column(String(40), nullable=False)
+    target_id: Mapped[str] = mapped_column(String(240), nullable=False)
+    action: Mapped[str] = mapped_column(String(80), nullable=False)
+    before: Mapped[dict] = mapped_column(JsonType, default=dict)
+    after: Mapped[dict] = mapped_column(JsonType, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
 class ConversationStrategyPreferenceRecord(AstraOrmRecordBase):
     __tablename__ = "conversation_strategy_preferences"
 

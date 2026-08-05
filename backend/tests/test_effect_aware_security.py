@@ -10,7 +10,7 @@ import pytest
 from app.application.permissions.effects import (
     ANALYZER_DIGEST,
     BashEffectAnalyzer,
-    DefaultEffectAnalyzer,
+    ChartEffectAnalyzer,
     grant_proposals,
     workspace_mount_mode,
 )
@@ -57,7 +57,7 @@ def test_effect_matrix_classifies_safe_mutating_forbidden_and_artifact_actions()
     modify = bash_plan("sed -i s/a/b/ report.txt")
     delete = bash_plan("find reports -type f -delete")
     forbidden = bash_plan("curl https://example.com")
-    artifact = DefaultEffectAnalyzer().analyze(
+    artifact = ChartEffectAnalyzer().analyze(
         ChartRenderTool.spec,
         {"data": {"x": [1], "y": [2]}, "chart_type": "line", "x": "x", "y": ["y"]},
         task_id="task-1",

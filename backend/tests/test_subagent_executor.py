@@ -218,9 +218,9 @@ async def _child_runtime(session, tool: AstraTool, *, max_model_calls: int = 5):
     tool_name = tool.spec.name
     if tool_name == "web_search":
         actions = ("network_read",)
-        resources = ("web://search/**",)
+        resources = ("provider://astra.builtin/web_search",)
         effects = ("network_read",)
-        destinations = ("web://search/**",)
+        destinations = ("provider://astra.builtin/web_search",)
     else:
         actions = ("credential_use",)
         resources = ("credential://records",)
@@ -680,14 +680,14 @@ async def _operations_runtime(session, *, enabled: bool = True):
     permissions = PermissionRepository(session)
     parent_scope = {
         "actions": ["network_read"],
-        "resources": ["web://search/**"],
+        "resources": ["provider://astra.builtin/web_search"],
         "effect_kinds": ["network_read"],
         "tools": ["web_search"],
         "skills": [],
         "credential_scopes": [],
         "data_labels": [],
         "allowed_purposes": ["research"],
-        "network_destinations": ["web://search/**"],
+        "network_destinations": ["provider://astra.builtin/web_search"],
         "workspace_read_roots": [],
         "workspace_write_roots": [],
         "max_tool_calls": 4,
@@ -753,12 +753,12 @@ async def _operations_runtime(session, *, enabled: bool = True):
         resource_scope={
             "purpose": "research",
             "actions": ["network_read"],
-            "resources": ["web://search/**"],
+            "resources": ["provider://astra.builtin/web_search"],
             "effect_kinds": ["network_read"],
             "tools": ["web_search"],
             "data_labels": [],
             "allowed_purposes": ["research"],
-            "network_destinations": ["web://search/**"],
+            "network_destinations": ["provider://astra.builtin/web_search"],
             "workspace_read_roots": [],
             "workspace_write_roots": [],
             "max_tool_calls": 4,

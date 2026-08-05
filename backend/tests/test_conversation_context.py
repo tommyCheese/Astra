@@ -110,7 +110,7 @@ async def test_compact_and_clear_change_projection_without_deleting_runs(session
     assert len(before.runs) == 7
 
     result = await manager.compact(task, retain_runs=2)
-    assert result == {"folded": 5, "retained": 2}
+    assert result == {"folded": 5, "retained": 2, "model_used": True}
     compacted = await manager.projection(task)
     assert len(compacted.runs) == 2
     assert compacted.summary
@@ -181,7 +181,7 @@ async def test_v2_compaction_installs_semantic_checkpoint_and_preserves_audit_ru
 
     result = await manager.compact(task, retain_runs=2, direction="保留约束和结论")
 
-    assert result == {"folded": 5, "retained": 2}
+    assert result == {"folded": 5, "retained": 2, "model_used": True}
     assert task.context_state["version"] == 2
     assert task.context_state["window_number"] == 1
     assert task.context_state["compaction_implementation"] == "deterministic_emergency"
@@ -207,7 +207,7 @@ async def test_v2_compaction_keeps_token_selected_recent_tail_visible(session):
 
     result = await manager.compact(task, retain_runs=2)
 
-    assert result == {"folded": 0, "retained": 7}
+    assert result == {"folded": 0, "retained": 7, "model_used": True}
     assert len(task.context_state["retained_tail_ids"]) == 5
     assert task.context_state["folded_run_ids"] == []
     assert len((await manager.projection(task)).runs) == 7

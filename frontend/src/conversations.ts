@@ -133,3 +133,17 @@ export function presentCommandMessage(message: CommandMessageView): ChatMessage 
     metadata: { presentation: 'user', command: message.command, command_arguments: message.arguments },
   };
 }
+
+export function presentCommandMessages(message: CommandMessageView): ChatMessage[] {
+  const presented = [presentCommandMessage(message)];
+  if (message.assistant_content) {
+    presented.push({
+      id: `${message.id}-result`,
+      role: 'assistant',
+      content: message.assistant_content,
+      status: 'completed',
+      metadata: { presentation: 'command-result', command: message.command },
+    });
+  }
+  return presented;
+}

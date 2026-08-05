@@ -144,6 +144,7 @@ export type CommandMessage = {
   command: string;
   content: string;
   arguments: string;
+  assistant_content?: string;
   after_run_count: number;
   created_at: string;
 };
@@ -392,15 +393,34 @@ export type RuntimeProfile = {
 };
 
 export type ToolSetting = {
-  name: 'web_search' | 'web_fetch' | 'chart_render' | 'bash_execute' | 'swarm';
+  name: string;
+  provider_id: string;
+  version: string;
   label: string;
   description: string;
   enabled: boolean;
   available: boolean;
+  health: string;
+  input_schema: Record<string, unknown>;
+  output_schema: Record<string, unknown>;
   unavailable_reason?: string | null;
 };
 
-export type ToolSettings = { tools: ToolSetting[] };
+export type ToolProviderSetting = {
+  provider_id: string;
+  label: string;
+  version: string;
+  enabled: boolean;
+  state: string;
+  health: string;
+  available: boolean;
+  unavailable_reason?: string | null;
+  configuration_schema: Record<string, unknown>;
+  configuration: Record<string, unknown>;
+  configuration_revision: string;
+};
+
+export type ToolSettings = { tools: ToolSetting[]; providers: ToolProviderSetting[] };
 
 export type SkillDiagnostic = {
   code: string;
@@ -591,6 +611,36 @@ export async function updateToolSettings(tools: ToolSetting[]): Promise<ToolSett
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(enabled),
+  });
+  if (!response.ok) throw await responseError(response);
+  return response.json();
+}
+
+export async function updateToolState(name: string, enabled: boolean): Promise<ToolSettings> {
+  const response = await fetch(`/api/tools/${encodeURIComponent(name)}/state`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ enabled }),
+  });
+  if (!response.ok) throw await responseError(response);
+  return response.json();
+}
+
+export async function updateToolProviderState(providerId: string, enabled: boolean): Promise<ToolSettings> {
+  const response = await fetch(`/api/tool-providers/${encodeURIComponent(providerId)}/state`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ enabled }),
+  });
+  if (!response.ok) throw await responseError(response);
+  return response.json();
+}
+
+export async function updateToolProviderConfiguration(providerId: string, configuration: Record<string, unknown>): Promise<ToolSettings> {
+  const response = await fetch(`/api/tool-providers/${encodeURIComponent(providerId)}/config`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ configuration }),
   });
   if (!response.ok) throw await responseError(response);
   return response.json();

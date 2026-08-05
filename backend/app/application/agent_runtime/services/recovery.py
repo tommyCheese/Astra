@@ -7,7 +7,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
-from app.application.agent_runtime.result_adapters import AgentToolResultProcessorRegistry
+from app.application.agent_runtime.services.plugin_runtime import PluginRuntimeState
 from app.application.agent_runtime.services.approval import input_hash
 from app.common.schemas.agent.execution_state import AgentObservation
 from app.infrastructure.db.models.permissions import ToolCallRecord
@@ -43,11 +43,13 @@ class RunRecoveryStage:
     def __init__(
         self,
         repository: RunUnitOfWork,
-        processors: AgentToolResultProcessorRegistry,
+        plugin_runtime: PluginRuntimeState,
+        tool_registry,
         normalize_tool_output: ToolOutputNormalizer,
     ) -> None:
         self._repository = repository
-        self._processors = processors
+        self._plugin_runtime = plugin_runtime
+        self._tool_registry = tool_registry
         self._normalize_tool_output = normalize_tool_output
 
     async def load(
@@ -147,6 +149,7 @@ class RunRecoveryStage:
             "frozen_effect_plan": dict(approval.frozen_effect_plan or {}),
             "analyzer_version": approval.analyzer_version,
             "analyzer_digest": approval.analyzer_digest,
+            "catalog_digest": approval.catalog_digest,
         }
 
     async def _recover_latest_turn(
@@ -183,17 +186,20 @@ class RunRecoveryStage:
             plan_node_id=tool_call.plan_node_id,
             node_execution_id=tool_call.node_execution_id,
         )
-        processor = self._processors.for_tool(tool_call.tool_name)
-        observation = (
-            processor.process(tool_call.tool_name, tool_output)[0]
-            if processor
-            else AgentObservation(
+        try:
+            spec = self._tool_registry.get(tool_call.tool_name).spec
+            observation = self._plugin_runtime.process(
+                spec,
+                tool_call.input,
+                tool_output,
+            ).observation
+        except ToolExecutionError:
+            observation = AgentObservation(
                 kind="tool_result",
                 status="succeeded",
                 summary=f"{tool_call.tool_name} recovered from checkpoint",
                 data=tool_output,
             )
-        )
         serialized_observation = observation.model_dump(mode="json")
         observations.append(serialized_observation)
         await self._repository.update_agent_turn(

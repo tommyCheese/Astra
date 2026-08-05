@@ -538,6 +538,7 @@ export type CommandMessageView = {
   command: string;
   content: string;
   arguments: string;
+  assistant_content?: string;
   after_run_count: number;
   created_at: string;
 };

@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from app.application.agent_runtime.policies.completion import AgentCompletionGate
-from app.application.agent_runtime.result_adapters import ChartTaskAdapter, WebTaskAdapter
+from app.application.agent_runtime.services.plugin_runtime import PluginRuntimeState
 from app.application.agent_runtime.services.completion import (
     CompletionVerificationStage,
     normalize_final_answer_artifact_references,
@@ -74,8 +74,7 @@ class AgentFinalizationStage:
         repository: RunUnitOfWork,
         plan_repository: PlanRepository,
         model_client: ModelClient,
-        web_adapter: WebTaskAdapter,
-        chart_adapter: ChartTaskAdapter,
+        plugin_runtime: PluginRuntimeState,
         memory_writer: MemoryCandidateWriter,
         verifier: CompletionVerificationStage,
         completion_gate: AgentCompletionGate,
@@ -86,8 +85,7 @@ class AgentFinalizationStage:
         self._repository = repository
         self._plan_repository = plan_repository
         self._model_client = model_client
-        self._web_adapter = web_adapter
-        self._chart_adapter = chart_adapter
+        self._plugin_runtime = plugin_runtime
         self._memory_writer = memory_writer
         self._verifier = verifier
         self._completion_gate = completion_gate
@@ -150,7 +148,7 @@ class AgentFinalizationStage:
             terminal_summary,
             final_context,
         )
-        answer = project_grounded_answer(answer, self._web_adapter.grounding)
+        answer = project_grounded_answer(answer, self._plugin_runtime.grounding)
         answer, invalid_count, artifact_ids = normalize_final_answer_artifact_references(
             answer,
             await self._repository.list_artifacts(stage_input.run_id),
@@ -169,13 +167,10 @@ class AgentFinalizationStage:
         self,
         stage_input: FinalizationInput,
     ) -> tuple[dict[str, Any], ArtifactRecord | None]:
-        evidence_pack = self._web_adapter.build_evidence(
-            stage_input.goal,
-            self._web_adapter.attempted,
-        )
+        evidence_pack = self._plugin_runtime.evidence_pack(stage_input.goal)
         if stage_input.quick_mode:
             return evidence_pack, None
-        records = self._web_adapter.grounding.records()
+        records = self._plugin_runtime.grounding.records()
         artifact = await self._repository.create_artifact(
             stage_input.run_id,
             "evidence_pack",
@@ -184,8 +179,8 @@ class AgentFinalizationStage:
                 "format": "json",
                 "schema": "grounding-ledger.v1",
                 "evidence_records": len(records),
-                "audited_sources": len(evidence_pack["fetched_sources"]),
-                "failed_sources": len(evidence_pack["failed_sources"]),
+                "audited_sources": len(evidence_pack.get("fetched_sources", [])),
+                "failed_sources": len(evidence_pack.get("failed_sources", [])),
             },
         )
         evidence_pack["artifact_id"] = artifact.id
@@ -230,7 +225,7 @@ class AgentFinalizationStage:
             verification_report=None,
             completion_decision=None,
             audit_refs={
-                "evidence_record_count": len(self._web_adapter.grounding.records()),
+                "evidence_record_count": len(self._plugin_runtime.grounding.records()),
                 "agent_turn_count": await self._repository.count_agent_turns(stage_input.run_id),
                 "referenced_artifact_ids": prepared.referenced_artifact_ids,
             },
@@ -252,14 +247,10 @@ class AgentFinalizationStage:
     ) -> AgentAnswerVerificationReport:
         validation_outcomes = []
         if profile.assurance_level == AssuranceLevel.full:
-            validation_outcomes = [
-                self._chart_adapter.validate(prepared.answer.model_dump(), {})
-                if self._chart_adapter.attempted and not self._web_adapter.attempted
-                else self._web_adapter.validate(
-                    prepared.answer.model_dump(),
-                    prepared.evidence_pack,
-                )
-            ]
+            validation_outcomes = self._plugin_runtime.validate(
+                prepared.answer.model_dump(mode="json"),
+                prepared.evidence_pack,
+            )
             validation_outcomes.extend(
                 grounding_validation_outcomes(
                     prepared.answer.model_dump(mode="json"),
@@ -374,7 +365,7 @@ class AgentFinalizationStage:
         return {
             "evidence_pack_artifact_id": artifact_id,
             "evidence_ledger_artifact_id": artifact_id,
-            "evidence_record_count": len(self._web_adapter.grounding.records()),
+            "evidence_record_count": len(self._plugin_runtime.grounding.records()),
             "agent_turn_count": len(stage_input.progress.observations)
             + (1 if stage_input.final_turn_id else 0),
             "referenced_artifact_ids": prepared.referenced_artifact_ids,

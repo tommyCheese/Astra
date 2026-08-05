@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from app.application.permissions.effects import grant_proposals
+from app.application.agent_runtime.services.plugin_runtime import PluginRuntimeState
 from app.application.permissions.invocation import InvocationAuthorizationResult
 from app.common.core.config import AstraRuntimeSettings
 from app.common.schemas.agent.execution_state import AgentDecision
@@ -39,23 +40,20 @@ def input_hash(tool_input: dict[str, Any]) -> str:
 
 
 def safe_preview(tool_name: str, tool_input: dict[str, Any], limit: int = 1000) -> str:
-    value = (
-        str(tool_input.get("command", ""))
-        if tool_name == "bash_execute"
-        else canonical_input(tool_input)
-    )
+    from app.infrastructure.plugins.builtin_compat import legacy_approval_presenter
+
+    presenter = legacy_approval_presenter(tool_name)
+    if presenter is not None:
+        return presenter.safe_preview(None, tool_input)[:limit]
+    value = canonical_input(tool_input)
     return SECRET_VALUE.sub(r"\1=[REDACTED]", value)[:limit]
 
 
 def similar_matcher(tool_name: str, tool_input: dict[str, Any]) -> dict[str, Any] | None:
-    if tool_name != "bash_execute":
-        return None
-    tokens = _safe_shell_tokens(tool_input)
-    if not tokens or any("=" in token and index == 0 for index, token in enumerate(tokens)):
-        return None
-    multi_part_commands = {"npm", "pnpm", "yarn", "git", "python", "python3"}
-    prefix_length = 2 if tokens[0] in multi_part_commands and len(tokens) > 1 else 1
-    return {"kind": "command_prefix", "tokens": tokens[:prefix_length]}
+    from app.infrastructure.plugins.builtin_compat import legacy_approval_presenter
+
+    presenter = legacy_approval_presenter(tool_name)
+    return presenter.similar_matcher(None, tool_input) if presenter is not None else None
 
 
 def matcher_matches(matcher: dict[str, Any], tool_input: dict[str, Any]) -> bool:
@@ -95,9 +93,15 @@ class ApprovalStageInput:
 
 
 class ApprovalRoutingStage:
-    def __init__(self, settings: AstraRuntimeSettings, repository: RunUnitOfWork) -> None:
+    def __init__(
+        self,
+        settings: AstraRuntimeSettings,
+        repository: RunUnitOfWork,
+        plugin_runtime: PluginRuntimeState,
+    ) -> None:
         self._settings = settings
         self._repository = repository
+        self._plugin_runtime = plugin_runtime
 
     async def execute(
         self, stage_input: ApprovalStageInput
@@ -217,6 +221,7 @@ class ApprovalRoutingStage:
         tool = stage_input.tool
         effect_plan = stage_input.effect_plan
         proposals = grant_proposals(effect_plan)
+        presenter = self._plugin_runtime.approval_presenter(tool.spec)
         return await self._repository.create_approval_request(
             ApprovalRequestCreate(
                 run_id=stage_input.run_id,
@@ -226,7 +231,11 @@ class ApprovalRoutingStage:
                 tool_version=tool.spec.version,
                 frozen_input=stage_input.decision.tool_input,
                 input_hash=input_hash(stage_input.decision.tool_input),
-                preview=safe_preview(tool.spec.name, stage_input.decision.tool_input),
+                preview=(
+                    presenter.safe_preview(tool.spec, stage_input.decision.tool_input)
+                    if presenter
+                    else safe_preview(tool.spec.name, stage_input.decision.tool_input)
+                ),
                 permission=", ".join(effect_plan.required_permissions),
                 impact=max(
                     (effect.risk for effect in effect_plan.effects),
@@ -235,12 +244,23 @@ class ApprovalRoutingStage:
                 similar_matcher=(
                     proposals[0]
                     if proposals
-                    else similar_matcher(tool.spec.name, stage_input.decision.tool_input)
+                    else (
+                        presenter.similar_matcher(tool.spec, stage_input.decision.tool_input)
+                        if presenter
+                        else similar_matcher(tool.spec.name, stage_input.decision.tool_input)
+                    )
                 ),
                 frozen_effect_plan=effect_plan.model_dump(mode="json"),
                 effect_plan_hash=stage_input.effect_plan_hash,
                 analyzer_version=effect_plan.analyzer_version,
                 analyzer_digest=effect_plan.analyzer_digest,
+                catalog_digest=(
+                    self._plugin_runtime.behavioral_digest(
+                        self._plugin_runtime.catalog.tool_registry()
+                    )
+                    if self._plugin_runtime.catalog is not None
+                    else None
+                ),
                 agent_execution_id=stage_input.turn.agent_execution_id,
                 continuation_token=continuation_token,
                 node_execution_id=stage_input.active_node_execution_id,

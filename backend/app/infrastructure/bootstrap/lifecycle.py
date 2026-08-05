@@ -12,7 +12,9 @@ from fastapi import FastAPI
 from app.application.skills.builtin_catalog import ensure_builtin_skills
 from app.infrastructure.bootstrap.container import ApplicationContainer
 from app.infrastructure.repositories.tool_settings import (
+    ToolProviderSettingsRepository,
     ToolSettingsRepository,
+    apply_provider_states,
     apply_tool_states,
     default_tool_states,
 )
@@ -80,7 +82,18 @@ async def initialize_persistence(container: ApplicationContainer) -> None:
         tool_states = await ToolSettingsRepository(session).get_or_create(
             default_tool_states(container.settings)
         )
-        container.tool_registry_for_settings(apply_tool_states(container.settings, tool_states))
+        provider_states = await ToolProviderSettingsRepository(session).get_or_create(
+            {
+                provider_id: True
+                for provider_id in container.settings.trusted_tool_provider_map
+            }
+        )
+        container.tool_registry_for_settings(
+            apply_provider_states(
+                apply_tool_states(container.settings, tool_states),
+                provider_states,
+            )
+        )
         await session.commit()
         interrupted_count = await UsageRepository(session).reconcile_interrupted()
         if interrupted_count:

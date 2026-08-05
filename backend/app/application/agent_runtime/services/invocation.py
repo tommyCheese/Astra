@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from app.application.permissions.effects import workspace_mount_mode
+from app.application.agent_runtime.services.plugin_runtime import PluginRuntimeState
 from app.application.skills.activation import SkillActivationService
 from app.application.workspaces.artifacts import ArtifactService
 from app.application.workspaces.runtime import WorkspaceRuntimeService
@@ -60,6 +61,7 @@ class ToolInvocationStage:
         artifact_service: ArtifactService,
         sandbox_service: SandboxJobService,
         skill_activation_service: SkillActivationService,
+        plugin_runtime: PluginRuntimeState,
     ) -> None:
         self._run_repository = run_repository
         self._permission_repository = permission_repository
@@ -68,6 +70,7 @@ class ToolInvocationStage:
         self._artifact_service = artifact_service
         self._sandbox_service = sandbox_service
         self._skill_activation_service = skill_activation_service
+        self._plugin_runtime = plugin_runtime
 
     async def execute(self, stage_input: InvocationStageInput) -> InvocationStageResult:
         # Authorization and the prepared tool-call record form the durable
@@ -81,10 +84,15 @@ class ToolInvocationStage:
         await self._record_skill_attribution(stage_input, execution_context)
         await self._run_repository.commit()
         try:
-            tool_output = await stage_input.tool.run(
+            raw_output = await self._plugin_runtime.execute(
+                stage_input.tool,
                 stage_input.tool_input,
                 context=execution_context,
             )
+            tool_output = self._plugin_runtime.adapt_and_validate(
+                stage_input.tool.spec,
+                raw_output,
+            ).model_dump(mode="json", exclude_none=True)
         except ToolExecutionError as error:
             await self._run_repository.finish_tool_call(
                 stage_input.tool_call.id,
@@ -97,7 +105,10 @@ class ToolInvocationStage:
         )
         await self._run_repository.finish_tool_call(
             stage_input.tool_call.id,
-            output=tool_output,
+            output=self._plugin_runtime.persistence_payload(
+                stage_input.tool.spec,
+                tool_output,
+            ),
         )
         await self._record_data_flow(stage_input)
         return InvocationStageResult(tool_output, workspace_path, workspace_changed)

@@ -808,10 +808,9 @@ async def test_standard_fast_path_skips_plan_state_and_all_quality_gates(session
     assert loaded.plan_graph == {}
     assert loaded.agent_state == {}
     assert loaded.steps == []
-    # A newly created standard Run reaches the model with one startup read, one
-    # legacy missing-Skill-snapshot check, and one live AstraTool AstraRuntimeSettings read used
-    # by lightweight Subagent eligibility.
-    assert client.selects_before_decide == 3
+    # A newly created standard Run freezes its Tool Catalog before the model,
+    # then performs startup, legacy Skill-snapshot, and Subagent eligibility reads.
+    assert client.selects_before_decide == 4
     # The original full-graph loading path issued 129 SELECTs here.
     assert len(select_statements) <= 12, Counter(
         statement.rsplit("FROM ", 1)[-1].split()[0] for statement in select_statements
@@ -924,7 +923,7 @@ async def test_standard_fast_path_defers_permission_records_until_after_first_de
         tool_registry=AstraToolRegistry(),
     )._run_with_repo(repo, run.id)
 
-    assert observed == {"identities": 0, "catalogs": 0}
+    assert observed == {"identities": 0, "catalogs": 1}
     assert (
         await session.scalar(
             select(AgentIdentityRecord).where(AgentIdentityRecord.run_id == run.id)

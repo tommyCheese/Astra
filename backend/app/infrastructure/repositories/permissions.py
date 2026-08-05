@@ -162,19 +162,40 @@ class PermissionRepository:
         *,
         catalog: list[dict[str, Any]],
         digest: str,
+        behavioral_catalog: list[dict[str, Any]] | None = None,
+        behavioral_digest: str | None = None,
+        display_digest: str | None = None,
     ) -> ToolCatalogSnapshotRecord:
         await self._require_run(run_id)
         existing = await self.session.scalar(
             select(ToolCatalogSnapshotRecord).where(ToolCatalogSnapshotRecord.run_id == run_id)
         )
         if existing is not None:
-            if existing.digest != digest or existing.catalog != catalog:
-                raise ValueError("AstraTool Catalog Snapshot is immutable")
+            if existing.schema_version < 2 or not existing.behavioral_digest:
+                if existing.digest != digest or existing.catalog != catalog:
+                    raise ValueError("AstraTool Catalog Snapshot is immutable")
+                if behavioral_catalog is not None and behavioral_digest is not None:
+                    existing.schema_version = 2
+                    existing.behavioral_catalog = deepcopy(behavioral_catalog)
+                    existing.behavioral_digest = behavioral_digest
+                    existing.display_digest = display_digest
+                    await self.session.commit()
+                return existing
+            if (
+                behavioral_digest is None
+                or existing.behavioral_digest != behavioral_digest
+                or existing.behavioral_catalog != (behavioral_catalog or [])
+            ):
+                raise ValueError("AstraTool Catalog behavioral identity changed")
             return existing
         snapshot = ToolCatalogSnapshotRecord(
             run_id=run_id,
             catalog=deepcopy(catalog),
             digest=digest,
+            schema_version=2 if behavioral_digest is not None else 1,
+            behavioral_catalog=deepcopy(behavioral_catalog or []),
+            behavioral_digest=behavioral_digest,
+            display_digest=display_digest,
         )
         self.session.add(snapshot)
         await self.session.commit()

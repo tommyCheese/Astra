@@ -7,7 +7,8 @@ import json
 from dataclasses import dataclass
 from typing import Any
 
-from app.application.permissions.effects import DefaultEffectAnalyzer, effect_plan_hash
+from app.application.permissions.effects import effect_plan_hash
+from app.application.agent_runtime.services.plugin_runtime import PluginRuntimeState
 from app.application.permissions.engine import PermissionEngine
 from app.application.permissions.invocation import InvocationAuthorizationResult
 from app.common.core.config import AstraRuntimeSettings
@@ -58,11 +59,13 @@ class PermissionAuthorizationStage:
         run_repository: RunUnitOfWork,
         permission_repository: PermissionRepository,
         tool_router: ToolRouter,
+        plugin_runtime: PluginRuntimeState,
     ) -> None:
         self._settings = settings
         self._run_repository = run_repository
         self._permission_repository = permission_repository
         self._tool_router = tool_router
+        self._plugin_runtime = plugin_runtime
         self._provider_identities: dict[str, AgentIdentityRecord] = {}
 
     async def execute(self, stage_input: AuthorizationStageInput) -> AuthorizedInvocation:
@@ -78,7 +81,7 @@ class PermissionAuthorizationStage:
             provider_identity,
             schema_digest,
         )
-        effect_plan = DefaultEffectAnalyzer().analyze(
+        effect_plan = self._plugin_runtime.effect_analyzer(tool.spec).analyze(
             tool.spec,
             stage_input.decision.tool_input,
             task_id=stage_input.run.task_id,
@@ -214,8 +217,8 @@ class PermissionAuthorizationStage:
             run_started_at=stage_input.run.started_at or stage_input.run.created_at,
         )
 
-    @staticmethod
     def _validate_approved_effect(
+        self,
         stage_input: AuthorizationStageInput,
         effect_plan: ActionEffectPlan,
         effect_hash: str,
@@ -232,6 +235,11 @@ class PermissionAuthorizationStage:
                 and snapshot["analyzer_digest"] == effect_plan.analyzer_digest
             )
         )
+        if valid and snapshot.get("catalog_digest") and self._plugin_runtime.catalog is not None:
+            current_digest = self._plugin_runtime.behavioral_digest(
+                self._plugin_runtime.catalog.tool_registry()
+            )
+            valid = snapshot["catalog_digest"] == current_digest
         if not valid:
             raise ToolExecutionError(
                 "approval_integrity_error",

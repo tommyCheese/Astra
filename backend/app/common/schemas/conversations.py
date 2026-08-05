@@ -24,6 +24,7 @@ class CommandMessageView(BaseModel):
     command: str
     content: str
     arguments: str = ""
+    assistant_content: str = ""
     after_run_count: int = Field(default=0, ge=0)
     created_at: datetime
 

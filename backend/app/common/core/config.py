@@ -26,9 +26,16 @@ class AstraRuntimeSettings(BaseSettings):
     tool_chart_render_enabled: bool = True
     tool_bash_execute_enabled: bool = False
     tool_swarm_enabled: bool = True
+    tool_states: dict[str, bool] = Field(default_factory=dict)
+    tool_provider_states: dict[str, bool] = Field(default_factory=dict)
+    tool_provider_configurations: dict[str, dict] = Field(default_factory=dict)
+    tool_provider_configuration_revisions: dict[str, str] = Field(default_factory=dict)
     trusted_tool_providers: str = (
         "astra.builtin=builtin,astra.web=builtin,astra.chart=builtin,astra.shell=builtin"
     )
+    tool_managed_plugin_discovery_enabled: bool = False
+    tool_external_plugin_discovery_enabled: bool = False
+    tool_plugin_rollout_mode: str = "builtin_only"
     permission_bundle_signing_secret: str = ""
     web_search_provider: str = "auto"
     web_search_api_key: str = ""
@@ -194,6 +201,8 @@ class AstraRuntimeSettings(BaseSettings):
             and self.context_compaction_recovery_ratio >= self.context_auto_compact_ratio
         ):
             raise ValueError("Compaction recovery ratio must be below the trigger ratio")
+        if self.tool_plugin_rollout_mode not in {"builtin_only", "configured"}:
+            raise ValueError("Tool plugin rollout mode must be builtin_only or configured")
         return self
 
     @property

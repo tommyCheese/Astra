@@ -124,9 +124,6 @@ class DefaultEffectAnalyzer(ToolEffectAnalyzer):
         *,
         task_id: str,
     ) -> ActionEffectPlan:
-        specialized = _specialized_effect_plan(spec, tool_input, task_id)
-        if specialized is not None:
-            return specialized
         declared = set(spec.permissions)
         mapped = _declared_effects(spec, tool_input, task_id, declared)
         if mapped:
@@ -161,18 +158,6 @@ class DefaultEffectAnalyzer(ToolEffectAnalyzer):
             list(spec.permissions),
             approval_required=True,
         )
-
-
-def _specialized_effect_plan(spec, tool_input, task_id) -> ActionEffectPlan | None:
-    analyzers = {
-        "web_search": WebEffectAnalyzer,
-        "web_fetch": WebEffectAnalyzer,
-        "bash_execute": BashEffectAnalyzer,
-        "chart.render": ChartEffectAnalyzer,
-    }
-    analyzer = analyzers.get(spec.name)
-    return analyzer().analyze(spec, tool_input, task_id=task_id) if analyzer else None
-
 
 def _declared_effects(spec, tool_input, task_id, declared) -> list[EffectItem]:
     effects = []

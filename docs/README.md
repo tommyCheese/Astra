@@ -26,3 +26,6 @@
 - 修改前端：重点读“前端状态与 SSE 展示链路”。
 
 > 文档基线：`main` 分支提交 `e1bdc3b`。代码持续演进时，应优先相信可执行代码和测试，并同步更新本文。
+# Tool Provider plugins
+
+- [Tool Provider Plugin 运行与治理](tool-provider-plugins.md)

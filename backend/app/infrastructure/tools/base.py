@@ -257,8 +257,13 @@ class AstraTool(ABC):
 
 
 class AstraToolRegistry:
-    def __init__(self) -> None:
+    def __init__(self, *, plugin_catalog: Any | None = None) -> None:
         self._tools: dict[str, AstraTool] = {}
+        self._plugin_catalog = plugin_catalog
+
+    @property
+    def plugin_catalog(self) -> Any | None:
+        return self._plugin_catalog
 
     def register(self, tool: AstraTool) -> None:
         self._tools[tool.spec.name] = tool
@@ -272,6 +277,9 @@ class AstraToolRegistry:
     def specs(self) -> dict[str, AstraToolSpec]:
         return {name: tool.spec for name, tool in self._tools.items()}
 
+    def tools(self) -> tuple[AstraTool, ...]:
+        return tuple(self._tools.values())
+
     def extend(self, tools: Iterable[AstraTool]) -> "AstraToolRegistry":
         for tool in tools:
             self.register(tool)
@@ -279,7 +287,10 @@ class AstraToolRegistry:
 
     @classmethod
     def compose(cls, *registries: "AstraToolRegistry") -> "AstraToolRegistry":
-        combined = cls()
+        catalogs = [registry.plugin_catalog for registry in registries if registry.plugin_catalog]
+        if len({id(catalog) for catalog in catalogs}) > 1:
+            raise ValueError("Cannot compose registries from different plugin catalogs")
+        combined = cls(plugin_catalog=catalogs[0] if catalogs else None)
         for registry in registries:
             combined.extend(registry._tools.values())
         return combined

@@ -194,6 +194,10 @@ class ToolCatalogSnapshotRecord(AstraOrmRecordBase):
     run_id: Mapped[str] = mapped_column(ForeignKey("runs.id"))
     catalog: Mapped[list] = mapped_column(JsonType, default=list)
     digest: Mapped[str] = mapped_column(String(120))
+    schema_version: Mapped[int] = mapped_column(Integer, default=1)
+    behavioral_catalog: Mapped[list] = mapped_column(JsonType, default=list)
+    behavioral_digest: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    display_digest: Mapped[str | None] = mapped_column(String(120), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
     run: Mapped[RunRecord] = relationship(back_populates="tool_catalog_snapshot")

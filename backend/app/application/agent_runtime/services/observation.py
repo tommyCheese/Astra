@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from app.application.agent_runtime.result_adapters import AgentToolResultProcessorRegistry
+from app.application.agent_runtime.services.plugin_runtime import PluginRuntimeState
 from app.application.context_compaction.tool_outputs import ToolOutputGovernanceService
 from app.common.core.config import AstraRuntimeSettings
 from app.common.schemas.agent.execution_state import AgentObservation
@@ -31,17 +31,19 @@ class NormalizedObservation:
     observation: AgentObservation
     context_observation: AgentObservation
     step_evidence: dict[str, Any]
+    validation_inputs: tuple[dict[str, Any], ...] = ()
+    completion_signals: tuple[str, ...] = ()
 
 
 class ObservationNormalizationStage:
     def __init__(
         self,
         settings: AstraRuntimeSettings,
-        processors: AgentToolResultProcessorRegistry,
+        plugin_runtime: PluginRuntimeState,
         normalize_tool_output,
     ) -> None:
         self._governance = ToolOutputGovernanceService(settings)
-        self._processors = processors
+        self._plugin_runtime = plugin_runtime
         self._normalize_tool_output = normalize_tool_output
 
     async def execute(self, stage_input: ObservationStageInput) -> NormalizedObservation:
@@ -58,7 +60,13 @@ class ObservationNormalizationStage:
             },
             persist=self._reference_persister(stage_input),
         )
-        observation, step_evidence = self._processor_observation(stage_input, tool_output)
+        processed = self._plugin_runtime.process(
+            stage_input.tool_spec,
+            stage_input.tool_call.input,
+            tool_output,
+        )
+        observation = processed.observation
+        step_evidence = {"fragments": list(processed.evidence)}
         if stage_input.active_plan_node_id is not None:
             observation.plan_node_id = stage_input.active_plan_node_id
         context_observation = (
@@ -81,6 +89,8 @@ class ObservationNormalizationStage:
             observation,
             context_observation,
             step_evidence,
+            processed.validation_inputs,
+            processed.completion_signals,
         )
 
     def _with_call_references(self, stage_input: ObservationStageInput) -> dict[str, Any]:
@@ -94,24 +104,6 @@ class ObservationNormalizationStage:
             node_execution_id=stage_input.tool_call.node_execution_id,
         )
         return tool_output
-
-    def _processor_observation(
-        self,
-        stage_input: ObservationStageInput,
-        tool_output: dict[str, Any],
-    ) -> tuple[AgentObservation, dict[str, Any]]:
-        processor = self._processors.for_tool(stage_input.tool_spec.name)
-        if processor:
-            return processor.process(stage_input.tool_spec.name, tool_output)
-        return (
-            AgentObservation(
-                kind="tool_result",
-                status="succeeded",
-                summary=f"{stage_input.tool_spec.name} completed",
-                data={"tool_name": stage_input.tool_spec.name, **tool_output},
-            ),
-            {},
-        )
 
     @staticmethod
     def _reference_persister(stage_input: ObservationStageInput):

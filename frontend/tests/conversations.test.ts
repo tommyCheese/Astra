@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildPresentation } from '../src/conversations';
+import { buildPresentation, presentCommandMessages } from '../src/conversations';
 import type { RunView } from '../src/types';
 
 function waitingRun(overrides: Partial<RunView> = {}): RunView {
@@ -52,5 +52,22 @@ describe('conversation presentation', () => {
     }));
 
     expect(messages.some((message) => message.content.includes('请告诉我'))).toBe(false);
+  });
+
+  it('restores both sides of a persisted context command exchange', () => {
+    const messages = presentCommandMessages({
+      id: 'command-compact',
+      command: '/compact',
+      content: '/compact',
+      arguments: '',
+      assistant_content: '上下文压缩完成。',
+      after_run_count: 1,
+      created_at: '2026-08-06T00:00:00Z',
+    });
+
+    expect(messages).toEqual([
+      expect.objectContaining({ role: 'user', content: '/compact' }),
+      expect.objectContaining({ role: 'assistant', content: '上下文压缩完成。', metadata: expect.objectContaining({ presentation: 'command-result' }) }),
+    ]);
   });
 });

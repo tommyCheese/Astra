@@ -423,7 +423,7 @@ async def test_context_status_and_registered_commands_preserve_history(app_clien
     ]
     assert catalog.json()[2]["argument_mode"] == "required"
     assert catalog.json()[0]["argument_mode"] == "optional"
-    assert catalog.json()[0]["default_arguments"] == "保留后续任务所需的关键上下文"
+    assert catalog.json()[0]["default_arguments"] == ""
     assert catalog.json()[2]["usage"].startswith("/schedule ")
     assert catalog.json()[2]["side_effect"] == "mixed"
     assert catalog.json()[4]["execution_mode"] == "run"
@@ -510,8 +510,12 @@ async def test_context_status_and_registered_commands_preserve_history(app_clien
     assert compacted.json()["details"] == {
         "folded": 0,
         "retained": 6,
-        "direction": "保留后续任务所需的关键上下文",
+        "model_used": True,
+        "direction": "",
     }
+    assert compacted.json()["message"] == "已调用模型完成主要信息上下文压缩：折叠 0 轮，保留最近 6 轮；完整聊天记录仍保留。"
+    assert compacted.json()["user_message"]["content"] == "/compact"
+    assert compacted.json()["user_message"]["assistant_content"] == compacted.json()["message"]
 
     cleared = await app_client.post(
         f"/api/conversations/{task_id}/commands/clear",
@@ -520,6 +524,7 @@ async def test_context_status_and_registered_commands_preserve_history(app_clien
     assert cleared.status_code == 200
     assert cleared.json()["context"]["visible_run_count"] == 0
     assert cleared.json()["context"]["summary_active"] is False
+    assert cleared.json()["user_message"]["assistant_content"] == cleared.json()["message"]
 
     detail = await app_client.get(f"/api/conversations/{task_id}")
     assert len(detail.json()["runs"]) == 6
@@ -589,6 +594,8 @@ async def test_parameterized_automation_commands_are_host_operations(app_client)
     )
     assert compact_with_arguments.status_code == 200
     assert compact_with_arguments.json()["details"]["direction"] == "unexpected"
+    assert compact_with_arguments.json()["details"]["model_used"] is False
+    assert compact_with_arguments.json()["message"] == "当前没有需要折叠的较早上下文，未调用模型；主要信息上下文保持不变。"
     assert compact_with_arguments.json()["user_message"]["content"] == "/compact unexpected"
 
     cleared = await app_client.post(
@@ -605,6 +612,7 @@ async def test_parameterized_automation_commands_are_host_operations(app_client)
         "/compact",
         "/clear",
     ]
+    assert all(item["assistant_content"] for item in conversation.json()["command_messages"])
 
     async with app_client._astra_session() as session:
         runs = await session.execute(select(RunRecord).where(RunRecord.task_id == task_id))
@@ -1293,9 +1301,15 @@ async def test_tool_settings_can_be_read_and_updated(app_client):
     assert {tool["name"] for tool in loaded.json()["tools"]} == {
         "web_search",
         "web_fetch",
-        "chart_render",
+        "chart.render",
         "bash_execute",
         "swarm",
+    }
+    assert {provider["provider_id"] for provider in loaded.json()["providers"]} == {
+        "astra.builtin",
+        "astra.chart",
+        "astra.shell",
+        "astra.web",
     }
     initial_swarm = next(tool for tool in loaded.json()["tools"] if tool["name"] == "swarm")
     assert initial_swarm["available"] is True
@@ -1316,13 +1330,86 @@ async def test_tool_settings_can_be_read_and_updated(app_client):
     assert states == {
         "web_search": False,
         "web_fetch": True,
-        "chart_render": False,
+        "chart.render": False,
         "bash_execute": True,
         "swarm": False,
     }
+    assert updated.headers["deprecation"] == "true"
     reloaded = await app_client.get("/api/tools")
     persisted = {tool["name"]: tool["enabled"] for tool in reloaded.json()["tools"]}
     assert persisted == states
+
+
+async def test_dynamic_tool_and_provider_settings_validate_identity_and_persist(app_client):
+    unknown_tool = await app_client.put(
+        "/api/tools/not-a-tool/state", json={"enabled": False}
+    )
+    assert unknown_tool.status_code == 404
+    unknown_provider = await app_client.put(
+        "/api/tool-providers/not-a-provider/state", json={"enabled": False}
+    )
+    assert unknown_provider.status_code == 404
+
+    disabled = await app_client.put(
+        "/api/tool-providers/astra.web/state", json={"enabled": False}
+    )
+    assert disabled.status_code == 200
+    web = next(
+        provider
+        for provider in disabled.json()["providers"]
+        if provider["provider_id"] == "astra.web"
+    )
+    assert web["enabled"] is False
+    assert web["state"] == "disabled"
+
+    tool_disabled = await app_client.put(
+        "/api/tools/chart.render/state", json={"enabled": False}
+    )
+    assert tool_disabled.status_code == 200
+    reloaded = await app_client.get("/api/tools")
+    chart = next(tool for tool in reloaded.json()["tools"] if tool["name"] == "chart.render")
+    assert chart["enabled"] is False
+
+
+async def test_provider_configuration_only_persists_secret_references(app_client):
+    invalid = await app_client.put(
+        "/api/tool-providers/astra.web/config",
+        json={"configuration": {"search_credential": "plain-secret"}},
+    )
+    assert invalid.status_code == 422
+
+    saved = await app_client.put(
+        "/api/tool-providers/astra.web/config",
+        json={
+            "configuration": {
+                "search_provider": "google",
+                "search_credential": {"credential_ref": "credential://web-search"},
+            }
+        },
+    )
+    assert saved.status_code == 200
+    provider = next(
+        item
+        for item in saved.json()["providers"]
+        if item["provider_id"] == "astra.web"
+    )
+    assert provider["configuration"] == {
+        "search_provider": "google",
+        "search_credential": {"configured": True},
+    }
+    assert "credential://web-search" not in saved.text
+
+    updated = await app_client.put(
+        "/api/tool-providers/astra.web/config",
+        json={"configuration": {"search_provider": "auto"}},
+    )
+    provider = next(
+        item
+        for item in updated.json()["providers"]
+        if item["provider_id"] == "astra.web"
+    )
+    assert provider["configuration"]["search_credential"] == {"configured": True}
+    assert int(provider["configuration_revision"]) >= 3
 
 
 async def test_disabling_swarm_hides_command_and_freezes_subagents_off(app_client):

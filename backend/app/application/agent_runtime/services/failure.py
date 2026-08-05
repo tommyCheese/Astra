@@ -7,7 +7,7 @@ import logging
 from dataclasses import dataclass
 
 from app.application.agent_runtime.policies.reasoning import failure_fingerprint
-from app.application.agent_runtime.result_adapters import AgentToolResultProcessorRegistry
+from app.application.agent_runtime.services.plugin_runtime import PluginRuntimeState
 from app.application.agent_runtime.services.progress import (
     ExecutionProgress,
     ProgressEvaluationStage,
@@ -34,12 +34,14 @@ class ToolFailureStage:
     def __init__(
         self,
         repository: RunUnitOfWork,
-        processors: AgentToolResultProcessorRegistry,
+        plugin_runtime: PluginRuntimeState,
+        tool_registry,
         progress: ExecutionProgress,
         progress_stage: ProgressEvaluationStage,
     ) -> None:
         self._repository = repository
-        self._processors = processors
+        self._plugin_runtime = plugin_runtime
+        self._tool_registry = tool_registry
         self._progress = progress
         self._progress_stage = progress_stage
         self._retry_counts: dict[str, int] = {}
@@ -64,9 +66,15 @@ class ToolFailureStage:
         observation = self._observation(stage_input, tool_name, fingerprint)
         self._progress.observations.append(observation.model_dump())
         await self._progress_stage.persist()
-        processor = self._processors.for_tool(tool_name)
-        if processor:
-            processor.record_failure(tool_name, decision.tool_input, stage_input.error.to_payload())
+        try:
+            spec = self._tool_registry.get(tool_name).spec
+        except ToolExecutionError:
+            spec = None
+        self._plugin_runtime.record_failure(
+            spec,
+            decision.tool_input,
+            stage_input.error.to_payload(),
+        )
         reflection = (
             await self._progress_stage.reflect(
                 "tool_failed",
@@ -112,13 +120,6 @@ class ToolFailureStage:
             "retry_count": self._retry_counts[tool_name],
             "failure_fingerprint": fingerprint,
         }
-        attempted_url = stage_input.decision.tool_input.get("url")
-        if (
-            stage_input.decision.tool_name == "web_fetch"
-            and isinstance(attempted_url, str)
-            and attempted_url
-        ):
-            failure_data["url"] = attempted_url
         return AgentObservation(
             kind="tool_error",
             status="failed",

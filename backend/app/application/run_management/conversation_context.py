@@ -292,7 +292,7 @@ class ConversationContextManager:
         require_idle: bool = True,
         commit: bool = True,
         direction: str = "",
-    ) -> dict[str, int | str]:
+    ) -> dict[str, int | str | bool]:
         policy = build_compaction_policy(self.settings, ContextOwnerRole.conversation)
         if not policy.enabled or policy.shadow_mode:
             raise AstraStateConflictError(
@@ -317,7 +317,7 @@ class ConversationContextManager:
         require_idle: bool,
         commit: bool,
         direction: str,
-    ) -> dict[str, int | str]:
+    ) -> dict[str, int | str | bool]:
         return await SemanticConversationCompactor(self, resolve_context_window).compact(
             task,
             retain_runs=retain_runs,

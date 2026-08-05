@@ -16,11 +16,7 @@ from app.application.agent_runtime.policies.reasoning import (
     AgentObservationEvaluator,
     AgentReflectionGate,
 )
-from app.application.agent_runtime.result_adapters import (
-    AgentToolResultProcessorRegistry,
-    ChartTaskAdapter,
-    WebTaskAdapter,
-)
+from app.application.agent_runtime.services.plugin_runtime import PluginRuntimeState
 from app.application.agent_runtime.services.progress import ExecutionProgress
 from app.application.agent_runtime.services.recovery import RunRecoveryStage
 from app.application.agent_runtime.services.runtime_composition import RootRuntimeComposer
@@ -68,6 +64,9 @@ class RootPermissionRuntime:
         run_id: str,
         catalog: list[dict[str, Any]],
         catalog_digest: str,
+        behavioral_catalog: list[dict[str, Any]],
+        behavioral_digest: str,
+        display_digest: str,
     ) -> None:
         self._repository = repository
         self._permissions = permission_repository
@@ -75,6 +74,9 @@ class RootPermissionRuntime:
         self._run_id = run_id
         self._catalog = catalog
         self._catalog_digest = catalog_digest
+        self._behavioral_catalog = behavioral_catalog
+        self._behavioral_digest = behavioral_digest
+        self._display_digest = display_digest
         self._identity: AgentIdentityRecord | None = None
 
     async def ensure(self) -> AgentIdentityRecord:
@@ -88,12 +90,18 @@ class RootPermissionRuntime:
             trust_level="platform",
             attributes={"permission_scope": self._unrestricted_scope()},
         )
+        await self.freeze_catalog()
+        return self._identity
+
+    async def freeze_catalog(self) -> None:
         await self._permissions.freeze_tool_catalog(
             self._run_id,
             catalog=self._catalog,
             digest=self._catalog_digest,
+            behavioral_catalog=self._behavioral_catalog,
+            behavioral_digest=self._behavioral_digest,
+            display_digest=self._display_digest,
         )
-        return self._identity
 
     @staticmethod
     def _unrestricted_scope() -> dict[str, list[str]]:
@@ -122,12 +130,10 @@ class AgentRuntimeBuilder:
         model_client: ModelClient,
         tool_registry: AstraToolRegistry,
         tool_router: ToolRouter,
-        processors: AgentToolResultProcessorRegistry,
+        plugin_runtime: PluginRuntimeState,
         evaluator: AgentObservationEvaluator,
         reflection_gate: AgentReflectionGate,
         completion_gate: AgentCompletionGate,
-        web_adapter: WebTaskAdapter,
-        chart_adapter: ChartTaskAdapter,
         sandbox_provider: Any,
         supervisor_close_tasks: set[asyncio.Task[Any]],
         normalize_tool_output: Callable[[str, dict[str, Any]], dict[str, Any]],
@@ -136,12 +142,10 @@ class AgentRuntimeBuilder:
         self._model_client = model_client
         self._tool_registry = tool_registry
         self._tool_router = tool_router
-        self._processors = processors
+        self._plugin_runtime = plugin_runtime
         self._evaluator = evaluator
         self._reflection_gate = reflection_gate
         self._completion_gate = completion_gate
-        self._web_adapter = web_adapter
-        self._chart_adapter = chart_adapter
         self._sandbox_provider = sandbox_provider
         self._supervisor_close_tasks = supervisor_close_tasks
         self._normalize_tool_output = normalize_tool_output
@@ -168,6 +172,7 @@ class AgentRuntimeBuilder:
         policy = ReasoningPolicySnapshot.model_validate(run.reasoning_policy or {}).effective
         quick_mode = profile.answer_mode == AnswerMode.standard
         permissions, permission_runtime = self._permission_runtime(repository, run, run_id)
+        await permission_runtime.freeze_catalog()
         if not quick_mode:
             await permission_runtime.ensure()
         infrastructure = self._infrastructure(repository, permissions)
@@ -208,12 +213,10 @@ class AgentRuntimeBuilder:
             model_client=self._model_client,
             tool_registry=self._tool_registry,
             tool_router=self._tool_router,
-            processors=self._processors,
+            plugin_runtime=self._plugin_runtime,
             evaluator=self._evaluator,
             reflection_gate=self._reflection_gate,
             completion_gate=self._completion_gate,
-            web_adapter=self._web_adapter,
-            chart_adapter=self._chart_adapter,
             normalize_tool_output=self._normalize_tool_output,
         )
 
@@ -226,7 +229,8 @@ class AgentRuntimeBuilder:
     ):
         recovery = RunRecoveryStage(
             repository,
-            self._processors,
+            self._plugin_runtime,
+            self._tool_registry,
             self._normalize_tool_output,
         )
         loaded = await recovery.load(
@@ -250,6 +254,7 @@ class AgentRuntimeBuilder:
             json.dumps(catalog, sort_keys=True, separators=(",", ":")).encode()
         ).hexdigest()
         permissions = PermissionRepository(repository.session)
+        behavioral_catalog = self._plugin_runtime.snapshot_catalog(self._tool_registry)
         return permissions, RootPermissionRuntime(
             repository=repository,
             permission_repository=permissions,
@@ -257,6 +262,9 @@ class AgentRuntimeBuilder:
             run_id=run_id,
             catalog=catalog,
             catalog_digest=digest,
+            behavioral_catalog=behavioral_catalog,
+            behavioral_digest=self._plugin_runtime.behavioral_digest(self._tool_registry),
+            display_digest=self._plugin_runtime.display_digest(self._tool_registry),
         )
 
     def _validate_catalog(self, catalog: list[dict[str, Any]]) -> None:

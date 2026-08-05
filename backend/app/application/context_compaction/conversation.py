@@ -35,12 +35,12 @@ class SemanticConversationCompactor:
         require_idle: bool,
         commit: bool,
         direction: str,
-    ) -> dict[str, int | str]:
+    ) -> dict[str, int | str | bool]:
         projection, eligible = await self._eligible_runs(
             task, retain_runs=retain_runs, require_idle=require_idle
         )
         if not eligible:
-            return {"folded": 0, "retained": len(projection.runs)}
+            return {"folded": 0, "retained": len(projection.runs), "model_used": False}
         state = self.manager._state(task)
         accounting = TokenAccountingService()
         envelope = self._build_envelope(task, eligible, state, direction, accounting)
@@ -182,6 +182,7 @@ class SemanticConversationCompactor:
         return {
             "folded": 0,
             "retained": len(projection.runs),
+            "model_used": True,
             "status": "failed",
             "failure_code": failure_code,
         }
@@ -206,7 +207,11 @@ class SemanticConversationCompactor:
         task.updated_at = utc_now()
         await self._finish(commit)
         folded = len(eligible) - len(result.retained_tail_ids)
-        return {"folded": folded, "retained": len(projection.runs) - folded}
+        return {
+            "folded": folded,
+            "retained": len(projection.runs) - folded,
+            "model_used": True,
+        }
 
     async def _finish(self, commit: bool) -> None:
         if commit:

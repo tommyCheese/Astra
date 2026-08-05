@@ -19,7 +19,10 @@ from app.infrastructure.plugins.discovery import (
     IsolatedDescriptorDiscoverySource,
     IsolatedProviderReference,
     ManagedPackageDiscoverySource,
+    PluginDiscoverySource,
 )
+from app.infrastructure.plugins.diagnostics import plugin_diagnostics
+from app.infrastructure.tools.registry import build_plugin_catalog
 from app.infrastructure.plugins.interfaces import (
     PluginHealthProbe,
     PluginHealthReport,
@@ -181,6 +184,41 @@ def test_managed_discovery_is_disabled_by_default_and_has_no_workspace_input(tmp
 
     assert source.discover() == ()
     assert "workspace.attack" not in repr(source.discover())
+    assert AstraRuntimeSettings().tool_managed_plugin_discovery_enabled is False
+
+
+def test_builtin_only_rollout_ignores_external_sources_and_configured_mode_enables_them():
+    class CountingSource(PluginDiscoverySource):
+        calls = 0
+
+        def discover(self):
+            self.calls += 1
+            return ()
+
+    source = CountingSource()
+    base = AstraRuntimeSettings(sandbox_skip_availability_check=True)
+    build_plugin_catalog(base, extra_sources=[source])
+    assert source.calls == 0
+
+    build_plugin_catalog(
+        base.model_copy(update={"tool_plugin_rollout_mode": "configured"}),
+        extra_sources=[source],
+    )
+    assert source.calls == 1
+
+
+async def test_plugin_diagnostics_count_catalog_lifecycle_and_conflicts():
+    plugin_diagnostics.reset()
+    await builder(CatalogPlugin()).build()
+    snapshot = plugin_diagnostics.snapshot()["counts"]
+    assert snapshot["discovered"] == 1
+    assert snapshot["verified"] == 1
+    assert snapshot["loaded"] == 1
+    assert snapshot["health"] == 1
+
+    with pytest.raises(PluginCatalogError):
+        await builder(CatalogPlugin(), CatalogPlugin()).build()
+    assert plugin_diagnostics.snapshot()["counts"]["catalog_conflict"] == 1
 
 
 async def test_isolated_descriptor_cannot_smuggle_in_process_code():

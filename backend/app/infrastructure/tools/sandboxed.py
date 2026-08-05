@@ -18,45 +18,17 @@ MAX_SANDBOX_CONFIG_BYTES = 64 * 1024
 MAX_SANDBOX_RESPONSE_BYTES = 4 * 1024 * 1024
 
 
-def _env_bool(value: bool) -> str:
-    return "true" if value else "false"
-
-
-def _web_runtime_config(settings: AstraRuntimeSettings, tool_name: str) -> dict[str, str]:
-    """Build an explicit allowlist; never forward the host process environment."""
-    runtime_config = {"ALLOW_NETWORK_READ": "true"}
-    if tool_name == "web_search":
-        runtime_config.update(
-            {
-                "WEB_SEARCH_PROVIDER": settings.web_search_provider,
-                "WEB_SEARCH_API_KEY": settings.web_search_api_key,
-                "GOOGLE_SEARCH_API_KEY": settings.google_search_api_key,
-                "GOOGLE_SEARCH_ENGINE_ID": settings.google_search_engine_id,
-                "GOOGLE_SEARCH_RESULT_COUNT": str(settings.google_search_result_count),
-                "GOOGLE_SEARCH_LANGUAGE": settings.google_search_language,
-                "GOOGLE_SEARCH_REGION": settings.google_search_region,
-                "GOOGLE_SEARCH_SAFE": settings.google_search_safe,
-            }
-        )
-    elif tool_name == "web_fetch":
-        runtime_config.update(
-            {
-                "CRAWLER_MAX_CONTENT_CHARS": str(settings.crawler_max_content_chars),
-                "CRAWLER_MAX_RESPONSE_BYTES": str(settings.crawler_max_response_bytes),
-                "CRAWLER_MIN_QUALITY_CHARS": str(settings.crawler_min_quality_chars),
-                "CRAWLER_ALLOW_PROXY_FAKE_IP": _env_bool(settings.crawler_allow_proxy_fake_ip),
-            }
-        )
-    else:
-        raise ValueError(f"Unsupported sandboxed web tool: {tool_name}")
-    return runtime_config
-
-
 class SandboxedWebTool(AstraTool):
     """Host-side plugin descriptor and proxy for a container-only web tool."""
 
-    def __init__(self, native_tool: AstraTool, settings: AstraRuntimeSettings):
+    def __init__(
+        self,
+        native_tool: AstraTool,
+        settings: AstraRuntimeSettings,
+        runtime_config: dict[str, str],
+    ):
         self.settings = settings
+        self.runtime_config = dict(runtime_config)
         self.spec = AstraToolSpec.model_validate(
             native_tool.spec.model_dump()
             | {
@@ -89,7 +61,7 @@ class SandboxedWebTool(AstraTool):
         output_dir.mkdir(mode=0o700)
         (input_dir / "request.json").write_bytes(payload)
         runtime_config = json.dumps(
-            _web_runtime_config(self.settings, self.spec.name),
+            self.runtime_config,
             ensure_ascii=False,
             separators=(",", ":"),
         ).encode("utf-8")

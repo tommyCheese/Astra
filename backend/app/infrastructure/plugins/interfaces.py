@@ -8,7 +8,7 @@ from app.common.schemas.agent.execution_state import AgentObservation
 from app.common.schemas.agent.run_result import AgentValidationOutcome
 from app.common.schemas.permissions import ActionEffectPlan
 from app.infrastructure.plugins.contracts import PluginContribution, PluginDescriptor
-from app.infrastructure.tools.base import AstraToolSpec
+from app.infrastructure.tools.base import AstraToolSpec, ToolExecutionContext
 
 
 @dataclass(frozen=True)
@@ -32,6 +32,22 @@ class ToolProviderPlugin(ABC):
     def contribute(self) -> PluginContribution: ...
 
 
+class ToolExecutor(ABC):
+    @abstractmethod
+    async def execute(
+        self,
+        spec: AstraToolSpec,
+        tool_input: dict[str, Any],
+        *,
+        context: ToolExecutionContext | None = None,
+    ) -> dict[str, Any]: ...
+
+
+class RuntimeBackend(ToolExecutor):
+    """Host-owned execution backend; providers receive no host service objects."""
+
+
+
 class ToolEffectAnalyzer(ABC):
     @abstractmethod
     def analyze(
@@ -51,6 +67,19 @@ class PluginResultProcessor(ABC):
         tool_input: dict[str, Any],
         result: dict[str, Any],
     ) -> PluginResultProcessingOutput: ...
+
+    def process_failure(
+        self,
+        spec: AstraToolSpec,
+        tool_input: dict[str, Any],
+        error: dict[str, Any],
+    ) -> dict[str, Any]:
+        return {}
+
+
+class PluginResultAdapter(ABC):
+    @abstractmethod
+    def adapt(self, result: dict[str, Any]) -> dict[str, Any]: ...
 
 
 class PluginResultValidator(ABC):

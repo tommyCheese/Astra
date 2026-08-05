@@ -1117,6 +1117,12 @@ html[data-theme="dark"] .history-menu, html[data-theme="dark"] .conversation-act
   padding: 14px 0 6px;
 }
 
+.tool-provider { border: 1px solid var(--border); border-radius: 12px; padding: 12px; }
+.tool-provider-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.tool-provider-heading small { display: block; margin-top: 3px; color: var(--text-muted); }
+.tool-provider-config { display: grid; gap: 8px; margin: 10px 0; padding: 10px; background: var(--surface-subtle); border-radius: 8px; }
+.tool-provider-config label { display: grid; grid-template-columns: minmax(130px, 0.4fr) 1fr; align-items: center; gap: 10px; }
+
 .capability-item strong,
 .capability-item span {
   display: block;
@@ -6387,7 +6393,6 @@ html[data-theme="dark"] .question-preview p {
   margin: 0 auto;
   max-width: var(--workspace-content-width);
   padding: 34px 0 calc(var(--composer-dock-height, 124px) + 18px);
-  scroll-behavior: smooth;
   scrollbar-color: rgba(118, 135, 153, .28) transparent;
   scrollbar-width: thin;
   width: 100%;
@@ -6397,6 +6402,14 @@ html[data-theme="dark"] .question-preview p {
 .conversation .bubble.assistant, .conversation .process-entry { max-width: 820px; }
 .conversation .process-entry { margin-bottom: 4px; }
 .conversation .process-panel { margin-bottom: 6px; }
+.command-progress-message,
+.command-result-message { padding-block: 4px; }
+.command-progress-message p,
+.command-result-message p { margin: 0; }
+.command-progress-line { align-items: center; color: var(--app-muted); display: flex; gap: 8px; min-height: 24px; }
+.command-progress-line small { color: var(--app-muted); font-size: 12px; }
+.command-progress-spinner { animation: history-run-spin .8s linear infinite; border: 1.8px solid color-mix(in srgb, var(--astra-mint) 24%, transparent); border-radius: 50%; border-top-color: var(--astra-mint); box-sizing: border-box; height: 14px; width: 14px; }
+.command-result-message p { color: var(--app-text); line-height: 1.65; }
 .bubble { font-size: 15px; line-height: 1.65; }
 .bubble.user { background: #f1f1f1; border: 0; box-shadow: none; width: fit-content; }
 .bubble.user p { max-width: min(68ch, calc(100vw - 380px)); }

@@ -80,6 +80,18 @@ claims, but SQLite is not the supported coordination layer for multiple backend
 replicas. Use PostgreSQL through `DATABASE_URL` before scaling the backend beyond
 one process; keep all replicas on the same database and artifact/workspace stores.
 
+## Tool Provider plugin rollout
+
+External and managed-package discovery are disabled by default. Keep the safe rollout mode while upgrading:
+
+```text
+TOOL_PLUGIN_ROLLOUT_MODE=builtin_only
+TOOL_MANAGED_PLUGIN_DISCOVERY_ENABLED=false
+TOOL_EXTERNAL_PLUGIN_DISCOVERY_ENABLED=false
+```
+
+Switch to `configured` only after the Provider identity and digest are allowlisted, a Host-managed isolated Runtime Backend is configured, and deployment tests cover health, timeout, cancellation and rollback. To roll back, restore `builtin_only` and restart. Preserve Tool Catalog Snapshot rows: paused Runs that froze an external behavioral catalog must remain failed closed rather than silently resuming against different tools. See `docs/tool-provider-plugins.md` for the trust model and troubleshooting codes.
+
 ## Stop
 
 ```bash

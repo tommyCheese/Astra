@@ -21,6 +21,8 @@ SUPPORTED_REVISIONS = {
     "0004_detach_scheduled_jobs",
     "0005_agent_context_compaction",
     "0006_runtime_profiles",
+    "0007_plugin_tool_catalog_snapshots",
+    "0008_dynamic_tool_provider_settings",
 }
 
 

@@ -14,6 +14,7 @@ from app.interfaces.api.runs import router as runs_router
 from app.interfaces.api.runtime import router as runtime_router
 from app.interfaces.api.schedules import router as schedules_router
 from app.interfaces.api.skills import router as skills_router
+from app.interfaces.api.tools import provider_router as tool_providers_router
 from app.interfaces.api.tools import router as tools_router
 from app.interfaces.api.usage import router as usage_router
 from app.interfaces.platform.http.system import router as system_router
@@ -31,6 +32,7 @@ APPLICATION_ROUTERS = (
     runtime_router,
     schedules_router,
     tools_router,
+    tool_providers_router,
     usage_router,
     skills_router,
     system_router,

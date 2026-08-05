@@ -1,6 +1,6 @@
 import { Component, CSSProperties, FormEvent, KeyboardEvent as ReactKeyboardEvent, lazy, memo, MouseEvent, PointerEvent as ReactPointerEvent, ReactNode, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { AstraApiError, ApiErrorPayload, buildRuntime, cancelRun, cancelRuntimeBuild, confirmPlanExecution, createConversationShare, createRun, decideToolApproval, deleteConversation, executeConversationCommand, getConversation, getConversationContext, getConversationStrategy, getPermissionCenter, getRun, getRuntimeDefaultModel, getRuntimeProfile, getToolSettings, listConversationShares, listConversations, listLibraryDeliverables, listRuns, listSkills, listSystemCommands, resetRuntimeAgentProfile, resolveModelContextCapabilities, resolveModelThinkingCapabilities, resumeRun, revisePlan, revokeConversationShare, revokePermissionGrant, streamRunEvents, takeCreatedRunStream, testModelConnection, updateConversation, updateConversationStrategy, updateRuntimeAgentProfile, updateRuntimeMemorySettings, updateToolSettings, type AgentProfileDocuments, type ContextWindowStatus, type ConversationStrategyPreferences, type Deliverable, type MemoryRuntimeSettings, type ModelConnectionTestResult, type ModelContextCapability, type ModelThinkingCapability, type ModelThinkingDepth, type ModelThinkingSelection, type PermissionCenterView, type RunModelConfig, type RunStreamEvent, type RunStreamHandle, type RuntimeDefaultModel, type SkillSummary, type SlashSystemCommand, type ToolSetting } from './api';
+import { AstraApiError, ApiErrorPayload, buildRuntime, cancelRun, cancelRuntimeBuild, confirmPlanExecution, createConversationShare, createRun, decideToolApproval, deleteConversation, executeConversationCommand, getConversation, getConversationContext, getConversationStrategy, getPermissionCenter, getRun, getRuntimeDefaultModel, getRuntimeProfile, getToolSettings, listConversationShares, listConversations, listLibraryDeliverables, listRuns, listSkills, listSystemCommands, resetRuntimeAgentProfile, resolveModelContextCapabilities, resolveModelThinkingCapabilities, resumeRun, revisePlan, revokeConversationShare, revokePermissionGrant, streamRunEvents, takeCreatedRunStream, testModelConnection, updateConversation, updateConversationStrategy, updateRuntimeAgentProfile, updateRuntimeMemorySettings, updateToolProviderConfiguration, updateToolProviderState, updateToolState, type AgentProfileDocuments, type ContextWindowStatus, type ConversationStrategyPreferences, type Deliverable, type MemoryRuntimeSettings, type ModelConnectionTestResult, type ModelContextCapability, type ModelThinkingCapability, type ModelThinkingDepth, type ModelThinkingSelection, type PermissionCenterView, type RunModelConfig, type RunStreamEvent, type RunStreamHandle, type RuntimeDefaultModel, type SkillSummary, type SlashSystemCommand, type ToolProviderSetting, type ToolSetting } from './api';
 import { cancelSubagent } from './api';
 import { buildAuditLog } from './auditPresentation';
 import { I18nProvider, useI18n } from './i18n';
@@ -10,7 +10,7 @@ import type { AgentExecutionView } from './types';
 import { UsageDashboard } from './UsageDashboard';
 import { GraphPaneWindowActions } from './GraphPaneWindowActions';
 import { CloseButton } from './CloseButton';
-import { buildPresentation, HISTORY_LIMIT, normalizeRunView, presentCommandMessage, type ConversationEntry } from './conversations';
+import { buildPresentation, HISTORY_LIMIT, normalizeRunView, presentCommandMessages, type ConversationEntry } from './conversations';
 import { createOptimisticProcessState, isDecisionGroup, reconcileProcessSnapshot, reduceProcessEvents, type ProcessStreamItem, type ProcessStreamState } from './processStream';
 import { createPlanGraphStreamState, reconcilePlanGraphSnapshot, reducePlanGraphEvent, type PlanGraphStreamState } from './planGraph';
 import { detectSlashSkillCommand, filterSlashCommandOptions, normalizeSelectedSkillIds, type SlashSkillCommand } from './composerSkills';
@@ -818,7 +818,10 @@ function AppContent() {
       void runSlashSystemCommand(command);
       return;
     }
-    const prefix = `${command.command} ${command.default_arguments ?? ''}`;
+    const defaultArguments = command.default_arguments?.trim() ?? '';
+    const prefix = defaultArguments
+      ? `${command.command} ${defaultArguments}`
+      : `${command.command}${command.argument_mode === 'required' ? ' ' : ''}`;
     const caret = slashCommand.start + prefix.length;
     setGoal(
       goal.slice(0, slashCommand.start)
@@ -850,17 +853,22 @@ function AppContent() {
         : goal;
     if (!activeConversationId && (command.name === 'clear' || command.name === 'compact')) {
       const localArguments = command.name === 'compact'
-        ? (options.argumentsText?.trim() || command.default_arguments || '')
+        ? (options.argumentsText?.trim() ?? '')
         : '';
-      const localCommandMessage = presentCommandMessage({
+      const assistantContent = command.name === 'clear'
+        ? t('当前没有模型上下文；已保持为空。')
+        : t('当前没有可整理的模型上下文。');
+      const localCommandMessages = presentCommandMessages({
         id: `local-${command.name}-${Date.now()}`,
         command: command.command,
         content: `${command.command}${localArguments ? ` ${localArguments}` : ''}`,
         arguments: localArguments,
+        assistant_content: assistantContent,
         after_run_count: 0,
         created_at: new Date().toISOString(),
       });
       setError(null);
+      setContextNotice('');
       setGoal((current) => current === submittedGoal ? nextGoal : current);
       if (command.name === 'clear') {
         setPriorMessages([]);
@@ -869,11 +877,9 @@ function AppContent() {
         setAnswerPhase('idle');
         setProcessState(null);
         setContextStatus(null);
-        setContextNotice(t('当前没有模型上下文；已保持为空。'));
-        setTrailingCommandMessages([localCommandMessage]);
+        setTrailingCommandMessages(localCommandMessages);
       } else {
-        setContextNotice(t('当前没有可整理的模型上下文。'));
-        setTrailingCommandMessages((messages) => [...messages, localCommandMessage]);
+        setTrailingCommandMessages((messages) => [...messages, ...localCommandMessages]);
       }
       closeSlashCommand();
       queueMicrotask(() => goalInputRef.current?.focus());
@@ -891,8 +897,33 @@ function AppContent() {
     }
     const commandProvider = selectedModelOption?.providerId ?? 'runtime';
     const commandModel = selectedModelOption?.model ?? 'default';
+    const commandArguments = options.argumentsText?.trim() ?? '';
+    const pendingMessageId = `pending-command-${command.name}-${Date.now()}`;
+    const progressContent = command.name === 'compact'
+      ? '正在检查并压缩主要信息上下文…'
+      : command.name === 'clear'
+        ? '正在清除模型上下文…'
+        : '正在执行快捷操作…';
+    const pendingMessages: ChatMessage[] = [
+      {
+        id: pendingMessageId,
+        role: 'user',
+        content: `${command.command}${commandArguments ? ` ${commandArguments}` : ''}`,
+        status: 'completed',
+        metadata: { presentation: 'user', command: command.command, command_arguments: commandArguments },
+      },
+      {
+        id: `${pendingMessageId}-progress`,
+        role: 'assistant',
+        content: t(progressContent),
+        status: 'streaming',
+        metadata: { presentation: 'command-progress', command: command.command, started_at: Date.now() },
+      },
+    ];
     setCommandPending(command.name);
     setError(null);
+    setContextNotice('');
+    setTrailingCommandMessages((messages) => [...messages, ...pendingMessages]);
     try {
       const result = options.argumentsText === undefined
         ? await executeConversationCommand(
@@ -910,14 +941,19 @@ function AppContent() {
         );
       setGoal((current) => current === submittedGoal ? nextGoal : current);
       setContextStatus(result.context);
-      setContextNotice(t(result.message));
-      setTrailingCommandMessages((messages) => [...messages, presentCommandMessage(result.user_message)]);
+      setTrailingCommandMessages((messages) => [
+        ...messages.filter((message) => message.id !== pendingMessageId && message.id !== `${pendingMessageId}-progress`),
+        ...presentCommandMessages(result.user_message),
+      ]);
       closeSlashCommand();
       queueMicrotask(() => {
         goalInputRef.current?.focus();
         goalInputRef.current?.setSelectionRange(caret, caret);
       });
     } catch (err) {
+      setTrailingCommandMessages((messages) => messages.filter(
+        (message) => message.id !== pendingMessageId && message.id !== `${pendingMessageId}-progress`,
+      ));
       setError(err instanceof AstraApiError ? err.payload : {
         type: 'runtime.command_failed',
         code: 'SYSTEM_COMMAND_FAILED',
@@ -970,11 +1006,11 @@ function AppContent() {
       const commandMessages = detail.command_messages ?? [];
       const prior = runs.slice(0, -1).flatMap((item, index) => [
         ...buildPresentation(item),
-        ...commandMessages.filter((message) => message.after_run_count === index + 1).map(presentCommandMessage),
+        ...commandMessages.filter((message) => message.after_run_count === index + 1).flatMap(presentCommandMessages),
       ]);
-      prior.unshift(...commandMessages.filter((message) => message.after_run_count === 0).map(presentCommandMessage));
+      prior.unshift(...commandMessages.filter((message) => message.after_run_count === 0).flatMap(presentCommandMessages));
       setPriorMessages(prior);
-      setTrailingCommandMessages(commandMessages.filter((message) => message.after_run_count >= runs.length).map(presentCommandMessage));
+      setTrailingCommandMessages(commandMessages.filter((message) => message.after_run_count >= runs.length).flatMap(presentCommandMessages));
       setRun(latest);
       applyConversationAnswerMode(detail.preferred_answer_mode ?? latest.answer_mode ?? 'standard');
       setProcessState(reconcileProcessSnapshot(null, latest));
@@ -1700,7 +1736,10 @@ function AppContent() {
     const frame = window.requestAnimationFrame(() => {
       const element = conversationRef.current;
       if (!element) return;
-      if (typeof element.scrollTo === 'function') element.scrollTo({ top: element.scrollHeight, behavior: 'auto' });
+      // `auto` inherits the container's CSS scroll behavior. If that behavior is
+      // smooth, an in-flight programmatic scroll can look like a user scroll and
+      // incorrectly disable followLatestRef before it reaches the bottom.
+      if (typeof element.scrollTo === 'function') element.scrollTo({ top: element.scrollHeight, behavior: 'instant' });
       else element.scrollTop = element.scrollHeight;
     });
     return () => window.cancelAnimationFrame(frame);
@@ -3022,12 +3061,14 @@ function SettingSection({ category, providerConfigs, onProviderConfigsChange }: 
 function ToolSettings() {
   const { t } = useI18n();
   const [tools, setTools] = useState<ToolSetting[]>([]);
+  const [providers, setProviders] = useState<ToolProviderSetting[]>([]);
   const [busyTool, setBusyTool] = useState<string | null>(null);
   const [message, setMessage] = useState('正在读取工具配置…');
   useEffect(() => {
     const controller = new AbortController();
     void getToolSettings(controller.signal).then((value) => {
       setTools(value.tools);
+      setProviders(value.providers);
       setMessage('');
     }).catch((error) => {
       if (error instanceof DOMException && error.name === 'AbortError') return;
@@ -3035,15 +3076,18 @@ function ToolSettings() {
     });
     return () => controller.abort();
   }, []);
-  async function changeTool(name: ToolSetting['name'], enabled: boolean) {
+  function applySaved(saved: { tools: ToolSetting[]; providers: ToolProviderSetting[] }) {
+    setTools(saved.tools);
+    setProviders(saved.providers);
+  }
+  async function changeTool(name: string, enabled: boolean) {
     const previous = tools;
     const next = tools.map((tool) => tool.name === name ? { ...tool, enabled } : tool);
     setTools(next);
     setBusyTool(name);
     setMessage('');
     try {
-      const saved = await updateToolSettings(next);
-      setTools(saved.tools);
+      applySaved(await updateToolState(name, enabled));
     } catch {
       setTools(previous);
       setMessage('保存工具配置失败，已恢复原状态。');
@@ -3051,13 +3095,56 @@ function ToolSettings() {
       setBusyTool(null);
     }
   }
+  async function changeProvider(providerId: string, enabled: boolean) {
+    setBusyTool(providerId);
+    try {
+      applySaved(await updateToolProviderState(providerId, enabled));
+    } catch {
+      setMessage('保存 Provider 配置失败。');
+    } finally {
+      setBusyTool(null);
+    }
+  }
+  async function saveProviderConfiguration(providerId: string, configuration: Record<string, unknown>) {
+    setBusyTool(providerId);
+    try {
+      applySaved(await updateToolProviderConfiguration(providerId, configuration));
+      setMessage('Provider 配置已保存。');
+    } catch {
+      setMessage('保存 Provider 配置失败。');
+    } finally {
+      setBusyTool(null);
+    }
+  }
   return <SettingsGroup title="工具" description="管理 Agent 可用工具。修改会应用到之后新建的任务，运行中的任务不受影响。">
     <div className="capability-settings">
-      {tools.map((tool) => <CapabilityItem key={tool.name} tool={tool} busy={busyTool !== null} onChange={(enabled) => void changeTool(tool.name, enabled)} />)}
+      {providers.map((provider) => <div className="tool-provider" key={provider.provider_id} data-setting-search-key={provider.label}>
+        <div className="tool-provider-heading">
+          <div><strong>{t(provider.label)}</strong><small>{provider.provider_id} · v{provider.version} · {provider.health}</small></div>
+          <Toggle checked={provider.enabled} onChange={(enabled) => void changeProvider(provider.provider_id, enabled)} disabled={busyTool !== null} label={`${provider.label} · ${provider.state}`} />
+        </div>
+        {!provider.available && <p className="capability-warning">{t(provider.unavailable_reason ?? '当前不可用')}</p>}
+        <ProviderConfigurationFields provider={provider} busy={busyTool !== null} onSave={(configuration) => void saveProviderConfiguration(provider.provider_id, configuration)} />
+        {tools.filter((tool) => tool.provider_id === provider.provider_id).map((tool) => <CapabilityItem key={tool.name} tool={tool} busy={busyTool !== null} onChange={(enabled) => void changeTool(tool.name, enabled)} />)}
+      </div>)}
       {!tools.length && <p className="tool-settings-message">{t(message)}</p>}
     </div>
     {tools.length > 0 && message && <p className="tool-settings-message" role="status">{t(message)}</p>}
   </SettingsGroup>;
+}
+
+function ProviderConfigurationFields({ provider, busy, onSave }: { provider: ToolProviderSetting; busy: boolean; onSave: (configuration: Record<string, unknown>) => void }) {
+  const schemaProperties = (provider.configuration_schema.properties ?? {}) as Record<string, { type?: string; title?: string; enum?: string[]; 'x-secret'?: boolean }>;
+  const editableFields = Object.entries(schemaProperties);
+  const [values, setValues] = useState<Record<string, string>>(() => Object.fromEntries(editableFields.map(([name, schema]) => [name, schema['x-secret'] ? '' : String(provider.configuration[name] ?? '')])));
+  useEffect(() => {
+    setValues(Object.fromEntries(editableFields.map(([name, schema]) => [name, schema['x-secret'] ? '' : String(provider.configuration[name] ?? '')])));
+  }, [provider.configuration_revision]);
+  if (!editableFields.length) return null;
+  return <div className="tool-provider-config">
+    {editableFields.map(([name, schema]) => <label key={name}><span>{schema.title ?? name}</span>{schema.enum ? <select value={values[name] ?? ''} onChange={(event) => setValues((current) => ({ ...current, [name]: event.target.value }))}><option value="">—</option>{schema.enum.map((option) => <option key={option} value={option}>{option}</option>)}</select> : <input type={schema['x-secret'] ? 'password' : 'text'} placeholder={schema['x-secret'] && provider.configuration[name] ? '已配置；输入新的凭据引用以替换' : ''} value={values[name] ?? ''} onChange={(event) => setValues((current) => ({ ...current, [name]: event.target.value }))} />}</label>)}
+    <button type="button" disabled={busy} onClick={() => onSave(Object.fromEntries(editableFields.flatMap(([name, schema]) => values[name] ? [[name, schema['x-secret'] ? { credential_ref: values[name] } : values[name]]] : [])))}>保存配置</button>
+  </div>;
 }
 
 type MemoryCenterTab = 'settings' | 'stored' | 'maintenance';
@@ -4389,6 +4476,17 @@ function MessageBubble({ message, run, processState, processPanelDefaultOpen, pr
     return <article className={`bubble user${command ? ' command-message' : ''}`} id={`message-${message.id}`}><span className="bubble-label">{t('你')}</span><p>{command && <span className="message-command-prefix">{command}</span>}{argumentsText && <span className="message-command-arguments">{argumentsText}</span>}</p></article>;
   }
 
+  if (presentation === 'command-progress') {
+    return <CommandProgressMessage message={message} />;
+  }
+
+  if (presentation === 'command-result') {
+    return <article className="bubble assistant command-result-message" id={`message-${message.id}`} role="status">
+      <span className="bubble-label">Astra</span>
+      <p>{t(message.content)}</p>
+    </article>;
+  }
+
   if (message.role === 'assistant' && message.status === 'streaming') {
     return <article className="bubble assistant answer-message streaming-message" id={`message-${message.id}`}><span className="bubble-label">Astra</span><div className="answer-content"><MarkdownContent content={message.content} /></div></article>;
   }
@@ -4409,6 +4507,27 @@ function MessageBubble({ message, run, processState, processPanelDefaultOpen, pr
   }
 
   return null;
+}
+
+function CommandProgressMessage({ message }: { message: ChatMessage }) {
+  const { t } = useI18n();
+  const startedAt = typeof message.metadata.started_at === 'number' ? message.metadata.started_at : Date.now();
+  const [elapsedSeconds, setElapsedSeconds] = useState(() => Math.max(0, Math.floor((Date.now() - startedAt) / 1000)));
+
+  useEffect(() => {
+    const updateElapsed = () => setElapsedSeconds(Math.max(0, Math.floor((Date.now() - startedAt) / 1000)));
+    const timer = window.setInterval(updateElapsed, 1000);
+    return () => window.clearInterval(timer);
+  }, [startedAt]);
+
+  return <article className="bubble assistant command-progress-message" id={`message-${message.id}`} role="status" aria-live="polite">
+    <span className="bubble-label">Astra</span>
+    <div className="command-progress-line">
+      <span className="command-progress-spinner" aria-hidden="true" />
+      <span>{t(message.content)}</span>
+      <small>{t('已用时 {seconds} 秒').replace('{seconds}', String(elapsedSeconds))}</small>
+    </div>
+  </article>;
 }
 
 function ProcessPanel({ run, messageId, liveState, open, isLatestRun, onInitialize, onOpenChange }: { run: RunView; messageId: string; liveState: ProcessStreamState | null; open: boolean; isLatestRun: boolean; onInitialize: (runId: string) => void; onOpenChange: (runId: string, open: boolean) => void }) {

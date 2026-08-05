@@ -10,11 +10,7 @@ from app.application.agent_runtime.policies.reasoning import (
     AgentObservationEvaluator,
     AgentReflectionGate,
 )
-from app.application.agent_runtime.result_adapters import (
-    AgentToolResultProcessorRegistry,
-    ChartTaskAdapter,
-    WebTaskAdapter,
-)
+from app.application.agent_runtime.services.plugin_runtime import PluginRuntimeState
 from app.application.agent_runtime.services.finalization import FinalizationInput
 from app.application.agent_runtime.services.runtime_builder import (
     AgentRuntimeBuilder,
@@ -81,9 +77,7 @@ class AstraAgentLoop:
         if settings.sandbox_enabled:
             backends.add("sandbox.remote")
         self.router = ToolRouter(tool_registry, available_backends=backends)
-        self.adapter = WebTaskAdapter()
-        self.chart_adapter = ChartTaskAdapter()
-        self.processors = AgentToolResultProcessorRegistry([self.adapter, self.chart_adapter])
+        self.plugin_runtime = PluginRuntimeState.from_registry(tool_registry)
         self.evaluator = AgentObservationEvaluator()
         self.reflection_gate = AgentReflectionGate()
         self.completion_gate = AgentCompletionGate()
@@ -158,12 +152,10 @@ class AstraAgentLoop:
             model_client=self.model_client,
             tool_registry=self.tool_registry,
             tool_router=self.router,
-            processors=self.processors,
+            plugin_runtime=self.plugin_runtime,
             evaluator=self.evaluator,
             reflection_gate=self.reflection_gate,
             completion_gate=self.completion_gate,
-            web_adapter=self.adapter,
-            chart_adapter=self.chart_adapter,
             sandbox_provider=self.sandbox_provider,
             supervisor_close_tasks=self._supervisor_close_tasks,
             normalize_tool_output=self._normalize_tool_output,

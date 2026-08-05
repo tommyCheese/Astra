@@ -5,9 +5,10 @@ import pytest
 
 from app.common.core.config import AstraRuntimeSettings
 from app.infrastructure.sandbox.runtime import SandboxResult
+from app.infrastructure.plugins.builtin import _web_runtime_config
 from app.infrastructure.tools.base import ToolExecutionContext, ToolExecutionError
 from app.infrastructure.tools.registry import build_tool_registry
-from app.infrastructure.tools.sandboxed import SandboxedWebTool, _web_runtime_config
+from app.infrastructure.tools.sandboxed import SandboxedWebTool
 from app.infrastructure.tools.web.fetching import WebFetchTool
 
 
@@ -105,7 +106,10 @@ async def test_web_tool_executes_through_container_protocol_only():
     service = RecordingSandboxService(
         {"ok": True, "output": {"url": "https://example.com", "content": "example"}}
     )
-    tool = SandboxedWebTool(WebFetchTool(AstraRuntimeSettings()), AstraRuntimeSettings())
+    settings = AstraRuntimeSettings()
+    tool = SandboxedWebTool(
+        WebFetchTool(settings), settings, _web_runtime_config(settings, "web_fetch")
+    )
 
     output = await tool.run({"url": "https://example.com"}, context=context(service))
 
@@ -124,7 +128,10 @@ async def test_web_tool_executes_through_container_protocol_only():
 
 async def test_web_tool_rejects_invalid_container_response():
     service = RecordingSandboxService({"ok": True, "output": "not-an-object"})
-    tool = SandboxedWebTool(WebFetchTool(AstraRuntimeSettings()), AstraRuntimeSettings())
+    settings = AstraRuntimeSettings()
+    tool = SandboxedWebTool(
+        WebFetchTool(settings), settings, _web_runtime_config(settings, "web_fetch")
+    )
 
     with pytest.raises(ToolExecutionError) as exc_info:
         await tool.run({"url": "https://example.com"}, context=context(service))

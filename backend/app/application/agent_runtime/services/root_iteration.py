@@ -10,7 +10,7 @@ from app.application.agent_runtime.services.root_decision import (
     RootDecisionResult,
     RootDecisionStage,
 )
-from app.application.agent_runtime.services.tool_action import RootToolActionStage, ToolActionInput
+from app.application.agent_runtime.services.tool_action import InvocationPipeline, InvocationRequest
 from app.application.agent_runtime.services.turn_preparation import (
     PreparedRootTurn,
     RootTurnPreparationStage,
@@ -61,7 +61,7 @@ class RootAgentIterationStage:
         decision_stage: RootDecisionStage,
         completion_stage: NodeCompletionStage,
         control_stage: ControlDecisionStage,
-        tool_stage: RootToolActionStage,
+        tool_stage: InvocationPipeline,
         subagent_supervisor: SubagentSupervisorPort | None,
         execution_mode: str,
     ) -> None:
@@ -178,7 +178,7 @@ class RootAgentIterationStage:
             terminal_status,
             terminal_summary,
         ) = await self._tools.execute(
-            ToolActionInput(
+            InvocationRequest(
                 run=self._state.run,
                 run_id=context.run_id,
                 goal=context.goal,

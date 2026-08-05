@@ -11,11 +11,7 @@ from app.application.agent_runtime.policies.reasoning import (
     AgentObservationEvaluator,
     AgentReflectionGate,
 )
-from app.application.agent_runtime.result_adapters import (
-    AgentToolResultProcessorRegistry,
-    ChartTaskAdapter,
-    WebTaskAdapter,
-)
+from app.application.agent_runtime.services.plugin_runtime import PluginRuntimeState
 from app.application.agent_runtime.services.approval import ApprovalRoutingStage
 from app.application.agent_runtime.services.authorization import PermissionAuthorizationStage
 from app.application.agent_runtime.services.completion import CompletionVerificationStage
@@ -37,7 +33,7 @@ from app.application.agent_runtime.services.root_iteration import (
     RootRuntimeState,
 )
 from app.application.agent_runtime.services.skill_actions import SkillActionStage
-from app.application.agent_runtime.services.tool_action import RootToolActionStage
+from app.application.agent_runtime.services.tool_action import InvocationPipeline
 from app.application.agent_runtime.services.turn_preparation import RootTurnPreparationStage
 from app.application.planning.scheduler import PlanScheduler
 from app.application.skills.activation import SkillActivationService
@@ -59,24 +55,20 @@ class RootRuntimeComposer:
         model_client: ModelClient,
         tool_registry: AstraToolRegistry,
         tool_router: ToolRouter,
-        processors: AgentToolResultProcessorRegistry,
+        plugin_runtime: PluginRuntimeState,
         evaluator: AgentObservationEvaluator,
         reflection_gate: AgentReflectionGate,
         completion_gate: AgentCompletionGate,
-        web_adapter: WebTaskAdapter,
-        chart_adapter: ChartTaskAdapter,
         normalize_tool_output: Callable[[str, dict[str, Any]], dict[str, Any]],
     ) -> None:
         self._settings = settings
         self._model_client = model_client
         self._tool_registry = tool_registry
         self._tool_router = tool_router
-        self._processors = processors
+        self._plugin_runtime = plugin_runtime
         self._evaluator = evaluator
         self._reflection_gate = reflection_gate
         self._completion_gate = completion_gate
-        self._web_adapter = web_adapter
-        self._chart_adapter = chart_adapter
         self._normalize_tool_output = normalize_tool_output
 
     def compose(self, values: dict[str, Any]) -> RootRuntimeAssembly:
@@ -156,6 +148,7 @@ class RootRuntimeComposer:
             repository,
             permissions,
             self._tool_router,
+            self._plugin_runtime,
         )
         invocation = ToolInvocationStage(
             repository,
@@ -165,19 +158,25 @@ class RootRuntimeComposer:
             infrastructure["artifact_service"],
             infrastructure["sandbox_service"],
             activation,
+            self._plugin_runtime,
         )
         return {
             "authorization": authorization,
-            "approval": ApprovalRoutingStage(self._settings, repository),
+            "approval": ApprovalRoutingStage(
+                self._settings,
+                repository,
+                self._plugin_runtime,
+            ),
             "invocation": invocation,
             "observation": ObservationNormalizationStage(
                 self._settings,
-                self._processors,
+                self._plugin_runtime,
                 self._normalize_tool_output,
             ),
             "failure": ToolFailureStage(
                 repository,
-                self._processors,
+                self._plugin_runtime,
+                self._tool_registry,
                 progress,
                 progress_stage,
             ),
@@ -230,8 +229,8 @@ class RootRuntimeComposer:
         progress: ExecutionProgress,
         progress_stage: ProgressEvaluationStage,
         collaborators: dict[str, Any],
-    ) -> RootToolActionStage:
-        return RootToolActionStage(
+    ) -> InvocationPipeline:
+        return InvocationPipeline(
             repository=repository,
             tool_registry=self._tool_registry,
             authorization_stage=collaborators["authorization"],
@@ -254,7 +253,7 @@ class RootRuntimeComposer:
         scheduler: PlanScheduler,
         control: ControlDecisionStage,
         completion: NodeCompletionStage,
-        tool_stage: RootToolActionStage,
+        tool_stage: InvocationPipeline,
         infrastructure: dict[str, Any],
     ) -> RootRuntimeAssembly:
         repository: RunUnitOfWork = values["repository"]
@@ -348,8 +347,7 @@ class RootRuntimeComposer:
             repository=values["repository"],
             plan_repository=plans,
             model_client=self._model_client,
-            web_adapter=self._web_adapter,
-            chart_adapter=self._chart_adapter,
+            plugin_runtime=self._plugin_runtime,
             memory_writer=collaborators["memory_writer"],
             verifier=CompletionVerificationStage(),
             completion_gate=self._completion_gate,

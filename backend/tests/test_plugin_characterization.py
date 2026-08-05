@@ -3,7 +3,7 @@ from fake_web_tools import fake_web_registry
 from app.application.agent_runtime.policies.reasoning import AgentReasoningPolicyCompiler
 from app.application.agent_runtime.services.approval import safe_preview, similar_matcher
 from app.application.agent_runtime.services.loop import AstraAgentLoop
-from app.application.permissions.effects import DefaultEffectAnalyzer
+from app.application.permissions.effects import BashEffectAnalyzer
 from app.common.core.config import AstraRuntimeSettings
 from app.common.schemas.agent.run_policy import RequestedReasoningPolicy
 from app.infrastructure.model_clients.mock import MockModelClient
@@ -49,7 +49,7 @@ async def test_web_runtime_characterization_freezes_calls_events_observations_an
 def test_bash_characterization_freezes_effect_approval_preview_and_matcher():
     tool_input = {"command": "touch report.txt"}
 
-    effect = DefaultEffectAnalyzer().analyze(BashExecuteTool.spec, tool_input, task_id="task-1")
+    effect = BashEffectAnalyzer().analyze(BashExecuteTool.spec, tool_input, task_id="task-1")
 
     assert effect.approval_required is True
     assert effect.summary == "创建或修改任务工作区文件"
@@ -64,7 +64,7 @@ def test_bash_characterization_freezes_effect_approval_preview_and_matcher():
 def test_bash_characterization_keeps_complex_command_matchers_fail_closed():
     tool_input = {"command": "pytest && rm report.txt"}
 
-    effect = DefaultEffectAnalyzer().analyze(BashExecuteTool.spec, tool_input, task_id="task-1")
+    effect = BashEffectAnalyzer().analyze(BashExecuteTool.spec, tool_input, task_id="task-1")
 
     assert effect.approval_required is True
     assert {item.kind.value for item in effect.effects} == {"process_execute_unknown"}

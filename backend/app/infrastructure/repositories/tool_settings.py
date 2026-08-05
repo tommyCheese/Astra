@@ -6,16 +6,18 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 
 from app.common.core.config import AstraRuntimeSettings
+from app.infrastructure.plugins.builtin_settings_compat import (
+    apply_tool_states,
+    default_tool_states,
+    persisted_tool_name,
+)
 from app.infrastructure.db.model_base import utc_now
-from app.infrastructure.db.models.conversations import ToolSettingRecord
+from app.infrastructure.db.models.conversations import (
+    ToolProviderSettingRecord,
+    ToolSettingRecord,
+    ToolSettingsAuditRecord,
+)
 
-TOOL_SETTING_FIELDS = {
-    "web_search": "tool_web_search_enabled",
-    "web_fetch": "tool_web_fetch_enabled",
-    "chart_render": "tool_chart_render_enabled",
-    "bash_execute": "tool_bash_execute_enabled",
-    "swarm": "tool_swarm_enabled",
-}
 PENDING_TOOL_SETTINGS_CACHE = "astra_pending_tool_settings_cache"
 _TOOL_SETTINGS_CACHE: WeakKeyDictionary[Engine, dict[str, bool]] = WeakKeyDictionary()
 
@@ -38,18 +40,29 @@ def discard_tool_settings_cache(session: Session) -> None:
     session.info.pop(PENDING_TOOL_SETTINGS_CACHE, None)
 
 
-def default_tool_states(settings: AstraRuntimeSettings) -> dict[str, bool]:
-    return {
-        name: bool(getattr(settings, field))
-        for name, field in TOOL_SETTING_FIELDS.items()
+def apply_provider_states(
+    settings: AstraRuntimeSettings,
+    records: dict[str, ToolProviderSettingRecord],
+) -> AstraRuntimeSettings:
+    states = {provider_id: bool(record.enabled) for provider_id, record in records.items()}
+    configurations = {
+        provider_id: dict(record.configuration or {})
+        for provider_id, record in records.items()
     }
-
-
-def apply_tool_states(settings: AstraRuntimeSettings, states: dict[str, bool]) -> AstraRuntimeSettings:
-    result = settings.model_copy(deep=True)
-    for name, field in TOOL_SETTING_FIELDS.items():
-        if name in states:
-            setattr(result, field, states[name])
+    configuration_revisions = {
+        provider_id: str(record.configuration_revision)
+        for provider_id, record in records.items()
+    }
+    result = settings.model_copy(
+        update={
+            "tool_provider_states": states,
+            "tool_provider_configurations": configurations,
+            "tool_provider_configuration_revisions": configuration_revisions,
+        },
+        deep=True,
+    )
+    if not states.get("astra.builtin", True):
+        result.tool_swarm_enabled = False
     return result
 
 
@@ -94,9 +107,97 @@ class ToolSettingsRepository:
         self._stage_cache({**current, **updated})
         return updated
 
+    async def set_tool(self, tool_name: str, enabled: bool, *, default: bool) -> bool:
+        key = tool_name
+        before = await self.get_or_create({key: default})
+        await self.set_all({key: enabled}, {key: default})
+        self.session.add(
+            ToolSettingsAuditRecord(
+                target_kind="tool",
+                target_id=tool_name,
+                action="set_enabled",
+                before={"enabled": before[key]},
+                after={"enabled": enabled},
+            )
+        )
+        await self.session.flush()
+        return enabled
+
     def _stage_cache(self, states: dict[str, bool]) -> None:
         session = self.session.sync_session
         session.info[PENDING_TOOL_SETTINGS_CACHE] = (
             _session_engine(session),
             dict(states),
         )
+
+
+class ToolProviderSettingsRepository:
+    def __init__(self, session: AsyncSession):
+        self.session = session
+
+    async def get_or_create(
+        self,
+        defaults: dict[str, bool],
+    ) -> dict[str, ToolProviderSettingRecord]:
+        records = list(
+            (
+                await self.session.scalars(
+                    select(ToolProviderSettingRecord).where(
+                        ToolProviderSettingRecord.provider_id.in_(defaults)
+                    )
+                )
+            ).all()
+        )
+        by_id = {record.provider_id: record for record in records}
+        for provider_id, enabled in defaults.items():
+            if provider_id not in by_id:
+                record = ToolProviderSettingRecord(provider_id=provider_id, enabled=enabled)
+                self.session.add(record)
+                by_id[provider_id] = record
+        await self.session.flush()
+        return by_id
+
+    async def set_enabled(self, provider_id: str, enabled: bool) -> ToolProviderSettingRecord:
+        record = (await self.get_or_create({provider_id: True}))[provider_id]
+        before = bool(record.enabled)
+        record.enabled = enabled
+        record.updated_at = utc_now()
+        self.session.add(
+            ToolSettingsAuditRecord(
+                target_kind="provider",
+                target_id=provider_id,
+                action="set_enabled",
+                before={"enabled": before},
+                after={"enabled": enabled},
+            )
+        )
+        await self.session.flush()
+        return record
+
+    async def set_configuration(
+        self,
+        provider_id: str,
+        configuration: dict,
+    ) -> ToolProviderSettingRecord:
+        record = (await self.get_or_create({provider_id: True}))[provider_id]
+        before = {
+            "configuration": dict(record.configuration or {}),
+            "configuration_revision": record.configuration_revision,
+        }
+        record.configuration = dict(configuration)
+        record.configuration_revision += 1
+        record.updated_at = utc_now()
+        self.session.add(
+            ToolSettingsAuditRecord(
+                target_kind="provider",
+                target_id=provider_id,
+                action="set_configuration",
+                before=before,
+                after={
+                    "configuration": dict(configuration),
+                    "configuration_revision": record.configuration_revision,
+                },
+            )
+        )
+        await self.session.flush()
+        return record

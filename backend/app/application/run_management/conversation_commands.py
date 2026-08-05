@@ -49,7 +49,6 @@ SYSTEM_COMMANDS = (
         description="整理较早的对话，保留近期内容和完整记录",
         effect="compact_context",
         argument_mode="optional",
-        default_arguments="保留后续任务所需的关键上下文",
         usage="/compact [压缩方向]",
     ),
     SystemCommandDefinition(
@@ -141,6 +140,7 @@ async def execute_system_command(
         "command": f"/{command}",
         "content": invocation,
         "arguments": normalized_arguments,
+        "assistant_content": message,
         "after_run_count": run_count,
         "created_at": utc_now().isoformat(),
     }
@@ -164,11 +164,10 @@ async def _execute_command(
             {"usage": definition.usage, "command": f"/{command}"},
         )
     if command == "compact":
-        direction = arguments or definition.default_arguments
-        details = await manager.compact(task, direction=direction)
-        details["direction"] = direction
-        message = _compaction_message(details)
-        return message, details, direction
+        details = await manager.compact(task, direction=arguments)
+        details["direction"] = arguments
+        message = _compaction_message(details, customized=bool(arguments))
+        return message, details, arguments
     return "已清空模型上下文；后续请求将从零开始，完整记录仍保留。", await manager.clear(task), arguments
 
 
@@ -191,10 +190,16 @@ async def _execute_parameterized_command(
     return message, details, arguments
 
 
-def _compaction_message(details: dict[str, object]) -> str:
+def _compaction_message(details: dict[str, object], *, customized: bool) -> str:
     if details.get("status") == "failed":
         return f"未能完成对话整理（{details['failure_code']}）；原上下文保持不变。"
-    return "已按指定方向整理较早的对话，完整记录仍保留。"
+    if not details.get("model_used"):
+        return "当前没有需要折叠的较早上下文，未调用模型；主要信息上下文保持不变。"
+    folded = int(details.get("folded") or 0)
+    retained = int(details.get("retained") or 0)
+    if customized:
+        return f"已按指定方向调用模型完成上下文压缩：折叠 {folded} 轮，保留最近 {retained} 轮；完整聊天记录仍保留。"
+    return f"已调用模型完成主要信息上下文压缩：折叠 {folded} 轮，保留最近 {retained} 轮；完整聊天记录仍保留。"
 
 
 def _command_invocation(command: str, arguments: str) -> str:

@@ -91,6 +91,8 @@ class PluginApplicabilityBinding(BaseModel):
 class PluginToolContribution:
     tool: AstraTool
     executor_id: str
+    result_adapter_id: str = "envelope.v1"
+    result_adapter_factory: Callable[[], Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -123,6 +125,14 @@ class PluginContribution:
                 raise PluginContractError("tool provider identity does not match plugin")
             if not entry.executor_id:
                 raise PluginContractError("tool contribution requires an executor binding")
+            if not entry.result_adapter_id:
+                raise PluginContractError("tool contribution requires a result adapter identity")
+            if entry.result_adapter_id != "envelope.v1" and not callable(
+                entry.result_adapter_factory
+            ):
+                raise PluginContractError(
+                    "non-envelope tool contribution requires a result adapter factory"
+                )
         components = (
             *self.effect_analyzers,
             *self.result_processors,
