@@ -21,6 +21,8 @@
 - [x] 3.6 Reduce streaming render work with frame-paced advancement and memoized unchanged process rows
 - [x] 3.7 Rebuild from authoritative snapshots so live model-thinking deltas are not duplicated during reconciliation
 - [x] 3.8 Expose persisted Run processing duration and show a Codex-style processed-time label after thinking completes
+- [x] 3.9 Coalesce same-stream model-thinking deltas once per animation frame while preserving event cursors and deduplication
+- [x] 3.10 Pace the visible model-thinking buffer independently from network delivery and defer follow-latest layout work
 
 ## 4. Verification
 
@@ -30,3 +32,4 @@
 - [x] 4.4 Run focused backend and frontend suites plus OpenSpec validation, and resolve all failures caused by this change
 - [x] 4.5 Add component coverage for expansion and follow-latest behavior, then visually verify a real streaming Run
 - [x] 4.6 Cover duration projection and localized compact formatting, then run frontend/backend focused validation
+- [x] 4.7 Cover burst coalescing and frame-paced model-thinking rendering, then visually verify a live stream

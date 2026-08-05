@@ -50,6 +50,31 @@ describe('ModelThinkingContent', () => {
     expect(frames).toHaveLength(scheduledAfterCollapse);
   });
 
+  it('paces a burst across animation frames and reveals completion immediately', () => {
+    const frames: FrameRequestCallback[] = [];
+    vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
+      frames.push(callback);
+      return frames.length;
+    });
+    vi.spyOn(window, 'cancelAnimationFrame').mockImplementation(() => undefined);
+    const initial = {
+      id: 'model-thinking-paced', kind: 'model_thinking' as const, title: '模型思考', status: 'running' as const,
+      detail: '起点', provider: 'qwen', operation: 'synthesis', contentLevel: 'reasoning' as const,
+    };
+    const burst = `${initial.detail}${'新增思考'.repeat(80)}`;
+    const { container, rerender } = render(<I18nProvider><ModelThinkingContent item={initial} /></I18nProvider>);
+
+    rerender(<I18nProvider><ModelThinkingContent item={{ ...initial, detail: burst }} /></I18nProvider>);
+    expect(container.querySelector('pre')?.textContent).not.toBe(burst);
+    act(() => frames.shift()?.(16));
+    const firstFrame = container.querySelector('pre')?.textContent ?? '';
+    expect(firstFrame.length).toBeGreaterThan(initial.detail.length);
+    expect(firstFrame.length).toBeLessThan(burst.length);
+
+    rerender(<I18nProvider><ModelThinkingContent item={{ ...initial, detail: burst, status: 'completed' }} /></I18nProvider>);
+    expect(container.querySelector('pre')?.textContent).toBe(burst);
+  });
+
   it('explains when the provider exposes no displayable thinking', () => {
     render(<I18nProvider><ModelThinkingContent item={{
       id: 'model-thinking-2', kind: 'model_thinking', title: '模型思考不可见', status: 'completed',

@@ -1,5 +1,6 @@
-import { useLayoutEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useI18n } from './i18n';
+import { usePacedStreamingText } from './pacedStreamingText';
 import type { ProcessStreamItem } from './processStream';
 
 export function ModelThinkingContent({ item }: { item: ProcessStreamItem }) {
@@ -7,12 +8,18 @@ export function ModelThinkingContent({ item }: { item: ProcessStreamItem }) {
   const [expanded, setExpanded] = useState(item.status === 'running');
   const contentRef = useRef<HTMLPreElement>(null);
   const scrollFrameRef = useRef<number>();
+  const visibleDetail = usePacedStreamingText(
+    item.detail ?? '',
+    item.id,
+    item.status === 'running' && expanded,
+    96,
+  );
   const metadata = [item.provider, item.operation].filter(Boolean).join(' · ');
   const unavailableText = item.unavailableReason === 'model_request_failed'
     ? t('模型调用失败，未获得可展示的思考内容。')
     : t('该模型未公开可展示的思考内容。');
 
-  useLayoutEffect(() => {
+  useEffect(() => {
     if (!expanded || item.contentLevel === 'unavailable') return undefined;
     if (scrollFrameRef.current !== undefined) window.cancelAnimationFrame(scrollFrameRef.current);
     scrollFrameRef.current = window.requestAnimationFrame(() => {
@@ -23,7 +30,7 @@ export function ModelThinkingContent({ item }: { item: ProcessStreamItem }) {
     return () => {
       if (scrollFrameRef.current !== undefined) window.cancelAnimationFrame(scrollFrameRef.current);
     };
-  }, [expanded, item.contentLevel, item.detail]);
+  }, [expanded, item.contentLevel, visibleDetail]);
 
   const statusLabel = item.status === 'running' ? t('运行中') : t('已完成');
   return <details
@@ -42,7 +49,7 @@ export function ModelThinkingContent({ item }: { item: ProcessStreamItem }) {
     <div className="model-thinking-body">
       {item.contentLevel === 'unavailable'
         ? <p className="model-thinking-unavailable">{unavailableText}</p>
-        : <pre ref={contentRef} data-follow-latest={expanded ? 'true' : 'false'}>{item.detail}{item.status === 'running' && <span className="model-thinking-caret" aria-hidden="true" />}</pre>}
+        : <pre ref={contentRef} data-follow-latest={expanded ? 'true' : 'false'}>{visibleDetail}{item.status === 'running' && <span className="model-thinking-caret" aria-hidden="true" />}</pre>}
       {item.truncated && <p className="model-thinking-warning">{t('内容超过保存上限，以下记录已被截断。')}</p>}
     </div>
   </details>;

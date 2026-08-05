@@ -11,12 +11,13 @@ import { UsageDashboard } from './UsageDashboard';
 import { GraphPaneWindowActions } from './GraphPaneWindowActions';
 import { CloseButton } from './CloseButton';
 import { buildPresentation, HISTORY_LIMIT, normalizeRunView, presentCommandMessage, type ConversationEntry } from './conversations';
-import { createOptimisticProcessState, isDecisionGroup, reconcileProcessSnapshot, reduceProcessEvent, type ProcessStreamItem, type ProcessStreamState } from './processStream';
+import { createOptimisticProcessState, isDecisionGroup, reconcileProcessSnapshot, reduceProcessEvents, type ProcessStreamItem, type ProcessStreamState } from './processStream';
 import { createPlanGraphStreamState, reconcilePlanGraphSnapshot, reducePlanGraphEvent, type PlanGraphStreamState } from './planGraph';
 import { detectSlashSkillCommand, filterSlashCommandOptions, normalizeSelectedSkillIds, type SlashSkillCommand } from './composerSkills';
 import { citationsForClaim, sourceAnchor, validatedCitations, type PresentedCitation } from './groundingPresentation';
 import { ScheduledTasksView } from './ScheduledTasksView';
 import { ModelThinkingContent } from './ModelThinkingContent';
+import { usePacedStreamingText } from './pacedStreamingText';
 
 const QUESTION_SUBMIT_MARK = 'astra.question.submit';
 const FIRST_TOKEN_COMMIT_MARK = 'astra.answer.first_token_commit';
@@ -181,103 +182,6 @@ function thinkingDepthLabel(depth: ModelThinkingDepth | null | undefined): strin
   return '自动';
 }
 
-function safeStreamingSlice(value: string, end: number) {
-  let boundary = Math.min(value.length, end);
-  const previous = value.charCodeAt(boundary - 1);
-  if (previous >= 0xD800 && previous <= 0xDBFF) boundary += 1;
-  return value.slice(0, boundary);
-}
-
-function usePacedStreamingText(target: string, streamId: string | undefined) {
-  const [visible, setVisible] = useState('');
-  const targetRef = useRef(target);
-  const visibleRef = useRef('');
-  const frameRef = useRef<number>();
-  const lastPaintRef = useRef(performance.now());
-  const characterCreditRef = useRef(1);
-  targetRef.current = target;
-
-  useEffect(() => {
-    if (!target) {
-      if (frameRef.current !== undefined) {
-        window.cancelAnimationFrame(frameRef.current);
-        frameRef.current = undefined;
-      }
-      visibleRef.current = '';
-      setVisible('');
-      characterCreditRef.current = 1;
-      return;
-    }
-    const reduceMotion = typeof window.matchMedia === 'function'
-      && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-
-    if (reduceMotion) {
-      if (frameRef.current !== undefined) {
-        window.cancelAnimationFrame(frameRef.current);
-        frameRef.current = undefined;
-      }
-      visibleRef.current = target;
-      setVisible(target);
-      return;
-    }
-    if (!target.startsWith(visibleRef.current)) {
-      visibleRef.current = '';
-      setVisible('');
-      characterCreditRef.current = 1;
-    }
-
-    const paint = (now: number) => {
-      frameRef.current = undefined;
-      const nextTarget = targetRef.current;
-      let current = visibleRef.current;
-      if (!nextTarget.startsWith(current)) {
-        current = '';
-        visibleRef.current = '';
-        setVisible('');
-        characterCreditRef.current = 1;
-      }
-
-      const backlog = nextTarget.length - current.length;
-      if (backlog > 0) {
-        const elapsed = Math.min(80, Math.max(0, now - lastPaintRef.current));
-        const charactersPerSecond = backlog > 600 ? 9000
-          : backlog > 240 ? 4800
-            : backlog > 80 ? 2400
-              : backlog > 24 ? 1200
-                : 720;
-        characterCreditRef.current += elapsed * charactersPerSecond / 1000;
-        const characterCount = Math.min(
-          backlog,
-          160,
-          Math.max(1, Math.floor(characterCreditRef.current)),
-        );
-        if (characterCount > 0) {
-          characterCreditRef.current = Math.max(0, characterCreditRef.current - characterCount);
-          const nextVisible = safeStreamingSlice(nextTarget, current.length + characterCount);
-          visibleRef.current = nextVisible;
-          setVisible(nextVisible);
-        }
-      }
-      lastPaintRef.current = now;
-      if (visibleRef.current !== targetRef.current) {
-        frameRef.current = window.requestAnimationFrame(paint);
-      }
-    };
-
-    if (frameRef.current === undefined) {
-      lastPaintRef.current = performance.now();
-      frameRef.current = window.requestAnimationFrame(paint);
-    }
-  }, [target, streamId]);
-  useEffect(() => () => {
-    if (frameRef.current !== undefined) window.cancelAnimationFrame(frameRef.current);
-  }, []);
-
-  if (!target) return '';
-  return target.startsWith(visible) && visible
-    ? visible
-    : safeStreamingSlice(target, 1);
-}
 const DEFAULT_CONVERSATION_STRATEGY: ConversationStrategyPreferences = {
   preferred_answer_mode: 'standard',
   reasoning_effort: 'balanced',
@@ -1607,8 +1511,7 @@ function AppContent() {
         let next = state?.runId === run.id
           ? state
           : createOptimisticProcessState(run.id, run.answer_mode === 'standard' ? 'standard' : 'trusted');
-        for (const event of events) next = reduceProcessEvent(next, event);
-        return next;
+        return reduceProcessEvents(next, events);
       });
     };
     const queueProcessEvent = (event: RunStreamEvent) => {

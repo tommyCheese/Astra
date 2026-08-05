@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createOptimisticProcessState, reconcileProcessSnapshot, reduceProcessEvent } from '../src/processStream';
+import { createOptimisticProcessState, reconcileProcessSnapshot, reduceProcessEvent, reduceProcessEvents } from '../src/processStream';
 import type { RunView } from '../src/types';
 
 describe('process stream reducer', () => {
@@ -63,6 +63,22 @@ describe('process stream reducer', () => {
       contentLevel: 'reasoning',
     });
     expect(state.items.find((item) => item.id === 'reasoning-1')?.detail).toBe('公开摘要');
+  });
+
+  it('coalesces one-frame model-thinking bursts while preserving cursor and duplicate semantics', () => {
+    const base = { stream_id: 'burst-1', provider: 'deepseek', operation: 'synthesis', content_level: 'reasoning' };
+    const state = reduceProcessEvents(createOptimisticProcessState('run-burst'), [
+      { id: 1, run_sequence: 1, type: 'model_thinking.started', payload: base },
+      { id: 2, run_sequence: 2, type: 'model_thinking.delta', payload: { ...base, delta: '逐' } },
+      { id: 3, run_sequence: 3, type: 'model_thinking.delta', payload: { ...base, delta: '帧' } },
+      { id: 3, run_sequence: 3, type: 'model_thinking.delta', payload: { ...base, delta: '重复' } },
+      { id: 5, run_sequence: 5, type: 'model_thinking.delta', payload: { ...base, delta: '输出' } },
+    ]);
+
+    expect(state.items.find((item) => item.id === 'model-thinking-burst-1')?.detail).toBe('逐帧输出');
+    expect(state.seenEventIds).toEqual([1, 2, 3, 5]);
+    expect(state.runCursor).toBe(5);
+    expect(state.cursorGap).toBe(true);
   });
 
   it('restores provider summaries, unavailable states, and truncation from snapshot events', () => {

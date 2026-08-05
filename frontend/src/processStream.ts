@@ -31,6 +31,7 @@ export type ProcessStreamState = {
 };
 
 const terminalStatuses = new Set(['completed', 'completed_with_warnings', 'failed', 'blocked', 'waiting_user', 'cancelled']);
+const CURSOR_ONLY_EVENT_TYPE = '__astra.process_cursor_only';
 
 const phaseTitles: Record<string, string> = {
   planning: '正在理解任务并制定计划',
@@ -149,6 +150,9 @@ export function reduceProcessEvent(state: ProcessStreamState, event: RunStreamEv
     ? { ...state.agentCursors, [agentExecutionId]: agentSequence }
     : state.agentCursors;
   const seenEventIds = typeof event.id === 'number' ? [...state.seenEventIds.slice(-199), event.id] : state.seenEventIds;
+  if (event.type === CURSOR_ONLY_EVENT_TYPE) {
+    return { ...state, seenEventIds, runCursor, agentCursors, cursorGap };
+  }
   const payload = event.payload;
   const turnIndex = numeric(payload.turn_index);
   let items = [...state.items];
@@ -328,6 +332,60 @@ export function reduceProcessEvent(state: ProcessStreamState, event: RunStreamEv
       .map((item) => item.status === 'running' ? { ...item, status: event.type === 'run.cancelled' || status === 'cancelled' ? 'cancelled' : 'completed' } : item);
   }
   return { ...state, items, active, seenEventIds, runCursor, agentCursors, cursorGap };
+}
+
+/**
+ * Reduces a browser-frame batch while applying consecutive deltas for one model
+ * thinking stream in a single text append. Every source event still advances the
+ * normal event-id and Run/Agent cursor bookkeeping before its text is accepted.
+ */
+export function reduceProcessEvents(
+  state: ProcessStreamState,
+  events: RunStreamEvent[],
+): ProcessStreamState {
+  let next = state;
+  let index = 0;
+  while (index < events.length) {
+    const event = events[index];
+    const streamId = event.type === 'model_thinking.delta'
+      ? safeString(event.payload.stream_id)
+      : '';
+    if (!streamId) {
+      next = reduceProcessEvent(next, event);
+      index += 1;
+      continue;
+    }
+
+    let cursorState = next;
+    let mergedDelta = '';
+    let acceptedPayload: Record<string, unknown> | undefined;
+    let groupEnd = index;
+    while (groupEnd < events.length) {
+      const candidate = events[groupEnd];
+      if (
+        candidate.type !== 'model_thinking.delta'
+        || safeString(candidate.payload.stream_id) !== streamId
+      ) break;
+      const advanced = reduceProcessEvent(cursorState, {
+        ...candidate,
+        type: CURSOR_ONLY_EVENT_TYPE,
+      });
+      if (advanced !== cursorState) {
+        mergedDelta += safeString(candidate.payload.delta);
+        acceptedPayload = candidate.payload;
+        cursorState = advanced;
+      }
+      groupEnd += 1;
+    }
+    next = mergedDelta && acceptedPayload
+      ? reduceProcessEvent(cursorState, {
+        type: 'model_thinking.delta',
+        payload: { ...acceptedPayload, delta: mergedDelta },
+      })
+      : cursorState;
+    index = groupEnd;
+  }
+  return next;
 }
 
 export function isDecisionGroup(item: ProcessStreamItem) {
