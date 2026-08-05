@@ -1,8 +1,12 @@
-from app.infrastructure.tools.base import Tool, ToolRegistry, ToolSpec
+from app.infrastructure.tools.base import (
+    AstraTool,
+    AstraToolRegistry,
+    AstraToolSpec,
+)
 
 
-class FakeSearch(Tool):
-    spec = ToolSpec(
+class FakeSearch(AstraTool):
+    spec = AstraToolSpec(
         name="web_search",
         version="test",
         input_schema={"required": ["query"]},
@@ -31,8 +35,8 @@ class FakeSearch(Tool):
         }
 
 
-class FakeFetch(Tool):
-    spec = ToolSpec(
+class FakeFetch(AstraTool):
+    spec = AstraToolSpec(
         name="web_fetch",
         version="test",
         input_schema={"required": ["url"]},
@@ -56,7 +60,7 @@ class FakeFetch(Tool):
 
 
 def fake_web_registry():
-    registry = ToolRegistry()
+    registry = AstraToolRegistry()
     registry.register(FakeSearch())
     registry.register(FakeFetch())
     return registry

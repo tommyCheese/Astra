@@ -5,15 +5,15 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from app.application.run_management.contracts import PreparedRun
+from app.application.run_management.contracts import PreparedRunExecution
 from app.application.run_management.dispatcher import InProcessRunDispatcher
 from app.application.scheduling.dispatcher import ScheduledRunDispatcher
-from app.common.core.config import Settings
-from app.common.core.errors import ValidationError
+from app.common.core.config import AstraRuntimeSettings
+from app.common.core.errors import AstraInputValidationError
 from app.common.schemas.agent.api_views import CreateRunResponse
 from app.common.schemas.agent.types import AnswerMode
 from app.common.schemas.schedules import ScheduledJobCreate
-from app.infrastructure.db.model_base import Base
+from app.infrastructure.db.model_base import AstraOrmRecordBase
 from app.infrastructure.db.models.conversations import TaskRecord
 from app.infrastructure.db.models.runs import RunRecord
 from app.infrastructure.db.models.scheduling import ScheduledJobRecord, ScheduledJobRunRecord
@@ -36,7 +36,7 @@ async def test_dispatcher_reuses_target_conversation_workspace(tmp_path, monkeyp
     database_path = tmp_path / "scheduled-dispatch.db"
     engine = create_async_engine(f"sqlite+aiosqlite:///{database_path}")
     async with engine.begin() as connection:
-        await connection.run_sync(Base.metadata.create_all)
+        await connection.run_sync(AstraOrmRecordBase.metadata.create_all)
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
 
     async with session_factory() as session:
@@ -79,20 +79,20 @@ async def test_dispatcher_reuses_target_conversation_workspace(tmp_path, monkeyp
             await _service.session.commit()
         else:
             await _service.session.flush()
-        return PreparedRun(
+        return PreparedRunExecution(
             CreateRunResponse(
                 task_id=run.task_id,
                 run_id=run.id,
                 status=run.status,
                 answer_mode=AnswerMode.standard,
             ),
-            Settings(),
+            AstraRuntimeSettings(),
         )
 
     monkeypatch.setattr("app.application.scheduling.dispatcher.RunApplicationService.prepare", fake_prepare)
 
     dispatched = await ScheduledRunDispatcher(
-        Settings(), session_factory, _run_dispatcher()
+        AstraRuntimeSettings(), session_factory, _run_dispatcher()
     ).dispatch(schedule_run.id)
     await asyncio.sleep(0.05)
 
@@ -118,7 +118,7 @@ async def test_heartbeat_defers_while_target_conversation_is_busy(tmp_path):
     database_path = tmp_path / "heartbeat-busy.db"
     engine = create_async_engine(f"sqlite+aiosqlite:///{database_path}")
     async with engine.begin() as connection:
-        await connection.run_sync(Base.metadata.create_all)
+        await connection.run_sync(AstraOrmRecordBase.metadata.create_all)
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
     async with session_factory() as session:
         target = TaskRecord(title="Target", description="Target conversation")
@@ -144,7 +144,7 @@ async def test_heartbeat_defers_while_target_conversation_is_busy(tmp_path):
         await session.commit()
         schedule_run = await ScheduleRepository(session).manual_trigger(job)
 
-    result = await ScheduledRunDispatcher(Settings(), session_factory, _run_dispatcher()).dispatch(
+    result = await ScheduledRunDispatcher(AstraRuntimeSettings(), session_factory, _run_dispatcher()).dispatch(
         schedule_run.id
     )
     assert result.status == "deferred_busy"
@@ -158,7 +158,7 @@ async def test_heartbeat_ok_is_recorded_silently_and_hidden_from_chat(tmp_path):
     database_path = tmp_path / "heartbeat-silent.db"
     engine = create_async_engine(f"sqlite+aiosqlite:///{database_path}")
     async with engine.begin() as connection:
-        await connection.run_sync(Base.metadata.create_all)
+        await connection.run_sync(AstraOrmRecordBase.metadata.create_all)
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
     async with session_factory() as session:
         target = TaskRecord(title="Target", description="Target conversation")
@@ -200,7 +200,7 @@ async def test_heartbeat_ok_is_recorded_silently_and_hidden_from_chat(tmp_path):
         await session.commit()
         schedule_run_id, run_id = schedule_run.id, run.id
 
-    await ScheduledRunDispatcher(Settings(), session_factory, _run_dispatcher())._finalize(
+    await ScheduledRunDispatcher(AstraRuntimeSettings(), session_factory, _run_dispatcher())._finalize(
         schedule_run_id, run_id
     )
     async with session_factory() as session:
@@ -220,7 +220,7 @@ async def test_dispatcher_blocks_invalid_unattended_permissions(tmp_path):
     database_path = tmp_path / "scheduled-permission.db"
     engine = create_async_engine(f"sqlite+aiosqlite:///{database_path}")
     async with engine.begin() as connection:
-        await connection.run_sync(Base.metadata.create_all)
+        await connection.run_sync(AstraOrmRecordBase.metadata.create_all)
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
 
     async with session_factory() as session:
@@ -242,7 +242,7 @@ async def test_dispatcher_blocks_invalid_unattended_permissions(tmp_path):
         schedule_run = await ScheduleRepository(session).manual_trigger(job)
 
     dispatched = await ScheduledRunDispatcher(
-        Settings(permission_bundle_signing_secret="test-secret"),
+        AstraRuntimeSettings(permission_bundle_signing_secret="test-secret"),
         session_factory,
         _run_dispatcher(),
     ).dispatch(schedule_run.id)
@@ -261,7 +261,7 @@ async def test_dispatcher_blocks_invalid_unattended_permissions(tmp_path):
 async def test_dispatcher_rolls_back_partial_run_when_creation_is_blocked(tmp_path, monkeypatch):
     engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'rollback.db'}")
     async with engine.begin() as connection:
-        await connection.run_sync(Base.metadata.create_all)
+        await connection.run_sync(AstraOrmRecordBase.metadata.create_all)
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
     async with session_factory() as session:
         target = TaskRecord(title="Target", description="Target conversation")
@@ -284,10 +284,10 @@ async def test_dispatcher_rolls_back_partial_run_when_creation_is_blocked(tmp_pa
     async def fail_after_flush(service, payload, *, commit=True):
         service.session.add(RunRecord(task_id=payload.task_id, status="created", model_policy={}))
         await service.session.flush()
-        raise ValidationError("TEST_BLOCKED", "blocked")
+        raise AstraInputValidationError("TEST_BLOCKED", "blocked")
 
     monkeypatch.setattr("app.application.scheduling.dispatcher.RunApplicationService.prepare", fail_after_flush)
-    result = await ScheduledRunDispatcher(Settings(), session_factory, _run_dispatcher()).dispatch(
+    result = await ScheduledRunDispatcher(AstraRuntimeSettings(), session_factory, _run_dispatcher()).dispatch(
         schedule_run.id
     )
 

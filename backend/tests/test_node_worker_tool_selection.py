@@ -1,10 +1,14 @@
 from app.application.runner.node_worker import ReadOnlyAgentNodeExecutor
-from app.common.core.config import Settings
+from app.common.core.config import AstraRuntimeSettings
 from app.infrastructure.model_clients.mock import MockModelClient
-from app.infrastructure.tools.base import Tool, ToolRegistry, ToolSpec
+from app.infrastructure.tools.base import (
+    AstraTool,
+    AstraToolRegistry,
+    AstraToolSpec,
+)
 
 
-class SelectionTool(Tool):
+class SelectionTool(AstraTool):
     def __init__(
         self,
         name: str,
@@ -13,7 +17,7 @@ class SelectionTool(Tool):
         side_effect_level: str = "read_only",
         idempotent: bool = True,
     ):
-        self.spec = ToolSpec(
+        self.spec = AstraToolSpec(
             name=name,
             version="test",
             input_schema={"type": "object"},
@@ -33,7 +37,7 @@ class SelectionTool(Tool):
 
 
 def test_parallel_executor_exposes_only_safe_semantic_capabilities():
-    registry = ToolRegistry().extend(
+    registry = AstraToolRegistry().extend(
         [
             SelectionTool("safe.search", "information.search"),
             SelectionTool(
@@ -44,7 +48,7 @@ def test_parallel_executor_exposes_only_safe_semantic_capabilities():
         ]
     )
     executor = ReadOnlyAgentNodeExecutor(
-        Settings(model_provider="mock"),
+        AstraRuntimeSettings(model_provider="mock"),
         model_client=MockModelClient(),
         tool_registry=registry,
     )
@@ -58,7 +62,7 @@ def test_parallel_executor_exposes_only_safe_semantic_capabilities():
 
 
 def test_parallel_and_serial_resolution_share_matching_semantics():
-    registry = ToolRegistry().extend(
+    registry = AstraToolRegistry().extend(
         [
             SelectionTool("search.b", "information.search"),
             SelectionTool("search.a", "information.search"),
@@ -70,7 +74,7 @@ def test_parallel_and_serial_resolution_share_matching_semantics():
         ]
     )
     executor = ReadOnlyAgentNodeExecutor(
-        Settings(model_provider="mock"),
+        AstraRuntimeSettings(model_provider="mock"),
         model_client=MockModelClient(),
         tool_registry=registry,
     )
@@ -87,7 +91,7 @@ def test_parallel_and_serial_resolution_share_matching_semantics():
 
 
 def test_side_effect_only_requirement_is_not_parallel_eligible():
-    registry = ToolRegistry().extend(
+    registry = AstraToolRegistry().extend(
         [
             SelectionTool(
                 "workspace.writer",
@@ -97,7 +101,7 @@ def test_side_effect_only_requirement_is_not_parallel_eligible():
         ]
     )
     executor = ReadOnlyAgentNodeExecutor(
-        Settings(model_provider="mock"),
+        AstraRuntimeSettings(model_provider="mock"),
         model_client=MockModelClient(),
         tool_registry=registry,
     )

@@ -19,7 +19,7 @@ from app.application.memory.consolidation.models import (
     canonical_json,
 )
 from app.application.memory.consolidation.validation import validate_proposal
-from app.common.core.config import Settings
+from app.common.core.config import AstraRuntimeSettings
 from app.domain.agent_profile import AgentProfile, ModelOperation, load_agent_profile
 from app.infrastructure.db.model_base import utc_now
 from app.infrastructure.db.models.memory import MemoryConsolidationJobRecord
@@ -56,7 +56,7 @@ def autodream_profile_snapshot(profile: AgentProfile) -> dict[str, Any]:
 class AutoDreamProcessor:
     """Runs one deterministic, model-free consolidation attempt."""
 
-    def __init__(self, settings: Settings):
+    def __init__(self, settings: AstraRuntimeSettings):
         self.settings = settings
 
     async def prepare_job(
@@ -205,7 +205,7 @@ class AutoDreamService:
 
     def __init__(
         self,
-        settings: Settings,
+        settings: AstraRuntimeSettings,
         session_factory: async_sessionmaker[AsyncSession],
     ):
         self.settings = settings

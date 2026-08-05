@@ -8,8 +8,8 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.application.context_compaction.accounting import TokenAccountingService
-from app.common.core.config import Settings
-from app.common.schemas.context_compaction import ContextOwnerRole, ContextReference
+from app.common.core.config import AstraRuntimeSettings
+from app.common.schemas.context_compaction import CompactionContextReference, ContextOwnerRole
 
 
 class ToolOutputStorageError(RuntimeError):
@@ -25,18 +25,18 @@ class NormalizedToolObservation(BaseModel):
     output: Any = None
     preview: str | None = None
     checksum: str | None = None
-    reference: ContextReference | None = None
+    reference: CompactionContextReference | None = None
     externalized: bool = False
     original_bytes: int = Field(default=0, ge=0)
     original_tokens: int = Field(default=0, ge=0)
     error: dict[str, Any] | None = None
 
 
-PersistToolOutput = Callable[[bytes, str], Awaitable[ContextReference | None]]
+PersistToolOutput = Callable[[bytes, str], Awaitable[CompactionContextReference | None]]
 
 
 class ToolOutputGovernanceService:
-    def __init__(self, settings: Settings, *, accounting: TokenAccountingService | None = None):
+    def __init__(self, settings: AstraRuntimeSettings, *, accounting: TokenAccountingService | None = None):
         self.settings = settings
         self.accounting = accounting or TokenAccountingService()
 

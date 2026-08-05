@@ -5,10 +5,10 @@ import zipfile
 
 from app.application.skills.errors import SkillStorageError
 from app.application.skills.packages import normalize_skill_path
-from app.common.core.config import Settings
+from app.common.core.config import AstraRuntimeSettings
 
 
-def read_skill_archive(archive: bytes, settings: Settings) -> dict[str, bytes]:
+def read_skill_archive(archive: bytes, settings: AstraRuntimeSettings) -> dict[str, bytes]:
     if len(archive) > settings.skills_max_package_bytes:
         raise SkillStorageError("SKILL_ARCHIVE_TOO_LARGE", "Skill 压缩包超过大小限制。")
     try:
@@ -19,7 +19,7 @@ def read_skill_archive(archive: bytes, settings: Settings) -> dict[str, bytes]:
     return _strip_single_root(files)
 
 
-def _read_bundle(bundle: zipfile.ZipFile, settings: Settings) -> dict[str, bytes]:
+def _read_bundle(bundle: zipfile.ZipFile, settings: AstraRuntimeSettings) -> dict[str, bytes]:
     entries = bundle.infolist()
     if len(entries) > settings.skills_max_files + 8:
         raise SkillStorageError("SKILL_ARCHIVE_TOO_MANY_FILES", "Skill 文件过多。")
@@ -38,7 +38,7 @@ def _read_bundle(bundle: zipfile.ZipFile, settings: Settings) -> dict[str, bytes
     return files
 
 
-def _validated_entry_path(entry: zipfile.ZipInfo, settings: Settings) -> str:
+def _validated_entry_path(entry: zipfile.ZipInfo, settings: AstraRuntimeSettings) -> str:
     if entry.file_size > settings.skills_max_file_bytes:
         raise SkillStorageError("SKILL_FILE_TOO_LARGE", "Skill 文件超过大小限制。")
     file_kind = entry.external_attr >> 16 & 0o170000

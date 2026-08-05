@@ -6,14 +6,14 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from app.common.core.config import Settings
+from app.common.core.config import AstraRuntimeSettings
 from app.common.schemas.agent.tool_invocation import BashExecuteResult
 from app.infrastructure.sandbox.runtime import SandboxError, SandboxRequest, sanitize_log
 from app.infrastructure.tools.base import (
-    Tool,
+    AstraTool,
+    AstraToolSpec,
     ToolExecutionError,
     ToolResultEnvelope,
-    ToolSpec,
     materialize_skill_inputs,
 )
 
@@ -43,8 +43,8 @@ class BashExecuteRequest(BaseModel):
     timeout_seconds: int | None = Field(default=None, ge=1, le=120)
 
 
-class BashExecuteTool(Tool):
-    spec = ToolSpec(
+class BashExecuteTool(AstraTool):
+    spec = AstraToolSpec(
         name="bash_execute",
         version="1.0",
         description=(
@@ -85,7 +85,7 @@ class BashExecuteTool(Tool):
         resource_profile={"runtime": "oci", "network": "none", "workspace": "read_write"},
     )
 
-    def __init__(self, settings: Settings):
+    def __init__(self, settings: AstraRuntimeSettings):
         self.settings = settings
 
     async def run(self, tool_input: dict[str, Any], *, context=None) -> dict[str, Any]:

@@ -5,10 +5,13 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
 
-from app.interfaces.platform.http.dependencies import ApplicationServices, get_application_container
+from app.interfaces.platform.http.dependencies import (
+    AstraApplicationServices,
+    get_application_container,
+)
 
 router = APIRouter()
-ApplicationDependencies = Annotated[ApplicationServices, Depends(get_application_container)]
+ApplicationDependencies = Annotated[AstraApplicationServices, Depends(get_application_container)]
 
 
 @router.get("/api/health")

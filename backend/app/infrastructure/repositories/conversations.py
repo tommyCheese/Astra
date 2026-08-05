@@ -27,8 +27,8 @@ from app.infrastructure.db.models.memory import (
     MemoryAuditRecord,
     MemoryLinkRecord,
     MemoryRecallEventRecord,
-    MemoryRecord,
     MemorySourceRecord,
+    PersistedMemoryRecord,
 )
 from app.infrastructure.db.models.permissions import (
     AgentDelegationRecord,
@@ -411,7 +411,7 @@ class ConversationRepository:
         affected_memory_ids.update(
             (
                 await self.session.scalars(
-                    select(MemoryRecord.id).where(MemoryRecord.run_id.in_(run_ids))
+                    select(PersistedMemoryRecord.id).where(PersistedMemoryRecord.run_id.in_(run_ids))
                 )
             ).all()
         )
@@ -419,7 +419,7 @@ class ConversationRepository:
             list(
                 (
                     await self.session.scalars(
-                        select(MemoryRecord).where(MemoryRecord.id.in_(affected_memory_ids))
+                        select(PersistedMemoryRecord).where(PersistedMemoryRecord.id.in_(affected_memory_ids))
                     )
                 ).all()
             )
@@ -577,7 +577,7 @@ class ConversationRepository:
         )
         for model in (MemoryAuditRecord, MemorySourceRecord):
             await self.session.execute(delete(model).where(model.memory_id.in_(run_memory_ids)))
-        await self.session.execute(delete(MemoryRecord).where(MemoryRecord.id.in_(run_memory_ids)))
+        await self.session.execute(delete(PersistedMemoryRecord).where(PersistedMemoryRecord.id.in_(run_memory_ids)))
 
 
 def conversation_summary(task: TaskRecord) -> dict:

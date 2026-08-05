@@ -8,11 +8,11 @@ from app.application.runner.engine import (
     shared_model_http_client,
     shared_tool_registry,
 )
-from app.common.core.config import Settings
+from app.common.core.config import AstraRuntimeSettings
 from app.domain.agent_profile import ModelOperation
 from app.infrastructure.model_clients.anthropic import AnthropicModelClient
 from app.infrastructure.model_clients.openai_compatible import OpenAICompatibleModelClient
-from app.infrastructure.tools.base import ToolRegistry
+from app.infrastructure.tools.base import AstraToolRegistry
 
 
 class RecordingUsage:
@@ -97,7 +97,7 @@ async def test_openai_compatible_transport_applies_supported_reasoning_fields(
     FakeOpenAIAsyncClient.requests = []
     monkeypatch.setattr("app.infrastructure.model_clients.openai_compatible.httpx.AsyncClient", FakeOpenAIAsyncClient)
     client = OpenAICompatibleModelClient(
-        Settings(model_provider=provider, model_name=model, model_api_key="secret")
+        AstraRuntimeSettings(model_provider=provider, model_name=model, model_api_key="secret")
     )
     client.bind_reasoning_effort(effort)
     usage = RecordingUsage()
@@ -127,7 +127,7 @@ async def test_explicit_model_thinking_depth_overrides_agent_effort_in_transport
     FakeOpenAIAsyncClient.requests = []
     monkeypatch.setattr("app.infrastructure.model_clients.openai_compatible.httpx.AsyncClient", FakeOpenAIAsyncClient)
     client = OpenAICompatibleModelClient(
-        Settings(
+        AstraRuntimeSettings(
             model_provider="openai",
             model_name="gpt-5.2",
             model_api_key="secret",
@@ -170,7 +170,7 @@ async def test_openai_compatible_transport_reuses_connection_pool(monkeypatch):
     FakeOpenAIAsyncClient.closes = 0
     monkeypatch.setattr("app.infrastructure.model_clients.openai_compatible.httpx.AsyncClient", FakeOpenAIAsyncClient)
     client = OpenAICompatibleModelClient(
-        Settings(model_provider="openai", model_name="gpt-5", model_api_key="secret")
+        AstraRuntimeSettings(model_provider="openai", model_name="gpt-5", model_api_key="secret")
     )
 
     for _ in range(2):
@@ -191,7 +191,7 @@ async def test_openai_prompt_cache_key_tracks_only_the_static_system_prefix(
     FakeOpenAIAsyncClient.requests = []
     monkeypatch.setattr("app.infrastructure.model_clients.openai_compatible.httpx.AsyncClient", FakeOpenAIAsyncClient)
     client = OpenAICompatibleModelClient(
-        Settings(model_provider="openai", model_name="gpt-5", model_api_key="secret")
+        AstraRuntimeSettings(model_provider="openai", model_name="gpt-5", model_api_key="secret")
     )
 
     for system, user in (
@@ -246,7 +246,7 @@ async def test_openai_stream_decodes_multiple_fields_across_chunk_boundaries():
             return StreamingContext()
 
     client = OpenAICompatibleModelClient(
-        Settings(model_provider="openai", model_name="gpt-5", model_api_key="secret"),
+        AstraRuntimeSettings(model_provider="openai", model_name="gpt-5", model_api_key="secret"),
         http_client=StreamingClient(),
     )
     reasoning = []
@@ -313,7 +313,7 @@ async def test_anthropic_stream_delivers_answer_before_response_completes():
             return StreamingContext()
 
     client = AnthropicModelClient(
-        Settings(
+        AstraRuntimeSettings(
             model_provider="anthropic",
             model_name="claude-sonnet-4-6",
             model_api_key="secret",
@@ -376,7 +376,7 @@ async def test_openai_compatible_stream_forwards_reasoning_content_separately():
             return StreamingContext()
 
     client = OpenAICompatibleModelClient(
-        Settings(model_provider="qwen", model_name="qwen3.7-plus", model_api_key="secret"),
+        AstraRuntimeSettings(model_provider="qwen", model_name="qwen3.7-plus", model_api_key="secret"),
         http_client=StreamingClient(),
     )
     observed = []
@@ -429,7 +429,7 @@ async def test_anthropic_stream_forwards_only_visible_thinking_deltas():
             return StreamingContext()
 
     client = AnthropicModelClient(
-        Settings(model_provider="anthropic", model_name="claude-sonnet-4-6", model_api_key="secret"),
+        AstraRuntimeSettings(model_provider="anthropic", model_name="claude-sonnet-4-6", model_api_key="secret"),
         http_client=StreamingClient(),
     )
     client.bind_model_thinking(
@@ -484,7 +484,7 @@ async def test_disabled_model_thinking_does_not_forward_provider_reasoning_conte
             return JsonContext()
 
     client = OpenAICompatibleModelClient(
-        Settings(model_provider="qwen", model_name="qwen3.7-plus", model_api_key="secret"),
+        AstraRuntimeSettings(model_provider="qwen", model_name="qwen3.7-plus", model_api_key="secret"),
         http_client=JsonClient(),
     )
     client.bind_model_thinking(
@@ -521,7 +521,7 @@ async def test_server_reuses_model_connections_across_runs(
     FakeOpenAIAsyncClient.closes = 0
     FakeOpenAIAsyncClient.options = []
     monkeypatch.setattr("app.application.runner.engine.httpx.AsyncClient", FakeOpenAIAsyncClient)
-    settings = Settings(
+    settings = AstraRuntimeSettings(
         model_provider=provider,
         model_name=model,
         model_api_key="secret",
@@ -550,10 +550,10 @@ async def test_server_reuses_tool_registry_across_model_overrides(monkeypatch):
     def build_registry(_settings):
         nonlocal builds
         builds += 1
-        return ToolRegistry()
+        return AstraToolRegistry()
 
     monkeypatch.setattr("app.application.runner.engine.build_tool_registry", build_registry)
-    settings = Settings(
+    settings = AstraRuntimeSettings(
         model_provider="openai",
         model_name="first-model",
         model_api_key="secret",
@@ -613,7 +613,7 @@ async def test_anthropic_transport_applies_adaptive_thinking_and_effort(monkeypa
 
     monkeypatch.setattr("app.infrastructure.model_clients.openai_compatible.httpx.AsyncClient", FakeAnthropicAsyncClient)
     client = AnthropicModelClient(
-        Settings(
+        AstraRuntimeSettings(
             model_provider="anthropic",
             model_name="claude-sonnet-4-6",
             model_api_key="secret",

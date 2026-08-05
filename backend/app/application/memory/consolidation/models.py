@@ -12,7 +12,7 @@ from enum import Enum
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from app.infrastructure.db.models.memory import MemoryRecord, MemorySourceRecord
+    from app.infrastructure.db.models.memory import MemorySourceRecord, PersistedMemoryRecord
 
 
 INPUT_MANIFEST_SCHEMA_VERSION = 1
@@ -247,7 +247,7 @@ class FrozenSourceReference:
             run_id=_optional_string(value.get("run_id"), label="Run ID", maximum=120),
             turn_id=_optional_string(value.get("turn_id"), label="Turn ID", maximum=120),
             tool_call_id=_optional_string(
-                value.get("tool_call_id"), label="Tool call ID", maximum=120
+                value.get("tool_call_id"), label="AstraTool call ID", maximum=120
             ),
             artifact_id=_optional_string(
                 value.get("artifact_id"), label="Artifact ID", maximum=120
@@ -323,7 +323,7 @@ class FrozenMemoryInput:
         return {**self._payload(), "memory_hash": self.memory_hash}
 
     @classmethod
-    def from_record(cls, memory: MemoryRecord) -> FrozenMemoryInput:
+    def from_record(cls, memory: PersistedMemoryRecord) -> FrozenMemoryInput:
         content = normalize_text(memory.content)
         structured_data = _json_object(memory.structured_data)
         provenance = _json_object(memory.provenance)

@@ -14,7 +14,7 @@ from app.common.schemas.agent.planning import (
     PlanView,
 )
 from app.common.schemas.agent.run_policy import RequestedReasoningPolicy
-from app.common.schemas.agent.run_result import RunResult
+from app.common.schemas.agent.run_result import AgentRunResult
 from app.common.schemas.agent.tool_invocation import PendingApprovalView
 from app.common.schemas.agent.types import AnswerMode, ContinuationAction, PlanExecution
 from app.common.schemas.models import RunModelConfig
@@ -194,7 +194,7 @@ class AgentTurnView(BaseModel):
     updated_at: datetime
 
 
-class MemoryView(BaseModel):
+class AgentRunMemoryView(BaseModel):
     id: str
     run_id: str | None
     memory_key: str
@@ -321,14 +321,14 @@ class RunView(BaseModel):
     answer_mode: AnswerMode = AnswerMode.trusted
     execution_profile: dict[str, Any] = Field(default_factory=dict)
     summary: str | None
-    result: RunResult | None
+    result: AgentRunResult | None
     steps: list[StepView]
     tool_calls: list[ToolCallView]
     artifacts: list[ArtifactView]
     sandbox_jobs: list[SandboxJobView] = Field(default_factory=list)
     events: list[RunEventView]
     turns: list[AgentTurnView] = Field(default_factory=list)
-    memories: list[MemoryView] = Field(default_factory=list)
+    memories: list[AgentRunMemoryView] = Field(default_factory=list)
     chat_messages: list[ChatMessageView] = Field(default_factory=list)
     model_policy: dict[str, Any] = Field(default_factory=dict)
     reasoning_policy: dict[str, Any] = Field(default_factory=dict)
@@ -349,8 +349,8 @@ class RunView(BaseModel):
     agent_profile: dict[str, Any] = Field(default_factory=dict)
 
 
-# FastAPI disambiguates the API MemoryView from the memory-domain view with
+# FastAPI disambiguates the API AgentRunMemoryView from the memory-domain view with
 # this historical module name. Preserve it so schema splitting is HTTP-neutral.
-MemoryView.__module__ = "app.common.schemas.agent"
-MemoryView.model_rebuild(force=True)
+AgentRunMemoryView.__module__ = "app.common.schemas.agent"
+AgentRunMemoryView.model_rebuild(force=True)
 RunView.model_rebuild(force=True)

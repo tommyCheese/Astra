@@ -5,7 +5,7 @@ import math
 from collections.abc import Callable, Iterable
 from typing import Any
 
-from app.common.schemas.context_compaction import ContextItem, TokenAccounting
+from app.common.schemas.context_compaction import CompactionContextItem, ContextTokenAccounting
 
 Tokenizer = Callable[[str], int]
 
@@ -36,7 +36,7 @@ class TokenAccountingService:
         )
         return self.count_text(text)
 
-    def count_items(self, items: Iterable[ContextItem]) -> tuple[int, str, bool]:
+    def count_items(self, items: Iterable[CompactionContextItem]) -> tuple[int, str, bool]:
         total = 0
         sources: set[str] = set()
         estimated = False
@@ -67,13 +67,13 @@ class TokenAccountingService:
         context_window: int,
         output_reserve: int,
         compaction_output_reserve: int,
-        protected_prefix: Iterable[ContextItem] = (),
-        checkpoint: Iterable[ContextItem] = (),
-        body: Iterable[ContextItem] = (),
-        recent_tail: Iterable[ContextItem] = (),
+        protected_prefix: Iterable[CompactionContextItem] = (),
+        checkpoint: Iterable[CompactionContextItem] = (),
+        body: Iterable[CompactionContextItem] = (),
+        recent_tail: Iterable[CompactionContextItem] = (),
         prefill_tokens: int = 0,
         reported_usage: dict[str, Any] | None = None,
-    ) -> TokenAccounting:
+    ) -> ContextTokenAccounting:
         prefix_tokens, prefix_source, prefix_estimated = self.count_items(protected_prefix)
         checkpoint_tokens, checkpoint_source, checkpoint_estimated = self.count_items(checkpoint)
         body_tokens, body_source, body_estimated = self.count_items(body)
@@ -90,7 +90,7 @@ class TokenAccountingService:
             )
             or "empty"
         )
-        return TokenAccounting(
+        return ContextTokenAccounting(
             context_window=context_window,
             output_reserve=output_reserve,
             compaction_output_reserve=compaction_output_reserve,

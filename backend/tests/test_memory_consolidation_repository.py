@@ -5,14 +5,14 @@ from sqlalchemy import select
 
 from app.application.memory.consolidation.models import ConsolidationConflictError
 from app.application.memory.consolidation.service import AutoDreamProcessor
-from app.common.core.config import Settings
+from app.common.core.config import AstraRuntimeSettings
 from app.domain.memory import MemoryNamespace, MemoryNamespaceType
 from app.infrastructure.db.model_base import utc_now
 from app.infrastructure.db.models.memory import (
     MemoryAuditRecord,
     MemoryConsolidationJobRecord,
-    MemoryRecord,
     MemorySourceRecord,
+    PersistedMemoryRecord,
 )
 from app.infrastructure.repositories.memories import MemoryRepository
 from app.infrastructure.repositories.memory_consolidation import (
@@ -28,7 +28,7 @@ async def create_duplicate_memories(
     *,
     namespace_id: str = "session-1",
     count: int = 2,
-) -> list[MemoryRecord]:
+) -> list[PersistedMemoryRecord]:
     repository = MemoryRepository(session)
     records = []
     keys = ["Project DB", "project-db", "project_db", "project.db"]
@@ -53,7 +53,7 @@ async def create_duplicate_memories(
     return records
 
 
-def autodream_settings(**overrides) -> Settings:
+def autodream_settings(**overrides) -> AstraRuntimeSettings:
     values = {
         "model_provider": "mock",
         "agent_memory_autodream_min_candidates": 2,
@@ -61,7 +61,7 @@ def autodream_settings(**overrides) -> Settings:
         "agent_memory_autodream_lease_seconds": 30,
     }
     values.update(overrides)
-    return Settings(**values)
+    return AstraRuntimeSettings(**values)
 
 
 async def test_prepare_publish_and_audited_rollback_are_atomic(session):
@@ -96,12 +96,12 @@ async def test_prepare_publish_and_audited_rollback_are_atomic(session):
     assert len(published.publish_result["outputs"]) == 1
     output_id = published.publish_result["outputs"][0]["memory_id"]
 
-    output = await session.get(MemoryRecord, output_id)
+    output = await session.get(PersistedMemoryRecord, output_id)
     assert output is not None
     assert output.status == "active"
     assert output.consolidation_generation == published.generation
     for memory_id in input_ids:
-        assert (await session.get(MemoryRecord, memory_id)).status == "superseded"
+        assert (await session.get(PersistedMemoryRecord, memory_id)).status == "superseded"
 
     rollback = await MemoryConsolidationPublicationService(repository).rollback_published(
         published_id,
@@ -112,8 +112,8 @@ async def test_prepare_publish_and_audited_rollback_are_atomic(session):
     assert rollback.status == "published"
     assert rollback.rollback_of_id == published_id
     session.expire_all()
-    assert (await session.get(MemoryRecord, output_id)).status == "revoked"
-    assert {(await session.get(MemoryRecord, memory_id)).status for memory_id in input_ids} == {
+    assert (await session.get(PersistedMemoryRecord, output_id)).status == "revoked"
+    assert {(await session.get(PersistedMemoryRecord, memory_id)).status for memory_id in input_ids} == {
         "active"
     }
     original = await session.get(MemoryConsolidationJobRecord, published_id)
@@ -143,7 +143,7 @@ async def test_publication_conflict_changes_no_memory_projection(session):
     )
     proposed_id = proposed.id
     proposed_state_version = proposed.state_version
-    changed = await session.get(MemoryRecord, input_ids[1])
+    changed = await session.get(PersistedMemoryRecord, input_ids[1])
     changed.content = "A concurrent correction."
     changed.state_version += 1
     await session.commit()
@@ -160,7 +160,7 @@ async def test_publication_conflict_changes_no_memory_projection(session):
     conflicted = await session.get(MemoryConsolidationJobRecord, proposed_id)
     assert conflicted.status == "conflict"
     records = (
-        await session.scalars(select(MemoryRecord).where(MemoryRecord.namespace_id == "session-1"))
+        await session.scalars(select(PersistedMemoryRecord).where(PersistedMemoryRecord.namespace_id == "session-1"))
     ).all()
     assert len(records) == 2
     assert {record.status for record in records} == {"active"}
@@ -208,8 +208,8 @@ async def test_rollback_fails_atomically_when_source_support_is_revoked(session)
         )
 
     session.expire_all()
-    assert (await session.get(MemoryRecord, output_id)).status == "active"
-    assert {(await session.get(MemoryRecord, memory_id)).status for memory_id in input_ids} == {
+    assert (await session.get(PersistedMemoryRecord, output_id)).status == "active"
+    assert {(await session.get(PersistedMemoryRecord, memory_id)).status for memory_id in input_ids} == {
         "superseded"
     }
 
@@ -277,6 +277,6 @@ async def test_processor_marks_too_small_working_region_without_side_effects(
     )
     assert result.status == "insufficient_input"
     assert result.input_manifest == {}
-    assert {memory.status for memory in (await session.scalars(select(MemoryRecord))).all()} == {
+    assert {memory.status for memory in (await session.scalars(select(PersistedMemoryRecord))).all()} == {
         "active"
     }

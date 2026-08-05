@@ -24,7 +24,7 @@ class ActionResolutionInput:
 
 
 @dataclass(frozen=True)
-class ResolvedAction:
+class ResolvedAgentAction:
     invocation: InvocationIntent | None = None
     rejected_observation: AgentObservation | None = None
     terminal_outcome: BlockedOutcome | None = None
@@ -33,12 +33,12 @@ class ResolvedAction:
 class ActionResolutionStage:
     """Enforce plan targeting and the capability-derived tool candidate set."""
 
-    def execute(self, stage_input: ActionResolutionInput) -> ResolvedAction:
+    def execute(self, stage_input: ActionResolutionInput) -> ResolvedAgentAction:
         plan_rejection = self._validate_plan_target(stage_input)
         if plan_rejection is not None:
             return plan_rejection
         if stage_input.decision.decision_type != "call_tool":
-            return ResolvedAction()
+            return ResolvedAgentAction()
         invocation = InvocationIntent(
             tool_name=stage_input.decision.tool_name or "",
             tool_input=dict(stage_input.decision.tool_input),
@@ -46,7 +46,7 @@ class ActionResolutionStage:
             plan_node_id=stage_input.active_plan_node_id,
             node_execution_id=stage_input.active_node_execution_id,
         )
-        return ResolvedAction(
+        return ResolvedAgentAction(
             invocation=invocation,
             rejected_observation=self._validate_tool_candidate(stage_input),
         )
@@ -54,7 +54,7 @@ class ActionResolutionStage:
     @staticmethod
     def _validate_plan_target(
         stage_input: ActionResolutionInput,
-    ) -> ResolvedAction | None:
+    ) -> ResolvedAgentAction | None:
         decision = stage_input.decision
         if not stage_input.has_canonical_plan:
             return None
@@ -64,7 +64,7 @@ class ActionResolutionStage:
             stage_input.active_plan_node_key,
         }
         if stage_input.active_plan_node_id and decision.target_step_id not in allowed_targets:
-            return ResolvedAction(
+            return ResolvedAgentAction(
                 rejected_observation=AgentObservation(
                     kind="decision_error",
                     status="failed",
@@ -76,7 +76,7 @@ class ActionResolutionStage:
                 )
             )
         if decision.decision_type == "call_tool" and stage_input.active_plan_node_id is None:
-            return ResolvedAction(
+            return ResolvedAgentAction(
                 terminal_outcome=BlockedOutcome(
                     reason="计划没有可执行节点，工具决策已被拒绝。",
                     error_code="PLAN_HAS_NO_EXECUTABLE_NODE",

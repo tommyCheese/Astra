@@ -17,19 +17,19 @@ from app.application.runner.engine import (
     shared_tool_registry,
 )
 from app.application.scheduling.service import SchedulerService
-from app.common.core.config import Settings
+from app.common.core.config import AstraRuntimeSettings
 from app.domain.agent_profile import configure_agent_profile_resolver
 from app.infrastructure.sandbox.profiles import RuntimeProfileService
-from app.infrastructure.tools.base import ToolRegistry
+from app.infrastructure.tools.base import AstraToolRegistry
 
-ModelHttpClientProvider = Callable[[Settings], httpx.AsyncClient | None]
-ToolRegistryProvider = Callable[[Settings], ToolRegistry]
+ModelHttpClientProvider = Callable[[AstraRuntimeSettings], httpx.AsyncClient | None]
+ToolRegistryProvider = Callable[[AstraRuntimeSettings], AstraToolRegistry]
 AsyncResourceCloser = Callable[[], Awaitable[None]]
 
 
 @dataclass(frozen=True)
 class ApplicationContainer:
-    settings: Settings
+    settings: AstraRuntimeSettings
     session_factory: async_sessionmaker[AsyncSession]
     runtime_profile_service: RuntimeProfileService
     conversation_retention_service: ConversationRetentionService
@@ -42,7 +42,7 @@ class ApplicationContainer:
 
 
 def build_application_container(
-    settings: Settings,
+    settings: AstraRuntimeSettings,
     session_factory: async_sessionmaker[AsyncSession],
 ) -> ApplicationContainer:
     runtime_profile_service = RuntimeProfileService(

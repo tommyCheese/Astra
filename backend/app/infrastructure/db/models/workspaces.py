@@ -20,10 +20,10 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.infrastructure.db.model_base import Base, JsonType, utc_now, uuid_str
+from app.infrastructure.db.model_base import AstraOrmRecordBase, JsonType, utc_now, uuid_str
 
 
-class TaskWorkspaceRecord(Base):
+class TaskWorkspaceRecord(AstraOrmRecordBase):
     __tablename__ = "task_workspaces"
     __table_args__ = (UniqueConstraint("task_id", name="uq_task_workspaces_task_id"),)
 
@@ -43,7 +43,7 @@ class TaskWorkspaceRecord(Base):
     checkpoints: Mapped[list[WorkspaceCheckpointRecord]] = relationship(back_populates="workspace")
 
 
-class WorkspaceFileRecord(Base):
+class WorkspaceFileRecord(AstraOrmRecordBase):
     __tablename__ = "workspace_files"
     __table_args__ = (
         UniqueConstraint("workspace_id", "relative_path", name="uq_workspace_files_path"),
@@ -67,7 +67,7 @@ class WorkspaceFileRecord(Base):
     workspace: Mapped[TaskWorkspaceRecord] = relationship(back_populates="files")
 
 
-class WorkspaceCheckpointRecord(Base):
+class WorkspaceCheckpointRecord(AstraOrmRecordBase):
     __tablename__ = "workspace_checkpoints"
     __table_args__ = (
         Index("ix_workspace_checkpoints_workspace_created", "workspace_id", "created_at"),
@@ -84,7 +84,7 @@ class WorkspaceCheckpointRecord(Base):
     workspace: Mapped[TaskWorkspaceRecord] = relationship(back_populates="checkpoints")
 
 
-class WorkspaceChangeRecord(Base):
+class WorkspaceChangeRecord(AstraOrmRecordBase):
     __tablename__ = "workspace_changes"
     __table_args__ = (
         Index("ix_workspace_changes_run_created", "run_id", "created_at"),
@@ -112,7 +112,7 @@ class WorkspaceChangeRecord(Base):
     workspace: Mapped[TaskWorkspaceRecord] = relationship(back_populates="changes")
 
 
-class ArtifactRecord(Base):
+class ArtifactRecord(AstraOrmRecordBase):
     __tablename__ = "artifacts"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_str)
@@ -139,7 +139,7 @@ class ArtifactRecord(Base):
     run: Mapped[RunRecord] = relationship(back_populates="artifacts")
 
 
-class SandboxJobRecord(Base):
+class SandboxJobRecord(AstraOrmRecordBase):
     __tablename__ = "sandbox_jobs"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_str)

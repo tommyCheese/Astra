@@ -23,10 +23,10 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.infrastructure.db.model_base import Base, JsonType, utc_now, uuid_str
+from app.infrastructure.db.model_base import AstraOrmRecordBase, JsonType, utc_now, uuid_str
 
 
-class ToolCallRecord(Base):
+class ToolCallRecord(AstraOrmRecordBase):
     __tablename__ = "tool_calls"
     __table_args__ = (Index("ix_tool_calls_run_id", "run_id"),)
 
@@ -60,7 +60,7 @@ class ToolCallRecord(Base):
     )
 
 
-class ApprovalRequestRecord(Base):
+class ApprovalRequestRecord(AstraOrmRecordBase):
     __tablename__ = "approval_requests"
     __table_args__ = (
         Index("ix_approval_requests_run_status", "run_id", "status"),
@@ -113,7 +113,7 @@ class ApprovalRequestRecord(Base):
     )
 
 
-class ApprovalGrantRecord(Base):
+class ApprovalGrantRecord(AstraOrmRecordBase):
     __tablename__ = "approval_grants"
     __table_args__ = (
         Index("ix_approval_grants_run_tool", "run_id", "tool_name"),
@@ -143,7 +143,7 @@ class ApprovalGrantRecord(Base):
     run: Mapped[RunRecord] = relationship(back_populates="approval_grants")
 
 
-class AgentIdentityRecord(Base):
+class AgentIdentityRecord(AstraOrmRecordBase):
     __tablename__ = "agent_identities"
     __table_args__ = (
         Index("ix_agent_identities_run_type", "run_id", "identity_type"),
@@ -166,7 +166,7 @@ class AgentIdentityRecord(Base):
     run: Mapped[RunRecord | None] = relationship(back_populates="agent_identities")
 
 
-class AgentDelegationRecord(Base):
+class AgentDelegationRecord(AstraOrmRecordBase):
     __tablename__ = "agent_delegations"
     __table_args__ = (
         Index("ix_agent_delegations_parent", "parent_identity_id", "revoked_at"),
@@ -186,7 +186,7 @@ class AgentDelegationRecord(Base):
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
-class ToolCatalogSnapshotRecord(Base):
+class ToolCatalogSnapshotRecord(AstraOrmRecordBase):
     __tablename__ = "tool_catalog_snapshots"
     __table_args__ = (UniqueConstraint("run_id", name="uq_tool_catalog_snapshots_run_id"),)
 
@@ -199,7 +199,7 @@ class ToolCatalogSnapshotRecord(Base):
     run: Mapped[RunRecord] = relationship(back_populates="tool_catalog_snapshot")
 
 
-class CredentialGrantRecord(Base):
+class CredentialGrantRecord(AstraOrmRecordBase):
     __tablename__ = "credential_grants"
     __table_args__ = (
         Index("ix_credential_grants_run_service", "run_id", "service"),
@@ -221,7 +221,7 @@ class CredentialGrantRecord(Base):
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
-class DataFlowStateRecord(Base):
+class DataFlowStateRecord(AstraOrmRecordBase):
     __tablename__ = "data_flow_states"
     __table_args__ = (UniqueConstraint("run_id", name="uq_data_flow_states_run_id"),)
 

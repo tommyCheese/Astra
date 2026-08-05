@@ -13,8 +13,8 @@ from app.application.run_management.query_service import RunQueryService
 from app.application.subagents.lifecycle import SubagentCancellationService
 from app.application.subagents.observability import SubagentTelemetryRepository
 from app.application.workspaces.artifacts import LocalArtifactStore
-from app.common.core.config import Settings, get_settings
-from app.common.core.errors import ResourceError, ValidationError
+from app.common.core.config import AstraRuntimeSettings, get_settings
+from app.common.core.errors import AstraInputValidationError, AstraResourceNotFoundError
 from app.common.schemas.agent.api_views import (
     ContinueRunRequest,
     CreateRunRequest,
@@ -33,7 +33,10 @@ from app.infrastructure.repositories.plans import (
 )
 from app.infrastructure.repositories.run_unit_of_work import RunUnitOfWork
 from app.infrastructure.repositories.run_view_projection import RunViewProjector
-from app.interfaces.platform.http.dependencies import ApplicationServices, get_application_container
+from app.interfaces.platform.http.dependencies import (
+    AstraApplicationServices,
+    get_application_container,
+)
 
 router = APIRouter(prefix="/api", tags=["runs"])
 logger = logging.getLogger("astra.runs")
@@ -47,8 +50,8 @@ SSE_HEADERS = {
 
 def get_run_application_service(
     session: AsyncSession = Depends(get_session),
-    settings: Settings = Depends(get_settings),
-    container: ApplicationServices = Depends(get_application_container),
+    settings: AstraRuntimeSettings = Depends(get_settings),
+    container: AstraApplicationServices = Depends(get_application_container),
 ) -> RunApplicationService:
     return RunApplicationService(session, settings, container.run_dispatcher)
 
@@ -182,18 +185,18 @@ def _streaming_response(stream: AsyncIterator[str]) -> StreamingResponse:
 async def get_artifact_content(
     artifact_id: str,
     session: AsyncSession = Depends(get_session),
-    settings: Settings = Depends(get_settings),
+    settings: AstraRuntimeSettings = Depends(get_settings),
     workspace_id: str | None = Header(default=None, alias="X-Astra-Workspace-Id"),
 ):
     scoped = await RunUnitOfWork(session).get_artifact_with_workspace(artifact_id)
     artifact, required_workspace = scoped if scoped else (None, None)
     if artifact is None or not artifact.storage_key or artifact.security_status != "verified":
-        raise ResourceError("ARTIFACT_NOT_FOUND", "找不到可访问的工件。")
+        raise AstraResourceNotFoundError("ARTIFACT_NOT_FOUND", "找不到可访问的工件。")
     if required_workspace and workspace_id != required_workspace:
-        raise ResourceError("ARTIFACT_NOT_FOUND", "找不到可访问的工件。")
+        raise AstraResourceNotFoundError("ARTIFACT_NOT_FOUND", "找不到可访问的工件。")
     path = LocalArtifactStore(settings.artifact_store_path).resolve(artifact.storage_key)
     if not path.is_file():
-        raise ResourceError("ARTIFACT_NOT_FOUND", "工件内容已不可用。")
+        raise AstraResourceNotFoundError("ARTIFACT_NOT_FOUND", "工件内容已不可用。")
     return FileResponse(
         path, media_type=artifact.mime_type, filename=artifact.metadata_.get("filename")
     )
@@ -249,7 +252,7 @@ async def get_run(
     queries = RunQueryService(RunUnitOfWork(session))
     run_view = await (queries.initial(run_id) if detail == "initial" else queries.detail(run_id))
     if run_view is None:
-        raise ResourceError("RUN_NOT_FOUND", "找不到指定运行记录。")
+        raise AstraResourceNotFoundError("RUN_NOT_FOUND", "找不到指定运行记录。")
     return run_view
 
 
@@ -260,7 +263,7 @@ async def list_run_plans(
 ) -> list[PlanVersionSummary]:
     run = await RunUnitOfWork(session).get_run(run_id)
     if run is None:
-        raise ResourceError("RUN_NOT_FOUND", "找不到指定运行记录。")
+        raise AstraResourceNotFoundError("RUN_NOT_FOUND", "找不到指定运行记录。")
     if run.answer_mode != "trusted":
         return []
     plans = await PlanRepository(session).list_for_run(run_id)
@@ -275,7 +278,7 @@ async def get_run_plan(
 ) -> PlanView:
     plan = await PlanRepository(session).by_version(run_id, version)
     if plan is None:
-        raise ResourceError("PLAN_NOT_FOUND", "找不到指定计划版本。")
+        raise AstraResourceNotFoundError("PLAN_NOT_FOUND", "找不到指定计划版本。")
     return plan_to_view(plan)
 
 
@@ -290,9 +293,9 @@ async def get_run_plan_diff(
     before = await repository.by_version(run_id, from_version)
     after = await repository.by_version(run_id, version)
     if before is None or after is None:
-        raise ResourceError("PLAN_NOT_FOUND", "找不到指定计划版本。")
+        raise AstraResourceNotFoundError("PLAN_NOT_FOUND", "找不到指定计划版本。")
     if before.version >= after.version:
-        raise ValidationError("PLAN_DIFF_INVALID", "只能比较较早计划与较新计划。")
+        raise AstraInputValidationError("PLAN_DIFF_INVALID", "只能比较较早计划与较新计划。")
     return diff_plans(before, after)
 
 
@@ -316,14 +319,14 @@ async def cancel_subagent(
 ) -> RunView:
     execution = await AgentExecutionRepository(session).require(agent_execution_id)
     if execution.run_id != run_id or execution.parent_execution_id is None:
-        raise ResourceError("SUBAGENT_NOT_FOUND", "找不到指定子系统执行。")
+        raise AstraResourceNotFoundError("SUBAGENT_NOT_FOUND", "找不到指定子系统执行。")
     await SubagentCancellationService(session).cancel_tree(
         agent_execution_id,
         reason="user_cancelled_child",
     )
     run_view = await RunQueryService(RunUnitOfWork(session)).detail(run_id)
     if run_view is None:
-        raise ResourceError("RUN_NOT_FOUND", "找不到指定运行记录。")
+        raise AstraResourceNotFoundError("RUN_NOT_FOUND", "找不到指定运行记录。")
     return run_view
 
 
@@ -335,7 +338,7 @@ async def get_subagent_metrics(
     try:
         return await SubagentTelemetryRepository(session).summary(run_id)
     except ValueError as exc:
-        raise ResourceError("RUN_NOT_FOUND", "找不到指定运行记录。") from exc
+        raise AstraResourceNotFoundError("RUN_NOT_FOUND", "找不到指定运行记录。") from exc
 
 
 @router.post("/runs/{run_id}/resume", response_model=CreateRunResponse)
@@ -368,7 +371,7 @@ async def stream_run_events(
 ) -> StreamingResponse:
     repo = RunUnitOfWork(session)
     if await repo.get_run_status(run_id) is None:
-        raise ResourceError("RUN_NOT_FOUND", "找不到指定运行记录。")
+        raise AstraResourceNotFoundError("RUN_NOT_FOUND", "找不到指定运行记录。")
     # FastAPI keeps dependency scopes alive until a streaming response closes.
     # End the existence-check transaction now so an idle SSE connection does not
     # pin a database connection for the lifetime of the run.

@@ -4,20 +4,20 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
-from app.infrastructure.tools.base import ToolSpec
+from app.infrastructure.tools.base import AstraToolSpec
 from app.infrastructure.tools.router import ToolRouter
 
 _SUCCESS_STATUSES = frozenset({"completed", "succeeded", "success"})
 
 
-def task_capability_catalog(specs: Mapping[str, ToolSpec]) -> set[str]:
+def task_capability_catalog(specs: Mapping[str, AstraToolSpec]) -> set[str]:
     """Return the provider-neutral abilities that planning is allowed to reference."""
     return {
         capability for spec in specs.values() for capability in spec.task_capabilities if capability
     }
 
 
-def forbidden_plan_bindings(specs: Mapping[str, ToolSpec]) -> set[str]:
+def forbidden_plan_bindings(specs: Mapping[str, AstraToolSpec]) -> set[str]:
     """Return concrete/runtime identities that must not leak into new Plans."""
     semantic = task_capability_catalog(specs)
     bindings = set(specs)
@@ -73,7 +73,7 @@ class CapabilityToolCandidate:
     tool_version: str
     provider_id: str
     provider_digest: str
-    spec: ToolSpec = field(repr=False, compare=False)
+    spec: AstraToolSpec = field(repr=False, compare=False)
 
 
 @dataclass(frozen=True)
@@ -280,7 +280,7 @@ class CapabilityToolResolver:
     @staticmethod
     def _matched_capabilities(
         tool_name: str,
-        spec: ToolSpec,
+        spec: AstraToolSpec,
         *,
         required: tuple[str, ...],
         unresolved: frozenset[str],
@@ -296,7 +296,7 @@ class CapabilityToolResolver:
         observations: Iterable[Any],
         *,
         plan_node_id: str | None,
-        specs: Mapping[str, ToolSpec],
+        specs: Mapping[str, AstraToolSpec],
     ) -> tuple[str, ...]:
         if not required:
             return ()

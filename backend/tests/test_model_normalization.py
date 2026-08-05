@@ -3,10 +3,10 @@ from unittest.mock import AsyncMock
 import pytest
 
 from app.application.agent_runtime.policies.reasoning import build_default_contract
-from app.common.core.config import Settings
+from app.common.core.config import AstraRuntimeSettings
 from app.common.schemas.agent.execution_state import AgentReflection
 from app.common.schemas.agent.planning import PlanDraft, TaskContract
-from app.common.schemas.agent.run_result import FinalAnswer, MemoryRecord
+from app.common.schemas.agent.run_result import AgentFinalAnswer, AgentRunMemoryCandidate
 from app.domain.agent_profile import ModelOperation
 from app.infrastructure.model_clients.factory import build_model_client
 from app.infrastructure.model_clients.normalization import (
@@ -126,7 +126,7 @@ def test_contract_goal_mismatch_falls_back_to_user_request():
 
 
 def test_final_answer_normalization_accepts_nullable_and_scalar_fields():
-    answer = FinalAnswer.model_validate(
+    answer = AgentFinalAnswer.model_validate(
         normalize_final_answer_payload(
             {
                 "summary": "递归是自我调用。",
@@ -147,7 +147,7 @@ def test_final_answer_normalization_accepts_nullable_and_scalar_fields():
 
 @pytest.mark.parametrize("model_status", ["inferred", "self_known", "VERIFIED", "unknown"])
 def test_final_answer_normalizes_non_contract_support_status(model_status):
-    answer = FinalAnswer.model_validate(
+    answer = AgentFinalAnswer.model_validate(
         normalize_final_answer_payload(
             {
                 "summary": "我是 AI，没有人类意义上的年龄。",
@@ -168,7 +168,7 @@ def test_final_answer_normalizes_non_contract_support_status(model_status):
 
 
 async def test_standard_combined_answer_accepts_non_contract_support_status_once():
-    client = build_model_client(Settings(model_provider="openai", model_api_key="secret"))
+    client = build_model_client(AstraRuntimeSettings(model_provider="openai", model_api_key="secret"))
     client._chat_json = AsyncMock(
         return_value={
             "reasoning_summary": "这是稳定的身份信息。",
@@ -208,7 +208,7 @@ async def test_standard_combined_answer_accepts_non_contract_support_status_once
     ],
 )
 def test_final_answer_normalizes_artifact_ids(artifact_ids, expected):
-    answer = FinalAnswer.model_validate(
+    answer = AgentFinalAnswer.model_validate(
         normalize_final_answer_payload(
             {
                 "summary": "完成",
@@ -221,7 +221,7 @@ def test_final_answer_normalizes_artifact_ids(artifact_ids, expected):
 
 
 def test_final_answer_normalization_drops_scalar_record_placeholders():
-    answer = FinalAnswer.model_validate(
+    answer = AgentFinalAnswer.model_validate(
         normalize_final_answer_payload(
             {
                 "summary": "完成",
@@ -270,7 +270,7 @@ def test_memory_normalization_is_bounded_typed_and_drops_empty_content():
             "importance": -1,
         }
     )
-    memory = MemoryRecord.model_validate(normalized)
+    memory = AgentRunMemoryCandidate.model_validate(normalized)
     assert memory.content == "用户询问口腔溃疡"
     assert memory.scope == "run"
     assert memory.kind == "semantic_fact"
@@ -287,7 +287,7 @@ def test_memory_normalization_is_bounded_typed_and_drops_empty_content():
 async def test_real_model_operations_use_explicit_profile_composition():
 
     client = OpenAICompatibleModelClient(
-        Settings(model_provider="openai", model_api_key="secret", model_name="test")
+        AstraRuntimeSettings(model_provider="openai", model_api_key="secret", model_name="test")
     )
     captured = []
     payloads = {
@@ -345,7 +345,7 @@ async def test_real_model_operations_use_explicit_profile_composition():
 
 
 async def test_standard_combined_answer_prompt_streams_reasoning_before_summary():
-    client = build_model_client(Settings(model_provider="openai", model_api_key="secret"))
+    client = build_model_client(AstraRuntimeSettings(model_provider="openai", model_api_key="secret"))
     captured = []
 
     async def fake_chat(messages, *, operation, **kwargs):
@@ -372,7 +372,7 @@ async def test_standard_combined_answer_prompt_streams_reasoning_before_summary(
 
 
 async def test_trusted_combined_answer_accepts_flat_streamed_final_answer():
-    client = build_model_client(Settings(model_provider="openai", model_api_key="secret"))
+    client = build_model_client(AstraRuntimeSettings(model_provider="openai", model_api_key="secret"))
     client._chat_json = AsyncMock(
         return_value={
             "reasoning_summary": "直接完成创作任务。",

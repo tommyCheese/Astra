@@ -7,13 +7,13 @@ from datetime import datetime, timedelta, timezone
 import pytest
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
-from app.common.core.config import Settings
+from app.common.core.config import AstraRuntimeSettings
 from app.infrastructure.db.models.executions import RuntimeBuildRecord, RuntimeProfileRecord
 from app.infrastructure.sandbox.profiles import RuntimeProfileService
 
 
 async def test_profile_write_is_atomic_and_finished_tasks_are_removed(tmp_path, monkeypatch):
-    settings = Settings(
+    settings = AstraRuntimeSettings(
         runtime_profile_path=str(tmp_path / "runtime" / "profile.json"),
         sandbox_runtime_image="astra-data-viz:test",
     )
@@ -40,7 +40,7 @@ async def test_profile_write_is_atomic_and_finished_tasks_are_removed(tmp_path, 
 
 
 async def test_build_progress_uses_live_subprocess_output(tmp_path):
-    service = RuntimeProfileService(Settings(runtime_profile_path=str(tmp_path / "profile.json")))
+    service = RuntimeProfileService(AstraRuntimeSettings(runtime_profile_path=str(tmp_path / "profile.json")))
     service.write(
         {
             "dependencies": [],
@@ -66,7 +66,7 @@ async def test_build_progress_uses_live_subprocess_output(tmp_path):
 
 
 async def test_failed_build_command_preserves_recent_error_output(tmp_path):
-    service = RuntimeProfileService(Settings(runtime_profile_path=str(tmp_path / "profile.json")))
+    service = RuntimeProfileService(AstraRuntimeSettings(runtime_profile_path=str(tmp_path / "profile.json")))
     service.write(
         {
             "dependencies": [],
@@ -94,7 +94,7 @@ async def test_failed_build_command_preserves_recent_error_output(tmp_path):
 
 async def test_runtime_build_command_supports_docker_without_buildx(tmp_path, monkeypatch):
     service = RuntimeProfileService(
-        Settings(
+        AstraRuntimeSettings(
             runtime_profile_path=str(tmp_path / "profile.json"),
             sandbox_runtime_image="astra-data-viz:test",
         )
@@ -125,7 +125,7 @@ async def test_unpinned_dependency_is_resolved_persisted_and_content_addressed(
     tmp_path, monkeypatch
 ):
     service = RuntimeProfileService(
-        Settings(
+        AstraRuntimeSettings(
             runtime_profile_path=str(tmp_path / "profile.json"),
             sandbox_runtime_image="astra-data-viz:test",
         )
@@ -158,7 +158,7 @@ async def test_unpinned_dependency_is_resolved_persisted_and_content_addressed(
 
 async def test_runtime_image_retention_protects_active_and_recent_images(tmp_path, monkeypatch):
     service = RuntimeProfileService(
-        Settings(
+        AstraRuntimeSettings(
             runtime_profile_path=str(tmp_path / "profile.json"),
             sandbox_runtime_image="astra-data-viz:test",
             runtime_image_keep_recent=1,
@@ -210,7 +210,7 @@ async def test_runtime_image_retention_protects_active_and_recent_images(tmp_pat
 
 async def test_failed_runtime_image_cleanup_keeps_history_for_retry(tmp_path, monkeypatch):
     service = RuntimeProfileService(
-        Settings(
+        AstraRuntimeSettings(
             runtime_profile_path=str(tmp_path / "profile.json"),
             runtime_image_keep_recent=0,
             runtime_image_retention_days=0,
@@ -239,7 +239,7 @@ async def test_failed_runtime_image_cleanup_keeps_history_for_retry(tmp_path, mo
 
 
 async def test_runtime_image_cleanup_rejects_non_astra_tags(tmp_path, monkeypatch):
-    service = RuntimeProfileService(Settings(runtime_profile_path=str(tmp_path / "profile.json")))
+    service = RuntimeProfileService(AstraRuntimeSettings(runtime_profile_path=str(tmp_path / "profile.json")))
     called = False
 
     async def should_not_run(*args, **kwargs):
@@ -254,7 +254,7 @@ async def test_runtime_image_cleanup_rejects_non_astra_tags(tmp_path, monkeypatc
 
 async def test_active_build_can_be_cancelled(tmp_path, monkeypatch):
     service = RuntimeProfileService(
-        Settings(
+        AstraRuntimeSettings(
             runtime_profile_path=str(tmp_path / "profile.json"),
             sandbox_runtime_image="astra-data-viz:test",
         )
@@ -279,7 +279,7 @@ async def test_active_build_can_be_cancelled(tmp_path, monkeypatch):
 
 async def test_shutdown_cancels_owned_build_tasks(tmp_path, monkeypatch):
     service = RuntimeProfileService(
-        Settings(
+        AstraRuntimeSettings(
             runtime_profile_path=str(tmp_path / "profile.json"),
             sandbox_runtime_image="astra-data-viz:test",
         )
@@ -317,7 +317,7 @@ def test_interrupted_build_is_recovered_as_cancelled(tmp_path):
     )
 
     service = RuntimeProfileService(
-        Settings(runtime_profile_path=str(profile_path)), recover_interrupted=True
+        AstraRuntimeSettings(runtime_profile_path=str(profile_path)), recover_interrupted=True
     )
 
     assert service.read()["build"]["status"] == "cancelled"
@@ -337,7 +337,7 @@ async def test_startup_cleans_recovered_staging_image(tmp_path, monkeypatch):
         )
     )
     service = RuntimeProfileService(
-        Settings(runtime_profile_path=str(profile_path)), recover_interrupted=True
+        AstraRuntimeSettings(runtime_profile_path=str(profile_path)), recover_interrupted=True
     )
     removed = []
 
@@ -366,7 +366,7 @@ def test_read_only_profile_service_does_not_cancel_an_active_build(tmp_path):
         )
     )
 
-    service = RuntimeProfileService(Settings(runtime_profile_path=str(profile_path)))
+    service = RuntimeProfileService(AstraRuntimeSettings(runtime_profile_path=str(profile_path)))
 
     assert service.read()["build"]["status"] == "building"
 
@@ -375,7 +375,7 @@ async def test_runtime_service_persists_and_rehydrates_database_state(session, t
     factory = async_sessionmaker(session.bind, expire_on_commit=False)
     first_path = tmp_path / "first.json"
     service = RuntimeProfileService(
-        Settings(runtime_profile_path=str(first_path)),
+        AstraRuntimeSettings(runtime_profile_path=str(first_path)),
         session_factory=factory,
     )
     state = service.read()
@@ -403,7 +403,7 @@ async def test_runtime_service_persists_and_rehydrates_database_state(session, t
     assert build is not None and build.status == "succeeded"
 
     restored = RuntimeProfileService(
-        Settings(runtime_profile_path=str(tmp_path / "restored.json")),
+        AstraRuntimeSettings(runtime_profile_path=str(tmp_path / "restored.json")),
         session_factory=factory,
     )
     await restored._load_database_state()

@@ -5,7 +5,7 @@ from typing import Any
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.application.skills.storage import SkillService
-from app.common.core.config import Settings
+from app.common.core.config import AstraRuntimeSettings
 from app.common.schemas.skills import (
     SkillDetailView,
     SkillFileView,
@@ -96,7 +96,7 @@ def skill_revision_file_view(
 
 
 async def skill_detail_view(
-    session: AsyncSession, settings: Settings, skill: SkillRecord
+    session: AsyncSession, settings: AstraRuntimeSettings, skill: SkillRecord
 ) -> SkillDetailView:
     service = SkillService(session, settings)
     summary = await skill_summary_view(session, skill)

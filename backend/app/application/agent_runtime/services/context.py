@@ -7,11 +7,11 @@ from typing import Any
 from sqlalchemy import select
 
 from app.application.agent_runtime.services.context_memory import (
+    AgentMemoryContextProjection,
     MemoryContextProjector,
-    MemoryProjection,
 )
 from app.application.subagents.eligibility import subagent_execution_eligibility
-from app.common.core.config import Settings
+from app.common.core.config import AstraRuntimeSettings
 from app.common.schemas.agent.run_policy import EffectiveSubagentPolicy
 from app.common.schemas.agent.types import AnswerMode
 from app.infrastructure.db.models.executions import AgentJoinRecord
@@ -24,7 +24,7 @@ from app.infrastructure.repositories.tool_settings import (
     ToolSettingsRepository,
     default_tool_states,
 )
-from app.infrastructure.tools.base import ToolRegistry, ToolSpec
+from app.infrastructure.tools.base import AstraToolRegistry, AstraToolSpec
 from app.infrastructure.tools.router import ToolRouter
 from app.infrastructure.tools.selection import CapabilityToolResolver
 
@@ -119,13 +119,13 @@ def _load_tools(
     active_node_id: str | None,
     active_node: dict[str, Any] | None,
     observations: list[dict[str, Any]],
-    registry: ToolRegistry,
+    registry: AstraToolRegistry,
     router: ToolRouter | None,
 ) -> tuple[
     dict[str, dict[str, Any]],
     dict[str, Any],
     list[Any],
-    dict[str, ToolSpec],
+    dict[str, AstraToolSpec],
 ]:
     router = router or ToolRouter(
         registry,
@@ -189,7 +189,7 @@ async def _load_skills(
 
 async def _subagents_executable(
     repository: RunUnitOfWork,
-    settings: Settings | None,
+    settings: AstraRuntimeSettings | None,
     raw_policy: dict[str, Any],
 ) -> bool:
     live_states = (
@@ -223,7 +223,7 @@ async def _active_joins(
 
 def _subagent_projection(
     raw_policy: dict[str, Any],
-    swarm_spec: ToolSpec | None,
+    swarm_spec: AstraToolSpec | None,
     descendants: list[Any],
     joins: list[AgentJoinRecord],
 ) -> dict[str, Any]:
@@ -259,10 +259,10 @@ def _subagent_projection(
 
 async def _load_subagents(
     repository: RunUnitOfWork,
-    settings: Settings | None,
+    settings: AstraRuntimeSettings | None,
     run_id: str,
     run: RunRecord,
-    selected_specs: dict[str, ToolSpec],
+    selected_specs: dict[str, AstraToolSpec],
 ) -> tuple[dict[str, Any], bool]:
     raw_policy = ((run.reasoning_policy or {}).get("effective") or {}).get("subagents") or {}
     if not await _subagents_executable(repository, settings, raw_policy):
@@ -275,13 +275,13 @@ async def _load_subagents(
     return _subagent_projection(raw_policy, selected_specs.get("swarm"), descendants, joins), True
 
 
-class ContextAssembler:
+class AgentContextAssembler:
     def __init__(
         self,
         repository: RunUnitOfWork,
         *,
         skills_enabled: bool = True,
-        settings: Settings | None = None,
+        settings: AstraRuntimeSettings | None = None,
     ) -> None:
         self._repository = repository
         self._skills_enabled = skills_enabled
@@ -293,7 +293,7 @@ class ContextAssembler:
         *,
         run_id: str,
         goal: str,
-        tool_registry: ToolRegistry,
+        tool_registry: AstraToolRegistry,
         sandbox_provider: Any = None,
         tool_router: ToolRouter | None = None,
         observations: list[dict[str, Any]],
@@ -372,7 +372,7 @@ class ContextAssembler:
         self,
         context: dict[str, Any],
         run: RunRecord,
-        memory: MemoryProjection,
+        memory: AgentMemoryContextProjection,
         unavailable_capabilities: list[Any],
         is_draft_test: bool,
         evidence_pack: dict[str, Any] | None,

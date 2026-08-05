@@ -6,8 +6,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.application.permissions.governance import verify_permission_bundle
-from app.common.core.config import Settings
-from app.common.core.errors import ValidationError
+from app.common.core.config import AstraRuntimeSettings
+from app.common.core.errors import AstraInputValidationError
 from app.common.schemas.permissions import PermissionBundle
 from app.common.schemas.schedules import ScheduledExecutionConfig
 from app.infrastructure.db.models.runs import RunRecord
@@ -16,7 +16,7 @@ from app.infrastructure.db.models.runs import RunRecord
 class ScheduledExecutionResolver:
     """Resolve the same reusable unattended execution context for every entry point."""
 
-    def __init__(self, session: AsyncSession, settings: Settings):
+    def __init__(self, session: AsyncSession, settings: AstraRuntimeSettings):
         self.session = session
         self.settings = settings
 
@@ -36,7 +36,7 @@ class ScheduledExecutionResolver:
     async def from_task_or_workspace(self, task_id: str) -> ScheduledExecutionConfig:
         try:
             return await self.from_task(task_id)
-        except ValidationError:
+        except AstraInputValidationError:
             return await self.from_workspace()
 
     async def _from_query(self, query) -> ScheduledExecutionConfig:
@@ -71,7 +71,7 @@ class ScheduledExecutionResolver:
                 model=model or None,
                 permission_bundle=bundle.model_dump(mode="json"),
             )
-        raise ValidationError(
+        raise AstraInputValidationError(
             "AUTOMATION_PERMISSION_BUNDLE_REQUIRED",
             "创建自动化需要工作区中仍有效的无人值守权限包。",
         )

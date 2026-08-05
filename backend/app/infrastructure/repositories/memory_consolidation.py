@@ -22,8 +22,8 @@ from app.domain.memory import MemoryNamespaceType, MemoryStatus
 from app.infrastructure.db.model_base import utc_now, uuid_str
 from app.infrastructure.db.models.memory import (
     MemoryConsolidationJobRecord,
-    MemoryRecord,
     MemorySourceRecord,
+    PersistedMemoryRecord,
 )
 
 ACTIVE_JOB_STATUSES = frozenset({"queued", "running", "proposed"})
@@ -387,7 +387,7 @@ class MemoryConsolidationRepository:
         namespace_type: str,
         namespace_id: str,
         limit: int,
-    ) -> list[MemoryRecord]:
+    ) -> list[PersistedMemoryRecord]:
         normalized_type, normalized_id = _validate_namespace(namespace_type, namespace_id)
         if not 2 <= limit <= 100:
             raise ConsolidationValidationError(
@@ -395,25 +395,25 @@ class MemoryConsolidationRepository:
             )
         now = utc_now()
         query = (
-            select(MemoryRecord)
+            select(PersistedMemoryRecord)
             .where(
-                MemoryRecord.namespace_type == normalized_type,
-                MemoryRecord.namespace_id == normalized_id,
-                MemoryRecord.status == MemoryStatus.active.value,
-                or_(MemoryRecord.expires_at.is_(None), MemoryRecord.expires_at > now),
-                or_(MemoryRecord.valid_to.is_(None), MemoryRecord.valid_to > now),
-                MemoryRecord.sources.any(
+                PersistedMemoryRecord.namespace_type == normalized_type,
+                PersistedMemoryRecord.namespace_id == normalized_id,
+                PersistedMemoryRecord.status == MemoryStatus.active.value,
+                or_(PersistedMemoryRecord.expires_at.is_(None), PersistedMemoryRecord.expires_at > now),
+                or_(PersistedMemoryRecord.valid_to.is_(None), PersistedMemoryRecord.valid_to > now),
+                PersistedMemoryRecord.sources.any(
                     and_(
                         MemorySourceRecord.accessible.is_(True),
                         MemorySourceRecord.revoked_at.is_(None),
                     )
                 ),
             )
-            .options(selectinload(MemoryRecord.sources))
+            .options(selectinload(PersistedMemoryRecord.sources))
             .order_by(
-                MemoryRecord.memory_key,
-                MemoryRecord.version.desc(),
-                MemoryRecord.id,
+                PersistedMemoryRecord.memory_key,
+                PersistedMemoryRecord.version.desc(),
+                PersistedMemoryRecord.id,
             )
             .limit(limit)
         )
@@ -451,32 +451,32 @@ class MemoryConsolidationRepository:
         rows = (
             await self.session.execute(
                 select(
-                    MemoryRecord.namespace_type,
-                    MemoryRecord.namespace_id,
-                    func.count(func.distinct(MemoryRecord.id)),
+                    PersistedMemoryRecord.namespace_type,
+                    PersistedMemoryRecord.namespace_id,
+                    func.count(func.distinct(PersistedMemoryRecord.id)),
                 )
                 .join(MemorySourceRecord)
                 .where(
-                    MemoryRecord.status == MemoryStatus.active.value,
+                    PersistedMemoryRecord.status == MemoryStatus.active.value,
                     or_(
-                        MemoryRecord.expires_at.is_(None),
-                        MemoryRecord.expires_at > now,
+                        PersistedMemoryRecord.expires_at.is_(None),
+                        PersistedMemoryRecord.expires_at > now,
                     ),
                     or_(
-                        MemoryRecord.valid_to.is_(None),
-                        MemoryRecord.valid_to > now,
+                        PersistedMemoryRecord.valid_to.is_(None),
+                        PersistedMemoryRecord.valid_to > now,
                     ),
                     MemorySourceRecord.accessible.is_(True),
                     MemorySourceRecord.revoked_at.is_(None),
                 )
                 .group_by(
-                    MemoryRecord.namespace_type,
-                    MemoryRecord.namespace_id,
+                    PersistedMemoryRecord.namespace_type,
+                    PersistedMemoryRecord.namespace_id,
                 )
-                .having(func.count(func.distinct(MemoryRecord.id)) >= minimum_count)
+                .having(func.count(func.distinct(PersistedMemoryRecord.id)) >= minimum_count)
                 .order_by(
-                    MemoryRecord.namespace_type,
-                    MemoryRecord.namespace_id,
+                    PersistedMemoryRecord.namespace_type,
+                    PersistedMemoryRecord.namespace_id,
                 )
                 .limit(limit)
             )
@@ -527,14 +527,14 @@ class MemoryConsolidationRepository:
     async def _require_unchanged_inputs(
         self,
         manifest: ConsolidationInputManifest,
-    ) -> list[MemoryRecord]:
+    ) -> list[PersistedMemoryRecord]:
         input_ids = [item.id for item in manifest.items]
         records = list(
             (
                 await self.session.scalars(
-                    select(MemoryRecord)
-                    .where(MemoryRecord.id.in_(input_ids))
-                    .options(selectinload(MemoryRecord.sources))
+                    select(PersistedMemoryRecord)
+                    .where(PersistedMemoryRecord.id.in_(input_ids))
+                    .options(selectinload(PersistedMemoryRecord.sources))
                 )
             ).all()
         )

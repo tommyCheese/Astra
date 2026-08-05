@@ -6,12 +6,12 @@ from dataclasses import dataclass
 
 from sqlalchemy import select
 
-from app.application.agent_runtime.policies.completion import CompletionGate
+from app.application.agent_runtime.policies.completion import AgentCompletionGate
 from app.application.agent_runtime.policies.reasoning import apply_validation_outcomes
 from app.application.agent_runtime.services.progress import ExecutionProgress
 from app.common.schemas.agent.execution_state import AgentState, CompletionDecision
 from app.common.schemas.agent.run_policy import RunExecutionProfile
-from app.common.schemas.agent.run_result import VerificationReport
+from app.common.schemas.agent.run_result import AgentAnswerVerificationReport
 from app.common.schemas.agent.types import AssuranceLevel, TerminalState
 from app.infrastructure.db.models.executions import AgentJoinRecord
 from app.infrastructure.repositories.agent_executions import AgentExecutionRepository
@@ -32,7 +32,7 @@ class CompletionGateStage:
         self,
         repository: RunUnitOfWork,
         plan_repository: PlanRepository,
-        completion_gate: CompletionGate,
+        completion_gate: AgentCompletionGate,
     ) -> None:
         self._repository = repository
         self._plan_repository = plan_repository
@@ -41,7 +41,7 @@ class CompletionGateStage:
     async def evaluate(
         self,
         stage_input: CompletionGateInput,
-        verification: VerificationReport,
+        verification: AgentAnswerVerificationReport,
     ) -> CompletionDecision:
         run = await self._repository.require_run(stage_input.run_id)
         if not run.agent_state:
@@ -88,7 +88,7 @@ class CompletionGateStage:
         stage_input: CompletionGateInput,
         run,
         state: AgentState,
-        verification: VerificationReport,
+        verification: AgentAnswerVerificationReport,
         required_action: str | None,
     ) -> CompletionDecision:
         if stage_input.profile.assurance_level != AssuranceLevel.full:
@@ -140,7 +140,7 @@ class CompletionGateStage:
 
     @staticmethod
     def _decision_without_agent_state(
-        verification: VerificationReport,
+        verification: AgentAnswerVerificationReport,
     ) -> CompletionDecision:
         blocking = [
             outcome

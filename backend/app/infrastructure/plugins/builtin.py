@@ -7,7 +7,7 @@ from app.application.permissions.effects import (
     ChartEffectAnalyzer,
     WebEffectAnalyzer,
 )
-from app.common.core.config import Settings
+from app.common.core.config import AstraRuntimeSettings
 from app.infrastructure.plugins.builtin_components import (
     BashApprovalPresenter,
     BashResultProcessor,
@@ -17,21 +17,21 @@ from app.infrastructure.plugins.builtin_components import (
     WebResultProcessor,
 )
 from app.infrastructure.plugins.contracts import (
-    ApplicabilityBinding,
-    ComponentContribution,
-    ComponentIdentity,
+    PluginApplicabilityBinding,
+    PluginComponentContribution,
+    PluginComponentIdentity,
     PluginContribution,
     PluginDescriptor,
-    ToolContribution,
+    PluginToolContribution,
 )
-from app.infrastructure.tools.base import Tool
+from app.infrastructure.tools.base import AstraTool
 from app.infrastructure.tools.bash import BashExecuteTool
 from app.infrastructure.tools.chart import ChartRenderTool
 from app.infrastructure.tools.sandboxed import SandboxedWebTool
 from app.infrastructure.tools.web import build_web_registry
 
 
-def builtin_contributions(settings: Settings) -> tuple[PluginContribution, ...]:
+def builtin_contributions(settings: AstraRuntimeSettings) -> tuple[PluginContribution, ...]:
     contributions = []
     if settings.sandbox_enabled:
         native_web = build_web_registry(settings)
@@ -75,7 +75,7 @@ def builtin_contributions(settings: Settings) -> tuple[PluginContribution, ...]:
 
 def _provider(
     provider_id: str,
-    tools: Iterable[Tool],
+    tools: Iterable[AstraTool],
     *,
     analyzers=(),
     processors=(),
@@ -100,7 +100,7 @@ def _provider(
             }
         )
         bound_tools.append(
-            ToolContribution(
+            PluginToolContribution(
                 tool=tool,
                 executor_id="in_process",
             )
@@ -108,14 +108,14 @@ def _provider(
 
     def components(entries):
         return tuple(
-            ComponentContribution(
-                identity=ComponentIdentity(
+            PluginComponentContribution(
+                identity=PluginComponentIdentity(
                     component_id=f"{provider_id}.{component_id}",
                     provider_id=provider_id,
                     version="1",
                     digest="builtin",
                 ),
-                applicability=ApplicabilityBinding(tool_names=tool_names),
+                applicability=PluginApplicabilityBinding(tool_names=tool_names),
                 factory=factory,
             )
             for component_id, tool_names, factory in entries

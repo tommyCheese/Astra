@@ -4,26 +4,26 @@ import pytest
 from pydantic import ValidationError
 
 from app.infrastructure.plugins.contracts import (
-    ApplicabilityBinding,
-    ComponentContribution,
-    ComponentIdentity,
+    PluginApplicabilityBinding,
+    PluginComponentContribution,
+    PluginComponentIdentity,
     PluginContractError,
     PluginContribution,
     PluginDescriptor,
     PluginLifecycleState,
-    ToolContribution,
+    PluginToolContribution,
 )
 from app.infrastructure.tools.base import (
-    Tool,
+    AstraTool,
+    AstraToolSpec,
     ToolExecutionError,
     ToolResultEnvelope,
-    ToolSpec,
     validate_tool_result,
 )
 
 
-class ExampleTool(Tool):
-    spec = ToolSpec(
+class ExampleTool(AstraTool):
+    spec = AstraToolSpec(
         name="example.read",
         version="1",
         input_schema={"type": "object"},
@@ -69,7 +69,7 @@ def test_plugin_contract_is_versioned_frozen_and_tracks_lifecycle():
 
 
 def test_applicability_matches_explicit_tool_capability_result_and_media():
-    binding = ApplicabilityBinding(
+    binding = PluginApplicabilityBinding(
         tool_names=("example.read",),
         capabilities=("network_read",),
         result_kinds=("evidence",),
@@ -84,16 +84,16 @@ def test_applicability_matches_explicit_tool_capability_result_and_media():
 
 
 def test_malformed_contribution_fails_with_safe_contract_error():
-    identity = ComponentIdentity(
+    identity = PluginComponentIdentity(
         component_id="processor", provider_id="other.provider", version="1", digest="sha256:x"
     )
     contribution = PluginContribution(
         descriptor=descriptor(),
-        tools=(ToolContribution(tool=ExampleTool(), executor_id="in_process"),),
+        tools=(PluginToolContribution(tool=ExampleTool(), executor_id="in_process"),),
         result_processors=(
-            ComponentContribution(
+            PluginComponentContribution(
                 identity=identity,
-                applicability=ApplicabilityBinding(tool_names=("example.read",)),
+                applicability=PluginApplicabilityBinding(tool_names=("example.read",)),
                 factory=SimpleNamespace,
             ),
         ),

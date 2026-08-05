@@ -7,7 +7,7 @@ import logging
 
 from app.application.run_management.contracts import RunCompletionCallback, RunStarter
 from app.application.runner.engine import start_run_in_process
-from app.common.core.config import Settings
+from app.common.core.config import AstraRuntimeSettings
 
 logger = logging.getLogger("astra.run_dispatcher")
 
@@ -21,7 +21,7 @@ class InProcessRunDispatcher:
     def start(
         self,
         run_id: str,
-        settings: Settings,
+        settings: AstraRuntimeSettings,
         *,
         on_complete: RunCompletionCallback | None = None,
     ) -> asyncio.Task[None]:

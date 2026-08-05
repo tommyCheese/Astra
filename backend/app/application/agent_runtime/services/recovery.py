@@ -7,7 +7,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
-from app.application.agent_runtime.result_adapters import ProcessorRegistry
+from app.application.agent_runtime.result_adapters import AgentToolResultProcessorRegistry
 from app.application.agent_runtime.services.approval import input_hash
 from app.common.schemas.agent.execution_state import AgentObservation
 from app.infrastructure.db.models.permissions import ToolCallRecord
@@ -21,7 +21,7 @@ ToolOutputNormalizer = Callable[[str, dict[str, Any]], dict[str, Any]]
 
 
 @dataclass(frozen=True)
-class LoadedRunState:
+class LoadedAgentRunState:
     run: RunRecord
     tool_calls: list[ToolCallRecord]
     turns: list[AgentTurnRecord]
@@ -29,7 +29,7 @@ class LoadedRunState:
 
 
 @dataclass(frozen=True)
-class RecoveredRunState:
+class RecoveredAgentRunState:
     approved_tool_call: ToolCallRecord | None
     approved_turn: AgentTurnRecord | None
     approved_request_snapshot: dict[str, Any] | None
@@ -43,7 +43,7 @@ class RunRecoveryStage:
     def __init__(
         self,
         repository: RunUnitOfWork,
-        processors: ProcessorRegistry,
+        processors: AgentToolResultProcessorRegistry,
         normalize_tool_output: ToolOutputNormalizer,
     ) -> None:
         self._repository = repository
@@ -56,7 +56,7 @@ class RunRecoveryStage:
         *,
         initial_run: RunRecord | None,
         fresh_run: bool,
-    ) -> LoadedRunState:
+    ) -> LoadedAgentRunState:
         current_task = asyncio.current_task()
         if current_task is not None and current_task.cancelling():
             raise asyncio.CancelledError
@@ -66,7 +66,7 @@ class RunRecoveryStage:
             if run.answer_mode == "standard"
             else await PlanRepository(self._repository.session).active_for_run(run_id)
         )
-        return LoadedRunState(
+        return LoadedAgentRunState(
             run=run,
             tool_calls=[] if fresh_run else list(run.tool_calls),
             turns=[] if fresh_run else list(run.turns),
@@ -76,9 +76,9 @@ class RunRecoveryStage:
     async def recover(
         self,
         run_id: str,
-        loaded_state: LoadedRunState,
+        loaded_state: LoadedAgentRunState,
         observations: list[dict[str, Any]],
-    ) -> RecoveredRunState:
+    ) -> RecoveredAgentRunState:
         approved_call = await self._approved_call(run_id, loaded_state.tool_calls)
         await self._validate_approved_call(approved_call)
         approved_turn = self._approved_turn(approved_call, loaded_state.turns)
@@ -87,7 +87,7 @@ class RunRecoveryStage:
             loaded_state,
             observations,
         )
-        return RecoveredRunState(
+        return RecoveredAgentRunState(
             approved_tool_call=approved_call,
             approved_turn=approved_turn,
             approved_request_snapshot=self._approval_snapshot(approved_call),
@@ -152,7 +152,7 @@ class RunRecoveryStage:
     async def _recover_latest_turn(
         self,
         run_id: str,
-        loaded_state: LoadedRunState,
+        loaded_state: LoadedAgentRunState,
         observations: list[dict[str, Any]],
     ) -> tuple[str | None, str | None]:
         if not loaded_state.turns:

@@ -12,22 +12,22 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 from app.application.agent_runtime.policies.reasoning import (
     build_default_contract,
 )
-from app.application.agent_runtime.services.loop import AgentLoop
+from app.application.agent_runtime.services.loop import AstraAgentLoop
 from app.application.planning.service import PlanService, PlanValidationError, canonical_agent_state
-from app.application.run_management.recovery import ExecutionRecovery
+from app.application.run_management.recovery import RunExecutionRecovery
 from app.application.runner.answer_stream import AnswerStreamMixin
 from app.application.runner.coordinator import RunCoordinator
 from app.application.runner.model_thinking_stream import ModelThinkingEventWriter
 from app.application.runner.node_worker import ReadOnlyAgentNodeExecutor
 from app.application.runner.plan_preparation import PlanPreparationMixin
 from app.application.skills.activation import SkillActivationService
-from app.common.core.config import Settings
+from app.common.core.config import AstraRuntimeSettings
 from app.common.core.errors import run_error_from_exception
 from app.common.schemas.agent.planning import (
     PlanGraphSnapshotEvent,
 )
 from app.common.schemas.agent.run_policy import ReasoningPolicySnapshot, RunExecutionProfile
-from app.common.schemas.agent.run_result import FinalAnswer
+from app.common.schemas.agent.run_result import AgentFinalAnswer
 from app.common.schemas.agent.types import AnswerMode, PlanExecution
 from app.common.schemas.models import ModelThinkingSnapshot
 from app.domain.agent_profile import (
@@ -46,18 +46,18 @@ from app.infrastructure.model_clients.factory import build_model_client
 from app.infrastructure.model_clients.usage_metering import DatabaseUsageRecorder
 from app.infrastructure.repositories.plans import PlanRepository, plan_to_view
 from app.infrastructure.repositories.run_unit_of_work import RunUnitOfWork
-from app.infrastructure.tools.base import ToolRegistry
+from app.infrastructure.tools.base import AstraToolRegistry
 from app.infrastructure.tools.registry import build_tool_registry
 from app.infrastructure.tools.selection import forbidden_plan_bindings, task_capability_catalog
 
 logger = logging.getLogger("astra.engine")
 
 _SHARED_MODEL_HTTP_CLIENTS: dict[str, httpx.AsyncClient] = {}
-_SHARED_TOOL_REGISTRIES: OrderedDict[str, ToolRegistry] = OrderedDict()
+_SHARED_TOOL_REGISTRIES: OrderedDict[str, AstraToolRegistry] = OrderedDict()
 MAX_SHARED_TOOL_REGISTRIES = 16
 
 
-def shared_model_http_client(settings: Settings) -> httpx.AsyncClient | None:
+def shared_model_http_client(settings: AstraRuntimeSettings) -> httpx.AsyncClient | None:
     """Reuse provider connections across Runs in the same server process."""
     if settings.model_provider == "mock":
         return None
@@ -77,7 +77,7 @@ async def close_shared_model_http_clients() -> None:
         await client.aclose()
 
 
-def shared_tool_registry(settings: Settings) -> ToolRegistry:
+def shared_tool_registry(settings: AstraRuntimeSettings) -> AstraToolRegistry:
     """Reuse immutable tool manifests without probing the sandbox for every Run."""
     payload = {
         name: value
@@ -101,10 +101,10 @@ def shared_tool_registry(settings: Settings) -> ToolRegistry:
 class RunEngine(PlanPreparationMixin, AnswerStreamMixin):
     def __init__(
         self,
-        settings: Settings,
+        settings: AstraRuntimeSettings,
         *,
         model_client=None,
-        tool_registry: ToolRegistry | None = None,
+        tool_registry: AstraToolRegistry | None = None,
     ):
         self.settings = settings
         self.model_client = model_client or build_model_client(
@@ -404,7 +404,7 @@ class RunEngine(PlanPreparationMixin, AnswerStreamMixin):
                 expire_on_commit=False,
                 class_=type(repo.session),
             )
-            recovery = await ExecutionRecovery(
+            recovery = await RunExecutionRecovery(
                 session_factory,
                 stale_seconds=self.settings.agent_execution_stale_seconds,
             ).scan(run_id)
@@ -505,7 +505,7 @@ class RunEngine(PlanPreparationMixin, AnswerStreamMixin):
             "executing",
             loaded_run=run if fresh_run else None,
         )
-        agent_loop = AgentLoop(
+        agent_loop = AstraAgentLoop(
             self.settings,
             model_client=self.model_client,
             tool_registry=self.tool_registry,
@@ -549,7 +549,7 @@ class RunEngine(PlanPreparationMixin, AnswerStreamMixin):
         self,
         repo: RunUnitOfWork,
         run_id: str,
-        final_answer: FinalAnswer,
+        final_answer: AgentFinalAnswer,
         result: dict[str, Any],
         status: str,
     ) -> None:
@@ -640,7 +640,7 @@ class RunEngine(PlanPreparationMixin, AnswerStreamMixin):
         return AgentProfile.from_snapshot(snapshot)
 
 
-async def start_run_in_process(run_id: str, settings: Settings) -> None:
+async def start_run_in_process(run_id: str, settings: AstraRuntimeSettings) -> None:
     try:
         engine = RunEngine(settings)
     except ModelConfigurationError as exc:

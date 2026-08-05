@@ -4,7 +4,7 @@ from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
-class Settings(BaseSettings):
+class AstraRuntimeSettings(BaseSettings):
     log_level: str = "INFO"
     database_url: str = "sqlite+aiosqlite:///./astra-dev.db"
     sqlite_pool_size: int = Field(default=5, ge=1, le=32)
@@ -169,7 +169,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 
     @model_validator(mode="after")
-    def validate_runtime_bounds(self) -> "Settings":
+    def validate_runtime_bounds(self) -> "AstraRuntimeSettings":
         if (
             self.agent_memory_autodream_min_candidates
             > self.agent_memory_autodream_max_records_per_job
@@ -219,5 +219,5 @@ class Settings(BaseSettings):
 
 
 @lru_cache
-def get_settings() -> Settings:
-    return Settings()
+def get_settings() -> AstraRuntimeSettings:
+    return AstraRuntimeSettings()

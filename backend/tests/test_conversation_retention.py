@@ -9,8 +9,8 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.application.run_management.conversation_lifecycle import ConversationLifecycleService
 from app.application.run_management.conversation_retention import ConversationRetentionService
-from app.common.core.config import Settings
-from app.infrastructure.db.model_base import Base
+from app.common.core.config import AstraRuntimeSettings
+from app.infrastructure.db.model_base import AstraOrmRecordBase
 from app.infrastructure.db.models.conversations import ConversationShareRecord, TaskRecord
 from app.infrastructure.db.models.evolution import (
     AgentEvolutionAuditRecord,
@@ -27,7 +27,7 @@ from app.infrastructure.repositories.run_unit_of_work import RunUnitOfWork
 async def retention_database():
     engine = create_async_engine("sqlite+aiosqlite:///:memory:", future=True)
     async with engine.begin() as connection:
-        await connection.run_sync(Base.metadata.create_all)
+        await connection.run_sync(AstraOrmRecordBase.metadata.create_all)
     factory = async_sessionmaker(engine, expire_on_commit=False)
     yield factory
     await engine.dispose()
@@ -62,7 +62,7 @@ async def create_conversation(
         return task.id
 
 
-def retention_settings(tmp_path, **overrides) -> Settings:
+def retention_settings(tmp_path, **overrides) -> AstraRuntimeSettings:
     values = {
         "model_provider": "mock",
         "conversation_retention_enabled": True,
@@ -73,16 +73,16 @@ def retention_settings(tmp_path, **overrides) -> Settings:
         "task_workspace_store_path": str(tmp_path / "workspaces"),
     }
     values.update(overrides)
-    return Settings(**values)
+    return AstraRuntimeSettings(**values)
 
 
 def test_retention_settings_reject_unsafe_bounds():
     with pytest.raises(ValidationError):
-        Settings(conversation_retention_days=0)
+        AstraRuntimeSettings(conversation_retention_days=0)
     with pytest.raises(ValidationError):
-        Settings(conversation_retention_sweep_seconds=59)
+        AstraRuntimeSettings(conversation_retention_sweep_seconds=59)
     with pytest.raises(ValidationError):
-        Settings(conversation_retention_batch_size=0)
+        AstraRuntimeSettings(conversation_retention_batch_size=0)
 
 
 async def test_candidate_selection_protects_recent_pinned_shared_active_and_empty(

@@ -4,15 +4,19 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.common.core.errors import ResourceError, StateError, ValidationError
+from app.common.core.errors import (
+    AstraInputValidationError,
+    AstraResourceNotFoundError,
+    AstraStateConflictError,
+)
 from app.common.schemas.memory import (
     MemoryActivationRequest,
     MemoryDetailView,
     MemoryListView,
+    MemoryManagementView,
     MemoryRecallFeedbackRequest,
     MemoryRecallView,
     MemoryRevocationRequest,
-    MemoryView,
 )
 from app.domain.memory import (
     MemoryConflictError,
@@ -31,8 +35,8 @@ router = APIRouter(prefix="/api/memories", tags=["memories"])
 recall_router = APIRouter(prefix="/api/memory-recalls", tags=["memories"])
 
 
-def _memory_view(memory) -> MemoryView:
-    return MemoryView.model_validate(memory)
+def _memory_view(memory) -> MemoryManagementView:
+    return MemoryManagementView.model_validate(memory)
 
 
 def _recall_view(event: MemoryRecallEventRecord, memory_id: str) -> MemoryRecallView | None:
@@ -73,7 +77,7 @@ async def _require_memory(
     try:
         return await repository.require(memory_id, include_sources=include_sources)
     except MemoryValidationError as exc:
-        raise ResourceError("MEMORY_NOT_FOUND", "找不到指定记忆。") from exc
+        raise AstraResourceNotFoundError("MEMORY_NOT_FOUND", "找不到指定记忆。") from exc
 
 
 async def _memory_detail(
@@ -139,7 +143,7 @@ async def list_memories(
     session: AsyncSession = Depends(get_session),
 ):
     if bool(namespace_type) != bool(namespace_id):
-        raise ValidationError(
+        raise AstraInputValidationError(
             "MEMORY_NAMESPACE_INCOMPLETE",
             "namespace_type 与 namespace_id 必须同时提供。",
         )
@@ -148,7 +152,7 @@ async def list_memories(
         try:
             namespaces = [MemoryNamespace(MemoryNamespaceType(namespace_type), namespace_id)]
         except ValueError as exc:
-            raise ValidationError(
+            raise AstraInputValidationError(
                 "MEMORY_NAMESPACE_INVALID",
                 "记忆命名空间无效。",
             ) from exc
@@ -157,7 +161,7 @@ async def list_memories(
         try:
             statuses = [MemoryStatus(status)]
         except ValueError as exc:
-            raise ValidationError("MEMORY_STATUS_INVALID", "记忆生命周期状态无效。") from exc
+            raise AstraInputValidationError("MEMORY_STATUS_INVALID", "记忆生命周期状态无效。") from exc
     elif not include_history:
         statuses = [MemoryStatus.active]
     records = await MemoryQueryRepository(session).list_records(
@@ -209,12 +213,12 @@ async def revoke_memory(
             reason=payload.reason.strip(),
         )
     except MemoryConflictError as exc:
-        raise StateError(
+        raise AstraStateConflictError(
             "MEMORY_VERSION_CONFLICT",
             "记忆已被其他操作修改，请刷新后重试。",
         ) from exc
     except (MemoryValidationError, ValueError) as exc:
-        raise StateError(
+        raise AstraStateConflictError(
             "MEMORY_TRANSITION_INVALID",
             "当前记忆状态不允许撤销。",
         ) from exc
@@ -237,12 +241,12 @@ async def activate_memory(
             reason=payload.reason,
         )
     except MemoryConflictError as exc:
-        raise StateError(
+        raise AstraStateConflictError(
             "MEMORY_VERSION_CONFLICT",
             "记忆已被其他操作修改，请刷新后重试。",
         ) from exc
     except (MemoryValidationError, ValueError) as exc:
-        raise StateError(
+        raise AstraStateConflictError(
             "MEMORY_ACTIVATION_INVALID",
             "当前记忆不满足人工激活条件。",
         ) from exc
@@ -264,11 +268,11 @@ async def record_memory_recall_feedback(
         )
     except MemoryValidationError as exc:
         if "not found" in str(exc):
-            raise ResourceError(
+            raise AstraResourceNotFoundError(
                 "MEMORY_RECALL_NOT_FOUND",
                 "找不到指定召回事件。",
             ) from exc
-        raise ValidationError(
+        raise AstraInputValidationError(
             "MEMORY_RECALL_FEEDBACK_INVALID",
             "召回反馈参数无效。",
         ) from exc

@@ -1,17 +1,21 @@
 from __future__ import annotations
 
 from app.domain.grounding.identity import stable_id
-from app.domain.grounding.ledger import EvidenceLedger
-from app.domain.grounding.schemas import Citation, Claim, EvidenceKind
+from app.domain.grounding.ledger import GroundingEvidenceLedger
+from app.domain.grounding.schemas import (
+    GroundedAnswerCitation,
+    GroundedAnswerClaim,
+    GroundingEvidenceKind,
+)
 
 
-def project_grounded_answer(final_answer, ledger: EvidenceLedger):
+def project_grounded_answer(final_answer, ledger: GroundingEvidenceLedger):
     """Add deterministic grounding bindings without changing answer prose."""
-    if not ledger.records(EvidenceKind.passage):
+    if not ledger.records(GroundingEvidenceKind.passage):
         return final_answer
     valid_evidence = ledger.evidence_ids()
     claims = _valid_claims(final_answer.claims, valid_evidence)
-    passage_records = ledger.records(EvidenceKind.passage)
+    passage_records = ledger.records(GroundingEvidenceKind.passage)
     snapshots = _snapshots_by_source(ledger)
     passage_by_url = _passages_by_url(passage_records, snapshots)
     claims = _ensure_claims(final_answer, claims, passage_records, passage_by_url)
@@ -32,10 +36,10 @@ def _valid_claims(claims, valid_evidence: set[str]):
     ]
 
 
-def _snapshots_by_source(ledger: EvidenceLedger):
+def _snapshots_by_source(ledger: GroundingEvidenceLedger):
     return {
         item.payload["source_id"]: item
-        for item in ledger.records(EvidenceKind.source_snapshot)
+        for item in ledger.records(GroundingEvidenceKind.source_snapshot)
     }
 
 
@@ -80,7 +84,7 @@ def _claim_from_finding(index, finding, passage_records, passage_by_url):
     if not candidates and len(passage_records) == 1:
         candidates = passage_records
     refs = [item.id for item in candidates[:2]]
-    return Claim(
+    return GroundedAnswerClaim(
         id=stable_id("claim", str(index), finding.text),
         text=finding.text,
         evidence_refs=refs,
@@ -96,18 +100,18 @@ def _build_citations(existing_citations, claims, ledger, snapshots):
         for citation in existing_citations
         if citation.evidence_ref in valid_evidence
     }
-    citations: list[Citation] = []
+    citations: list[GroundedAnswerCitation] = []
     ordinal = 1
     for claim in claims:
         for evidence_ref in claim.evidence_refs:
             record = ledger.get_by_id(evidence_ref)
-            if record is None or record.kind != EvidenceKind.passage:
+            if record is None or record.kind != GroundingEvidenceKind.passage:
                 continue
             passage = record.payload
             snapshot = snapshots.get(passage.get("source_id"))
             current = existing.get((claim.id, evidence_ref))
             citations.append(
-                (current or Citation(
+                (current or GroundedAnswerCitation(
                     id=stable_id("citation", claim.id, evidence_ref),
                     claim_id=claim.id,
                     evidence_ref=evidence_ref,

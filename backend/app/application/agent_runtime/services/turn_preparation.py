@@ -6,14 +6,14 @@ from dataclasses import dataclass
 from typing import Any
 
 from app.application.agent_runtime.services.context import (
-    ContextAssembler,
+    AgentContextAssembler,
     active_node_execution_id,
     active_plan_node_id,
 )
 from app.application.agent_runtime.services.progress import ExecutionProgress
 from app.application.context_compaction.root import compact_root_context
 from app.application.planning.scheduler import PlanScheduler
-from app.common.core.config import Settings
+from app.common.core.config import AstraRuntimeSettings
 from app.common.schemas.agent.types import PlanNodeStatus
 from app.domain.execution.contracts import SubagentSupervisorPort
 from app.infrastructure.db.models.plans import PlanNodeRecord
@@ -22,7 +22,7 @@ from app.infrastructure.db.models.skills import RunSkillSnapshotRecord
 from app.infrastructure.model_clients.contracts import ModelClient
 from app.infrastructure.repositories.plans import PlanRepository
 from app.infrastructure.repositories.run_unit_of_work import RunUnitOfWork
-from app.infrastructure.tools.base import ToolRegistry
+from app.infrastructure.tools.base import AstraToolRegistry
 from app.infrastructure.tools.router import ToolRouter
 
 
@@ -44,10 +44,10 @@ class RootTurnPreparationStage:
         repository: RunUnitOfWork,
         plan_repository: PlanRepository,
         scheduler: PlanScheduler,
-        assembler: ContextAssembler,
-        settings: Settings,
+        assembler: AgentContextAssembler,
+        settings: AstraRuntimeSettings,
         model_client: ModelClient,
-        tool_registry: ToolRegistry,
+        tool_registry: AstraToolRegistry,
         tool_router: ToolRouter,
         progress: ExecutionProgress,
         initial_run: RunRecord,

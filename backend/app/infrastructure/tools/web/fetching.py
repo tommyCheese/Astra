@@ -8,7 +8,11 @@ from urllib.parse import urljoin
 
 import httpx
 
-from app.infrastructure.tools.base import Tool, ToolExecutionError, ToolSpec
+from app.infrastructure.tools.base import (
+    AstraTool,
+    AstraToolSpec,
+    ToolExecutionError,
+)
 from app.infrastructure.tools.web.content import extract_source, validate_crawler_plan
 from app.infrastructure.tools.web.security import (
     decode_response_body,
@@ -20,11 +24,11 @@ from app.infrastructure.tools.web.security import (
 )
 
 if TYPE_CHECKING:
-    from app.common.core.config import Settings
+    from app.common.core.config import AstraRuntimeSettings
 
 
 @dataclass(frozen=True)
-class FetchedResponse:
+class WebFetchResponse:
     requested_url: str
     final_url: str
     status_code: int
@@ -33,8 +37,8 @@ class FetchedResponse:
     redirect_count: int
 
 
-class WebFetchTool(Tool):
-    spec = ToolSpec(
+class WebFetchTool(AstraTool):
+    spec = AstraToolSpec(
         name="web_fetch",
         version="0.4.0",
         description=(
@@ -70,7 +74,7 @@ class WebFetchTool(Tool):
         ],
     )
 
-    def __init__(self, settings: Settings):
+    def __init__(self, settings: AstraRuntimeSettings):
         self.settings = settings
 
     async def run(self, tool_input: dict[str, Any], *, context=None) -> dict[str, Any]:
@@ -100,7 +104,7 @@ class WebFetchTool(Tool):
             response_bytes=len(response.body),
         )
 
-    async def _fetch_response(self, url: str) -> FetchedResponse:
+    async def _fetch_response(self, url: str) -> WebFetchResponse:
         try:
             timeout = httpx.Timeout(
                 self.spec.timeout_seconds,
@@ -143,7 +147,7 @@ class WebFetchTool(Tool):
         *,
         max_redirects: int = 5,
         max_response_bytes: int | None = None,
-    ) -> FetchedResponse:
+    ) -> WebFetchResponse:
         byte_limit = max_response_bytes or self.settings.crawler_max_response_bytes
         current_url = url
         for redirect_count in range(max_redirects + 1):
@@ -166,7 +170,7 @@ class WebFetchTool(Tool):
                 validate_fetch_content_type(content_type)
                 validate_content_length(response.headers.get("content-length"), byte_limit)
                 body = await read_limited_body(response, byte_limit)
-                return FetchedResponse(
+                return WebFetchResponse(
                     requested_url=url,
                     final_url=str(response.url),
                     status_code=response.status_code,

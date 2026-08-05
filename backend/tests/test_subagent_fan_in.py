@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 import pytest
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
-from app.application.agent_runtime.policies.completion import CompletionGate
+from app.application.agent_runtime.policies.completion import AgentCompletionGate
 from app.application.agent_runtime.policies.reasoning import (
     build_default_contract,
     resolve_run_profile,
@@ -24,14 +24,17 @@ from app.application.subagents.fan_in import (
 )
 from app.application.subagents.governance import DelegationContractService
 from app.application.subagents.supervisor import SubagentSupervisor
-from app.common.core.config import Settings
+from app.common.core.config import AstraRuntimeSettings
 from app.common.schemas.agent.execution_state import AgentState
 from app.common.schemas.agent.run_policy import (
     EffectiveSubagentPolicy,
     RequestedReasoningPolicy,
     SubagentBudgetPolicy,
 )
-from app.common.schemas.agent.run_result import ValidationOutcome, VerificationReport
+from app.common.schemas.agent.run_result import (
+    AgentAnswerVerificationReport,
+    AgentValidationOutcome,
+)
 from app.common.schemas.agent.types import AnswerMode, PlanExecution, TerminalState
 from app.common.schemas.permissions import PermissionPolicySet, PermissionRule
 from app.common.schemas.subagents import (
@@ -50,7 +53,7 @@ from app.infrastructure.repositories.agent_executions import AgentExecutionRepos
 from app.infrastructure.repositories.permissions import PermissionRepository
 from app.infrastructure.repositories.plans import PlanRepository
 from app.infrastructure.repositories.run_unit_of_work import RunUnitOfWork
-from app.infrastructure.tools.base import ToolRegistry
+from app.infrastructure.tools.base import AstraToolRegistry
 
 NOW = datetime(2026, 1, 1, tzinfo=timezone.utc)
 
@@ -282,7 +285,7 @@ async def test_result_merger_deduplicates_and_preserves_conflicts_and_warnings(s
 
 def _supervisor(session, run, root) -> SubagentSupervisor:
     return SubagentSupervisor(
-        settings=Settings(model_provider="mock"),
+        settings=AstraRuntimeSettings(model_provider="mock"),
         session=session,
         session_factory=async_sessionmaker(
             session.bind,
@@ -297,7 +300,7 @@ def _supervisor(session, run, root) -> SubagentSupervisor:
             read_only=True,
             rollout_cohort="trusted_read_only",
         ),
-        tool_registry=ToolRegistry(),
+        tool_registry=AstraToolRegistry(),
         model_client_factory=MockModelClient,
     )
 
@@ -378,8 +381,8 @@ async def test_join_crash_recovery_projects_parent_result_exactly_once(session, 
 
 def test_root_completion_gate_waits_for_descendants_and_required_joins():
     state = AgentState(task_contract=build_default_contract("Complete with children"))
-    gate = CompletionGate()
-    validation = [ValidationOutcome(validator="test", passed=True)]
+    gate = AgentCompletionGate()
+    validation = [AgentValidationOutcome(validator="test", passed=True)]
     waiting = gate.evaluate(
         state,
         validation_outcomes=validation,
@@ -398,7 +401,7 @@ def test_root_completion_gate_waits_for_descendants_and_required_joins():
 
 
 async def test_persisted_root_completion_barrier_waits_through_join_consumption(session):
-    settings = Settings(model_provider="mock")
+    settings = AstraRuntimeSettings(model_provider="mock")
     profile = resolve_run_profile(
         AnswerMode.trusted,
         RequestedReasoningPolicy(execution_mode="auto_approval"),
@@ -430,11 +433,11 @@ async def test_persisted_root_completion_barrier_waits_through_join_consumption(
         child_execution_ids=[child.id],
         policy=SubagentJoinPolicy.required,
     )
-    stage = CompletionGateStage(repository, PlanRepository(session), CompletionGate())
+    stage = CompletionGateStage(repository, PlanRepository(session), AgentCompletionGate())
     progress = ExecutionProgress(active_plan=None)
-    verification = VerificationReport(
+    verification = AgentAnswerVerificationReport(
         status="passed",
-        validation_outcomes=[ValidationOutcome(validator="task_adapter", passed=True)],
+        validation_outcomes=[AgentValidationOutcome(validator="task_adapter", passed=True)],
     )
 
     while_child_runs = await stage.evaluate(

@@ -5,18 +5,21 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
-from app.application.agent_runtime.models import RootRuntimeAssembly, RuntimeLimits
-from app.application.agent_runtime.policies.completion import CompletionGate
-from app.application.agent_runtime.policies.reasoning import ObservationEvaluator, ReflectionGate
+from app.application.agent_runtime.models import AgentRuntimeLimits, RootRuntimeAssembly
+from app.application.agent_runtime.policies.completion import AgentCompletionGate
+from app.application.agent_runtime.policies.reasoning import (
+    AgentObservationEvaluator,
+    AgentReflectionGate,
+)
 from app.application.agent_runtime.result_adapters import (
+    AgentToolResultProcessorRegistry,
     ChartTaskAdapter,
-    ProcessorRegistry,
     WebTaskAdapter,
 )
 from app.application.agent_runtime.services.approval import ApprovalRoutingStage
 from app.application.agent_runtime.services.authorization import PermissionAuthorizationStage
 from app.application.agent_runtime.services.completion import CompletionVerificationStage
-from app.application.agent_runtime.services.context import ContextAssembler
+from app.application.agent_runtime.services.context import AgentContextAssembler
 from app.application.agent_runtime.services.control_decisions import ControlDecisionStage
 from app.application.agent_runtime.services.failure import ToolFailureStage
 from app.application.agent_runtime.services.finalization import AgentFinalizationStage
@@ -38,13 +41,13 @@ from app.application.agent_runtime.services.tool_action import RootToolActionSta
 from app.application.agent_runtime.services.turn_preparation import RootTurnPreparationStage
 from app.application.planning.scheduler import PlanScheduler
 from app.application.skills.activation import SkillActivationService
-from app.common.core.config import Settings
+from app.common.core.config import AstraRuntimeSettings
 from app.common.schemas.agent.run_policy import EffectiveReasoningPolicy
 from app.common.schemas.agent.types import AnswerMode
 from app.infrastructure.model_clients.contracts import ModelClient
 from app.infrastructure.repositories.plans import PlanRepository
 from app.infrastructure.repositories.run_unit_of_work import RunUnitOfWork
-from app.infrastructure.tools.base import ToolRegistry
+from app.infrastructure.tools.base import AstraToolRegistry
 from app.infrastructure.tools.router import ToolRouter
 
 
@@ -52,14 +55,14 @@ class RootRuntimeComposer:
     def __init__(
         self,
         *,
-        settings: Settings,
+        settings: AstraRuntimeSettings,
         model_client: ModelClient,
-        tool_registry: ToolRegistry,
+        tool_registry: AstraToolRegistry,
         tool_router: ToolRouter,
-        processors: ProcessorRegistry,
-        evaluator: ObservationEvaluator,
-        reflection_gate: ReflectionGate,
-        completion_gate: CompletionGate,
+        processors: AgentToolResultProcessorRegistry,
+        evaluator: AgentObservationEvaluator,
+        reflection_gate: AgentReflectionGate,
+        completion_gate: AgentCompletionGate,
         web_adapter: WebTaskAdapter,
         chart_adapter: ChartTaskAdapter,
         normalize_tool_output: Callable[[str, dict[str, Any]], dict[str, Any]],
@@ -116,7 +119,7 @@ class RootRuntimeComposer:
         repository: RunUnitOfWork = values["repository"]
         progress: ExecutionProgress = values["progress"]
         policy: EffectiveReasoningPolicy = values["policy"]
-        limits: RuntimeLimits = values["limits"]
+        limits: AgentRuntimeLimits = values["limits"]
         progress_stage = ProgressEvaluationStage(
             run_id=values["run_id"],
             goal=values["goal"],
@@ -192,7 +195,7 @@ class RootRuntimeComposer:
     ) -> RootRuntimeAssembly:
         repository: RunUnitOfWork = values["repository"]
         progress: ExecutionProgress = values["progress"]
-        limits: RuntimeLimits = values["limits"]
+        limits: AgentRuntimeLimits = values["limits"]
         progress_stage = collaborators["progress_stage"]
         control = ControlDecisionStage(
             repository,
@@ -317,7 +320,7 @@ class RootRuntimeComposer:
             repository=repository,
             plan_repository=plans,
             scheduler=scheduler,
-            assembler=ContextAssembler(
+            assembler=AgentContextAssembler(
                 repository,
                 skills_enabled=self._settings.skills_enabled,
                 settings=self._settings,

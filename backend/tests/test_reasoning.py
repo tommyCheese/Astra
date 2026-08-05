@@ -1,15 +1,15 @@
 import pytest
 
-from app.application.agent_runtime.policies.completion import CompletionGate
+from app.application.agent_runtime.policies.completion import AgentCompletionGate
 from app.application.agent_runtime.policies.loop import (
     record_progress_signature,
     recovery_action,
     validate_transition,
 )
 from app.application.agent_runtime.policies.reasoning import (
-    ObservationEvaluator,
-    PolicyCompiler,
-    ReflectionGate,
+    AgentObservationEvaluator,
+    AgentReasoningPolicyCompiler,
+    AgentReflectionGate,
     StateVersionConflict,
     apply_reflection_patch,
     apply_validation_outcomes,
@@ -28,7 +28,7 @@ from app.common.schemas.agent.execution_state import (
 )
 from app.common.schemas.agent.planning import ExpectedObservation, TaskContract
 from app.common.schemas.agent.run_policy import ReasoningPolicySnapshot, RequestedReasoningPolicy
-from app.common.schemas.agent.run_result import ValidationIssue, ValidationOutcome
+from app.common.schemas.agent.run_result import AgentValidationIssue, AgentValidationOutcome
 from app.common.schemas.agent.types import (
     AnswerMode,
     CriterionStatus,
@@ -41,9 +41,9 @@ from app.common.schemas.agent.types import (
 
 
 def test_policy_defaults_and_safety_floor():
-    snapshot = PolicyCompiler().compile(RequestedReasoningPolicy())
+    snapshot = AgentReasoningPolicyCompiler().compile(RequestedReasoningPolicy())
     assert snapshot.effective.reasoning_effort == ReasoningEffort.balanced
-    high = PolicyCompiler().compile(
+    high = AgentReasoningPolicyCompiler().compile(
         RequestedReasoningPolicy(
             reasoning_effort="fast", execution_mode="auto_approval"
         ),
@@ -100,7 +100,7 @@ def test_removed_planning_fields_are_strictly_rejected():
         RequestedReasoningPolicy(planning_strategy="direct")
     with pytest.raises(ValueError):
         RequestedReasoningPolicy(planning_strategy="adaptive")
-    snapshot = PolicyCompiler().compile(RequestedReasoningPolicy()).model_dump(mode="json")
+    snapshot = AgentReasoningPolicyCompiler().compile(RequestedReasoningPolicy()).model_dump(mode="json")
     snapshot["requested"]["planning_strategy"] = "adaptive"
     with pytest.raises(ValueError):
         ReasoningPolicySnapshot.model_validate(snapshot)
@@ -111,7 +111,7 @@ def test_removed_planning_fields_are_strictly_rejected():
     [("fast", 0), ("fast", 5), ("balanced", 6), ("balanced", 15)],
 )
 def test_policy_compiler_uses_custom_tool_call_limit(effort, limit):
-    snapshot = PolicyCompiler().compile(
+    snapshot = AgentReasoningPolicyCompiler().compile(
         RequestedReasoningPolicy(reasoning_effort=effort, max_tool_calls=limit)
     )
     assert snapshot.requested.max_tool_calls == limit
@@ -141,7 +141,7 @@ def test_contract_normalization_supports_simple_conversation():
 
 
 def test_evaluation_does_not_treat_failure_as_success():
-    evaluation = ObservationEvaluator().evaluate(
+    evaluation = AgentObservationEvaluator().evaluate(
         AgentObservation(kind="tool_result", status="failed", summary="bad"),
         ExpectedObservation(kind="tool_result", success_condition="ok"),
         ["criterion-result"],
@@ -152,11 +152,11 @@ def test_evaluation_does_not_treat_failure_as_success():
 
 def test_reflection_policy_patch_and_versioning():
     policy = (
-        PolicyCompiler()
+        AgentReasoningPolicyCompiler()
         .compile(RequestedReasoningPolicy(reflection_trigger=ReflectionTrigger.adaptive))
         .effective
     )
-    assert ReflectionGate().should_reflect(policy, "expectation_mismatch", 0)
+    assert AgentReflectionGate().should_reflect(policy, "expectation_mismatch", 0)
     state = AgentState(task_contract=build_default_contract("goal"))
     patch = ReflectionPatch(
         level="goal", criterion_updates={"criterion-result": CriterionStatus.satisfied}
@@ -175,21 +175,21 @@ def test_failure_fingerprints_are_stable():
 def test_completion_gate_requires_criteria():
     contract = build_default_contract("goal")
     state = AgentState(task_contract=contract)
-    failed = ValidationOutcome(
+    failed = AgentValidationOutcome(
         validator="task_adapter",
         passed=False,
         blocking=True,
-        issues=[ValidationIssue(code="missing", message="missing evidence")],
+        issues=[AgentValidationIssue(code="missing", message="missing evidence")],
     )
     state = apply_validation_outcomes(state, [failed])
     assert (
-        CompletionGate().evaluate(state, validation_outcomes=[failed]).state
+        AgentCompletionGate().evaluate(state, validation_outcomes=[failed]).state
         == TerminalState.blocked
     )
-    passed = ValidationOutcome(validator="task_adapter", passed=True, blocking=True)
+    passed = AgentValidationOutcome(validator="task_adapter", passed=True, blocking=True)
     state = apply_validation_outcomes(state, [passed])
     assert (
-        CompletionGate().evaluate(state, validation_outcomes=[passed]).state
+        AgentCompletionGate().evaluate(state, validation_outcomes=[passed]).state
         == TerminalState.completed
     )
 
@@ -197,10 +197,10 @@ def test_completion_gate_requires_criteria():
 def test_completion_gate_waits_for_parallel_execution_approval_and_budget_barriers():
     contract = build_default_contract("goal")
     state = AgentState(task_contract=contract)
-    passed = ValidationOutcome(validator="task_adapter", passed=True, blocking=True)
+    passed = AgentValidationOutcome(validator="task_adapter", passed=True, blocking=True)
     state = apply_validation_outcomes(state, [passed])
 
-    decision = CompletionGate().evaluate(
+    decision = AgentCompletionGate().evaluate(
         state,
         validation_outcomes=[passed],
         active_executions=[
@@ -219,15 +219,15 @@ def test_completion_gate_waits_for_parallel_execution_approval_and_budget_barrie
 
 
 def test_basic_completion_ignores_full_contract_but_preserves_warnings_and_blockers():
-    gate = CompletionGate()
-    warning = ValidationOutcome(
+    gate = AgentCompletionGate()
+    warning = AgentValidationOutcome(
         validator="artifact_reference",
         passed=True,
         blocking=False,
         warnings=["已清洗无效引用"],
     )
     assert gate.evaluate_basic(validation_outcomes=[warning]).state == TerminalState.completed_with_warnings
-    blocked = ValidationOutcome(validator="safety", passed=False, blocking=True)
+    blocked = AgentValidationOutcome(validator="safety", passed=False, blocking=True)
     decision = gate.evaluate_basic(validation_outcomes=[blocked])
     assert decision.state == TerminalState.blocked
     assert decision.unmet_criteria == ["validator:safety"]
@@ -236,8 +236,8 @@ def test_basic_completion_ignores_full_contract_but_preserves_warnings_and_block
 def test_completion_gate_distinguishes_waiting_failure_and_warning():
     contract = build_default_contract("goal")
     state = AgentState(task_contract=contract)
-    gate = CompletionGate()
-    failed = ValidationOutcome(validator="task_adapter", passed=False, blocking=True)
+    gate = AgentCompletionGate()
+    failed = AgentValidationOutcome(validator="task_adapter", passed=False, blocking=True)
     assert (
         gate.evaluate(state, validation_outcomes=[failed], required_user_action="请选择范围").state
         == TerminalState.waiting_user
@@ -248,7 +248,7 @@ def test_completion_gate_distinguishes_waiting_failure_and_warning():
         ).state
         == TerminalState.failed
     )
-    warning = ValidationOutcome(
+    warning = AgentValidationOutcome(
         validator="task_adapter",
         passed=True,
         blocking=True,
@@ -264,9 +264,9 @@ def test_completion_gate_distinguishes_waiting_failure_and_warning():
 def test_completion_gate_blocks_when_mandatory_validator_is_missing():
     contract = build_default_contract("goal")
     state = AgentState(task_contract=contract)
-    unrelated = ValidationOutcome(validator="artifact_reference", passed=True, blocking=False)
+    unrelated = AgentValidationOutcome(validator="artifact_reference", passed=True, blocking=False)
 
-    decision = CompletionGate().evaluate(state, validation_outcomes=[unrelated])
+    decision = AgentCompletionGate().evaluate(state, validation_outcomes=[unrelated])
 
     assert decision.state == TerminalState.blocked
     assert "verification:verify-result" in decision.unmet_criteria
@@ -282,7 +282,7 @@ def test_validation_outcomes_update_only_matching_success_criteria():
     state = AgentState(task_contract=contract)
 
     updated = apply_validation_outcomes(
-        state, [ValidationOutcome(validator="task_adapter", passed=True)]
+        state, [AgentValidationOutcome(validator="task_adapter", passed=True)]
     )
 
     assert updated.task_contract.success_criteria[0].status == CriterionStatus.satisfied
@@ -328,12 +328,12 @@ def test_checkpoint_recovery_does_not_repeat_unknown_non_idempotent_action():
 
 
 def test_reflection_gate_modes_and_exhaustion():
-    compiler = PolicyCompiler()
+    compiler = AgentReasoningPolicyCompiler()
     disabled = compiler.compile(RequestedReasoningPolicy(reflection_enabled=False)).effective
-    assert not ReflectionGate().should_reflect(disabled, "tool_failed", 0)
+    assert not AgentReflectionGate().should_reflect(disabled, "tool_failed", 0)
     every = compiler.compile(RequestedReasoningPolicy(reflection_trigger="every_turn")).effective
-    assert ReflectionGate().should_reflect(every, "ordinary", 0)
-    assert not ReflectionGate().should_reflect(every, "ordinary", every.budgets.max_reflections)
+    assert AgentReflectionGate().should_reflect(every, "ordinary", 0)
+    assert not AgentReflectionGate().should_reflect(every, "ordinary", every.budgets.max_reflections)
 
 
 def test_non_actionable_reflection_is_rejected():

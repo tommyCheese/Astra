@@ -1,16 +1,16 @@
 import pytest
 
-from app.application.agent_runtime.policies.completion import CompletionGate
+from app.application.agent_runtime.policies.completion import AgentCompletionGate
 from app.application.agent_runtime.policies.reasoning import (
     apply_validation_outcomes,
     build_default_contract,
 )
 from app.common.schemas.agent.execution_state import AgentState
 from app.common.schemas.agent.run_result import (
-    FinalAnswer,
-    Finding,
-    SourceReference,
-    ValidationOutcome,
+    AgentAnswerFinding,
+    AgentAnswerSourceReference,
+    AgentFinalAnswer,
+    AgentValidationOutcome,
 )
 from app.common.schemas.agent.types import TerminalState
 from app.domain.grounding.fragments import fragments_from_web_result
@@ -22,9 +22,12 @@ from app.domain.grounding.identity import (
     snapshot_id,
     source_id,
 )
-from app.domain.grounding.ledger import EvidenceConflictError, EvidenceLedger
+from app.domain.grounding.ledger import (
+    GroundingEvidenceConflictError,
+    GroundingEvidenceLedger,
+)
 from app.domain.grounding.projection import project_grounded_answer
-from app.domain.grounding.schemas import EvidenceFragment, EvidenceKind
+from app.domain.grounding.schemas import GroundingEvidenceFragment, GroundingEvidenceKind
 from app.domain.grounding.validators import grounding_validation_outcomes
 from app.infrastructure.db.models.conversations import TaskRecord
 from app.infrastructure.db.models.runs import RunRecord
@@ -69,7 +72,7 @@ def test_segment_passages_is_bounded_and_find_open_are_local():
             "content_length": len(content),
         },
     )
-    ledger = EvidenceLedger(fragments)
+    ledger = GroundingEvidenceLedger(fragments)
     matches = ledger.find_passages(source, "Beta", max_passages=2)
     assert matches
     assert ledger.open_passage(source, matches[0].id, context_before=1, context_after=1)
@@ -91,7 +94,10 @@ def test_search_snippets_are_candidate_only_evidence():
             ],
         },
     )
-    candidate = next(item for item in fragments if item.kind == EvidenceKind.search_candidate)
+    candidate = next(
+        item for item in fragments
+        if item.kind == GroundingEvidenceKind.search_candidate
+    )
     assert candidate.payload["evidence_strength"] == "candidate_only"
 
 
@@ -100,15 +106,15 @@ def test_evidence_ledger_replay_is_idempotent_and_conflicts_fail():
         "web_search",
         {"query": "Astra", "provider": "google", "candidates": []},
     )
-    ledger = EvidenceLedger(fragments)
+    ledger = GroundingEvidenceLedger(fragments)
     assert len(ledger.records()) == 1
     ledger.append(fragments[0])
     assert len(ledger.records()) == 1
-    conflicting = EvidenceFragment.model_validate(
+    conflicting = GroundingEvidenceFragment.model_validate(
         fragments[0].model_dump(mode="json")
         | {"payload_digest": "0" * 64}
     )
-    with pytest.raises(EvidenceConflictError):
+    with pytest.raises(GroundingEvidenceConflictError):
         ledger.append(conflicting)
 
 
@@ -149,17 +155,17 @@ def test_grounded_projection_binds_findings_to_passages_and_validates():
         "content_length": 48,
         "title": "Report",
     }
-    ledger = EvidenceLedger(fragments_from_web_result("web_fetch", output))
+    ledger = GroundingEvidenceLedger(fragments_from_web_result("web_fetch", output))
     answer = project_grounded_answer(
-        FinalAnswer(
+        AgentFinalAnswer(
             summary="Material conclusion",
             findings=[
-                Finding(
+                AgentAnswerFinding(
                     text="Material conclusion",
                     source_urls=["https://example.com/report"],
                 )
             ],
-            sources=[SourceReference(url="https://example.com/report")],
+            sources=[AgentAnswerSourceReference(url="https://example.com/report")],
         ),
         ledger,
     )
@@ -179,7 +185,7 @@ def test_grounded_projection_binds_findings_to_passages_and_validates():
 
 
 def test_candidate_only_evidence_cannot_support_material_claim():
-    ledger = EvidenceLedger(
+    ledger = GroundingEvidenceLedger(
         fragments_from_web_result(
             "web_search",
             {
@@ -196,7 +202,7 @@ def test_candidate_only_evidence_cannot_support_material_claim():
             },
         )
     )
-    candidate = ledger.records(EvidenceKind.search_candidate)[0]
+    candidate = ledger.records(GroundingEvidenceKind.search_candidate)[0]
     result = {
         "claims": [
             {
@@ -228,7 +234,7 @@ def test_non_web_result_does_not_activate_grounding_validators():
 
 
 def test_grounding_failure_blocks_trusted_completion_without_affecting_non_web():
-    task_adapter_passed = ValidationOutcome(
+    task_adapter_passed = AgentValidationOutcome(
         validator="task_adapter",
         passed=True,
         blocking=True,
@@ -237,12 +243,12 @@ def test_grounding_failure_blocks_trusted_completion_without_affecting_non_web()
         AgentState(task_contract=build_default_contract("General task")),
         [task_adapter_passed],
     )
-    assert CompletionGate().evaluate(
+    assert AgentCompletionGate().evaluate(
         non_web_state,
         validation_outcomes=[task_adapter_passed],
     ).state == TerminalState.completed
 
-    grounding_failed = ValidationOutcome(
+    grounding_failed = AgentValidationOutcome(
         validator="grounding.claim_support",
         passed=False,
         blocking=True,
@@ -251,7 +257,7 @@ def test_grounding_failure_blocks_trusted_completion_without_affecting_non_web()
         non_web_state,
         [grounding_failed],
     )
-    decision = CompletionGate().evaluate(
+    decision = AgentCompletionGate().evaluate(
         grounded_state,
         validation_outcomes=[task_adapter_passed, grounding_failed],
     )

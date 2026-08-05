@@ -2,17 +2,17 @@ from dataclasses import replace
 
 import pytest
 
-from app.common.core.config import Settings
+from app.common.core.config import AstraRuntimeSettings
 from app.infrastructure.plugins.builtin import builtin_contributions
 from app.infrastructure.plugins.catalog import PluginCatalogBuilder, PluginCatalogError
 from app.infrastructure.plugins.contracts import (
-    ApplicabilityBinding,
-    ComponentContribution,
-    ComponentIdentity,
+    PluginApplicabilityBinding,
+    PluginComponentContribution,
+    PluginComponentIdentity,
     PluginContribution,
     PluginDescriptor,
     PluginLifecycleState,
-    ToolContribution,
+    PluginToolContribution,
 )
 from app.infrastructure.plugins.discovery import (
     BuiltinDiscoverySource,
@@ -20,13 +20,21 @@ from app.infrastructure.plugins.discovery import (
     IsolatedProviderReference,
     ManagedPackageDiscoverySource,
 )
-from app.infrastructure.plugins.interfaces import HealthProbe, HealthReport, ToolProviderPlugin
-from app.infrastructure.tools.base import Tool, ToolExecutionError, ToolSpec
+from app.infrastructure.plugins.interfaces import (
+    PluginHealthProbe,
+    PluginHealthReport,
+    ToolProviderPlugin,
+)
+from app.infrastructure.tools.base import (
+    AstraTool,
+    AstraToolSpec,
+    ToolExecutionError,
+)
 
 
-class CatalogTool(Tool):
+class CatalogTool(AstraTool):
     def __init__(self, name="catalog.read", provider_id="catalog.provider"):
-        self.spec = ToolSpec(
+        self.spec = AstraToolSpec(
             name=name,
             version="1",
             input_schema={"type": "object"},
@@ -71,13 +79,13 @@ class CatalogPlugin(ToolProviderPlugin):
         )
         return PluginContribution(
             descriptor=self.descriptor,
-            tools=(ToolContribution(tool=tool, executor_id="in_process"),),
+            tools=(PluginToolContribution(tool=tool, executor_id="in_process"),),
         )
 
 
-class ProbedCatalogPlugin(CatalogPlugin, HealthProbe):
+class ProbedCatalogPlugin(CatalogPlugin, PluginHealthProbe):
     async def check(self):
-        return HealthReport(healthy=self.healthy, reason=None if self.healthy else "offline")
+        return PluginHealthReport(healthy=self.healthy, reason=None if self.healthy else "offline")
 
 
 def builder(*plugins, allowed=None):
@@ -103,7 +111,7 @@ async def test_catalog_detects_provider_manifest_mutation_after_assembly():
     tool = CatalogTool()
     contribution = PluginContribution(
         descriptor=descriptor,
-        tools=(ToolContribution(tool=tool, executor_id="in_process"),),
+        tools=(PluginToolContribution(tool=tool, executor_id="in_process"),),
     )
     catalog = await builder(contribution).build()
     tool.spec = tool.spec.model_copy(update={"version": "changed"})
@@ -133,19 +141,19 @@ async def test_provider_digest_and_duplicate_tool_conflicts_fail_closed():
 
 async def test_duplicate_component_and_ambiguous_analyzer_bindings_are_rejected():
     descriptor = plugin_descriptor()
-    identity = ComponentIdentity(
+    identity = PluginComponentIdentity(
         component_id="catalog.analyzer",
         provider_id=descriptor.provider_id,
         version="1",
         digest="sha256:component",
     )
-    binding = ApplicabilityBinding(tool_names=("catalog.read",))
+    binding = PluginApplicabilityBinding(tool_names=("catalog.read",))
     base = CatalogPlugin(descriptor).contribute()
     contribution = replace(
         base,
         effect_analyzers=(
-            ComponentContribution(identity, binding, object),
-            ComponentContribution(
+            PluginComponentContribution(identity, binding, object),
+            PluginComponentContribution(
                 identity.model_copy(update={"component_id": "catalog.analyzer.two"}),
                 binding,
                 object,
@@ -180,7 +188,7 @@ async def test_isolated_descriptor_cannot_smuggle_in_process_code():
     tool = CatalogTool()
     contribution = PluginContribution(
         descriptor=descriptor,
-        tools=(ToolContribution(tool=tool, executor_id="in_process"),),
+        tools=(PluginToolContribution(tool=tool, executor_id="in_process"),),
     )
     source = IsolatedDescriptorDiscoverySource(
         [IsolatedProviderReference(descriptor, contribution)]
@@ -195,7 +203,7 @@ async def test_isolated_descriptor_cannot_smuggle_in_process_code():
 
 def test_builtin_providers_contribute_domain_components_without_agent_loop_wiring():
     contributions = builtin_contributions(
-        Settings(sandbox_skip_availability_check=True, tool_bash_execute_enabled=True)
+        AstraRuntimeSettings(sandbox_skip_availability_check=True, tool_bash_execute_enabled=True)
     )
     by_provider = {item.descriptor.provider_id: item for item in contributions}
 

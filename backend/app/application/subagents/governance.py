@@ -70,7 +70,7 @@ class FrozenChildCatalog:
         if snapshot != self.model_dump():
             raise DelegationAuthorizationError(
                 DelegationRejectionCode.catalog_drift,
-                "The child Tool/Skill Catalog changed after it was frozen.",
+                "The child AstraTool/Skill Catalog changed after it was frozen.",
             )
 
 
@@ -262,7 +262,7 @@ class DelegationContractService:
         _require_catalog_entries(
             requested - {str(item.get("name")) for item in tools},
             field="requested_tools",
-            catalog_name="Tool",
+            catalog_name="AstraTool",
         )
         return tools
 
@@ -510,7 +510,7 @@ def _validate_catalog_binding(context, catalog, tool_name, tool_version) -> None
     ):
         raise DelegationAuthorizationError(
             DelegationRejectionCode.capability_not_delegated,
-            "Tool invocation is outside the frozen child Catalog.",
+            "AstraTool invocation is outside the frozen child Catalog.",
         )
 
 
@@ -521,7 +521,7 @@ def _validate_effect_scope(context, effect_plan, declared_permissions) -> None:
     if declared_permissions and not _values_are_subset(declared_permissions, scope.actions):
         raise DelegationAuthorizationError(
             DelegationRejectionCode.capability_not_delegated,
-            "Tool permissions exceed the delegated child action scope.",
+            "AstraTool permissions exceed the delegated child action scope.",
         )
     for effect in effect_plan.effects:
         _validate_effect_data_scope(effect, scope)
@@ -537,7 +537,7 @@ def _require_effect_values(effect_plan, attribute, allowed, label) -> None:
     if values and not _values_are_subset(values, allowed):
         raise DelegationAuthorizationError(
             DelegationRejectionCode.resource_not_delegated,
-            f"Tool {label} exceeds the delegated child scope.",
+            f"AstraTool {label} exceeds the delegated child scope.",
         )
 
 
@@ -545,7 +545,7 @@ def _validate_effect_data_scope(effect, scope) -> None:
     if effect.data_labels and not _values_are_subset(effect.data_labels, scope.data_labels):
         raise DelegationAuthorizationError(
             DelegationRejectionCode.resource_not_delegated,
-            "Tool data labels exceed the delegated child scope.",
+            "AstraTool data labels exceed the delegated child scope.",
         )
     if effect.kind.value in {
         "network_write",
@@ -554,7 +554,7 @@ def _validate_effect_data_scope(effect, scope) -> None:
     } and not _values_are_subset([effect.resource], scope.network_destinations):
         raise DelegationAuthorizationError(
             DelegationRejectionCode.resource_not_delegated,
-            "Tool network destination exceeds the delegated child scope.",
+            "AstraTool network destination exceeds the delegated child scope.",
         )
     workspace_roots = _workspace_roots(effect.kind.value, scope)
     if effect.kind.value.startswith("workspace_") and not _values_are_subset(
@@ -562,7 +562,7 @@ def _validate_effect_data_scope(effect, scope) -> None:
     ):
         raise DelegationAuthorizationError(
             DelegationRejectionCode.resource_not_delegated,
-            "Tool Workspace path exceeds the delegated child roots.",
+            "AstraTool Workspace path exceeds the delegated child roots.",
         )
 
 

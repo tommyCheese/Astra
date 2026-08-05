@@ -7,7 +7,7 @@ from typing import Protocol
 from app.common.contracts.json_values import JsonObject, JsonValue
 from app.common.schemas.agent.execution_state import AgentDecision, AgentReflection
 from app.common.schemas.agent.planning import PlanDraft, TaskContract
-from app.common.schemas.agent.run_result import FinalAnswer
+from app.common.schemas.agent.run_result import AgentFinalAnswer
 
 
 class DelegatedModelPort(Protocol):
@@ -20,6 +20,6 @@ class DelegatedModelPort(Protocol):
         goal: str,
         context: JsonObject,
         **kwargs: JsonValue,
-    ) -> tuple[AgentDecision, FinalAnswer | None]: ...
+    ) -> tuple[AgentDecision, AgentFinalAnswer | None]: ...
 
     async def reflect(self, goal: str, context: JsonObject) -> AgentReflection: ...

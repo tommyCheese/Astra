@@ -3,7 +3,7 @@ import time
 import httpx
 from fastapi import APIRouter, Depends
 
-from app.common.core.config import Settings, get_settings
+from app.common.core.config import AstraRuntimeSettings, get_settings
 from app.common.schemas.models import (
     ModelConnectionTestRequest,
     ModelConnectionTestResponse,
@@ -138,7 +138,7 @@ async def probe_model_connection(
 
 @router.get("/default", response_model=RuntimeDefaultModelResponse)
 async def get_runtime_default_model(
-    settings: Settings = Depends(get_settings),
+    settings: AstraRuntimeSettings = Depends(get_settings),
 ) -> RuntimeDefaultModelResponse:
     return RuntimeDefaultModelResponse(
         provider=settings.model_provider,
@@ -186,7 +186,7 @@ async def resolve_thinking_capabilities(
 )
 async def resolve_context_capabilities(
     payload: ModelContextCapabilitiesRequest,
-    settings: Settings = Depends(get_settings),
+    settings: AstraRuntimeSettings = Depends(get_settings),
 ) -> ModelContextCapabilitiesResponse:
     capabilities: list[ModelContextCapability] = []
     for item in payload.models:

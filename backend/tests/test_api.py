@@ -13,12 +13,12 @@ from app.application.agent_runtime.policies.reasoning import (
 )
 from app.application.planning import revision as plan_revision_module
 from app.application.planning.service import PlanService, canonical_agent_state
-from app.common.core.config import Settings, get_settings
+from app.common.core.config import AstraRuntimeSettings, get_settings
 from app.common.schemas.agent.planning import ExpectedObservation, PlanDraft, PlanNodeDraft
 from app.common.schemas.agent.run_policy import RequestedReasoningPolicy
 from app.common.schemas.agent.types import AnswerMode, PlanExecution, PlanNodeStatus
 from app.domain.memory import MemoryStatus
-from app.infrastructure.db.model_base import Base, utc_now
+from app.infrastructure.db.model_base import AstraOrmRecordBase, utc_now
 from app.infrastructure.db.models.conversations import TaskRecord
 from app.infrastructure.db.models.runs import RunRecord
 from app.infrastructure.db.session import get_session
@@ -35,7 +35,7 @@ from app.main import create_app
 async def app_client(monkeypatch, tmp_path):
     engine = create_async_engine("sqlite+aiosqlite:///:memory:", future=True)
     async with engine.begin() as connection:
-        await connection.run_sync(Base.metadata.create_all)
+        await connection.run_sync(AstraOrmRecordBase.metadata.create_all)
     Session = async_sessionmaker(engine, expire_on_commit=False)
 
     async def override_session():
@@ -50,7 +50,7 @@ async def app_client(monkeypatch, tmp_path):
         "build_tool_registry",
         lambda settings: fake_web_registry(),
     )
-    settings = Settings(
+    settings = AstraRuntimeSettings(
         model_provider="mock",
         artifact_store_path=str(tmp_path / "artifacts"),
         task_workspace_store_path=str(tmp_path / "workspaces"),
@@ -83,7 +83,7 @@ async def test_create_run_rejects_empty_goal(app_client):
 
 async def test_runtime_default_model_reports_whether_it_is_runnable():
     missing_key = await get_runtime_default_model(
-        Settings(model_provider="openai", model_name="gpt-5", model_api_key="")
+        AstraRuntimeSettings(model_provider="openai", model_name="gpt-5", model_api_key="")
     )
     assert missing_key.model_dump() == {
         "provider": "openai",
@@ -92,7 +92,7 @@ async def test_runtime_default_model_reports_whether_it_is_runnable():
     }
 
     local_model = await get_runtime_default_model(
-        Settings(
+        AstraRuntimeSettings(
             model_provider="ollama",
             model_name="qwen3",
             model_base_url="http://127.0.0.1:11434/v1",
@@ -100,7 +100,7 @@ async def test_runtime_default_model_reports_whether_it_is_runnable():
     )
     assert local_model.configured is True
 
-    mock_model = await get_runtime_default_model(Settings(model_provider="mock", model_name="mock"))
+    mock_model = await get_runtime_default_model(AstraRuntimeSettings(model_provider="mock", model_name="mock"))
     assert mock_model.configured is True
 
 
@@ -639,7 +639,7 @@ async def test_unattended_run_rejects_unsigned_permission_bundle(app_client):
 
 
 async def test_remote_api_clients_are_rejected_by_default():
-    app = create_app(Settings(model_provider="mock"))
+    app = create_app(AstraRuntimeSettings(model_provider="mock"))
     transport = ASGITransport(app=app, client=("203.0.113.9", 40000))
     async with AsyncClient(transport=transport, base_url="http://astra") as client:
         response = await client.get("/api/health")
@@ -2245,7 +2245,7 @@ def test_model_config_accepts_supported_cloud_providers(provider):
     from app.application.run_management.settings import RunSettingsResolver
 
     configured = RunSettingsResolver.apply_model_config(
-        Settings(model_provider="mock"),
+        AstraRuntimeSettings(model_provider="mock"),
         {
             "provider": provider,
             "name": "test-model",
@@ -2262,7 +2262,7 @@ def test_model_config_allows_keyless_local_providers(provider):
     from app.application.run_management.settings import RunSettingsResolver
 
     configured = RunSettingsResolver.apply_model_config(
-        Settings(model_provider="mock"),
+        AstraRuntimeSettings(model_provider="mock"),
         {
             "provider": provider,
             "name": "local-model",

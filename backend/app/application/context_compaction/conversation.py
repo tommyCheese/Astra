@@ -7,8 +7,8 @@ from app.application.context_compaction.accounting import TokenAccountingService
 from app.application.context_compaction.policy import build_compaction_policy
 from app.application.context_compaction.service import AgentContextCompactionService
 from app.common.schemas.context_compaction import (
-    ContextEnvelope,
-    ContextItem,
+    CompactionContextEnvelope,
+    CompactionContextItem,
     ContextOwnerRole,
     ContinuationManifest,
 )
@@ -91,7 +91,7 @@ class SemanticConversationCompactor:
             checkpoint=self._checkpoint_item(task.id, state),
             body=body,
         )
-        return ContextEnvelope(
+        return CompactionContextEnvelope(
             owner_type=ContextOwnerRole.conversation,
             owner_id=task.id,
             purpose=prefix_text,
@@ -121,7 +121,7 @@ class SemanticConversationCompactor:
             }
             count, _, _ = accounting.count_value(content)
             body.append(
-                ContextItem(
+                CompactionContextItem(
                     id=run.id,
                     kind="conversation_run",
                     content=content,
@@ -135,7 +135,7 @@ class SemanticConversationCompactor:
     def _prefix_item(task_id, prefix_text, accounting):
         count, _, _ = accounting.count_text(prefix_text)
         return (
-            ContextItem(
+            CompactionContextItem(
                 id=f"conversation:{task_id}:intent",
                 kind="current_request",
                 content=prefix_text,
@@ -150,7 +150,7 @@ class SemanticConversationCompactor:
         if not state["checkpoint"]:
             return ()
         return (
-            ContextItem(
+            CompactionContextItem(
                 id=f"checkpoint:{task_id}",
                 kind="prior_checkpoint",
                 content=state["checkpoint"],

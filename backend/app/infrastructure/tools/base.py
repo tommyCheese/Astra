@@ -17,7 +17,7 @@ class ToolExecutionError(RuntimeError):
         return {"category": self.category, "message": self.message}
 
 
-class ToolSpec(BaseModel):
+class AstraToolSpec(BaseModel):
     name: str
     version: str
     description: str = ""
@@ -50,7 +50,7 @@ class ToolSpec(BaseModel):
             self.capabilities = [self.permission]
 
 
-class ArtifactRef(BaseModel):
+class ToolArtifactReference(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     id: str
@@ -77,7 +77,7 @@ class ToolResultEnvelope(BaseModel):
     data: dict[str, Any] = Field(default_factory=dict)
     warnings: list[str] = Field(default_factory=list)
     metrics: dict[str, Any] = Field(default_factory=dict)
-    artifacts: list[ArtifactRef] = Field(default_factory=list)
+    artifacts: list[ToolArtifactReference] = Field(default_factory=list)
     error: ToolResultError | None = None
 
     @model_validator(mode="after")
@@ -89,7 +89,7 @@ class ToolResultEnvelope(BaseModel):
         return self
 
 
-def validate_tool_result(output: dict[str, Any], spec: ToolSpec) -> ToolResultEnvelope:
+def validate_tool_result(output: dict[str, Any], spec: AstraToolSpec) -> ToolResultEnvelope:
     """Validate the host envelope and the tool-declared schema without leaking payload data."""
     try:
         envelope = ToolResultEnvelope.model_validate(output)
@@ -97,13 +97,13 @@ def validate_tool_result(output: dict[str, Any], spec: ToolSpec) -> ToolResultEn
             validate_json_schema(envelope.data, spec.output_schema, path="data")
     except (TypeError, ValueError, ValidationError) as exc:
         raise ToolExecutionError(
-            "invalid_result", f"Tool returned an invalid result for {spec.name}"
+            "invalid_result", f"AstraTool returned an invalid result for {spec.name}"
         ) from exc
     return envelope
 
 
 def validate_json_schema(value: Any, schema: dict[str, Any], *, path: str = "value") -> None:
-    """Validate the bounded JSON Schema subset accepted by ToolSpec manifests."""
+    """Validate the bounded JSON Schema subset accepted by tool manifests."""
     if not schema:
         return
     _validate_alternatives(value, schema.get("anyOf"), path)
@@ -246,8 +246,8 @@ async def materialize_skill_inputs(
     )
 
 
-class Tool(ABC):
-    spec: ToolSpec
+class AstraTool(ABC):
+    spec: AstraToolSpec
 
     @abstractmethod
     async def run(
@@ -256,29 +256,29 @@ class Tool(ABC):
         raise NotImplementedError
 
 
-class ToolRegistry:
+class AstraToolRegistry:
     def __init__(self) -> None:
-        self._tools: dict[str, Tool] = {}
+        self._tools: dict[str, AstraTool] = {}
 
-    def register(self, tool: Tool) -> None:
+    def register(self, tool: AstraTool) -> None:
         self._tools[tool.spec.name] = tool
 
-    def get(self, name: str) -> Tool:
+    def get(self, name: str) -> AstraTool:
         try:
             return self._tools[name]
         except KeyError as exc:
-            raise ToolExecutionError("tool_not_allowed", f"Tool is not registered: {name}") from exc
+            raise ToolExecutionError("tool_not_allowed", f"AstraTool is not registered: {name}") from exc
 
-    def specs(self) -> dict[str, ToolSpec]:
+    def specs(self) -> dict[str, AstraToolSpec]:
         return {name: tool.spec for name, tool in self._tools.items()}
 
-    def extend(self, tools: Iterable[Tool]) -> "ToolRegistry":
+    def extend(self, tools: Iterable[AstraTool]) -> "AstraToolRegistry":
         for tool in tools:
             self.register(tool)
         return self
 
     @classmethod
-    def compose(cls, *registries: "ToolRegistry") -> "ToolRegistry":
+    def compose(cls, *registries: "AstraToolRegistry") -> "AstraToolRegistry":
         combined = cls()
         for registry in registries:
             combined.extend(registry._tools.values())

@@ -16,7 +16,7 @@ MEMORY_SETTING_BOUNDS = {
 }
 
 
-class RuntimeConfiguration:
+class SandboxRuntimeConfiguration:
     """Owns persisted Agent Profile and Memory runtime settings."""
 
     def __init__(self, settings: Any, path: Path):

@@ -13,7 +13,7 @@ from trafilatura import extract_metadata
 from app.infrastructure.tools.web.output import build_fetch_output, iso_now, quality_warnings
 
 
-class ContentExtractor(HTMLParser):
+class WebContentExtractor(HTMLParser):
     SKIPPED_TAGS = frozenset({"script", "style", "svg", "noscript"})
     VOID_TAGS = frozenset(
         {
@@ -239,7 +239,7 @@ def _extract_html(
     redirect_count: int,
     response_bytes: int | None,
 ) -> dict[str, Any]:
-    parser = ContentExtractor()
+    parser = WebContentExtractor()
     parser.feed(body)
     document_metadata = extract_metadata(body, default_url=url)
     title, description, metadata = _html_metadata(
@@ -284,7 +284,7 @@ def _extract_html(
 
 
 def _html_metadata(
-    parser: ContentExtractor,
+    parser: WebContentExtractor,
     document_metadata: Any,
     *,
     url: str,
@@ -334,7 +334,7 @@ def _html_content(
     body: str,
     *,
     url: str,
-    parser: ContentExtractor,
+    parser: WebContentExtractor,
     description: str | None,
     snippet: str,
     crawler_plan: dict[str, Any],
@@ -377,7 +377,7 @@ def _trafilatura_content(
 
 
 def choose_strategy(
-    crawler_plan: dict[str, Any], parser: ContentExtractor, description: str | None
+    crawler_plan: dict[str, Any], parser: WebContentExtractor, description: str | None
 ) -> str:
     strategy = crawler_plan.get("strategy", "trafilatura")
     if strategy == "readability":
@@ -416,7 +416,7 @@ def selectors_to_prune_xpath(selectors: list[str]) -> list[str] | None:
 
 def extract_content_by_strategy(
     strategy: str,
-    parser: ContentExtractor,
+    parser: WebContentExtractor,
     description: str | None,
     snippet: str,
     selectors: list[str],

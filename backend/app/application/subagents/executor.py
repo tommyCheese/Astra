@@ -9,10 +9,10 @@ from app.application.subagents.executor_contracts import AgentExecutor, AgentExe
 from app.application.subagents.governance import ChildInvocationAuthorizer, stable_digest
 from app.application.subagents.invocation import ChildToolInvocationInput, ChildToolInvocationStage
 from app.application.subagents.run_loop import ChildAgentRun
-from app.common.core.config import Settings
+from app.common.core.config import AstraRuntimeSettings
 from app.common.schemas.agent.execution_state import CompletionDecision
 from app.common.schemas.agent.planning import SuccessCriterion, TaskContract
-from app.common.schemas.agent.run_result import ValidationIssue, ValidationOutcome
+from app.common.schemas.agent.run_result import AgentValidationIssue, AgentValidationOutcome
 from app.common.schemas.agent.types import (
     CriterionStatus,
     NodeExecutionPhase,
@@ -35,11 +35,11 @@ from app.infrastructure.db.models.executions import AgentExecutionRecord
 from app.infrastructure.repositories.agent_executions import AgentExecutionRepository
 from app.infrastructure.repositories.executions import NodeExecutionRepository
 from app.infrastructure.repositories.run_unit_of_work import RunUnitOfWork
-from app.infrastructure.tools.base import ToolRegistry, validate_json_schema
+from app.infrastructure.tools.base import AstraToolRegistry, validate_json_schema
 
 
 def _evaluate_basic_completion(
-    validation_outcomes: list[ValidationOutcome],
+    validation_outcomes: list[AgentValidationOutcome],
 ) -> CompletionDecision:
     blocking = [
         outcome.validator
@@ -78,12 +78,12 @@ class LocalAstraAgentExecutor(AgentExecutor):
         self,
         *,
         model_client: DelegatedModelPort,
-        tool_registry: ToolRegistry,
-        settings: Settings | None = None,
+        tool_registry: AstraToolRegistry,
+        settings: AstraRuntimeSettings | None = None,
     ):
         self.model_client = model_client
         self.tool_registry = tool_registry
-        self.settings = settings or Settings()
+        self.settings = settings or AstraRuntimeSettings()
         self.authorizer = ChildInvocationAuthorizer()
 
     async def execute(
@@ -162,18 +162,18 @@ class LocalAstraAgentExecutor(AgentExecutor):
         evidence: list[SubagentEvidenceReference],
     ) -> SubagentResult:
         outputs = deepcopy(payload.get("outputs", {}))
-        outcomes: list[ValidationOutcome] = []
+        outcomes: list[AgentValidationOutcome] = []
         try:
             validate_json_schema(outputs, contract.request.output_schema, path="outputs")
-            outcomes.append(ValidationOutcome(validator="subagent_output_schema", passed=True))
+            outcomes.append(AgentValidationOutcome(validator="subagent_output_schema", passed=True))
         except ValueError as exc:
             outcomes.append(
-                ValidationOutcome(
+                AgentValidationOutcome(
                     validator="subagent_output_schema",
                     passed=False,
                     blocking=True,
                     issues=[
-                        ValidationIssue(
+                        AgentValidationIssue(
                             code="subagent_output_schema_invalid",
                             message=str(exc),
                             severity="error",

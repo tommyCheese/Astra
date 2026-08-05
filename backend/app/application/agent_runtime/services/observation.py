@@ -5,19 +5,19 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from app.application.agent_runtime.result_adapters import ProcessorRegistry
+from app.application.agent_runtime.result_adapters import AgentToolResultProcessorRegistry
 from app.application.context_compaction.tool_outputs import ToolOutputGovernanceService
-from app.common.core.config import Settings
+from app.common.core.config import AstraRuntimeSettings
 from app.common.schemas.agent.execution_state import AgentObservation
-from app.common.schemas.context_compaction import ContextOwnerRole, ContextReference
+from app.common.schemas.context_compaction import CompactionContextReference, ContextOwnerRole
 from app.common.schemas.permissions import ActionEffectPlan
 from app.infrastructure.db.models.permissions import ToolCallRecord
-from app.infrastructure.tools.base import ToolSpec
+from app.infrastructure.tools.base import AstraToolSpec
 
 
 @dataclass(frozen=True)
 class ObservationStageInput:
-    tool_spec: ToolSpec
+    tool_spec: AstraToolSpec
     tool_call: ToolCallRecord
     tool_output: dict[str, Any]
     effect_plan: ActionEffectPlan
@@ -36,8 +36,8 @@ class NormalizedObservation:
 class ObservationNormalizationStage:
     def __init__(
         self,
-        settings: Settings,
-        processors: ProcessorRegistry,
+        settings: AstraRuntimeSettings,
+        processors: AgentToolResultProcessorRegistry,
         normalize_tool_output,
     ) -> None:
         self._governance = ToolOutputGovernanceService(settings)
@@ -121,8 +121,8 @@ class ObservationNormalizationStage:
             )
         )
 
-        async def persist(_serialized: bytes, checksum: str) -> ContextReference:
-            return ContextReference(
+        async def persist(_serialized: bytes, checksum: str) -> CompactionContextReference:
+            return CompactionContextReference(
                 kind="tool_call",
                 ref=f"tool_call:{stage_input.tool_call.id}",
                 content_hash=checksum,

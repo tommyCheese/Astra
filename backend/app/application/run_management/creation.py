@@ -11,14 +11,18 @@ from app.application.agent_runtime.policies.reasoning import (
     resolve_run_profile,
 )
 from app.application.permissions.governance import verify_permission_bundle
-from app.application.run_management.contracts import PreparedRun
+from app.application.run_management.contracts import PreparedRunExecution
 from app.application.run_management.conversation_context import ConversationContextManager
 from app.application.run_management.settings import RunSettingsResolver
 from app.application.skills.activation import SkillActivationService
 from app.application.skills.catalog import SkillCatalogBuilder
 from app.application.subagents.eligibility import subagent_execution_eligibility
-from app.common.core.config import Settings
-from app.common.core.errors import ConfigurationError, ResourceError, ValidationError
+from app.common.core.config import AstraRuntimeSettings
+from app.common.core.errors import (
+    AstraConfigurationError,
+    AstraInputValidationError,
+    AstraResourceNotFoundError,
+)
 from app.common.schemas.agent.api_views import CreateRunRequest, CreateRunResponse
 from app.common.schemas.agent.run_policy import RunExecutionProfile
 from app.common.schemas.permissions import PermissionBundle
@@ -35,7 +39,7 @@ class RunCreator:
     def __init__(
         self,
         session: AsyncSession,
-        settings: Settings,
+        settings: AstraRuntimeSettings,
         settings_resolver: RunSettingsResolver,
     ) -> None:
         self._session = session
@@ -47,10 +51,10 @@ class RunCreator:
         request: CreateRunRequest,
         *,
         commit: bool = True,
-    ) -> PreparedRun:
+    ) -> PreparedRunExecution:
         run_goal = request.goal.strip()
         if not run_goal:
-            raise ValidationError("GOAL_REQUIRED", "请输入你想完成的目标。", {"field": "goal"})
+            raise AstraInputValidationError("GOAL_REQUIRED", "请输入你想完成的目标。", {"field": "goal"})
         logger.info(
             "run.create.start conversation_id=%s provider=%s model=%s goal_chars=%s",
             request.task_id,
@@ -82,14 +86,14 @@ class RunCreator:
             else:
                 await self._session.flush()
         except AgentProfileConfigurationError as error:
-            raise ConfigurationError(
+            raise AstraConfigurationError(
                 "AGENT_PROFILE_INVALID",
                 "Astra 身份配置无效，暂时无法创建任务。",
             ) from error
         except ValueError as error:
             if str(error).startswith("Task not found"):
-                raise ResourceError("TASK_NOT_FOUND", "找不到指定任务。") from error
-            raise ValidationError("RUN_REQUEST_INVALID", "无法创建任务。") from error
+                raise AstraResourceNotFoundError("TASK_NOT_FOUND", "找不到指定任务。") from error
+            raise AstraInputValidationError("RUN_REQUEST_INVALID", "无法创建任务。") from error
         response = self._response_for_run(run)
         logger.info(
             "run.create.accepted run_id=%s conversation_id=%s status=%s",
@@ -97,13 +101,13 @@ class RunCreator:
             run.task_id,
             run.status,
         )
-        return PreparedRun(response=response, settings=run_settings)
+        return PreparedRunExecution(response=response, settings=run_settings)
 
     async def _prepare_conversation(
         self,
         request: CreateRunRequest,
         run_goal: str,
-        run_settings: Settings,
+        run_settings: AstraRuntimeSettings,
     ) -> None:
         if request.task_id is None:
             return
@@ -119,7 +123,7 @@ class RunCreator:
     @staticmethod
     def _compile_execution_profile(
         request: CreateRunRequest,
-        run_settings: Settings,
+        run_settings: AstraRuntimeSettings,
     ) -> RunExecutionProfile:
         execution_profile = resolve_run_profile(
             request.answer_mode,
@@ -134,12 +138,12 @@ class RunCreator:
                 live_swarm_enabled=bool(run_settings.tool_swarm_enabled),
             )
             if not eligibility.executable:
-                raise ValidationError(
+                raise AstraInputValidationError(
                     "SUBAGENT_COMMAND_UNAVAILABLE",
                     "当前策略不允许创建必需子 Agent 运行。",
                 )
         if not request.interactive and request.permission_bundle is None:
-            raise ValidationError(
+            raise AstraInputValidationError(
                 "PERMISSION_BUNDLE_REQUIRED",
                 "无人值守、定时或后台运行必须提供显式权限包。",
             )
@@ -149,7 +153,7 @@ class RunCreator:
         self,
         request: CreateRunRequest,
         run_goal: str,
-        run_settings: Settings,
+        run_settings: AstraRuntimeSettings,
         execution_profile: RunExecutionProfile,
     ) -> RunRecord:
         context_window = resolve_context_window(
@@ -205,12 +209,12 @@ class RunCreator:
         try:
             permission_bundle = PermissionBundle.model_validate(raw_bundle)
         except ValueError as error:
-            raise ValidationError("PERMISSION_BUNDLE_INVALID", "权限包格式无效。") from error
+            raise AstraInputValidationError("PERMISSION_BUNDLE_INVALID", "权限包格式无效。") from error
         if not verify_permission_bundle(
             permission_bundle,
             self._settings.permission_bundle_signing_secret,
         ):
-            raise ValidationError(
+            raise AstraInputValidationError(
                 "PERMISSION_BUNDLE_INVALID",
                 "权限包签名无效或签名密钥未配置。",
             )
@@ -222,7 +226,7 @@ class RunCreator:
         run_goal: str,
         request: CreateRunRequest,
         answer_mode: str,
-        run_settings: Settings,
+        run_settings: AstraRuntimeSettings,
     ) -> None:
         if not run_settings.skills_enabled:
             return
@@ -251,14 +255,14 @@ class RunCreator:
                     reason="explicit run selection",
                 )
             except ValueError as error:
-                raise ValidationError(
+                raise AstraInputValidationError(
                     "SKILL_SELECTION_INVALID",
                     f"无法激活 Skill：{skill_identity}",
                     {"qualified_identity": skill_identity, "reason": str(error)},
                 ) from error
 
     @staticmethod
-    def _configured_skill_capabilities(settings: Settings) -> set[str]:
+    def _configured_skill_capabilities(settings: AstraRuntimeSettings) -> set[str]:
         return {
             capability
             for capability, is_enabled in {

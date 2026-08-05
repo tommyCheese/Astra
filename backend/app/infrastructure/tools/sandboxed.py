@@ -4,12 +4,12 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-from app.common.core.config import Settings
+from app.common.core.config import AstraRuntimeSettings
 from app.infrastructure.sandbox.runtime import SandboxError, SandboxRequest
 from app.infrastructure.tools.base import (
-    Tool,
+    AstraTool,
+    AstraToolSpec,
     ToolExecutionError,
-    ToolSpec,
     materialize_skill_inputs,
 )
 
@@ -22,7 +22,7 @@ def _env_bool(value: bool) -> str:
     return "true" if value else "false"
 
 
-def _web_runtime_config(settings: Settings, tool_name: str) -> dict[str, str]:
+def _web_runtime_config(settings: AstraRuntimeSettings, tool_name: str) -> dict[str, str]:
     """Build an explicit allowlist; never forward the host process environment."""
     runtime_config = {"ALLOW_NETWORK_READ": "true"}
     if tool_name == "web_search":
@@ -52,12 +52,12 @@ def _web_runtime_config(settings: Settings, tool_name: str) -> dict[str, str]:
     return runtime_config
 
 
-class SandboxedWebTool(Tool):
+class SandboxedWebTool(AstraTool):
     """Host-side plugin descriptor and proxy for a container-only web tool."""
 
-    def __init__(self, native_tool: Tool, settings: Settings):
+    def __init__(self, native_tool: AstraTool, settings: AstraRuntimeSettings):
         self.settings = settings
-        self.spec = ToolSpec.model_validate(
+        self.spec = AstraToolSpec.model_validate(
             native_tool.spec.model_dump()
             | {
                 "risk": "sandboxed",

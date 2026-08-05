@@ -23,8 +23,8 @@ from app.infrastructure.db.models.conversations import TaskRecord
 from app.infrastructure.db.models.memory import (
     MemoryAuditRecord,
     MemoryLinkRecord,
-    MemoryRecord,
     MemorySourceRecord,
+    PersistedMemoryRecord,
 )
 from app.infrastructure.db.models.permissions import ToolCallRecord
 from app.infrastructure.db.models.runs import AgentTurnRecord, RunRecord
@@ -265,7 +265,7 @@ class MemoryRepository:
         created_by: str | None = None,
         normalize_kind: bool = True,
         commit: bool = True,
-    ) -> MemoryRecord:
+    ) -> PersistedMemoryRecord:
         normalized_content = str(content or "").strip()
         initial_status = _validate_new_memory(
             normalized_content, confidence, importance, utility_score, status, scope, provenance
@@ -281,7 +281,7 @@ class MemoryRepository:
         _require_persistent_sources(scope, source_specs)
 
         now = utc_now()
-        record = MemoryRecord(
+        record = PersistedMemoryRecord(
             run_id=run_id,
             created_by=created_by or (task.created_by if task else None),
             memory_key=memory_key or uuid_str(),
@@ -352,10 +352,10 @@ class MemoryRepository:
             raise MemoryValidationError("Explicit Memory namespace does not match the source Run")
         return derived_namespace, task
 
-    async def require(self, memory_id: str, *, include_sources: bool = False) -> MemoryRecord:
-        query = select(MemoryRecord).where(MemoryRecord.id == memory_id)
+    async def require(self, memory_id: str, *, include_sources: bool = False) -> PersistedMemoryRecord:
+        query = select(PersistedMemoryRecord).where(PersistedMemoryRecord.id == memory_id)
         if include_sources:
-            query = query.options(selectinload(MemoryRecord.sources))
+            query = query.options(selectinload(PersistedMemoryRecord.sources))
         memory = (await self.session.execute(query)).scalar_one_or_none()
         if memory is None:
             raise MemoryValidationError(f"Memory not found: {memory_id}")
@@ -367,19 +367,19 @@ class MemoryRepository:
         namespace: MemoryNamespace,
         memory_key: str,
         include_sources: bool = False,
-    ) -> MemoryRecord | None:
+    ) -> PersistedMemoryRecord | None:
         query = (
-            select(MemoryRecord)
+            select(PersistedMemoryRecord)
             .where(
-                MemoryRecord.namespace_type == namespace.type.value,
-                MemoryRecord.namespace_id == namespace.id,
-                MemoryRecord.memory_key == memory_key,
+                PersistedMemoryRecord.namespace_type == namespace.type.value,
+                PersistedMemoryRecord.namespace_id == namespace.id,
+                PersistedMemoryRecord.memory_key == memory_key,
             )
-            .order_by(MemoryRecord.version.desc(), MemoryRecord.created_at.desc())
+            .order_by(PersistedMemoryRecord.version.desc(), PersistedMemoryRecord.created_at.desc())
             .limit(1)
         )
         if include_sources:
-            query = query.options(selectinload(MemoryRecord.sources))
+            query = query.options(selectinload(PersistedMemoryRecord.sources))
         return (await self.session.execute(query)).scalar_one_or_none()
 
     async def transition(
@@ -391,7 +391,7 @@ class MemoryRepository:
         actor: str | None = None,
         reason: str | None = None,
         commit: bool = True,
-    ) -> MemoryRecord:
+    ) -> PersistedMemoryRecord:
         memory = await self.require(memory_id, include_sources=True)
         if memory.state_version != expected_state_version:
             raise MemoryConflictError("Memory state version changed")
@@ -416,10 +416,10 @@ class MemoryRepository:
             values["revoked_at"] = now
             values["revoke_reason"] = reason
         result = await self.session.execute(
-            update(MemoryRecord)
+            update(PersistedMemoryRecord)
             .where(
-                MemoryRecord.id == memory_id,
-                MemoryRecord.state_version == expected_state_version,
+                PersistedMemoryRecord.id == memory_id,
+                PersistedMemoryRecord.state_version == expected_state_version,
             )
             .values(**values)
         )
@@ -458,8 +458,8 @@ class MemoryRepository:
         importance,
         valid_from,
         now,
-    ) -> MemoryRecord:
-        replacement = MemoryRecord(
+    ) -> PersistedMemoryRecord:
+        replacement = PersistedMemoryRecord(
             run_id=run_id,
             created_by=current.created_by,
             memory_key=current.memory_key,
@@ -514,7 +514,7 @@ class MemoryRepository:
         valid_from: datetime | None = None,
         actor: str | None = None,
         reason: str | None = None,
-    ) -> MemoryRecord:
+    ) -> PersistedMemoryRecord:
         current = await self.require(memory_id, include_sources=True)
         if current.status != MemoryStatus.active.value:
             raise MemoryValidationError("Only active Memory can be superseded")
@@ -542,11 +542,11 @@ class MemoryRepository:
         await self.session.flush()
         self._copy_version_sources(current, replacement, source_specs, now)
         result = await self.session.execute(
-            update(MemoryRecord)
+            update(PersistedMemoryRecord)
             .where(
-                MemoryRecord.id == current.id,
-                MemoryRecord.state_version == expected_state_version,
-                MemoryRecord.status == MemoryStatus.active.value,
+                PersistedMemoryRecord.id == current.id,
+                PersistedMemoryRecord.state_version == expected_state_version,
+                PersistedMemoryRecord.status == MemoryStatus.active.value,
             )
             .values(
                 status=MemoryStatus.superseded.value,
@@ -606,7 +606,7 @@ class MemoryRepository:
         valid_from: datetime | None = None,
         actor: str | None = None,
         reason: str | None = None,
-    ) -> MemoryRecord:
+    ) -> PersistedMemoryRecord:
         current = await self.require(memory_id, include_sources=True)
         if current.status != MemoryStatus.active.value:
             raise MemoryValidationError("Only active Memory can receive a candidate replacement")
@@ -661,7 +661,7 @@ class MemoryRepository:
         expected_state_version: int,
         actor: str,
         reason: str,
-    ) -> MemoryRecord:
+    ) -> PersistedMemoryRecord:
         candidate = await self.require(memory_id, include_sources=True)
         normalized_reason = str(reason or "").strip()
         normalized_actor = str(actor or "").strip()
@@ -673,11 +673,11 @@ class MemoryRepository:
         base = await self._supersede_candidate_base(candidate, now)
 
         result = await self.session.execute(
-            update(MemoryRecord)
+            update(PersistedMemoryRecord)
             .where(
-                MemoryRecord.id == candidate.id,
-                MemoryRecord.status == MemoryStatus.candidate.value,
-                MemoryRecord.state_version == expected_state_version,
+                PersistedMemoryRecord.id == candidate.id,
+                PersistedMemoryRecord.status == MemoryStatus.candidate.value,
+                PersistedMemoryRecord.state_version == expected_state_version,
             )
             .values(
                 status=MemoryStatus.active.value,
@@ -743,11 +743,11 @@ class MemoryRepository:
         if not same_lineage:
             raise MemoryConflictError("Candidate base version changed")
         result = await self.session.execute(
-            update(MemoryRecord)
+            update(PersistedMemoryRecord)
             .where(
-                MemoryRecord.id == base.id,
-                MemoryRecord.status == MemoryStatus.active.value,
-                MemoryRecord.state_version == base.state_version,
+                PersistedMemoryRecord.id == base.id,
+                PersistedMemoryRecord.status == MemoryStatus.active.value,
+                PersistedMemoryRecord.state_version == base.state_version,
             )
             .values(
                 status=MemoryStatus.superseded.value,

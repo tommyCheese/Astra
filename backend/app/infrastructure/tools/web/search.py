@@ -5,16 +5,16 @@ from __future__ import annotations
 import asyncio
 from typing import TYPE_CHECKING, Any
 
-from app.infrastructure.tools.base import Tool, ToolSpec
-from app.infrastructure.tools.web.providers import SearchProviderClient
-from app.infrastructure.tools.web.results import SearchResultNormalizer, combine_outputs
+from app.infrastructure.tools.base import AstraTool, AstraToolSpec
+from app.infrastructure.tools.web.providers import WebSearchProviderClient
+from app.infrastructure.tools.web.results import WebSearchResultNormalizer, combine_outputs
 
 if TYPE_CHECKING:
-    from app.common.core.config import Settings
+    from app.common.core.config import AstraRuntimeSettings
 
 
-class WebSearchTool(Tool):
-    spec = ToolSpec(
+class WebSearchTool(AstraTool):
+    spec = AstraToolSpec(
         name="web_search",
         version="0.4.0",
         description="Search the web through a configured provider and return candidate sources.",
@@ -64,9 +64,9 @@ class WebSearchTool(Tool):
         error_categories=["invalid_input", "missing_credentials", "search_failed"],
     )
 
-    def __init__(self, settings: Settings):
-        self.provider_client = SearchProviderClient(settings)
-        self.result_normalizer = SearchResultNormalizer(self.provider_client.search_parameters)
+    def __init__(self, settings: AstraRuntimeSettings):
+        self.provider_client = WebSearchProviderClient(settings)
+        self.result_normalizer = WebSearchResultNormalizer(self.provider_client.search_parameters)
 
     async def run(self, tool_input: dict[str, Any], *, context=None) -> dict[str, Any]:
         requests = self.result_normalizer.logical_queries(tool_input)

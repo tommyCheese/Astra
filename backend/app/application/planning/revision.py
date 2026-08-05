@@ -6,7 +6,7 @@ import json
 from dataclasses import dataclass
 
 from app.application.planning.service import PlanValidationError, PlanValidator
-from app.common.core.config import Settings
+from app.common.core.config import AstraRuntimeSettings
 from app.common.schemas.agent.planning import PlanDraft, TaskContract
 from app.common.schemas.agent.run_policy import ReasoningPolicySnapshot
 from app.common.schemas.agent.types import PlanNodeStatus, PlanStatus
@@ -40,7 +40,7 @@ class RevisionEnvironment:
 
 async def revise_waiting_plan(
     repository: RunUnitOfWork,
-    settings: Settings,
+    settings: AstraRuntimeSettings,
     *,
     run_id: str,
     request: str,

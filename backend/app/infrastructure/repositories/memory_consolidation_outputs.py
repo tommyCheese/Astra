@@ -18,22 +18,22 @@ from app.infrastructure.db.models.memory import (
     MemoryAuditRecord,
     MemoryConsolidationJobRecord,
     MemoryLinkRecord,
-    MemoryRecord,
     MemorySourceRecord,
+    PersistedMemoryRecord,
 )
 
 
 @dataclass(frozen=True)
-class PublicationContext:
+class MemoryPublicationContext:
     job: MemoryConsolidationJobRecord
     manifest: ConsolidationInputManifest
     proposal: ConsolidationProposal
-    source_by_id: dict[str, MemoryRecord]
+    source_by_id: dict[str, PersistedMemoryRecord]
     published_at: datetime
 
 
 @dataclass(frozen=True)
-class RollbackManifest:
+class MemoryRollbackManifest:
     original: MemoryConsolidationJobRecord
     outputs: list[dict[str, Any]]
     replacements: list[dict[str, Any]]
@@ -65,10 +65,10 @@ async def next_memory_version(
     session: Any, manifest: ConsolidationInputManifest, memory_key: str
 ) -> int:
     current = await session.scalar(
-        select(func.coalesce(func.max(MemoryRecord.version), 0)).where(
-            MemoryRecord.namespace_type == manifest.namespace_type,
-            MemoryRecord.namespace_id == manifest.namespace_id,
-            MemoryRecord.memory_key == memory_key,
+        select(func.coalesce(func.max(PersistedMemoryRecord.version), 0)).where(
+            PersistedMemoryRecord.namespace_type == manifest.namespace_type,
+            PersistedMemoryRecord.namespace_id == manifest.namespace_id,
+            PersistedMemoryRecord.memory_key == memory_key,
         )
     )
     return int(current) + 1
@@ -77,7 +77,7 @@ async def next_memory_version(
 def copy_sources_and_create_links(
     session: Any,
     operation: ConsolidationOperation,
-    source_memories: list[MemoryRecord],
+    source_memories: list[PersistedMemoryRecord],
     output_id: str,
     *,
     job_id: str,
@@ -129,14 +129,14 @@ def _copy_source(
 
 async def create_output_memory(
     session: Any,
-    context: PublicationContext,
+    context: MemoryPublicationContext,
     operation: ConsolidationOperation,
-    source_memories: list[MemoryRecord],
+    source_memories: list[PersistedMemoryRecord],
     actor: str | None,
-) -> MemoryRecord:
+) -> PersistedMemoryRecord:
     version = await next_memory_version(session, context.manifest, operation.memory_key)
     run_ids = {memory.run_id for memory in source_memories if memory.run_id}
-    output = MemoryRecord(
+    output = PersistedMemoryRecord(
         id=uuid_str(),
         run_id=next(iter(run_ids)) if len(run_ids) == 1 else None,
         created_by=_output_creator(context, actor),
@@ -165,14 +165,14 @@ async def create_output_memory(
     return output
 
 
-def _output_creator(context: PublicationContext, actor: str | None) -> str | None:
+def _output_creator(context: MemoryPublicationContext, actor: str | None) -> str | None:
     if context.manifest.namespace_type == "user":
         return context.manifest.namespace_id
     return actor
 
 
 def _output_provenance(
-    context: PublicationContext, operation: ConsolidationOperation
+    context: MemoryPublicationContext, operation: ConsolidationOperation
 ) -> dict[str, Any]:
     return {
         "consolidation_job_id": context.job.id,
@@ -184,7 +184,7 @@ def _output_provenance(
 
 async def supersede_replacements(
     session: Any,
-    context: PublicationContext,
+    context: MemoryPublicationContext,
     operation: ConsolidationOperation,
     output_id: str,
     *,
@@ -212,16 +212,16 @@ async def supersede_replacements(
 
 async def _supersede_memory(
     session: Any,
-    context: PublicationContext,
+    context: MemoryPublicationContext,
     memory_id: str,
     expected_state_version: int,
 ) -> None:
     result = await session.execute(
-        update(MemoryRecord)
+        update(PersistedMemoryRecord)
         .where(
-            MemoryRecord.id == memory_id,
-            MemoryRecord.status == MemoryStatus.active.value,
-            MemoryRecord.state_version == expected_state_version,
+            PersistedMemoryRecord.id == memory_id,
+            PersistedMemoryRecord.status == MemoryStatus.active.value,
+            PersistedMemoryRecord.state_version == expected_state_version,
         )
         .values(
             status=MemoryStatus.superseded.value,
@@ -236,7 +236,7 @@ async def _supersede_memory(
 
 def _audit_superseded(
     session: Any,
-    context: PublicationContext,
+    context: MemoryPublicationContext,
     memory_id: str,
     output_id: str,
     expected_state_version: int,

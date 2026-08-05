@@ -5,12 +5,12 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.common.core.config import Settings
+from app.common.core.config import AstraRuntimeSettings
 from app.common.schemas.context_compaction import (
-    ContextItem,
+    CompactionContextItem,
     ContextOwnerRole,
     ContextThresholdScope,
-    TokenAccounting,
+    ContextTokenAccounting,
 )
 
 
@@ -42,7 +42,7 @@ class CompactionPolicy(BaseModel):
 class RecentTailSelection(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    items: tuple[ContextItem, ...]
+    items: tuple[CompactionContextItem, ...]
     token_count: int = Field(ge=0)
     first_retained_id: str | None = None
 
@@ -67,7 +67,7 @@ class ShadowCompactionProjection(BaseModel):
     would_install: Literal[False] = False
 
 
-def build_compaction_policy(settings: Settings, role: ContextOwnerRole) -> CompactionPolicy:
+def build_compaction_policy(settings: AstraRuntimeSettings, role: ContextOwnerRole) -> CompactionPolicy:
     child = role == ContextOwnerRole.child_execution
     enabled_by_role = {
         ContextOwnerRole.conversation: settings.context_compaction_conversation_enabled,
@@ -125,13 +125,13 @@ def build_compaction_policy(settings: Settings, role: ContextOwnerRole) -> Compa
     )
 
 
-def recent_tail_budget(policy: CompactionPolicy, accounting: TokenAccounting) -> int:
+def recent_tail_budget(policy: CompactionPolicy, accounting: ContextTokenAccounting) -> int:
     ratio_budget = int(accounting.usable_input * policy.recent_tail_max_ratio)
     return max(0, min(policy.recent_tail_tokens, ratio_budget))
 
 
-def select_recent_tail(items: tuple[ContextItem, ...], token_budget: int) -> RecentTailSelection:
-    selected: list[ContextItem] = []
+def select_recent_tail(items: tuple[CompactionContextItem, ...], token_budget: int) -> RecentTailSelection:
+    selected: list[CompactionContextItem] = []
     used = 0
     for item in reversed(items):
         size = max(0, item.token_count)
@@ -150,7 +150,7 @@ def select_recent_tail(items: tuple[ContextItem, ...], token_budget: int) -> Rec
 
 
 def evaluate_compaction_trigger(
-    accounting: TokenAccounting,
+    accounting: ContextTokenAccounting,
     policy: CompactionPolicy,
     *,
     provider_changed: bool = False,
@@ -198,7 +198,7 @@ def evaluate_compaction_trigger(
 
 
 def project_shadow_compaction(
-    accounting: TokenAccounting,
+    accounting: ContextTokenAccounting,
     policy: CompactionPolicy,
     *,
     expected_checkpoint_tokens: int,

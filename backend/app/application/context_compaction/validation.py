@@ -7,7 +7,7 @@ from pydantic import BaseModel, ValidationError
 
 from app.common.schemas.context_compaction import (
     ChildContextCheckpointV2,
-    ContextEnvelope,
+    CompactionContextEnvelope,
     ContextOwnerRole,
     ConversationContextCheckpointV2,
     RootContextCheckpointV2,
@@ -39,7 +39,7 @@ FORBIDDEN_KEYS = frozenset(
 
 def validate_checkpoint_payload(
     payload: dict[str, Any],
-    envelope: ContextEnvelope,
+    envelope: CompactionContextEnvelope,
 ) -> CheckpointV2:
     _reject_forbidden_content(payload)
     schema: type[BaseModel]
@@ -69,7 +69,7 @@ def _reject_forbidden_content(value: Any) -> None:
             _reject_forbidden_content(child)
 
 
-def _validate_binding(checkpoint: CheckpointV2, envelope: ContextEnvelope) -> None:
+def _validate_binding(checkpoint: CheckpointV2, envelope: CompactionContextEnvelope) -> None:
     if isinstance(checkpoint, ChildContextCheckpointV2):
         continuation = envelope.continuation
         if checkpoint.agent_execution_id != envelope.owner_id:
@@ -80,7 +80,7 @@ def _validate_binding(checkpoint: CheckpointV2, envelope: ContextEnvelope) -> No
             raise CheckpointValidationError("child_contract_hash_mismatch")
 
 
-def _validate_references(checkpoint: CheckpointV2, envelope: ContextEnvelope) -> None:
+def _validate_references(checkpoint: CheckpointV2, envelope: CompactionContextEnvelope) -> None:
     allowed = {ref.ref: ref for ref in envelope.reference_manifest if ref.accessible}
     referenced: set[str] = set()
     if isinstance(checkpoint, RootContextCheckpointV2):

@@ -4,7 +4,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from app.infrastructure.db.model_base import Base
+from app.infrastructure.db.model_base import AstraOrmRecordBase
 
 BACKEND_ROOT = Path(__file__).parents[1]
 BASELINE_REVISION = "0001_current_baseline"
@@ -46,7 +46,7 @@ def test_current_baseline_creates_the_complete_orm_schema(tmp_path: Path):
     finally:
         connection.close()
 
-    assert set(Base.metadata.tables) <= tables
+    assert set(AstraOrmRecordBase.metadata.tables) <= tables
     assert revision == (HEAD_REVISION,)
     assert "workspace_id" not in memory_columns
     assert "shadow" not in recall_columns

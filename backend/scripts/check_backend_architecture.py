@@ -45,6 +45,7 @@ class ArchitectureRules:
     forbidden_dependencies: tuple[ForbiddenDependency, ...]
     typed_module_prefixes: tuple[str, ...]
     forbidden_generic_module_names: tuple[str, ...]
+    forbidden_generic_class_names: tuple[str, ...]
     forbidden_top_level_packages: tuple[str, ...]
     forbidden_compatibility_symbol_terms: tuple[str, ...]
     complexity_budget: ComplexityBudget
@@ -73,6 +74,7 @@ def load_rules(path: Path) -> ArchitectureRules:
         ),
         typed_module_prefixes=tuple(raw_rules["typed_module_prefixes"]),
         forbidden_generic_module_names=tuple(raw_rules["forbidden_generic_module_names"]),
+        forbidden_generic_class_names=tuple(raw_rules["forbidden_generic_class_names"]),
         forbidden_top_level_packages=tuple(raw_rules["forbidden_top_level_packages"]),
         forbidden_compatibility_symbol_terms=tuple(
             raw_rules["forbidden_compatibility_symbol_terms"]
@@ -220,7 +222,7 @@ def one_operation_classes(source_root: Path) -> list[str]:
                 continue
             bases = {ast.unparse(base).rsplit(".", 1)[-1] for base in statement.bases}
             decorators = {ast.unparse(item).split("(", 1)[0] for item in statement.decorator_list}
-            if bases & {"Base", "BaseModel", "Protocol", "ABC", "Enum"}:
+            if bases & {"AstraOrmRecordBase", "BaseModel", "Protocol", "ABC", "Enum"}:
                 continue
             if "dataclass" in decorators or statement.name.endswith(("Error", "Exception")):
                 continue
@@ -373,6 +375,24 @@ def check_role_package_names(
             yield f"{module.module} creates a global technical package"
 
 
+def check_global_class_names(source_root: Path, rules: ArchitectureRules) -> Iterable[str]:
+    """Require production class names to be unique and meaningful without module context."""
+    definitions: dict[str, list[str]] = defaultdict(list)
+    resolved_root = source_root.resolve()
+    for source_file in resolved_root.rglob("*.py"):
+        module = ".".join(source_file.relative_to(resolved_root.parent).with_suffix("").parts)
+        tree = ast.parse(source_file.read_text(encoding="utf-8"), filename=str(source_file))
+        for statement in ast.walk(tree):
+            if isinstance(statement, ast.ClassDef):
+                definitions[statement.name].append(f"{module}:{statement.lineno}")
+    forbidden = set(rules.forbidden_generic_class_names)
+    for name, locations in sorted(definitions.items()):
+        if len(locations) > 1:
+            yield f"class name {name} is duplicated at {', '.join(locations)}"
+        if name in forbidden:
+            yield f"class name {name} is too generic at {locations[0]}"
+
+
 def check_structural_budget(
     inventory: ArchitectureInventory,
     rules: ArchitectureRules,
@@ -410,6 +430,7 @@ def check_architecture(
         *check_function_budgets(inventory, rules, baseline, exceptions),
         *check_typed_boundaries(source_root, rules),
         *check_role_package_names(inventory, rules),
+        *check_global_class_names(source_root, rules),
         *check_structural_budget(inventory, rules, baseline, source_root),
     ]
     current_forbidden = forbidden_edges(dependency_edges(inventory), rules)

@@ -2,7 +2,7 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from app.common.core.config import Settings
+from app.common.core.config import AstraRuntimeSettings
 from app.infrastructure.db import session as session_module
 from app.infrastructure.db.session import configure_sqlite_engine, engine_options_for_settings
 
@@ -26,7 +26,7 @@ async def test_sqlite_engine_uses_concurrent_runtime_pragmas(tmp_path):
 
 
 def test_file_sqlite_uses_bounded_connection_pool():
-    settings = Settings(database_url="sqlite+aiosqlite:///runtime.db")
+    settings = AstraRuntimeSettings(database_url="sqlite+aiosqlite:///runtime.db")
 
     assert engine_options_for_settings(settings) == {
         "pool_size": 5,
@@ -36,10 +36,10 @@ def test_file_sqlite_uses_bounded_connection_pool():
 
 def test_non_file_databases_keep_driver_pool_defaults():
     assert engine_options_for_settings(
-        Settings(database_url="sqlite+aiosqlite:///:memory:")
+        AstraRuntimeSettings(database_url="sqlite+aiosqlite:///:memory:")
     ) == {}
     assert engine_options_for_settings(
-        Settings(database_url="postgresql+asyncpg://astra@db/astra")
+        AstraRuntimeSettings(database_url="postgresql+asyncpg://astra@db/astra")
     ) == {}
 
 

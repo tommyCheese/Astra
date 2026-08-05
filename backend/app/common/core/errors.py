@@ -9,7 +9,7 @@ from sqlalchemy.exc import SQLAlchemyError
 logger = logging.getLogger(__name__)
 
 
-class ErrorPayload(BaseModel):
+class AstraApiErrorPayload(BaseModel):
     type: str
     code: str
     message: str
@@ -18,8 +18,8 @@ class ErrorPayload(BaseModel):
     details: dict[str, Any] = Field(default_factory=dict)
 
 
-class ErrorEnvelope(BaseModel):
-    error: ErrorPayload
+class AstraApiErrorEnvelope(BaseModel):
+    error: AstraApiErrorPayload
 
 
 class AstraError(Exception):
@@ -34,13 +34,13 @@ class AstraError(Exception):
         details: dict[str, Any] | None = None,
     ):
         super().__init__(message)
-        self.payload = ErrorPayload(
+        self.payload = AstraApiErrorPayload(
             type=error_type, code=code, message=message, retryable=retryable, details=details or {}
         )
         self.status_code = status_code
 
 
-class ValidationError(AstraError):
+class AstraInputValidationError(AstraError):
     def __init__(self, code: str, message: str, details: dict[str, Any] | None = None):
         super().__init__(
             error_type="validation.input_invalid",
@@ -51,14 +51,14 @@ class ValidationError(AstraError):
         )
 
 
-class ResourceError(AstraError):
+class AstraResourceNotFoundError(AstraError):
     def __init__(self, code: str, message: str):
         super().__init__(
             error_type="resource.not_found", code=code, message=message, status_code=404
         )
 
 
-class StateError(AstraError):
+class AstraStateConflictError(AstraError):
     def __init__(self, code: str, message: str, details: dict[str, Any] | None = None):
         super().__init__(
             error_type="state.conflict",
@@ -69,7 +69,7 @@ class StateError(AstraError):
         )
 
 
-class InfrastructureError(AstraError):
+class AstraInfrastructureError(AstraError):
     def __init__(
         self,
         code: str = "DATABASE_UNAVAILABLE",
@@ -85,7 +85,7 @@ class InfrastructureError(AstraError):
         )
 
 
-class ConfigurationError(AstraError):
+class AstraConfigurationError(AstraError):
     def __init__(self, code: str, message: str):
         super().__init__(
             error_type="configuration.invalid",
@@ -96,8 +96,8 @@ class ConfigurationError(AstraError):
         )
 
 
-def internal_error(exc: Exception) -> ErrorPayload:
-    payload = ErrorPayload(
+def internal_error(exc: Exception) -> AstraApiErrorPayload:
+    payload = AstraApiErrorPayload(
         type="runtime.internal_error",
         code="INTERNAL_ERROR",
         message="服务暂时出现异常，请稍后重试。",
@@ -120,7 +120,7 @@ def _payload(
     retryable: bool = False,
     details: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    return ErrorPayload(
+    return AstraApiErrorPayload(
         type=error_type,
         code=code,
         message=message,
@@ -189,5 +189,5 @@ def run_error_from_exception(exc: Exception) -> dict[str, Any]:
     if name == "ToolExecutionError":
         return _tool_error(exc)
     if isinstance(exc, (SQLAlchemyError, OSError, ConnectionError)):
-        return InfrastructureError().payload.model_dump(mode="json")
+        return AstraInfrastructureError().payload.model_dump(mode="json")
     return internal_error(exc).model_dump(mode="json")

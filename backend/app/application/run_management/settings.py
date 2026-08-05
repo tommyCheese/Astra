@@ -5,8 +5,8 @@ from __future__ import annotations
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.common.contracts.json_values import JsonObject
-from app.common.core.config import Settings
-from app.common.core.errors import ValidationError
+from app.common.core.config import AstraRuntimeSettings
+from app.common.core.errors import AstraInputValidationError
 from app.common.schemas.models import RunModelConfig
 from app.infrastructure.db.models.runs import RunRecord
 from app.infrastructure.model_clients.providers import (
@@ -21,11 +21,11 @@ from app.infrastructure.repositories.tool_settings import (
 
 
 class RunSettingsResolver:
-    def __init__(self, session: AsyncSession, base_settings: Settings) -> None:
+    def __init__(self, session: AsyncSession, base_settings: AstraRuntimeSettings) -> None:
         self._session = session
         self._base_settings = base_settings
 
-    async def for_new_run(self, model: RunModelConfig | None) -> Settings:
+    async def for_new_run(self, model: RunModelConfig | None) -> AstraRuntimeSettings:
         tool_states = await ToolSettingsRepository(self._session).get_or_create(
             default_tool_states(self._base_settings)
         )
@@ -38,22 +38,22 @@ class RunSettingsResolver:
         self,
         run: RunRecord,
         model: RunModelConfig | None,
-    ) -> Settings:
+    ) -> AstraRuntimeSettings:
         run_settings = await self.for_new_run(model)
         return self._restore_frozen_model(run_settings, run.model_policy)
 
     @staticmethod
     def apply_model_config(
-        settings: Settings,
+        settings: AstraRuntimeSettings,
         model: RunModelConfig | dict | None,
-    ) -> Settings:
+    ) -> AstraRuntimeSettings:
         if not model:
             return settings
         model_config = (
             model if isinstance(model, RunModelConfig) else RunModelConfig.model_validate(model)
         )
         if model_config.provider not in SUPPORTED_MODEL_PROVIDERS:
-            raise ValidationError(
+            raise AstraInputValidationError(
                 "MODEL_PROVIDER_UNSUPPORTED",
                 "当前模型供应商尚未接入通用运行时。",
             )
@@ -74,21 +74,21 @@ class RunSettingsResolver:
             or not configured_settings.model_base_url
             or missing_api_key
         ):
-            raise ValidationError(
+            raise AstraInputValidationError(
                 "MODEL_CONFIGURATION_REQUIRED",
                 "请先配置模型名称、API 地址和 API Key。",
             )
         return configured_settings
 
     @staticmethod
-    def _restore_frozen_model(settings: Settings, model_policy: JsonObject) -> Settings:
+    def _restore_frozen_model(settings: AstraRuntimeSettings, model_policy: JsonObject) -> AstraRuntimeSettings:
         provider = str(model_policy.get("provider") or "")
         model_name = str(model_policy.get("model") or "")
         base_url = str(model_policy.get("base_url") or "")
         if not provider or not model_name:
             return settings
         if settings.model_provider != provider or settings.model_name != model_name:
-            raise ValidationError(
+            raise AstraInputValidationError(
                 "RUN_MODEL_MISMATCH",
                 "继续运行时必须使用该任务开始时选择的模型。",
                 {"provider": provider, "model": model_name},

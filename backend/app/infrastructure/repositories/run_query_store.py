@@ -7,7 +7,7 @@ from app.domain.agent_profile import AgentProfile
 from app.infrastructure.db.model_base import utc_now
 from app.infrastructure.db.models.conversations import TaskRecord
 from app.infrastructure.db.models.executions import NodeExecutionRecord
-from app.infrastructure.db.models.memory import MemoryRecord
+from app.infrastructure.db.models.memory import PersistedMemoryRecord
 from app.infrastructure.db.models.plans import PlanRecord
 from app.infrastructure.db.models.runs import AgentTurnRecord, RunRecord
 from app.infrastructure.db.models.skills import RunSkillSnapshotRecord
@@ -141,15 +141,15 @@ class RunQueryStore:
         *,
         include_skills: bool,
         memory_limit: int = 8,
-    ) -> tuple[RunRecord, list[MemoryRecord], RunSkillSnapshotRecord | None]:
+    ) -> tuple[RunRecord, list[PersistedMemoryRecord], RunSkillSnapshotRecord | None]:
         """Load standard-mode context inputs in one database round trip."""
         query = (
-            select(RunRecord, MemoryRecord, RunSkillSnapshotRecord)
+            select(RunRecord, PersistedMemoryRecord, RunSkillSnapshotRecord)
             .outerjoin(
-                MemoryRecord,
+                PersistedMemoryRecord,
                 and_(
-                    MemoryRecord.run_id == RunRecord.id,
-                    MemoryRecord.confidence >= 0.0,
+                    PersistedMemoryRecord.run_id == RunRecord.id,
+                    PersistedMemoryRecord.confidence >= 0.0,
                 ),
             )
             .outerjoin(
@@ -160,7 +160,7 @@ class RunQueryStore:
                 ),
             )
             .where(RunRecord.id == run_id)
-            .order_by(MemoryRecord.updated_at.desc())
+            .order_by(PersistedMemoryRecord.updated_at.desc())
             .limit(memory_limit)
         )
         rows = (await self.session.execute(query)).all()

@@ -5,7 +5,7 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 
-from app.common.core.config import Settings
+from app.common.core.config import AstraRuntimeSettings
 from app.infrastructure.db.model_base import utc_now
 from app.infrastructure.db.models.conversations import ToolSettingRecord
 
@@ -38,14 +38,14 @@ def discard_tool_settings_cache(session: Session) -> None:
     session.info.pop(PENDING_TOOL_SETTINGS_CACHE, None)
 
 
-def default_tool_states(settings: Settings) -> dict[str, bool]:
+def default_tool_states(settings: AstraRuntimeSettings) -> dict[str, bool]:
     return {
         name: bool(getattr(settings, field))
         for name, field in TOOL_SETTING_FIELDS.items()
     }
 
 
-def apply_tool_states(settings: Settings, states: dict[str, bool]) -> Settings:
+def apply_tool_states(settings: AstraRuntimeSettings, states: dict[str, bool]) -> AstraRuntimeSettings:
     result = settings.model_copy(deep=True)
     for name, field in TOOL_SETTING_FIELDS.items():
         if name in states:

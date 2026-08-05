@@ -10,7 +10,7 @@ from app.application.memory.consolidation.models import (
     ConsolidationValidationError,
 )
 from app.application.memory.consolidation.service import AutoDreamProcessor
-from app.common.core.config import Settings, get_settings
+from app.common.core.config import AstraRuntimeSettings, get_settings
 from app.common.schemas.memory_consolidation import (
     ConsolidationJobAction,
     ConsolidationJobList,
@@ -104,7 +104,7 @@ def _raise_api_error(exc: Exception) -> None:
 async def trigger_consolidation_job(
     payload: ConsolidationJobTrigger,
     session: AsyncSession = Depends(get_session),
-    settings: Settings = Depends(get_settings),
+    settings: AstraRuntimeSettings = Depends(get_settings),
 ) -> ConsolidationJobView:
     """Explicit local trigger; independent from disabled background scheduling."""
     repository = MemoryConsolidationRepository(session)

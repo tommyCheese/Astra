@@ -21,10 +21,10 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.infrastructure.db.model_base import Base, JsonType, utc_now, uuid_str
+from app.infrastructure.db.model_base import AstraOrmRecordBase, JsonType, utc_now, uuid_str
 
 
-class PlanRecord(Base):
+class PlanRecord(AstraOrmRecordBase):
     __tablename__ = "plans"
     __table_args__ = (
         UniqueConstraint("run_id", "version", name="uq_plans_run_version"),
@@ -53,7 +53,7 @@ class PlanRecord(Base):
     executions: Mapped[list[NodeExecutionRecord]] = relationship(back_populates="plan")
 
 
-class PlanNodeRecord(Base):
+class PlanNodeRecord(AstraOrmRecordBase):
     __tablename__ = "plan_nodes"
     __table_args__ = (
         UniqueConstraint("plan_id", "node_key", name="uq_plan_nodes_plan_key"),
@@ -94,7 +94,7 @@ class PlanNodeRecord(Base):
     executions: Mapped[list[NodeExecutionRecord]] = relationship(back_populates="plan_node")
 
 
-class PlanEdgeRecord(Base):
+class PlanEdgeRecord(AstraOrmRecordBase):
     __tablename__ = "plan_edges"
     __table_args__ = (
         UniqueConstraint("plan_id", "predecessor_id", "successor_id", name="uq_plan_edges_nodes"),

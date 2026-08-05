@@ -25,7 +25,7 @@ from app.common.schemas.subagents import (
     SubagentContinuationAnswer,
     SubagentQuestion,
 )
-from app.domain.grounding.schemas import EvidenceFragment
+from app.domain.grounding.schemas import GroundingEvidenceFragment
 from app.infrastructure.db.model_base import utc_now
 from app.infrastructure.db.models.executions import AgentExecutionRecord
 from app.infrastructure.db.models.runs import EvidenceRecord
@@ -200,7 +200,7 @@ class SubagentContextComposer:
         )
         add(
             kind="catalog",
-            summary="Attenuated immutable Tool and Skill Catalog references.",
+            summary="Attenuated immutable AstraTool and Skill Catalog references.",
             content={
                 "tool_digest": catalog.tool_digest,
                 "tools": [item.get("name") for item in catalog.tools],
@@ -455,7 +455,7 @@ class SubagentExchangeService:
         self,
         *,
         agent_execution_id: str,
-        fragment: EvidenceFragment,
+        fragment: GroundingEvidenceFragment,
     ) -> EvidenceRecord:
         execution = await self._child(agent_execution_id)
         return await EvidenceRepository(self.session).append(

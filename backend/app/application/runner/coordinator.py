@@ -75,13 +75,13 @@ NodeExecutor = Callable[
 
 
 @dataclass(frozen=True)
-class CoordinatorResult:
+class RunCoordinationResult:
     completed_execution_ids: tuple[str, ...]
     failed_execution_ids: tuple[str, ...]
     peak_concurrency: int
 
 
-class NodeWorker:
+class PlanNodeWorker:
     def __init__(
         self,
         session_factory: async_sessionmaker[AsyncSession],
@@ -253,7 +253,7 @@ class RunCoordinator:
         self._cancelled = asyncio.Event()
         self._workers: set[asyncio.Task[NodeExecutionResult]] = set()
 
-    async def run(self, run_id: str, executor: NodeExecutor) -> CoordinatorResult:
+    async def run(self, run_id: str, executor: NodeExecutor) -> RunCoordinationResult:
         completed: list[str] = []
         failed: list[str] = []
         peak = 0
@@ -263,7 +263,7 @@ class RunCoordinator:
         while not self._cancelled.is_set():
             contexts = await self._claim_contexts(run_id)
             if contexts:
-                worker = NodeWorker(
+                worker = PlanNodeWorker(
                     self.session_factory,
                     executor,
                     heartbeat_seconds=self.heartbeat_seconds,
@@ -315,7 +315,7 @@ class RunCoordinator:
             break
         if self._cancelled.is_set():
             await self._persist_cancellation(run_id)
-        return CoordinatorResult(tuple(completed), tuple(failed), peak)
+        return RunCoordinationResult(tuple(completed), tuple(failed), peak)
 
     async def cancel(self) -> None:
         self._cancelled.set()

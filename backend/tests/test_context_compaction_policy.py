@@ -5,12 +5,12 @@ from app.application.context_compaction import (
     project_shadow_compaction,
     select_recent_tail,
 )
-from app.common.core.config import Settings
-from app.common.schemas.context_compaction import ContextItem, ContextOwnerRole
+from app.common.core.config import AstraRuntimeSettings
+from app.common.schemas.context_compaction import CompactionContextItem, ContextOwnerRole
 
 
-def item(item_id: str, tokens: int) -> ContextItem:
-    return ContextItem(id=item_id, kind="observation", content=item_id, token_count=tokens)
+def item(item_id: str, tokens: int) -> CompactionContextItem:
+    return CompactionContextItem(id=item_id, kind="observation", content=item_id, token_count=tokens)
 
 
 def test_accounting_prefers_reported_usage_and_reserves_compaction_output():
@@ -39,7 +39,7 @@ def test_recent_tail_selects_newest_that_fit_then_restores_chronology():
 
 
 def test_body_after_prefix_trigger_still_enforces_full_hard_cap():
-    settings = Settings(
+    settings = AstraRuntimeSettings(
         context_compaction_v2_enabled=True,
         context_compaction_root_enabled=True,
         context_auto_compact_ratio=0.8,
@@ -59,7 +59,7 @@ def test_body_after_prefix_trigger_still_enforces_full_hard_cap():
 
 
 def test_model_downshift_and_shadow_projection_do_not_install():
-    settings = Settings(
+    settings = AstraRuntimeSettings(
         context_compaction_v2_enabled=True,
         context_compaction_child_enabled=True,
     )

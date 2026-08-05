@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import ClassVar, Protocol
 
-from app.infrastructure.tools.base import ArtifactRef, ToolExecutionError
+from app.infrastructure.tools.base import ToolArtifactReference, ToolExecutionError
 
 
 class ArtifactStore(Protocol):
@@ -192,8 +192,8 @@ class ArtifactCollector:
             raise ToolExecutionError("invalid_artifact", "Office artifact is malformed") from exc
 
 
-def artifact_ref(record) -> ArtifactRef:
-    return ArtifactRef(
+def artifact_ref(record) -> ToolArtifactReference:
+    return ToolArtifactReference(
         id=record.id,
         type=record.type,
         mime_type=record.mime_type or "application/octet-stream",
@@ -217,7 +217,7 @@ class ArtifactService:
         sandbox_job_id: str,
         output_dir: Path,
         provenance: dict,
-    ) -> list[ArtifactRef]:
+    ) -> list[ToolArtifactReference]:
         refs = []
         for item in ArtifactCollector(
             output_dir, max_files=self.max_files, max_bytes=self.max_bytes

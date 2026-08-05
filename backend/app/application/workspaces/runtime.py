@@ -22,7 +22,7 @@ from app.infrastructure.tools.base import ToolExecutionError
 
 
 @dataclass(frozen=True)
-class ManifestEntry:
+class WorkspaceManifestEntry:
     checksum: str
     size_bytes: int
     mime_type: str | None
@@ -71,13 +71,13 @@ class WorkspaceRuntimeService:
                 protected.mkdir(mode=0o755)
         return path
 
-    def scan(self, workspace_dir: Path) -> dict[str, ManifestEntry]:
+    def scan(self, workspace_dir: Path) -> dict[str, WorkspaceManifestEntry]:
         root = workspace_dir.resolve(strict=True)
         if not root.is_relative_to(self.root):
             raise ToolExecutionError(
                 "sandbox_policy_violation", "Workspace is outside the managed root"
             )
-        manifest: dict[str, ManifestEntry] = {}
+        manifest: dict[str, WorkspaceManifestEntry] = {}
         total_bytes = 0
         for current, directories, filenames in os.walk(root, followlinks=False):
             current_path = Path(current)
@@ -121,7 +121,7 @@ class WorkspaceRuntimeService:
                     raise ToolExecutionError(
                         "artifact_limit_exceeded", "Workspace exceeds quota"
                     )
-                manifest[relative] = ManifestEntry(
+                manifest[relative] = WorkspaceManifestEntry(
                     checksum=self._checksum(path),
                     size_bytes=size,
                     mime_type=mimetypes.guess_type(path.name)[0],
@@ -237,7 +237,7 @@ class WorkspaceRuntimeService:
         run_id: str,
         tool_call_id: str,
         workspace_dir: Path,
-        before: dict[str, ManifestEntry],
+        before: dict[str, WorkspaceManifestEntry],
         before_protected_paths: set[str] | None = None,
     ) -> list[dict[str, Any]]:
         after = self.scan(workspace_dir)
@@ -279,7 +279,7 @@ class WorkspaceRuntimeService:
         )
         raise ToolExecutionError(
             "sandbox_policy_violation",
-            "Tool execution attempted to modify a protected Workspace path",
+            "AstraTool execution attempted to modify a protected Workspace path",
         )
 
     async def _record_workspace_change(
@@ -361,7 +361,7 @@ class WorkspaceRuntimeService:
     @staticmethod
     def _remove_new_protected_paths(
         workspace_dir: Path,
-        before: dict[str, ManifestEntry],
+        before: dict[str, WorkspaceManifestEntry],
         changed_paths: list[str],
     ) -> None:
         protected_roots: set[Path] = set()

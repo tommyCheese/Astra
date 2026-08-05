@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import (
 from sqlalchemy.orm import Session
 
 from app.application.run_management.events import PublishedRunEvent, run_event_broker
-from app.common.core.config import Settings, get_settings
+from app.common.core.config import AstraRuntimeSettings, get_settings
 from app.infrastructure.db.models.metadata import metadata as metadata
 from app.infrastructure.db.models.runs import RunEventRecord
 
@@ -68,7 +68,7 @@ def configure_sqlite_engine(async_engine: AsyncEngine) -> None:
             cursor.close()
 
 
-def engine_options_for_settings(settings: Settings) -> dict[str, int]:
+def engine_options_for_settings(settings: AstraRuntimeSettings) -> dict[str, int]:
     database_url = make_url(settings.database_url)
     if (
         database_url.get_backend_name() != "sqlite"

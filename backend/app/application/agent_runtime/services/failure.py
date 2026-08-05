@@ -7,7 +7,7 @@ import logging
 from dataclasses import dataclass
 
 from app.application.agent_runtime.policies.reasoning import failure_fingerprint
-from app.application.agent_runtime.result_adapters import ProcessorRegistry
+from app.application.agent_runtime.result_adapters import AgentToolResultProcessorRegistry
 from app.application.agent_runtime.services.progress import (
     ExecutionProgress,
     ProgressEvaluationStage,
@@ -34,7 +34,7 @@ class ToolFailureStage:
     def __init__(
         self,
         repository: RunUnitOfWork,
-        processors: ProcessorRegistry,
+        processors: AgentToolResultProcessorRegistry,
         progress: ExecutionProgress,
         progress_stage: ProgressEvaluationStage,
     ) -> None:

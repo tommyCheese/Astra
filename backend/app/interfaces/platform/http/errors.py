@@ -10,10 +10,10 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.common.core.errors import (
+    AstraApiErrorEnvelope,
     AstraError,
-    ErrorEnvelope,
-    InfrastructureError,
-    ValidationError,
+    AstraInfrastructureError,
+    AstraInputValidationError,
     run_error_from_exception,
 )
 
@@ -29,28 +29,28 @@ async def astra_error_handler(_: Request, error: AstraError) -> JSONResponse:
     )
     return JSONResponse(
         status_code=error.status_code,
-        content=ErrorEnvelope(error=error.payload).model_dump(mode="json"),
+        content=AstraApiErrorEnvelope(error=error.payload).model_dump(mode="json"),
     )
 
 
 async def validation_error_handler(_: Request, error: RequestValidationError) -> JSONResponse:
-    validation_error = ValidationError(
+    validation_error = AstraInputValidationError(
         "REQUEST_INVALID",
         "请求参数不正确。",
         {"fields": [item.get("loc", [])[-1] for item in error.errors()]},
     )
     return JSONResponse(
         status_code=validation_error.status_code,
-        content=ErrorEnvelope(error=validation_error.payload).model_dump(mode="json"),
+        content=AstraApiErrorEnvelope(error=validation_error.payload).model_dump(mode="json"),
     )
 
 
 async def database_error_handler(_: Request, error: SQLAlchemyError) -> JSONResponse:
     logger.exception("request.database_error cause=%s", type(error).__name__)
-    infrastructure_error = InfrastructureError()
+    infrastructure_error = AstraInfrastructureError()
     return JSONResponse(
         status_code=infrastructure_error.status_code,
-        content=ErrorEnvelope(error=infrastructure_error.payload).model_dump(mode="json"),
+        content=AstraApiErrorEnvelope(error=infrastructure_error.payload).model_dump(mode="json"),
     )
 
 
@@ -64,7 +64,7 @@ async def unknown_error_handler(_: Request, error: Exception) -> JSONResponse:
     )
     return JSONResponse(
         status_code=status_code,
-        content=ErrorEnvelope(error=error_payload).model_dump(mode="json"),
+        content=AstraApiErrorEnvelope(error=error_payload).model_dump(mode="json"),
     )
 
 

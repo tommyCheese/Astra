@@ -8,7 +8,11 @@ from app.common.schemas.agent.planning import (
     PlanNodeDraft,
     TaskContract,
 )
-from app.common.schemas.agent.run_result import FinalAnswer, Finding, MemoryRecord
+from app.common.schemas.agent.run_result import (
+    AgentAnswerFinding,
+    AgentFinalAnswer,
+    AgentRunMemoryCandidate,
+)
 from app.infrastructure.model_clients.contracts import (
     AnswerDeltaCallback,
     ModelClient,
@@ -93,7 +97,7 @@ class MockModelClient(ModelClient):
         tool_outputs: list[dict[str, Any]],
         *,
         on_delta: AnswerDeltaCallback | None = None,
-    ) -> FinalAnswer:
+    ) -> AgentFinalAnswer:
         evidence = summarize_mock_evidence(tool_outputs)
         artifact_ids = [
             str(artifact["id"])
@@ -105,7 +109,7 @@ class MockModelClient(ModelClient):
         if not evidence.findings:
             if artifact_ids:
                 evidence.findings.append(
-                    Finding(
+                    AgentAnswerFinding(
                         text="工具已生成可用于查看结果的输出。",
                         artifact_ids=list(dict.fromkeys(artifact_ids)),
                     )
@@ -117,7 +121,7 @@ class MockModelClient(ModelClient):
                 update={"artifact_ids": list(dict.fromkeys(artifact_ids))}
             )
 
-        answer = FinalAnswer(
+        answer = AgentFinalAnswer(
             summary=f"已围绕目标完成 Web 数据查询：{goal}",
             findings=evidence.findings,
             sources=evidence.sources,
@@ -162,7 +166,7 @@ class MockModelClient(ModelClient):
 
     async def finalize(
         self, goal: str, context: dict[str, Any], *, on_delta: AnswerDeltaCallback | None = None
-    ) -> FinalAnswer:
+    ) -> AgentFinalAnswer:
         return await self.synthesize(
             goal, [{"evidence_pack": context.get("evidence_pack", {})}], on_delta=on_delta
         )
@@ -171,13 +175,13 @@ class MockModelClient(ModelClient):
         self,
         goal: str,
         context: dict[str, Any],
-    ) -> list[MemoryRecord]:
+    ) -> list[AgentRunMemoryCandidate]:
         evidence_pack = context.get("evidence_pack") or {}
         fetched_sources = evidence_pack.get("fetched_sources", [])
         if not fetched_sources:
             return []
         return [
-            MemoryRecord(
+            AgentRunMemoryCandidate(
                 scope="run",
                 kind="episodic_experience",
                 memory_key=(f"run:{context.get('run_id') or 'unknown'}:source-summary"),

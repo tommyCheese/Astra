@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from app.common.schemas.agent.execution_state import AgentDecision, AgentObservation
-from app.common.schemas.agent.run_result import FinalAnswer
+from app.common.schemas.agent.run_result import AgentFinalAnswer
 from app.infrastructure.db.models.permissions import ToolCallRecord
 from app.infrastructure.db.models.runs import AgentTurnRecord
 from app.infrastructure.model_clients.contracts import ModelClient, ModelOutputError
@@ -36,7 +36,7 @@ class DecisionStageInput:
 
 
 @dataclass
-class StreamedAnswer:
+class StreamedAgentAnswer:
     parts: list[str] = field(default_factory=list)
     completed: bool = False
 
@@ -48,7 +48,7 @@ class StreamedAnswer:
 @dataclass(frozen=True)
 class DecisionStageResult:
     decision: AgentDecision
-    candidate_answer: FinalAnswer | None
+    candidate_answer: AgentFinalAnswer | None
     reasoning_summary: str
     reasoning_completed: bool
 
@@ -153,7 +153,7 @@ class ModelDecisionStage:
         await self._record_skill_binding(stage_input)
         if stage_input.quick_mode:
             await self._repository.session.commit()
-        streamed_answer = StreamedAnswer()
+        streamed_answer = StreamedAgentAnswer()
         try:
             decision, candidate_answer = await self._model_client.decide_with_answer(
                 stage_input.goal,
@@ -209,7 +209,7 @@ class ModelDecisionStage:
 
     async def _accept_answer_delta(
         self,
-        streamed_answer: StreamedAnswer,
+        streamed_answer: StreamedAgentAnswer,
         delta: str,
     ) -> None:
         if delta == "\1":
@@ -222,10 +222,10 @@ class ModelDecisionStage:
     async def _adopt_streamed_answer(
         self,
         stage_input: DecisionStageInput,
-        streamed_answer: StreamedAnswer,
+        streamed_answer: StreamedAgentAnswer,
         decision: AgentDecision,
-        candidate_answer: FinalAnswer | None,
-    ) -> FinalAnswer | None:
+        candidate_answer: AgentFinalAnswer | None,
+    ) -> AgentFinalAnswer | None:
         if decision.decision_type != "finalize" or candidate_answer or not streamed_answer.text:
             return candidate_answer
         logger.warning(
@@ -239,7 +239,7 @@ class ModelDecisionStage:
             "answer.structure_adopted",
             {"turn_index": stage_input.turn_index, "answer_mode": stage_input.answer_mode},
         )
-        return FinalAnswer(
+        return AgentFinalAnswer(
             summary=streamed_answer.text,
             verification_notes=["已采用本轮流式正文；模型未提供独立的结构化答案对象。"],
         )
@@ -247,7 +247,7 @@ class ModelDecisionStage:
     async def _recover_invalid_output(
         self,
         stage_input: DecisionStageInput,
-        streamed_answer: StreamedAnswer,
+        streamed_answer: StreamedAgentAnswer,
         error: ModelOutputError,
     ) -> DecisionStageResult | DecisionStageFailure:
         assert self._reasoning_writer is not None
@@ -286,7 +286,7 @@ class ModelDecisionStage:
                 reasoning_summary=self._reasoning_writer.summary
                 or "已保留完成生成的回答；辅助结构未通过校验。",
             ),
-            FinalAnswer(
+            AgentFinalAnswer(
                 summary=streamed_answer.text,
                 verification_notes=["辅助结构未通过模型输出协议校验。"],
             ),

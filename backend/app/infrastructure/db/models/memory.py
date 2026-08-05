@@ -20,10 +20,10 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.infrastructure.db.model_base import Base, JsonType, utc_now, uuid_str
+from app.infrastructure.db.model_base import AstraOrmRecordBase, JsonType, utc_now, uuid_str
 
 
-class MemoryRecord(Base):
+class PersistedMemoryRecord(AstraOrmRecordBase):
     __tablename__ = "memories"
     __table_args__ = (
         UniqueConstraint(
@@ -97,7 +97,7 @@ class MemoryRecord(Base):
     )
 
 
-class MemorySourceRecord(Base):
+class MemorySourceRecord(AstraOrmRecordBase):
     __tablename__ = "memory_sources"
     __table_args__ = (
         UniqueConstraint(
@@ -124,10 +124,10 @@ class MemorySourceRecord(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
-    memory: Mapped[MemoryRecord] = relationship(back_populates="sources", foreign_keys=[memory_id])
+    memory: Mapped[PersistedMemoryRecord] = relationship(back_populates="sources", foreign_keys=[memory_id])
 
 
-class MemoryLinkRecord(Base):
+class MemoryLinkRecord(AstraOrmRecordBase):
     __tablename__ = "memory_links"
     __table_args__ = (
         UniqueConstraint(
@@ -147,7 +147,7 @@ class MemoryLinkRecord(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
 
-class MemoryRecallEventRecord(Base):
+class MemoryRecallEventRecord(AstraOrmRecordBase):
     __tablename__ = "memory_recall_events"
     __table_args__ = (
         Index("ix_memory_recall_events_run_created", "run_id", "created_at"),
@@ -168,7 +168,7 @@ class MemoryRecallEventRecord(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
 
-class MemoryAuditRecord(Base):
+class MemoryAuditRecord(AstraOrmRecordBase):
     __tablename__ = "memory_audit_events"
     __table_args__ = (Index("ix_memory_audit_memory_created", "memory_id", "created_at"),)
 
@@ -180,10 +180,10 @@ class MemoryAuditRecord(Base):
     payload: Mapped[dict] = mapped_column(JsonType, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
-    memory: Mapped[MemoryRecord] = relationship(back_populates="audit_events")
+    memory: Mapped[PersistedMemoryRecord] = relationship(back_populates="audit_events")
 
 
-class MemoryConsolidationJobRecord(Base):
+class MemoryConsolidationJobRecord(AstraOrmRecordBase):
     __tablename__ = "memory_consolidation_jobs"
     __table_args__ = (
         UniqueConstraint("idempotency_key", name="uq_memory_consolidation_idempotency"),

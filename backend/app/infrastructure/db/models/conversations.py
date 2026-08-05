@@ -20,10 +20,10 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.infrastructure.db.model_base import Base, JsonType, utc_now, uuid_str
+from app.infrastructure.db.model_base import AstraOrmRecordBase, JsonType, utc_now, uuid_str
 
 
-class ToolSettingRecord(Base):
+class ToolSettingRecord(AstraOrmRecordBase):
     __tablename__ = "tool_settings"
 
     tool_name: Mapped[str] = mapped_column(String(120), primary_key=True)
@@ -32,7 +32,7 @@ class ToolSettingRecord(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
 
-class ConversationStrategyPreferenceRecord(Base):
+class ConversationStrategyPreferenceRecord(AstraOrmRecordBase):
     __tablename__ = "conversation_strategy_preferences"
 
     id: Mapped[str] = mapped_column(String(40), primary_key=True, default="default")
@@ -47,7 +47,7 @@ class ConversationStrategyPreferenceRecord(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
 
-class TaskRecord(Base):
+class TaskRecord(AstraOrmRecordBase):
     __tablename__ = "tasks"
     __table_args__ = (Index("ix_tasks_retention_scan", "pinned_at", "updated_at"),)
 
@@ -77,7 +77,7 @@ class TaskRecord(Base):
     )
 
 
-class ConversationShareRecord(Base):
+class ConversationShareRecord(AstraOrmRecordBase):
     __tablename__ = "conversation_shares"
     __table_args__ = (
         UniqueConstraint("conversation_id", name="uq_conversation_shares_conversation_id"),

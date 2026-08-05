@@ -19,10 +19,10 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.infrastructure.db.model_base import Base, JsonType, utc_now, uuid_str
+from app.infrastructure.db.model_base import AstraOrmRecordBase, JsonType, utc_now, uuid_str
 
 
-class SkillBlobRecord(Base):
+class SkillBlobRecord(AstraOrmRecordBase):
     __tablename__ = "skill_blobs"
 
     digest: Mapped[str] = mapped_column(String(80), primary_key=True)
@@ -32,7 +32,7 @@ class SkillBlobRecord(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
 
-class SkillAuditRecord(Base):
+class SkillAuditRecord(AstraOrmRecordBase):
     __tablename__ = "skill_audit_events"
     __table_args__ = (Index("ix_skill_audit_skill_created", "skill_id", "created_at"),)
 
@@ -43,7 +43,7 @@ class SkillAuditRecord(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
 
-class SkillRecord(Base):
+class SkillRecord(AstraOrmRecordBase):
     __tablename__ = "skills"
     __table_args__ = (
         UniqueConstraint("name", name="uq_skills_name"),
@@ -70,7 +70,7 @@ class SkillRecord(Base):
     )
 
 
-class SkillDraftRecord(Base):
+class SkillDraftRecord(AstraOrmRecordBase):
     __tablename__ = "skill_drafts"
 
     skill_id: Mapped[str] = mapped_column(ForeignKey("skills.id"), primary_key=True)
@@ -83,7 +83,7 @@ class SkillDraftRecord(Base):
     skill: Mapped[SkillRecord] = relationship(back_populates="draft")
 
 
-class SkillRevisionRecord(Base):
+class SkillRevisionRecord(AstraOrmRecordBase):
     __tablename__ = "skill_revisions"
     __table_args__ = (
         UniqueConstraint("skill_id", "version", name="uq_skill_revisions_version"),
@@ -108,7 +108,7 @@ class SkillRevisionRecord(Base):
     skill: Mapped[SkillRecord] = relationship(back_populates="revisions")
 
 
-class RunSkillSnapshotRecord(Base):
+class RunSkillSnapshotRecord(AstraOrmRecordBase):
     __tablename__ = "run_skill_snapshots"
     __table_args__ = (
         UniqueConstraint("run_id", name="uq_run_skill_snapshots_run"),

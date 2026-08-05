@@ -5,7 +5,7 @@ from typing import Any
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.common.schemas.context_compaction import CompactionMetadata, ContextEnvelope
+from app.common.schemas.context_compaction import CompactionContextEnvelope, CompactionMetadata
 from app.infrastructure.db.model_base import utc_now
 from app.infrastructure.db.models.conversations import TaskRecord
 from app.infrastructure.db.models.executions import (
@@ -55,7 +55,7 @@ class ContextCompactionAttemptRepository:
 
     async def install_agent_checkpoint(
         self,
-        envelope: ContextEnvelope,
+        envelope: CompactionContextEnvelope,
         checkpoint,
         retained_tail_ids: tuple[str, ...],
     ) -> bool:
@@ -96,7 +96,7 @@ class ContextCompactionAttemptRepository:
 
     async def install_conversation_checkpoint(
         self,
-        envelope: ContextEnvelope,
+        envelope: CompactionContextEnvelope,
         checkpoint,
         retained_tail_ids: tuple[str, ...],
     ) -> bool:

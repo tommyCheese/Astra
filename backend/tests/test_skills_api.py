@@ -7,10 +7,10 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.application.skills.builtin_catalog import ensure_builtin_skills
-from app.common.core.config import Settings, get_settings
+from app.common.core.config import AstraRuntimeSettings, get_settings
 from app.common.schemas.agent.execution_state import AgentDecision
-from app.common.schemas.agent.run_result import FinalAnswer
-from app.infrastructure.db.model_base import Base
+from app.common.schemas.agent.run_result import AgentFinalAnswer
+from app.infrastructure.db.model_base import AstraOrmRecordBase
 from app.infrastructure.db.session import get_session
 from app.infrastructure.model_clients.mock import MockModelClient
 from app.main import create_app
@@ -39,14 +39,14 @@ class DirectFinalizeSkillClient(MockModelClient):
         return AgentDecision(
             decision_type="finalize",
             reasoning_summary="Skill 已绑定，直接完成。",
-        ), FinalAnswer(summary="已按 Skill 完成。")
+        ), AgentFinalAnswer(summary="已按 Skill 完成。")
 
 
 @pytest.fixture
 async def skill_client(monkeypatch, tmp_path):
     engine = create_async_engine("sqlite+aiosqlite:///:memory:", future=True)
     async with engine.begin() as connection:
-        await connection.run_sync(Base.metadata.create_all)
+        await connection.run_sync(AstraOrmRecordBase.metadata.create_all)
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
 
     async def override_session():
@@ -58,7 +58,7 @@ async def skill_client(monkeypatch, tmp_path):
     async def record_schedule(run_id, settings):
         scheduled_runs.append(run_id)
 
-    settings = Settings(
+    settings = AstraRuntimeSettings(
         model_provider="mock",
         artifact_store_path=str(tmp_path / "artifacts"),
         task_workspace_store_path=str(tmp_path / "workspaces"),

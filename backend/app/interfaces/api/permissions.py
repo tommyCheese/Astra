@@ -11,8 +11,8 @@ from app.application.permissions.engine import PermissionEngine
 from app.application.workspaces.artifacts import LocalArtifactStore
 from app.application.workspaces.deliverables import DeliverableCatalog
 from app.application.workspaces.runtime import WorkspaceRuntimeService
-from app.common.core.config import Settings, get_settings
-from app.common.core.errors import ResourceError
+from app.common.core.config import AstraRuntimeSettings, get_settings
+from app.common.core.errors import AstraResourceNotFoundError
 from app.common.schemas.permissions import PolicySimulationRequest, PolicySimulationResult
 from app.common.schemas.schedules import ScheduledDeliverableView
 from app.infrastructure.db.models.conversations import TaskRecord
@@ -258,14 +258,14 @@ async def deliverable_artifact_content(
     artifact_id: str,
     inline: bool = False,
     session: AsyncSession = Depends(get_session),
-    settings: Settings = Depends(get_settings),
+    settings: AstraRuntimeSettings = Depends(get_settings),
 ):
     artifact = await session.get(ArtifactRecord, artifact_id)
     if artifact is None or not artifact.storage_key or artifact.security_status != "verified":
-        raise ResourceError("DELIVERABLE_NOT_FOUND", "找不到可访问的制品。")
+        raise AstraResourceNotFoundError("DELIVERABLE_NOT_FOUND", "找不到可访问的制品。")
     path = LocalArtifactStore(settings.artifact_store_path).resolve(artifact.storage_key)
     if not path.is_file():
-        raise ResourceError("DELIVERABLE_NOT_FOUND", "制品内容已不可用。")
+        raise AstraResourceNotFoundError("DELIVERABLE_NOT_FOUND", "制品内容已不可用。")
     return FileResponse(
         path,
         media_type=artifact.mime_type,
@@ -280,7 +280,7 @@ async def workspace_file_content(
     file_id: str,
     inline: bool = False,
     session: AsyncSession = Depends(get_session),
-    settings: Settings = Depends(get_settings),
+    settings: AstraRuntimeSettings = Depends(get_settings),
 ):
     workspace = await WorkspaceRepository(session).get_or_create(task_id)
     file = await session.get(WorkspaceFileRecord, file_id)

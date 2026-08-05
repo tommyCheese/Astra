@@ -7,8 +7,12 @@ from app.application.run_management.conversation_commands import (
 )
 from app.application.run_management.conversation_context import ConversationContextManager
 from app.application.run_management.conversation_lifecycle import ConversationLifecycleService
-from app.common.core.config import Settings, get_settings
-from app.common.core.errors import ResourceError, StateError, ValidationError
+from app.common.core.config import AstraRuntimeSettings, get_settings
+from app.common.core.errors import (
+    AstraInputValidationError,
+    AstraResourceNotFoundError,
+    AstraStateConflictError,
+)
 from app.common.schemas.conversations import (
     ContextWindowStatus,
     ConversationCreateRequest,
@@ -41,7 +45,7 @@ router = APIRouter(prefix="/api", tags=["conversations"])
 async def require_conversation(repo: ConversationRepository, conversation_id: str, *, detailed: bool = False):
     task = await repo.get(conversation_id, detailed=detailed)
     if task is None:
-        raise ResourceError("CONVERSATION_NOT_FOUND", "找不到指定对话。")
+        raise AstraResourceNotFoundError("CONVERSATION_NOT_FOUND", "找不到指定对话。")
     return task
 
 
@@ -60,7 +64,7 @@ async def create_conversation(
 ):
     title = payload.title.strip()
     if not title:
-        raise ValidationError("CONVERSATION_TITLE_REQUIRED", "对话标题不能为空。")
+        raise AstraInputValidationError("CONVERSATION_TITLE_REQUIRED", "对话标题不能为空。")
     task = await ConversationRepository(session).create(
         title=title,
         preferred_answer_mode=payload.preferred_answer_mode,
@@ -76,7 +80,7 @@ async def get_conversation(conversation_id: str, session: AsyncSession = Depends
 
 @router.get("/system-commands", response_model=list[SlashSystemCommand])
 async def get_system_commands(
-    settings: Settings = Depends(get_settings),
+    settings: AstraRuntimeSettings = Depends(get_settings),
     session: AsyncSession = Depends(get_session),
 ):
     states = await ToolSettingsRepository(session).get_or_create(
@@ -96,7 +100,7 @@ async def get_conversation_context(
     model: str = Query(min_length=1, max_length=160),
     draft: str = Query(default="", max_length=4000),
     session: AsyncSession = Depends(get_session),
-    settings: Settings = Depends(get_settings),
+    settings: AstraRuntimeSettings = Depends(get_settings),
 ):
     repo = ConversationRepository(session)
     task = await require_conversation(repo, conversation_id)
@@ -119,7 +123,7 @@ async def run_conversation_command(
     provider: str = Query(min_length=1, max_length=80),
     model: str = Query(min_length=1, max_length=160),
     session: AsyncSession = Depends(get_session),
-    settings: Settings = Depends(get_settings),
+    settings: AstraRuntimeSettings = Depends(get_settings),
 ):
     repo = ConversationRepository(session)
     task = await require_conversation(repo, conversation_id)
@@ -154,7 +158,7 @@ async def update_conversation(
     task = await require_conversation(repo, conversation_id)
     title = payload.title.strip() if payload.title is not None else None
     if payload.title is not None and not title:
-        raise ValidationError("CONVERSATION_TITLE_REQUIRED", "对话标题不能为空。")
+        raise AstraInputValidationError("CONVERSATION_TITLE_REQUIRED", "对话标题不能为空。")
     return conversation_summary(
         await repo.update(
             task,
@@ -168,20 +172,20 @@ async def update_conversation(
 @router.delete("/conversations/{conversation_id}", status_code=204)
 async def delete_conversation(
     conversation_id: str, session: AsyncSession = Depends(get_session),
-    settings: Settings = Depends(get_settings),
+    settings: AstraRuntimeSettings = Depends(get_settings),
 ):
     repo = ConversationRepository(session)
     task = await require_conversation(repo, conversation_id)
     bound_jobs = await ScheduleRepository(session).list(target_task_id=conversation_id, limit=1)
     if bound_jobs:
-        raise StateError(
+        raise AstraStateConflictError(
             "CONVERSATION_HAS_AUTOMATIONS",
             "该对话仍绑定定时任务或 Heartbeat，请先更换结果对话或删除任务。",
         )
     try:
         await ConversationLifecycleService(settings).delete(repo, task)
     except RuntimeError as exc:
-        raise StateError("CONVERSATION_ACTIVE", "对话仍在执行，请等待结束或先取消运行。") from exc
+        raise AstraStateConflictError("CONVERSATION_ACTIVE", "对话仍在执行，请等待结束或先取消运行。") from exc
     return Response(status_code=204)
 
 
@@ -231,5 +235,5 @@ async def revoke_share(conversation_id: str, session: AsyncSession = Depends(get
 async def get_shared_conversation(token: str, session: AsyncSession = Depends(get_session)):
     share = await ConversationRepository(session).get_public_share(token)
     if share is None:
-        raise ResourceError("SHARE_NOT_FOUND", "分享链接不存在或已失效。")
+        raise AstraResourceNotFoundError("SHARE_NOT_FOUND", "分享链接不存在或已失效。")
     return {**share.snapshot, "shared_at": share.created_at, "updated_at": share.updated_at}

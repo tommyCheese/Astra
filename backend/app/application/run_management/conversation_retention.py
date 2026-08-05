@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.application.run_management.conversation_lifecycle import ConversationLifecycleService
-from app.common.core.config import Settings
+from app.common.core.config import AstraRuntimeSettings
 from app.infrastructure.repositories.conversations import ConversationRepository
 
 logger = logging.getLogger("astra.conversation_retention")
@@ -25,7 +25,7 @@ class ConversationRetentionSweep:
 class ConversationRetentionService:
     def __init__(
         self,
-        settings: Settings,
+        settings: AstraRuntimeSettings,
         session_factory: async_sessionmaker[AsyncSession],
         *,
         lifecycle: ConversationLifecycleService | None = None,

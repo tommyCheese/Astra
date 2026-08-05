@@ -10,12 +10,15 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
-from app.application.agent_runtime.models import RootRuntimeAssembly, RuntimeLimits
-from app.application.agent_runtime.policies.completion import CompletionGate
-from app.application.agent_runtime.policies.reasoning import ObservationEvaluator, ReflectionGate
+from app.application.agent_runtime.models import AgentRuntimeLimits, RootRuntimeAssembly
+from app.application.agent_runtime.policies.completion import AgentCompletionGate
+from app.application.agent_runtime.policies.reasoning import (
+    AgentObservationEvaluator,
+    AgentReflectionGate,
+)
 from app.application.agent_runtime.result_adapters import (
+    AgentToolResultProcessorRegistry,
     ChartTaskAdapter,
-    ProcessorRegistry,
     WebTaskAdapter,
 )
 from app.application.agent_runtime.services.progress import ExecutionProgress
@@ -26,7 +29,7 @@ from app.application.subagents.eligibility import subagent_execution_eligibility
 from app.application.subagents.supervisor import SubagentSupervisor
 from app.application.workspaces.artifacts import ArtifactService, LocalArtifactStore
 from app.application.workspaces.runtime import WorkspaceRuntimeService
-from app.common.core.config import Settings
+from app.common.core.config import AstraRuntimeSettings
 from app.common.schemas.agent.run_policy import (
     EffectiveReasoningPolicy,
     ReasoningPolicySnapshot,
@@ -49,7 +52,7 @@ from app.infrastructure.repositories.tool_settings import (
 from app.infrastructure.repositories.workspaces import WorkspaceRepository
 from app.infrastructure.sandbox.docker_provider import build_sandbox_provider
 from app.infrastructure.sandbox.runtime import SandboxJobService, SandboxSupervisor
-from app.infrastructure.tools.base import ToolExecutionError, ToolRegistry
+from app.infrastructure.tools.base import AstraToolRegistry, ToolExecutionError
 from app.infrastructure.tools.router import ToolRouter
 
 
@@ -115,14 +118,14 @@ class AgentRuntimeBuilder:
     def __init__(
         self,
         *,
-        settings: Settings,
+        settings: AstraRuntimeSettings,
         model_client: ModelClient,
-        tool_registry: ToolRegistry,
+        tool_registry: AstraToolRegistry,
         tool_router: ToolRouter,
-        processors: ProcessorRegistry,
-        evaluator: ObservationEvaluator,
-        reflection_gate: ReflectionGate,
-        completion_gate: CompletionGate,
+        processors: AgentToolResultProcessorRegistry,
+        evaluator: AgentObservationEvaluator,
+        reflection_gate: AgentReflectionGate,
+        completion_gate: AgentCompletionGate,
         web_adapter: WebTaskAdapter,
         chart_adapter: ChartTaskAdapter,
         sandbox_provider: Any,
@@ -425,7 +428,7 @@ class AgentRuntimeBuilder:
 
     def _limits(
         self, profile: RunExecutionProfile, policy: EffectiveReasoningPolicy
-    ) -> RuntimeLimits:
+    ) -> AgentRuntimeLimits:
         max_turns = self._bounded(policy.budgets.max_turns, self._settings.agent_max_turns)
         unlimited_tools = (
             profile.answer_mode == AnswerMode.trusted
@@ -440,7 +443,7 @@ class AgentRuntimeBuilder:
                 self._settings.agent_max_tool_calls,
             )
         )
-        return RuntimeLimits(
+        return AgentRuntimeLimits(
             max_turns=max_turns,
             max_tool_calls=max_tool_calls,
             max_reflections=min(

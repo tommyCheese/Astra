@@ -7,7 +7,7 @@ from app.domain.memory import (
     MemoryStatus,
     MemoryValidationError,
 )
-from app.infrastructure.db.models.memory import MemoryRecord
+from app.infrastructure.db.models.memory import PersistedMemoryRecord
 from app.infrastructure.repositories.memories import MemoryRepository
 from app.infrastructure.repositories.memory_queries import MemoryQueryRepository
 
@@ -33,7 +33,7 @@ class RunMemoryStore:
         valid_to=None,
         expires_at=None,
         normalize_kind: bool = False,
-    ) -> MemoryRecord:
+    ) -> PersistedMemoryRecord:
         namespace = None
         if run_id is None:
             namespace = (
@@ -98,7 +98,7 @@ class RunMemoryStore:
         run_id: str | None = None,
         min_confidence: float = 0.0,
         limit: int = 10,
-    ) -> list[MemoryRecord]:
+    ) -> list[PersistedMemoryRecord]:
         return await MemoryQueryRepository(self.session).list_records(
             scope=scope,
             kind=kind,

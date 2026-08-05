@@ -5,10 +5,10 @@ from __future__ import annotations
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.application.planning.revision import PlanRevisionError, revise_waiting_plan
-from app.application.run_management.contracts import RunDispatcher
+from app.application.run_management.contracts import RunExecutionDispatcher
 from app.application.run_management.settings import RunSettingsResolver
-from app.common.core.config import Settings
-from app.common.core.errors import StateError, ValidationError
+from app.common.core.config import AstraRuntimeSettings
+from app.common.core.errors import AstraInputValidationError, AstraStateConflictError
 from app.common.schemas.agent.api_views import ContinueRunRequest, CreateRunResponse
 from app.common.schemas.agent.tool_invocation import ApprovalDecisionRequest
 from app.common.schemas.agent.types import ContinuationAction
@@ -22,7 +22,7 @@ class RunContinuationService:
         self,
         session: AsyncSession,
         settings_resolver: RunSettingsResolver,
-        dispatcher: RunDispatcher,
+        dispatcher: RunExecutionDispatcher,
     ) -> None:
         self._session = session
         self._settings_resolver = settings_resolver
@@ -50,7 +50,7 @@ class RunContinuationService:
         except ValueError as error:
             if getattr(error, "code", "").startswith("PLAN_REVISION_"):
                 await repository.commit()
-                raise ValidationError(
+                raise AstraInputValidationError(
                     error.code,
                     "计划调整未通过校验，原计划仍可继续使用。",
                 ) from error
@@ -101,7 +101,7 @@ class RunContinuationService:
         repository: RunUnitOfWork,
         run: RunRecord,
         request: ContinueRunRequest,
-        run_settings: Settings,
+        run_settings: AstraRuntimeSettings,
     ) -> RunRecord:
         if request.action == ContinuationAction.execute_plan:
             return await RunContinuationService._confirm_plan(repository, run, request)
@@ -137,7 +137,7 @@ class RunContinuationService:
         repository: RunUnitOfWork,
         run: RunRecord,
         request: ContinueRunRequest,
-        run_settings: Settings,
+        run_settings: AstraRuntimeSettings,
     ) -> RunRecord:
         return await revise_waiting_plan(
             repository,
@@ -186,37 +186,37 @@ class RunContinuationService:
     def _raise_resume_error(error: ValueError) -> None:
         message = str(error)
         if isinstance(error, PlanRevisionError):
-            raise ValidationError(
+            raise AstraInputValidationError(
                 error.code,
                 "计划调整未通过校验，原计划仍可继续使用。",
             ) from error
         if "plan revision" in message:
-            raise StateError(
+            raise AstraStateConflictError(
                 "PLAN_REVISION_STALE", "计划已变化，请刷新后基于最新版本调整。"
             ) from error
         if "plan confirmation" in message:
-            raise StateError(
+            raise AstraStateConflictError(
                 "PLAN_CONFIRMATION_INVALID",
                 "计划确认已失效，请刷新后核对最新计划。",
             ) from error
         if "not waiting" in message:
-            raise StateError("RUN_NOT_WAITING", "该任务当前不需要补充信息。") from error
+            raise AstraStateConflictError("RUN_NOT_WAITING", "该任务当前不需要补充信息。") from error
         if "continuation token" in message:
-            raise StateError(
+            raise AstraStateConflictError(
                 "CONTINUATION_INVALID", "任务恢复凭据已失效，请刷新后重试。"
             ) from error
-        raise StateError("RUN_RESUME_CONFLICT", "当前任务无法恢复。") from error
+        raise AstraStateConflictError("RUN_RESUME_CONFLICT", "当前任务无法恢复。") from error
 
     @staticmethod
     def _raise_approval_error(error: ValueError) -> None:
         message = str(error)
         if "continuation token" in message:
-            raise StateError("CONTINUATION_INVALID", "批准凭据已失效，请刷新后重试。") from error
+            raise AstraStateConflictError("CONTINUATION_INVALID", "批准凭据已失效，请刷新后重试。") from error
         if "already been decided" in message:
-            raise StateError("APPROVAL_ALREADY_DECIDED", "该工具调用已经处理。") from error
+            raise AstraStateConflictError("APPROVAL_ALREADY_DECIDED", "该工具调用已经处理。") from error
         if "not available" in message:
-            raise StateError(
+            raise AstraStateConflictError(
                 "SIMILAR_APPROVAL_UNAVAILABLE",
                 "该命令不能使用相似命令授权。",
             ) from error
-        raise StateError("APPROVAL_CONFLICT", "该批准请求当前无法处理。") from error
+        raise AstraStateConflictError("APPROVAL_CONFLICT", "该批准请求当前无法处理。") from error

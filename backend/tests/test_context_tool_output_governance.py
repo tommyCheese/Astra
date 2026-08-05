@@ -4,14 +4,14 @@ from app.application.context_compaction.tool_outputs import (
     ToolOutputGovernanceService,
     ToolOutputStorageError,
 )
-from app.common.core.config import Settings
-from app.common.schemas.context_compaction import ContextOwnerRole, ContextReference
+from app.common.core.config import AstraRuntimeSettings
+from app.common.schemas.context_compaction import CompactionContextReference, ContextOwnerRole
 
 
 @pytest.mark.asyncio
 async def test_large_child_output_is_externalized_with_bounded_preview():
     service = ToolOutputGovernanceService(
-        Settings(
+        AstraRuntimeSettings(
             context_compaction_child_inline_bytes=1_024,
             context_compaction_child_inline_tokens=256,
         )
@@ -20,7 +20,7 @@ async def test_large_child_output_is_externalized_with_bounded_preview():
 
     async def persist(content: bytes, checksum: str):
         persisted[checksum] = content
-        return ContextReference(
+        return CompactionContextReference(
             kind="artifact", ref="artifact:large-report", content_hash=checksum
         )
 
@@ -42,7 +42,7 @@ async def test_large_child_output_is_externalized_with_bounded_preview():
 @pytest.mark.asyncio
 async def test_large_output_storage_failure_is_classified_and_never_silently_truncated():
     service = ToolOutputGovernanceService(
-        Settings(context_compaction_root_inline_bytes=1_024, context_compaction_root_inline_tokens=256)
+        AstraRuntimeSettings(context_compaction_root_inline_bytes=1_024, context_compaction_root_inline_tokens=256)
     )
 
     async def fail(_content: bytes, _checksum: str):
@@ -60,7 +60,7 @@ async def test_large_output_storage_failure_is_classified_and_never_silently_tru
 
 @pytest.mark.asyncio
 async def test_small_output_stays_inline_and_errors_are_sanitized():
-    service = ToolOutputGovernanceService(Settings())
+    service = ToolOutputGovernanceService(AstraRuntimeSettings())
 
     async def unused(_content: bytes, _checksum: str):
         raise AssertionError("small output must not be persisted")

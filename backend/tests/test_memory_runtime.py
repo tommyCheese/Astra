@@ -1,19 +1,19 @@
 from sqlalchemy import select
 
-from app.application.agent_runtime.services.context import ContextAssembler
+from app.application.agent_runtime.services.context import AgentContextAssembler
 from app.application.agent_runtime.services.memory_candidates import MemoryCandidateWriter
-from app.common.core.config import Settings
-from app.common.schemas.agent.run_result import MemoryRecord
+from app.common.core.config import AstraRuntimeSettings
+from app.common.schemas.agent.run_result import AgentRunMemoryCandidate
 from app.infrastructure.db.models.memory import MemoryRecallEventRecord
 from app.infrastructure.db.models.runs import RunEventRecord
 from app.infrastructure.repositories.memories import MemoryRepository
 from app.infrastructure.repositories.memory_recall import MemoryRecallRepository
 from app.infrastructure.repositories.run_unit_of_work import RunUnitOfWork
-from app.infrastructure.tools.base import ToolRegistry
+from app.infrastructure.tools.base import AstraToolRegistry
 
 
 class CandidateModelClient:
-    def __init__(self, candidates: list[MemoryRecord]):
+    def __init__(self, candidates: list[AgentRunMemoryCandidate]):
         self.candidates = candidates
 
     async def extract_memory_candidates(self, goal, context):
@@ -42,19 +42,19 @@ async def test_cross_session_retrieval_injects_task_memory_and_persists_safe_aud
         confidence=0.95,
         importance=0.8,
     )
-    settings = Settings(
+    settings = AstraRuntimeSettings(
         agent_memory_cross_session_enabled=True,
         agent_memory_retrieval_min_score=0,
     )
 
-    context = await ContextAssembler(
+    context = await AgentContextAssembler(
         run_repo,
         settings=settings,
         skills_enabled=False,
     ).assemble(
         run_id=target_run.id,
         goal="项目使用什么数据库？",
-        tool_registry=ToolRegistry(),
+        tool_registry=AstraToolRegistry(),
         observations=[],
         quick_mode=True,
         initial_run=target_run,
@@ -101,9 +101,9 @@ async def test_session_retrieval_crosses_tasks_with_matching_identity(session):
         confidence=0.9,
     )
 
-    context = await ContextAssembler(
+    context = await AgentContextAssembler(
         run_repo,
-        settings=Settings(
+        settings=AstraRuntimeSettings(
             agent_memory_cross_session_enabled=True,
             agent_memory_retrieval_min_score=0,
         ),
@@ -111,7 +111,7 @@ async def test_session_retrieval_crosses_tasks_with_matching_identity(session):
     ).assemble(
         run_id=target_run.id,
         goal="用户有什么偏好？",
-        tool_registry=ToolRegistry(),
+        tool_registry=AstraToolRegistry(),
         observations=[],
         quick_mode=True,
         initial_run=target_run,
@@ -130,9 +130,9 @@ async def test_session_retrieval_crosses_tasks_with_matching_identity(session):
         {"provider": "mock", "model": "mock"},
         session_id="browser-session-b",
     )
-    isolated_context = await ContextAssembler(
+    isolated_context = await AgentContextAssembler(
         run_repo,
-        settings=Settings(
+        settings=AstraRuntimeSettings(
             agent_memory_cross_session_enabled=True,
             agent_memory_retrieval_min_score=0,
         ),
@@ -140,7 +140,7 @@ async def test_session_retrieval_crosses_tasks_with_matching_identity(session):
     ).assemble(
         run_id=isolated_run.id,
         goal="用户有什么偏好？",
-        tool_registry=ToolRegistry(),
+        tool_registry=AstraToolRegistry(),
         observations=[],
         quick_mode=True,
         initial_run=isolated_run,
@@ -155,7 +155,7 @@ async def test_memory_manager_leaves_safe_candidate_pending_and_isolates_rejecti
         {"provider": "mock", "model": "mock"},
     )
     candidates = [
-        MemoryRecord(
+        AgentRunMemoryCandidate(
             scope="run",
             kind="semantic_fact",
             memory_key="run:answer",
@@ -164,7 +164,7 @@ async def test_memory_manager_leaves_safe_candidate_pending_and_isolates_rejecti
             confidence=0.9,
             importance=0.7,
         ),
-        MemoryRecord(
+        AgentRunMemoryCandidate(
             scope="workspace",
             kind="procedure",
             memory_key="workspace:unsafe",
@@ -175,7 +175,7 @@ async def test_memory_manager_leaves_safe_candidate_pending_and_isolates_rejecti
         ),
     ]
     manager = MemoryCandidateWriter(
-        Settings(agent_memory_write_enabled=True),
+        AstraRuntimeSettings(agent_memory_write_enabled=True),
         run_repo,
         CandidateModelClient(candidates),
     )

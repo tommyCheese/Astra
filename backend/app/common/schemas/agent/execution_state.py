@@ -49,7 +49,7 @@ class AgentState(BaseModel):
     terminal_intent: str | None = None
 
 
-class Evaluation(BaseModel):
+class AgentObservationEvaluation(BaseModel):
     plan_node_id: str | None = None
     outcome: EvaluationOutcome
     summary: str

@@ -14,10 +14,10 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.infrastructure.db.model_base import Base, JsonType, utc_now, uuid_str
+from app.infrastructure.db.model_base import AstraOrmRecordBase, JsonType, utc_now, uuid_str
 
 
-class ScheduledJobRecord(Base):
+class ScheduledJobRecord(AstraOrmRecordBase):
     __tablename__ = "scheduled_jobs"
     __table_args__ = (
         Index(
@@ -60,7 +60,7 @@ class ScheduledJobRecord(Base):
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
-class ScheduledJobRunRecord(Base):
+class ScheduledJobRunRecord(AstraOrmRecordBase):
     __tablename__ = "scheduled_job_runs"
     __table_args__ = (
         UniqueConstraint(

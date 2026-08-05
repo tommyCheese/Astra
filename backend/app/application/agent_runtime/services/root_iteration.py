@@ -17,7 +17,7 @@ from app.application.agent_runtime.services.turn_preparation import (
 )
 from app.common.schemas.agent.execution_state import AgentDecision
 from app.common.schemas.agent.run_policy import RunExecutionProfile
-from app.common.schemas.agent.run_result import FinalAnswer
+from app.common.schemas.agent.run_result import AgentFinalAnswer
 from app.domain.execution.contracts import (
     BlockedOutcome,
     CompletedOutcome,
@@ -45,7 +45,7 @@ class RootRuntimeState:
     workspace_changed: bool = False
     required_subagent_missing: bool = False
     final_turn_id: str | None = None
-    streamed_final_answer: FinalAnswer | None = None
+    streamed_final_answer: AgentFinalAnswer | None = None
     terminal_status: str | None = None
     terminal_summary: str | None = None
 
@@ -128,7 +128,7 @@ class RootAgentIterationStage:
             self._state.required_subagent_missing = False
             self._state.final_turn_id = completion.final_turn_id
             self._state.streamed_final_answer = completion.streamed_answer
-            return CompletedOutcome(answer=completion.streamed_answer or FinalAnswer(summary=""))
+            return CompletedOutcome(answer=completion.streamed_answer or AgentFinalAnswer(summary=""))
         return await self._route_control_or_tool(
             context,
             prepared,
@@ -204,7 +204,7 @@ class RootAgentIterationStage:
             self._clear_approved_resume()
         if action == "stop":
             if terminal_status is None:
-                return CompletedOutcome(answer=FinalAnswer(summary=""))
+                return CompletedOutcome(answer=AgentFinalAnswer(summary=""))
             return self._stop(terminal_status, terminal_summary)
         return ContinueOutcome()
 

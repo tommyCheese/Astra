@@ -5,18 +5,18 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.application.run_management.dispatcher import InProcessRunDispatcher
 from app.application.scheduling.service import SchedulerService
-from app.common.core.config import Settings
-from app.infrastructure.db.model_base import Base
+from app.common.core.config import AstraRuntimeSettings
+from app.infrastructure.db.model_base import AstraOrmRecordBase
 
 
 @pytest.mark.asyncio
 async def test_scheduler_lifecycle_reports_readiness_and_stops_cleanly(tmp_path):
     engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'scheduler.db'}")
     async with engine.begin() as connection:
-        await connection.run_sync(Base.metadata.create_all)
+        await connection.run_sync(AstraOrmRecordBase.metadata.create_all)
     sessions = async_sessionmaker(engine, expire_on_commit=False)
     service = SchedulerService(
-        Settings(scheduler_poll_seconds=0.1, scheduler_history_retention_days=1),
+        AstraRuntimeSettings(scheduler_poll_seconds=0.1, scheduler_history_retention_days=1),
         sessions,
         InProcessRunDispatcher(),
     )
@@ -42,7 +42,7 @@ async def test_scheduler_lifecycle_reports_readiness_and_stops_cleanly(tmp_path)
 
 def test_disabled_scheduler_is_ready_without_a_worker():
     service = SchedulerService(
-        Settings(scheduler_enabled=False),
+        AstraRuntimeSettings(scheduler_enabled=False),
         None,
         InProcessRunDispatcher(),
     )

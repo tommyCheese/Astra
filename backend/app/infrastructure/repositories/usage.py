@@ -16,7 +16,7 @@ from app.common.schemas.usage import (
 )
 from app.infrastructure.db.model_base import utc_now
 from app.infrastructure.db.models.executions import ModelInvocationRecord
-from app.infrastructure.db.models.memory import MemoryRecord
+from app.infrastructure.db.models.memory import PersistedMemoryRecord
 from app.infrastructure.db.models.permissions import ToolCallRecord
 from app.infrastructure.db.models.runs import AgentTurnRecord, RunRecord
 from app.infrastructure.db.models.workspaces import ArtifactRecord, SandboxJobRecord
@@ -162,7 +162,7 @@ class UsageRepository:
         invocations = await rows(ModelInvocationRecord, ModelInvocationRecord.created_at)
         turns = await rows(AgentTurnRecord, AgentTurnRecord.created_at)
         tools = await rows(ToolCallRecord, ToolCallRecord.started_at)
-        memories = await rows(MemoryRecord, MemoryRecord.created_at)
+        memories = await rows(PersistedMemoryRecord, PersistedMemoryRecord.created_at)
         jobs = await rows(SandboxJobRecord, SandboxJobRecord.created_at)
         artifacts = await rows(ArtifactRecord, ArtifactRecord.created_at)
 

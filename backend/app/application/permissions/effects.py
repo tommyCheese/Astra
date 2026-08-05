@@ -8,8 +8,8 @@ from pathlib import PurePosixPath
 from typing import Any
 
 from app.common.schemas.permissions import ActionEffectPlan, EffectItem, EffectKind
-from app.infrastructure.plugins.interfaces import EffectAnalyzer
-from app.infrastructure.tools.base import ToolSpec
+from app.infrastructure.plugins.interfaces import ToolEffectAnalyzer
+from app.infrastructure.tools.base import AstraToolSpec
 
 ANALYZER_VERSION = "1"
 ANALYZER_DIGEST = hashlib.sha256(b"astra-effect-analyzer-v1").hexdigest()
@@ -56,10 +56,10 @@ def effect_plan_hash(plan: ActionEffectPlan) -> str:
     ).hexdigest()
 
 
-class WebEffectAnalyzer(EffectAnalyzer):
+class WebEffectAnalyzer(ToolEffectAnalyzer):
     def analyze(
         self,
-        spec: ToolSpec,
+        spec: AstraToolSpec,
         tool_input: dict[str, Any],
         *,
         task_id: str,
@@ -79,10 +79,10 @@ class WebEffectAnalyzer(EffectAnalyzer):
         )
 
 
-class ChartEffectAnalyzer(EffectAnalyzer):
+class ChartEffectAnalyzer(ToolEffectAnalyzer):
     def analyze(
         self,
-        spec: ToolSpec,
+        spec: AstraToolSpec,
         tool_input: dict[str, Any],
         *,
         task_id: str,
@@ -116,10 +116,10 @@ class ChartEffectAnalyzer(EffectAnalyzer):
         )
 
 
-class DefaultEffectAnalyzer(EffectAnalyzer):
+class DefaultEffectAnalyzer(ToolEffectAnalyzer):
     def analyze(
         self,
-        spec: ToolSpec,
+        spec: AstraToolSpec,
         tool_input: dict[str, Any],
         *,
         task_id: str,
@@ -243,7 +243,7 @@ def _mapped_declared_effects(spec, tool_input, task_id, declared) -> list[Effect
     ]
 
 def _effect_plan(
-    spec: ToolSpec,
+    spec: AstraToolSpec,
     summary: str,
     effects: list[EffectItem],
     permissions: list[str],
@@ -265,10 +265,10 @@ def _effect_plan(
     )
 
 
-class BashEffectAnalyzer(EffectAnalyzer):
+class BashEffectAnalyzer(ToolEffectAnalyzer):
     def analyze(
         self,
-        spec: ToolSpec,
+        spec: AstraToolSpec,
         tool_input: dict[str, Any],
         *,
         task_id: str,
@@ -363,7 +363,7 @@ def _workspace_read_effect(task_id: str) -> EffectItem:
     )
 
 
-def _bash_effect_plan(spec: ToolSpec, summary: str, effects: list[EffectItem]):
+def _bash_effect_plan(spec: AstraToolSpec, summary: str, effects: list[EffectItem]):
     effects = _deduplicate_effects(effects)
     effect_kinds = {item.kind for item in effects}
     if EffectKind.workspace_delete in effect_kinds:

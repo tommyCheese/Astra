@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from typing import Literal, Protocol, TypeAlias
 
 from app.common.contracts.json_values import JsonObject
-from app.common.schemas.agent.run_result import FinalAnswer
+from app.common.schemas.agent.run_result import AgentFinalAnswer
 from app.common.schemas.agent.types import ExecutionId, RunId, TaskId
 
 
@@ -66,7 +66,7 @@ class WaitingOutcome:
 
 @dataclass(frozen=True)
 class CompletedOutcome:
-    answer: FinalAnswer
+    answer: AgentFinalAnswer
     kind: Literal["completed"] = "completed"
 
 

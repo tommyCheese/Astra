@@ -6,10 +6,10 @@ from typing import Any, ClassVar
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 from app.common.schemas.agent.execution_state import AgentObservation
-from app.common.schemas.agent.run_result import ValidationIssue, ValidationOutcome
+from app.common.schemas.agent.run_result import AgentValidationIssue, AgentValidationOutcome
 from app.domain.grounding.fragments import fragments_from_web_result
-from app.domain.grounding.ledger import EvidenceLedger
-from app.domain.grounding.schemas import EvidenceLineage
+from app.domain.grounding.ledger import GroundingEvidenceLedger
+from app.domain.grounding.schemas import GroundingEvidenceLineage
 
 
 class TaskAdapter(ABC):
@@ -21,7 +21,7 @@ class TaskAdapter(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def validate(self, result: dict[str, Any], evidence: dict[str, Any]) -> ValidationOutcome:
+    def validate(self, result: dict[str, Any], evidence: dict[str, Any]) -> AgentValidationOutcome:
         raise NotImplementedError
 
 
@@ -43,7 +43,7 @@ class ToolResultProcessor(ABC):
         return {"query": goal, "external_evidence_attempted": attempted}
 
 
-class ProcessorRegistry:
+class AgentToolResultProcessorRegistry:
     def __init__(self, processors: Iterable[ToolResultProcessor]):
         self._processors = list(processors)
 
@@ -63,7 +63,7 @@ class WebTaskAdapter(TaskAdapter, ToolResultProcessor):
         self.dedupe: dict[str, Any] = {}
         self.search_warnings: list[str] = []
         self.attempted = False
-        self.grounding = EvidenceLedger()
+        self.grounding = GroundingEvidenceLedger()
 
     def normalize_tool_result(self, tool_name: str, output: dict[str, Any]) -> AgentObservation:
         return AgentObservation(
@@ -101,7 +101,7 @@ class WebTaskAdapter(TaskAdapter, ToolResultProcessor):
         fragments = fragments_from_web_result(
             tool_name,
             output,
-            lineage=EvidenceLineage(
+            lineage=GroundingEvidenceLineage(
                 plan_node_id=str(output.get("plan_node_id") or "") or None,
                 node_execution_id=str(output.get("node_execution_id") or "") or None,
                 tool_call_id=str(output.get("tool_call_id") or "") or None,
@@ -119,7 +119,7 @@ class WebTaskAdapter(TaskAdapter, ToolResultProcessor):
         if tool_name == "web_fetch":
             self.failed_sources.append({"url": tool_input.get("url"), **error})
 
-    def validate(self, result: dict[str, Any], evidence: dict[str, Any]) -> ValidationOutcome:
+    def validate(self, result: dict[str, Any], evidence: dict[str, Any]) -> AgentValidationOutcome:
         fetched = evidence.get("fetched_sources", [])
         sources = result.get("sources", [])
         warnings = list(evidence.get("warnings", []))
@@ -129,39 +129,39 @@ class WebTaskAdapter(TaskAdapter, ToolResultProcessor):
             and not evidence.get("failed_sources")
             and (result.get("summary") or result.get("findings"))
         ):
-            return ValidationOutcome(
+            return AgentValidationOutcome(
                 validator="task_adapter",
                 passed=True,
                 blocking=True,
                 evidence_refs=[],
             )
-        issues: list[ValidationIssue] = []
+        issues: list[AgentValidationIssue] = []
         if not fetched:
             issues.append(
-                ValidationIssue(
+                AgentValidationIssue(
                     code="web_sources_not_fetched",
                     message="没有成功抓取到可用来源。",
                 )
             )
         if not sources:
             issues.append(
-                ValidationIssue(
+                AgentValidationIssue(
                     code="web_source_citations_missing",
                     message="最终答案缺少来源引用。",
                 )
             )
         if issues:
-            return ValidationOutcome(
+            return AgentValidationOutcome(
                 validator="task_adapter",
                 passed=False,
                 blocking=True,
                 issues=issues,
                 warnings=warnings,
             )
-        warning_issues: list[ValidationIssue] = []
+        warning_issues: list[AgentValidationIssue] = []
         if evidence.get("failed_sources"):
             warning_issues.append(
-                ValidationIssue(
+                AgentValidationIssue(
                     code="web_sources_partially_failed",
                     message="部分来源抓取失败。",
                     severity="warning",
@@ -169,13 +169,13 @@ class WebTaskAdapter(TaskAdapter, ToolResultProcessor):
             )
         if any(float(item.get("quality_score") or 0) < 0.5 for item in fetched):
             warning_issues.append(
-                ValidationIssue(
+                AgentValidationIssue(
                     code="web_source_quality_low",
                     message="部分来源质量较低。",
                     severity="warning",
                 )
             )
-        return ValidationOutcome(
+        return AgentValidationOutcome(
             validator="task_adapter",
             passed=True,
             blocking=True,
@@ -286,22 +286,22 @@ class ChartTaskAdapter(TaskAdapter, ToolResultProcessor):
             "warnings": self.warnings,
         }
 
-    def validate(self, result: dict[str, Any], evidence: dict[str, Any]) -> ValidationOutcome:
+    def validate(self, result: dict[str, Any], evidence: dict[str, Any]) -> AgentValidationOutcome:
         if not self.attempted:
-            return ValidationOutcome(validator="task_adapter", passed=True, blocking=True)
+            return AgentValidationOutcome(validator="task_adapter", passed=True, blocking=True)
         if not self.artifacts:
-            return ValidationOutcome(
+            return AgentValidationOutcome(
                 validator="task_adapter",
                 passed=False,
                 blocking=True,
                 issues=[
-                    ValidationIssue(
+                    AgentValidationIssue(
                         code="chart_artifact_missing",
                         message="图表没有产生有效 Artifact。",
                     )
                 ],
             )
-        return ValidationOutcome(
+        return AgentValidationOutcome(
             validator="task_adapter",
             passed=True,
             blocking=True,

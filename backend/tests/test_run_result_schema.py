@@ -2,11 +2,11 @@ import pytest
 from pydantic import ValidationError
 
 from app.common.schemas.agent.api_views import RunView
-from app.common.schemas.agent.run_result import RunResult
+from app.common.schemas.agent.run_result import AgentRunResult
 
 
 def test_verification_report_defaults_optional_validation_outcomes():
-    result = RunResult.model_validate(
+    result = AgentRunResult.model_validate(
         {
             "summary": "legacy",
             "verification_report": {"status": "completed", "notes": []},
@@ -19,7 +19,7 @@ def test_verification_report_defaults_optional_validation_outcomes():
 
 def test_run_result_rejects_obsolete_payload():
     with pytest.raises(ValidationError):
-        RunResult.model_validate(
+        AgentRunResult.model_validate(
             {
                 "summary": "obsolete",
                 "findings": "one finding",
@@ -49,7 +49,7 @@ def test_run_result_rejects_obsolete_payload():
 
 
 def test_run_result_preserves_grounding_claims_citations_and_audit_refs():
-    result = RunResult.model_validate(
+    result = AgentRunResult.model_validate(
         {
             "summary": "grounded",
             "claims": [
@@ -83,7 +83,7 @@ def test_run_result_preserves_grounding_claims_citations_and_audit_refs():
 
 
 def test_run_result_preserves_structured_failure():
-    result = RunResult.model_validate(
+    result = AgentRunResult.model_validate(
         {
             "summary": "无法完成",
             "error": {

@@ -1,12 +1,12 @@
 import pytest
 from pydantic import ValidationError
 
-from app.application.agent_runtime.policies.reasoning import PolicyCompiler
-from app.application.agent_runtime.services.loop import AgentLoop
-from app.common.core.config import Settings
+from app.application.agent_runtime.policies.reasoning import AgentReasoningPolicyCompiler
+from app.application.agent_runtime.services.loop import AstraAgentLoop
+from app.common.core.config import AstraRuntimeSettings
 from app.common.schemas.agent.execution_state import AgentDecision
 from app.common.schemas.agent.run_policy import RequestedReasoningPolicy
-from app.common.schemas.agent.run_result import FinalAnswer
+from app.common.schemas.agent.run_result import AgentFinalAnswer
 from app.infrastructure.model_clients.mock import MockModelClient
 from app.infrastructure.repositories.run_unit_of_work import RunUnitOfWork
 from app.infrastructure.sandbox.runtime import SandboxHandle, SandboxProvider, SandboxResult
@@ -101,17 +101,17 @@ def test_chart_tool_reads_bounded_workspace_csv(tmp_path):
 
 
 def test_chart_tool_is_registered_only_when_sandbox_enabled():
-    assert "chart.render" not in build_tool_registry(Settings(sandbox_enabled=False)).specs()
+    assert "chart.render" not in build_tool_registry(AstraRuntimeSettings(sandbox_enabled=False)).specs()
     assert (
         "chart.render"
         in build_tool_registry(
-            Settings(sandbox_enabled=True, sandbox_skip_availability_check=True)
+            AstraRuntimeSettings(sandbox_enabled=True, sandbox_skip_availability_check=True)
         ).specs()
     )
 
 
 def test_chart_tool_switch_overrides_available_sandbox():
-    settings = Settings(
+    settings = AstraRuntimeSettings(
         tool_chart_render_enabled=False,
         sandbox_enabled=True,
         sandbox_skip_availability_check=True,
@@ -122,7 +122,7 @@ def test_chart_tool_switch_overrides_available_sandbox():
 
 def test_chart_manifest_availability_does_not_fabricate_invalid_probe_input():
     registry = build_tool_registry(
-        Settings(sandbox_enabled=True, sandbox_skip_availability_check=True)
+        AstraRuntimeSettings(sandbox_enabled=True, sandbox_skip_availability_check=True)
     )
 
     status = ToolRouter(registry, available_backends={"sandbox.remote"}).availability(
@@ -145,7 +145,7 @@ class ChartClient(MockModelClient):
                 tool_name="chart.render",
                 tool_input=request().model_dump(mode="json"),
             ), None
-        return AgentDecision(decision_type="finalize", reasoning_summary="完成"), FinalAnswer(
+        return AgentDecision(decision_type="finalize", reasoning_summary="完成"), AgentFinalAnswer(
             summary="图表已生成"
         )
 
@@ -185,14 +185,14 @@ class ChartProvider(SandboxProvider):
 async def test_chart_only_agent_run_creates_sandbox_artifact_without_web_evidence(
     session, tmp_path
 ):
-    settings = Settings(
+    settings = AstraRuntimeSettings(
         model_provider="mock",
         sandbox_enabled=True,
         sandbox_skip_availability_check=True,
         artifact_store_path=str(tmp_path / "store"),
     )
     repo = RunUnitOfWork(session)
-    policy = PolicyCompiler().compile(
+    policy = AgentReasoningPolicyCompiler().compile(
         RequestedReasoningPolicy(execution_mode="auto_approval")
     )
     run = await repo.create_task_run(
@@ -201,7 +201,7 @@ async def test_chart_only_agent_run_creates_sandbox_artifact_without_web_evidenc
         reasoning_policy=policy.model_dump(mode="json"),
     )
     registry = build_tool_registry(settings)
-    output = await AgentLoop(
+    output = await AstraAgentLoop(
         settings,
         model_client=ChartClient(),
         tool_registry=registry,
@@ -215,4 +215,4 @@ async def test_chart_only_agent_run_creates_sandbox_artifact_without_web_evidenc
 
 def test_chart_tool_is_hidden_when_provider_is_not_configured(monkeypatch):
     monkeypatch.setattr("app.infrastructure.tools.registry.shutil.which", lambda _: None)
-    assert "chart.render" not in build_tool_registry(Settings(sandbox_enabled=True)).specs()
+    assert "chart.render" not in build_tool_registry(AstraRuntimeSettings(sandbox_enabled=True)).specs()

@@ -11,7 +11,7 @@ def utc_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-class EvidenceKind(str, Enum):
+class GroundingEvidenceKind(str, Enum):
     search_trace = "search_trace"
     search_candidate = "search_candidate"
     source_snapshot = "source_snapshot"
@@ -22,7 +22,7 @@ class EvidenceKind(str, Enum):
     citation = "citation"
 
 
-class SearchConstraints(BaseModel):
+class GroundingSearchConstraints(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     language: str | None = None
@@ -35,7 +35,7 @@ class SearchConstraints(BaseModel):
     max_results: int = Field(default=5, ge=1, le=20)
 
 
-class ConstraintAudit(BaseModel):
+class GroundingConstraintAudit(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     applied: list[str] = Field(default_factory=list)
@@ -44,19 +44,19 @@ class ConstraintAudit(BaseModel):
     unsupported: list[str] = Field(default_factory=list)
 
 
-class SearchTrace(BaseModel):
+class GroundingSearchTrace(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     id: str
     query: str
     purpose: str | None = None
     provider: str
-    constraints: SearchConstraints = Field(default_factory=SearchConstraints)
-    constraint_audit: ConstraintAudit = Field(default_factory=ConstraintAudit)
+    constraints: GroundingSearchConstraints = Field(default_factory=GroundingSearchConstraints)
+    constraint_audit: GroundingConstraintAudit = Field(default_factory=GroundingConstraintAudit)
     retrieved_at: str = Field(default_factory=utc_iso)
 
 
-class SearchCandidate(BaseModel):
+class GroundingSearchCandidate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     id: str
@@ -75,7 +75,7 @@ class SearchCandidate(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
-class Passage(BaseModel):
+class GroundingSourcePassage(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     id: str
@@ -89,13 +89,13 @@ class Passage(BaseModel):
     evidence_strength: Literal["source_passage"] = "source_passage"
 
     @model_validator(mode="after")
-    def validate_offsets(self) -> Passage:
+    def validate_offsets(self) -> GroundingSourcePassage:
         if self.end_offset < self.start_offset:
             raise ValueError("passage end_offset precedes start_offset")
         return self
 
 
-class SourceSnapshot(BaseModel):
+class GroundingSourceSnapshot(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     id: str
@@ -118,7 +118,7 @@ class SourceSnapshot(BaseModel):
     warnings: list[str] = Field(default_factory=list)
 
 
-class Claim(BaseModel):
+class GroundedAnswerClaim(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     id: str
@@ -128,7 +128,7 @@ class Claim(BaseModel):
     support_status: Literal["unverified", "supported", "unsupported"] = "unverified"
 
 
-class Citation(BaseModel):
+class GroundedAnswerCitation(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     id: str
@@ -141,7 +141,7 @@ class Citation(BaseModel):
     ordinal: int | None = Field(default=None, ge=1)
 
 
-class EvidenceLineage(BaseModel):
+class GroundingEvidenceLineage(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     run_id: str | None = None
@@ -151,13 +151,13 @@ class EvidenceLineage(BaseModel):
     artifact_ids: list[str] = Field(default_factory=list)
 
 
-class EvidenceFragment(BaseModel):
+class GroundingEvidenceFragment(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     id: str
-    kind: EvidenceKind
+    kind: GroundingEvidenceKind
     evidence_key: str
     payload_digest: str
     payload: dict[str, Any]
-    lineage: EvidenceLineage = Field(default_factory=EvidenceLineage)
+    lineage: GroundingEvidenceLineage = Field(default_factory=GroundingEvidenceLineage)
     created_at: str = Field(default_factory=utc_iso)

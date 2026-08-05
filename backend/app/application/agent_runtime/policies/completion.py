@@ -5,15 +5,15 @@ from __future__ import annotations
 from typing import Any
 
 from app.common.schemas.agent.execution_state import AgentState, CompletionDecision
-from app.common.schemas.agent.run_result import ValidationOutcome
+from app.common.schemas.agent.run_result import AgentValidationOutcome
 from app.common.schemas.agent.types import CriterionStatus, TerminalState
 
 
-class CompletionGate:
+class AgentCompletionGate:
     def evaluate_basic(
         self,
         *,
-        validation_outcomes: list[ValidationOutcome],
+        validation_outcomes: list[AgentValidationOutcome],
         required_user_action: str | None = None,
         runtime_error: str | None = None,
     ) -> CompletionDecision:
@@ -48,7 +48,7 @@ class CompletionGate:
         self,
         state: AgentState,
         *,
-        validation_outcomes: list[ValidationOutcome],
+        validation_outcomes: list[AgentValidationOutcome],
         plan: Any | None = None,
         warnings: list[str] | None = None,
         required_user_action: str | None = None,
@@ -206,7 +206,7 @@ def _node_keys_with_status(nodes: list[Any], statuses: set[str]) -> list[str]:
 
 
 def _completion_warnings(
-    warnings: list[str], validation_outcomes: list[ValidationOutcome]
+    warnings: list[str], validation_outcomes: list[AgentValidationOutcome]
 ) -> list[str]:
     collected = list(warnings)
     for outcome in validation_outcomes:
@@ -216,7 +216,7 @@ def _completion_warnings(
 
 
 def _unmet_contract_requirements(
-    state: AgentState, validation_outcomes: list[ValidationOutcome]
+    state: AgentState, validation_outcomes: list[AgentValidationOutcome]
 ) -> list[str]:
     unmet = _unmet_success_criteria(state)
     unmet.extend(_unmet_verification_requirements(state, validation_outcomes))
@@ -233,7 +233,7 @@ def _unmet_success_criteria(state: AgentState) -> list[str]:
 
 
 def _unmet_verification_requirements(
-    state: AgentState, validation_outcomes: list[ValidationOutcome]
+    state: AgentState, validation_outcomes: list[AgentValidationOutcome]
 ) -> list[str]:
     unmet: list[str] = []
     for requirement in state.task_contract.verification_requirements:
@@ -250,7 +250,7 @@ def _unmet_verification_requirements(
 
 
 def _blocking_validator_requirements(
-    validation_outcomes: list[ValidationOutcome],
+    validation_outcomes: list[AgentValidationOutcome],
 ) -> list[str]:
     return [
         f"validator:{outcome.validator}"

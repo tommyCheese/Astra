@@ -3,34 +3,42 @@ from __future__ import annotations
 from collections import Counter
 from collections.abc import Iterable
 
-from app.domain.grounding.schemas import EvidenceFragment, EvidenceKind, Passage
+from app.domain.grounding.schemas import (
+    GroundingEvidenceFragment,
+    GroundingEvidenceKind,
+    GroundingSourcePassage,
+)
 
 
-class EvidenceConflictError(ValueError):
+class GroundingEvidenceConflictError(ValueError):
     pass
 
 
-class EvidenceLedger:
-    def __init__(self, fragments: Iterable[EvidenceFragment] = ()):
-        self._records: dict[str, EvidenceFragment] = {}
+class GroundingEvidenceLedger:
+    def __init__(self, fragments: Iterable[GroundingEvidenceFragment] = ()):
+        self._records: dict[str, GroundingEvidenceFragment] = {}
         for fragment in fragments:
             self.append(fragment)
 
-    def append(self, fragment: EvidenceFragment) -> EvidenceFragment:
+    def append(self, fragment: GroundingEvidenceFragment) -> GroundingEvidenceFragment:
         existing = self._records.get(fragment.evidence_key)
         if existing is not None:
             if existing.payload_digest != fragment.payload_digest:
-                raise EvidenceConflictError(
+                raise GroundingEvidenceConflictError(
                     f"conflicting evidence replay for {fragment.evidence_key}"
                 )
             return existing
         self._records[fragment.evidence_key] = fragment
         return fragment
 
-    def extend(self, fragments: Iterable[EvidenceFragment]) -> list[EvidenceFragment]:
+    def extend(
+        self, fragments: Iterable[GroundingEvidenceFragment]
+    ) -> list[GroundingEvidenceFragment]:
         return [self.append(fragment) for fragment in fragments]
 
-    def records(self, kind: EvidenceKind | None = None) -> list[EvidenceFragment]:
+    def records(
+        self, kind: GroundingEvidenceKind | None = None
+    ) -> list[GroundingEvidenceFragment]:
         values = list(self._records.values())
         if kind is not None:
             values = [item for item in values if item.kind == kind]
@@ -39,13 +47,13 @@ class EvidenceLedger:
     def evidence_ids(self) -> set[str]:
         return {item.id for item in self._records.values()}
 
-    def get_by_id(self, evidence_id: str) -> EvidenceFragment | None:
+    def get_by_id(self, evidence_id: str) -> GroundingEvidenceFragment | None:
         return next((item for item in self._records.values() if item.id == evidence_id), None)
 
-    def passages(self, source_id: str | None = None) -> list[Passage]:
+    def passages(self, source_id: str | None = None) -> list[GroundingSourcePassage]:
         passages = [
-            Passage.model_validate(item.payload)
-            for item in self.records(EvidenceKind.passage)
+            GroundingSourcePassage.model_validate(item.payload)
+            for item in self.records(GroundingEvidenceKind.passage)
         ]
         if source_id is not None:
             passages = [item for item in passages if item.source_id == source_id]
@@ -57,7 +65,7 @@ class EvidenceLedger:
         query: str,
         *,
         max_passages: int = 5,
-    ) -> list[Passage]:
+    ) -> list[GroundingSourcePassage]:
         terms = [term.casefold() for term in query.split() if term.strip()]
         ranked = []
         for passage in self.passages(source_id):
@@ -75,7 +83,7 @@ class EvidenceLedger:
         *,
         context_before: int = 0,
         context_after: int = 0,
-    ) -> list[Passage]:
+    ) -> list[GroundingSourcePassage]:
         passages = self.passages(source_id)
         index = next(
             (index for index, item in enumerate(passages) if item.id == passage_id),
@@ -100,7 +108,7 @@ class EvidenceLedger:
                 break
             record = next(
                 item
-                for item in self.records(EvidenceKind.passage)
+                for item in self.records(GroundingEvidenceKind.passage)
                 if item.payload.get("id") == passage.id
             )
             selected.append(

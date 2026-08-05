@@ -34,7 +34,7 @@ class CompactionLifecycleStatus(str, Enum):
     skipped = "skipped"
 
 
-class TokenAccounting(BaseModel):
+class ContextTokenAccounting(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     context_window: int = Field(ge=1)
@@ -51,7 +51,7 @@ class TokenAccounting(BaseModel):
     estimated: bool = True
 
 
-class ContextItem(BaseModel):
+class CompactionContextItem(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     id: str = Field(min_length=1, max_length=240)
@@ -66,7 +66,7 @@ class ContextItem(BaseModel):
     canonical: bool = False
 
 
-class ContextReference(BaseModel):
+class CompactionContextReference(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     kind: Literal["artifact", "evidence", "tool_call", "child_result", "path"]
@@ -96,23 +96,23 @@ class ContinuationManifest(BaseModel):
     catalog_digests: dict[str, str] = Field(default_factory=dict)
 
 
-class ContextEnvelope(BaseModel):
+class CompactionContextEnvelope(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     schema_version: Literal[1] = 1
     owner_type: ContextOwnerRole
     owner_id: str = Field(min_length=1, max_length=160)
     purpose: str = Field(min_length=1, max_length=4_000)
-    protected_prefix: tuple[ContextItem, ...]
+    protected_prefix: tuple[CompactionContextItem, ...]
     prior_checkpoint: dict[str, Any] | None = None
-    compactable_body: tuple[ContextItem, ...] = ()
-    recent_tail: tuple[ContextItem, ...] = ()
-    reference_manifest: tuple[ContextReference, ...] = ()
-    accounting: TokenAccounting
+    compactable_body: tuple[CompactionContextItem, ...] = ()
+    recent_tail: tuple[CompactionContextItem, ...] = ()
+    reference_manifest: tuple[CompactionContextReference, ...] = ()
+    accounting: ContextTokenAccounting
     continuation: ContinuationManifest
 
     @model_validator(mode="after")
-    def validate_owner_binding(self) -> ContextEnvelope:
+    def validate_owner_binding(self) -> CompactionContextEnvelope:
         if (
             self.continuation.owner_type != self.owner_type
             or self.continuation.owner_id != self.owner_id
@@ -131,21 +131,21 @@ class CheckpointTrustMetadata(BaseModel):
     generated_from_canonical_state: bool = False
 
 
-class VerifiedFact(BaseModel):
+class CompactionVerifiedFact(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     text: str = Field(min_length=1, max_length=4_000)
     evidence_refs: tuple[str, ...] = ()
 
 
-class GlobalProgressItem(BaseModel):
+class CompactionProgressItem(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     criterion_or_node: str = Field(min_length=1, max_length=1_000)
     status: str = Field(min_length=1, max_length=80)
 
 
-class WorkspaceChange(BaseModel):
+class CompactionWorkspaceChange(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     artifact_or_path_ref: str = Field(min_length=1, max_length=1_000)
@@ -160,7 +160,7 @@ class ChildResultReference(BaseModel):
     summary: str = Field(min_length=1, max_length=2_000)
 
 
-class FailureDigest(BaseModel):
+class CompactionFailureDigest(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     fingerprint: str = Field(min_length=1, max_length=240)
@@ -175,11 +175,11 @@ class RootContextCheckpointV2(BaseModel):
     user_intent: str = Field(max_length=8_000)
     current_constraints: tuple[str, ...] = ()
     key_decisions: tuple[str, ...] = ()
-    verified_facts: tuple[VerifiedFact, ...] = ()
-    global_progress: tuple[GlobalProgressItem, ...] = ()
-    workspace_changes: tuple[WorkspaceChange, ...] = ()
+    verified_facts: tuple[CompactionVerifiedFact, ...] = ()
+    global_progress: tuple[CompactionProgressItem, ...] = ()
+    workspace_changes: tuple[CompactionWorkspaceChange, ...] = ()
     child_results: tuple[ChildResultReference, ...] = ()
-    recent_failures: tuple[FailureDigest, ...] = ()
+    recent_failures: tuple[CompactionFailureDigest, ...] = ()
     open_issues: tuple[str, ...] = ()
     next_steps: tuple[str, ...] = ()
     trust: CheckpointTrustMetadata = Field(default_factory=CheckpointTrustMetadata)
@@ -201,7 +201,7 @@ class ConversationContextCheckpointV2(BaseModel):
     created_at: datetime
 
 
-class ChildLocalFact(BaseModel):
+class ChildCompactionLocalFact(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     text: str = Field(min_length=1, max_length=4_000)
@@ -219,10 +219,10 @@ class ChildContextCheckpointV2(BaseModel):
     contract_hash: str = Field(min_length=1, max_length=160)
     local_progress: tuple[str, ...] = ()
     completed_steps: tuple[str, ...] = ()
-    local_facts: tuple[ChildLocalFact, ...] = ()
+    local_facts: tuple[ChildCompactionLocalFact, ...] = ()
     evidence_refs: tuple[str, ...] = ()
     artifact_refs: tuple[str, ...] = ()
-    recent_failures: tuple[FailureDigest, ...] = ()
+    recent_failures: tuple[CompactionFailureDigest, ...] = ()
     open_issues: tuple[str, ...] = ()
     next_action: str | None = Field(default=None, max_length=4_000)
     remaining_budget: dict[str, int | float] = Field(default_factory=dict)

@@ -4,14 +4,14 @@ from unittest.mock import AsyncMock
 import httpx
 import pytest
 
-from app.common.core.config import Settings
+from app.common.core.config import AstraRuntimeSettings
 from app.infrastructure.tools.base import (
-    ArtifactRef,
-    Tool,
+    AstraTool,
+    AstraToolRegistry,
+    AstraToolSpec,
+    ToolArtifactReference,
     ToolExecutionError,
-    ToolRegistry,
     ToolResultEnvelope,
-    ToolSpec,
 )
 from app.infrastructure.tools.web import build_web_registry
 from app.infrastructure.tools.web.content import extract_source
@@ -26,21 +26,21 @@ from app.infrastructure.tools.web.search import WebSearchTool
 
 
 async def test_unconfigured_web_search_provider_is_rejected():
-    tool = WebSearchTool(Settings(web_search_provider="unsupported"))
+    tool = WebSearchTool(AstraRuntimeSettings(web_search_provider="unsupported"))
     with pytest.raises(ToolExecutionError) as exc_info:
         await tool.run({"query": "Astra"})
     assert exc_info.value.category == "provider_not_configured"
 
 
 async def test_web_search_rejects_empty_query():
-    tool = WebSearchTool(Settings(web_search_provider="mock"))
+    tool = WebSearchTool(AstraRuntimeSettings(web_search_provider="mock"))
 
     with pytest.raises(ToolExecutionError):
         await tool.run({"query": ""})
 
 
 async def test_web_search_batches_logical_queries_and_preserves_lineage(monkeypatch):
-    tool = WebSearchTool(Settings(web_search_provider="google"))
+    tool = WebSearchTool(AstraRuntimeSettings(web_search_provider="google"))
 
     async def fake_search(query, _tool_input):
         return {
@@ -95,7 +95,7 @@ async def test_web_search_batches_logical_queries_and_preserves_lineage(monkeypa
 
 
 async def test_web_search_reports_provider_unsupported_region_truthfully(monkeypatch):
-    tool = WebSearchTool(Settings(web_search_provider="bing"))
+    tool = WebSearchTool(AstraRuntimeSettings(web_search_provider="bing"))
 
     async def fake_search(query, _tool_input):
         return {
@@ -160,7 +160,7 @@ async def test_duckduckgo_web_search_uses_real_provider_response(monkeypatch):
             )
 
     monkeypatch.setattr("app.infrastructure.tools.web.providers.httpx.AsyncClient", FakeClient)
-    output = await WebSearchTool(Settings(web_search_provider="duckduckgo")).run(
+    output = await WebSearchTool(AstraRuntimeSettings(web_search_provider="duckduckgo")).run(
         {"query": "Astra", "num_results": 1}
     )
 
@@ -205,7 +205,7 @@ async def test_bing_web_search_uses_rss_response(monkeypatch):
             )
 
     monkeypatch.setattr("app.infrastructure.tools.web.providers.httpx.AsyncClient", FakeClient)
-    output = await WebSearchTool(Settings(web_search_provider="bing")).run(
+    output = await WebSearchTool(AstraRuntimeSettings(web_search_provider="bing")).run(
         {"query": "Astra", "num_results": 1}
     )
 
@@ -231,7 +231,7 @@ def search_output(provider: str, candidate_count: int = 1) -> dict:
 
 async def test_auto_web_search_selects_google_with_dedicated_credentials(monkeypatch):
     tool = WebSearchTool(
-        Settings(
+        AstraRuntimeSettings(
             web_search_provider="auto",
             google_search_api_key="google-secret",
             google_search_engine_id="cx",
@@ -255,7 +255,7 @@ async def test_auto_web_search_selects_google_with_dedicated_credentials(monkeyp
 
 async def test_auto_web_search_selects_brave_from_generic_search_key(monkeypatch):
     tool = WebSearchTool(
-        Settings(
+        AstraRuntimeSettings(
             web_search_provider="auto",
             google_search_api_key="",
             google_search_engine_id="",
@@ -278,7 +278,7 @@ async def test_auto_web_search_selects_brave_from_generic_search_key(monkeypatch
 
 async def test_auto_keyless_search_stops_after_successful_bing(monkeypatch):
     tool = WebSearchTool(
-        Settings(
+        AstraRuntimeSettings(
             web_search_provider="auto",
             google_search_api_key="",
             google_search_engine_id="",
@@ -304,7 +304,7 @@ async def test_auto_keyless_search_stops_after_successful_bing(monkeypatch):
 @pytest.mark.parametrize("bing_failure", ["empty", "error"])
 async def test_auto_keyless_search_falls_back_to_duckduckgo(monkeypatch, bing_failure):
     tool = WebSearchTool(
-        Settings(
+        AstraRuntimeSettings(
             web_search_provider="auto",
             google_search_api_key="",
             google_search_engine_id="",
@@ -334,7 +334,7 @@ async def test_auto_keyless_search_falls_back_to_duckduckgo(monkeypatch, bing_fa
 
 async def test_auto_keyless_search_aggregates_provider_failures_without_details(monkeypatch):
     tool = WebSearchTool(
-        Settings(
+        AstraRuntimeSettings(
             web_search_provider="auto",
             google_search_api_key="",
             google_search_engine_id="",
@@ -362,7 +362,7 @@ async def test_auto_keyless_search_aggregates_provider_failures_without_details(
 
 
 async def test_explicit_provider_failure_does_not_fall_back(monkeypatch):
-    tool = WebSearchTool(Settings(web_search_provider="google"))
+    tool = WebSearchTool(AstraRuntimeSettings(web_search_provider="google"))
     bing = AsyncMock(return_value=search_output("bing"))
     duckduckgo = AsyncMock(return_value=search_output("duckduckgo"))
     monkeypatch.setattr(tool.provider_client, "_bing_search", bing)
@@ -377,7 +377,7 @@ async def test_explicit_provider_failure_does_not_fall_back(monkeypatch):
 
 
 async def test_google_web_search_requires_credentials():
-    tool = WebSearchTool(Settings(web_search_provider="google"))
+    tool = WebSearchTool(AstraRuntimeSettings(web_search_provider="google"))
 
     with pytest.raises(ToolExecutionError) as exc_info:
         await tool.run({"query": "Astra"})
@@ -424,7 +424,7 @@ async def test_google_web_search_api_error(monkeypatch):
 
     monkeypatch.setattr("app.infrastructure.tools.web.providers.httpx.AsyncClient", FakeClient)
     tool = WebSearchTool(
-        Settings(
+        AstraRuntimeSettings(
             web_search_provider="google",
             google_search_api_key="secret",
             google_search_engine_id="cx",
@@ -439,7 +439,7 @@ async def test_google_web_search_api_error(monkeypatch):
 
 async def test_google_web_search_rejects_invalid_result_count():
     tool = WebSearchTool(
-        Settings(
+        AstraRuntimeSettings(
             web_search_provider="google",
             google_search_api_key="secret",
             google_search_engine_id="cx",
@@ -469,7 +469,7 @@ async def test_brave_web_search_wraps_provider_errors(monkeypatch):
             raise httpx.HTTPStatusError("unavailable", request=request, response=response)
 
     monkeypatch.setattr("app.infrastructure.tools.web.providers.httpx.AsyncClient", FakeClient)
-    tool = WebSearchTool(Settings(web_search_provider="brave", web_search_api_key="secret"))
+    tool = WebSearchTool(AstraRuntimeSettings(web_search_provider="brave", web_search_api_key="secret"))
 
     with pytest.raises(ToolExecutionError) as exc_info:
         await tool.run({"query": "Astra"})
@@ -483,7 +483,7 @@ async def test_brave_web_search_wraps_provider_errors(monkeypatch):
 )
 async def test_google_web_search_real_integration():
     tool = WebSearchTool(
-        Settings(
+        AstraRuntimeSettings(
             web_search_provider="google",
             google_search_api_key=os.environ["GOOGLE_SEARCH_API_KEY"],
             google_search_engine_id=os.environ["GOOGLE_SEARCH_ENGINE_ID"],
@@ -498,7 +498,7 @@ async def test_google_web_search_real_integration():
 
 
 def test_web_tool_manifest_contains_operational_fields():
-    specs = build_web_registry(Settings()).specs()
+    specs = build_web_registry(AstraRuntimeSettings()).specs()
 
     assert specs["web_search"].description
     assert specs["web_search"].timeout_seconds > 0
@@ -511,7 +511,7 @@ def test_web_tool_manifest_contains_operational_fields():
 
 def test_web_tool_switches_control_registration():
     registry = build_web_registry(
-        Settings(tool_web_search_enabled=False, tool_web_fetch_enabled=True)
+        AstraRuntimeSettings(tool_web_search_enabled=False, tool_web_fetch_enabled=True)
     )
 
     assert "web_search" not in registry.specs()
@@ -522,7 +522,7 @@ def test_web_tool_switches_control_registration():
 
 
 def test_tool_contract_serializes_artifact_envelope_and_legacy_permissions():
-    spec = ToolSpec(
+    spec = AstraToolSpec(
         name="legacy",
         version="1",
         input_schema={},
@@ -531,15 +531,15 @@ def test_tool_contract_serializes_artifact_envelope_and_legacy_permissions():
         side_effect_level="read_only",
     )
     result = ToolResultEnvelope(
-        artifacts=[ArtifactRef(id="a1", type="chart", mime_type="image/png")]
+        artifacts=[ToolArtifactReference(id="a1", type="chart", mime_type="image/png")]
     )
     assert spec.capabilities == ["network_read"]
     assert result.model_dump()["artifacts"][0]["id"] == "a1"
 
 
 def test_tool_registries_are_composable():
-    class ExampleTool(Tool):
-        spec = ToolSpec(
+    class ExampleTool(AstraTool):
+        spec = AstraToolSpec(
             name="example",
             version="1",
             input_schema={},
@@ -551,20 +551,20 @@ def test_tool_registries_are_composable():
         async def run(self, tool_input, *, context=None):
             return {}
 
-    extra = ToolRegistry().extend([ExampleTool()])
-    registry = ToolRegistry.compose(build_web_registry(Settings()), extra)
+    extra = AstraToolRegistry().extend([ExampleTool()])
+    registry = AstraToolRegistry.compose(build_web_registry(AstraRuntimeSettings()), extra)
     assert {"web_search", "web_fetch", "example"} <= set(registry.specs())
 
 
 async def test_web_fetch_respects_network_permission():
-    tool = WebFetchTool(Settings(allow_network_read=False))
+    tool = WebFetchTool(AstraRuntimeSettings(allow_network_read=False))
     with pytest.raises(ToolExecutionError) as exc_info:
         await tool.run({"url": "https://example.com/source"})
     assert exc_info.value.category == "permission_denied"
 
 
 async def test_web_fetch_rejects_empty_url():
-    tool = WebFetchTool(Settings())
+    tool = WebFetchTool(AstraRuntimeSettings())
 
     with pytest.raises(ToolExecutionError):
         await tool.run({"url": ""})
@@ -581,7 +581,7 @@ async def test_web_fetch_rejects_empty_url():
     ],
 )
 async def test_web_fetch_rejects_unsafe_targets(url):
-    tool = WebFetchTool(Settings())
+    tool = WebFetchTool(AstraRuntimeSettings())
 
     with pytest.raises(ToolExecutionError) as exc_info:
         await tool.run({"url": url})
@@ -601,7 +601,7 @@ async def test_web_fetch_revalidates_redirect_targets(monkeypatch):
             302, headers={"location": "http://127.0.0.1/private"}, request=request
         )
 
-    tool = WebFetchTool(Settings())
+    tool = WebFetchTool(AstraRuntimeSettings())
     async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
         with pytest.raises(ToolExecutionError) as exc_info:
             await tool._get_with_safe_redirects(client, "https://example.com/source")
@@ -615,7 +615,7 @@ async def test_web_fetch_rejects_hostnames_resolving_to_private_addresses(monkey
             return [(2, 1, 6, "", ("127.0.0.1", port))]
 
     monkeypatch.setattr("app.infrastructure.tools.web.security.asyncio.get_running_loop", lambda: Resolver())
-    tool = WebFetchTool(Settings())
+    tool = WebFetchTool(AstraRuntimeSettings())
     async with httpx.AsyncClient(transport=httpx.MockTransport(lambda request: None)) as client:
         with pytest.raises(ToolExecutionError) as exc_info:
             await tool._get_with_safe_redirects(client, "https://public.example/source")
@@ -638,8 +638,8 @@ async def test_web_fetch_proxy_fake_ip_compatibility_is_explicit(monkeypatch):
             request=request,
         )
 
-    strict_tool = WebFetchTool(Settings(crawler_allow_proxy_fake_ip=False))
-    compatible_tool = WebFetchTool(Settings(crawler_allow_proxy_fake_ip=True))
+    strict_tool = WebFetchTool(AstraRuntimeSettings(crawler_allow_proxy_fake_ip=False))
+    compatible_tool = WebFetchTool(AstraRuntimeSettings(crawler_allow_proxy_fake_ip=True))
     async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
         with pytest.raises(ToolExecutionError):
             await strict_tool._get_with_safe_redirects(client, "https://public.example/")
@@ -662,7 +662,7 @@ async def test_web_fetch_streams_with_a_hard_response_limit(monkeypatch):
             request=request,
         )
 
-    tool = WebFetchTool(Settings(crawler_max_response_bytes=8))
+    tool = WebFetchTool(AstraRuntimeSettings(crawler_max_response_bytes=8))
     async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
         with pytest.raises(ToolExecutionError) as exc_info:
             await tool._get_with_safe_redirects(
@@ -686,7 +686,7 @@ async def test_web_fetch_rejects_non_text_content(monkeypatch):
             request=request,
         )
 
-    tool = WebFetchTool(Settings())
+    tool = WebFetchTool(AstraRuntimeSettings())
     async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
         with pytest.raises(ToolExecutionError) as exc_info:
             await tool._get_with_safe_redirects(client, "https://example.com/image")
@@ -710,7 +710,7 @@ async def test_web_fetch_records_the_validated_final_url(monkeypatch):
             request=request,
         )
 
-    tool = WebFetchTool(Settings())
+    tool = WebFetchTool(AstraRuntimeSettings())
     async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
         response = await tool._get_with_safe_redirects(client, "https://example.com/start")
 

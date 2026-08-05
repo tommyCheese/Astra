@@ -12,8 +12,8 @@ from app.application.run_management.conversation_context import (
     ConversationContextManager,
     estimate_tokens,
 )
-from app.common.core.config import Settings
-from app.common.core.errors import StateError
+from app.common.core.config import AstraRuntimeSettings
+from app.common.core.errors import AstraStateConflictError
 from app.common.schemas.context_compaction import CompactionLifecycleStatus
 from app.common.schemas.models import RunModelConfig
 from app.infrastructure.db.model_base import utc_now
@@ -103,7 +103,7 @@ async def test_compact_and_clear_change_projection_without_deleting_runs(session
     task = await _conversation_with_runs(session)
     manager = ConversationContextManager(
         session,
-        Settings(model_provider="mock", context_compaction_recent_tail_tokens=0),
+        AstraRuntimeSettings(model_provider="mock", context_compaction_recent_tail_tokens=0),
     )
 
     before = await manager.projection(task)
@@ -130,7 +130,7 @@ async def test_compact_and_clear_change_projection_without_deleting_runs(session
 @pytest.mark.asyncio
 async def test_automatic_compaction_and_active_run_guard(session):
     task = await _conversation_with_runs(session, count=12)
-    settings = Settings(
+    settings = AstraRuntimeSettings(
         model_provider="mock",
         context_window_fallback_tokens=65_536,
         context_auto_compact_ratio=0.8,
@@ -163,14 +163,14 @@ async def test_automatic_compaction_and_active_run_guard(session):
         )
     )
     await session.commit()
-    with pytest.raises(StateError):
+    with pytest.raises(AstraStateConflictError):
         await manager.clear(task)
 
 
 @pytest.mark.asyncio
 async def test_v2_compaction_installs_semantic_checkpoint_and_preserves_audit_runs(session):
     task = await _conversation_with_runs(session)
-    settings = Settings(
+    settings = AstraRuntimeSettings(
         model_provider="mock",
         context_compaction_v2_enabled=True,
         context_compaction_conversation_enabled=True,
@@ -197,7 +197,7 @@ async def test_v2_compaction_keeps_token_selected_recent_tail_visible(session):
     task = await _conversation_with_runs(session)
     manager = ConversationContextManager(
         session,
-        Settings(
+        AstraRuntimeSettings(
             model_provider="mock",
             context_compaction_v2_enabled=True,
             context_compaction_conversation_enabled=True,
@@ -220,7 +220,7 @@ async def test_v2_compaction_discloses_classified_failure_without_changing_proje
     task = await _conversation_with_runs(session)
     manager = ConversationContextManager(
         session,
-        Settings(
+        AstraRuntimeSettings(
             model_provider="mock",
             context_compaction_v2_enabled=True,
             context_compaction_conversation_enabled=True,
@@ -252,7 +252,7 @@ async def test_v2_compaction_discloses_classified_failure_without_changing_proje
 @pytest.mark.asyncio
 async def test_status_reports_adaptive_context_breakdown(session):
     task = await _conversation_with_runs(session, count=2)
-    settings = Settings(model_provider="mock")
+    settings = AstraRuntimeSettings(model_provider="mock")
     status = await ConversationContextManager(session, settings).status(
         task,
         provider="openai",

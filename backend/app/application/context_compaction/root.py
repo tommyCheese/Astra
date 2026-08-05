@@ -12,12 +12,12 @@ from app.application.context_compaction import (
     evaluate_compaction_trigger,
     project_shadow_compaction,
 )
-from app.common.core.config import Settings
+from app.common.core.config import AstraRuntimeSettings
 from app.common.schemas.context_compaction import (
-    ContextEnvelope,
-    ContextItem,
+    CompactionContextEnvelope,
+    CompactionContextItem,
+    CompactionContextReference,
     ContextOwnerRole,
-    ContextReference,
     ContinuationManifest,
 )
 from app.infrastructure.model_clients.context_windows import resolve_context_window
@@ -29,9 +29,9 @@ from app.infrastructure.repositories.run_unit_of_work import RunUnitOfWork
 
 @dataclass
 class RootCompactionState:
-    envelope: ContextEnvelope
+    envelope: CompactionContextEnvelope
     accounting: TokenAccountingService
-    body: list[ContextItem]
+    body: list[CompactionContextItem]
     observations_by_id: dict[str, dict[str, Any]]
     prior_checkpoint: dict[str, Any] | None
     metadata: dict[str, Any]
@@ -52,14 +52,14 @@ def _item_id(observation: dict[str, Any], index: int) -> str:
     return f"observation:{index}:{digest}"
 
 
-def _reference_manifest(observations: list[dict[str, Any]]) -> tuple[ContextReference, ...]:
-    references: dict[str, ContextReference] = {}
+def _reference_manifest(observations: list[dict[str, Any]]) -> tuple[CompactionContextReference, ...]:
+    references: dict[str, CompactionContextReference] = {}
     for observation in observations:
         data = observation.get("data") if isinstance(observation.get("data"), dict) else {}
         normalized = data.get("normalized_output") if isinstance(data, dict) else None
         raw = normalized.get("reference") if isinstance(normalized, dict) else None
         if isinstance(raw, dict):
-            reference = ContextReference.model_validate(raw)
+            reference = CompactionContextReference.model_validate(raw)
             references[reference.ref] = reference
     return tuple(references.values())
 
@@ -70,7 +70,7 @@ def _protected_prefix(
     context: dict[str, Any],
     trusted: bool,
     accounting: TokenAccountingService,
-) -> tuple[ContextItem, ...]:
+) -> tuple[CompactionContextItem, ...]:
     sections: list[tuple[str, Any]] = [
         ("current_request", goal),
         (
@@ -112,7 +112,7 @@ def _protected_prefix(
     for kind, content in sections:
         count, _, _ = accounting.count_value(content)
         items.append(
-            ContextItem(
+            CompactionContextItem(
                 id=f"root:{kind}",
                 kind=kind,
                 content=content,
@@ -126,7 +126,7 @@ def _protected_prefix(
 async def compact_root_context(
     *,
     repo: RunUnitOfWork,
-    settings: Settings,
+    settings: AstraRuntimeSettings,
     model_client: ModelClient,
     run_id: str,
     goal: str,
@@ -195,7 +195,7 @@ async def _prepare_compaction_state(
         waiting_state=dict(run.waiting_state or {}),
         remaining_budget=dict(root.budget_envelope or {}),
     )
-    envelope = ContextEnvelope(
+    envelope = CompactionContextEnvelope(
         owner_type=ContextOwnerRole.root_execution,
         owner_id=root.id,
         purpose=goal,
@@ -218,7 +218,7 @@ def _observation_items(observations, accounting):
         item_id = _item_id(observation, index)
         count, _, _ = accounting.count_value(observation)
         body.append(
-            ContextItem(
+            CompactionContextItem(
                 id=item_id,
                 kind=str(observation.get("kind") or "observation"),
                 content=observation,
@@ -235,7 +235,7 @@ def _checkpoint_items(root_id, checkpoint, accounting):
         return ()
     checkpoint_count, _, _ = accounting.count_value(checkpoint)
     return (
-        ContextItem(
+        CompactionContextItem(
             id=f"root-checkpoint:{root_id}",
             kind="root_context_checkpoint_v2",
             content=checkpoint,

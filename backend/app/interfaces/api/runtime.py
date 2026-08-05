@@ -1,30 +1,33 @@
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.common.core.errors import StateError, ValidationError
+from app.common.core.errors import AstraInputValidationError, AstraStateConflictError
 from app.domain.agent_profile import AgentProfileConfigurationError
 from app.infrastructure.sandbox.profiles import RuntimeProfileService
-from app.interfaces.platform.http.dependencies import ApplicationServices, get_application_container
+from app.interfaces.platform.http.dependencies import (
+    AstraApplicationServices,
+    get_application_container,
+)
 
 router = APIRouter(prefix="/api/runtime", tags=["runtime"])
 
 
 def get_runtime_profile_service(
-    container: ApplicationServices = Depends(get_application_container),
+    container: AstraApplicationServices = Depends(get_application_container),
 ) -> RuntimeProfileService:
     return container.runtime_profile_service
 
 
-class Dependency(BaseModel):
+class RuntimeDependencyRequirement(BaseModel):
     name: str = Field(max_length=64)
     version: str = Field(default="", max_length=64)
 
 
-class BuildRequest(BaseModel):
-    dependencies: list[Dependency] = Field(max_length=32)
+class RuntimeBuildRequest(BaseModel):
+    dependencies: list[RuntimeDependencyRequirement] = Field(max_length=32)
 
 
-class CancelBuildRequest(BaseModel):
+class RuntimeBuildCancellationRequest(BaseModel):
     build_id: str
 
 
@@ -60,26 +63,26 @@ async def get_runtime(service: RuntimeProfileService = Depends(get_runtime_profi
 
 @router.post("/build")
 async def build_runtime(
-    request: BuildRequest,
+    request: RuntimeBuildRequest,
     service: RuntimeProfileService = Depends(get_runtime_profile_service),
 ):
     try:
         return await service.start([item.model_dump() for item in request.dependencies])
     except ValueError as exc:
-        raise ValidationError("RUNTIME_DEPENDENCY_INVALID", str(exc)) from exc
+        raise AstraInputValidationError("RUNTIME_DEPENDENCY_INVALID", str(exc)) from exc
     except RuntimeError as exc:
-        raise StateError("RUNTIME_BUILD_IN_PROGRESS", str(exc)) from exc
+        raise AstraStateConflictError("RUNTIME_BUILD_IN_PROGRESS", str(exc)) from exc
 
 
 @router.post("/build/cancel")
 async def cancel_runtime_build(
-    request: CancelBuildRequest,
+    request: RuntimeBuildCancellationRequest,
     service: RuntimeProfileService = Depends(get_runtime_profile_service),
 ):
     try:
         return await service.cancel(request.build_id)
     except RuntimeError as exc:
-        raise StateError("RUNTIME_BUILD_NOT_CANCELLABLE", str(exc)) from exc
+        raise AstraStateConflictError("RUNTIME_BUILD_NOT_CANCELLABLE", str(exc)) from exc
 
 
 @router.put("/agent-profile")
@@ -90,7 +93,7 @@ async def update_runtime_agent_profile(
     try:
         return service.update_agent_profile(request.documents.model_dump())
     except AgentProfileConfigurationError as exc:
-        raise ValidationError("AGENT_PROFILE_INVALID", str(exc)) from exc
+        raise AstraInputValidationError("AGENT_PROFILE_INVALID", str(exc)) from exc
 
 
 @router.post("/agent-profile/reset")
@@ -104,13 +107,13 @@ async def reset_runtime_agent_profile(
 async def update_runtime_memory_settings(
     payload: MemorySettingsUpdateRequest,
     service: RuntimeProfileService = Depends(get_runtime_profile_service),
-    container: ApplicationServices = Depends(get_application_container),
+    container: AstraApplicationServices = Depends(get_application_container),
 ):
     previous = service.memory_settings()
     try:
         updated = service.update_memory_settings(payload.model_dump())
     except ValueError as exc:
-        raise ValidationError("MEMORY_SETTINGS_INVALID", str(exc)) from exc
+        raise AstraInputValidationError("MEMORY_SETTINGS_INVALID", str(exc)) from exc
     try:
         autodream = container.autodream_service
         if updated["autodream_enabled"] and not previous["autodream_enabled"]:
@@ -119,7 +122,7 @@ async def update_runtime_memory_settings(
             await autodream.shutdown()
     except Exception as exc:
         service.update_memory_settings(previous)
-        raise StateError(
+        raise AstraStateConflictError(
             "MEMORY_SETTINGS_APPLY_FAILED",
             "记忆设置已恢复，AutoDream 状态切换失败。",
         ) from exc

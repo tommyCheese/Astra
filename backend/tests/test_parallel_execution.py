@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from app.application.agent_runtime.policies.reasoning import build_default_contract
 from app.application.planning.scheduler import PlanScheduler
 from app.application.planning.service import PlanService
-from app.application.run_management.recovery import ExecutionRecovery
+from app.application.run_management.recovery import RunExecutionRecovery
 from app.application.runner.concurrency import (
     ResourceClaim,
     acquire_resource_claims,
@@ -27,7 +27,7 @@ from app.common.schemas.agent.planning import (
 )
 from app.common.schemas.agent.types import NodeExecutionPhase, NodeExecutionStatus
 from app.common.schemas.permissions import ActionEffectPlan, EffectItem, EffectKind
-from app.infrastructure.db.model_base import Base, utc_now
+from app.infrastructure.db.model_base import AstraOrmRecordBase, utc_now
 from app.infrastructure.db.models.executions import AgentJoinRecord, NodeExecutionRecord
 from app.infrastructure.repositories.agent_executions import AgentExecutionRepository
 from app.infrastructure.repositories.executions import (
@@ -356,7 +356,7 @@ async def test_coordinator_workers_overlap_and_keep_execution_ownership(tmp_path
     database_path = tmp_path / "parallel.db"
     engine = create_async_engine(f"sqlite+aiosqlite:///{database_path}")
     async with engine.begin() as connection:
-        await connection.run_sync(Base.metadata.create_all)
+        await connection.run_sync(AstraOrmRecordBase.metadata.create_all)
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
     async with session_factory() as setup_session:
         run = await RunUnitOfWork(setup_session).create_task_run("overlap", {"provider": "mock"})
@@ -552,7 +552,7 @@ async def test_failure_blocks_all_descendants_but_not_unrelated_branch(tmp_path)
     database_path = tmp_path / "failure-scope.db"
     engine = create_async_engine(f"sqlite+aiosqlite:///{database_path}")
     async with engine.begin() as connection:
-        await connection.run_sync(Base.metadata.create_all)
+        await connection.run_sync(AstraOrmRecordBase.metadata.create_all)
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
     draft = PlanDraft(
         nodes=[
@@ -622,7 +622,7 @@ async def test_safe_timeout_creates_one_new_attempt_and_reuses_dag_position(tmp_
     database_path = tmp_path / "timeout-retry.db"
     engine = create_async_engine(f"sqlite+aiosqlite:///{database_path}")
     async with engine.begin() as connection:
-        await connection.run_sync(Base.metadata.create_all)
+        await connection.run_sync(AstraOrmRecordBase.metadata.create_all)
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
     async with session_factory() as session:
         run = await RunUnitOfWork(session).create_task_run("retry", {"provider": "mock"})
@@ -675,7 +675,7 @@ async def test_recovery_classifies_resume_replay_and_unknown_outcomes(tmp_path):
     database_path = tmp_path / "recovery.db"
     engine = create_async_engine(f"sqlite+aiosqlite:///{database_path}")
     async with engine.begin() as connection:
-        await connection.run_sync(Base.metadata.create_all)
+        await connection.run_sync(AstraOrmRecordBase.metadata.create_all)
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
     async with session_factory() as session:
         run = await RunUnitOfWork(session).create_task_run("recover", {"provider": "mock"})
@@ -713,7 +713,7 @@ async def test_recovery_classifies_resume_replay_and_unknown_outcomes(tmp_path):
         run_id = run.id
         await session.commit()
 
-    scan = await ExecutionRecovery(session_factory, stale_seconds=1).scan(run_id)
+    scan = await RunExecutionRecovery(session_factory, stale_seconds=1).scan(run_id)
     assert scan.resumable_execution_ids == (resume.id,)
     assert scan.replayable_execution_ids == (replay.id,)
     assert scan.unknown_execution_ids == (unknown.id,)
@@ -732,7 +732,7 @@ async def test_concurrent_schedulers_cannot_overclaim_run_slots(tmp_path):
     database_path = tmp_path / "scheduler-race.db"
     engine = create_async_engine(f"sqlite+aiosqlite:///{database_path}")
     async with engine.begin() as connection:
-        await connection.run_sync(Base.metadata.create_all)
+        await connection.run_sync(AstraOrmRecordBase.metadata.create_all)
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
     async with session_factory() as session:
         run = await RunUnitOfWork(session).create_task_run("race", {"provider": "mock"})

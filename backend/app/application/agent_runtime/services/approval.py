@@ -12,7 +12,7 @@ from typing import Any
 
 from app.application.permissions.effects import grant_proposals
 from app.application.permissions.invocation import InvocationAuthorizationResult
-from app.common.core.config import Settings
+from app.common.core.config import AstraRuntimeSettings
 from app.common.schemas.agent.execution_state import AgentDecision
 from app.common.schemas.agent.types import NodeExecutionPhase
 from app.common.schemas.permissions import ActionEffectPlan, PermissionDecisionKind
@@ -22,7 +22,7 @@ from app.infrastructure.db.models.runs import AgentTurnRecord, StepRecord
 from app.infrastructure.repositories.approval_contracts import ApprovalRequestCreate
 from app.infrastructure.repositories.executions import NodeExecutionRepository
 from app.infrastructure.repositories.run_unit_of_work import RunUnitOfWork
-from app.infrastructure.tools.base import Tool, ToolExecutionError
+from app.infrastructure.tools.base import AstraTool, ToolExecutionError
 
 SHELL_META = re.compile(r"(?:&&|\|\||[|;&<>`]|\$\(|\$\{|\n|\r)")
 SECRET_VALUE = re.compile(
@@ -83,7 +83,7 @@ class ApprovalStageInput:
     run_id: str
     turn: AgentTurnRecord
     decision: AgentDecision
-    tool: Tool
+    tool: AstraTool
     effect_plan: ActionEffectPlan
     effect_plan_hash: str
     authorization: InvocationAuthorizationResult
@@ -95,7 +95,7 @@ class ApprovalStageInput:
 
 
 class ApprovalRoutingStage:
-    def __init__(self, settings: Settings, repository: RunUnitOfWork) -> None:
+    def __init__(self, settings: AstraRuntimeSettings, repository: RunUnitOfWork) -> None:
         self._settings = settings
         self._repository = repository
 

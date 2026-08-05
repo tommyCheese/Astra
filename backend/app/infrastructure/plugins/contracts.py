@@ -7,7 +7,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from app.infrastructure.tools.base import Tool
+from app.infrastructure.tools.base import AstraTool
 
 PLUGIN_PROTOCOL_VERSION = "1"
 
@@ -48,7 +48,7 @@ class PluginDescriptor(BaseModel):
         return self
 
 
-class ComponentIdentity(BaseModel):
+class PluginComponentIdentity(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     component_id: str = Field(min_length=1, max_length=240)
@@ -57,7 +57,7 @@ class ComponentIdentity(BaseModel):
     digest: str = Field(min_length=1, max_length=256)
 
 
-class ApplicabilityBinding(BaseModel):
+class PluginApplicabilityBinding(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     tool_names: tuple[str, ...] = ()
@@ -66,7 +66,7 @@ class ApplicabilityBinding(BaseModel):
     media_types: tuple[str, ...] = ()
 
     @model_validator(mode="after")
-    def require_selector(self) -> ApplicabilityBinding:
+    def require_selector(self) -> PluginApplicabilityBinding:
         if not any((self.tool_names, self.capabilities, self.result_kinds, self.media_types)):
             raise ValueError("applicability binding requires at least one selector")
         return self
@@ -88,20 +88,20 @@ class ApplicabilityBinding(BaseModel):
 
 
 @dataclass(frozen=True)
-class ToolContribution:
-    tool: Tool
+class PluginToolContribution:
+    tool: AstraTool
     executor_id: str
 
 
 @dataclass(frozen=True)
-class ComponentContribution:
-    identity: ComponentIdentity
-    applicability: ApplicabilityBinding
+class PluginComponentContribution:
+    identity: PluginComponentIdentity
+    applicability: PluginApplicabilityBinding
     factory: Callable[[], Any]
 
 @dataclass(frozen=True)
-class RuntimeBackendContribution:
-    identity: ComponentIdentity
+class PluginRuntimeBackendContribution:
+    identity: PluginComponentIdentity
     backend_id: str
     backend: Any
 
@@ -109,12 +109,12 @@ class RuntimeBackendContribution:
 @dataclass(frozen=True)
 class PluginContribution:
     descriptor: PluginDescriptor
-    tools: tuple[ToolContribution, ...] = ()
-    effect_analyzers: tuple[ComponentContribution, ...] = ()
-    result_processors: tuple[ComponentContribution, ...] = ()
-    validators: tuple[ComponentContribution, ...] = ()
-    approval_presenters: tuple[ComponentContribution, ...] = ()
-    runtime_backends: tuple[RuntimeBackendContribution, ...] = ()
+    tools: tuple[PluginToolContribution, ...] = ()
+    effect_analyzers: tuple[PluginComponentContribution, ...] = ()
+    result_processors: tuple[PluginComponentContribution, ...] = ()
+    validators: tuple[PluginComponentContribution, ...] = ()
+    approval_presenters: tuple[PluginComponentContribution, ...] = ()
+    runtime_backends: tuple[PluginRuntimeBackendContribution, ...] = ()
 
     def validate(self) -> PluginContribution:
         provider_id = self.descriptor.provider_id

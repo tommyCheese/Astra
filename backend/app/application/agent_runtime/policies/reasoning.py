@@ -7,8 +7,8 @@ from typing import Any, ClassVar, Literal
 
 from app.common.schemas.agent.execution_state import (
     AgentObservation,
+    AgentObservationEvaluation,
     AgentState,
-    Evaluation,
     ReflectionPatch,
 )
 from app.common.schemas.agent.planning import (
@@ -28,7 +28,7 @@ from app.common.schemas.agent.run_policy import (
     SubagentBudgetPolicy,
     SubagentModelRoutingPolicy,
 )
-from app.common.schemas.agent.run_result import ValidationOutcome
+from app.common.schemas.agent.run_result import AgentValidationOutcome
 from app.common.schemas.agent.types import (
     AnswerMode,
     AssuranceLevel,
@@ -47,7 +47,7 @@ class StateVersionConflict(RuntimeError):
     pass
 
 
-class PolicyCompiler:
+class AgentReasoningPolicyCompiler:
     BUDGETS: ClassVar[dict[ReasoningEffort, RunBudgets]] = {
         ReasoningEffort.fast: RunBudgets(
             max_plan_depth=3,
@@ -238,7 +238,7 @@ def resolve_run_profile(
         validators = TRUSTED_VALIDATORS
         resolved_plan_execution = plan_execution or PlanExecution.confirm
         effective_subagent_policy = subagent_policy or EffectiveSubagentPolicy()
-    policy = PolicyCompiler().compile(
+    policy = AgentReasoningPolicyCompiler().compile(
         effective_request,
         risk_level=risk_level,
         complexity=complexity,
@@ -337,13 +337,13 @@ def validate_contract(contract: TaskContract) -> None:
         raise ValueError("Ambiguous contract requires a clarification question")
 
 
-class ObservationEvaluator:
+class AgentObservationEvaluator:
     def evaluate(
         self,
         observation: AgentObservation,
         expected: ExpectedObservation | None,
         criterion_refs: Iterable[str] = (),
-    ) -> Evaluation:
+    ) -> AgentObservationEvaluation:
         outcome = EvaluationOutcome.inconclusive
         if observation.status == "failed":
             outcome = EvaluationOutcome.mismatch
@@ -357,7 +357,7 @@ class ObservationEvaluator:
             if outcome == EvaluationOutcome.matched
             else {}
         )
-        return Evaluation(
+        return AgentObservationEvaluation(
             plan_node_id=observation.plan_node_id,
             outcome=outcome,
             summary=f"Observation evaluated as {outcome.value}",
@@ -366,7 +366,7 @@ class ObservationEvaluator:
         )
 
 
-class ReflectionGate:
+class AgentReflectionGate:
     ADAPTIVE_SIGNALS: ClassVar[frozenset[str]] = frozenset(
         {
             "tool_failed",
@@ -415,9 +415,9 @@ def apply_reflection_patch(
     return updated
 
 
-def apply_validation_outcomes(state: AgentState, outcomes: list[ValidationOutcome]) -> AgentState:
+def apply_validation_outcomes(state: AgentState, outcomes: list[AgentValidationOutcome]) -> AgentState:
     updated = state.model_copy(deep=True)
-    by_validator: dict[str, list[ValidationOutcome]] = {}
+    by_validator: dict[str, list[AgentValidationOutcome]] = {}
     for outcome in outcomes:
         by_validator.setdefault(outcome.validator, []).append(outcome)
     for criterion in updated.task_contract.success_criteria:

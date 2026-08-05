@@ -19,8 +19,8 @@ from app.common.schemas.subagents import (
     EffectiveDelegationScope,
     SubagentBudgetEnvelope,
 )
-from app.domain.grounding.ledger import EvidenceConflictError
-from app.domain.grounding.schemas import EvidenceFragment, EvidenceKind
+from app.domain.grounding.ledger import GroundingEvidenceConflictError
+from app.domain.grounding.schemas import GroundingEvidenceFragment, GroundingEvidenceKind
 from app.infrastructure.repositories.agent_executions import AgentExecutionRepository
 from app.infrastructure.repositories.run_unit_of_work import RunUnitOfWork
 
@@ -262,20 +262,22 @@ async def test_child_artifact_evidence_staging_and_explicit_parent_promotion(ses
     )
     evidence = await exchange.stage_evidence(
         agent_execution_id=child.id,
-        fragment=EvidenceFragment(
+        fragment=GroundingEvidenceFragment(
             id="ev-1",
-            kind=EvidenceKind.claim,
+            kind=GroundingEvidenceKind.claim,
             evidence_key="child:claim:1",
             payload_digest="digest-1",
             payload={"claim": "Verified"},
         ),
     )
-    with pytest.raises(EvidenceConflictError, match="AgentExecution isolation"):
+    with pytest.raises(
+        GroundingEvidenceConflictError, match="AgentExecution isolation"
+    ):
         await exchange.stage_evidence(
             agent_execution_id=sibling.id,
-            fragment=EvidenceFragment(
+            fragment=GroundingEvidenceFragment(
                 id="ev-1",
-                kind=EvidenceKind.claim,
+                kind=GroundingEvidenceKind.claim,
                 evidence_key="child:claim:1",
                 payload_digest="digest-1",
                 payload={"claim": "Verified"},

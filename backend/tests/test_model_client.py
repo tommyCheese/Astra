@@ -3,7 +3,7 @@ import json
 import pytest
 
 from app.application.agent_runtime.policies.reasoning import build_default_contract
-from app.common.core.config import Settings
+from app.common.core.config import AstraRuntimeSettings
 from app.domain.agent_profile import ModelOperation
 from app.infrastructure.model_clients.anthropic import AnthropicModelClient
 from app.infrastructure.model_clients.contracts import (
@@ -137,21 +137,21 @@ async def test_mock_model_reflection_and_memory_candidates():
 
 
 def test_real_model_requires_credentials():
-    settings = Settings(model_provider="openai", model_api_key="")
+    settings = AstraRuntimeSettings(model_provider="openai", model_api_key="")
 
     with pytest.raises(ModelConfigurationError):
         build_model_client(settings)
 
 
 def test_mock_model_requires_no_credentials():
-    client = build_model_client(Settings(model_provider="mock", model_api_key=""))
+    client = build_model_client(AstraRuntimeSettings(model_provider="mock", model_api_key=""))
 
     assert isinstance(client, MockModelClient)
 
 
 def test_anthropic_provider_uses_native_client():
     client = build_model_client(
-        Settings(model_provider="anthropic", model_api_key="secret", model_name="claude-test")
+        AstraRuntimeSettings(model_provider="anthropic", model_api_key="secret", model_name="claude-test")
     )
 
     assert isinstance(client, AnthropicModelClient)
@@ -197,7 +197,7 @@ async def test_anthropic_client_translates_messages_and_stream_callbacks(monkeyp
 
     monkeypatch.setattr("app.infrastructure.model_clients.openai_compatible.httpx.AsyncClient", FakeAsyncClient)
     client = AnthropicModelClient(
-        Settings(
+        AstraRuntimeSettings(
             model_provider="anthropic",
             model_api_key="secret",
             model_name="claude-test",
@@ -289,7 +289,7 @@ async def test_invalid_json_does_not_retry_after_streaming_visible_summary(monke
             return FakeStreamContext()
 
     monkeypatch.setattr("app.infrastructure.model_clients.openai_compatible.httpx.AsyncClient", FakeAsyncClient)
-    settings = Settings(
+    settings = AstraRuntimeSettings(
         model_provider=provider,
         model_api_key="secret",
         model_name="test-model",

@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.common.core.config import Settings, get_settings
+from app.common.core.config import AstraRuntimeSettings, get_settings
 from app.common.schemas.agent.run_policy import EXECUTABLE_SUBAGENT_COHORTS
 from app.infrastructure.db.session import get_session
 from app.infrastructure.repositories.tool_settings import (
@@ -35,7 +35,7 @@ class ToolSettingsUpdate(BaseModel):
     swarm: bool | None = None
 
 
-def _tool_settings(settings: Settings, states: dict[str, bool]) -> ToolSettingsResponse:
+def _tool_settings(settings: AstraRuntimeSettings, states: dict[str, bool]) -> ToolSettingsResponse:
     sandbox_ready = settings.sandbox_enabled and sandbox_available(settings)
     unavailable_reason = None
     if not settings.sandbox_enabled:
@@ -100,7 +100,7 @@ def _tool_settings(settings: Settings, states: dict[str, bool]) -> ToolSettingsR
 
 @router.get("", response_model=ToolSettingsResponse)
 async def get_tool_settings(
-    settings: Settings = Depends(get_settings),
+    settings: AstraRuntimeSettings = Depends(get_settings),
     session: AsyncSession = Depends(get_session),
 ) -> ToolSettingsResponse:
     states = await ToolSettingsRepository(session).get_or_create(default_tool_states(settings))
@@ -111,7 +111,7 @@ async def get_tool_settings(
 @router.put("", response_model=ToolSettingsResponse)
 async def update_tool_settings(
     update: ToolSettingsUpdate,
-    settings: Settings = Depends(get_settings),
+    settings: AstraRuntimeSettings = Depends(get_settings),
     session: AsyncSession = Depends(get_session),
 ) -> ToolSettingsResponse:
     repository = ToolSettingsRepository(session)

@@ -10,7 +10,7 @@ from app.application.agent_runtime.policies.loop import (
     record_progress_signature,
     validate_transition,
 )
-from app.application.agent_runtime.policies.reasoning import ObservationEvaluator
+from app.application.agent_runtime.policies.reasoning import AgentObservationEvaluator
 from app.application.agent_runtime.services.approval import ApprovalRoutingStage, ApprovalStageInput
 from app.application.agent_runtime.services.authorization import (
     AuthorizationStageInput,
@@ -40,7 +40,7 @@ from app.infrastructure.db.models.permissions import AgentIdentityRecord, ToolCa
 from app.infrastructure.db.models.plans import PlanNodeRecord
 from app.infrastructure.db.models.runs import AgentTurnRecord, RunRecord, StepRecord
 from app.infrastructure.repositories.run_unit_of_work import RunUnitOfWork
-from app.infrastructure.tools.base import ToolExecutionError, ToolRegistry
+from app.infrastructure.tools.base import AstraToolRegistry, ToolExecutionError
 
 logger = logging.getLogger("astra.agent_runtime.tool_action")
 
@@ -82,7 +82,7 @@ class RootToolActionStage:
         self,
         *,
         repository: RunUnitOfWork,
-        tool_registry: ToolRegistry,
+        tool_registry: AstraToolRegistry,
         authorization_stage: PermissionAuthorizationStage,
         approval_stage: ApprovalRoutingStage,
         invocation_stage: ToolInvocationStage,
@@ -91,7 +91,7 @@ class RootToolActionStage:
         progress: ExecutionProgress,
         progress_stage: ProgressEvaluationStage,
         memory_writer: MemoryCandidateWriter,
-        evaluator: ObservationEvaluator,
+        evaluator: AgentObservationEvaluator,
         tool_outputs: list[dict[str, Any]],
     ) -> None:
         self._repository = repository

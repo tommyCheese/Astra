@@ -8,18 +8,18 @@ from sqlalchemy import create_mock_engine
 from support import DecisionStep, RunRequestBuilder, ScriptedDecisionClient
 
 from app.application.agent_runtime.policies.reasoning import resolve_run_profile
-from app.application.agent_runtime.services.loop import AgentLoop
-from app.common.core.config import Settings
+from app.application.agent_runtime.services.loop import AstraAgentLoop
+from app.common.core.config import AstraRuntimeSettings
 from app.common.schemas.agent.execution_state import AgentDecision
 from app.common.schemas.agent.run_policy import RequestedReasoningPolicy
-from app.common.schemas.agent.run_result import FinalAnswer
+from app.common.schemas.agent.run_result import AgentFinalAnswer
 from app.common.schemas.agent.types import AnswerMode
-from app.infrastructure.db.model_base import Base
+from app.infrastructure.db.model_base import AstraOrmRecordBase
 from app.infrastructure.repositories.run_unit_of_work import RunUnitOfWork
-from app.infrastructure.tools.base import ToolRegistry
+from app.infrastructure.tools.base import AstraToolRegistry
 from app.main import create_app
 
-EXPECTED_OPENAPI_SHA256 = "3dc527eb42c6af0c08ac949928f08bda9c8a1bba1c2dcc3d02d4a6918967290c"
+EXPECTED_OPENAPI_SHA256 = "03452c7423ebcbfba9d170536c9e6351ad1d32c2b202143082ada90f9708ca9b"
 EXPECTED_ORM_TABLES = {
     "agent_budget_reservations",
     "agent_delegations",
@@ -93,7 +93,7 @@ def test_openapi_contract_matches_refactoring_baseline():
 
 
 def test_orm_metadata_matches_refactoring_baseline():
-    assert set(Base.metadata.tables) == EXPECTED_ORM_TABLES
+    assert set(AstraOrmRecordBase.metadata.tables) == EXPECTED_ORM_TABLES
 
 
 def test_orm_metadata_compiles_for_postgresql():
@@ -105,7 +105,7 @@ def test_orm_metadata_compiles_for_postgresql():
         ),
     )
 
-    Base.metadata.create_all(engine, checkfirst=False)
+    AstraOrmRecordBase.metadata.create_all(engine, checkfirst=False)
 
     create_table_statements = [
         statement for statement in statements if statement.lstrip().startswith("CREATE TABLE")
@@ -133,7 +133,7 @@ class TransactionInspectingSearch(FakeSearch):
 
 
 async def test_tool_execution_does_not_hold_a_database_transaction(session):
-    settings = Settings(model_provider="mock", web_search_provider="mock")
+    settings = AstraRuntimeSettings(model_provider="mock", web_search_provider="mock")
     execution_profile = resolve_run_profile(
         AnswerMode.standard,
         RequestedReasoningPolicy(execution_mode="auto_approval", reflection_enabled=False),
@@ -161,15 +161,15 @@ async def test_tool_execution_does_not_hold_a_database_transaction(session):
             ),
             DecisionStep(
                 AgentDecision(decision_type="finalize", reasoning_summary="证据足够"),
-                FinalAnswer(summary="检索完成"),
+                AgentFinalAnswer(summary="检索完成"),
             ),
         ]
     )
     search_tool = TransactionInspectingSearch(session)
-    tool_registry = ToolRegistry()
+    tool_registry = AstraToolRegistry()
     tool_registry.register(search_tool)
 
-    await AgentLoop(
+    await AstraAgentLoop(
         settings,
         model_client=model_client,
         tool_registry=tool_registry,

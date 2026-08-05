@@ -5,10 +5,10 @@ from __future__ import annotations
 from typing import Any
 
 from app.common.schemas.agent.run_result import (
-    FinalAnswer,
-    ValidationIssue,
-    ValidationOutcome,
-    VerificationReport,
+    AgentAnswerVerificationReport,
+    AgentFinalAnswer,
+    AgentValidationIssue,
+    AgentValidationOutcome,
 )
 from app.common.schemas.agent.types import AssuranceLevel
 
@@ -16,9 +16,9 @@ INVALID_ARTIFACT_REFERENCE_WARNING = "已移除无效或不可访问的工具输
 
 
 def normalize_final_answer_artifact_references(
-    final_answer: FinalAnswer,
+    final_answer: AgentFinalAnswer,
     artifacts: list[Any],
-) -> tuple[FinalAnswer, int, list[str]]:
+) -> tuple[AgentFinalAnswer, int, list[str]]:
     """Keep only accessible artifacts from the current Run."""
     allowed_ids = {
         str(artifact.id)
@@ -103,13 +103,13 @@ def _workspace_deletion_requested(normalized_goal: str) -> bool:
 class CompletionVerificationStage:
     def verify(
         self,
-        final_answer: FinalAnswer,
+        final_answer: AgentFinalAnswer,
         evidence_pack: dict[str, Any],
         *,
-        validation_outcomes: list[ValidationOutcome] | None = None,
+        validation_outcomes: list[AgentValidationOutcome] | None = None,
         invalid_artifact_references: int = 0,
         assurance_level: AssuranceLevel = AssuranceLevel.full,
-    ) -> VerificationReport:
+    ) -> AgentAnswerVerificationReport:
         fetched_sources = evidence_pack.get("fetched_sources", [])
         low_quality = [
             source for source in fetched_sources if float(source.get("quality_score") or 0) < 0.5
@@ -119,7 +119,7 @@ class CompletionVerificationStage:
             self._artifact_validation(invalid_artifact_references),
         ]
         notes = self._verification_notes(final_answer, fetched_sources, outcomes)
-        return VerificationReport(
+        return AgentAnswerVerificationReport(
             status=self._status(outcomes),
             assurance_level=assurance_level,
             source_count=len(final_answer.sources),
@@ -133,7 +133,7 @@ class CompletionVerificationStage:
         )
 
     @staticmethod
-    def _status(outcomes: list[ValidationOutcome]) -> str:
+    def _status(outcomes: list[AgentValidationOutcome]) -> str:
         if any(not outcome.passed and outcome.blocking for outcome in outcomes):
             return "failed"
         has_warnings = any(
@@ -143,11 +143,11 @@ class CompletionVerificationStage:
         return "completed_with_warnings" if has_warnings else "completed"
 
     @staticmethod
-    def _artifact_validation(invalid_count: int) -> ValidationOutcome:
+    def _artifact_validation(invalid_count: int) -> AgentValidationOutcome:
         warnings = [INVALID_ARTIFACT_REFERENCE_WARNING] if invalid_count else []
         issues = (
             [
-                ValidationIssue(
+                AgentValidationIssue(
                     code="artifact_reference_invalid",
                     message=INVALID_ARTIFACT_REFERENCE_WARNING,
                     severity="warning",
@@ -157,7 +157,7 @@ class CompletionVerificationStage:
             if invalid_count
             else []
         )
-        return ValidationOutcome(
+        return AgentValidationOutcome(
             validator="artifact_reference",
             passed=True,
             blocking=False,
@@ -167,9 +167,9 @@ class CompletionVerificationStage:
 
     @staticmethod
     def _verification_notes(
-        final_answer: FinalAnswer,
+        final_answer: AgentFinalAnswer,
         fetched_sources: list[dict[str, Any]],
-        outcomes: list[ValidationOutcome],
+        outcomes: list[AgentValidationOutcome],
     ) -> list[str]:
         notes = list(final_answer.verification_notes)
         for outcome in outcomes:

@@ -4,16 +4,16 @@ from datetime import datetime, timezone
 
 from app.common.schemas.context_compaction import (
     CheckpointTrustMetadata,
+    ChildCompactionLocalFact,
     ChildContextCheckpointV2,
-    ChildLocalFact,
-    ContextEnvelope,
+    CompactionContextEnvelope,
     ContextOwnerRole,
     ConversationContextCheckpointV2,
     RootContextCheckpointV2,
 )
 
 
-def deterministic_emergency_checkpoint(envelope: ContextEnvelope):
+def deterministic_emergency_checkpoint(envelope: CompactionContextEnvelope):
     now = datetime.now(timezone.utc)
     trust = CheckpointTrustMetadata(generated_from_canonical_state=True)
     summaries = _item_summaries((*envelope.compactable_body, *envelope.recent_tail))[-20:]
@@ -38,7 +38,7 @@ def deterministic_emergency_checkpoint(envelope: ContextEnvelope):
         agent_execution_id=envelope.owner_id,
         manifest_hash=envelope.continuation.manifest_hash or "missing",
         contract_hash=envelope.continuation.contract_hash or "missing",
-        local_facts=tuple(ChildLocalFact(text=text, confidence=0.0) for text in summaries),
+        local_facts=tuple(ChildCompactionLocalFact(text=text, confidence=0.0) for text in summaries),
         remaining_budget=envelope.continuation.remaining_budget,
         trust=trust,
         created_at=now,
@@ -55,7 +55,7 @@ def _item_text(item) -> str:
     return item.summary or (item.content if isinstance(item.content, str) else "")
 
 
-def _accessible_refs(envelope: ContextEnvelope, kind: str) -> tuple[str, ...]:
+def _accessible_refs(envelope: CompactionContextEnvelope, kind: str) -> tuple[str, ...]:
     return tuple(
         reference.ref
         for reference in envelope.reference_manifest

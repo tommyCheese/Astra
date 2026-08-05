@@ -8,8 +8,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.application.run_management.application import RunApplicationService
-from app.application.run_management.contracts import RunDispatcher
-from app.common.core.config import Settings
+from app.application.run_management.contracts import RunExecutionDispatcher
+from app.common.core.config import AstraRuntimeSettings
 from app.common.core.errors import AstraError
 from app.common.schemas.agent.api_views import CreateRunRequest
 from app.common.schemas.agent.types import AnswerMode
@@ -44,9 +44,9 @@ class ScheduledRunDispatcher:
 
     def __init__(
         self,
-        settings: Settings,
+        settings: AstraRuntimeSettings,
         session_factory: async_sessionmaker[AsyncSession],
-        run_dispatcher: RunDispatcher,
+        run_dispatcher: RunExecutionDispatcher,
     ):
         self.settings = settings
         self.session_factory = session_factory

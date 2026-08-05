@@ -20,8 +20,12 @@ from app.application.skills.catalog import SkillCatalogBuilder
 from app.application.skills.errors import SkillStorageError
 from app.application.skills.packages import SkillPackageError, normalize_skill_path
 from app.application.skills.storage import SkillService
-from app.common.core.config import Settings, get_settings
-from app.common.core.errors import ResourceError, StateError, ValidationError
+from app.common.core.config import AstraRuntimeSettings, get_settings
+from app.common.core.errors import (
+    AstraInputValidationError,
+    AstraResourceNotFoundError,
+    AstraStateConflictError,
+)
 from app.common.schemas.agent.api_views import CreateRunResponse
 from app.common.schemas.agent.run_policy import RequestedReasoningPolicy
 from app.common.schemas.agent.types import PlanExecution
@@ -75,36 +79,39 @@ from app.interfaces.api.skill_views import (
 from app.interfaces.api.skill_views import (
     skill_summary_view as _summary,
 )
-from app.interfaces.platform.http.dependencies import ApplicationServices, get_application_container
+from app.interfaces.platform.http.dependencies import (
+    AstraApplicationServices,
+    get_application_container,
+)
 
 router = APIRouter(prefix="/api", tags=["skills"])
 
 
 def _raise_skill_error(exc: Exception) -> None:
     if isinstance(exc, SkillPackageError):
-        raise ValidationError(
+        raise AstraInputValidationError(
             "SKILL_PACKAGE_INVALID",
             "Skill 包校验失败。",
             {"diagnostics": [item.model_dump(mode="json") for item in exc.diagnostics]},
         ) from exc
     if isinstance(exc, SkillStorageError):
         if exc.code in {"SKILL_NOT_FOUND", "SKILL_REVISION_NOT_FOUND", "SKILL_FILE_NOT_FOUND"}:
-            raise ResourceError(exc.code, str(exc)) from exc
+            raise AstraResourceNotFoundError(exc.code, str(exc)) from exc
         if exc.code in {
             "SKILL_DRAFT_STALE",
             "SKILL_IDENTITY_CONFLICT",
             "SKILL_FILE_CONFLICT",
             "SKILL_BUILTIN_READONLY",
         }:
-            raise StateError(exc.code, str(exc), exc.details) from exc
-        raise ValidationError(exc.code, str(exc), exc.details) from exc
+            raise AstraStateConflictError(exc.code, str(exc), exc.details) from exc
+        raise AstraInputValidationError(exc.code, str(exc), exc.details) from exc
     raise exc
 
 
 @router.get("/skills", response_model=list[SkillSummaryView])
 async def list_skills(
     session: AsyncSession = Depends(get_session),
-    settings: Settings = Depends(get_settings),
+    settings: AstraRuntimeSettings = Depends(get_settings),
 ) -> list[SkillSummaryView]:
     records = await SkillService(session, settings).list_skills()
     return [await _summary(session, item) for item in records]
@@ -114,7 +121,7 @@ async def list_skills(
 async def create_skill(
     payload: SkillCreateRequest,
     session: AsyncSession = Depends(get_session),
-    settings: Settings = Depends(get_settings),
+    settings: AstraRuntimeSettings = Depends(get_settings),
 ) -> SkillDetailView:
     try:
         skill = await SkillService(session, settings).create_custom(
@@ -131,12 +138,12 @@ async def create_skill(
 async def import_skill(
     payload: SkillImportRequest,
     session: AsyncSession = Depends(get_session),
-    settings: Settings = Depends(get_settings),
+    settings: AstraRuntimeSettings = Depends(get_settings),
 ) -> SkillDetailView:
     try:
         archive = base64.b64decode(payload.content_base64, validate=True)
     except ValueError as exc:
-        raise ValidationError("SKILL_ARCHIVE_ENCODING_INVALID", "Skill 压缩包编码无效。") from exc
+        raise AstraInputValidationError("SKILL_ARCHIVE_ENCODING_INVALID", "Skill 压缩包编码无效。") from exc
     try:
         skill = await SkillService(session, settings).import_zip(archive, filename=payload.filename)
         await session.commit()
@@ -150,7 +157,7 @@ async def import_skill(
 async def get_skill_catalog(
     goal: str = Query(default="", max_length=4000),
     session: AsyncSession = Depends(get_session),
-    settings: Settings = Depends(get_settings),
+    settings: AstraRuntimeSettings = Depends(get_settings),
 ) -> SkillCatalogView:
     catalog = await SkillCatalogBuilder(
         session, metadata_chars=settings.skills_catalog_metadata_chars
@@ -164,7 +171,7 @@ async def get_skill_catalog(
 async def get_skill(
     skill_id: str,
     session: AsyncSession = Depends(get_session),
-    settings: Settings = Depends(get_settings),
+    settings: AstraRuntimeSettings = Depends(get_settings),
 ) -> SkillDetailView:
     try:
         skill = await SkillService(session, settings).require_skill(skill_id)
@@ -178,7 +185,7 @@ async def clone_skill(
     skill_id: str,
     payload: SkillCloneRequest,
     session: AsyncSession = Depends(get_session),
-    settings: Settings = Depends(get_settings),
+    settings: AstraRuntimeSettings = Depends(get_settings),
 ) -> SkillDetailView:
     try:
         skill = await SkillService(session, settings).clone_builtin(skill_id, payload.name)
@@ -193,7 +200,7 @@ async def clone_skill(
 async def list_skill_files(
     skill_id: str,
     session: AsyncSession = Depends(get_session),
-    settings: Settings = Depends(get_settings),
+    settings: AstraRuntimeSettings = Depends(get_settings),
 ) -> SkillDraftFilesView:
     try:
         service = SkillService(session, settings)
@@ -217,7 +224,7 @@ async def read_skill_file(
     skill_id: str,
     path: Annotated[str, Query(min_length=1)],
     session: AsyncSession = Depends(get_session),
-    settings: Settings = Depends(get_settings),
+    settings: AstraRuntimeSettings = Depends(get_settings),
 ) -> SkillFileContentView:
     try:
         service = SkillService(session, settings)
@@ -247,7 +254,7 @@ async def update_skill_files(
     skill_id: str,
     payload: SkillDraftUpdateRequest,
     session: AsyncSession = Depends(get_session),
-    settings: Settings = Depends(get_settings),
+    settings: AstraRuntimeSettings = Depends(get_settings),
 ) -> SkillDraftFilesView:
     try:
         service = SkillService(session, settings)
@@ -275,7 +282,7 @@ async def update_skill_files(
 async def validate_skill(
     skill_id: str,
     session: AsyncSession = Depends(get_session),
-    settings: Settings = Depends(get_settings),
+    settings: AstraRuntimeSettings = Depends(get_settings),
 ) -> SkillValidationView:
     try:
         service = SkillService(session, settings)
@@ -292,7 +299,7 @@ async def publish_skill(
     skill_id: str,
     payload: SkillPublishRequest,
     session: AsyncSession = Depends(get_session),
-    settings: Settings = Depends(get_settings),
+    settings: AstraRuntimeSettings = Depends(get_settings),
 ) -> SkillRevisionView:
     try:
         revision = await SkillService(session, settings).publish(skill_id, payload.revision_token)
@@ -309,7 +316,7 @@ async def publish_skill(
 async def list_skill_revisions(
     skill_id: str,
     session: AsyncSession = Depends(get_session),
-    settings: Settings = Depends(get_settings),
+    settings: AstraRuntimeSettings = Depends(get_settings),
 ) -> list[SkillRevisionView]:
     try:
         service = SkillService(session, settings)
@@ -339,7 +346,7 @@ async def get_skill_revision(
     skill_id: str,
     revision_id: str,
     session: AsyncSession = Depends(get_session),
-    settings: Settings = Depends(get_settings),
+    settings: AstraRuntimeSettings = Depends(get_settings),
 ) -> SkillRevisionDetailView:
     try:
         service = SkillService(session, settings)
@@ -369,7 +376,7 @@ async def read_skill_revision_file(
     revision_id: str,
     path: Annotated[str, Query(min_length=1)],
     session: AsyncSession = Depends(get_session),
-    settings: Settings = Depends(get_settings),
+    settings: AstraRuntimeSettings = Depends(get_settings),
 ) -> SkillFileContentView:
     try:
         service = SkillService(session, settings)
@@ -409,7 +416,7 @@ async def diff_skill_revision(
     skill_id: str,
     revision_id: str,
     session: AsyncSession = Depends(get_session),
-    settings: Settings = Depends(get_settings),
+    settings: AstraRuntimeSettings = Depends(get_settings),
 ) -> SkillRevisionDiffView:
     try:
         service = SkillService(session, settings)
@@ -441,7 +448,7 @@ async def revoke_skill_revision(
     revision_id: str,
     payload: SkillRevokeRequest,
     session: AsyncSession = Depends(get_session),
-    settings: Settings = Depends(get_settings),
+    settings: AstraRuntimeSettings = Depends(get_settings),
 ) -> SkillRevisionView:
     try:
         service = SkillService(session, settings)
@@ -479,7 +486,7 @@ async def restore_skill_revision(
     skill_id: str,
     revision_id: str,
     session: AsyncSession = Depends(get_session),
-    settings: Settings = Depends(get_settings),
+    settings: AstraRuntimeSettings = Depends(get_settings),
 ) -> SkillDraftFilesView:
     try:
         service = SkillService(session, settings)
@@ -503,7 +510,7 @@ async def restore_skill_revision(
 async def diff_skill(
     skill_id: str,
     session: AsyncSession = Depends(get_session),
-    settings: Settings = Depends(get_settings),
+    settings: AstraRuntimeSettings = Depends(get_settings),
 ) -> SkillDiffView:
     try:
         service = SkillService(session, settings)
@@ -558,7 +565,7 @@ async def diff_skill(
 async def preview_skill(
     skill_id: str,
     session: AsyncSession = Depends(get_session),
-    settings: Settings = Depends(get_settings),
+    settings: AstraRuntimeSettings = Depends(get_settings),
 ) -> dict[str, str]:
     try:
         service = SkillService(session, settings)
@@ -577,7 +584,7 @@ async def export_skill(
     skill_id: str,
     revision_id: str | None = None,
     session: AsyncSession = Depends(get_session),
-    settings: Settings = Depends(get_settings),
+    settings: AstraRuntimeSettings = Depends(get_settings),
 ) -> Response:
     try:
         service = SkillService(session, settings)
@@ -597,7 +604,7 @@ async def update_skill_state(
     skill_id: str,
     payload: SkillStateRequest,
     session: AsyncSession = Depends(get_session),
-    settings: Settings = Depends(get_settings),
+    settings: AstraRuntimeSettings = Depends(get_settings),
 ) -> SkillSummaryView:
     try:
         skill = await SkillService(session, settings).set_enabled(skill_id, payload.enabled)
@@ -612,7 +619,7 @@ async def update_skill_state(
 async def delete_skill(
     skill_id: str,
     session: AsyncSession = Depends(get_session),
-    settings: Settings = Depends(get_settings),
+    settings: AstraRuntimeSettings = Depends(get_settings),
 ) -> Response:
     try:
         await SkillService(session, settings).remove(skill_id)
@@ -630,9 +637,9 @@ async def delete_skill(
 async def create_skill_test_run(
     skill_id: str,
     payload: SkillTestRunRequest,
-    container: ApplicationServices = Depends(get_application_container),
+    container: AstraApplicationServices = Depends(get_application_container),
     session: AsyncSession = Depends(get_session),
-    settings: Settings = Depends(get_settings),
+    settings: AstraRuntimeSettings = Depends(get_settings),
 ) -> CreateRunResponse:
     service = SkillService(session, settings)
     try:
@@ -718,7 +725,7 @@ async def get_run_skills(
         select(RunSkillSnapshotRecord).where(RunSkillSnapshotRecord.run_id == run_id)
     )
     if snapshot is None:
-        raise ResourceError("RUN_SKILLS_NOT_FOUND", "该 Run 没有 Skill 快照。")
+        raise AstraResourceNotFoundError("RUN_SKILLS_NOT_FOUND", "该 Run 没有 Skill 快照。")
     events = list(
         (
             await session.scalars(
@@ -751,7 +758,7 @@ async def get_skill_audit(
     skill_id: str,
     limit: int = Query(default=200, ge=1, le=500),
     session: AsyncSession = Depends(get_session),
-    settings: Settings = Depends(get_settings),
+    settings: AstraRuntimeSettings = Depends(get_settings),
 ) -> list[dict[str, Any]]:
     await SkillService(session, settings).require_skill(skill_id)
     events = list(

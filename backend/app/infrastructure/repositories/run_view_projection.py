@@ -6,7 +6,7 @@ from copy import deepcopy
 from typing import Any
 
 from app.common.schemas.agent.api_views import RunView
-from app.common.schemas.agent.run_result import RunResult
+from app.common.schemas.agent.run_result import AgentRunResult
 from app.infrastructure.db.models.permissions import ApprovalRequestRecord
 from app.infrastructure.db.models.runs import RunRecord
 from app.infrastructure.repositories.plans import plan_to_summary, plan_to_view
@@ -194,7 +194,7 @@ def _result_view(run: RunRecord) -> dict[str, Any] | None:
         return None
     raw_result = dict(run.result) if isinstance(run.result, dict) else {}
     raw_result.setdefault("summary", run.summary or "")
-    return RunResult.model_validate(raw_result).model_dump(mode="json")
+    return AgentRunResult.model_validate(raw_result).model_dump(mode="json")
 
 
 def _run_content(

@@ -10,7 +10,7 @@ from sqlalchemy.orm import DeclarativeBase
 from sqlalchemy.types import JSON
 
 
-class Base(DeclarativeBase):
+class AstraOrmRecordBase(DeclarativeBase):
     pass
 
 

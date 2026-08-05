@@ -1,13 +1,13 @@
 from app.application.agent_runtime.policies.reasoning import resolve_run_profile
 from app.application.runner.model_thinking_stream import ModelThinkingEventWriter
-from app.common.core.config import Settings
+from app.common.core.config import AstraRuntimeSettings
 from app.common.schemas.agent.run_policy import RequestedReasoningPolicy
 from app.common.schemas.agent.types import AnswerMode
 from app.infrastructure.repositories.run_unit_of_work import RunUnitOfWork
 
 
 async def _create_run(repo: RunUnitOfWork):
-    settings = Settings(model_provider="mock")
+    settings = AstraRuntimeSettings(model_provider="mock")
     profile = resolve_run_profile(AnswerMode.standard, RequestedReasoningPolicy())
     return await repo.create_task_run(
         "展示模型思考",

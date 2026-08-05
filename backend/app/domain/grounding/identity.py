@@ -6,7 +6,7 @@ import re
 from typing import Any
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
-from app.domain.grounding.schemas import Passage
+from app.domain.grounding.schemas import GroundingSourcePassage
 
 SEGMENTATION_VERSION = "passages.v1"
 
@@ -94,13 +94,13 @@ def segment_passages(
     max_chars: int = 900,
     overlap_chars: int = 120,
     max_passages: int = 32,
-) -> list[Passage]:
+) -> list[GroundingSourcePassage]:
     text = normalized_text(content)
     if not text:
         return []
     max_chars = max(160, min(max_chars, 2000))
     overlap_chars = max(0, min(overlap_chars, max_chars // 2))
-    passages: list[Passage] = []
+    passages: list[GroundingSourcePassage] = []
     start = 0
     while start < len(text) and len(passages) < max_passages:
         target_end = min(len(text), start + max_chars)
@@ -118,7 +118,7 @@ def segment_passages(
         if passage_text:
             ordinal = len(passages)
             passages.append(
-                Passage(
+                GroundingSourcePassage(
                     id=stable_id("passage", snapshot, str(ordinal), digest_text(passage_text)),
                     source_id=source,
                     snapshot_id=snapshot,

@@ -10,7 +10,7 @@ from typing import Any, Literal
 from app.application.agent_runtime.services.action_resolution import (
     ActionResolutionInput,
     ActionResolutionStage,
-    ResolvedAction,
+    ResolvedAgentAction,
 )
 from app.application.agent_runtime.services.decision import (
     DecisionStageFailure,
@@ -23,7 +23,7 @@ from app.application.agent_runtime.services.progress import (
 )
 from app.application.agent_runtime.services.skill_actions import SkillActionStage
 from app.common.schemas.agent.execution_state import AgentDecision
-from app.common.schemas.agent.run_result import FinalAnswer
+from app.common.schemas.agent.run_result import AgentFinalAnswer
 from app.common.schemas.agent.types import AnswerMode
 from app.infrastructure.db.models.permissions import AgentIdentityRecord, ToolCallRecord
 from app.infrastructure.db.models.plans import PlanNodeRecord
@@ -41,7 +41,7 @@ class RootDecisionResult:
     action: Literal["continue", "stop", "ready"]
     turn: AgentTurnRecord | None = None
     decision: AgentDecision | None = None
-    candidate_answer: FinalAnswer | None = None
+    candidate_answer: AgentFinalAnswer | None = None
     main_identity: AgentIdentityRecord | None = None
     is_approved_resume: bool = False
     terminal_status: str | None = None
@@ -136,7 +136,7 @@ class RootDecisionStage:
         run_id: str,
         turn_index: int,
         decision: AgentDecision,
-        candidate_answer: FinalAnswer | None,
+        candidate_answer: AgentFinalAnswer | None,
         identity: AgentIdentityRecord,
         context: dict[str, Any],
         active_node: PlanNodeRecord | None,
@@ -191,7 +191,7 @@ class RootDecisionStage:
         )
 
     @staticmethod
-    def _terminal_resolution(resolved: ResolvedAction) -> RootDecisionResult | None:
+    def _terminal_resolution(resolved: ResolvedAgentAction) -> RootDecisionResult | None:
         if resolved.terminal_outcome is None:
             return None
         return RootDecisionResult(
@@ -208,7 +208,7 @@ class RootDecisionStage:
         context: dict[str, Any],
         active_node: PlanNodeRecord | None,
         active_execution_id: str | None,
-    ) -> ResolvedAction:
+    ) -> ResolvedAgentAction:
         return ActionResolutionStage().execute(
             ActionResolutionInput(
                 run_id=run_id,

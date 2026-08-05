@@ -12,8 +12,12 @@ from app.application.scheduling.command_parsing import (
     parse_schedule_command,
 )
 from app.application.scheduling.execution import ScheduledExecutionResolver
-from app.common.core.config import Settings
-from app.common.core.errors import ResourceError, StateError, ValidationError
+from app.common.core.config import AstraRuntimeSettings
+from app.common.core.errors import (
+    AstraInputValidationError,
+    AstraResourceNotFoundError,
+    AstraStateConflictError,
+)
 from app.common.schemas.schedules import (
     ActiveHours,
     HeartbeatConfig,
@@ -32,7 +36,7 @@ from app.infrastructure.repositories.schedules import (
 
 
 class AutomationCommandService:
-    def __init__(self, session: AsyncSession, settings: Settings):
+    def __init__(self, session: AsyncSession, settings: AstraRuntimeSettings):
         self.session = session
         self.settings = settings
         self.repo = ScheduleRepository(session)
@@ -46,7 +50,7 @@ class AutomationCommandService:
         try:
             command = parse_schedule_command(arguments)
         except CommandUsageError as exc:
-            raise ValidationError(
+            raise AstraInputValidationError(
                 "SYSTEM_COMMAND_USAGE_INVALID",
                 str(exc),
                 {"usage": exc.usage, "command": "/schedule"},
@@ -54,12 +58,12 @@ class AutomationCommandService:
         try:
             return await self._execute_schedule(task, command)
         except ScheduleNotFoundError as exc:
-            raise ResourceError(
+            raise AstraResourceNotFoundError(
                 "SCHEDULE_NOT_FOUND",
                 "找不到工作区中的指定定时任务。",
             ) from exc
         except ScheduleVersionConflictError as exc:
-            raise StateError(
+            raise AstraStateConflictError(
                 "SCHEDULE_VERSION_CONFLICT",
                 "定时任务已被更新，请刷新状态后重试。",
             ) from exc
@@ -72,7 +76,7 @@ class AutomationCommandService:
         try:
             command = parse_heartbeat_command(arguments)
         except CommandUsageError as exc:
-            raise ValidationError(
+            raise AstraInputValidationError(
                 "SYSTEM_COMMAND_USAGE_INVALID",
                 str(exc),
                 {"usage": exc.usage, "command": "/heartbeat"},
@@ -80,7 +84,7 @@ class AutomationCommandService:
         try:
             return await self._execute_heartbeat(task, command)
         except ScheduleNotFoundError as exc:
-            raise ResourceError(
+            raise AstraResourceNotFoundError(
                 "HEARTBEAT_NOT_CONFIGURED",
                 "工作区尚未配置 heartbeat。",
             ) from exc
@@ -126,7 +130,7 @@ class AutomationCommandService:
             job = await self.repo.delete(job.id, version=command.version)
             return "已删除定时任务并保留运行历史。", {"job": self._job_view(job)}
         if not job.enabled:
-            raise StateError(
+            raise AstraStateConflictError(
                 "SCHEDULE_DISABLED",
                 "定时任务已暂停，请先恢复后再手动运行。",
             )
@@ -165,7 +169,7 @@ class AutomationCommandService:
                 execution=await self._current_execution(task.id),
             )
         except ValueError as error:
-            raise ValidationError(
+            raise AstraInputValidationError(
                 "SCHEDULE_COMMAND_INVALID", "定时任务参数无效。", {"reason": str(error)[:600]}
             ) from error
         job = await self.repo.create(payload, owner_principal="system-command")
@@ -217,7 +221,7 @@ class AutomationCommandService:
         assert command.interval_seconds is not None
         minimum = self.settings.scheduler_heartbeat_min_interval_seconds
         if command.interval_seconds < minimum:
-            raise ValidationError(
+            raise AstraInputValidationError(
                 "HEARTBEAT_INTERVAL_TOO_SHORT",
                 "heartbeat 周期低于系统允许的最小值。",
                 {"minimum_seconds": minimum},
@@ -226,7 +230,7 @@ class AutomationCommandService:
         try:
             payload = HeartbeatConfig.model_validate(payload_values)
         except ValueError as error:
-            raise ValidationError(
+            raise AstraInputValidationError(
                 "HEARTBEAT_COMMAND_INVALID", "heartbeat 参数无效。", {"reason": str(error)[:600]}
             ) from error
         updated = await self.heartbeats.upsert(payload, owner_principal="system-command")

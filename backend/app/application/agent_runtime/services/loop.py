@@ -5,11 +5,14 @@ import logging
 from collections.abc import Awaitable, Callable
 from typing import Any, assert_never
 
-from app.application.agent_runtime.policies.completion import CompletionGate
-from app.application.agent_runtime.policies.reasoning import ObservationEvaluator, ReflectionGate
+from app.application.agent_runtime.policies.completion import AgentCompletionGate
+from app.application.agent_runtime.policies.reasoning import (
+    AgentObservationEvaluator,
+    AgentReflectionGate,
+)
 from app.application.agent_runtime.result_adapters import (
+    AgentToolResultProcessorRegistry,
     ChartTaskAdapter,
-    ProcessorRegistry,
     WebTaskAdapter,
 )
 from app.application.agent_runtime.services.finalization import FinalizationInput
@@ -17,7 +20,7 @@ from app.application.agent_runtime.services.runtime_builder import (
     AgentRuntimeBuilder,
     RootRuntimeAssembly,
 )
-from app.common.core.config import Settings
+from app.common.core.config import AstraRuntimeSettings
 from app.domain.execution.contracts import (
     BlockedOutcome,
     CompletedOutcome,
@@ -32,7 +35,7 @@ from app.infrastructure.db.models.runs import RunRecord
 from app.infrastructure.db.models.skills import RunSkillSnapshotRecord
 from app.infrastructure.model_clients.contracts import ModelClient
 from app.infrastructure.repositories.run_unit_of_work import RunUnitOfWork
-from app.infrastructure.tools.base import ToolRegistry
+from app.infrastructure.tools.base import AstraToolRegistry
 from app.infrastructure.tools.router import ToolRouter
 
 logger = logging.getLogger("astra.agent_loop")
@@ -60,13 +63,13 @@ def route_outcome(outcome: StageOutcome) -> StageOutcome:
     assert_never(outcome)
 
 
-class AgentLoop:
+class AstraAgentLoop:
     def __init__(
         self,
-        settings: Settings,
+        settings: AstraRuntimeSettings,
         *,
         model_client: ModelClient,
-        tool_registry: ToolRegistry,
+        tool_registry: AstraToolRegistry,
         sandbox_provider=None,
     ):
         self.settings = settings
@@ -80,10 +83,10 @@ class AgentLoop:
         self.router = ToolRouter(tool_registry, available_backends=backends)
         self.adapter = WebTaskAdapter()
         self.chart_adapter = ChartTaskAdapter()
-        self.processors = ProcessorRegistry([self.adapter, self.chart_adapter])
-        self.evaluator = ObservationEvaluator()
-        self.reflection_gate = ReflectionGate()
-        self.completion_gate = CompletionGate()
+        self.processors = AgentToolResultProcessorRegistry([self.adapter, self.chart_adapter])
+        self.evaluator = AgentObservationEvaluator()
+        self.reflection_gate = AgentReflectionGate()
+        self.completion_gate = AgentCompletionGate()
         self._supervisor_close_tasks: set[asyncio.Task[Any]] = set()
 
     async def run(

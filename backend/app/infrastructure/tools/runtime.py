@@ -5,19 +5,19 @@ from typing import Any
 from app.application.subagents.governance import DelegationAuthorizationError
 from app.common.schemas.subagents import SubagentFanoutRequest, SubagentFanoutResult
 from app.infrastructure.tools.base import (
-    Tool,
+    AstraTool,
+    AstraToolRegistry,
+    AstraToolSpec,
     ToolExecutionContext,
     ToolExecutionError,
-    ToolRegistry,
     ToolResultEnvelope,
-    ToolSpec,
 )
 
 
-class SwarmTool(Tool):
+class SwarmTool(AstraTool):
     """Astra control-plane facade for governed concurrent delegation."""
 
-    spec = ToolSpec(
+    spec = AstraToolSpec(
         name="swarm",
         version="1.0.0",
         description=(
@@ -76,7 +76,7 @@ class SwarmTool(Tool):
         ).model_dump(mode="json")
 
 
-def build_runtime_tool_registry() -> ToolRegistry:
-    registry = ToolRegistry()
+def build_runtime_tool_registry() -> AstraToolRegistry:
+    registry = AstraToolRegistry()
     registry.register(SwarmTool())
     return registry

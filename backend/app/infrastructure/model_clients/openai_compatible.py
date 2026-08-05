@@ -9,10 +9,10 @@ from typing import Any
 import httpx
 
 from app.application.context_compaction.service import CompactionGeneration
-from app.common.core.config import Settings
+from app.common.core.config import AstraRuntimeSettings
 from app.common.schemas.agent.execution_state import AgentDecision, AgentReflection
 from app.common.schemas.agent.planning import PlanDraft, TaskContract
-from app.common.schemas.agent.run_result import FinalAnswer, MemoryRecord
+from app.common.schemas.agent.run_result import AgentFinalAnswer, AgentRunMemoryCandidate
 from app.common.schemas.agent.types import ReasoningEffort
 from app.common.schemas.models import ModelThinkingSnapshot
 from app.domain.agent_profile import AgentProfile, ModelOperation, load_agent_profile
@@ -145,7 +145,7 @@ async def generate_context_checkpoint(
 class OpenAICompatibleModelClient(ModelClient):
     def __init__(
         self,
-        settings: Settings,
+        settings: AstraRuntimeSettings,
         *,
         http_client: httpx.AsyncClient | None = None,
     ):
@@ -286,7 +286,7 @@ class OpenAICompatibleModelClient(ModelClient):
         tool_outputs: list[dict[str, Any]],
         *,
         on_delta: AnswerDeltaCallback | None = None,
-    ) -> FinalAnswer:
+    ) -> AgentFinalAnswer:
         operation = ModelOperation.SYNTHESIS
         payload = await self._chat_json(
             [
@@ -321,7 +321,7 @@ class OpenAICompatibleModelClient(ModelClient):
             on_field_delta=on_delta,
         )
         try:
-            return FinalAnswer.model_validate(normalize_final_answer_payload(payload))
+            return AgentFinalAnswer.model_validate(normalize_final_answer_payload(payload))
         except Exception as exc:
             raise ModelOutputError(f"Invalid final answer output: {exc}") from exc
 
@@ -369,7 +369,7 @@ class OpenAICompatibleModelClient(ModelClient):
         *,
         on_delta: AnswerDeltaCallback | None = None,
         on_reasoning_delta: AnswerDeltaCallback | None = None,
-    ) -> tuple[AgentDecision, FinalAnswer | None]:
+    ) -> tuple[AgentDecision, AgentFinalAnswer | None]:
         operation = ModelOperation.DECISION_WITH_ANSWER
         payload = await self._chat_json(
             [
@@ -407,7 +407,7 @@ class OpenAICompatibleModelClient(ModelClient):
                 # Accept the already-streamed top-level answer to avoid a second synthesis call.
                 raw_answer = payload
             answer = (
-                FinalAnswer.model_validate(normalize_final_answer_payload(raw_answer))
+                AgentFinalAnswer.model_validate(normalize_final_answer_payload(raw_answer))
                 if decision.decision_type == "finalize" and isinstance(raw_answer, dict)
                 else None
             )
@@ -446,7 +446,7 @@ class OpenAICompatibleModelClient(ModelClient):
 
     async def finalize(
         self, goal: str, context: dict[str, Any], *, on_delta: AnswerDeltaCallback | None = None
-    ) -> FinalAnswer:
+    ) -> AgentFinalAnswer:
         return await self.synthesize(
             goal, [{"evidence_pack": context.get("evidence_pack", {})}], on_delta=on_delta
         )
@@ -455,7 +455,7 @@ class OpenAICompatibleModelClient(ModelClient):
         self,
         goal: str,
         context: dict[str, Any],
-    ) -> list[MemoryRecord]:
+    ) -> list[AgentRunMemoryCandidate]:
         operation = ModelOperation.MEMORY
         payload = await self._chat_json(
             [
@@ -483,7 +483,7 @@ class OpenAICompatibleModelClient(ModelClient):
         )
         try:
             return [
-                MemoryRecord.model_validate(normalized)
+                AgentRunMemoryCandidate.model_validate(normalized)
                 for item in payload.get("memories", [])
                 if isinstance(item, dict)
                 and (normalized := normalize_memory_payload(item)) is not None

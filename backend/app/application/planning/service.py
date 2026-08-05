@@ -6,7 +6,7 @@ from typing import Any
 
 from sqlalchemy import select
 
-from app.common.schemas.agent.execution_state import AgentState, Evaluation
+from app.common.schemas.agent.execution_state import AgentObservationEvaluation, AgentState
 from app.common.schemas.agent.planning import (
     PlanDraft,
     PlanNodeDraft,
@@ -377,7 +377,7 @@ class PlanService:
         run_id: str,
         node_id: str,
         *,
-        evaluation: Evaluation | None,
+        evaluation: AgentObservationEvaluation | None,
         evidence_refs: list[str],
     ) -> PlanNodeRecord:
         if evaluation is not None and evaluation.outcome != EvaluationOutcome.matched:

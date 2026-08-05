@@ -9,12 +9,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.application.skills.contracts import SkillOrigin
 from app.application.skills.packages import parse_skill_package
 from app.application.skills.storage import SkillService
-from app.common.core.config import Settings
+from app.common.core.config import AstraRuntimeSettings
 from app.infrastructure.db.model_base import utc_now
 from app.infrastructure.db.models.skills import SkillRecord, SkillRevisionRecord
 
 
-async def ensure_builtin_skills(session: AsyncSession, settings: Settings) -> None:
+async def ensure_builtin_skills(session: AsyncSession, settings: AstraRuntimeSettings) -> None:
     if not settings.skills_enabled:
         return
     root = resources.files("app.infrastructure.builtin_skills")
@@ -30,7 +30,7 @@ async def ensure_builtin_skills(session: AsyncSession, settings: Settings) -> No
 
 async def _sync_builtin_skill(
     session: AsyncSession,
-    settings: Settings,
+    settings: AstraRuntimeSettings,
     directory_name: str,
     files: dict[str, bytes],
 ) -> None:

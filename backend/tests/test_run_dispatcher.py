@@ -3,7 +3,7 @@ import asyncio
 import pytest
 
 from app.application.run_management.dispatcher import InProcessRunDispatcher
-from app.common.core.config import Settings
+from app.common.core.config import AstraRuntimeSettings
 
 
 @pytest.mark.asyncio
@@ -16,11 +16,11 @@ async def test_dispatcher_retains_run_until_engine_finishes():
         await release.wait()
 
     dispatcher = InProcessRunDispatcher(run_engine)
-    task = dispatcher.start("run-1", Settings())
+    task = dispatcher.start("run-1", AstraRuntimeSettings())
     await started.wait()
 
     assert dispatcher.active_run_ids() == ("run-1",)
-    assert dispatcher.start("run-1", Settings()) is task
+    assert dispatcher.start("run-1", AstraRuntimeSettings()) is task
 
     release.set()
     await task
@@ -37,7 +37,7 @@ async def test_dispatcher_cancels_run_idempotently():
         await asyncio.Event().wait()
 
     dispatcher = InProcessRunDispatcher(run_engine)
-    dispatcher.start("run-1", Settings())
+    dispatcher.start("run-1", AstraRuntimeSettings())
     await started.wait()
 
     assert await dispatcher.cancel("run-1") is True
@@ -57,7 +57,7 @@ async def test_dispatcher_survives_engine_cleanup_failure():
             raise RuntimeError("cleanup failed") from error
 
     dispatcher = InProcessRunDispatcher(run_engine)
-    dispatcher.start("run-1", Settings())
+    dispatcher.start("run-1", AstraRuntimeSettings())
     await started.wait()
 
     assert await dispatcher.cancel("run-1") is True
@@ -73,8 +73,8 @@ async def test_dispatcher_shutdown_cancels_every_active_run():
         await asyncio.Event().wait()
 
     dispatcher = InProcessRunDispatcher(run_engine)
-    dispatcher.start("run-1", Settings())
-    dispatcher.start("run-2", Settings())
+    dispatcher.start("run-1", AstraRuntimeSettings())
+    dispatcher.start("run-2", AstraRuntimeSettings())
     await asyncio.gather(*(event.wait() for event in started.values()))
 
     await dispatcher.shutdown()

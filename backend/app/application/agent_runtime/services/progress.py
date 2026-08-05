@@ -7,30 +7,30 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from app.application.agent_runtime.policies.reasoning import (
-    ObservationEvaluator,
-    ReflectionGate,
+    AgentObservationEvaluator,
+    AgentReflectionGate,
     apply_reflection_patch,
 )
 from app.application.planning.service import PlanService
 from app.common.schemas.agent.execution_state import (
     AgentDecision,
     AgentObservation,
+    AgentObservationEvaluation,
     AgentReflection,
     AgentState,
-    Evaluation,
     FailureFingerprint,
     ReflectionPatch,
 )
 from app.common.schemas.agent.planning import ExpectedObservation
 from app.common.schemas.agent.run_policy import EffectiveReasoningPolicy
-from app.common.schemas.agent.run_result import FinalAnswer
+from app.common.schemas.agent.run_result import AgentFinalAnswer
 from app.common.schemas.agent.types import EvaluationOutcome
 from app.infrastructure.db.models.plans import PlanNodeRecord, PlanRecord
 from app.infrastructure.db.models.runs import AgentTurnRecord
 from app.infrastructure.model_clients.contracts import ModelClient, ModelOutputError
 from app.infrastructure.repositories.plans import PlanRepository, plan_to_view
 from app.infrastructure.repositories.run_unit_of_work import RunUnitOfWork
-from app.infrastructure.tools.base import ToolRegistry
+from app.infrastructure.tools.base import AstraToolRegistry
 from app.infrastructure.tools.selection import forbidden_plan_bindings, task_capability_catalog
 
 logger = logging.getLogger("astra.agent_progress")
@@ -59,10 +59,10 @@ class ProgressEvaluationStage:
         repository: RunUnitOfWork,
         plan_repository: PlanRepository,
         model_client: ModelClient,
-        tool_registry: ToolRegistry,
+        tool_registry: AstraToolRegistry,
         policy: EffectiveReasoningPolicy,
-        reflection_gate: ReflectionGate,
-        evaluator: ObservationEvaluator,
+        reflection_gate: AgentReflectionGate,
+        evaluator: AgentObservationEvaluator,
         max_reflections: int,
         progress: ExecutionProgress,
     ) -> None:
@@ -108,7 +108,9 @@ class ProgressEvaluationStage:
         await self._repository.session.commit()
         return reflection
 
-    async def persist(self, evaluation: Evaluation | None = None) -> None:
+    async def persist(
+        self, evaluation: AgentObservationEvaluation | None = None
+    ) -> None:
         current = await self._repository.require_run_core(self._run_id)
         if not current.agent_state:
             return
@@ -139,8 +141,8 @@ class ProgressEvaluationStage:
         self,
         node: PlanNodeRecord,
         decision: AgentDecision,
-        candidate_answer: FinalAnswer | None = None,
-    ) -> tuple[AgentObservation | None, Evaluation | None, bool]:
+        candidate_answer: AgentFinalAnswer | None = None,
+    ) -> tuple[AgentObservation | None, AgentObservationEvaluation | None, bool]:
         current = await self._repository.require_run(self._run_id)
         prior_match = next(
             (
@@ -182,7 +184,7 @@ class ProgressEvaluationStage:
         self,
         turn: AgentTurnRecord,
         observation: AgentObservation | None,
-        evaluation: Evaluation | None,
+        evaluation: AgentObservationEvaluation | None,
         model_context: dict[str, Any],
     ) -> None:
         if observation is not None:
@@ -335,7 +337,9 @@ class ProgressEvaluationStage:
                 known.add(fingerprint)
 
     @staticmethod
-    def _apply_evaluation(state: AgentState, evaluation: Evaluation) -> None:
+    def _apply_evaluation(
+        state: AgentState, evaluation: AgentObservationEvaluation
+    ) -> None:
         state.evaluations.append(evaluation.model_dump(mode="json"))
         for criterion in state.task_contract.success_criteria:
             if criterion.id in evaluation.criterion_updates:

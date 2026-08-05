@@ -15,7 +15,7 @@ SearchRequest = dict[str, str | None]
 SearchOutput = dict[str, Any]
 
 
-class SearchResultNormalizer:
+class WebSearchResultNormalizer:
     """Validate search requests and project provider output into Astra evidence candidates."""
 
     def __init__(self, search_parameters: Callable[[dict[str, Any]], tuple[int, str, str]]):

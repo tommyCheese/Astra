@@ -7,8 +7,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.application.run_management.conversation_context import ConversationContextManager
 from app.application.scheduling.commands import AutomationCommandService
-from app.common.core.config import Settings
-from app.common.core.errors import ResourceError, ValidationError
+from app.common.core.config import AstraRuntimeSettings
+from app.common.core.errors import AstraInputValidationError, AstraResourceNotFoundError
 from app.common.schemas.agent.run_policy import EXECUTABLE_SUBAGENT_COHORTS
 from app.infrastructure.db.model_base import utc_now
 from app.infrastructure.db.models.conversations import TaskRecord
@@ -76,7 +76,7 @@ SYSTEM_COMMANDS = (
 )
 
 
-def list_system_commands(settings: Settings | None = None) -> list[dict[str, object]]:
+def list_system_commands(settings: AstraRuntimeSettings | None = None) -> list[dict[str, object]]:
     commands = list(SYSTEM_COMMANDS)
     enabled = bool(
         settings
@@ -117,12 +117,12 @@ async def execute_system_command(
     *,
     arguments: str = "",
     session: AsyncSession | None = None,
-    settings: Settings | None = None,
+    settings: AstraRuntimeSettings | None = None,
 ) -> tuple[str, dict[str, object], dict[str, object]]:
     run_count = len(await manager.list_runs(task.id))
     definition = next((item for item in SYSTEM_COMMANDS if item.name == command), None)
     if definition is None:
-        raise ResourceError("SYSTEM_COMMAND_NOT_FOUND", "找不到这个快捷操作。")
+        raise AstraResourceNotFoundError("SYSTEM_COMMAND_NOT_FOUND", "找不到这个快捷操作。")
     normalized_arguments = arguments.strip()
     message, details, normalized_arguments = await _execute_command(
         manager=manager,
@@ -158,7 +158,7 @@ async def _execute_command(
             task, definition, command, arguments, session, settings
         )
     if definition.argument_mode == "none" and arguments:
-        raise ValidationError(
+        raise AstraInputValidationError(
             "SYSTEM_COMMAND_USAGE_INVALID",
             f"/{command} 不接受参数。",
             {"usage": definition.usage, "command": f"/{command}"},
@@ -176,7 +176,7 @@ async def _execute_parameterized_command(
     task, definition, command, arguments, session, settings
 ) -> tuple[str, dict[str, object], str]:
     if not arguments:
-        raise ValidationError(
+        raise AstraInputValidationError(
             "SYSTEM_COMMAND_ARGUMENTS_REQUIRED",
             f"此命令需要参数。用法：{definition.usage}",
             {"usage": definition.usage, "command": f"/{command}"},

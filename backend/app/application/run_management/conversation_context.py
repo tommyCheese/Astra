@@ -12,8 +12,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.application.context_compaction.conversation import SemanticConversationCompactor
 from app.application.context_compaction.policy import build_compaction_policy
-from app.common.core.config import Settings
-from app.common.core.errors import StateError, ValidationError
+from app.common.core.config import AstraRuntimeSettings
+from app.common.core.errors import AstraInputValidationError, AstraStateConflictError
 from app.common.schemas.context_compaction import ContextOwnerRole
 from app.infrastructure.db.model_base import utc_now
 from app.infrastructure.db.models.conversations import TaskRecord
@@ -31,7 +31,7 @@ _CJK_RE = re.compile(
 
 
 @dataclass(frozen=True)
-class ContextProjection:
+class ConversationContextProjection:
     summary: str
     runs: tuple[RunRecord, ...]
     folded_run_ids: frozenset[str]
@@ -51,7 +51,7 @@ def estimate_messages_tokens(messages: list[str]) -> int:
 
 
 class ConversationContextManager:
-    def __init__(self, session: AsyncSession, settings: Settings):
+    def __init__(self, session: AsyncSession, settings: AstraRuntimeSettings):
         self.session = session
         self.settings = settings
 
@@ -98,7 +98,7 @@ class ConversationContextManager:
         task: TaskRecord,
         *,
         runs: list[RunRecord] | None = None,
-    ) -> ContextProjection:
+    ) -> ConversationContextProjection:
         state = self._state(task)
         folded = frozenset(state["folded_run_ids"])
         all_runs = runs if runs is not None else await self.list_runs(task.id)
@@ -107,7 +107,7 @@ class ConversationContextManager:
             for run in all_runs
             if run.id not in folded and run.status in CONTEXT_TERMINAL_STATUSES
         )
-        return ContextProjection(
+        return ConversationContextProjection(
             summary=self._checkpoint_text(state["checkpoint"]),
             runs=visible,
             folded_run_ids=folded,
@@ -278,7 +278,7 @@ class ConversationContextManager:
     async def ensure_idle(self, task_id: str, *, runs: list[RunRecord] | None = None) -> None:
         all_runs = runs if runs is not None else await self.list_runs(task_id)
         if any(run.status not in CONTEXT_TERMINAL_STATUSES for run in all_runs):
-            raise StateError(
+            raise AstraStateConflictError(
                 "CONVERSATION_CONTEXT_ACTIVE",
                 "对话仍在执行或等待继续，暂时不能修改上下文。",
             )
@@ -295,7 +295,7 @@ class ConversationContextManager:
     ) -> dict[str, int | str]:
         policy = build_compaction_policy(self.settings, ContextOwnerRole.conversation)
         if not policy.enabled or policy.shadow_mode:
-            raise StateError(
+            raise AstraStateConflictError(
                 "CONTEXT_COMPACTION_UNAVAILABLE",
                 "Semantic context compaction is not enabled.",
             )
@@ -381,7 +381,7 @@ class ConversationContextManager:
                 draft=draft,
             )
         if current["usage_ratio"] >= 1:
-            raise ValidationError(
+            raise AstraInputValidationError(
                 "CONTEXT_WINDOW_EXCEEDED",
                 "当前请求在压缩后仍超出模型上下文窗口，请缩短输入或执行 /clear。",
                 {

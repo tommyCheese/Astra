@@ -20,7 +20,7 @@ from app.application.skills.packages import (
     normalize_skill_path,
     parse_skill_package,
 )
-from app.common.core.config import Settings
+from app.common.core.config import AstraRuntimeSettings
 from app.infrastructure.db.model_base import utc_now
 from app.infrastructure.db.models.skills import (
     SkillAuditRecord,
@@ -39,7 +39,7 @@ def _blob_digest(files: dict[str, dict[str, Any]], path: str) -> str:
 
 
 class SkillService:
-    def __init__(self, session: AsyncSession, settings: Settings):
+    def __init__(self, session: AsyncSession, settings: AstraRuntimeSettings):
         self.session = session
         self.settings = settings
 

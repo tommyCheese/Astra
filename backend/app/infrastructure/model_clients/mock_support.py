@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from app.common.schemas.agent.execution_state import AgentDecision
-from app.common.schemas.agent.run_result import Finding, SourceReference
+from app.common.schemas.agent.run_result import AgentAnswerFinding, AgentAnswerSourceReference
 
 WEB_MARKERS = (
     "搜索",
@@ -59,8 +59,8 @@ def infer_mock_capabilities(goal: str) -> list[str]:
 
 @dataclass
 class MockEvidenceSummary:
-    sources: list[SourceReference] = field(default_factory=list)
-    findings: list[Finding] = field(default_factory=list)
+    sources: list[AgentAnswerSourceReference] = field(default_factory=list)
+    findings: list[AgentAnswerFinding] = field(default_factory=list)
     caveats: list[str] = field(default_factory=list)
     failed_sources: list[dict[str, Any]] = field(default_factory=list)
     source_quality: list[dict[str, Any]] = field(default_factory=list)
@@ -70,7 +70,7 @@ class MockEvidenceSummary:
         if not isinstance(url, str) or not url:
             return
         self.sources.append(
-            SourceReference(
+            AgentAnswerSourceReference(
                 url=url,
                 title=source.get("title"),
                 retrieved_at=source.get("retrieved_at"),
@@ -78,7 +78,7 @@ class MockEvidenceSummary:
         )
         content = source.get("content", "")
         excerpt = content[:excerpt_length].strip() or "该来源没有返回可读正文。"
-        self.findings.append(Finding(text=excerpt, source_urls=[url]))
+        self.findings.append(AgentAnswerFinding(text=excerpt, source_urls=[url]))
         self.source_quality.append(
             {
                 "url": url,

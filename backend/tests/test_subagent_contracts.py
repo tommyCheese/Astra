@@ -4,12 +4,12 @@ import pytest
 from pydantic import ValidationError
 
 from app.application.agent_runtime.policies.reasoning import (
-    PolicyCompiler,
+    AgentReasoningPolicyCompiler,
     compile_subagent_policy,
     resolve_run_profile,
 )
 from app.application.subagents.eligibility import subagent_execution_eligibility
-from app.common.core.config import Settings
+from app.common.core.config import AstraRuntimeSettings
 from app.common.schemas.agent.run_policy import RequestedReasoningPolicy
 from app.common.schemas.agent.types import AnswerMode, PlanExecution
 from app.common.schemas.subagents import (
@@ -152,7 +152,7 @@ def test_subagent_result_status_contract_is_total():
 
 
 def test_subagent_settings_are_governed_and_conservative_by_default():
-    settings = Settings()
+    settings = AstraRuntimeSettings()
 
     assert settings.tool_swarm_enabled is True
     assert settings.agent_subagent_rollout_cohort == "trusted_read_only"
@@ -161,14 +161,14 @@ def test_subagent_settings_are_governed_and_conservative_by_default():
     assert settings.agent_subagent_max_parallel_children <= 2
 
     with pytest.raises(ValidationError):
-        Settings(
+        AstraRuntimeSettings(
             agent_subagent_max_children_total=1,
             agent_subagent_max_children_per_parent=2,
         )
 
 
 def test_policy_compiler_freezes_effective_subagent_limits():
-    settings = Settings(
+    settings = AstraRuntimeSettings(
         model_provider="mock",
         model_name="mock-agent",
         agent_subagent_rollout_cohort="admin-canary",
@@ -177,7 +177,7 @@ def test_policy_compiler_freezes_effective_subagent_limits():
         agent_subagent_max_parallel_children=2,
     )
     child_policy = compile_subagent_policy(settings)
-    snapshot = PolicyCompiler().compile(
+    snapshot = AgentReasoningPolicyCompiler().compile(
         RequestedReasoningPolicy(), subagent_policy=child_policy
     )
 
@@ -190,8 +190,8 @@ def test_policy_compiler_freezes_effective_subagent_limits():
 
 
 def test_swarm_tool_switch_is_the_product_enablement_gate():
-    user_enabled = compile_subagent_policy(Settings(tool_swarm_enabled=True))
-    user_disabled = compile_subagent_policy(Settings(tool_swarm_enabled=False))
+    user_enabled = compile_subagent_policy(AstraRuntimeSettings(tool_swarm_enabled=True))
+    user_disabled = compile_subagent_policy(AstraRuntimeSettings(tool_swarm_enabled=False))
 
     assert user_enabled.enabled is True
     assert user_disabled.enabled is False
@@ -199,7 +199,7 @@ def test_swarm_tool_switch_is_the_product_enablement_gate():
 
 
 def test_standard_profile_uses_a_clamped_shared_subagent_policy():
-    policy = compile_subagent_policy(Settings(tool_swarm_enabled=True))
+    policy = compile_subagent_policy(AstraRuntimeSettings(tool_swarm_enabled=True))
 
     standard = resolve_run_profile(
         AnswerMode.standard,
@@ -229,7 +229,7 @@ def test_standard_profile_uses_a_clamped_shared_subagent_policy():
 
 
 def test_subagent_execution_eligibility_is_shared_across_answer_modes():
-    policy = compile_subagent_policy(Settings(tool_swarm_enabled=True))
+    policy = compile_subagent_policy(AstraRuntimeSettings(tool_swarm_enabled=True))
 
     assert subagent_execution_eligibility(policy, live_swarm_enabled=True).executable
     disabled = subagent_execution_eligibility(policy, live_swarm_enabled=False)
@@ -238,9 +238,9 @@ def test_subagent_execution_eligibility_is_shared_across_answer_modes():
 
 
 def test_historical_reasoning_snapshot_defaults_to_disabled_subagents():
-    snapshot = PolicyCompiler().compile(RequestedReasoningPolicy()).model_dump(mode="json")
+    snapshot = AgentReasoningPolicyCompiler().compile(RequestedReasoningPolicy()).model_dump(mode="json")
     snapshot["effective"].pop("subagents")
 
-    restored = PolicyCompiler().compile(RequestedReasoningPolicy()).model_validate(snapshot)
+    restored = AgentReasoningPolicyCompiler().compile(RequestedReasoningPolicy()).model_validate(snapshot)
 
     assert restored.effective.subagents.enabled is False

@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from app.application.workspaces.artifacts import ArtifactStore, LocalArtifactStore
-from app.common.core.config import Settings
+from app.common.core.config import AstraRuntimeSettings
 from app.infrastructure.db.models.conversations import TaskRecord
 from app.infrastructure.repositories.conversations import ConversationRepository
 
@@ -22,7 +22,7 @@ class ConversationDeletionOutcome:
 class ConversationLifecycleService:
     def __init__(
         self,
-        settings: Settings,
+        settings: AstraRuntimeSettings,
         *,
         artifact_store: ArtifactStore | None = None,
     ):

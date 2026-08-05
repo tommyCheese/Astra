@@ -1,6 +1,10 @@
 from __future__ import annotations
 
-from app.infrastructure.tools.base import Tool, ToolRegistry, ToolSpec
+from app.infrastructure.tools.base import (
+    AstraTool,
+    AstraToolRegistry,
+    AstraToolSpec,
+)
 from app.infrastructure.tools.bash import BashExecuteTool
 from app.infrastructure.tools.chart import ChartRenderTool
 from app.infrastructure.tools.router import ToolRouter
@@ -9,7 +13,7 @@ from app.infrastructure.tools.web.fetching import WebFetchTool
 from app.infrastructure.tools.web.search import WebSearchTool
 
 
-class StaticTool(Tool):
+class StaticTool(AstraTool):
     def __init__(
         self,
         name: str,
@@ -20,7 +24,7 @@ class StaticTool(Tool):
         execution_backend: str = "in_process",
         provider_id: str = "test.provider",
     ):
-        self.spec = ToolSpec(
+        self.spec = AstraToolSpec(
             name=name,
             version="1",
             description=f"private description for {name}",
@@ -41,12 +45,12 @@ class StaticTool(Tool):
         return {}
 
 
-def registry(*tools: Tool) -> ToolRegistry:
-    return ToolRegistry().extend(tools)
+def registry(*tools: AstraTool) -> AstraToolRegistry:
+    return AstraToolRegistry().extend(tools)
 
 
 def test_task_capabilities_are_separate_from_security_authorities():
-    spec = ToolSpec(
+    spec = AstraToolSpec(
         name="search.one",
         version="1",
         input_schema={},

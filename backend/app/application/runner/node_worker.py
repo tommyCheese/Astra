@@ -14,12 +14,16 @@ from app.application.runner.node_runtime import (
     observation_from_output,
     prepare_parallel_node_runtime,
 )
-from app.common.core.config import Settings
+from app.common.core.config import AstraRuntimeSettings
 from app.common.schemas.agent.types import NodeExecutionPhase, NodeExecutionStatus
 from app.infrastructure.model_clients.contracts import ModelClient
 from app.infrastructure.repositories.executions import NodeExecutionRepository
 from app.infrastructure.repositories.run_unit_of_work import RunUnitOfWork
-from app.infrastructure.tools.base import ToolExecutionContext, ToolExecutionError, ToolRegistry
+from app.infrastructure.tools.base import (
+    AstraToolRegistry,
+    ToolExecutionContext,
+    ToolExecutionError,
+)
 from app.infrastructure.tools.router import ToolRouter
 from app.infrastructure.tools.selection import CapabilityToolResolver
 
@@ -36,10 +40,10 @@ class PreparedNodeTool:
 class ReadOnlyAgentNodeExecutor:
     def __init__(
         self,
-        settings: Settings,
+        settings: AstraRuntimeSettings,
         *,
         model_client: ModelClient,
-        tool_registry: ToolRegistry,
+        tool_registry: AstraToolRegistry,
     ):
         self.settings = settings
         self.model_client = model_client
@@ -370,7 +374,7 @@ class ReadOnlyAgentNodeExecutor:
                 turn,
                 resolution,
                 decision,
-                "Tool is not in the current parallel-safe candidate set.",
+                "AstraTool is not in the current parallel-safe candidate set.",
             )
             return None
         try:
@@ -582,7 +586,7 @@ class ReadOnlyAgentNodeExecutor:
             observation={
                 "kind": "parallel_safety_fallback",
                 "status": "blocked",
-                "summary": "Tool requires deterministic serial execution.",
+                "summary": "AstraTool requires deterministic serial execution.",
                 "data": {"tool_name": tool_name},
             },
         )

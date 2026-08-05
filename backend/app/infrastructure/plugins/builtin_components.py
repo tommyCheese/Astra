@@ -5,18 +5,18 @@ from typing import Any
 from app.application.agent_runtime.result_adapters import WebTaskAdapter
 from app.application.agent_runtime.services.approval import safe_preview, similar_matcher
 from app.common.schemas.agent.execution_state import AgentObservation
-from app.common.schemas.agent.run_result import ValidationIssue, ValidationOutcome
+from app.common.schemas.agent.run_result import AgentValidationIssue, AgentValidationOutcome
 from app.domain.grounding.fragments import fragments_from_web_result
 from app.infrastructure.plugins.interfaces import (
-    ApprovalPresenter,
-    ProcessorOutput,
-    ResultProcessor,
-    Validator,
+    PluginApprovalPresenter,
+    PluginResultProcessingOutput,
+    PluginResultProcessor,
+    PluginResultValidator,
 )
-from app.infrastructure.tools.base import ToolSpec
+from app.infrastructure.tools.base import AstraToolSpec
 
 
-class WebResultProcessor(ResultProcessor):
+class WebResultProcessor(PluginResultProcessor):
     def process(self, spec, tool_input, result):
         data = dict(result.get("data") or {})
         fragments = fragments_from_web_result(spec.name, data)
@@ -45,7 +45,7 @@ class WebResultProcessor(ResultProcessor):
                     for item in fragments
                 ],
             }
-        return ProcessorOutput(
+        return PluginResultProcessingOutput(
             observation=AgentObservation(
                 kind="tool_result",
                 status="succeeded",
@@ -57,25 +57,25 @@ class WebResultProcessor(ResultProcessor):
         )
 
 
-class WebEvidenceValidator(Validator):
+class WebEvidenceValidator(PluginResultValidator):
     def validate(self, result, evidence):
         fragments = evidence.get("fragments", [])
         fetched = [item["source"] for item in fragments if item.get("kind") == "fetch"]
         attempted = any(item.get("domain") == "web" for item in fragments)
         if not attempted:
-            return ValidationOutcome(validator="web_evidence", passed=True, blocking=True)
+            return AgentValidationOutcome(validator="web_evidence", passed=True, blocking=True)
         issues = []
         if not fetched:
             issues.append(
-                ValidationIssue(code="web_sources_not_fetched", message="没有成功抓取到可用来源。")
+                AgentValidationIssue(code="web_sources_not_fetched", message="没有成功抓取到可用来源。")
             )
         if not result.get("sources"):
             issues.append(
-                ValidationIssue(
+                AgentValidationIssue(
                     code="web_source_citations_missing", message="最终答案缺少来源引用。"
                 )
             )
-        return ValidationOutcome(
+        return AgentValidationOutcome(
             validator="web_evidence",
             passed=not issues,
             blocking=True,
@@ -84,7 +84,7 @@ class WebEvidenceValidator(Validator):
         )
 
 
-class ChartResultProcessor(ResultProcessor):
+class ChartResultProcessor(PluginResultProcessor):
     def process(self, spec, tool_input, result):
         artifacts = list(result.get("artifacts", []))
         if not artifacts or any(
@@ -94,7 +94,7 @@ class ChartResultProcessor(ResultProcessor):
             for item in artifacts
         ):
             raise ValueError("chart result contains invalid artifacts")
-        return ProcessorOutput(
+        return PluginResultProcessingOutput(
             observation=AgentObservation(
                 kind="tool_result",
                 status="succeeded",
@@ -107,7 +107,7 @@ class ChartResultProcessor(ResultProcessor):
         )
 
 
-class ChartArtifactValidator(Validator):
+class ChartArtifactValidator(PluginResultValidator):
     def validate(self, result, evidence):
         fragments = evidence.get("fragments", [])
         artifacts = [
@@ -117,19 +117,19 @@ class ChartArtifactValidator(Validator):
             for artifact in item.get("artifacts", [])
         ]
         if not any(item.get("domain") == "chart" for item in fragments):
-            return ValidationOutcome(validator="chart_artifact", passed=True, blocking=True)
+            return AgentValidationOutcome(validator="chart_artifact", passed=True, blocking=True)
         if not artifacts:
-            return ValidationOutcome(
+            return AgentValidationOutcome(
                 validator="chart_artifact",
                 passed=False,
                 blocking=True,
                 issues=[
-                    ValidationIssue(
+                    AgentValidationIssue(
                         code="chart_artifact_missing", message="图表没有产生有效 Artifact。"
                     )
                 ],
             )
-        return ValidationOutcome(
+        return AgentValidationOutcome(
             validator="chart_artifact",
             passed=True,
             blocking=True,
@@ -137,11 +137,11 @@ class ChartArtifactValidator(Validator):
         )
 
 
-class BashResultProcessor(ResultProcessor):
+class BashResultProcessor(PluginResultProcessor):
     def process(self, spec, tool_input, result):
         data = dict(result.get("data") or {})
         changes = list(data.get("workspace_changes", []))
-        return ProcessorOutput(
+        return PluginResultProcessingOutput(
             observation=AgentObservation(
                 kind="tool_result",
                 status="succeeded",
@@ -153,9 +153,9 @@ class BashResultProcessor(ResultProcessor):
         )
 
 
-class BashApprovalPresenter(ApprovalPresenter):
-    def safe_preview(self, spec: ToolSpec, tool_input: dict[str, Any]) -> str:
+class BashApprovalPresenter(PluginApprovalPresenter):
+    def safe_preview(self, spec: AstraToolSpec, tool_input: dict[str, Any]) -> str:
         return safe_preview(spec.name, tool_input)
 
-    def similar_matcher(self, spec: ToolSpec, tool_input: dict[str, Any]):
+    def similar_matcher(self, spec: AstraToolSpec, tool_input: dict[str, Any]):
         return similar_matcher(spec.name, tool_input)

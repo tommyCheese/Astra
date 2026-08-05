@@ -9,7 +9,7 @@ from app.application.agent_runtime.services.action_resolution import (
 )
 from app.application.agent_runtime.services.loop import execute_turns
 from app.common.schemas.agent.execution_state import AgentDecision
-from app.common.schemas.agent.run_result import FinalAnswer
+from app.common.schemas.agent.run_result import AgentFinalAnswer
 from app.domain.execution.contracts import (
     BlockedOutcome,
     CompletedOutcome,
@@ -41,7 +41,7 @@ def test_stage_outcome_union_is_exhaustive():
     outcomes: list[StageOutcome] = [
         ContinueOutcome(),
         WaitingOutcome(reason="input required", waiting_state={}),
-        CompletedOutcome(answer=FinalAnswer(summary="done")),
+        CompletedOutcome(answer=AgentFinalAnswer(summary="done")),
         BlockedOutcome(reason="denied", error_code="PERMISSION_DENIED"),
         FailedOutcome(reason="provider unavailable", error_code="MODEL_ERROR"),
     ]
@@ -90,7 +90,7 @@ class OutcomeStage:
     "outcome",
     [
         WaitingOutcome(reason="wait", waiting_state={}),
-        CompletedOutcome(answer=FinalAnswer(summary="done")),
+        CompletedOutcome(answer=AgentFinalAnswer(summary="done")),
         BlockedOutcome(reason="blocked", error_code="BLOCKED"),
         FailedOutcome(reason="failed", error_code="FAILED"),
     ],

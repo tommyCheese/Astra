@@ -7,15 +7,15 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from app.common.core.config import Settings
+from app.common.core.config import AstraRuntimeSettings
 from app.infrastructure.repositories.workspaces import validate_workspace_path
 from app.infrastructure.sandbox.profiles import RuntimeProfileService
 from app.infrastructure.sandbox.runtime import SandboxError, SandboxRequest
 from app.infrastructure.tools.base import (
-    Tool,
+    AstraTool,
+    AstraToolSpec,
     ToolExecutionError,
     ToolResultEnvelope,
-    ToolSpec,
     materialize_skill_inputs,
 )
 
@@ -90,8 +90,8 @@ def select_backend(request: ChartRequest) -> tuple[str, str]:
     return "matplotlib", "deterministic static chart"
 
 
-class ChartRenderTool(Tool):
-    spec = ToolSpec(
+class ChartRenderTool(AstraTool):
+    spec = AstraToolSpec(
         name="chart.render",
         version="1.0",
         description="Render a declarative chart with an isolated runtime",
@@ -169,7 +169,7 @@ class ChartRenderTool(Tool):
         artifact_behavior={"produces": ["chart_image", "chart_html", "chart_spec"]},
     )
 
-    def __init__(self, settings: Settings):
+    def __init__(self, settings: AstraRuntimeSettings):
         self.settings = settings
 
     async def run(self, tool_input: dict[str, Any], *, context=None) -> dict[str, Any]:

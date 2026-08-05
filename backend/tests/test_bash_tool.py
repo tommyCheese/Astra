@@ -3,7 +3,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.common.core.config import Settings
+from app.common.core.config import AstraRuntimeSettings
 from app.infrastructure.sandbox.runtime import SandboxError, SandboxResult
 from app.infrastructure.tools.base import ToolExecutionContext, ToolExecutionError
 from app.infrastructure.tools.bash import BashExecuteTool
@@ -41,9 +41,9 @@ def context(service, workspace_path):
 
 
 def test_bash_execute_is_disabled_by_default_and_registered_explicitly():
-    disabled = build_tool_registry(Settings(sandbox_skip_availability_check=True))
+    disabled = build_tool_registry(AstraRuntimeSettings(sandbox_skip_availability_check=True))
     enabled = build_tool_registry(
-        Settings(sandbox_skip_availability_check=True, tool_bash_execute_enabled=True)
+        AstraRuntimeSettings(sandbox_skip_availability_check=True, tool_bash_execute_enabled=True)
     )
 
     assert "bash_execute" not in disabled.specs()
@@ -64,7 +64,7 @@ async def test_bash_execute_uses_offline_sandbox_and_returns_nonzero_result(tmp_
     service = BashSandboxService(
         {"exit_code": 7, "stdout": "partial", "stderr": "token=secret /tmp/private"}
     )
-    tool = BashExecuteTool(Settings())
+    tool = BashExecuteTool(AstraRuntimeSettings())
 
     output = await tool.run(
         {"command": "printf partial; exit 7"},
@@ -87,7 +87,7 @@ async def test_bash_execute_propagates_sandbox_timeout(tmp_path):
     service = BashSandboxService(error=SandboxError("sandbox_timeout", "timed out"))
 
     with pytest.raises(ToolExecutionError) as error:
-        await BashExecuteTool(Settings()).run(
+        await BashExecuteTool(AstraRuntimeSettings()).run(
             {"command": "sleep 60", "timeout_seconds": 1},
             context=context(service, tmp_path),
         )

@@ -15,7 +15,7 @@ from app.infrastructure.repositories.run_unit_of_work import RunUnitOfWork
 
 
 @dataclass(frozen=True)
-class RecoveryScanResult:
+class RunRecoveryScanResult:
     resumable_execution_ids: tuple[str, ...]
     replayable_execution_ids: tuple[str, ...]
     unknown_execution_ids: tuple[str, ...]
@@ -25,7 +25,7 @@ class RecoveryScanResult:
     incompatible_agent_execution_ids: tuple[str, ...] = ()
 
 
-class ExecutionRecovery:
+class RunExecutionRecovery:
     def __init__(
         self,
         session_factory: async_sessionmaker[AsyncSession],
@@ -35,7 +35,7 @@ class ExecutionRecovery:
         self.session_factory = session_factory
         self.stale_seconds = max(1, stale_seconds)
 
-    async def scan(self, run_id: str | None = None) -> RecoveryScanResult:
+    async def scan(self, run_id: str | None = None) -> RunRecoveryScanResult:
         resumable: list[str] = []
         replayable: list[str] = []
         unknown: list[str] = []
@@ -103,7 +103,7 @@ class ExecutionRecovery:
                 stale_seconds=self.stale_seconds,
             ).scan(run_id)
             await session.commit()
-        return RecoveryScanResult(
+        return RunRecoveryScanResult(
             tuple(resumable),
             tuple(replayable),
             tuple(unknown),

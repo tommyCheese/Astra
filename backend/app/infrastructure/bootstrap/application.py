@@ -6,7 +6,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.common.core.config import Settings, get_settings
+from app.common.core.config import AstraRuntimeSettings, get_settings
 from app.infrastructure.bootstrap.container import build_application_container
 from app.infrastructure.bootstrap.lifecycle import create_application_lifespan
 from app.infrastructure.bootstrap.routes import register_routes
@@ -23,7 +23,7 @@ def application_version() -> str:
 
 
 def create_app(
-    settings: Settings | None = None,
+    settings: AstraRuntimeSettings | None = None,
     *,
     session_factory: async_sessionmaker[AsyncSession] = SessionLocal,
 ) -> FastAPI:

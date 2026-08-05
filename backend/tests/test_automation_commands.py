@@ -4,8 +4,8 @@ import pytest
 
 from app.application.permissions.governance import permission_bundle_digest
 from app.application.scheduling.commands import AutomationCommandService
-from app.common.core.config import Settings
-from app.common.core.errors import ValidationError
+from app.common.core.config import AstraRuntimeSettings
+from app.common.core.errors import AstraInputValidationError
 from app.common.schemas.permissions import PermissionBundle
 from app.infrastructure.db.models.conversations import TaskRecord
 from app.infrastructure.db.models.runs import RunRecord
@@ -59,7 +59,7 @@ async def test_schedule_commands_create_in_conversation_and_manage_globally(sess
     task = await conversation_with_permission_bundle(session)
     service = AutomationCommandService(
         session,
-        Settings(permission_bundle_signing_secret="test-secret"),
+        AstraRuntimeSettings(permission_bundle_signing_secret="test-secret"),
     )
 
     _, created = await service.execute_schedule(
@@ -78,7 +78,7 @@ async def test_schedule_commands_create_in_conversation_and_manage_globally(sess
     other_task = await conversation_with_permission_bundle(session)
     other_service = AutomationCommandService(
         session,
-        Settings(permission_bundle_signing_secret="test-secret"),
+        AstraRuntimeSettings(permission_bundle_signing_secret="test-secret"),
     )
     _, global_list = await other_service.execute_schedule(other_task, "list")
     assert [item["id"] for item in global_list["jobs"]] == [job["id"]]
@@ -101,7 +101,7 @@ async def test_heartbeat_commands_upsert_stable_system_schedule(session):
     task = await conversation_with_permission_bundle(session)
     service = AutomationCommandService(
         session,
-        Settings(
+        AstraRuntimeSettings(
             permission_bundle_signing_secret="test-secret",
             scheduler_heartbeat_min_interval_seconds=300,
         ),
@@ -153,10 +153,10 @@ async def test_automation_create_fails_closed_without_signed_bundle(session):
     await session.commit()
     service = AutomationCommandService(
         session,
-        Settings(permission_bundle_signing_secret="test-secret"),
+        AstraRuntimeSettings(permission_bundle_signing_secret="test-secret"),
     )
 
-    with pytest.raises(ValidationError) as error:
+    with pytest.raises(AstraInputValidationError) as error:
         await service.execute_schedule(task, "create --every 30m work")
 
     assert error.value.payload.code == "AUTOMATION_PERMISSION_BUNDLE_REQUIRED"
@@ -167,7 +167,7 @@ async def test_manual_command_idempotency_returns_same_schedule_run(session):
     task = await conversation_with_permission_bundle(session)
     service = AutomationCommandService(
         session,
-        Settings(permission_bundle_signing_secret="test-secret"),
+        AstraRuntimeSettings(permission_bundle_signing_secret="test-secret"),
     )
     _, created = await service.execute_schedule(
         task,

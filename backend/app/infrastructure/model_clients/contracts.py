@@ -6,10 +6,10 @@ from typing import Any
 
 import httpx
 
-from app.common.core.config import Settings
+from app.common.core.config import AstraRuntimeSettings
 from app.common.schemas.agent.execution_state import AgentDecision, AgentReflection
 from app.common.schemas.agent.planning import PlanDraft, TaskContract
-from app.common.schemas.agent.run_result import FinalAnswer, MemoryRecord
+from app.common.schemas.agent.run_result import AgentFinalAnswer, AgentRunMemoryCandidate
 from app.common.schemas.agent.types import ReasoningEffort
 from app.common.schemas.models import ModelThinkingSnapshot
 from app.domain.agent_profile import AgentProfile
@@ -51,7 +51,7 @@ class DeferredUsageInvocation:
         return await self.task if self.task is not None else None
 
 
-def model_http_client_options(settings: Settings) -> dict[str, Any]:
+def model_http_client_options(settings: AstraRuntimeSettings) -> dict[str, Any]:
     """Build the shared transport policy used by every real model provider."""
     return {
         "http2": settings.model_http2_enabled,
@@ -132,7 +132,7 @@ class ModelClient(ABC):
         tool_outputs: list[dict[str, Any]],
         *,
         on_delta: AnswerDeltaCallback | None = None,
-    ) -> FinalAnswer:
+    ) -> AgentFinalAnswer:
         raise NotImplementedError
 
     @abstractmethod
@@ -146,7 +146,7 @@ class ModelClient(ABC):
         *,
         on_delta: AnswerDeltaCallback | None = None,
         on_reasoning_delta: AnswerDeltaCallback | None = None,
-    ) -> tuple[AgentDecision, FinalAnswer | None]:
+    ) -> tuple[AgentDecision, AgentFinalAnswer | None]:
         decision = await self.decide(goal, context)
         if on_reasoning_delta:
             await on_reasoning_delta(decision.reasoning_summary)
@@ -160,7 +160,7 @@ class ModelClient(ABC):
     @abstractmethod
     async def finalize(
         self, goal: str, context: dict[str, Any], *, on_delta: AnswerDeltaCallback | None = None
-    ) -> FinalAnswer:
+    ) -> AgentFinalAnswer:
         raise NotImplementedError
 
     @abstractmethod
@@ -168,5 +168,5 @@ class ModelClient(ABC):
         self,
         goal: str,
         context: dict[str, Any],
-    ) -> list[MemoryRecord]:
+    ) -> list[AgentRunMemoryCandidate]:
         raise NotImplementedError

@@ -39,11 +39,11 @@
       "lines": 64,
       "complexity": 15
     },
-    "app.application.agent_runtime.services.context:ContextAssembler.assemble": {
+    "app.application.agent_runtime.services.context:AgentContextAssembler.assemble": {
       "lines": 79,
       "complexity": 4
     },
-    "app.application.agent_runtime.services.loop:AgentLoop.run": {
+    "app.application.agent_runtime.services.loop:AstraAgentLoop.run": {
       "lines": 62,
       "complexity": 4
     },
@@ -103,7 +103,7 @@
       "lines": 80,
       "complexity": 12
     },
-    "app.common.core.config:Settings.validate_runtime_bounds": {
+    "app.common.core.config:AstraRuntimeSettings.validate_runtime_bounds": {
       "lines": 26,
       "complexity": 11
     },
@@ -323,7 +323,7 @@
       "lines": 25,
       "complexity": 13
     },
-    "app.application.run_management.recovery:ExecutionRecovery.scan": {
+    "app.application.run_management.recovery:RunExecutionRecovery.scan": {
       "lines": 77,
       "complexity": 10
     },
@@ -331,7 +331,7 @@
       "lines": 29,
       "complexity": 11
     },
-    "app.application.runner.coordinator:NodeWorker.run": {
+    "app.application.runner.coordinator:PlanNodeWorker.run": {
       "lines": 83,
       "complexity": 6
     },
@@ -493,22 +493,22 @@
   "type_ignore_counts": {},
   "one_operation_classes": [
     "app.domain.agent_profile.profile:AgentProfileLoader",
-    "app.application.agent_runtime.policies.reasoning:ObservationEvaluator",
-    "app.application.agent_runtime.policies.reasoning:PolicyCompiler",
-    "app.application.agent_runtime.policies.reasoning:ReflectionGate",
-    "app.application.agent_runtime.result_adapters:ProcessorRegistry",
+    "app.application.agent_runtime.policies.reasoning:AgentObservationEvaluator",
+    "app.application.agent_runtime.policies.reasoning:AgentReasoningPolicyCompiler",
+    "app.application.agent_runtime.policies.reasoning:AgentReflectionGate",
+    "app.application.agent_runtime.result_adapters:AgentToolResultProcessorRegistry",
     "app.application.agent_runtime.services.action_resolution:ActionResolutionStage",
     "app.application.agent_runtime.services.approval:ApprovalRoutingStage",
     "app.application.agent_runtime.services.authorization:PermissionAuthorizationStage",
     "app.application.agent_runtime.services.completion:CompletionVerificationStage",
     "app.application.agent_runtime.services.completion_gate:CompletionGateStage",
-    "app.application.agent_runtime.services.context:ContextAssembler",
+    "app.application.agent_runtime.services.context:AgentContextAssembler",
     "app.application.agent_runtime.services.context_memory:MemoryContextProjector",
     "app.application.agent_runtime.services.control_decisions:ControlDecisionStage",
     "app.application.agent_runtime.services.failure:ToolFailureStage",
     "app.application.agent_runtime.services.finalization:AgentFinalizationStage",
     "app.application.agent_runtime.services.invocation:ToolInvocationStage",
-    "app.application.agent_runtime.services.loop:AgentLoop",
+    "app.application.agent_runtime.services.loop:AstraAgentLoop",
     "app.application.agent_runtime.services.loop:AgentRunOrchestrator",
     "app.application.agent_runtime.services.memory_candidates:MemoryCandidateWriter",
     "app.application.agent_runtime.services.node_completion:NodeCompletionStage",
@@ -549,8 +549,8 @@
     "app.infrastructure.plugins.discovery:ManagedPackageDiscoverySource",
     "app.infrastructure.repositories.run_cancellation_store:RunCancellationStore",
     "app.application.run_management.creation:RunCreator",
-    "app.application.run_management.recovery:ExecutionRecovery",
-    "app.application.runner.coordinator:NodeWorker",
+    "app.application.run_management.recovery:RunExecutionRecovery",
+    "app.application.runner.coordinator:PlanNodeWorker",
     "app.application.runner.engine:RunEngine",
     "app.application.runner.model_thinking_stream:ModelThinkingEventWriter",
     "app.application.runner.node_worker:ReadOnlyAgentNodeExecutor",

@@ -3,7 +3,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.common.core.config import Settings
+from app.common.core.config import AstraRuntimeSettings
 from app.infrastructure.sandbox.runtime import SandboxResult
 from app.infrastructure.tools.base import ToolExecutionContext, ToolExecutionError
 from app.infrastructure.tools.registry import build_tool_registry
@@ -41,7 +41,7 @@ def context(service):
 
 def test_application_registry_exposes_only_container_tools():
     registry = build_tool_registry(
-        Settings(sandbox_enabled=True, sandbox_skip_availability_check=True)
+        AstraRuntimeSettings(sandbox_enabled=True, sandbox_skip_availability_check=True)
     )
 
     assert {"web_search", "web_fetch", "chart.render", "swarm"} == set(registry.specs())
@@ -54,14 +54,14 @@ def test_application_registry_exposes_only_container_tools():
 
 
 def test_registry_exposes_no_tools_when_sandbox_is_disabled():
-    registry = build_tool_registry(Settings(sandbox_enabled=False))
+    registry = build_tool_registry(AstraRuntimeSettings(sandbox_enabled=False))
 
     assert set(registry.specs()) == {"swarm"}
     assert registry.specs()["swarm"].execution_backend == "astra.runtime"
 
 
 def test_web_runtime_config_is_an_explicit_host_secret_allowlist():
-    settings = Settings(
+    settings = AstraRuntimeSettings(
         model_api_key="model-secret",
         database_url="postgresql://private-host/astra",
         artifact_store_path="/Users/private/artifacts",
@@ -79,7 +79,7 @@ def test_web_runtime_config_is_an_explicit_host_secret_allowlist():
 
 
 def test_web_runtime_config_passes_only_explicit_search_credentials():
-    settings = Settings(
+    settings = AstraRuntimeSettings(
         web_search_provider="auto",
         web_search_api_key="brave-secret",
         google_search_api_key="google-secret",
@@ -105,7 +105,7 @@ async def test_web_tool_executes_through_container_protocol_only():
     service = RecordingSandboxService(
         {"ok": True, "output": {"url": "https://example.com", "content": "example"}}
     )
-    tool = SandboxedWebTool(WebFetchTool(Settings()), Settings())
+    tool = SandboxedWebTool(WebFetchTool(AstraRuntimeSettings()), AstraRuntimeSettings())
 
     output = await tool.run({"url": "https://example.com"}, context=context(service))
 
@@ -124,7 +124,7 @@ async def test_web_tool_executes_through_container_protocol_only():
 
 async def test_web_tool_rejects_invalid_container_response():
     service = RecordingSandboxService({"ok": True, "output": "not-an-object"})
-    tool = SandboxedWebTool(WebFetchTool(Settings()), Settings())
+    tool = SandboxedWebTool(WebFetchTool(AstraRuntimeSettings()), AstraRuntimeSettings())
 
     with pytest.raises(ToolExecutionError) as exc_info:
         await tool.run({"url": "https://example.com"}, context=context(service))

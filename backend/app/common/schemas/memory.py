@@ -47,7 +47,7 @@ class MemoryRecallView(BaseModel):
     created_at: datetime | None = None
 
 
-class MemoryView(BaseModel):
+class MemoryManagementView(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: str
@@ -81,15 +81,15 @@ class MemoryView(BaseModel):
     revoke_reason: str | None = None
 
 
-class MemoryDetailView(MemoryView):
+class MemoryDetailView(MemoryManagementView):
     sources: list[MemorySourceView] = Field(default_factory=list)
     recall_events: list[MemoryRecallView] = Field(default_factory=list)
     audit_events: list[MemoryAuditView] = Field(default_factory=list)
-    history: list[MemoryView] = Field(default_factory=list)
+    history: list[MemoryManagementView] = Field(default_factory=list)
 
 
 class MemoryListView(BaseModel):
-    items: list[MemoryView]
+    items: list[MemoryManagementView]
     total: int
     next_cursor: str | None = None
 

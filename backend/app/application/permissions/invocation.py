@@ -215,7 +215,7 @@ class InvocationAuthorizationMixin:
             return self._decision(
                 PermissionDecisionKind.deny,
                 "tool_permission_violation",
-                "The invocation exceeds the ToolSpec permission ceiling: "
+                "The invocation exceeds the tool specification permission ceiling: "
                 + ", ".join(sorted(undeclared)),
                 [],
                 now,

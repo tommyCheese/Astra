@@ -3,9 +3,9 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from app.common.core.config import Settings, get_settings
+from app.common.core.config import AstraRuntimeSettings, get_settings
 from app.domain.memory import MemoryNamespace, MemoryNamespaceType
-from app.infrastructure.db.model_base import Base
+from app.infrastructure.db.model_base import AstraOrmRecordBase
 from app.infrastructure.db.session import get_session
 from app.infrastructure.repositories.memories import MemoryRepository
 from app.interfaces.api.memory_consolidation import router
@@ -15,9 +15,9 @@ from app.interfaces.api.memory_consolidation import router
 async def consolidation_client():
     engine = create_async_engine("sqlite+aiosqlite:///:memory:", future=True)
     async with engine.begin() as connection:
-        await connection.run_sync(Base.metadata.create_all)
+        await connection.run_sync(AstraOrmRecordBase.metadata.create_all)
     sessions = async_sessionmaker(engine, expire_on_commit=False)
-    settings = Settings(
+    settings = AstraRuntimeSettings(
         model_provider="mock",
         agent_memory_autodream_lease_seconds=30,
     )

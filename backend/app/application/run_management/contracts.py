@@ -7,24 +7,24 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Protocol
 
-from app.common.core.config import Settings
+from app.common.core.config import AstraRuntimeSettings
 from app.common.schemas.agent.api_views import CreateRunResponse
 
-RunStarter = Callable[[str, Settings], Awaitable[None]]
+RunStarter = Callable[[str, AstraRuntimeSettings], Awaitable[None]]
 RunCompletionCallback = Callable[[asyncio.Task[None]], None]
 
 
 @dataclass(frozen=True)
-class PreparedRun:
+class PreparedRunExecution:
     response: CreateRunResponse
-    settings: Settings
+    settings: AstraRuntimeSettings
 
 
-class RunDispatcher(Protocol):
+class RunExecutionDispatcher(Protocol):
     def start(
         self,
         run_id: str,
-        settings: Settings,
+        settings: AstraRuntimeSettings,
         *,
         on_complete: RunCompletionCallback | None = None,
     ) -> asyncio.Task[None]: ...

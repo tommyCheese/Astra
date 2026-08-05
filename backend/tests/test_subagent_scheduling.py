@@ -21,7 +21,7 @@ from app.common.schemas.subagents import (
     SubagentBudgetEnvelope,
     SubagentExecutionStatus,
 )
-from app.infrastructure.db.model_base import Base
+from app.infrastructure.db.model_base import AstraOrmRecordBase
 from app.infrastructure.db.models.executions import (
     AgentBudgetReservationRecord,
     AgentExecutionRecord,
@@ -65,7 +65,7 @@ async def _database(tmp_path, name: str):
         future=True,
     )
     async with engine.begin() as connection:
-        await connection.run_sync(Base.metadata.create_all)
+        await connection.run_sync(AstraOrmRecordBase.metadata.create_all)
     return engine, async_sessionmaker(engine, expire_on_commit=False)
 
 

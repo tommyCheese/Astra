@@ -18,12 +18,12 @@ from app.domain.memory import MemoryStatus
 from app.infrastructure.db.model_base import utc_now, uuid_str
 from app.infrastructure.db.models.memory import (
     MemoryConsolidationJobRecord,
-    MemoryRecord,
     MemorySourceRecord,
+    PersistedMemoryRecord,
 )
 from app.infrastructure.repositories.memory_consolidation_outputs import (
-    PublicationContext,
-    RollbackManifest,
+    MemoryPublicationContext,
+    MemoryRollbackManifest,
     copy_sources_and_create_links,
     create_output_memory,
     record_memory_audit,
@@ -93,7 +93,7 @@ class MemoryConsolidationPublicationService:
 
     async def _prepare_publication(
         self, job_id: str, expected_state_version: int
-    ) -> PublicationContext:
+    ) -> MemoryPublicationContext:
         job = await self.repository.require(job_id, refresh=True)
         self._require_publishable_job(job, expected_state_version)
         manifest = ConsolidationInputManifest.from_dict(job.input_manifest)
@@ -103,7 +103,7 @@ class MemoryConsolidationPublicationService:
             raise ConsolidationValidationError(
                 "Consolidation proposal failed publication validation"
             )
-        return PublicationContext(
+        return MemoryPublicationContext(
             job=job,
             manifest=manifest,
             proposal=proposal,
@@ -126,7 +126,7 @@ class MemoryConsolidationPublicationService:
 
     async def _publish_operation(
         self,
-        context: PublicationContext,
+        context: MemoryPublicationContext,
         operation: ConsolidationOperation,
         *,
         actor: str | None,
@@ -176,7 +176,7 @@ class MemoryConsolidationPublicationService:
 
     async def _mark_job_published(
         self,
-        context: PublicationContext,
+        context: MemoryPublicationContext,
         *,
         expected_state_version: int,
         outputs: list[dict[str, Any]],
@@ -252,7 +252,7 @@ class MemoryConsolidationPublicationService:
 
     async def _prepare_rollback(
         self, job_id: str, expected_state_version: int
-    ) -> tuple[MemoryConsolidationJobRecord | None, RollbackManifest | None]:
+    ) -> tuple[MemoryConsolidationJobRecord | None, MemoryRollbackManifest | None]:
         original = await self.repository.require(job_id, refresh=True)
         if original.status == "rolled_back":
             existing = await self._find_rollback_job(job_id)
@@ -270,7 +270,7 @@ class MemoryConsolidationPublicationService:
             raise ConsolidationValidationError(
                 "Published consolidation job has no rollback manifest"
             )
-        return None, RollbackManifest(
+        return None, MemoryRollbackManifest(
             original=original,
             outputs=outputs,
             replacements=list(publication.get("replacements") or []),
@@ -279,7 +279,7 @@ class MemoryConsolidationPublicationService:
 
     async def _rollback_transaction(
         self,
-        manifest: RollbackManifest,
+        manifest: MemoryRollbackManifest,
         *,
         expected_state_version: int,
         actor: str | None,
@@ -295,7 +295,7 @@ class MemoryConsolidationPublicationService:
 
     async def _revoke_outputs(
         self,
-        manifest: RollbackManifest,
+        manifest: MemoryRollbackManifest,
         *,
         actor: str | None,
         reason: str | None,
@@ -304,11 +304,11 @@ class MemoryConsolidationPublicationService:
             memory_id = str(item.get("memory_id") or "")
             expected = int(item.get("state_version", 0))
             result = await self.session.execute(
-                update(MemoryRecord)
+                update(PersistedMemoryRecord)
                 .where(
-                    MemoryRecord.id == memory_id,
-                    MemoryRecord.status == MemoryStatus.active.value,
-                    MemoryRecord.state_version == expected,
+                    PersistedMemoryRecord.id == memory_id,
+                    PersistedMemoryRecord.status == MemoryStatus.active.value,
+                    PersistedMemoryRecord.state_version == expected,
                 )
                 .values(
                     status=MemoryStatus.revoked.value,
@@ -335,7 +335,7 @@ class MemoryConsolidationPublicationService:
 
     async def _restore_replacements(
         self,
-        manifest: RollbackManifest,
+        manifest: MemoryRollbackManifest,
         *,
         actor: str | None,
         reason: str | None,
@@ -351,7 +351,7 @@ class MemoryConsolidationPublicationService:
 
     async def _restore_replacement(
         self,
-        manifest: RollbackManifest,
+        manifest: MemoryRollbackManifest,
         item: dict[str, Any],
         memory_id: str,
         *,
@@ -364,11 +364,11 @@ class MemoryConsolidationPublicationService:
             )
         expected = int(item.get("state_version_after", 0))
         result = await self.session.execute(
-            update(MemoryRecord)
+            update(PersistedMemoryRecord)
             .where(
-                MemoryRecord.id == memory_id,
-                MemoryRecord.status == MemoryStatus.superseded.value,
-                MemoryRecord.state_version == expected,
+                PersistedMemoryRecord.id == memory_id,
+                PersistedMemoryRecord.status == MemoryStatus.superseded.value,
+                PersistedMemoryRecord.state_version == expected,
             )
             .values(
                 status=MemoryStatus.active.value,
@@ -403,7 +403,7 @@ class MemoryConsolidationPublicationService:
 
     @staticmethod
     def _create_rollback_job(
-        manifest: RollbackManifest, restored_ids: set[str]
+        manifest: MemoryRollbackManifest, restored_ids: set[str]
     ) -> MemoryConsolidationJobRecord:
         original = manifest.original
         return MemoryConsolidationJobRecord(
@@ -437,7 +437,7 @@ class MemoryConsolidationPublicationService:
         )
 
     async def _mark_original_rolled_back(
-        self, manifest: RollbackManifest, expected_state_version: int
+        self, manifest: MemoryRollbackManifest, expected_state_version: int
     ) -> None:
         result = await self.session.execute(
             update(MemoryConsolidationJobRecord)

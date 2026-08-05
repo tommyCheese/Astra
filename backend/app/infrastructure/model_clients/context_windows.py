@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 
 @dataclass(frozen=True)
-class ContextWindow:
+class ModelContextWindow:
     provider: str
     model: str
     tokens: int
@@ -116,7 +116,7 @@ def resolve_context_window(
     model: str,
     *,
     fallback_tokens: int = 131_072,
-) -> ContextWindow:
+) -> ModelContextWindow:
     normalized_provider = provider.strip().lower()
     normalized_model = model.strip().lower()
     catalog_provider = normalized_provider
@@ -145,7 +145,7 @@ def resolve_context_window(
         source = "fallback"
         verified = False
 
-    return ContextWindow(
+    return ModelContextWindow(
         provider=provider,
         model=model,
         tokens=tokens,

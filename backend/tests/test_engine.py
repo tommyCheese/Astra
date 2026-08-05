@@ -14,25 +14,29 @@ from app.application.planning.scheduler import PlanScheduler
 from app.application.planning.service import PlanService, canonical_agent_state
 from app.application.runner import engine as engine_module
 from app.application.runner.engine import RunEngine
-from app.common.core.config import Settings
+from app.common.core.config import AstraRuntimeSettings
 from app.common.schemas.agent.execution_state import AgentDecision
 from app.common.schemas.agent.planning import ExpectedObservation, PlanDraft, PlanNodeDraft
 from app.common.schemas.agent.run_policy import RequestedReasoningPolicy
-from app.common.schemas.agent.run_result import FinalAnswer
+from app.common.schemas.agent.run_result import AgentFinalAnswer
 from app.common.schemas.agent.types import AnswerMode, PlanExecution
 from app.domain.agent_profile import load_agent_profile
-from app.infrastructure.db.model_base import Base
+from app.infrastructure.db.model_base import AstraOrmRecordBase
 from app.infrastructure.db.models.permissions import AgentIdentityRecord, ToolCatalogSnapshotRecord
 from app.infrastructure.db.models.workspaces import TaskWorkspaceRecord, WorkspaceCheckpointRecord
 from app.infrastructure.model_clients.contracts import ModelOutputError
 from app.infrastructure.model_clients.mock import MockModelClient
 from app.infrastructure.repositories.plans import PlanRepository, plan_to_view
 from app.infrastructure.repositories.run_unit_of_work import RunUnitOfWork
-from app.infrastructure.tools.base import Tool, ToolRegistry, ToolSpec
+from app.infrastructure.tools.base import (
+    AstraTool,
+    AstraToolRegistry,
+    AstraToolSpec,
+)
 
 
-class FakeWeather(Tool):
-    spec = ToolSpec(
+class FakeWeather(AstraTool):
+    spec = AstraToolSpec(
         name="weather_lookup",
         version="test",
         input_schema={"required": ["location", "date"]},
@@ -53,7 +57,7 @@ class FakeWeather(Tool):
 
 
 async def test_cancelled_answer_flush_reuses_active_repository_session():
-    engine = RunEngine(Settings(model_provider="mock"), model_client=MockModelClient())
+    engine = RunEngine(AstraRuntimeSettings(model_provider="mock"), model_client=MockModelClient())
     repo = AsyncMock()
     repo.session = AsyncMock()
     engine._answer_buffers["run-1"] = "停止前的部分回答"
@@ -91,7 +95,7 @@ async def test_engine_rolls_back_failed_stage_before_persisting_terminal_error(m
     monkeypatch.setattr(engine_module, "SessionLocal", lambda: SessionContext())
     monkeypatch.setattr(engine_module, "RunUnitOfWork", lambda _session: repository)
 
-    engine = RunEngine(Settings(model_provider="mock"), model_client=MockModelClient())
+    engine = RunEngine(AstraRuntimeSettings(model_provider="mock"), model_client=MockModelClient())
     engine._run_with_repo = AsyncMock(side_effect=RuntimeError("stage failed"))
 
     await engine.run("run-1")
@@ -112,9 +116,9 @@ async def test_engine_run_commits_terminal_status_for_a_new_session(monkeypatch,
     )
     session_factory = async_sessionmaker(database_engine, expire_on_commit=False)
     async with database_engine.begin() as connection:
-        await connection.run_sync(Base.metadata.create_all)
+        await connection.run_sync(AstraOrmRecordBase.metadata.create_all)
 
-    settings = Settings(
+    settings = AstraRuntimeSettings(
         model_provider="mock",
         task_workspace_store_path=str(tmp_path / "workspaces"),
         artifact_store_path=str(tmp_path / "artifacts"),
@@ -203,7 +207,7 @@ class WeatherPlanClient(MockModelClient):
         if active is None:
             return AgentDecision(
                 decision_type="finalize", reasoning_summary="计划已完成"
-            ), FinalAnswer(
+            ), AgentFinalAnswer(
                 summary="明天上海有阵雨且最高约 34°C，不建议长距离户外跑步。",
                 findings=[{"text": "降雨概率较高，建议改为室内训练。"}],
             )
@@ -253,7 +257,7 @@ class FinalizeActiveNodeClient(MockModelClient):
             return AgentDecision(
                 decision_type="finalize",
                 reasoning_summary="完成当前计划节点",
-            ), FinalAnswer(summary="尚未提交的节点内答案")
+            ), AgentFinalAnswer(summary="尚未提交的节点内答案")
         assert on_delta is not None
         await on_delta("真正的")
         await on_delta("流式回答")
@@ -261,7 +265,7 @@ class FinalizeActiveNodeClient(MockModelClient):
         return AgentDecision(
             decision_type="finalize",
             reasoning_summary="计划完成后生成正式回答",
-        ), FinalAnswer(summary="真正的流式回答")
+        ), AgentFinalAnswer(summary="真正的流式回答")
 
 
 class QuickStreamingClient(MockModelClient):
@@ -291,7 +295,7 @@ class QuickStreamingClient(MockModelClient):
         return AgentDecision(
             decision_type="finalize",
             reasoning_summary="直接回答",
-        ), FinalAnswer(summary="立即流式回答")
+        ), AgentFinalAnswer(summary="立即流式回答")
 
 
 class QuickClarificationClient(MockModelClient):
@@ -359,7 +363,7 @@ class QuickPermissionTimingClient(QuickStreamingClient):
         return AgentDecision(
             decision_type="finalize",
             reasoning_summary="直接回答",
-        ), FinalAnswer(summary="立即流式回答")
+        ), AgentFinalAnswer(summary="立即流式回答")
 
 
 class QuickToolClient(QuickStreamingClient):
@@ -388,7 +392,7 @@ class QuickToolClient(QuickStreamingClient):
         return AgentDecision(
             decision_type="finalize",
             reasoning_summary="返回工具结果",
-        ), FinalAnswer(summary="适合室内训练")
+        ), AgentFinalAnswer(summary="适合室内训练")
 
 
 class QuickForbiddenToolClient(QuickStreamingClient):
@@ -401,7 +405,7 @@ class QuickForbiddenToolClient(QuickStreamingClient):
             return AgentDecision(
                 decision_type="finalize",
                 reasoning_summary="确认禁止工具不可用",
-            ), FinalAnswer(summary="禁止工具未被执行")
+            ), AgentFinalAnswer(summary="禁止工具未被执行")
         await on_reasoning_delta("尝试不存在的工具")
         await on_reasoning_delta("\1")
         return AgentDecision(
@@ -413,7 +417,7 @@ class QuickForbiddenToolClient(QuickStreamingClient):
 
 
 async def test_engine_completes_mock_web_query(session):
-    settings = Settings(model_provider="mock", web_search_provider="mock")
+    settings = AstraRuntimeSettings(model_provider="mock", web_search_provider="mock")
     repo = RunUnitOfWork(session)
     profile = resolve_run_profile(
         AnswerMode.trusted,
@@ -484,7 +488,7 @@ async def test_engine_completes_mock_web_query(session):
 
 
 async def test_trusted_skill_checks_become_provenanced_completion_criteria():
-    settings = Settings(model_provider="mock")
+    settings = AstraRuntimeSettings(model_provider="mock")
     profile = resolve_run_profile(
         AnswerMode.trusted,
         RequestedReasoningPolicy(execution_mode="auto_approval"),
@@ -517,7 +521,7 @@ async def test_trusted_skill_checks_become_provenanced_completion_criteria():
 
 
 async def test_weather_plan_executes_nodes_in_dependency_order(session):
-    settings = Settings(model_provider="mock")
+    settings = AstraRuntimeSettings(model_provider="mock")
     repo = RunUnitOfWork(session)
     profile = resolve_run_profile(
         AnswerMode.trusted,
@@ -531,7 +535,7 @@ async def test_weather_plan_executes_nodes_in_dependency_order(session):
         answer_mode="trusted",
         execution_profile=profile.model_dump(mode="json"),
     )
-    registry = ToolRegistry()
+    registry = AstraToolRegistry()
     registry.register(FakeWeather())
     await RunEngine(
         settings, model_client=WeatherPlanClient(), tool_registry=registry
@@ -548,7 +552,7 @@ async def test_weather_plan_executes_nodes_in_dependency_order(session):
 
 
 async def test_trusted_confirmation_activates_exact_plan_once_before_execution(session):
-    settings = Settings(model_provider="mock")
+    settings = AstraRuntimeSettings(model_provider="mock")
     repo = RunUnitOfWork(session)
     profile = resolve_run_profile(
         AnswerMode.trusted,
@@ -562,7 +566,7 @@ async def test_trusted_confirmation_activates_exact_plan_once_before_execution(s
         answer_mode="trusted",
         execution_profile=profile.model_dump(mode="json"),
     )
-    registry = ToolRegistry()
+    registry = AstraToolRegistry()
     registry.register(FakeWeather())
     engine = RunEngine(settings, model_client=WeatherPlanClient(), tool_registry=registry)
 
@@ -619,7 +623,7 @@ async def test_trusted_confirmation_activates_exact_plan_once_before_execution(s
 
 
 async def test_answer_delta_batching_flushes_first_and_final_content(session):
-    settings = Settings(model_provider="mock", web_search_provider="mock")
+    settings = AstraRuntimeSettings(model_provider="mock", web_search_provider="mock")
     repo = RunUnitOfWork(session)
     run = await repo.create_task_run("流式批处理", settings.model_policy)
     engine = RunEngine(settings, model_client=MockModelClient(), tool_registry=fake_web_registry())
@@ -652,7 +656,7 @@ async def test_answer_delta_batching_flushes_first_and_final_content(session):
 async def test_streamed_answer_is_not_replaced_after_late_model_validation_error(
     session, answer_mode
 ):
-    settings = Settings(model_provider="mock")
+    settings = AstraRuntimeSettings(model_provider="mock")
     profile = resolve_run_profile(
         answer_mode,
         RequestedReasoningPolicy(execution_mode="auto_approval"),
@@ -669,7 +673,7 @@ async def test_streamed_answer_is_not_replaced_after_late_model_validation_error
     )
     client = StreamThenModelErrorClient()
 
-    await RunEngine(settings, model_client=client, tool_registry=ToolRegistry())._run_with_repo(
+    await RunEngine(settings, model_client=client, tool_registry=AstraToolRegistry())._run_with_repo(
         repo, run.id
     )
 
@@ -688,7 +692,7 @@ async def test_streamed_answer_is_not_replaced_after_late_model_validation_error
 async def test_streamed_answer_is_not_resynthesized_when_answer_object_is_missing(
     session, answer_mode
 ):
-    settings = Settings(model_provider="mock")
+    settings = AstraRuntimeSettings(model_provider="mock")
     profile = resolve_run_profile(
         answer_mode,
         RequestedReasoningPolicy(execution_mode="auto_approval"),
@@ -705,7 +709,7 @@ async def test_streamed_answer_is_not_resynthesized_when_answer_object_is_missin
     )
     client = StreamWithoutStructuredAnswerClient()
 
-    await RunEngine(settings, model_client=client, tool_registry=ToolRegistry())._run_with_repo(
+    await RunEngine(settings, model_client=client, tool_registry=AstraToolRegistry())._run_with_repo(
         repo, run.id
     )
 
@@ -720,7 +724,7 @@ async def test_streamed_answer_is_not_resynthesized_when_answer_object_is_missin
 
 
 async def test_final_plan_node_answer_is_regenerated_as_canonical_stream(session):
-    settings = Settings(model_provider="mock")
+    settings = AstraRuntimeSettings(model_provider="mock")
     profile = resolve_run_profile(
         AnswerMode.trusted,
         RequestedReasoningPolicy(),
@@ -736,7 +740,7 @@ async def test_final_plan_node_answer_is_regenerated_as_canonical_stream(session
     )
     client = FinalizeActiveNodeClient()
 
-    await RunEngine(settings, model_client=client, tool_registry=ToolRegistry())._run_with_repo(
+    await RunEngine(settings, model_client=client, tool_registry=AstraToolRegistry())._run_with_repo(
         repo, run.id
     )
 
@@ -757,7 +761,7 @@ async def test_final_plan_node_answer_is_regenerated_as_canonical_stream(session
 
 
 async def test_standard_fast_path_skips_plan_state_and_all_quality_gates(session):
-    settings = Settings(model_provider="mock")
+    settings = AstraRuntimeSettings(model_provider="mock")
     profile = resolve_run_profile(
         AnswerMode.standard, RequestedReasoningPolicy(execution_mode="auto_approval")
     )
@@ -790,7 +794,7 @@ async def test_standard_fast_path_skips_plan_state_and_all_quality_gates(session
 
     event.listen(session.bind.sync_engine, "before_cursor_execute", count_selects)
     try:
-        await RunEngine(settings, model_client=client, tool_registry=ToolRegistry())._run_with_repo(
+        await RunEngine(settings, model_client=client, tool_registry=AstraToolRegistry())._run_with_repo(
             repo, run.id
         )
     finally:
@@ -805,7 +809,7 @@ async def test_standard_fast_path_skips_plan_state_and_all_quality_gates(session
     assert loaded.agent_state == {}
     assert loaded.steps == []
     # A newly created standard Run reaches the model with one startup read, one
-    # legacy missing-Skill-snapshot check, and one live Tool Settings read used
+    # legacy missing-Skill-snapshot check, and one live AstraTool AstraRuntimeSettings read used
     # by lightweight Subagent eligibility.
     assert client.selects_before_decide == 3
     # The original full-graph loading path issued 129 SELECTs here.
@@ -851,7 +855,7 @@ async def test_standard_fast_path_skips_plan_state_and_all_quality_gates(session
 
 
 async def test_standard_ask_user_uses_a_user_facing_fallback_question(session):
-    settings = Settings(model_provider="mock", tool_swarm_enabled=False)
+    settings = AstraRuntimeSettings(model_provider="mock", tool_swarm_enabled=False)
     profile = resolve_run_profile(
         AnswerMode.standard, RequestedReasoningPolicy(execution_mode="auto_approval")
     )
@@ -868,7 +872,7 @@ async def test_standard_ask_user_uses_a_user_facing_fallback_question(session):
     await RunEngine(
         settings,
         model_client=QuickClarificationClient(),
-        tool_registry=ToolRegistry(),
+        tool_registry=AstraToolRegistry(),
     )._run_with_repo(repo, run.id)
 
     loaded = await repo.require_run(run.id)
@@ -882,7 +886,7 @@ async def test_standard_ask_user_uses_a_user_facing_fallback_question(session):
 
 
 async def test_standard_fast_path_defers_permission_records_until_after_first_delta(session):
-    settings = Settings(model_provider="mock")
+    settings = AstraRuntimeSettings(model_provider="mock")
     profile = resolve_run_profile(
         AnswerMode.standard, RequestedReasoningPolicy(execution_mode="auto_approval")
     )
@@ -917,7 +921,7 @@ async def test_standard_fast_path_defers_permission_records_until_after_first_de
     await RunEngine(
         settings,
         model_client=QuickPermissionTimingClient(capture_permission_state),
-        tool_registry=ToolRegistry(),
+        tool_registry=AstraToolRegistry(),
     )._run_with_repo(repo, run.id)
 
     assert observed == {"identities": 0, "catalogs": 0}
@@ -936,7 +940,7 @@ async def test_standard_fast_path_defers_permission_records_until_after_first_de
 
 
 async def test_standard_fast_path_reuses_tool_router_without_creating_steps(session):
-    settings = Settings(model_provider="mock")
+    settings = AstraRuntimeSettings(model_provider="mock")
     profile = resolve_run_profile(
         AnswerMode.standard, RequestedReasoningPolicy(execution_mode="auto_approval")
     )
@@ -948,7 +952,7 @@ async def test_standard_fast_path_reuses_tool_router_without_creating_steps(sess
         answer_mode=profile.answer_mode.value,
         execution_profile=profile.model_dump(mode="json"),
     )
-    registry = ToolRegistry()
+    registry = AstraToolRegistry()
     registry.register(FakeWeather())
     client = QuickToolClient()
 
@@ -967,7 +971,7 @@ async def test_standard_fast_path_reuses_tool_router_without_creating_steps(sess
 
 
 async def test_standard_fast_path_keeps_tool_router_security_boundary(session):
-    settings = Settings(model_provider="mock")
+    settings = AstraRuntimeSettings(model_provider="mock")
     profile = resolve_run_profile(AnswerMode.standard, RequestedReasoningPolicy())
     repo = RunUnitOfWork(session)
     run = await repo.create_task_run(
@@ -979,7 +983,7 @@ async def test_standard_fast_path_keeps_tool_router_security_boundary(session):
     )
     client = QuickForbiddenToolClient()
 
-    await RunEngine(settings, model_client=client, tool_registry=ToolRegistry())._run_with_repo(
+    await RunEngine(settings, model_client=client, tool_registry=AstraToolRegistry())._run_with_repo(
         repo, run.id
     )
 
@@ -997,7 +1001,7 @@ async def test_engine_resumes_with_current_frozen_profile(session):
     run = await repo.create_task_run(
         "恢复 Profile", {"provider": "mock"}, agent_profile_snapshot=frozen.snapshot()
     )
-    selected = await RunEngine(Settings(model_provider="mock"))._profile_for_run(
+    selected = await RunEngine(AstraRuntimeSettings(model_provider="mock"))._profile_for_run(
         repo, run.id, run.agent_profile_snapshot
     )
 
@@ -1059,7 +1063,7 @@ class EffortSpyClient(MockModelClient):
 
 
 async def test_engine_binds_effective_reasoning_effort_before_model_operations(session):
-    settings = Settings(model_provider="mock", web_search_provider="mock")
+    settings = AstraRuntimeSettings(model_provider="mock", web_search_provider="mock")
     repo = RunUnitOfWork(session)
     profile = resolve_run_profile(
         AnswerMode.trusted,
@@ -1101,7 +1105,7 @@ async def test_engine_binds_effective_reasoning_effort_before_model_operations(s
 
 
 async def test_disabled_model_thinking_does_not_suppress_public_process_events(session):
-    settings = Settings(model_provider="mock", web_search_provider="mock")
+    settings = AstraRuntimeSettings(model_provider="mock", web_search_provider="mock")
     profile = resolve_run_profile(
         AnswerMode.standard,
         RequestedReasoningPolicy(),
@@ -1141,7 +1145,7 @@ async def test_disabled_model_thinking_does_not_suppress_public_process_events(s
 
 
 async def test_standard_profile_skips_planning_and_quality_assurance_objects(session):
-    settings = Settings(model_provider="mock", web_search_provider="mock")
+    settings = AstraRuntimeSettings(model_provider="mock", web_search_provider="mock")
     profile = resolve_run_profile(
         AnswerMode.standard,
         RequestedReasoningPolicy(reasoning_effort="deep", execution_mode="auto_approval"),
@@ -1173,7 +1177,7 @@ async def test_standard_profile_skips_planning_and_quality_assurance_objects(ses
 
 
 async def test_trusted_engine_always_builds_contract_and_complete_plan(session):
-    settings = Settings(model_provider="mock", web_search_provider="mock")
+    settings = AstraRuntimeSettings(model_provider="mock", web_search_provider="mock")
     repo = RunUnitOfWork(session)
     profile = resolve_run_profile(
         AnswerMode.trusted,
@@ -1198,7 +1202,7 @@ async def test_trusted_engine_always_builds_contract_and_complete_plan(session):
 
 
 async def test_follow_up_contract_excludes_private_conversation_transcript(session):
-    settings = Settings(model_provider="mock", web_search_provider="mock")
+    settings = AstraRuntimeSettings(model_provider="mock", web_search_provider="mock")
     repo = RunUnitOfWork(session)
     profile = resolve_run_profile(
         AnswerMode.trusted,
@@ -1236,7 +1240,7 @@ async def test_follow_up_contract_excludes_private_conversation_transcript(sessi
 
 
 async def test_engine_falls_back_when_model_returns_empty_plan(session):
-    settings = Settings(model_provider="mock", web_search_provider="mock")
+    settings = AstraRuntimeSettings(model_provider="mock", web_search_provider="mock")
     repo = RunUnitOfWork(session)
     profile = resolve_run_profile(
         AnswerMode.trusted,
@@ -1262,7 +1266,7 @@ async def test_engine_falls_back_when_model_returns_empty_plan(session):
 
 
 async def test_trusted_engine_falls_back_when_plan_requests_unavailable_capability(session):
-    settings = Settings(model_provider="mock", web_search_provider="mock")
+    settings = AstraRuntimeSettings(model_provider="mock", web_search_provider="mock")
     repo = RunUnitOfWork(session)
     profile = resolve_run_profile(
         AnswerMode.trusted,
@@ -1291,7 +1295,7 @@ async def test_trusted_engine_falls_back_when_plan_requests_unavailable_capabili
 
 
 async def test_engine_replays_recorded_checkpoint_without_duplicate_tool_call(session):
-    settings = Settings(model_provider="mock", web_search_provider="mock")
+    settings = AstraRuntimeSettings(model_provider="mock", web_search_provider="mock")
     repo = RunUnitOfWork(session)
     profile = resolve_run_profile(
         AnswerMode.trusted,

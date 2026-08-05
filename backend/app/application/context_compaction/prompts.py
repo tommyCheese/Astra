@@ -3,12 +3,12 @@ from __future__ import annotations
 import json
 
 from app.application.context_compaction.policy import CompactionPolicy
-from app.common.schemas.context_compaction import ContextEnvelope, ContextOwnerRole
+from app.common.schemas.context_compaction import CompactionContextEnvelope, ContextOwnerRole
 
 PROMPT_VERSION = "astra-context-checkpoint-v2"
 
 
-def build_compaction_prompt(envelope: ContextEnvelope, policy: CompactionPolicy) -> str:
+def build_compaction_prompt(envelope: CompactionContextEnvelope, policy: CompactionPolicy) -> str:
     role_instructions = {
         ContextOwnerRole.conversation: (
             "Preserve current user intent, corrections, constraints, decisions, completed outcomes, "
@@ -33,7 +33,7 @@ def build_compaction_prompt(envelope: ContextEnvelope, policy: CompactionPolicy)
             role_instructions[envelope.owner_type],
             "The protected_prefix is canonical and must not be summarized as an authority source. "
             "Merge prior_checkpoint cumulatively; do not nest or quote it as another summary.",
-            "ContextEnvelope JSON:",
+            "CompactionContextEnvelope JSON:",
             json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")),
         )
     )

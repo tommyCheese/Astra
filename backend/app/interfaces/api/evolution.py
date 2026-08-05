@@ -11,8 +11,12 @@ from app.application.evolution import (
     EvolutionCandidateStatus,
     EvolutionDomainError,
 )
-from app.common.core.config import Settings, get_settings
-from app.common.core.errors import ResourceError, StateError, ValidationError
+from app.common.core.config import AstraRuntimeSettings, get_settings
+from app.common.core.errors import (
+    AstraInputValidationError,
+    AstraResourceNotFoundError,
+    AstraStateConflictError,
+)
 from app.common.schemas.evolution import (
     EvolutionAuditView,
     EvolutionCandidateCreateRequest,
@@ -45,7 +49,7 @@ router = APIRouter(
 
 
 async def get_available_evolution_tools(
-    settings: Settings = Depends(get_settings),
+    settings: AstraRuntimeSettings = Depends(get_settings),
     session: AsyncSession = Depends(get_session),
 ) -> frozenset[str]:
     states = await ToolSettingsRepository(session).get_or_create(
@@ -62,7 +66,7 @@ def get_required_evolution_thresholds() -> EvaluationThresholds:
 
 def _raise_evolution_error(exc: EvolutionDomainError) -> None:
     if exc.code == "EVOLUTION_CANDIDATE_NOT_FOUND":
-        raise ResourceError(exc.code, str(exc)) from exc
+        raise AstraResourceNotFoundError(exc.code, str(exc)) from exc
     if exc.code in {
         "EVOLUTION_NAMESPACE_INVALID",
         "EVOLUTION_NAMESPACE_REQUIRED",
@@ -75,8 +79,8 @@ def _raise_evolution_error(exc: EvolutionDomainError) -> None:
         "EVOLUTION_ROLLBACK_METADATA_INVALID",
         "EVOLUTION_ROLLBACK_METADATA_TOO_LARGE",
     }:
-        raise ValidationError(exc.code, str(exc), exc.details) from exc
-    raise StateError(exc.code, str(exc), exc.details) from exc
+        raise AstraInputValidationError(exc.code, str(exc), exc.details) from exc
+    raise AstraStateConflictError(exc.code, str(exc), exc.details) from exc
 
 
 def _current_evaluation(record: AgentEvolutionCandidateRecord):
@@ -340,7 +344,7 @@ async def deny_candidate_promotion(
     except EvolutionDomainError as exc:
         await session.rollback()
         _raise_evolution_error(exc)
-    raise StateError(
+    raise AstraStateConflictError(
         "EVOLUTION_PROMOTION_DISABLED",
         "Automatic production promotion is disabled.",
     )

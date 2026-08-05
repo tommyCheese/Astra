@@ -38,7 +38,7 @@ from app.infrastructure.repositories.approval_contracts import ApprovalRequestCr
 from app.infrastructure.repositories.permissions import PermissionRepository
 from app.infrastructure.repositories.run_unit_of_work import RunUnitOfWork
 from app.infrastructure.repositories.workspaces import WorkspaceRepository
-from app.infrastructure.tools.base import ToolExecutionError, ToolSpec
+from app.infrastructure.tools.base import AstraToolSpec, ToolExecutionError
 from app.infrastructure.tools.bash import BashExecuteTool
 from app.infrastructure.tools.chart import ChartRenderTool
 
@@ -486,7 +486,7 @@ async def test_task_grant_crosses_runs_but_never_crosses_tasks(session):
 
 def test_extension_allowlist_detects_provider_and_supply_chain_drift():
     policy = ExtensionTrustPolicy()
-    entry = ToolSpec(
+    entry = AstraToolSpec(
         name="plugin.tool",
         version="1",
         input_schema={},

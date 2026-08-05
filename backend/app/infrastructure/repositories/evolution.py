@@ -29,7 +29,7 @@ from app.infrastructure.db.models.evolution import (
     AgentEvolutionEvaluationRecord,
     AgentEvolutionSourceRecord,
 )
-from app.infrastructure.db.models.memory import MemoryRecord
+from app.infrastructure.db.models.memory import PersistedMemoryRecord
 from app.infrastructure.db.models.runs import AgentTurnRecord, RunRecord
 from app.infrastructure.db.models.workspaces import ArtifactRecord
 
@@ -182,7 +182,7 @@ class EvolutionRepository:
             record = await self.session.get(AgentTurnRecord, source_id)
             run_id = record.run_id if record is not None else None
         elif source_type == EvolutionSourceType.memory:
-            record = await self.session.get(MemoryRecord, source_id)
+            record = await self.session.get(PersistedMemoryRecord, source_id)
             memory_id = source_id
             run_id = record.run_id if record is not None else None
         elif source_type == EvolutionSourceType.artifact:

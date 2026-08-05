@@ -13,12 +13,12 @@ from app.application.context_compaction.validation import (
     CheckpointValidationError,
     validate_checkpoint_payload,
 )
-from app.common.core.config import Settings
+from app.common.core.config import AstraRuntimeSettings
 from app.common.schemas.context_compaction import (
-    ContextEnvelope,
-    ContextItem,
+    CompactionContextEnvelope,
+    CompactionContextItem,
+    CompactionContextReference,
     ContextOwnerRole,
-    ContextReference,
     ContinuationManifest,
 )
 from app.infrastructure.db.model_base import utc_now
@@ -28,32 +28,32 @@ from app.infrastructure.db.models.runs import RunRecord
 from app.infrastructure.repositories.context_compaction import ContextCompactionAttemptRepository
 
 
-def envelope(*, total_body: int = 1_000) -> ContextEnvelope:
+def envelope(*, total_body: int = 1_000) -> CompactionContextEnvelope:
     accounting = TokenAccountingService().account(
         context_window=10_000,
         output_reserve=1_000,
         compaction_output_reserve=1_000,
         protected_prefix=(
-            ContextItem(id="request", kind="current_request", content="implement safely", token_count=200, canonical=True),
+            CompactionContextItem(id="request", kind="current_request", content="implement safely", token_count=200, canonical=True),
         ),
         body=(
-            ContextItem(id="old", kind="observation", summary="old progress", token_count=total_body),
-            ContextItem(id="new", kind="observation", summary="latest failure", token_count=300),
+            CompactionContextItem(id="old", kind="observation", summary="old progress", token_count=total_body),
+            CompactionContextItem(id="new", kind="observation", summary="latest failure", token_count=300),
         ),
     )
-    return ContextEnvelope(
+    return CompactionContextEnvelope(
         owner_type=ContextOwnerRole.root_execution,
         owner_id="root-1",
         purpose="continue root execution",
         protected_prefix=(
-            ContextItem(id="request", kind="current_request", content="implement safely", token_count=200, canonical=True),
+            CompactionContextItem(id="request", kind="current_request", content="implement safely", token_count=200, canonical=True),
         ),
         compactable_body=(
-            ContextItem(id="old", kind="observation", summary="old progress", token_count=total_body),
-            ContextItem(id="new", kind="observation", summary="latest failure", token_count=300),
+            CompactionContextItem(id="old", kind="observation", summary="old progress", token_count=total_body),
+            CompactionContextItem(id="new", kind="observation", summary="latest failure", token_count=300),
         ),
         reference_manifest=(
-            ContextReference(kind="evidence", ref="evidence:1"),
+            CompactionContextReference(kind="evidence", ref="evidence:1"),
         ),
         accounting=accounting,
         continuation=ContinuationManifest(
@@ -94,7 +94,7 @@ def semantic_payload() -> dict:
 
 def policy():
     return build_compaction_policy(
-        Settings(
+        AstraRuntimeSettings(
             context_compaction_v2_enabled=True,
             context_compaction_root_enabled=True,
             context_compaction_shadow_mode=False,
@@ -122,7 +122,7 @@ def test_astra_checkpoint_is_portable_across_provider_budget_recalculation():
         output_reserve=4_000,
         compaction_output_reserve=2_000,
         checkpoint=(
-            ContextItem(
+            CompactionContextItem(
                 id="checkpoint",
                 kind="checkpoint",
                 content=checkpoint.model_dump(mode="json"),
@@ -134,7 +134,7 @@ def test_astra_checkpoint_is_portable_across_provider_budget_recalculation():
         output_reserve=8_000,
         compaction_output_reserve=4_000,
         checkpoint=(
-            ContextItem(
+            CompactionContextItem(
                 id="checkpoint",
                 kind="checkpoint",
                 content=checkpoint.model_dump(mode="json"),

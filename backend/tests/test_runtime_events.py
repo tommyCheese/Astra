@@ -8,7 +8,7 @@ from app.application.run_management.events import (
     RunEventBroker,
     run_event_broker,
 )
-from app.infrastructure.db.model_base import Base
+from app.infrastructure.db.model_base import AstraOrmRecordBase
 from app.infrastructure.db.models.runs import RunEventRecord
 from app.infrastructure.db.session import EventAwareAsyncSession
 from app.infrastructure.repositories.run_unit_of_work import RunUnitOfWork
@@ -125,7 +125,7 @@ async def test_run_event_broker_coalesces_progress_but_preserves_critical_events
 async def test_event_aware_session_notifies_only_after_commit():
     engine = create_async_engine("sqlite+aiosqlite:///:memory:", future=True)
     async with engine.begin() as connection:
-        await connection.run_sync(Base.metadata.create_all)
+        await connection.run_sync(AstraOrmRecordBase.metadata.create_all)
     sessions = async_sessionmaker(
         engine,
         expire_on_commit=False,
@@ -170,7 +170,7 @@ async def test_event_aware_session_notifies_only_after_commit():
 async def test_event_aware_session_discards_rolled_back_notifications():
     engine = create_async_engine("sqlite+aiosqlite:///:memory:", future=True)
     async with engine.begin() as connection:
-        await connection.run_sync(Base.metadata.create_all)
+        await connection.run_sync(AstraOrmRecordBase.metadata.create_all)
     sessions = async_sessionmaker(
         engine,
         expire_on_commit=False,

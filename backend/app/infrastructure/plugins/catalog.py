@@ -8,21 +8,26 @@ from types import MappingProxyType
 from typing import Any
 
 from app.infrastructure.plugins.contracts import (
-    ComponentContribution,
+    PluginComponentContribution,
     PluginContractError,
     PluginContribution,
     PluginDescriptor,
     PluginLifecycleState,
-    RuntimeBackendContribution,
-    ToolContribution,
+    PluginRuntimeBackendContribution,
+    PluginToolContribution,
 )
 from app.infrastructure.plugins.discovery import (
     PluginCandidate,
     PluginDiscoverySource,
     discover_candidates,
 )
-from app.infrastructure.plugins.interfaces import HealthProbe, ToolProviderPlugin
-from app.infrastructure.tools.base import Tool, ToolExecutionError, ToolRegistry, ToolSpec
+from app.infrastructure.plugins.interfaces import PluginHealthProbe, ToolProviderPlugin
+from app.infrastructure.tools.base import (
+    AstraTool,
+    AstraToolRegistry,
+    AstraToolSpec,
+    ToolExecutionError,
+)
 
 
 class PluginCatalogError(RuntimeError):
@@ -32,21 +37,21 @@ class PluginCatalogError(RuntimeError):
         self.safe_message = message
 
 
-class CatalogTool(Tool):
+class CatalogTool(AstraTool):
     """Read-only manifest view that delegates execution to the provider tool."""
 
-    def __init__(self, tool: Tool):
+    def __init__(self, tool: AstraTool):
         self._tool = tool
         self._spec = tool.spec.model_copy(deep=True)
 
     @property
-    def spec(self) -> ToolSpec:
+    def spec(self) -> AstraToolSpec:
         return self._spec.model_copy(deep=True)
 
     async def run(self, tool_input, *, context=None):
         if self._tool.spec.model_dump(mode="json") != self._spec.model_dump(mode="json"):
             raise ToolExecutionError(
-                "provider_identity_changed", "Tool manifest changed after catalog assembly"
+                "provider_identity_changed", "AstraTool manifest changed after catalog assembly"
             )
         return await self._tool.run(tool_input, context=context)
 
@@ -62,16 +67,16 @@ class ProviderStatus:
 class PluginCatalog:
     digest: str
     providers: Mapping[str, ProviderStatus]
-    tools: Mapping[str, Tool]
-    tool_bindings: Mapping[str, ToolContribution]
-    effect_analyzers: tuple[ComponentContribution, ...]
-    result_processors: tuple[ComponentContribution, ...]
-    validators: tuple[ComponentContribution, ...]
-    approval_presenters: tuple[ComponentContribution, ...]
-    runtime_backends: Mapping[str, RuntimeBackendContribution]
+    tools: Mapping[str, AstraTool]
+    tool_bindings: Mapping[str, PluginToolContribution]
+    effect_analyzers: tuple[PluginComponentContribution, ...]
+    result_processors: tuple[PluginComponentContribution, ...]
+    validators: tuple[PluginComponentContribution, ...]
+    approval_presenters: tuple[PluginComponentContribution, ...]
+    runtime_backends: Mapping[str, PluginRuntimeBackendContribution]
 
-    def tool_registry(self) -> ToolRegistry:
-        return ToolRegistry().extend(self.tools.values())
+    def tool_registry(self) -> AstraToolRegistry:
+        return AstraToolRegistry().extend(self.tools.values())
 
 
 class PluginCatalogBuilder:
@@ -132,7 +137,7 @@ class PluginCatalogBuilder:
         providers: dict[str, ProviderStatus] = {}
         contributions: list[PluginContribution] = []
         for descriptor, contribution, health_target in self._load_candidates(providers):
-            if isinstance(health_target, HealthProbe):
+            if isinstance(health_target, PluginHealthProbe):
                 raise PluginCatalogError(
                     "health_check_required", "Provider requires asynchronous health verification"
                 )
@@ -206,7 +211,7 @@ class PluginCatalogBuilder:
 
     @staticmethod
     async def _health(target: Any) -> tuple[bool, str | None]:
-        if not isinstance(target, HealthProbe):
+        if not isinstance(target, PluginHealthProbe):
             return True, None
         try:
             report = await target.check()
@@ -228,15 +233,15 @@ class PluginCatalogBuilder:
         providers: dict[str, ProviderStatus],
         contributions: list[PluginContribution],
     ) -> PluginCatalog:
-        tools: dict[str, Tool] = {}
-        tool_bindings: dict[str, ToolContribution] = {}
+        tools: dict[str, AstraTool] = {}
+        tool_bindings: dict[str, PluginToolContribution] = {}
         component_ids: set[str] = set()
-        backend_ids: dict[str, RuntimeBackendContribution] = {}
+        backend_ids: dict[str, PluginRuntimeBackendContribution] = {}
         effect_bindings: set[str] = set()
-        analyzers: list[ComponentContribution] = []
-        processors: list[ComponentContribution] = []
-        validators: list[ComponentContribution] = []
-        presenters: list[ComponentContribution] = []
+        analyzers: list[PluginComponentContribution] = []
+        processors: list[PluginComponentContribution] = []
+        validators: list[PluginComponentContribution] = []
+        presenters: list[PluginComponentContribution] = []
         for contribution in sorted(
             contributions,
             key=lambda item: (
@@ -305,8 +310,8 @@ class PluginCatalogBuilder:
 
     def _append_components(
         self,
-        source: tuple[ComponentContribution, ...],
-        target: list[ComponentContribution],
+        source: tuple[PluginComponentContribution, ...],
+        target: list[PluginComponentContribution],
         component_ids: set[str],
         *,
         effect_bindings: set[str] | None = None,
@@ -325,15 +330,15 @@ class PluginCatalogBuilder:
     @staticmethod
     def _digest_payload(
         providers: dict[str, ProviderStatus],
-        tools: dict[str, Tool],
-        tool_bindings: dict[str, ToolContribution],
-        analyzers: list[ComponentContribution],
-        processors: list[ComponentContribution],
-        validators: list[ComponentContribution],
-        presenters: list[ComponentContribution],
-        backends: dict[str, RuntimeBackendContribution],
+        tools: dict[str, AstraTool],
+        tool_bindings: dict[str, PluginToolContribution],
+        analyzers: list[PluginComponentContribution],
+        processors: list[PluginComponentContribution],
+        validators: list[PluginComponentContribution],
+        presenters: list[PluginComponentContribution],
+        backends: dict[str, PluginRuntimeBackendContribution],
     ) -> dict[str, Any]:
-        def components(entries: list[ComponentContribution]) -> list[dict[str, Any]]:
+        def components(entries: list[PluginComponentContribution]) -> list[dict[str, Any]]:
             return [
                 {
                     "identity": entry.identity.model_dump(mode="json"),

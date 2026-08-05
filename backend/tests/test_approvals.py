@@ -1,19 +1,24 @@
 import pytest
 
-from app.application.agent_runtime.policies.reasoning import PolicyCompiler
+from app.application.agent_runtime.policies.reasoning import AgentReasoningPolicyCompiler
 from app.application.agent_runtime.services.approval import matcher_matches, similar_matcher
-from app.application.agent_runtime.services.loop import AgentLoop
-from app.common.core.config import Settings
+from app.application.agent_runtime.services.loop import AstraAgentLoop
+from app.common.core.config import AstraRuntimeSettings
 from app.common.schemas.agent.execution_state import AgentDecision
 from app.common.schemas.agent.run_policy import RequestedReasoningPolicy
 from app.infrastructure.model_clients.mock import MockModelClient
 from app.infrastructure.repositories.run_unit_of_work import RunUnitOfWork
 from app.infrastructure.repositories.run_view_projection import RunViewProjector
-from app.infrastructure.tools.base import Tool, ToolExecutionError, ToolRegistry, ToolSpec
+from app.infrastructure.tools.base import (
+    AstraTool,
+    AstraToolRegistry,
+    AstraToolSpec,
+    ToolExecutionError,
+)
 
 
-class FakeWrite(Tool):
-    spec = ToolSpec(
+class FakeWrite(AstraTool):
+    spec = AstraToolSpec(
         name="file_write",
         version="test",
         input_schema={"required": ["path", "content"]},
@@ -62,24 +67,24 @@ class AlwaysWriteModelClient(MockModelClient):
 
 
 def fake_write_registry():
-    return ToolRegistry().extend([FakeWrite()])
+    return AstraToolRegistry().extend([FakeWrite()])
 
 
 def policy(mode: str) -> dict:
-    return PolicyCompiler().compile(
+    return AgentReasoningPolicyCompiler().compile(
         RequestedReasoningPolicy(execution_mode=mode, reflection_enabled=False)
     ).model_dump(mode="json")
 
 
 async def test_request_approval_freezes_tool_before_execution(session):
-    settings = Settings(model_provider="mock")
+    settings = AstraRuntimeSettings(model_provider="mock")
     repo = RunUnitOfWork(session)
     run = await repo.create_task_run(
         "查询批准流程", settings.model_policy, reasoning_policy=policy("request_approval")
     )
     registry = fake_write_registry()
 
-    result = await AgentLoop(
+    result = await AstraAgentLoop(
         settings, model_client=WriteModelClient(), tool_registry=registry
     ).run(repo, run.id, run.task.description)
     loaded = await repo.require_run(run.id)
@@ -95,14 +100,14 @@ async def test_request_approval_freezes_tool_before_execution(session):
 
 
 async def test_approve_once_resumes_exact_frozen_call(session):
-    settings = Settings(model_provider="mock")
+    settings = AstraRuntimeSettings(model_provider="mock")
     repo = RunUnitOfWork(session)
     run = await repo.create_task_run(
         "查询批准恢复", settings.model_policy, reasoning_policy=policy("request_approval")
     )
     registry = fake_write_registry()
     client = WriteModelClient()
-    loop = AgentLoop(settings, model_client=client, tool_registry=registry)
+    loop = AstraAgentLoop(settings, model_client=client, tool_registry=registry)
     await loop.run(repo, run.id, run.task.description)
     waiting = await repo.require_run(run.id)
     approval = waiting.approval_requests[-1]
@@ -123,12 +128,12 @@ async def test_approve_once_resumes_exact_frozen_call(session):
 
 
 async def test_approval_resume_preserves_tool_budget_and_does_not_execute_twice(session):
-    settings = Settings(model_provider="mock", agent_max_tool_calls=1)
+    settings = AstraRuntimeSettings(model_provider="mock", agent_max_tool_calls=1)
     repo = RunUnitOfWork(session)
     run = await repo.create_task_run(
         "只写入一次 report.txt",
         settings.model_policy,
-        reasoning_policy=PolicyCompiler().compile(
+        reasoning_policy=AgentReasoningPolicyCompiler().compile(
             RequestedReasoningPolicy(
                 reasoning_effort="fast",
                 execution_mode="request_approval",
@@ -138,7 +143,7 @@ async def test_approval_resume_preserves_tool_budget_and_does_not_execute_twice(
         ).model_dump(mode="json"),
     )
     registry = fake_write_registry()
-    loop = AgentLoop(
+    loop = AstraAgentLoop(
         settings,
         model_client=AlwaysWriteModelClient(),
         tool_registry=registry,
@@ -162,13 +167,13 @@ async def test_approval_resume_preserves_tool_budget_and_does_not_execute_twice(
 
 
 async def test_rejection_never_executes_rejected_call_and_replay_fails(session):
-    settings = Settings(model_provider="mock")
+    settings = AstraRuntimeSettings(model_provider="mock")
     repo = RunUnitOfWork(session)
     run = await repo.create_task_run(
         "拒绝工具", settings.model_policy, reasoning_policy=policy("request_approval")
     )
     registry = fake_write_registry()
-    await AgentLoop(settings, model_client=WriteModelClient(), tool_registry=registry).run(
+    await AstraAgentLoop(settings, model_client=WriteModelClient(), tool_registry=registry).run(
         repo, run.id, run.task.description
     )
     waiting = await repo.require_run(run.id)
@@ -186,13 +191,13 @@ async def test_rejection_never_executes_rejected_call_and_replay_fails(session):
 
 
 async def test_approved_action_fails_closed_when_frozen_input_is_tampered(session):
-    settings = Settings(model_provider="mock")
+    settings = AstraRuntimeSettings(model_provider="mock")
     repo = RunUnitOfWork(session)
     run = await repo.create_task_run(
         "验证冻结输入", settings.model_policy, reasoning_policy=policy("request_approval")
     )
     registry = fake_write_registry()
-    loop = AgentLoop(settings, model_client=WriteModelClient(), tool_registry=registry)
+    loop = AstraAgentLoop(settings, model_client=WriteModelClient(), tool_registry=registry)
     await loop.run(repo, run.id, run.task.description)
     waiting = await repo.require_run(run.id)
     approval = waiting.approval_requests[-1]

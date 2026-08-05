@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from app.common.core.config import Settings
+from app.common.core.config import AstraRuntimeSettings
 from app.domain.agent_profile import (
     SYNCHRONOUS_MODEL_OPERATIONS,
     AgentProfile,
@@ -259,7 +259,7 @@ def test_live_database_is_not_a_packaged_profile_resource():
 
 
 def test_profile_snapshot_never_captures_runtime_credentials():
-    settings = Settings(model_api_key="super-secret-profile-test-key")
+    settings = AstraRuntimeSettings(model_api_key="super-secret-profile-test-key")
     serialized = json.dumps(load_agent_profile().snapshot(), ensure_ascii=False)
 
     assert settings.model_api_key not in serialized

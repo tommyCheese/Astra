@@ -30,10 +30,10 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.infrastructure.db.model_base import Base, JsonType, utc_now, uuid_str
+from app.infrastructure.db.model_base import AstraOrmRecordBase, JsonType, utc_now, uuid_str
 
 
-class NodeExecutionRecord(Base):
+class NodeExecutionRecord(AstraOrmRecordBase):
     __tablename__ = "node_executions"
     __table_args__ = (
         UniqueConstraint(
@@ -98,7 +98,7 @@ class NodeExecutionRecord(Base):
     )
 
 
-class ResourceLeaseRecord(Base):
+class ResourceLeaseRecord(AstraOrmRecordBase):
     __tablename__ = "resource_leases"
     __table_args__ = (
         UniqueConstraint(
@@ -128,7 +128,7 @@ class ResourceLeaseRecord(Base):
     node_execution: Mapped[NodeExecutionRecord] = relationship(back_populates="resource_leases")
 
 
-class BudgetReservationRecord(Base):
+class BudgetReservationRecord(AstraOrmRecordBase):
     __tablename__ = "budget_reservations"
     __table_args__ = (
         UniqueConstraint(
@@ -153,7 +153,7 @@ class BudgetReservationRecord(Base):
     node_execution: Mapped[NodeExecutionRecord] = relationship(back_populates="budget_reservations")
 
 
-class ModelInvocationRecord(Base):
+class ModelInvocationRecord(AstraOrmRecordBase):
     __tablename__ = "model_invocations"
     __table_args__ = (
         Index("ix_model_invocations_run_created", "run_id", "created_at"),
@@ -189,7 +189,7 @@ class ModelInvocationRecord(Base):
     run: Mapped[RunRecord] = relationship(back_populates="model_invocations")
 
 
-class AgentExecutionRecord(Base):
+class AgentExecutionRecord(AstraOrmRecordBase):
     __tablename__ = "agent_executions"
     __table_args__ = (
         UniqueConstraint("run_id", "root_slot", name="uq_agent_executions_run_root"),
@@ -249,7 +249,7 @@ class AgentExecutionRecord(Base):
     run: Mapped[RunRecord] = relationship(back_populates="agent_executions")
 
 
-class ContextCompactionAttemptRecord(Base):
+class ContextCompactionAttemptRecord(AstraOrmRecordBase):
     __tablename__ = "context_compaction_attempts"
     __table_args__ = (
         UniqueConstraint(
@@ -291,7 +291,7 @@ class ContextCompactionAttemptRecord(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
 
-class RuntimeProfileRecord(Base):
+class RuntimeProfileRecord(AstraOrmRecordBase):
     __tablename__ = "runtime_profiles"
 
     id: Mapped[str] = mapped_column(String(80), primary_key=True, default="default")
@@ -307,7 +307,7 @@ class RuntimeProfileRecord(Base):
     )
 
 
-class RuntimeBuildRecord(Base):
+class RuntimeBuildRecord(AstraOrmRecordBase):
     __tablename__ = "runtime_builds"
     __table_args__ = (
         Index("ix_runtime_builds_profile_created", "profile_id", "created_at"),
@@ -333,7 +333,7 @@ class RuntimeBuildRecord(Base):
     profile: Mapped[RuntimeProfileRecord] = relationship(back_populates="builds")
 
 
-class AgentBudgetReservationRecord(Base):
+class AgentBudgetReservationRecord(AstraOrmRecordBase):
     __tablename__ = "agent_budget_reservations"
     __table_args__ = (
         UniqueConstraint(
@@ -362,7 +362,7 @@ class AgentBudgetReservationRecord(Base):
     settled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
-class AgentJoinRecord(Base):
+class AgentJoinRecord(AstraOrmRecordBase):
     __tablename__ = "agent_joins"
     __table_args__ = (
         UniqueConstraint(

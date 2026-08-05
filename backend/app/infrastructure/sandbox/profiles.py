@@ -10,7 +10,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from app.domain.agent_profile import AgentProfile
-from app.infrastructure.sandbox.configuration import RuntimeConfiguration
+from app.infrastructure.sandbox.configuration import SandboxRuntimeConfiguration
 from app.infrastructure.sandbox.dependency_policy import CORE_DEPENDENCIES, normalize_dependencies
 from app.infrastructure.sandbox.profile_persistence import RuntimeProfilePersistence
 from app.infrastructure.sandbox.runtime import sanitize_log
@@ -24,7 +24,7 @@ class RuntimeProfileService:
         self.session_factory = session_factory
         self.persistence = RuntimeProfilePersistence(session_factory)
         self.recovered_staging_images = []
-        self.configuration = RuntimeConfiguration(settings, self.path)
+        self.configuration = SandboxRuntimeConfiguration(settings, self.path)
         if recover_interrupted:
             self._recover_interrupted_build()
 

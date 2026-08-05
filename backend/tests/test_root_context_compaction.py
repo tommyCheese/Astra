@@ -1,7 +1,7 @@
 import pytest
 
 from app.application.context_compaction.root import compact_root_context
-from app.common.core.config import Settings
+from app.common.core.config import AstraRuntimeSettings
 from app.infrastructure.model_clients.mock import MockModelClient
 from app.infrastructure.repositories.agent_executions import AgentExecutionRepository
 from app.infrastructure.repositories.run_unit_of_work import RunUnitOfWork
@@ -28,7 +28,7 @@ async def test_disabled_root_compaction_does_not_change_model_context(session):
 
     result = await compact_root_context(
         repo=repo,
-        settings=Settings(),
+        settings=AstraRuntimeSettings(),
         model_client=MockModelClient(),
         run_id=run.id,
         goal="keep context",
@@ -50,7 +50,7 @@ async def test_root_compaction_installs_checkpoint_and_bounds_model_projection(s
         for index in range(6)
     ]
     context = root_context(observations)
-    settings = Settings(
+    settings = AstraRuntimeSettings(
         model_provider="unknown",
         model_name="small",
         context_window_fallback_tokens=16_384,

@@ -1,10 +1,10 @@
 from fake_web_tools import fake_web_registry
 
-from app.application.agent_runtime.policies.reasoning import PolicyCompiler
+from app.application.agent_runtime.policies.reasoning import AgentReasoningPolicyCompiler
 from app.application.agent_runtime.services.approval import safe_preview, similar_matcher
-from app.application.agent_runtime.services.loop import AgentLoop
+from app.application.agent_runtime.services.loop import AstraAgentLoop
 from app.application.permissions.effects import DefaultEffectAnalyzer
-from app.common.core.config import Settings
+from app.common.core.config import AstraRuntimeSettings
 from app.common.schemas.agent.run_policy import RequestedReasoningPolicy
 from app.infrastructure.model_clients.mock import MockModelClient
 from app.infrastructure.repositories.run_unit_of_work import RunUnitOfWork
@@ -12,8 +12,8 @@ from app.infrastructure.tools.bash import BashExecuteTool
 
 
 async def test_web_runtime_characterization_freezes_calls_events_observations_and_results(session):
-    settings = Settings(model_provider="mock", web_search_provider="mock", agent_max_turns=8)
-    policy = PolicyCompiler().compile(RequestedReasoningPolicy(execution_mode="auto_approval"))
+    settings = AstraRuntimeSettings(model_provider="mock", web_search_provider="mock", agent_max_turns=8)
+    policy = AgentReasoningPolicyCompiler().compile(RequestedReasoningPolicy(execution_mode="auto_approval"))
     repo = RunUnitOfWork(session)
     run = await repo.create_task_run(
         "查询插件化前的 Web 行为",
@@ -21,7 +21,7 @@ async def test_web_runtime_characterization_freezes_calls_events_observations_an
         reasoning_policy=policy.model_dump(mode="json"),
     )
 
-    output = await AgentLoop(
+    output = await AstraAgentLoop(
         settings,
         model_client=MockModelClient(),
         tool_registry=fake_web_registry(),

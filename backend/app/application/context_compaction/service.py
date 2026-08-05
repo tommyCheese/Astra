@@ -20,10 +20,10 @@ from app.application.context_compaction.policy import (
 from app.application.context_compaction.prompts import build_compaction_prompt
 from app.application.context_compaction.validation import CheckpointV2, validate_checkpoint_payload
 from app.common.schemas.context_compaction import (
+    CompactionContextEnvelope,
     CompactionImplementation,
     CompactionLifecycleStatus,
     CompactionMetadata,
-    ContextEnvelope,
 )
 from app.infrastructure.repositories.context_compaction import ContextCompactionAttemptRepository
 
@@ -46,7 +46,7 @@ class OrdinaryCompactionGenerator(Protocol):
     async def __call__(self, prompt: str) -> CompactionGeneration: ...
 
 
-InstallCheckpoint = Callable[[ContextEnvelope, CheckpointV2, tuple[str, ...]], Awaitable[bool]]
+InstallCheckpoint = Callable[[CompactionContextEnvelope, CheckpointV2, tuple[str, ...]], Awaitable[bool]]
 
 
 @dataclass(frozen=True)
@@ -73,7 +73,7 @@ class AgentContextCompactionService:
 
     async def compact(
         self,
-        envelope: ContextEnvelope,
+        envelope: CompactionContextEnvelope,
         policy: CompactionPolicy,
         *,
         generate: OrdinaryCompactionGenerator,
@@ -224,13 +224,13 @@ class AgentContextCompactionService:
         )
 
 
-def _input_digest(envelope: ContextEnvelope) -> str:
+def _input_digest(envelope: CompactionContextEnvelope) -> str:
     payload = envelope.model_dump(mode="json")
     encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(encoded.encode()).hexdigest()
 
 
-def _compaction_metadata(envelope: ContextEnvelope, policy: CompactionPolicy) -> CompactionMetadata:
+def _compaction_metadata(envelope: CompactionContextEnvelope, policy: CompactionPolicy) -> CompactionMetadata:
     return CompactionMetadata(
         owner_type=envelope.owner_type,
         owner_id=envelope.owner_id,

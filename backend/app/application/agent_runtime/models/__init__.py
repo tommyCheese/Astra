@@ -16,7 +16,7 @@ from app.infrastructure.db.models.runs import RunRecord
 
 
 @dataclass(frozen=True)
-class RuntimeLimits:
+class AgentRuntimeLimits:
     max_turns: int
     max_tool_calls: int | None
     max_reflections: int
@@ -29,7 +29,7 @@ class RootRuntimeAssembly:
     initial_turn_count: int
     profile: RunExecutionProfile
     policy: EffectiveReasoningPolicy
-    limits: RuntimeLimits
+    limits: AgentRuntimeLimits
     progress: ExecutionProgress
     state: RootRuntimeState
     iteration_stage: RootAgentIterationStage

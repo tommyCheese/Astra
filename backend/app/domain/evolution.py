@@ -134,7 +134,7 @@ class EvolutionCandidate(FrozenModel):
         if len(normalized) != len(values):
             raise ValueError("required_tools must be non-empty and unique")
         if any(not TOOL_IDENTITY_PATTERN.fullmatch(value) for value in normalized):
-            raise ValueError("required_tools contains an invalid Tool identity")
+            raise ValueError("required_tools contains an invalid tool identity")
         return normalized
 
     @field_validator("source_refs")
@@ -467,7 +467,7 @@ def validate_candidate_authority(
         issues.append(
             AuthorityIssue(
                 code="evolution.tool_unavailable",
-                message="Candidate references a Tool outside the current executable ceiling.",
+                message="Candidate references a tool outside the current executable ceiling.",
                 path=tool,
             )
         )

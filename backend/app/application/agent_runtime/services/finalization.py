@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from app.application.agent_runtime.policies.completion import CompletionGate
+from app.application.agent_runtime.policies.completion import AgentCompletionGate
 from app.application.agent_runtime.result_adapters import ChartTaskAdapter, WebTaskAdapter
 from app.application.agent_runtime.services.completion import (
     CompletionVerificationStage,
@@ -26,7 +26,7 @@ from app.application.agent_runtime.services.progress import (
 from app.application.workspaces.runtime import WorkspaceRuntimeService
 from app.common.schemas.agent.execution_state import CompletionDecision
 from app.common.schemas.agent.run_policy import RunExecutionProfile
-from app.common.schemas.agent.run_result import FinalAnswer, VerificationReport
+from app.common.schemas.agent.run_result import AgentAnswerVerificationReport, AgentFinalAnswer
 from app.common.schemas.agent.types import AssuranceLevel, TerminalState
 from app.domain.grounding.projection import project_grounded_answer
 from app.domain.grounding.validators import grounding_validation_outcomes
@@ -46,7 +46,7 @@ class FinalizationInput:
     profile: RunExecutionProfile
     progress: ExecutionProgress
     tool_outputs: list[dict[str, Any]]
-    streamed_final_answer: FinalAnswer | None
+    streamed_final_answer: AgentFinalAnswer | None
     final_turn_id: str | None
     terminal_status: str | None
     terminal_summary: str | None
@@ -58,7 +58,7 @@ class FinalizationInput:
 
 @dataclass(frozen=True)
 class PreparedFinalAnswer:
-    answer: FinalAnswer
+    answer: AgentFinalAnswer
     evidence_pack: dict[str, Any]
     evidence_artifact: ArtifactRecord | None
     invalid_artifact_references: int
@@ -78,7 +78,7 @@ class AgentFinalizationStage:
         chart_adapter: ChartTaskAdapter,
         memory_writer: MemoryCandidateWriter,
         verifier: CompletionVerificationStage,
-        completion_gate: CompletionGate,
+        completion_gate: AgentCompletionGate,
         progress_stage: ProgressEvaluationStage,
         workspace_service: WorkspaceRuntimeService,
         on_answer_delta: AnswerDeltaHandler | None,
@@ -202,9 +202,9 @@ class AgentFinalizationStage:
         terminal_status: str | None,
         terminal_summary: str | None,
         final_context: dict[str, Any],
-    ) -> FinalAnswer:
+    ) -> AgentFinalAnswer:
         if terminal_status:
-            return FinalAnswer(
+            return AgentFinalAnswer(
                 summary=terminal_summary or "任务未能完成。",
                 caveats=["运行在满足全部成功条件前停止。"],
                 verification_notes=["该响应表示运行状态，不表示任务成功完成。"],
@@ -249,7 +249,7 @@ class AgentFinalizationStage:
         self,
         profile: RunExecutionProfile,
         prepared: PreparedFinalAnswer,
-    ) -> VerificationReport:
+    ) -> AgentAnswerVerificationReport:
         validation_outcomes = []
         if profile.assurance_level == AssuranceLevel.full:
             validation_outcomes = [
@@ -328,7 +328,7 @@ class AgentFinalizationStage:
         self,
         stage_input: FinalizationInput,
         prepared: PreparedFinalAnswer,
-        verification: VerificationReport,
+        verification: AgentAnswerVerificationReport,
         gate_decision: CompletionDecision,
         memory_writes: list[dict[str, Any]],
         completion_reflection: Any,
@@ -414,7 +414,7 @@ class AgentFinalizationStage:
         }
 
     @staticmethod
-    def _final_observation(answer: FinalAnswer, final_status: str) -> dict[str, str]:
+    def _final_observation(answer: AgentFinalAnswer, final_status: str) -> dict[str, str]:
         return {
             "kind": "final_answer",
             "status": final_status,

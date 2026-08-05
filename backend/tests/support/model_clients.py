@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from app.common.schemas.agent.execution_state import AgentDecision
-from app.common.schemas.agent.run_result import FinalAnswer
+from app.common.schemas.agent.run_result import AgentFinalAnswer
 from app.infrastructure.model_clients.contracts import AnswerDeltaCallback
 from app.infrastructure.model_clients.mock import MockModelClient
 
@@ -17,7 +17,7 @@ class DecisionStep:
     """One deterministic model decision and its optional streamed answer."""
 
     decision: AgentDecision
-    final_answer: FinalAnswer | None = None
+    final_answer: AgentFinalAnswer | None = None
 
 
 class ScriptedDecisionClient(MockModelClient):
@@ -34,7 +34,7 @@ class ScriptedDecisionClient(MockModelClient):
         *,
         on_delta: AnswerDeltaCallback | None = None,
         on_reasoning_delta: AnswerDeltaCallback | None = None,
-    ) -> tuple[AgentDecision, FinalAnswer | None]:
+    ) -> tuple[AgentDecision, AgentFinalAnswer | None]:
         del goal
         self.decision_contexts.append(context)
         if not self._remaining_steps:

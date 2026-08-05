@@ -2,7 +2,7 @@
 
 from importlib import import_module
 
-from app.infrastructure.db.model_base import Base
+from app.infrastructure.db.model_base import AstraOrmRecordBase
 
 MODEL_MODULES = (
     "conversations",
@@ -20,6 +20,6 @@ MODEL_MODULES = (
 for module_name in MODEL_MODULES:
     import_module(f"app.infrastructure.db.models.{module_name}")
 
-metadata = Base.metadata
+metadata = AstraOrmRecordBase.metadata
 
 __all__ = ["MODEL_MODULES", "metadata"]

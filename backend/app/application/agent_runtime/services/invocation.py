@@ -17,7 +17,11 @@ from app.infrastructure.repositories.permissions import PermissionRepository
 from app.infrastructure.repositories.run_unit_of_work import RunUnitOfWork
 from app.infrastructure.repositories.workspaces import WorkspaceRepository
 from app.infrastructure.sandbox.runtime import SandboxJobService
-from app.infrastructure.tools.base import Tool, ToolExecutionContext, ToolExecutionError
+from app.infrastructure.tools.base import (
+    AstraTool,
+    ToolExecutionContext,
+    ToolExecutionError,
+)
 
 
 @dataclass(frozen=True)
@@ -27,7 +31,7 @@ class InvocationStageInput:
     tool_call: ToolCallRecord
     step_id: str | None
     plan_node_id: str | None
-    tool: Tool
+    tool: AstraTool
     tool_input: dict[str, Any]
     effect_plan: ActionEffectPlan
     runtime_identity_id: str

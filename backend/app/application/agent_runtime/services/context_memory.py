@@ -16,7 +16,7 @@ from app.application.memory.retrieval import (
     ScoredMemory,
     retrieve_memories,
 )
-from app.common.core.config import Settings
+from app.common.core.config import AstraRuntimeSettings
 from app.infrastructure.repositories.memories import MemoryRepository
 from app.infrastructure.repositories.memory_queries import MemoryQueryRepository
 from app.infrastructure.repositories.memory_recall import MemoryRecallRepository
@@ -24,14 +24,14 @@ from app.infrastructure.repositories.run_unit_of_work import RunUnitOfWork
 
 
 @dataclass(frozen=True)
-class MemoryProjection:
+class AgentMemoryContextProjection:
     audit_reads: list[dict[str, Any]]
     context_reads: list[dict[str, Any]]
     recall_event_id: str | None
 
 
 class MemoryContextProjector:
-    def __init__(self, repository: RunUnitOfWork, settings: Settings | None) -> None:
+    def __init__(self, repository: RunUnitOfWork, settings: AstraRuntimeSettings | None) -> None:
         self._run_repository = repository
         self._settings = settings
 
@@ -40,14 +40,14 @@ class MemoryContextProjector:
         run_id: str,
         goal: str,
         memories: list[Any],
-    ) -> MemoryProjection:
+    ) -> AgentMemoryContextProjection:
         scored_by_id: dict[str, dict[str, float | None]] = {}
         recall_event_id = None
         if self._settings and self._settings.agent_memory_cross_session_enabled:
             selected, recall_event_id = await self._retrieve(run_id, goal)
             memories = [scored.candidate for scored in selected]
             scored_by_id = {scored.candidate.id: scored.score.as_dict() for scored in selected}
-        return MemoryProjection(
+        return AgentMemoryContextProjection(
             audit_reads=[
                 self._audit_view(memory, scored_by_id.get(memory.id), recall_event_id)
                 for memory in memories

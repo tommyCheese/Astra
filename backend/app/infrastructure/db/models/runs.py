@@ -12,7 +12,7 @@ if TYPE_CHECKING:
         NodeExecutionRecord,
         ResourceLeaseRecord,
     )
-    from app.infrastructure.db.models.memory import MemoryRecord
+    from app.infrastructure.db.models.memory import PersistedMemoryRecord
     from app.infrastructure.db.models.permissions import (
         AgentIdentityRecord,
         ApprovalGrantRecord,
@@ -41,10 +41,10 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.infrastructure.db.model_base import Base, JsonType, utc_now, uuid_str
+from app.infrastructure.db.model_base import AstraOrmRecordBase, JsonType, utc_now, uuid_str
 
 
-class RunRecord(Base):
+class RunRecord(AstraOrmRecordBase):
     __tablename__ = "runs"
     __table_args__ = (
         Index("ix_runs_task_status", "task_id", "status"),
@@ -90,7 +90,7 @@ class RunRecord(Base):
     turns: Mapped[list[AgentTurnRecord]] = relationship(
         back_populates="run", order_by="AgentTurnRecord.turn_index"
     )
-    memories: Mapped[list[MemoryRecord]] = relationship(back_populates="run")
+    memories: Mapped[list[PersistedMemoryRecord]] = relationship(back_populates="run")
     sandbox_jobs: Mapped[list[SandboxJobRecord]] = relationship(back_populates="run")
     model_invocations: Mapped[list[ModelInvocationRecord]] = relationship(back_populates="run")
     approval_requests: Mapped[list[ApprovalRequestRecord]] = relationship(
@@ -132,7 +132,7 @@ class RunRecord(Base):
     )
 
 
-class EvidenceRecord(Base):
+class EvidenceRecord(AstraOrmRecordBase):
     __tablename__ = "evidence_records"
     __table_args__ = (
         UniqueConstraint("run_id", "evidence_key", name="uq_evidence_records_run_key"),
@@ -159,7 +159,7 @@ class EvidenceRecord(Base):
     run: Mapped[RunRecord] = relationship(back_populates="evidence_records")
 
 
-class StepRecord(Base):
+class StepRecord(AstraOrmRecordBase):
     __tablename__ = "steps"
     __table_args__ = (Index("ix_steps_run_id_index", "run_id", "index"),)
 
@@ -178,7 +178,7 @@ class StepRecord(Base):
     tool_calls: Mapped[list[ToolCallRecord]] = relationship(back_populates="step")
 
 
-class RunEventRecord(Base):
+class RunEventRecord(AstraOrmRecordBase):
     __tablename__ = "run_events"
     __table_args__ = (
         Index("ix_run_events_run_id_id", "run_id", "id"),
@@ -197,7 +197,7 @@ class RunEventRecord(Base):
     run: Mapped[RunRecord] = relationship(back_populates="events")
 
 
-class AgentTurnRecord(Base):
+class AgentTurnRecord(AstraOrmRecordBase):
     __tablename__ = "agent_turns"
     __table_args__ = (Index("ix_agent_turns_run_id_index", "run_id", "turn_index"),)
 

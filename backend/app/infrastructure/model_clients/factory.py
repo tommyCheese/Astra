@@ -2,7 +2,7 @@ import logging
 
 import httpx
 
-from app.common.core.config import Settings
+from app.common.core.config import AstraRuntimeSettings
 from app.infrastructure.model_clients.anthropic import AnthropicModelClient
 from app.infrastructure.model_clients.contracts import ModelClient
 from app.infrastructure.model_clients.mock import MockModelClient
@@ -12,7 +12,7 @@ logger = logging.getLogger("astra.model")
 
 
 def build_model_client(
-    settings: Settings,
+    settings: AstraRuntimeSettings,
     *,
     http_client: httpx.AsyncClient | None = None,
 ) -> ModelClient:

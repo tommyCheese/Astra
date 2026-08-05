@@ -123,7 +123,7 @@ class DuckDuckGoHTMLParser(HTMLParser):
             self._current[self._active] = normalize_space(f"{self._current[self._active]} {text}")
 
 
-class SearchProviderClient:
+class WebSearchProviderClient:
     timeout_seconds = 20
 
     def __init__(self, settings):

@@ -21,8 +21,8 @@ from app.application.evolution import (
     SafetyMetricDirection,
     SafetyMetricResult,
 )
-from app.common.core.errors import AstraError, ErrorEnvelope
-from app.infrastructure.db.model_base import Base, utc_now
+from app.common.core.errors import AstraApiErrorEnvelope, AstraError
+from app.infrastructure.db.model_base import AstraOrmRecordBase, utc_now
 from app.infrastructure.db.models.conversations import TaskRecord
 from app.infrastructure.db.models.evolution import AgentEvolutionCandidateRecord
 from app.infrastructure.db.models.runs import RunRecord
@@ -127,7 +127,7 @@ def passing_manifest(
 async def evolution_client():
     engine = create_async_engine("sqlite+aiosqlite:///:memory:", future=True)
     async with engine.begin() as connection:
-        await connection.run_sync(Base.metadata.create_all)
+        await connection.run_sync(AstraOrmRecordBase.metadata.create_all)
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
 
     async def override_session():
@@ -145,7 +145,7 @@ async def evolution_client():
     async def astra_error_handler(_: Request, exc: AstraError) -> JSONResponse:
         return JSONResponse(
             status_code=exc.status_code,
-            content=ErrorEnvelope(error=exc.payload).model_dump(mode="json"),
+            content=AstraApiErrorEnvelope(error=exc.payload).model_dump(mode="json"),
         )
 
     now = utc_now()

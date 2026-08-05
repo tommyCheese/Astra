@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from app.common.core.config import Settings
+from app.common.core.config import AstraRuntimeSettings
 from app.domain.agent_profile import AgentProfileConfigurationError
 from app.infrastructure.sandbox.profiles import (
     CORE_DEPENDENCIES,
@@ -31,7 +31,7 @@ def test_dependency_version_is_optional_and_means_latest():
 
 
 def test_runtime_profile_exposes_locked_core_dependency_versions(tmp_path):
-    service = RuntimeProfileService(Settings(runtime_profile_path=str(tmp_path / "profile.json")))
+    service = RuntimeProfileService(AstraRuntimeSettings(runtime_profile_path=str(tmp_path / "profile.json")))
 
     assert service.read()["core_dependencies"] == CORE_DEPENDENCIES
     assert {item["name"] for item in CORE_DEPENDENCIES} == {
@@ -52,7 +52,7 @@ def test_runtime_profile_exposes_locked_core_dependency_versions(tmp_path):
 
 def test_runtime_profile_exposes_updates_and_resets_agent_profile(tmp_path):
     profile_path = tmp_path / "profile.json"
-    service = RuntimeProfileService(Settings(runtime_profile_path=str(profile_path)))
+    service = RuntimeProfileService(AstraRuntimeSettings(runtime_profile_path=str(profile_path)))
     initial = service.read()["agent_profile"]
     assert initial["source"] == "default"
     assert set(initial["documents"]) == {"identity", "soul", "memory", "autodream"}
@@ -78,7 +78,7 @@ def test_runtime_profile_exposes_updates_and_resets_agent_profile(tmp_path):
 
 def test_invalid_agent_profile_update_is_atomic(tmp_path):
     profile_path = tmp_path / "profile.json"
-    service = RuntimeProfileService(Settings(runtime_profile_path=str(profile_path)))
+    service = RuntimeProfileService(AstraRuntimeSettings(runtime_profile_path=str(profile_path)))
     initial = service.read()["agent_profile"]
     documents = dict(initial["documents"])
     documents["identity"] = "invalid"
@@ -92,7 +92,7 @@ def test_invalid_agent_profile_update_is_atomic(tmp_path):
 
 def test_memory_settings_are_applied_and_survive_service_restart(tmp_path):
     profile_path = tmp_path / "profile.json"
-    settings = Settings(runtime_profile_path=str(profile_path))
+    settings = AstraRuntimeSettings(runtime_profile_path=str(profile_path))
     service = RuntimeProfileService(settings)
     defaults = service.read()["memory_settings"]
     assert defaults["recall_enabled"] is False
@@ -112,7 +112,7 @@ def test_memory_settings_are_applied_and_survive_service_restart(tmp_path):
     assert service.update_memory_settings(updated) == updated
     assert settings.agent_memory_cross_session_enabled is True
 
-    restarted_settings = Settings(runtime_profile_path=str(profile_path))
+    restarted_settings = AstraRuntimeSettings(runtime_profile_path=str(profile_path))
     restarted = RuntimeProfileService(restarted_settings)
     assert restarted.memory_settings() == updated
     assert restarted_settings.agent_memory_autodream_enabled is True
@@ -121,19 +121,19 @@ def test_memory_settings_are_applied_and_survive_service_restart(tmp_path):
 def test_obsolete_shadow_memory_settings_are_rejected(tmp_path):
     profile_path = tmp_path / "profile.json"
     defaults = RuntimeProfileService(
-        Settings(runtime_profile_path=str(tmp_path / "defaults.json"))
+        AstraRuntimeSettings(runtime_profile_path=str(tmp_path / "defaults.json"))
     ).memory_settings()
     legacy = {**defaults, "cross_session_mode": "shadow"}
     legacy.pop("recall_enabled")
     profile_path.write_text(json.dumps({"memory_settings": legacy}))
 
     with pytest.raises(ValueError, match="字段不完整"):
-        RuntimeProfileService(Settings(runtime_profile_path=str(profile_path)))
+        RuntimeProfileService(AstraRuntimeSettings(runtime_profile_path=str(profile_path)))
 
 
 def test_invalid_memory_settings_update_is_atomic(tmp_path):
     profile_path = tmp_path / "profile.json"
-    settings = Settings(runtime_profile_path=str(profile_path))
+    settings = AstraRuntimeSettings(runtime_profile_path=str(profile_path))
     service = RuntimeProfileService(settings)
     initial = service.memory_settings()
 

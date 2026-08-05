@@ -14,10 +14,10 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.infrastructure.db.model_base import Base, JsonType, utc_now, uuid_str
+from app.infrastructure.db.model_base import AstraOrmRecordBase, JsonType, utc_now, uuid_str
 
 
-class AgentEvolutionCandidateRecord(Base):
+class AgentEvolutionCandidateRecord(AstraOrmRecordBase):
     __tablename__ = "agent_evolution_candidates"
     __table_args__ = (
         UniqueConstraint(
@@ -73,7 +73,7 @@ class AgentEvolutionCandidateRecord(Base):
     )
 
 
-class AgentEvolutionSourceRecord(Base):
+class AgentEvolutionSourceRecord(AstraOrmRecordBase):
     __tablename__ = "agent_evolution_sources"
     __table_args__ = (
         UniqueConstraint(
@@ -100,7 +100,7 @@ class AgentEvolutionSourceRecord(Base):
     candidate: Mapped[AgentEvolutionCandidateRecord] = relationship(back_populates="sources")
 
 
-class AgentEvolutionEvaluationRecord(Base):
+class AgentEvolutionEvaluationRecord(AstraOrmRecordBase):
     __tablename__ = "agent_evolution_evaluations"
     __table_args__ = (
         UniqueConstraint(
@@ -124,7 +124,7 @@ class AgentEvolutionEvaluationRecord(Base):
     candidate: Mapped[AgentEvolutionCandidateRecord] = relationship(back_populates="evaluations")
 
 
-class AgentEvolutionAuditRecord(Base):
+class AgentEvolutionAuditRecord(AstraOrmRecordBase):
     __tablename__ = "agent_evolution_audit_events"
     __table_args__ = (
         Index("ix_agent_evolution_audit_candidate_created", "candidate_id", "created_at"),

@@ -4,9 +4,9 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.application.memory.consolidation import service as autodream_module
 from app.application.memory.consolidation.service import AutoDreamService
-from app.common.core.config import Settings
+from app.common.core.config import AstraRuntimeSettings
 from app.domain.memory import MemoryNamespace, MemoryNamespaceType
-from app.infrastructure.db.model_base import Base
+from app.infrastructure.db.model_base import AstraOrmRecordBase
 from app.infrastructure.repositories.memories import MemoryRepository
 
 
@@ -17,7 +17,7 @@ class ForbiddenSessionFactory:
 
 def test_autodream_settings_reject_inconsistent_bounds():
     with pytest.raises(ValidationError, match="minimum candidates"):
-        Settings(
+        AstraRuntimeSettings(
             agent_memory_autodream_min_candidates=10,
             agent_memory_autodream_max_records_per_job=5,
         )
@@ -25,7 +25,7 @@ def test_autodream_settings_reject_inconsistent_bounds():
 
 async def test_disabled_service_has_no_database_side_effects():
     service = AutoDreamService(
-        Settings(agent_memory_autodream_enabled=False),
+        AstraRuntimeSettings(agent_memory_autodream_enabled=False),
         ForbiddenSessionFactory(),
     )
 
@@ -41,7 +41,7 @@ async def test_disabled_service_has_no_database_side_effects():
 async def test_enabled_worker_scans_and_processes_bounded_namespace():
     engine = create_async_engine("sqlite+aiosqlite:///:memory:", future=True)
     async with engine.begin() as connection:
-        await connection.run_sync(Base.metadata.create_all)
+        await connection.run_sync(AstraOrmRecordBase.metadata.create_all)
     sessions = async_sessionmaker(engine, expire_on_commit=False)
     async with sessions() as session:
         repository = MemoryRepository(session)
@@ -62,7 +62,7 @@ async def test_enabled_worker_scans_and_processes_bounded_namespace():
             )
 
     service = AutoDreamService(
-        Settings(
+        AstraRuntimeSettings(
             agent_memory_autodream_enabled=True,
             agent_memory_autodream_min_candidates=2,
             agent_memory_autodream_max_records_per_job=2,
@@ -91,7 +91,7 @@ async def test_enabled_worker_scans_and_processes_bounded_namespace():
 async def test_worker_isolates_one_failed_job_and_continues(monkeypatch):
     engine = create_async_engine("sqlite+aiosqlite:///:memory:", future=True)
     async with engine.begin() as connection:
-        await connection.run_sync(Base.metadata.create_all)
+        await connection.run_sync(AstraOrmRecordBase.metadata.create_all)
     sessions = async_sessionmaker(engine, expire_on_commit=False)
     async with sessions() as session:
         repository = MemoryRepository(session)
@@ -128,7 +128,7 @@ async def test_worker_isolates_one_failed_job_and_continues(monkeypatch):
         fail_first,
     )
     service = AutoDreamService(
-        Settings(
+        AstraRuntimeSettings(
             agent_memory_autodream_enabled=True,
             agent_memory_autodream_min_candidates=2,
             agent_memory_autodream_max_records_per_job=2,

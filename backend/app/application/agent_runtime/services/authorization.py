@@ -10,7 +10,7 @@ from typing import Any
 from app.application.permissions.effects import DefaultEffectAnalyzer, effect_plan_hash
 from app.application.permissions.engine import PermissionEngine
 from app.application.permissions.invocation import InvocationAuthorizationResult
-from app.common.core.config import Settings
+from app.common.core.config import AstraRuntimeSettings
 from app.common.schemas.agent.execution_state import AgentDecision
 from app.common.schemas.agent.types import ExecutionMode
 from app.common.schemas.permissions import (
@@ -23,7 +23,7 @@ from app.infrastructure.db.models.permissions import AgentIdentityRecord
 from app.infrastructure.db.models.runs import RunRecord
 from app.infrastructure.repositories.permissions import PermissionRepository
 from app.infrastructure.repositories.run_unit_of_work import RunUnitOfWork
-from app.infrastructure.tools.base import Tool, ToolExecutionError
+from app.infrastructure.tools.base import AstraTool, ToolExecutionError
 from app.infrastructure.tools.router import ToolRouter
 
 
@@ -40,7 +40,7 @@ class AuthorizationStageInput:
 
 
 AuthorizedInvocation = tuple[
-    Tool,
+    AstraTool,
     AgentIdentityRecord,
     AgentIdentityRecord,
     ActionEffectPlan,
@@ -54,7 +54,7 @@ class PermissionAuthorizationStage:
 
     def __init__(
         self,
-        settings: Settings,
+        settings: AstraRuntimeSettings,
         run_repository: RunUnitOfWork,
         permission_repository: PermissionRepository,
         tool_router: ToolRouter,
@@ -118,7 +118,7 @@ class PermissionAuthorizationStage:
     async def _provider_identity(
         self,
         stage_input: AuthorizationStageInput,
-        tool: Tool,
+        tool: AstraTool,
     ) -> AgentIdentityRecord:
         existing = self._provider_identities.get(tool.spec.provider_id)
         if existing is not None:
@@ -140,7 +140,7 @@ class PermissionAuthorizationStage:
     async def _runtime_identity(
         self,
         stage_input: AuthorizationStageInput,
-        tool: Tool,
+        tool: AstraTool,
         provider_identity: AgentIdentityRecord,
         schema_digest: str,
     ) -> AgentIdentityRecord:
@@ -164,7 +164,7 @@ class PermissionAuthorizationStage:
     async def _authorize(
         self,
         stage_input: AuthorizationStageInput,
-        tool: Tool,
+        tool: AstraTool,
         runtime_identity: AgentIdentityRecord,
         provider_identity: AgentIdentityRecord,
         effect_plan: ActionEffectPlan,
@@ -241,7 +241,7 @@ class PermissionAuthorizationStage:
     async def _record_decision(
         self,
         run_id: str,
-        tool: Tool,
+        tool: AstraTool,
         effect_hash: str,
         authorization: InvocationAuthorizationResult,
     ) -> None:
@@ -265,7 +265,7 @@ class PermissionAuthorizationStage:
         )
 
     @staticmethod
-    def _schema_digest(tool: Tool) -> str:
+    def _schema_digest(tool: AstraTool) -> str:
         return hashlib.sha256(
             json.dumps(
                 tool.spec.input_schema,

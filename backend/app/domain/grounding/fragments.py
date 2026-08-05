@@ -14,32 +14,32 @@ from app.domain.grounding.identity import (
     source_id,
 )
 from app.domain.grounding.schemas import (
-    ConstraintAudit,
-    EvidenceFragment,
-    EvidenceKind,
-    EvidenceLineage,
-    SearchCandidate,
-    SearchConstraints,
-    SearchTrace,
-    SourceSnapshot,
+    GroundingConstraintAudit,
+    GroundingEvidenceFragment,
+    GroundingEvidenceKind,
+    GroundingEvidenceLineage,
+    GroundingSearchCandidate,
+    GroundingSearchConstraints,
+    GroundingSearchTrace,
+    GroundingSourceSnapshot,
 )
 
 
 def _fragment(
-    kind: EvidenceKind,
+    kind: GroundingEvidenceKind,
     model: Any,
     *,
-    lineage: EvidenceLineage | None = None,
-) -> EvidenceFragment:
+    lineage: GroundingEvidenceLineage | None = None,
+) -> GroundingEvidenceFragment:
     payload = model.model_dump(mode="json", exclude_none=True)
     identity = str(payload["id"])
-    return EvidenceFragment(
+    return GroundingEvidenceFragment(
         id=evidence_identity(kind.value, identity),
         kind=kind,
         evidence_key=f"{kind.value}:{identity}",
         payload_digest=digest_payload(payload),
         payload=payload,
-        lineage=lineage or EvidenceLineage(),
+        lineage=lineage or GroundingEvidenceLineage(),
     )
 
 
@@ -47,8 +47,8 @@ def fragments_from_web_result(
     tool_name: str,
     output: dict[str, Any],
     *,
-    lineage: EvidenceLineage | None = None,
-) -> list[EvidenceFragment]:
+    lineage: GroundingEvidenceLineage | None = None,
+) -> list[GroundingEvidenceFragment]:
     data = dict(output.get("data") or output)
     if tool_name == "web_search" or "candidates" in data:
         return _search_fragments(data, lineage=lineage)
@@ -60,16 +60,16 @@ def fragments_from_web_result(
 def _search_fragments(
     data: dict[str, Any],
     *,
-    lineage: EvidenceLineage | None,
-) -> list[EvidenceFragment]:
+    lineage: GroundingEvidenceLineage | None,
+) -> list[GroundingEvidenceFragment]:
     traces = _build_search_traces(data, lineage)
     fragments = [
-        _fragment(EvidenceKind.search_trace, trace, lineage=lineage)
+        _fragment(GroundingEvidenceKind.search_trace, trace, lineage=lineage)
         for trace in traces.values()
     ]
     fallback_trace = next(iter(traces.values()))
     fragments.extend(
-        _fragment(EvidenceKind.search_candidate, candidate, lineage=lineage)
+        _fragment(GroundingEvidenceKind.search_candidate, candidate, lineage=lineage)
         for rank, raw in enumerate(data.get("candidates") or [], start=1)
         if (candidate := _build_search_candidate(raw, rank, traces, fallback_trace))
     )
@@ -77,8 +77,8 @@ def _search_fragments(
 
 
 def _build_search_traces(
-    data: dict[str, Any], lineage: EvidenceLineage | None
-) -> dict[str, SearchTrace]:
+    data: dict[str, Any], lineage: GroundingEvidenceLineage | None
+) -> dict[str, GroundingSearchTrace]:
     raw_traces = list(data.get("search_traces") or [_fallback_trace(data, lineage)])
     traces = [
         _build_search_trace(raw, index, data, lineage)
@@ -88,7 +88,7 @@ def _build_search_traces(
 
 
 def _fallback_trace(
-    data: dict[str, Any], lineage: EvidenceLineage | None
+    data: dict[str, Any], lineage: GroundingEvidenceLineage | None
 ) -> dict[str, Any]:
     query = str(data.get("query") or "")
     invocation_scope = lineage.tool_call_id if lineage else None
@@ -106,18 +106,18 @@ def _build_search_trace(
     raw: dict[str, Any],
     index: int,
     data: dict[str, Any],
-    lineage: EvidenceLineage | None,
-) -> SearchTrace:
+    lineage: GroundingEvidenceLineage | None,
+) -> GroundingSearchTrace:
     query = str(raw.get("query") or "")
     invocation_scope = lineage.tool_call_id if lineage else None
     retrieved_at = {"retrieved_at": raw["retrieved_at"]} if raw.get("retrieved_at") else {}
-    return SearchTrace(
+    return GroundingSearchTrace(
         id=str(raw.get("id") or search_trace_id(query, index, invocation_scope)),
         query=query,
         purpose=raw.get("purpose"),
         provider=str(raw.get("provider") or data.get("provider") or "unknown"),
-        constraints=SearchConstraints.model_validate(raw.get("constraints") or {}),
-        constraint_audit=ConstraintAudit.model_validate(
+        constraints=GroundingSearchConstraints.model_validate(raw.get("constraints") or {}),
+        constraint_audit=GroundingConstraintAudit.model_validate(
             raw.get("constraint_audit") or data.get("constraint_audit") or {}
         ),
         **retrieved_at,
@@ -127,9 +127,9 @@ def _build_search_trace(
 def _build_search_candidate(
     raw: dict[str, Any],
     rank: int,
-    traces: dict[str, SearchTrace],
-    fallback: SearchTrace,
-) -> SearchCandidate | None:
+    traces: dict[str, GroundingSearchTrace],
+    fallback: GroundingSearchTrace,
+) -> GroundingSearchCandidate | None:
     url = str(raw.get("url") or "")
     if not url:
         return None
@@ -137,7 +137,7 @@ def _build_search_candidate(
     retrieved_at = _optional_timestamp(raw)
     identity = str(raw.get("candidate_id") or candidate_id(trace.id, url))
     provider_rank = int(raw.get("provider_rank") or raw.get("rank") or rank)
-    return SearchCandidate(
+    return GroundingSearchCandidate(
         id=identity,
         search_trace_id=trace.id,
         url=url,
@@ -161,12 +161,13 @@ def _optional_timestamp(payload: dict[str, Any]) -> dict[str, Any]:
 def _read_fragments(
     data: dict[str, Any],
     *,
-    lineage: EvidenceLineage | None,
-) -> list[EvidenceFragment]:
+    lineage: GroundingEvidenceLineage | None,
+) -> list[GroundingEvidenceFragment]:
     model, passages = _build_source_snapshot(data)
-    fragments = [_fragment(EvidenceKind.source_snapshot, model, lineage=lineage)]
+    fragments = [_fragment(GroundingEvidenceKind.source_snapshot, model, lineage=lineage)]
     fragments.extend(
-        _fragment(EvidenceKind.passage, passage, lineage=lineage) for passage in passages
+        _fragment(GroundingEvidenceKind.passage, passage, lineage=lineage)
+        for passage in passages
     )
     return fragments
 
@@ -195,11 +196,11 @@ def _snapshot_identity(data: dict[str, Any]) -> dict[str, str]:
 
 
 def _snapshot_passages(data: dict[str, Any], *, content: str, source: str, snapshot: str, **_):
-    from app.domain.grounding.schemas import Passage
+    from app.domain.grounding.schemas import GroundingSourcePassage
 
     raw_passages = list(data.get("passages") or [])
     if raw_passages:
-        return [Passage.model_validate(item) for item in raw_passages]
+        return [GroundingSourcePassage.model_validate(item) for item in raw_passages]
     return segment_passages(content, source=source, snapshot=snapshot)
 
 
@@ -215,7 +216,7 @@ def _snapshot_model(
     snapshot: str,
 ):
     metadata = dict(data.get("metadata") or {})
-    return SourceSnapshot(
+    return GroundingSourceSnapshot(
         id=snapshot,
         source_id=source,
         requested_url=str(data.get("requested_url") or url),

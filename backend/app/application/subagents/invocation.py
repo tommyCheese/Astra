@@ -10,9 +10,9 @@ from app.application.context_compaction.tool_outputs import ToolOutputGovernance
 from app.application.permissions.effects import DefaultEffectAnalyzer, effect_plan_hash
 from app.application.subagents.executor_contracts import AgentExecutorRuntime
 from app.application.subagents.governance import ChildInvocationAuthorizer, stable_digest
-from app.common.core.config import Settings
+from app.common.core.config import AstraRuntimeSettings
 from app.common.schemas.agent.types import NodeExecutionPhase, NodeExecutionStatus
-from app.common.schemas.context_compaction import ContextOwnerRole, ContextReference
+from app.common.schemas.context_compaction import CompactionContextReference, ContextOwnerRole
 from app.common.schemas.permissions import PermissionDecisionKind
 from app.common.schemas.subagents import (
     DelegationContract,
@@ -26,9 +26,9 @@ from app.infrastructure.repositories.approval_contracts import ApprovalRequestCr
 from app.infrastructure.repositories.executions import NodeExecutionRepository
 from app.infrastructure.repositories.run_unit_of_work import RunUnitOfWork
 from app.infrastructure.tools.base import (
+    AstraToolRegistry,
     ToolExecutionContext,
     ToolExecutionError,
-    ToolRegistry,
     validate_tool_result,
 )
 
@@ -51,8 +51,8 @@ class ChildToolInvocationStage:
     def __init__(
         self,
         *,
-        settings: Settings,
-        tool_registry: ToolRegistry,
+        settings: AstraRuntimeSettings,
+        tool_registry: AstraToolRegistry,
         authorizer: ChildInvocationAuthorizer,
     ) -> None:
         self._settings = settings
@@ -293,8 +293,8 @@ class ChildToolInvocationStage:
             dict.fromkeys(label for effect in effect_plan.effects for label in effect.data_labels)
         )
 
-        async def reference(_serialized: bytes, checksum: str) -> ContextReference:
-            return ContextReference(
+        async def reference(_serialized: bytes, checksum: str) -> CompactionContextReference:
+            return CompactionContextReference(
                 kind="tool_call",
                 ref=f"tool_call:{tool_call_id}",
                 content_hash=checksum,

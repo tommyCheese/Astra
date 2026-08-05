@@ -169,7 +169,7 @@ class PermissionRepository:
         )
         if existing is not None:
             if existing.digest != digest or existing.catalog != catalog:
-                raise ValueError("Tool Catalog Snapshot is immutable")
+                raise ValueError("AstraTool Catalog Snapshot is immutable")
             return existing
         snapshot = ToolCatalogSnapshotRecord(
             run_id=run_id,

@@ -13,7 +13,7 @@ from app.application.subagents.executor import LocalAstraAgentExecutor
 from app.application.subagents.fan_in import SubagentJoinService, merge_subagent_results
 from app.application.subagents.runtime import SubagentRuntimeOperations
 from app.application.workspaces.artifacts import ArtifactService, LocalArtifactStore
-from app.common.core.config import Settings
+from app.common.core.config import AstraRuntimeSettings
 from app.common.schemas.agent.run_policy import EffectiveSubagentPolicy
 from app.common.schemas.subagents import (
     DelegationContract,
@@ -30,7 +30,7 @@ from app.infrastructure.repositories.tool_settings import (
     ToolSettingsRepository,
     default_tool_states,
 )
-from app.infrastructure.tools.base import ToolRegistry
+from app.infrastructure.tools.base import AstraToolRegistry
 
 logger = logging.getLogger("astra.subagent_supervisor")
 _SHARED_SUBAGENT_SEMAPHORES = HierarchicalSemaphoreRegistry()
@@ -42,14 +42,14 @@ class SubagentSupervisor:
     def __init__(
         self,
         *,
-        settings: Settings,
+        settings: AstraRuntimeSettings,
         session: AsyncSession,
         session_factory: async_sessionmaker[AsyncSession],
         run_id: str,
         parent_execution_id: str,
         parent_identity_id: str,
         policy: EffectiveSubagentPolicy,
-        tool_registry: ToolRegistry,
+        tool_registry: AstraToolRegistry,
         model_client_factory,
     ):
         self.settings = settings

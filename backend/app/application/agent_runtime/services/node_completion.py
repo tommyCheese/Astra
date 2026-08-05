@@ -13,7 +13,7 @@ from app.application.agent_runtime.services.progress import (
 )
 from app.application.planning.service import PlanService
 from app.common.schemas.agent.execution_state import AgentDecision, AgentObservation
-from app.common.schemas.agent.run_result import FinalAnswer
+from app.common.schemas.agent.run_result import AgentFinalAnswer
 from app.domain.execution.contracts import SubagentSupervisorPort
 from app.infrastructure.db.models.executions import AgentJoinRecord
 from app.infrastructure.db.models.plans import PlanNodeRecord
@@ -26,7 +26,7 @@ from app.infrastructure.repositories.run_unit_of_work import RunUnitOfWork
 class CompletionRoutingResult:
     action: Literal["not_handled", "continue", "finish"]
     final_turn_id: str | None = None
-    streamed_answer: FinalAnswer | None = None
+    streamed_answer: AgentFinalAnswer | None = None
     required_subagent_missing: bool = False
     active_node_completed: bool = False
 
@@ -50,7 +50,7 @@ class NodeCompletionStage:
         run_id: str,
         turn: AgentTurnRecord,
         decision: AgentDecision,
-        candidate_answer: FinalAnswer | None,
+        candidate_answer: AgentFinalAnswer | None,
         active_node: PlanNodeRecord | None,
         model_context: dict[str, Any],
         subagent_supervisor: SubagentSupervisorPort | None,
@@ -86,7 +86,7 @@ class NodeCompletionStage:
         run_id: str,
         turn: AgentTurnRecord,
         decision: AgentDecision,
-        candidate_answer: FinalAnswer | None,
+        candidate_answer: AgentFinalAnswer | None,
         active_node: PlanNodeRecord | None,
         model_context: dict[str, Any],
         supervisor: SubagentSupervisorPort | None,

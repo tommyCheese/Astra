@@ -10,8 +10,8 @@ from ipaddress import ip_address
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import JSONResponse
 
-from app.common.core.config import Settings
-from app.common.core.errors import ErrorEnvelope
+from app.common.core.config import AstraRuntimeSettings
+from app.common.core.errors import AstraApiErrorEnvelope
 
 logger = logging.getLogger("astra.http")
 RequestHandler = Callable[[Request], Awaitable[Response]]
@@ -27,12 +27,12 @@ def is_local_client(client_host: str) -> bool:
         return client_host in {"localhost", "testclient"}
 
 
-def create_local_api_boundary(settings: Settings) -> HttpMiddleware:
+def create_local_api_boundary(settings: AstraRuntimeSettings) -> HttpMiddleware:
     async def local_api_boundary(request: Request, call_next: RequestHandler) -> Response:
         is_protected_api = request.url.path.startswith("/api") and not settings.api_allow_remote
         client_host = request.client.host if request.client else ""
         if is_protected_api and not is_local_client(client_host):
-            error_envelope = ErrorEnvelope.model_validate(
+            error_envelope = AstraApiErrorEnvelope.model_validate(
                 {
                     "error": {
                         "type": "policy.remote_api_denied",
@@ -76,6 +76,6 @@ def create_request_logger() -> HttpMiddleware:
     return request_logger
 
 
-def register_http_middleware(application: FastAPI, settings: Settings) -> None:
+def register_http_middleware(application: FastAPI, settings: AstraRuntimeSettings) -> None:
     application.middleware("http")(create_local_api_boundary(settings))
     application.middleware("http")(create_request_logger())

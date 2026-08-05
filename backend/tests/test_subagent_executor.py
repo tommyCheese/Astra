@@ -14,7 +14,7 @@ from app.application.subagents.lifecycle import SubagentCancellationService
 from app.application.subagents.runtime import SubagentRuntimeOperations
 from app.application.subagents.scope import DelegationAuthorizationError
 from app.application.subagents.supervisor import SubagentSupervisor
-from app.common.core.config import Settings
+from app.common.core.config import AstraRuntimeSettings
 from app.common.schemas.agent.execution_state import AgentDecision, AgentReflection
 from app.common.schemas.agent.planning import ExpectedObservation, PlanDraft, PlanNodeDraft
 from app.common.schemas.agent.run_policy import EffectiveSubagentPolicy, SubagentBudgetPolicy
@@ -33,7 +33,7 @@ from app.common.schemas.subagents import (
     SubagentJoinPolicy,
     SubagentJoinSpec,
 )
-from app.infrastructure.db.model_base import Base
+from app.infrastructure.db.model_base import AstraOrmRecordBase
 from app.infrastructure.db.models.executions import NodeExecutionRecord
 from app.infrastructure.db.models.permissions import ToolCallRecord
 from app.infrastructure.db.models.plans import PlanRecord
@@ -47,18 +47,18 @@ from app.infrastructure.repositories.tool_settings import (
     default_tool_states,
 )
 from app.infrastructure.tools.base import (
-    ArtifactRef,
-    Tool,
-    ToolRegistry,
+    AstraTool,
+    AstraToolRegistry,
+    AstraToolSpec,
+    ToolArtifactReference,
     ToolResultEnvelope,
-    ToolSpec,
 )
 
 NOW = datetime(2026, 1, 1, tzinfo=timezone.utc)
 
 
-class ReadTool(Tool):
-    spec = ToolSpec(
+class ReadTool(AstraTool):
+    spec = AstraToolSpec(
         name="web_search",
         version="1",
         input_schema={"type": "object"},
@@ -83,7 +83,7 @@ class ReadTool(Tool):
             return {"not": "an envelope"}
         artifacts = (
             [
-                ArtifactRef(
+                ToolArtifactReference(
                     id="artifact-1",
                     type="report",
                     mime_type="text/markdown",
@@ -101,8 +101,8 @@ class ReadTool(Tool):
         ).model_dump(mode="json")
 
 
-class CredentialTool(Tool):
-    spec = ToolSpec(
+class CredentialTool(AstraTool):
+    spec = AstraToolSpec(
         name="credential.read",
         version="1",
         input_schema={"type": "object"},
@@ -151,7 +151,7 @@ class ScriptedChildClient(MockModelClient):
         self.reflect_calls += 1
         return AgentReflection(
             trigger="tool_failure",
-            summary="Tool failed safely.",
+            summary="AstraTool failed safely.",
             next_action="stop",
         )
 
@@ -210,7 +210,7 @@ def _allow_delegation() -> PermissionPolicySet:
     )
 
 
-async def _child_runtime(session, tool: Tool, *, max_model_calls: int = 5):
+async def _child_runtime(session, tool: AstraTool, *, max_model_calls: int = 5):
     run = await RunUnitOfWork(session).create_task_run("Child executor", {})
     root = await AgentExecutionRepository(session).root_for_run(run.id)
     assert root is not None
@@ -341,7 +341,7 @@ async def _child_runtime(session, tool: Tool, *, max_model_calls: int = 5):
         created_at=NOW,
     )
     await session.commit()
-    registry = ToolRegistry()
+    registry = AstraToolRegistry()
     registry.register(tool)
     runtime = AgentExecutorRuntime(
         session=session,
@@ -373,7 +373,7 @@ async def test_local_child_executes_tool_with_full_lineage_and_completes(session
     result = await LocalAstraAgentExecutor(
         model_client=client,
         tool_registry=registry,
-        settings=Settings().model_copy(
+        settings=AstraRuntimeSettings().model_copy(
             update={
                 "context_compaction_child_inline_bytes": 1,
                 "context_compaction_child_inline_tokens": 1,
@@ -439,7 +439,7 @@ async def test_child_model_wait_releases_transaction_for_competing_writer(tmp_pa
         connect_args={"timeout": 0.2},
     )
     async with engine.begin() as connection:
-        await connection.run_sync(Base.metadata.create_all)
+        await connection.run_sync(AstraOrmRecordBase.metadata.create_all)
     sessions = async_sessionmaker(engine, expire_on_commit=False)
     entered = asyncio.Event()
     release = asyncio.Event()
@@ -484,7 +484,7 @@ async def test_child_tool_wait_releases_transaction_for_competing_writer(tmp_pat
         connect_args={"timeout": 0.2},
     )
     async with engine.begin() as connection:
-        await connection.run_sync(Base.metadata.create_all)
+        await connection.run_sync(AstraOrmRecordBase.metadata.create_all)
     sessions = async_sessionmaker(engine, expire_on_commit=False)
     entered = asyncio.Event()
     release = asyncio.Event()
@@ -627,7 +627,7 @@ async def test_local_child_reflects_on_invalid_tool_result_then_fails_safely(ses
             ),
             AgentDecision(
                 decision_type="fail",
-                reasoning_summary="Tool result was invalid",
+                reasoning_summary="AstraTool result was invalid",
                 node_result={"open_issues": ["invalid_tool_result"]},
             ),
         ]
@@ -773,7 +773,7 @@ async def _operations_runtime(session, *, enabled: bool = True):
         ),
         dedupe_key="ops:child",
     )
-    registry = ToolRegistry()
+    registry = AstraToolRegistry()
     registry.register(tool)
     return run, root, parent, operations, request, registry
 
@@ -912,7 +912,7 @@ async def test_rollout_drill_shadow_canary_kill_switch_drain_and_immutable_effec
 
 async def test_live_swarm_switch_blocks_new_children_for_running_supervisor(session):
     run, root, parent, operations, request, registry = await _operations_runtime(session)
-    settings = Settings(
+    settings = AstraRuntimeSettings(
         model_provider="mock",
         agent_subagent_rollout_cohort="trusted_read_only",
     )
