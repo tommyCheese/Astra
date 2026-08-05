@@ -61,7 +61,7 @@ async def test_local_docker_echarts_html_is_self_contained(tmp_path):
 
 
 @DOCKER_INTEGRATION
-async def test_bash_workspace_csv_is_available_to_later_chart_render(tmp_path):
+async def test_bash_workspace_csv_is_available_to_later_chart_tool(tmp_path):
     image = os.getenv("SANDBOX_RUNTIME_IMAGE", "astra-data-viz:0.1.0")
     workspace = Path(__file__).parents[1] / ".test-workspaces" / uuid.uuid4().hex
     bash_input = tmp_path / "bash-input"

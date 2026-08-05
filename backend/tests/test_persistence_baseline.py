@@ -8,7 +8,7 @@ from app.infrastructure.db.model_base import AstraOrmRecordBase
 
 BACKEND_ROOT = Path(__file__).parents[1]
 BASELINE_REVISION = "0001_current_baseline"
-HEAD_REVISION = "0008_dynamic_tool_provider_settings"
+HEAD_REVISION = "0009_remove_legacy_tool_settings"
 
 
 def _alembic(database_path: Path, *arguments: str) -> subprocess.CompletedProcess[str]:
@@ -71,6 +71,37 @@ def test_obsolete_revision_has_no_upgrade_path(tmp_path: Path):
 
     assert upgraded.returncode != 0
     assert "reset the database" in upgraded.stderr
+
+
+def test_legacy_chart_tool_state_is_migrated_to_canonical_identity(tmp_path: Path):
+    database_path = tmp_path / "legacy-tool-state.db"
+    upgraded = _alembic(database_path, "upgrade", "0008_dynamic_tool_provider_settings")
+    assert upgraded.returncode == 0, upgraded.stderr
+
+    connection = sqlite3.connect(database_path)
+    try:
+        connection.execute(
+            """
+            INSERT INTO tool_settings (tool_name, enabled, created_at, updated_at)
+            VALUES ('chart_render', 0, '2026-08-01 00:00:00', '2026-08-01 00:00:00')
+            """
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+    migrated = _alembic(database_path, "upgrade", "head")
+    assert migrated.returncode == 0, migrated.stderr
+
+    connection = sqlite3.connect(database_path)
+    try:
+        rows = connection.execute(
+            "SELECT tool_name, enabled FROM tool_settings ORDER BY tool_name"
+        ).fetchall()
+    finally:
+        connection.close()
+
+    assert rows == [("chart.render", 0)]
 
 
 def test_subagent_migration_backfills_root_execution_and_lineage(tmp_path: Path):

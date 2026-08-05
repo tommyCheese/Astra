@@ -19,7 +19,7 @@ from app.application.agent_runtime.policies.reasoning import (
     resolve_run_profile,
     validate_contract,
 )
-from app.application.agent_runtime.result_adapters import WebTaskAdapter
+from app.infrastructure.plugins.builtin_components import WebEvidenceValidator
 from app.common.schemas.agent.execution_state import (
     AgentObservation,
     AgentState,
@@ -342,37 +342,34 @@ def test_non_actionable_reflection_is_rejected():
         apply_reflection_patch(state, ReflectionPatch(level="local"), expected_version=1)
 
 
-def test_web_adapter_completion_variants():
-    adapter = WebTaskAdapter()
+def test_web_plugin_validator_completion_variants():
+    validator = WebEvidenceValidator()
     result = {"sources": [{"url": "https://example.com"}]}
     assert (
-        adapter.validate(
+        validator.validate(
             result,
             {
-                "fetched_sources": [{"url": "https://example.com", "quality_score": 0.9}],
-                "failed_sources": [],
-                "warnings": [],
+                "fragments": [
+                    {
+                        "domain": "web",
+                        "kind": "fetch",
+                        "source": {"url": "https://example.com", "quality_score": 0.9},
+                    }
+                ]
             },
         ).passed
         is True
     )
-    warning = adapter.validate(
-        result,
-        {
-            "fetched_sources": [{"url": "https://example.com", "quality_score": 0.2}],
-            "failed_sources": [],
-            "warnings": ["low quality"],
-        },
-    )
-    assert warning.passed is True
-    assert warning.warnings == ["low quality"]
-    assert any(issue.severity == "warning" for issue in warning.issues)
-    blocked = adapter.validate(
+    blocked = validator.validate(
         {"sources": []},
         {
-            "fetched_sources": [],
-            "failed_sources": [{"url": "https://bad.example"}],
-            "warnings": [],
+            "fragments": [
+                {
+                    "domain": "web",
+                    "kind": "failure",
+                    "source": {"url": "https://bad.example"},
+                }
+            ]
         },
     )
     assert blocked.passed is False

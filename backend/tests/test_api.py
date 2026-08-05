@@ -47,7 +47,7 @@ async def app_client(monkeypatch, tmp_path):
 
     monkeypatch.setattr(
         plan_revision_module,
-        "build_tool_registry",
+        "build_application_tool_registry",
         lambda settings: fake_web_registry(),
     )
     settings = AstraRuntimeSettings(
@@ -1315,17 +1315,19 @@ async def test_tool_settings_can_be_read_and_updated(app_client):
     assert initial_swarm["available"] is True
     assert initial_swarm["unavailable_reason"] is None
 
-    updated = await app_client.put(
-        "/api/tools",
-        json={
-            "web_search": False,
-            "web_fetch": True,
-            "chart_render": False,
-            "bash_execute": True,
-            "swarm": False,
-        },
-    )
-    assert updated.status_code == 200
+    updated = None
+    for name, enabled in {
+        "web_search": False,
+        "web_fetch": True,
+        "chart.render": False,
+        "bash_execute": True,
+        "swarm": False,
+    }.items():
+        updated = await app_client.put(
+            f"/api/tools/{name}/state", json={"enabled": enabled}
+        )
+        assert updated.status_code == 200
+    assert updated is not None
     states = {tool["name"]: tool["enabled"] for tool in updated.json()["tools"]}
     assert states == {
         "web_search": False,
@@ -1334,7 +1336,8 @@ async def test_tool_settings_can_be_read_and_updated(app_client):
         "bash_execute": True,
         "swarm": False,
     }
-    assert updated.headers["deprecation"] == "true"
+    removed_legacy = await app_client.put("/api/tools", json={"swarm": True})
+    assert removed_legacy.status_code == 405
     reloaded = await app_client.get("/api/tools")
     persisted = {tool["name"]: tool["enabled"] for tool in reloaded.json()["tools"]}
     assert persisted == states
@@ -1421,14 +1424,7 @@ async def test_disabling_swarm_hides_command_and_freezes_subagents_off(app_clien
     assert enabled_command["available"] is True
 
     updated = await app_client.put(
-        "/api/tools",
-        json={
-            "web_search": True,
-            "web_fetch": True,
-            "chart_render": True,
-            "bash_execute": False,
-            "swarm": False,
-        },
+        "/api/tools/swarm/state", json={"enabled": False}
     )
     swarm = next(item for item in updated.json()["tools"] if item["name"] == "swarm")
     assert swarm["enabled"] is False
@@ -1459,7 +1455,9 @@ async def test_disabling_swarm_hides_command_and_freezes_subagents_off(app_clien
     snapshot = (await app_client.get(f"/api/runs/{ordinary.json()['run_id']}")).json()
     assert snapshot["reasoning_policy"]["effective"]["subagents"]["enabled"] is False
 
-    reenabled = await app_client.put("/api/tools", json={"swarm": True})
+    reenabled = await app_client.put(
+        "/api/tools/swarm/state", json={"enabled": True}
+    )
     assert reenabled.status_code == 200
     reenabled_catalog = await app_client.get("/api/system-commands")
     reenabled_command = next(
@@ -1574,16 +1572,18 @@ async def test_new_run_uses_persisted_tool_settings(app_client, monkeypatch):
         captured.append(settings)
 
     monkeypatch.setattr(app_client._astra_run_dispatcher, "_run_starter", capture_runner)
-    await app_client.put(
-        "/api/tools",
-        json={"web_search": False, "web_fetch": True, "chart_render": False},
-    )
+    for name, enabled in {
+        "web_search": False,
+        "web_fetch": True,
+        "chart.render": False,
+    }.items():
+        await app_client.put(f"/api/tools/{name}/state", json={"enabled": enabled})
     created = await app_client.post("/api/runs", json={"goal": "使用持久化工具设置"})
     assert created.status_code == 200
     await asyncio.sleep(0)
-    assert captured[0].tool_web_search_enabled is False
-    assert captured[0].tool_web_fetch_enabled is True
-    assert captured[0].tool_chart_render_enabled is False
+    assert captured[0].tool_states["web_search"] is False
+    assert captured[0].tool_states["web_fetch"] is True
+    assert captured[0].tool_states["chart.render"] is False
 
 
 async def test_runtime_build_uses_stable_validation_error_contract(app_client):
@@ -2220,8 +2220,7 @@ async def test_required_subagent_run_can_use_the_standard_no_dag_profile(app_cli
 
 async def test_required_subagent_run_fails_closed_when_swarm_is_disabled(app_client):
     updated = await app_client.put(
-        "/api/tools",
-        json={"swarm": False},
+        "/api/tools/swarm/state", json={"enabled": False}
     )
     assert updated.status_code == 200
 

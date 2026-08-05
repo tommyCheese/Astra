@@ -54,7 +54,7 @@ Settings are conservative by default and frozen in each Run policy snapshot.
 
 | Setting family | Purpose |
 | --- | --- |
-| `tool_swarm_enabled` | Persisted user-facing product enablement switch |
+| dynamic `swarm` Tool state | Persisted user-facing product enablement switch |
 | `agent_subagent_kill_switch` | Server-side emergency stop |
 | `agent_subagent_rollout_cohort` | Shadow, administrator canary, trusted read-only, or later cohort |
 | child/parent/depth/parallel settings | Fan-out and recursion bounds |

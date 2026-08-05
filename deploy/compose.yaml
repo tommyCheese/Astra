@@ -28,7 +28,6 @@ services:
       RUNTIME_PROFILE_PATH: ${ASTRA_DATA_DIR}/runtime-profile.json
       SANDBOX_RUNTIME_IMAGE: ${ASTRA_REGISTRY:-ghcr.io/tommycheese}/${ASTRA_DATA_VIZ_IMAGE:-astra-data-viz}:${ASTRA_VERSION:-latest}
       SANDBOX_WEB_RUNTIME_IMAGE: ${ASTRA_REGISTRY:-ghcr.io/tommycheese}/${ASTRA_WEB_TOOLS_IMAGE:-astra-web-tools}:${ASTRA_VERSION:-latest}
-      TOOL_BASH_EXECUTE_ENABLED: ${TOOL_BASH_EXECUTE_ENABLED:-false}
       PERMISSION_BUNDLE_SIGNING_SECRET: ${PERMISSION_BUNDLE_SIGNING_SECRET:-}
     volumes:
       - type: bind

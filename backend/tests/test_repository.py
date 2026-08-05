@@ -18,11 +18,11 @@ from app.infrastructure.repositories.usage import UsageRepository
 
 async def test_tool_settings_are_created_and_persisted(session):
     repo = ToolSettingsRepository(session)
-    defaults = {"web_search": True, "web_fetch": True, "chart_render": False}
+    defaults = {"web_search": True, "web_fetch": True, "chart.render": False}
     assert await repo.get_or_create(defaults) == defaults
     await session.commit()
 
-    updated = {"web_search": False, "web_fetch": True, "chart_render": True}
+    updated = {"web_search": False, "web_fetch": True, "chart.render": True}
     assert await repo.set_all(updated, defaults) == updated
     await session.commit()
 
@@ -31,7 +31,7 @@ async def test_tool_settings_are_created_and_persisted(session):
 
 async def test_tool_settings_cache_publishes_only_after_commit(session):
     repo = ToolSettingsRepository(session)
-    defaults = {"web_search": True, "web_fetch": True, "chart_render": False}
+    defaults = {"web_search": True, "web_fetch": True, "chart.render": False}
     assert await repo.get_or_create(defaults) == defaults
     await session.commit()
 
@@ -42,7 +42,7 @@ async def test_tool_settings_cache_publishes_only_after_commit(session):
 
 
 async def test_committed_tool_settings_cache_avoids_database_reads(session):
-    defaults = {"web_search": True, "web_fetch": True, "chart_render": False}
+    defaults = {"web_search": True, "web_fetch": True, "chart.render": False}
     assert await ToolSettingsRepository(session).get_or_create(defaults) == defaults
     await session.commit()
     statements: list[str] = []

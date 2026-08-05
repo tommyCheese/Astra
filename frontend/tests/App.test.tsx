@@ -59,7 +59,6 @@ vi.mock('../src/api', () => ({
     { provider_id: 'astra.shell', label: 'Shell', version: '1', enabled: true, state: 'enabled', health: 'healthy', available: true, configuration_schema: {}, configuration: {}, configuration_revision: '1' },
     { provider_id: 'astra.web', label: 'Web', version: '1', enabled: true, state: 'enabled', health: 'healthy', available: true, configuration_schema: {}, configuration: {}, configuration_revision: '1' },
   ] })),
-  updateToolSettings: vi.fn(async (tools) => ({ tools })),
   updateToolState: vi.fn(async (name, enabled) => ({ tools: [
     { name: 'web_search', provider_id: 'astra.web', label: 'Web Search', description: '搜索公开网页并生成候选来源', enabled: name === 'web_search' ? enabled : true, available: true },
     { name: 'web_fetch', provider_id: 'astra.web', label: 'Web Fetch', description: '自适应提取页面主要内容', enabled: true, available: true },

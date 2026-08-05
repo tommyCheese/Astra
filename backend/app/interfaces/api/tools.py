@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -14,8 +14,6 @@ from app.infrastructure.plugins.contracts import PluginLifecycleState
 from app.infrastructure.repositories.tool_settings import (
     ToolProviderSettingsRepository,
     ToolSettingsRepository,
-    default_tool_states,
-    persisted_tool_name,
 )
 from app.infrastructure.tools.base import AstraToolSpec, validate_json_schema
 from app.infrastructure.tools.registry import build_plugin_inventory, sandbox_available
@@ -58,16 +56,6 @@ class ToolSettingsResponse(BaseModel):
     providers: list[ToolProviderView]
 
 
-class ToolSettingsUpdate(BaseModel):
-    """One-version adapter for the former fixed-field settings payload."""
-
-    web_search: bool | None = None
-    web_fetch: bool | None = None
-    chart_render: bool | None = None
-    bash_execute: bool | None = None
-    swarm: bool | None = None
-
-
 class EnabledUpdate(BaseModel):
     enabled: bool
 
@@ -85,11 +73,7 @@ def _provider_defaults(settings: AstraRuntimeSettings) -> dict[str, bool]:
 
 
 def _tool_defaults(settings: AstraRuntimeSettings, specs: dict[str, AstraToolSpec]) -> dict[str, bool]:
-    legacy = default_tool_states(settings)
-    return {
-        persisted_tool_name(name): legacy.get(persisted_tool_name(name), True)
-        for name in specs
-    }
+    return {name: spec.enabled_by_default for name, spec in specs.items()}
 
 
 def _safe_configuration(configuration: dict[str, Any], schema: dict[str, Any]) -> dict[str, Any]:
@@ -221,7 +205,7 @@ async def _catalog_view(
                 version=spec.version,
                 label=_label(name),
                 description=spec.description,
-                enabled=bool(tool_states[persisted_tool_name(name)]),
+                enabled=bool(tool_states[name]),
                 available=available,
                 health="healthy" if available else "unavailable",
                 input_schema=spec.input_schema,
@@ -271,9 +255,9 @@ async def update_tool_state(
         },
     )
     await ToolSettingsRepository(session).set_tool(
-        persisted_tool_name(tool_name),
+        tool_name,
         update.enabled,
-        default=defaults[persisted_tool_name(tool_name)],
+        default=defaults[tool_name],
     )
     result = await _catalog_view(settings, session)
     await session.commit()
@@ -325,25 +309,6 @@ async def update_provider_configuration(
     await ToolProviderSettingsRepository(session).set_configuration(
         provider_id,
         configuration,
-    )
-    result = await _catalog_view(settings, session)
-    await session.commit()
-    return result
-
-
-@router.put("", response_model=ToolSettingsResponse, deprecated=True)
-async def update_tool_settings(
-    update: ToolSettingsUpdate,
-    response: Response,
-    settings: AstraRuntimeSettings = Depends(get_settings),
-    session: AsyncSession = Depends(get_session),
-) -> ToolSettingsResponse:
-    response.headers["Deprecation"] = "true"
-    response.headers["Sunset"] = "Thu, 06 Aug 2027 00:00:00 GMT"
-    response.headers["Link"] = '</api/tools/{tool_name}/state>; rel="successor-version"'
-    repository = ToolSettingsRepository(session)
-    await repository.set_all(
-        update.model_dump(exclude_none=True), default_tool_states(settings)
     )
     result = await _catalog_view(settings, session)
     await session.commit()

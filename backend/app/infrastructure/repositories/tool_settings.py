@@ -6,11 +6,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 
 from app.common.core.config import AstraRuntimeSettings
-from app.infrastructure.plugins.builtin_settings_compat import (
-    apply_tool_states,
-    default_tool_states,
-    persisted_tool_name,
-)
 from app.infrastructure.db.model_base import utc_now
 from app.infrastructure.db.models.conversations import (
     ToolProviderSettingRecord,
@@ -62,8 +57,26 @@ def apply_provider_states(
         deep=True,
     )
     if not states.get("astra.builtin", True):
-        result.tool_swarm_enabled = False
+        result.tool_states = {**result.tool_states, "swarm": False}
     return result
+
+
+def default_tool_states(settings: AstraRuntimeSettings) -> dict[str, bool]:
+    from app.infrastructure.tools.registry import build_plugin_inventory
+    from app.infrastructure.tools.runtime import build_runtime_tool_registry
+
+    specs = {
+        **{name: tool.spec for name, tool in build_plugin_inventory(settings).tools.items()},
+        **build_runtime_tool_registry().specs(),
+    }
+    return {name: spec.enabled_by_default for name, spec in specs.items()}
+
+
+def apply_tool_states(
+    settings: AstraRuntimeSettings,
+    states: dict[str, bool],
+) -> AstraRuntimeSettings:
+    return settings.model_copy(update={"tool_states": dict(states)}, deep=True)
 
 
 class ToolSettingsRepository:

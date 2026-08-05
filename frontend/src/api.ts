@@ -605,17 +605,6 @@ export async function getToolSettings(signal?: AbortSignal): Promise<ToolSetting
   return response.json();
 }
 
-export async function updateToolSettings(tools: ToolSetting[]): Promise<ToolSettings> {
-  const enabled = Object.fromEntries(tools.map((tool) => [tool.name, tool.enabled]));
-  const response = await fetch('/api/tools', {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(enabled),
-  });
-  if (!response.ok) throw await responseError(response);
-  return response.json();
-}
-
 export async function updateToolState(name: string, enabled: boolean): Promise<ToolSettings> {
   const response = await fetch(`/api/tools/${encodeURIComponent(name)}/state`, {
     method: 'PUT',

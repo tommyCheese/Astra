@@ -10,6 +10,7 @@ from app.infrastructure.tools.base import (
     AstraTool,
     AstraToolSpec,
     ToolExecutionError,
+    ToolResultEnvelope,
     materialize_skill_inputs,
 )
 
@@ -120,7 +121,12 @@ class SandboxedWebTool(AstraTool):
         finally:
             shutil.rmtree(root, ignore_errors=True)
 
-        return _parse_sandbox_response(result.stdout)
+        output = _parse_sandbox_response(result.stdout)
+        return ToolResultEnvelope(
+            data=output,
+            warnings=list(output.get("warnings", [])),
+            artifacts=list(output.get("artifacts", [])),
+        ).model_dump(mode="json", exclude_none=True)
 
 
 def _parse_sandbox_response(stdout: str) -> dict[str, Any]:

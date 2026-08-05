@@ -14,7 +14,6 @@ from app.infrastructure.plugins.interfaces import (
     PluginResultProcessingOutput,
     PluginResultProcessor,
     PluginResultValidator,
-    PluginResultAdapter,
 )
 from app.infrastructure.tools.base import AstraToolSpec
 
@@ -22,32 +21,6 @@ _SECRET_VALUE = re.compile(
     r"(?i)\b(api[_-]?key|token|authorization|password)\s*[:=]\s*(?:bearer\s+)?\S+"
 )
 _SHELL_META = re.compile(r"(?:&&|\|\||[|;&<>`]|\$\(|\$\{|\n|\r)")
-
-
-class LegacyRawResultAdapter(PluginResultAdapter):
-    """Compatibility boundary for built-in tools that still return their legacy payload."""
-
-    def adapt(self, result: dict[str, Any]) -> dict[str, Any]:
-        return {
-            "protocol_version": "1",
-            "status": "succeeded",
-            "data": result,
-            "warnings": list(result.get("warnings", [])),
-            "metrics": {},
-            "artifacts": list(result.get("artifacts", [])),
-        }
-
-
-class LegacyAutoResultAdapter(PluginResultAdapter):
-    """Accept an existing envelope or wrap a legacy direct-registry payload."""
-
-    def adapt(self, result: dict[str, Any]) -> dict[str, Any]:
-        if result.get("protocol_version") == "1" and result.get("status") in {
-            "succeeded",
-            "failed",
-        }:
-            return result
-        return LegacyRawResultAdapter().adapt(result)
 
 
 class WebResultProcessor(PluginResultProcessor):

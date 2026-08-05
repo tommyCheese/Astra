@@ -32,6 +32,7 @@ from app.infrastructure.tools.base import (
     AstraTool,
     AstraToolRegistry,
     AstraToolSpec,
+    ToolResultEnvelope,
 )
 
 
@@ -47,13 +48,15 @@ class FakeWeather(AstraTool):
     )
 
     async def run(self, tool_input, *, context=None):
-        return {
-            "location": tool_input["location"],
-            "date": tool_input["date"],
-            "temperature": {"min": 27, "max": 34},
-            "condition": "阵雨",
-            "precipitation_probability": 70,
-        }
+        return ToolResultEnvelope(
+            data={
+                "location": tool_input["location"],
+                "date": tool_input["date"],
+                "temperature": {"min": 27, "max": 34},
+                "condition": "阵雨",
+                "precipitation_probability": 70,
+            }
+        ).model_dump(mode="json")
 
 
 async def test_cancelled_answer_flush_reuses_active_repository_session():
@@ -854,7 +857,7 @@ async def test_standard_fast_path_skips_plan_state_and_all_quality_gates(session
 
 
 async def test_standard_ask_user_uses_a_user_facing_fallback_question(session):
-    settings = AstraRuntimeSettings(model_provider="mock", tool_swarm_enabled=False)
+    settings = AstraRuntimeSettings(model_provider="mock", tool_states={"swarm": False})
     profile = resolve_run_profile(
         AnswerMode.standard, RequestedReasoningPolicy(execution_mode="auto_approval")
     )

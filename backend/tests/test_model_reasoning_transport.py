@@ -552,7 +552,7 @@ async def test_server_reuses_tool_registry_across_model_overrides(monkeypatch):
         builds += 1
         return AstraToolRegistry()
 
-    monkeypatch.setattr("app.application.runner.engine.build_tool_registry", build_registry)
+    monkeypatch.setattr("app.application.runner.engine.build_application_tool_registry", build_registry)
     settings = AstraRuntimeSettings(
         model_provider="openai",
         model_name="first-model",
@@ -567,7 +567,7 @@ async def test_server_reuses_tool_registry_across_model_overrides(monkeypatch):
         )
     )
     changed_tools = shared_tool_registry(
-        settings.model_copy(update={"tool_bash_execute_enabled": True})
+        settings.model_copy(update={"tool_states": {"bash_execute": True}})
     )
 
     assert first is second

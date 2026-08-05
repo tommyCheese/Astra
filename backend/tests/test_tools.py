@@ -14,6 +14,7 @@ from app.infrastructure.tools.base import (
     ToolResultEnvelope,
 )
 from app.infrastructure.tools.web import build_web_registry
+from app.infrastructure.tools.registry import build_application_tool_registry
 from app.infrastructure.tools.web.content import extract_source
 from app.infrastructure.tools.web.fetching import WebFetchTool
 from app.infrastructure.tools.web.providers import (
@@ -509,9 +510,12 @@ def test_web_tool_manifest_contains_operational_fields():
     assert specs["web_search"].permissions == ["network_read"]
 
 
-def test_web_tool_switches_control_registration():
-    registry = build_web_registry(
-        AstraRuntimeSettings(tool_web_search_enabled=False, tool_web_fetch_enabled=True)
+def test_dynamic_tool_states_control_provider_registration():
+    registry = build_application_tool_registry(
+        AstraRuntimeSettings(
+            tool_states={"web_search": False, "web_fetch": True},
+            sandbox_skip_availability_check=True,
+        )
     )
 
     assert "web_search" not in registry.specs()

@@ -135,7 +135,7 @@ class RunCreator:
         if request.subagent_mode == "required":
             eligibility = subagent_execution_eligibility(
                 execution_profile.reasoning_policy.effective.subagents,
-                live_swarm_enabled=bool(run_settings.tool_swarm_enabled),
+                live_swarm_enabled=run_settings.tool_enabled("swarm"),
             )
             if not eligibility.executable:
                 raise AstraInputValidationError(
@@ -263,17 +263,12 @@ class RunCreator:
 
     @staticmethod
     def _configured_skill_capabilities(settings: AstraRuntimeSettings) -> set[str]:
-        return {
-            capability
-            for capability, is_enabled in {
-                "web_search": settings.tool_web_search_enabled,
-                "web_fetch": settings.tool_web_fetch_enabled,
-                "chart_render": settings.tool_chart_render_enabled,
-                "bash_execute": settings.tool_bash_execute_enabled,
-                "sandbox": settings.sandbox_enabled,
-            }.items()
-            if is_enabled
+        capabilities = {
+            name for name, enabled in settings.tool_states.items() if enabled
         }
+        if settings.sandbox_enabled:
+            capabilities.add("sandbox")
+        return capabilities
 
     @staticmethod
     def _response_for_run(run: RunRecord) -> CreateRunResponse:

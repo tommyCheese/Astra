@@ -13,8 +13,6 @@ def build_web_registry(settings: "AstraRuntimeSettings"):
     from app.infrastructure.tools.base import AstraToolRegistry
 
     registry = AstraToolRegistry()
-    if settings.tool_web_search_enabled:
-        registry.register(WebSearchTool(settings))
-    if settings.tool_web_fetch_enabled:
-        registry.register(WebFetchTool(settings))
+    registry.register(WebSearchTool(settings))
+    registry.register(WebFetchTool(settings))
     return registry

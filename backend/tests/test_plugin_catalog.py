@@ -241,7 +241,10 @@ async def test_isolated_descriptor_cannot_smuggle_in_process_code():
 
 def test_builtin_providers_contribute_domain_components_without_agent_loop_wiring():
     contributions = builtin_contributions(
-        AstraRuntimeSettings(sandbox_skip_availability_check=True, tool_bash_execute_enabled=True)
+        AstraRuntimeSettings(
+            sandbox_skip_availability_check=True,
+            tool_states={"bash_execute": True},
+        )
     )
     by_provider = {item.descriptor.provider_id: item for item in contributions}
 

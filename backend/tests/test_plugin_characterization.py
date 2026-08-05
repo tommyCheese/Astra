@@ -1,12 +1,12 @@
 from fake_web_tools import fake_web_registry
 
 from app.application.agent_runtime.policies.reasoning import AgentReasoningPolicyCompiler
-from app.application.agent_runtime.services.approval import safe_preview, similar_matcher
 from app.application.agent_runtime.services.loop import AstraAgentLoop
 from app.application.permissions.effects import BashEffectAnalyzer
 from app.common.core.config import AstraRuntimeSettings
 from app.common.schemas.agent.run_policy import RequestedReasoningPolicy
 from app.infrastructure.model_clients.mock import MockModelClient
+from app.infrastructure.plugins.builtin_components import BashApprovalPresenter
 from app.infrastructure.repositories.run_unit_of_work import RunUnitOfWork
 from app.infrastructure.tools.bash import BashExecuteTool
 
@@ -32,8 +32,8 @@ async def test_web_runtime_characterization_freezes_calls_events_observations_an
     assert output["status"] == "completed"
     assert [call.tool_name for call in loaded.tool_calls] == ["web_search", "web_fetch"]
     assert all(call.status == "succeeded" for call in loaded.tool_calls)
-    assert loaded.tool_calls[0].output["candidate_count"] == 1
-    assert loaded.tool_calls[1].output["content"] == "Deterministic test evidence"
+    assert loaded.tool_calls[0].output["data"]["candidate_count"] == 1
+    assert loaded.tool_calls[1].output["data"]["content"] == "Deterministic test evidence"
     assert [turn.observation["data"]["tool_name"] for turn in loaded.turns[:2]] == [
         "web_search",
         "web_fetch",
@@ -50,12 +50,13 @@ def test_bash_characterization_freezes_effect_approval_preview_and_matcher():
     tool_input = {"command": "touch report.txt"}
 
     effect = BashEffectAnalyzer().analyze(BashExecuteTool.spec, tool_input, task_id="task-1")
+    presenter = BashApprovalPresenter()
 
     assert effect.approval_required is True
     assert effect.summary == "创建或修改任务工作区文件"
     assert {item.kind.value for item in effect.effects} == {"workspace_write"}
-    assert safe_preview("bash_execute", tool_input) == "touch report.txt"
-    assert similar_matcher("bash_execute", tool_input) == {
+    assert presenter.safe_preview(BashExecuteTool.spec, tool_input) == "touch report.txt"
+    assert presenter.similar_matcher(BashExecuteTool.spec, tool_input) == {
         "kind": "command_prefix",
         "tokens": ["touch"],
     }
@@ -65,7 +66,8 @@ def test_bash_characterization_keeps_complex_command_matchers_fail_closed():
     tool_input = {"command": "pytest && rm report.txt"}
 
     effect = BashEffectAnalyzer().analyze(BashExecuteTool.spec, tool_input, task_id="task-1")
+    presenter = BashApprovalPresenter()
 
     assert effect.approval_required is True
     assert {item.kind.value for item in effect.effects} == {"process_execute_unknown"}
-    assert similar_matcher("bash_execute", tool_input) is None
+    assert presenter.similar_matcher(BashExecuteTool.spec, tool_input) is None

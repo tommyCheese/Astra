@@ -107,12 +107,6 @@ class PluginRuntimeState:
     @classmethod
     def from_registry(cls, registry) -> "PluginRuntimeState":
         catalog = getattr(registry, "plugin_catalog", None)
-        if catalog is None:
-            from app.infrastructure.plugins.builtin_compat import (
-                build_legacy_compatibility_catalog,
-            )
-
-            catalog = build_legacy_compatibility_catalog(registry)
         return cls(catalog)
 
     def effect_analyzer(self, spec: AstraToolSpec) -> ToolEffectAnalyzer:
@@ -181,9 +175,6 @@ class PluginRuntimeState:
         spec: AstraToolSpec,
         result: dict[str, Any],
     ) -> dict[str, Any]:
-        binding = self.catalog.tool_bindings.get(spec.name) if self.catalog else None
-        if binding is not None and binding.result_adapter_id == "legacy.raw.v0":
-            return dict(result.get("data") or {})
         return result
 
     def process(

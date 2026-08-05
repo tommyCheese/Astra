@@ -31,14 +31,6 @@
       "lines": 37,
       "complexity": 11
     },
-    "app.application.agent_runtime.result_adapters:WebTaskAdapter.process": {
-      "lines": 38,
-      "complexity": 11
-    },
-    "app.application.agent_runtime.result_adapters:WebTaskAdapter.validate": {
-      "lines": 64,
-      "complexity": 15
-    },
     "app.application.agent_runtime.services.context:AgentContextAssembler.assemble": {
       "lines": 79,
       "complexity": 4
@@ -496,7 +488,6 @@
     "app.application.agent_runtime.policies.reasoning:AgentObservationEvaluator",
     "app.application.agent_runtime.policies.reasoning:AgentReasoningPolicyCompiler",
     "app.application.agent_runtime.policies.reasoning:AgentReflectionGate",
-    "app.application.agent_runtime.result_adapters:AgentToolResultProcessorRegistry",
     "app.application.agent_runtime.services.action_resolution:ActionResolutionStage",
     "app.application.agent_runtime.services.approval:ApprovalRoutingStage",
     "app.application.agent_runtime.services.authorization:PermissionAuthorizationStage",

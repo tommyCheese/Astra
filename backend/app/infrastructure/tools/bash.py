@@ -82,6 +82,7 @@ class BashExecuteTool(AstraTool):
         retry_policy={"max_attempts": 1},
         error_categories=["invalid_input", "sandbox_unavailable", "sandbox_timeout"],
         idempotent=False,
+        enabled_by_default=False,
         resource_profile={"runtime": "oci", "network": "none", "workspace": "read_write"},
     )
 

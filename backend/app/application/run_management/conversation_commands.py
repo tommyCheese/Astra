@@ -79,13 +79,13 @@ def list_system_commands(settings: AstraRuntimeSettings | None = None) -> list[d
     commands = list(SYSTEM_COMMANDS)
     enabled = bool(
         settings
-        and settings.tool_swarm_enabled
+        and settings.tool_enabled("swarm")
         and not settings.agent_subagent_kill_switch
         and settings.agent_subagent_rollout_cohort in EXECUTABLE_SUBAGENT_COHORTS
     )
     if settings is None:
         subagent_unavailable_reason = "无法读取 Swarm / 子 Agent 工具状态。"
-    elif not settings.tool_swarm_enabled:
+    elif not settings.tool_enabled("swarm"):
         subagent_unavailable_reason = "Swarm / 子 Agent 工具已由用户关闭。"
     elif settings.agent_subagent_kill_switch:
         subagent_unavailable_reason = "子 Agent 已被紧急停止开关禁用。"

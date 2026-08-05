@@ -11,7 +11,7 @@
 | `app/runner/engine.py` | profile routing、planning、recovery、coordinator、terminal errors | agent-runtime | `app/agent_runtime/application.py`、`routing.py` | standard/trusted/resume 契约等价且旧 engine 职责迁空 |
 | `app/runner/node_worker.py` | node claim、上下文、模型、tool selection、result | planning/agent-runtime | `app/planning/node_worker.py` + shared execution ports | node worker 使用共享阶段 contract 且函数低于硬限制 |
 | `app/runner/planning.py` | plan validation、patch、ready-node scheduling | planning | `app/planning/service.py`、`scheduler.py`、`revision.py` | 已完成：计划能力迁出 runner；简单错误类型并入 service，消费者使用真实所有者 |
-| `app/runner/reasoning.py` 等策略模块 | Agent 推理、完成、审批、循环与结果适配规则 | agent-runtime | `app/agent_runtime/policies/*`、`services/approval.py`、`result_adapters.py` | 已完成：纯决策与有副作用阶段分离，runner 只保留执行协调 |
+| `app/runner/reasoning.py` 等策略模块 | Agent 推理、完成、审批、循环与结果处理规则 | agent-runtime + plugins | `app/agent_runtime/policies/*`、`services/approval.py`、`services/plugin_runtime.py` | 已完成：结果处理由插件贡献点驱动，旧 adapter 已删除 |
 | `app/runner/model_reasoning.py` | provider thinking 能力与请求配置 | model-clients | `app/model_clients/reasoning.py` | 已完成：模型 provider 能力不再由 runner 拥有 |
 | `app/subagents/executor.py` | child loop、permission、tool runtime、completion | subagents + shared execution contracts | `app/subagents/*`、`app/execution/contracts.py` | 已完成：共享契约由 execution 拥有，subagent 无 facade 转发层 |
 | `app/repositories/runs.py` | Run、waiting、revision、step、tool、approval、artifact、event、projection | run-management + owning capabilities | `run_core_store.py`、`run_step_turn_store.py`、`run_unit_of_work.py`、`run_view_projection.py` | 已完成：Event 并入 Run core，ToolCall 并入 step/turn activity；旧 Repository、转发 store 与 projection facade 已删除 |

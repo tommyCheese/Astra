@@ -674,15 +674,12 @@ async def create_skill_test_run(
             explicit_identities=[],
             revision_overrides=[test_revision],
             runtime_capabilities={
-                name
-                for name, enabled in {
-                    "web_search": settings.tool_web_search_enabled,
-                    "web_fetch": settings.tool_web_fetch_enabled,
-                    "chart_render": settings.tool_chart_render_enabled,
-                    "bash_execute": settings.tool_bash_execute_enabled,
-                    "sandbox": settings.sandbox_enabled,
-                }.items()
-                if enabled
+                *(
+                    name
+                    for name, enabled in settings.tool_states.items()
+                    if enabled
+                ),
+                *({"sandbox"} if settings.sandbox_enabled else set()),
             },
         )
         await catalog_builder.freeze(

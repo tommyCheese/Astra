@@ -83,13 +83,9 @@ MODEL_API_KEY=<your-api-key>
 MODEL_BASE_URL=https://api.openai.com/v1
 ```
 
-各项工具能力可独立配置：
-
-```dotenv
-TOOL_WEB_SEARCH_ENABLED=true
-TOOL_WEB_FETCH_ENABLED=true
-TOOL_CHART_RENDER_ENABLED=true
-```
+工具能力通过“设置 → 工具”动态配置，也可以使用按 identity 定位的
+`/api/tools/{tool_name}/state` 与 `/api/tool-providers/{provider_id}/state` 接口。
+固定的 `TOOL_<NAME>_ENABLED` 环境变量已不再支持。
 
 图表执行默认关闭；显式启用后通过 Docker 运行，而不会在 API 进程内执行任意代码。将 Astra 暴露到受信任本机之外前，请先审查 Runtime 的安全边界。
 

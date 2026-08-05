@@ -39,21 +39,9 @@ def input_hash(tool_input: dict[str, Any]) -> str:
     return hashlib.sha256(canonical_input(tool_input).encode()).hexdigest()
 
 
-def safe_preview(tool_name: str, tool_input: dict[str, Any], limit: int = 1000) -> str:
-    from app.infrastructure.plugins.builtin_compat import legacy_approval_presenter
-
-    presenter = legacy_approval_presenter(tool_name)
-    if presenter is not None:
-        return presenter.safe_preview(None, tool_input)[:limit]
+def _default_safe_preview(tool_input: dict[str, Any], limit: int = 1000) -> str:
     value = canonical_input(tool_input)
     return SECRET_VALUE.sub(r"\1=[REDACTED]", value)[:limit]
-
-
-def similar_matcher(tool_name: str, tool_input: dict[str, Any]) -> dict[str, Any] | None:
-    from app.infrastructure.plugins.builtin_compat import legacy_approval_presenter
-
-    presenter = legacy_approval_presenter(tool_name)
-    return presenter.similar_matcher(None, tool_input) if presenter is not None else None
 
 
 def matcher_matches(matcher: dict[str, Any], tool_input: dict[str, Any]) -> bool:
@@ -234,7 +222,7 @@ class ApprovalRoutingStage:
                 preview=(
                     presenter.safe_preview(tool.spec, stage_input.decision.tool_input)
                     if presenter
-                    else safe_preview(tool.spec.name, stage_input.decision.tool_input)
+                    else _default_safe_preview(stage_input.decision.tool_input)
                 ),
                 permission=", ".join(effect_plan.required_permissions),
                 impact=max(
@@ -247,7 +235,7 @@ class ApprovalRoutingStage:
                     else (
                         presenter.similar_matcher(tool.spec, stage_input.decision.tool_input)
                         if presenter
-                        else similar_matcher(tool.spec.name, stage_input.decision.tool_input)
+                        else None
                     )
                 ),
                 frozen_effect_plan=effect_plan.model_dump(mode="json"),

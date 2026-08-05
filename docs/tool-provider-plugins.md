@@ -22,7 +22,7 @@ Provider 状态依次经过 discovered、verified、loaded、healthy、enabled�
 
 标记为 `x-secret` 的配置字段只接受 `{ "credential_ref": "..." }`，读取接口仅返回是否已配置，不返回引用或 secret。每次状态和配置写入都有审计记录，配置 revision 会进入后续 Run 的目录快照。
 
-旧的固定字段 `PUT /api/tools` 仅保留一个版本周期，并返回 `Deprecation`、`Sunset` 和 successor `Link` 响应头。新客户端不得依赖它。
+旧的固定字段 `PUT /api/tools` 已在兼容窗口结束后删除。客户端必须使用按 identity 定位的 Tool/Provider 状态接口。
 
 ## 发布与回滚
 

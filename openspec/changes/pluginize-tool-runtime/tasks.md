@@ -79,5 +79,5 @@
 - [x] 9.2 Add a rollout flag that restricts the catalog to built-in plugins and a rollback procedure that preserves new snapshots
 - [x] 9.3 Run backend unit, integration, Docker, permission, recovery, API, and frontend suites with external discovery disabled and enabled
 - [x] 9.4 Update the system design and operator documentation with plugin trust boundaries, managed source configuration, lifecycle, and troubleshooting
-- [ ] 9.5 Remove legacy registry builders, static tool toggle fields, compatibility API, and unused adapter code after the announced compatibility window
+- [x] 9.5 Remove legacy registry builders, static tool toggle fields, compatibility API, and unused adapter code after the announced compatibility window
 - [x] 9.6 Verify no core AgentLoop, generic Effect Analyzer, approval, settings, or completion module branches on `web_search`, `web_fetch`, `chart.render`, or `bash_execute`

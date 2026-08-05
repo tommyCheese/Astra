@@ -42,6 +42,7 @@ class AstraToolSpec(BaseModel):
     provider_id: str = "astra.builtin"
     provider_digest: str = "builtin"
     trust_level: str = "platform"
+    enabled_by_default: bool = True
 
     def model_post_init(self, __context: Any) -> None:
         if not self.permissions:

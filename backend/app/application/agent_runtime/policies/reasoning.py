@@ -135,7 +135,7 @@ class AgentReasoningPolicyCompiler:
 
 def compile_subagent_policy(settings: Any) -> EffectiveSubagentPolicy:
     """Freeze deployment settings into a Run-scoped, non-escalating subagent policy."""
-    enabled = bool(settings.tool_swarm_enabled) and not bool(settings.agent_subagent_kill_switch)
+    enabled = settings.tool_enabled("swarm") and not bool(settings.agent_subagent_kill_switch)
     return EffectiveSubagentPolicy(
         enabled=enabled,
         kill_switch=bool(settings.agent_subagent_kill_switch),

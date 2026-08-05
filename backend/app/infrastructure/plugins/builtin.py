@@ -15,7 +15,6 @@ from app.infrastructure.plugins.builtin_components import (
     ChartResultProcessor,
     WebEvidenceValidator,
     WebResultProcessor,
-    LegacyRawResultAdapter,
 )
 from app.infrastructure.plugins.contracts import (
     PluginApplicabilityBinding,
@@ -32,7 +31,11 @@ from app.infrastructure.tools.sandboxed import SandboxedWebTool
 from app.infrastructure.tools.web import build_web_registry
 
 
-def builtin_contributions(settings: AstraRuntimeSettings) -> tuple[PluginContribution, ...]:
+def builtin_contributions(
+    settings: AstraRuntimeSettings,
+    *,
+    include_disabled: bool = False,
+) -> tuple[PluginContribution, ...]:
     contributions = []
     if settings.sandbox_enabled:
         native_web = build_web_registry(settings)
@@ -44,15 +47,17 @@ def builtin_contributions(settings: AstraRuntimeSettings) -> tuple[PluginContrib
             )
             for name in native_web.specs()
         ]
-        web_tools = [tool for tool in web_tools if _tool_enabled(settings, tool.spec.name)]
-        if web_tools and _provider_enabled(settings, "astra.web"):
+        if not include_disabled:
+            web_tools = [tool for tool in web_tools if _tool_enabled(settings, tool.spec.name)]
+        if web_tools and (
+            include_disabled or _provider_enabled(settings, "astra.web")
+        ):
             contributions.append(
                 _provider(
                     "astra.web",
                     web_tools,
                     configuration_schema=_web_configuration_schema(),
                     configuration_revision=_configuration_revision(settings, "astra.web"),
-                    result_adapter=("legacy.raw.v0", LegacyRawResultAdapter),
                     analyzers=[("web.effect", ("web_search", "web_fetch"), WebEffectAnalyzer)],
                     processors=[("web.result", ("web_search", "web_fetch"), WebResultProcessor)],
                     validators=[
@@ -60,9 +65,8 @@ def builtin_contributions(settings: AstraRuntimeSettings) -> tuple[PluginContrib
                     ],
                 )
             )
-        if (
-            settings.tool_chart_render_enabled
-            and _tool_enabled(settings, "chart.render")
+        if include_disabled or (
+            _tool_enabled(settings, "chart.render")
             and _provider_enabled(settings, "astra.chart")
         ):
             contributions.append(
@@ -75,9 +79,8 @@ def builtin_contributions(settings: AstraRuntimeSettings) -> tuple[PluginContrib
                     validators=[("chart.validator", ("chart.render",), ChartArtifactValidator)],
                 )
             )
-        if (
-            settings.tool_bash_execute_enabled
-            and _tool_enabled(settings, "bash_execute")
+        if include_disabled or (
+            _tool_enabled(settings, "bash_execute", default=False)
             and _provider_enabled(settings, "astra.shell")
         ):
             contributions.append(
@@ -97,12 +100,13 @@ def _provider_enabled(settings: AstraRuntimeSettings, provider_id: str) -> bool:
     return settings.tool_provider_states.get(provider_id, True)
 
 
-def _tool_enabled(settings: AstraRuntimeSettings, tool_name: str) -> bool:
-    aliases = {"chart.render": "chart_render"}
-    return settings.tool_states.get(
-        tool_name,
-        settings.tool_states.get(aliases.get(tool_name, tool_name), True),
-    )
+def _tool_enabled(
+    settings: AstraRuntimeSettings,
+    tool_name: str,
+    *,
+    default: bool = True,
+) -> bool:
+    return settings.tool_enabled(tool_name, default=default)
 
 
 def _configuration_revision(settings: AstraRuntimeSettings, provider_id: str) -> str:
@@ -169,7 +173,6 @@ def _provider(
     processors=(),
     validators=(),
     presenters=(),
-    result_adapter: tuple[str, type] | None = None,
     configuration_schema: dict | None = None,
     configuration_revision: str = "default",
 ) -> PluginContribution:
@@ -200,8 +203,6 @@ def _provider(
             PluginToolContribution(
                 tool=tool,
                 executor_id="in_process",
-                result_adapter_id=(result_adapter[0] if result_adapter else "envelope.v1"),
-                result_adapter_factory=(result_adapter[1] if result_adapter else None),
             )
         )
 

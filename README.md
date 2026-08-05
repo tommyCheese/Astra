@@ -83,13 +83,9 @@ MODEL_API_KEY=<your-api-key>
 MODEL_BASE_URL=https://api.openai.com/v1
 ```
 
-Tool availability is configured independently:
-
-```dotenv
-TOOL_WEB_SEARCH_ENABLED=true
-TOOL_WEB_FETCH_ENABLED=true
-TOOL_CHART_RENDER_ENABLED=true
-```
+Tool availability is configured dynamically in Settings → Tools or through the
+identity-based `/api/tools/{tool_name}/state` and `/api/tool-providers/{provider_id}/state`
+APIs. Fixed `TOOL_<NAME>_ENABLED` environment fields are no longer supported.
 
 Chart execution is disabled unless enabled explicitly and runs through Docker rather than inside the API process. Review the runtime security boundary before exposing Astra beyond a trusted local environment.
 

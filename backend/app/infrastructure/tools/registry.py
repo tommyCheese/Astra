@@ -12,7 +12,7 @@ from app.infrastructure.tools.base import AstraToolRegistry
 from app.infrastructure.tools.runtime import build_runtime_tool_registry
 
 
-def build_tool_registry(
+def build_application_tool_registry(
     settings: AstraRuntimeSettings,
     *,
     extra_sources: Iterable[PluginDiscoverySource] = (),
@@ -66,17 +66,16 @@ def build_plugin_inventory(settings: AstraRuntimeSettings) -> PluginCatalog:
         update={
             "sandbox_enabled": True,
             "sandbox_skip_availability_check": True,
-            "tool_web_search_enabled": True,
-            "tool_web_fetch_enabled": True,
-            "tool_chart_render_enabled": True,
-            "tool_bash_execute_enabled": True,
-            "tool_provider_states": {},
         },
         deep=True,
     )
+    contributions = builtin_contributions(inventory_settings, include_disabled=True)
     return PluginCatalogBuilder(
-        [BuiltinDiscoverySource(builtin_contributions(inventory_settings))],
-        allowed_providers=settings.trusted_tool_provider_map,
+        [BuiltinDiscoverySource(contributions)],
+        allowed_providers={
+            contribution.descriptor.provider_id: {contribution.descriptor.digest}
+            for contribution in contributions
+        },
     ).build_static()
 
 

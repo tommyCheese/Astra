@@ -21,11 +21,6 @@ class AstraRuntimeSettings(BaseSettings):
     model_http_read_timeout_seconds: float = Field(default=60.0, gt=0, le=600.0)
     model_http_write_timeout_seconds: float = Field(default=30.0, gt=0, le=600.0)
     model_http_pool_timeout_seconds: float = Field(default=10.0, gt=0, le=120.0)
-    tool_web_search_enabled: bool = True
-    tool_web_fetch_enabled: bool = True
-    tool_chart_render_enabled: bool = True
-    tool_bash_execute_enabled: bool = False
-    tool_swarm_enabled: bool = True
     tool_states: dict[str, bool] = Field(default_factory=dict)
     tool_provider_states: dict[str, bool] = Field(default_factory=dict)
     tool_provider_configurations: dict[str, dict] = Field(default_factory=dict)
@@ -216,6 +211,9 @@ class AstraRuntimeSettings(BaseSettings):
             "model": self.model_name,
             "base_url": self.model_base_url,
         }
+
+    def tool_enabled(self, name: str, *, default: bool = True) -> bool:
+        return self.tool_states.get(name, default)
 
     @property
     def trusted_tool_provider_map(self) -> dict[str, set[str]]:

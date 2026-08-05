@@ -7,7 +7,7 @@ from app.common.core.config import AstraRuntimeSettings
 from app.infrastructure.sandbox.runtime import SandboxResult
 from app.infrastructure.plugins.builtin import _web_runtime_config
 from app.infrastructure.tools.base import ToolExecutionContext, ToolExecutionError
-from app.infrastructure.tools.registry import build_tool_registry
+from app.infrastructure.tools.registry import build_application_tool_registry
 from app.infrastructure.tools.sandboxed import SandboxedWebTool
 from app.infrastructure.tools.web.fetching import WebFetchTool
 
@@ -41,7 +41,7 @@ def context(service):
 
 
 def test_application_registry_exposes_only_container_tools():
-    registry = build_tool_registry(
+    registry = build_application_tool_registry(
         AstraRuntimeSettings(sandbox_enabled=True, sandbox_skip_availability_check=True)
     )
 
@@ -55,7 +55,7 @@ def test_application_registry_exposes_only_container_tools():
 
 
 def test_registry_exposes_no_tools_when_sandbox_is_disabled():
-    registry = build_tool_registry(AstraRuntimeSettings(sandbox_enabled=False))
+    registry = build_application_tool_registry(AstraRuntimeSettings(sandbox_enabled=False))
 
     assert set(registry.specs()) == {"swarm"}
     assert registry.specs()["swarm"].execution_backend == "astra.runtime"
@@ -113,7 +113,7 @@ async def test_web_tool_executes_through_container_protocol_only():
 
     output = await tool.run({"url": "https://example.com"}, context=context(service))
 
-    assert output["content"] == "example"
+    assert output["data"]["content"] == "example"
     assert service.payload == {
         "version": "1",
         "tool": "web_fetch",

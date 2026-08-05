@@ -47,7 +47,7 @@ from app.infrastructure.model_clients.usage_metering import DatabaseUsageRecorde
 from app.infrastructure.repositories.plans import PlanRepository, plan_to_view
 from app.infrastructure.repositories.run_unit_of_work import RunUnitOfWork
 from app.infrastructure.tools.base import AstraToolRegistry
-from app.infrastructure.tools.registry import build_tool_registry
+from app.infrastructure.tools.registry import build_application_tool_registry
 from app.infrastructure.tools.selection import forbidden_plan_bindings, task_capability_catalog
 
 logger = logging.getLogger("astra.engine")
@@ -91,7 +91,7 @@ def shared_tool_registry(settings: AstraRuntimeSettings) -> AstraToolRegistry:
     if registry is not None:
         _SHARED_TOOL_REGISTRIES.move_to_end(key)
         return registry
-    registry = build_tool_registry(settings)
+    registry = build_application_tool_registry(settings)
     _SHARED_TOOL_REGISTRIES[key] = registry
     if len(_SHARED_TOOL_REGISTRIES) > MAX_SHARED_TOOL_REGISTRIES:
         _SHARED_TOOL_REGISTRIES.popitem(last=False)

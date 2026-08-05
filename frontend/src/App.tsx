@@ -4076,7 +4076,7 @@ function ApprovalCard({ approval, submitting, onDecision }: { approval: PendingA
 function permissionToolLabel(toolName: string) {
   const labels: Record<string, string> = {
     bash_execute: '命令工具',
-    chart_render: '图表工具',
+    'chart.render': '图表工具',
     web_search: '网页搜索',
     web_fetch: '网页读取',
   };

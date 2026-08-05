@@ -1,12 +1,14 @@
 import pytest
 
 from app.application.agent_runtime.policies.reasoning import AgentReasoningPolicyCompiler
-from app.application.agent_runtime.services.approval import matcher_matches, similar_matcher
+from app.application.agent_runtime.services.approval import matcher_matches
 from app.application.agent_runtime.services.loop import AstraAgentLoop
 from app.common.core.config import AstraRuntimeSettings
 from app.common.schemas.agent.execution_state import AgentDecision
 from app.common.schemas.agent.run_policy import RequestedReasoningPolicy
 from app.infrastructure.model_clients.mock import MockModelClient
+from app.infrastructure.plugins.builtin_components import BashApprovalPresenter
+from app.infrastructure.tools.bash import BashExecuteTool
 from app.infrastructure.repositories.run_unit_of_work import RunUnitOfWork
 from app.infrastructure.repositories.run_view_projection import RunViewProjector
 from app.infrastructure.tools.base import (
@@ -14,6 +16,7 @@ from app.infrastructure.tools.base import (
     AstraToolRegistry,
     AstraToolSpec,
     ToolExecutionError,
+    ToolResultEnvelope,
 )
 
 
@@ -31,7 +34,9 @@ class FakeWrite(AstraTool):
 
     async def run(self, tool_input, *, context=None):
         self.last_context = context
-        return {"path": tool_input["path"], "written": True}
+        return ToolResultEnvelope(
+            data={"path": tool_input["path"], "written": True}
+        ).model_dump(mode="json")
 
 
 class WriteModelClient(MockModelClient):
@@ -293,9 +298,17 @@ async def test_approved_action_fails_closed_when_frozen_input_is_tampered(sessio
 
 
 def test_bash_similar_matchers_are_narrow_and_complex_commands_are_exact_only():
-    matcher = similar_matcher("bash_execute", {"command": "pytest tests/test_api.py -q"})
+    presenter = BashApprovalPresenter()
+    matcher = presenter.similar_matcher(
+        BashExecuteTool.spec, {"command": "pytest tests/test_api.py -q"}
+    )
 
     assert matcher == {"kind": "command_prefix", "tokens": ["pytest"]}
     assert matcher_matches(matcher, {"command": "pytest tests/test_tools.py -q"})
     assert not matcher_matches(matcher, {"command": "python -m pytest"})
-    assert similar_matcher("bash_execute", {"command": "pytest && rm -rf /tmp/x"}) is None
+    assert (
+        presenter.similar_matcher(
+            BashExecuteTool.spec, {"command": "pytest && rm -rf /tmp/x"}
+        )
+        is None
+    )

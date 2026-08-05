@@ -7,7 +7,7 @@ from app.common.core.config import AstraRuntimeSettings
 from app.infrastructure.sandbox.runtime import SandboxError, SandboxResult
 from app.infrastructure.tools.base import ToolExecutionContext, ToolExecutionError
 from app.infrastructure.tools.bash import BashExecuteTool
-from app.infrastructure.tools.registry import build_tool_registry
+from app.infrastructure.tools.registry import build_application_tool_registry
 
 
 class BashSandboxService:
@@ -41,9 +41,12 @@ def context(service, workspace_path):
 
 
 def test_bash_execute_is_disabled_by_default_and_registered_explicitly():
-    disabled = build_tool_registry(AstraRuntimeSettings(sandbox_skip_availability_check=True))
-    enabled = build_tool_registry(
-        AstraRuntimeSettings(sandbox_skip_availability_check=True, tool_bash_execute_enabled=True)
+    disabled = build_application_tool_registry(AstraRuntimeSettings(sandbox_skip_availability_check=True))
+    enabled = build_application_tool_registry(
+        AstraRuntimeSettings(
+            sandbox_skip_availability_check=True,
+            tool_states={"bash_execute": True},
+        )
     )
 
     assert "bash_execute" not in disabled.specs()

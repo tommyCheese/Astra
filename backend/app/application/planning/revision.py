@@ -17,7 +17,7 @@ from app.infrastructure.model_clients.factory import build_model_client
 from app.infrastructure.model_clients.usage_metering import DatabaseUsageRecorder
 from app.infrastructure.repositories.plans import PlanRepository
 from app.infrastructure.repositories.run_unit_of_work import RunUnitOfWork
-from app.infrastructure.tools.registry import build_tool_registry
+from app.infrastructure.tools.registry import build_application_tool_registry
 from app.infrastructure.tools.selection import forbidden_plan_bindings, task_capability_catalog
 
 
@@ -121,7 +121,7 @@ def _configure_revision_client(client, run, policy, run_id: str) -> None:
 def _build_revision_environment(run, current, settings, request: str) -> RevisionEnvironment:
     contract = TaskContract.model_validate(run.task_contract)
     policy = ReasoningPolicySnapshot.model_validate(run.reasoning_policy)
-    tool_specs = build_tool_registry(settings).specs()
+    tool_specs = build_application_tool_registry(settings).specs()
     capabilities = task_capability_catalog(tool_specs)
     criterion_ids = [criterion.id for criterion in contract.success_criteria]
     prompt_context = {

@@ -276,7 +276,7 @@ async def test_agent_loop_blocks_at_turn_limit(session):
         "查询 mock 数据", settings.model_policy, reasoning_policy=compiled_policy()
     )
     loop = AstraAgentLoop(
-        settings, model_client=MockModelClient(), tool_registry=build_web_registry(settings)
+        settings, model_client=MockModelClient(), tool_registry=fake_web_registry()
     )
 
     output = await loop.run(repo, run.id, run.task.description)
@@ -645,7 +645,7 @@ async def test_root_loop_externalizes_oversized_model_observation_but_keeps_tool
 
 
 async def test_standard_mode_reuses_swarm_supervisor_without_creating_a_dag(session):
-    settings = AstraRuntimeSettings(model_provider="mock", tool_swarm_enabled=True)
+    settings = AstraRuntimeSettings(model_provider="mock", tool_states={"swarm": True})
     profile = resolve_run_profile(
         AnswerMode.standard,
         RequestedReasoningPolicy(execution_mode="auto_approval"),
@@ -681,7 +681,7 @@ async def test_standard_mode_reuses_swarm_supervisor_without_creating_a_dag(sess
 async def test_required_standard_mode_cannot_finalize_without_a_swarm_group(session):
     settings = AstraRuntimeSettings(
         model_provider="mock",
-        tool_swarm_enabled=True,
+        tool_states={"swarm": True},
         agent_max_turns=2,
     )
     profile = resolve_run_profile(

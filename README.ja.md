@@ -83,13 +83,9 @@ MODEL_API_KEY=<your-api-key>
 MODEL_BASE_URL=https://api.openai.com/v1
 ```
 
-各ツールは個別に設定できます。
-
-```dotenv
-TOOL_WEB_SEARCH_ENABLED=true
-TOOL_WEB_FETCH_ENABLED=true
-TOOL_CHART_RENDER_ENABLED=true
-```
+ツール機能は「設定 → ツール」から動的に設定できます。また、identity ベースの
+`/api/tools/{tool_name}/state` と `/api/tool-providers/{provider_id}/state` API も利用できます。
+固定の `TOOL_<NAME>_ENABLED` 環境変数はサポートされません。
 
 チャート実行はデフォルトで無効です。明示的に有効にした場合も、任意コードは API プロセス内ではなく Docker 経由で実行されます。信頼できるローカル環境の外部に Astra を公開する前に、Runtime のセキュリティ境界を確認してください。
 
