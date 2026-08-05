@@ -8,25 +8,18 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from app.core.config import Settings
-from app.db.base import Base
-from app.db.models.executions import NodeExecutionRecord
-from app.db.models.permissions import ToolCallRecord
-from app.db.models.plans import PlanRecord
-from app.db.models.runs import AgentTurnRecord
-from app.model_clients.mock import MockModelClient
-from app.repositories.agent_executions import AgentExecutionRepository
-from app.repositories.permissions import PermissionRepository
-from app.repositories.run_unit_of_work import RunUnitOfWork
-from app.repositories.tool_settings import (
-    ToolSettingsRepository,
-    default_tool_states,
-)
-from app.schemas.agent.execution_state import AgentDecision, AgentReflection
-from app.schemas.agent.planning import ExpectedObservation, PlanDraft, PlanNodeDraft
-from app.schemas.agent.run_policy import EffectiveSubagentPolicy, SubagentBudgetPolicy
-from app.schemas.permissions import PermissionPolicySet, PermissionRule
-from app.schemas.subagents import (
+from app.application.subagents.executor import AgentExecutorRuntime, LocalAstraAgentExecutor
+from app.application.subagents.governance import FrozenChildCatalog
+from app.application.subagents.lifecycle import SubagentCancellationService
+from app.application.subagents.runtime import SubagentRuntimeOperations
+from app.application.subagents.scope import DelegationAuthorizationError
+from app.application.subagents.supervisor import SubagentSupervisor
+from app.common.core.config import Settings
+from app.common.schemas.agent.execution_state import AgentDecision, AgentReflection
+from app.common.schemas.agent.planning import ExpectedObservation, PlanDraft, PlanNodeDraft
+from app.common.schemas.agent.run_policy import EffectiveSubagentPolicy, SubagentBudgetPolicy
+from app.common.schemas.permissions import PermissionPolicySet, PermissionRule
+from app.common.schemas.subagents import (
     DelegatedExecutionContext,
     DelegationContract,
     DelegationRequest,
@@ -40,13 +33,20 @@ from app.schemas.subagents import (
     SubagentJoinPolicy,
     SubagentJoinSpec,
 )
-from app.subagents.executor import AgentExecutorRuntime, LocalAstraAgentExecutor
-from app.subagents.governance import FrozenChildCatalog
-from app.subagents.lifecycle import SubagentCancellationService
-from app.subagents.runtime import SubagentRuntimeOperations
-from app.subagents.scope import DelegationAuthorizationError
-from app.subagents.supervisor import SubagentSupervisor
-from app.tools.base import (
+from app.infrastructure.db.base import Base
+from app.infrastructure.db.models.executions import NodeExecutionRecord
+from app.infrastructure.db.models.permissions import ToolCallRecord
+from app.infrastructure.db.models.plans import PlanRecord
+from app.infrastructure.db.models.runs import AgentTurnRecord
+from app.infrastructure.model_clients.mock import MockModelClient
+from app.infrastructure.repositories.agent_executions import AgentExecutionRepository
+from app.infrastructure.repositories.permissions import PermissionRepository
+from app.infrastructure.repositories.run_unit_of_work import RunUnitOfWork
+from app.infrastructure.repositories.tool_settings import (
+    ToolSettingsRepository,
+    default_tool_states,
+)
+from app.infrastructure.tools.base import (
     ArtifactRef,
     Tool,
     ToolRegistry,

@@ -2,16 +2,16 @@ import asyncio
 
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from app.db.model_base import Base
-from app.db.models.runs import RunEventRecord
-from app.db.session import EventAwareAsyncSession
-from app.repositories.run_unit_of_work import RunUnitOfWork
-from app.runtime_events import (
+from app.application.run_management.events import (
     MAX_PUBLISHED_EVENTS_PER_RUN,
     PublishedRunEvent,
     RunEventBroker,
     run_event_broker,
 )
+from app.infrastructure.db.model_base import Base
+from app.infrastructure.db.models.runs import RunEventRecord
+from app.infrastructure.db.session import EventAwareAsyncSession
+from app.infrastructure.repositories.run_unit_of_work import RunUnitOfWork
 
 
 async def test_run_event_broker_wakes_all_subscribers_without_lost_wakeup():

@@ -6,7 +6,7 @@ from support.memory_evaluation import (
     load_evaluation_fixtures,
 )
 
-from app.memory.retrieval import MemoryRetrievalBudget, MemoryRetrievalPolicy
+from app.application.memory.retrieval import MemoryRetrievalBudget, MemoryRetrievalPolicy
 
 FIXTURE_PATH = Path(__file__).parent / "fixtures" / "deep_memory_retrieval_cases.json"
 

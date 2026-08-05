@@ -3,15 +3,16 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from pydantic import ValidationError
 
-from app.agent_runtime.policies.reasoning import (
+from app.application.agent_runtime.policies.reasoning import (
     PolicyCompiler,
     compile_subagent_policy,
     resolve_run_profile,
 )
-from app.core.config import Settings
-from app.schemas.agent.run_policy import RequestedReasoningPolicy
-from app.schemas.agent.types import AnswerMode, PlanExecution
-from app.schemas.subagents import (
+from app.application.subagents.eligibility import subagent_execution_eligibility
+from app.common.core.config import Settings
+from app.common.schemas.agent.run_policy import RequestedReasoningPolicy
+from app.common.schemas.agent.types import AnswerMode, PlanExecution
+from app.common.schemas.subagents import (
     DelegationContract,
     DelegationInput,
     DelegationRejectionCode,
@@ -24,7 +25,6 @@ from app.schemas.subagents import (
     SubagentQuestion,
     SubagentResult,
 )
-from app.subagents.eligibility import subagent_execution_eligibility
 
 
 def delegation_request(**updates) -> DelegationRequest:

@@ -4,22 +4,35 @@
 [`domain-glossary.md`](domain-glossary.md) 为准；历史迁移关系以
 [`migration-map.md`](migration-map.md) 为准。
 
+## DDD 分层
+
+| 层级 | 路径 | 职责 |
+| --- | --- | --- |
+| Common | `app.common` | 配置、错误、共享契约与跨边界 Schema |
+| Domain | `app.domain` | Agent Profile、Memory/Evolution 领域模型、执行端口与 Grounding 规则 |
+| Application | `app.application` | 用例编排、Agent runtime、会话、权限、规划、调度、技能与工作区 |
+| Infrastructure | `app.infrastructure` | ORM、Repository、模型客户端、工具、沙箱、插件和应用装配 |
+| Interfaces | `app.interfaces` | HTTP API、middleware、依赖注入和协议映射 |
+
+`common` 与 `domain` 不得依赖 `application`、`infrastructure` 或 `interfaces`；
+`application` 不得依赖 `interfaces`。这些方向由架构检查自动约束。
+
 ## 主要模块地图
 
 | 能力 | 公开入口 | 内部职责 | 不应承担 |
 | --- | --- | --- | --- |
-| 应用启动 | `app.bootstrap.application:create_application` | 组合依赖、路由、middleware、生命周期 | 业务规则、持久化查询 |
-| HTTP 平台 | `app.platform.http` | trace、本机访问、错误映射、请求日志 | 用例编排 |
-| Run 管理 | `app.run_management.application:RunApplicationService` | 创建、派发、恢复、审批决定、取消 | Agent 阶段实现、HTTP 映射 |
-| Agent runtime | `app.agent_runtime.services.loop:AgentLoop` | `models` 共享对象、`policies` 纯决策、`services` 阶段与用例编排 | provider 细节、跨用例提交 |
-| Planning | `app.planning.service:PlanService` | Plan 校验、变更、revision 与 ready-node 调度 | Agent iteration、HTTP 映射 |
-| Model clients | `app.model_clients` | provider transport、thinking 能力、请求映射与响应归一化 | Run 生命周期、权限决策 |
-| Run 持久化 | `app.repositories.run_unit_of_work:RunUnitOfWork` | 组合窄 store、显式 commit/rollback | 自动提交、公共 read-model 拼装 |
-| Run 查询 | `app.repositories.run_view_projection:RunViewProjector` | ORM 到 typed public projection | 修改 ORM、触发事务提交 |
-| 权限 | `app.permissions` | effect analysis、allow/ask/deny、grant 与 credential scope | 工具执行 |
-| Subagent | `app.subagents.supervisor:SubagentSupervisor` | 委派、谱系、预算、权限衰减、join/cancel | facade 转发层、反向依赖 root runner 实现 |
-| Workspace / Artifact | `app.workspaces` / `app.artifacts` | 受控可变工作区 / 不可变交付物 | 互相替代概念 |
-| Scheduling | `app.scheduling` | 定时配置、claim、投递、心跳 | 导入 HTTP handler |
+| 应用启动 | `app.infrastructure.bootstrap.application:create_application` | 组合依赖、路由、middleware、生命周期 | 业务规则、持久化查询 |
+| HTTP 平台 | `app.interfaces.platform.http` | trace、本机访问、错误映射、请求日志 | 用例编排 |
+| Run 管理 | `app.application.run_management.application:RunApplicationService` | 创建、派发、恢复、审批决定、取消 | Agent 阶段实现、HTTP 映射 |
+| Agent runtime | `app.application.agent_runtime.services.loop:AgentLoop` | `models` 共享对象、`policies` 纯决策、`services` 阶段与用例编排 | provider 细节、跨用例提交 |
+| Planning | `app.application.planning.service:PlanService` | Plan 校验、变更、revision 与 ready-node 调度 | Agent iteration、HTTP 映射 |
+| Model clients | `app.infrastructure.model_clients` | provider transport、thinking 能力、请求映射与响应归一化 | Run 生命周期、权限决策 |
+| Run 持久化 | `app.infrastructure.repositories.run_unit_of_work:RunUnitOfWork` | 组合窄 store、显式 commit/rollback | 自动提交、公共 read-model 拼装 |
+| Run 查询 | `app.infrastructure.repositories.run_view_projection:RunViewProjector` | ORM 到 typed public projection | 修改 ORM、触发事务提交 |
+| 权限 | `app.application.permissions` | effect analysis、allow/ask/deny、grant 与 credential scope | 工具执行 |
+| Subagent | `app.application.subagents.supervisor:SubagentSupervisor` | 委派、谱系、预算、权限衰减、join/cancel | facade 转发层、反向依赖 root runner 实现 |
+| Workspace / Artifact | `app.application.workspaces` / `app.application.workspaces.artifacts` | 受控可变工作区 / 不可变交付物 | 互相替代概念 |
+| Scheduling | `app.application.scheduling` | 定时配置、claim、投递、心跳 | 导入 HTTP handler |
 
 ## Run 调用链
 
@@ -73,10 +86,13 @@ analysis、authorization、invocation、observation/evidence、progress/reflecti
 `Manager`/`Repository` 和依赖私有函数的测试。默认预算为模块 500 行、函数 60 行、复杂度
 10；任何代码不得超过模块 800 行、函数 100 行或复杂度 15。
 
-包结构先表达业务/Agent 能力，再在大型能力内部使用 `models`、`validation`、`policies`、
-`services`、`normalization` 或 `transports` 表达代码角色。只有形成多个同类模块时才建立
-role 子包；禁止顶层技术桶和 `utils.py`、`helpers.py`、`common.py`。单一消费者的 dataclass
-与实现保持同文件，无状态包装类、单实现抽象和旧路径 re-export 应直接删除。
+顶层只允许 `common`、`domain`、`application`、`infrastructure`、`interfaces` 五个 DDD
+分层包；各层内先表达业务/Agent 能力，再在大型能力内部使用 `models`、`validation`、
+`policies`、`services`、`normalization` 或 `transports` 表达代码角色。只有形成多个同类模块时
+才建立 role 子包；禁止 `utils.py`、`helpers.py`、`common.py`。单一消费者的 dataclass 与实现
+保持同文件，无状态包装类、单实现抽象和旧路径 re-export 应直接删除。
 
-复杂度预算是只减不增的架构契约。当前上限为 61,539 行、298 个模块、766 个类、2,473 个
-函数/方法和 1,249 个公共 symbol；重构或新增能力不得通过修改预算掩盖净增长。
+复杂度预算是只减不增的架构契约。DDD 路径加深带来的纯导入换行、5 个分层包入口以及
+保持旧 OpenAPI Schema ID 的惰性边界适配计入结构迁移基线；当前上限为 61,709 行、303 个
+模块、766 个类、2,474 个函数/方法和 1,249 个公共 symbol。后续重构或新增能力不得通过
+修改预算掩盖净增长。

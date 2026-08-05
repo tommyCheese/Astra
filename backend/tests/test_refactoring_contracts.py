@@ -7,17 +7,17 @@ from fake_web_tools import FakeSearch
 from sqlalchemy import create_mock_engine
 from support import DecisionStep, RunRequestBuilder, ScriptedDecisionClient
 
-from app.agent_runtime.policies.reasoning import resolve_run_profile
-from app.agent_runtime.services.loop import AgentLoop
-from app.core.config import Settings
-from app.db.base import Base
+from app.application.agent_runtime.policies.reasoning import resolve_run_profile
+from app.application.agent_runtime.services.loop import AgentLoop
+from app.common.core.config import Settings
+from app.common.schemas.agent.execution_state import AgentDecision
+from app.common.schemas.agent.run_policy import RequestedReasoningPolicy
+from app.common.schemas.agent.run_result import FinalAnswer
+from app.common.schemas.agent.types import AnswerMode
+from app.infrastructure.db.base import Base
+from app.infrastructure.repositories.run_unit_of_work import RunUnitOfWork
+from app.infrastructure.tools.base import ToolRegistry
 from app.main import create_app
-from app.repositories.run_unit_of_work import RunUnitOfWork
-from app.schemas.agent.execution_state import AgentDecision
-from app.schemas.agent.run_policy import RequestedReasoningPolicy
-from app.schemas.agent.run_result import FinalAnswer
-from app.schemas.agent.types import AnswerMode
-from app.tools.base import ToolRegistry
 
 EXPECTED_OPENAPI_SHA256 = "b85baa9be39afdc6a7a984469df2c191b7c96aa05c689865db59758556d3e7f4"
 EXPECTED_ORM_TABLES = {

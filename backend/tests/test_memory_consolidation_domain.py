@@ -2,17 +2,17 @@ import json
 
 import pytest
 
-from app.memory.consolidation.generation import (
+from app.application.memory.consolidation.generation import (
     deterministic_duplicate_proposal,
     normalize_model_output,
 )
-from app.memory.consolidation.models import (
+from app.application.memory.consolidation.models import (
     ConsolidationInputManifest,
     ConsolidationValidationError,
     FrozenMemoryInput,
     FrozenSourceReference,
 )
-from app.memory.consolidation.validation import validate_proposal
+from app.application.memory.consolidation.validation import validate_proposal
 
 
 def frozen_memory(
@@ -86,7 +86,7 @@ def frozen_memory(
         content_hash=content_hash,
         memory_hash="",
     )
-    from app.memory.consolidation.models import canonical_digest
+    from app.application.memory.consolidation.models import canonical_digest
 
     payload["memory_hash"] = canonical_digest(seed._payload())
     return FrozenMemoryInput.from_dict(payload)

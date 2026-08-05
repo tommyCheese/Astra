@@ -3,22 +3,22 @@ from datetime import timedelta
 import pytest
 from sqlalchemy import select
 
-from app.core.config import Settings
-from app.db.model_base import utc_now
-from app.db.models.memory import (
+from app.application.memory.consolidation.models import ConsolidationConflictError
+from app.application.memory.consolidation.service import AutoDreamProcessor
+from app.common.core.config import Settings
+from app.domain.memory import MemoryNamespace, MemoryNamespaceType
+from app.infrastructure.db.model_base import utc_now
+from app.infrastructure.db.models.memory import (
     MemoryAuditRecord,
     MemoryConsolidationJobRecord,
     MemoryRecord,
     MemorySourceRecord,
 )
-from app.memory.consolidation.models import ConsolidationConflictError
-from app.memory.consolidation.service import AutoDreamProcessor
-from app.memory.domain import MemoryNamespace, MemoryNamespaceType
-from app.repositories.memories import MemoryRepository
-from app.repositories.memory_consolidation import (
+from app.infrastructure.repositories.memories import MemoryRepository
+from app.infrastructure.repositories.memory_consolidation import (
     MemoryConsolidationRepository,
 )
-from app.repositories.memory_consolidation_publication import (
+from app.infrastructure.repositories.memory_consolidation_publication import (
     MemoryConsolidationPublicationService,
 )
 

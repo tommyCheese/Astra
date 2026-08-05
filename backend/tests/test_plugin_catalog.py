@@ -2,10 +2,10 @@ from dataclasses import replace
 
 import pytest
 
-from app.core.config import Settings
-from app.plugins.builtin import builtin_contributions
-from app.plugins.catalog import PluginCatalogBuilder, PluginCatalogError
-from app.plugins.contracts import (
+from app.common.core.config import Settings
+from app.infrastructure.plugins.builtin import builtin_contributions
+from app.infrastructure.plugins.catalog import PluginCatalogBuilder, PluginCatalogError
+from app.infrastructure.plugins.contracts import (
     ApplicabilityBinding,
     ComponentContribution,
     ComponentIdentity,
@@ -14,14 +14,14 @@ from app.plugins.contracts import (
     PluginLifecycleState,
     ToolContribution,
 )
-from app.plugins.discovery import (
+from app.infrastructure.plugins.discovery import (
     BuiltinDiscoverySource,
     IsolatedDescriptorDiscoverySource,
     IsolatedProviderReference,
     ManagedPackageDiscoverySource,
 )
-from app.plugins.interfaces import HealthProbe, HealthReport, ToolProviderPlugin
-from app.tools.base import Tool, ToolExecutionError, ToolSpec
+from app.infrastructure.plugins.interfaces import HealthProbe, HealthReport, ToolProviderPlugin
+from app.infrastructure.tools.base import Tool, ToolExecutionError, ToolSpec
 
 
 class CatalogTool(Tool):

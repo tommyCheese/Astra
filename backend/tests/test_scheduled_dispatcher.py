@@ -5,20 +5,20 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from app.core.config import Settings
-from app.core.errors import ValidationError
-from app.db.model_base import Base
-from app.db.models.conversations import TaskRecord
-from app.db.models.runs import RunRecord
-from app.db.models.scheduling import ScheduledJobRecord, ScheduledJobRunRecord
-from app.repositories.schedules import ScheduleRepository
-from app.repositories.workspaces import WorkspaceRepository
-from app.run_management.contracts import PreparedRun
-from app.run_management.dispatcher import InProcessRunDispatcher
-from app.scheduling.dispatcher import ScheduledRunDispatcher
-from app.schemas.agent.api_views import CreateRunResponse
-from app.schemas.agent.types import AnswerMode
-from app.schemas.schedules import ScheduledJobCreate
+from app.application.run_management.contracts import PreparedRun
+from app.application.run_management.dispatcher import InProcessRunDispatcher
+from app.application.scheduling.dispatcher import ScheduledRunDispatcher
+from app.common.core.config import Settings
+from app.common.core.errors import ValidationError
+from app.common.schemas.agent.api_views import CreateRunResponse
+from app.common.schemas.agent.types import AnswerMode
+from app.common.schemas.schedules import ScheduledJobCreate
+from app.infrastructure.db.model_base import Base
+from app.infrastructure.db.models.conversations import TaskRecord
+from app.infrastructure.db.models.runs import RunRecord
+from app.infrastructure.db.models.scheduling import ScheduledJobRecord, ScheduledJobRunRecord
+from app.infrastructure.repositories.schedules import ScheduleRepository
+from app.infrastructure.repositories.workspaces import WorkspaceRepository
 
 UTC = timezone.utc
 
@@ -89,7 +89,7 @@ async def test_dispatcher_reuses_target_conversation_workspace(tmp_path, monkeyp
             Settings(),
         )
 
-    monkeypatch.setattr("app.scheduling.dispatcher.RunApplicationService.prepare", fake_prepare)
+    monkeypatch.setattr("app.application.scheduling.dispatcher.RunApplicationService.prepare", fake_prepare)
 
     dispatched = await ScheduledRunDispatcher(
         Settings(), session_factory, _run_dispatcher()
@@ -208,7 +208,7 @@ async def test_heartbeat_ok_is_recorded_silently_and_hidden_from_chat(tmp_path):
         stored_run = await session.get(RunRecord, run_id)
         assert stored.status == "silent_ok"
         assert stored_run.execution_profile["trigger"]["delivery"] == "silent"
-        from app.repositories.conversations import ConversationRepository
+        from app.infrastructure.repositories.conversations import ConversationRepository
 
         conversation = await ConversationRepository(session).get(target.id, detailed=True)
         assert conversation.runs == []
@@ -286,7 +286,7 @@ async def test_dispatcher_rolls_back_partial_run_when_creation_is_blocked(tmp_pa
         await service.session.flush()
         raise ValidationError("TEST_BLOCKED", "blocked")
 
-    monkeypatch.setattr("app.scheduling.dispatcher.RunApplicationService.prepare", fail_after_flush)
+    monkeypatch.setattr("app.application.scheduling.dispatcher.RunApplicationService.prepare", fail_after_flush)
     result = await ScheduledRunDispatcher(Settings(), session_factory, _run_dispatcher()).dispatch(
         schedule_run.id
     )

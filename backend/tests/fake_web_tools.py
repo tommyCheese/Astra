@@ -1,4 +1,4 @@
-from app.tools.base import Tool, ToolRegistry, ToolSpec
+from app.infrastructure.tools.base import Tool, ToolRegistry, ToolSpec
 
 
 class FakeSearch(Tool):

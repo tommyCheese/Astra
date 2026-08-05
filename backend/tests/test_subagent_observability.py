@@ -2,12 +2,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from app.db.models.executions import ModelInvocationRecord
-from app.db.models.runs import RunEventRecord
-from app.repositories.agent_executions import AgentExecutionRepository
-from app.repositories.run_unit_of_work import RunUnitOfWork
-from app.schemas.subagents import DelegationContract, DelegationRequest
-from app.subagents.observability import (
+from app.application.subagents.observability import (
     DELEGATION_BEHAVIOR_CASES,
     BenchmarkResult,
     ReleaseThresholds,
@@ -16,6 +11,11 @@ from app.subagents.observability import (
     evaluate_delegation_behavior,
     evaluate_release_gate,
 )
+from app.common.schemas.subagents import DelegationContract, DelegationRequest
+from app.infrastructure.db.models.executions import ModelInvocationRecord
+from app.infrastructure.db.models.runs import RunEventRecord
+from app.infrastructure.repositories.agent_executions import AgentExecutionRepository
+from app.infrastructure.repositories.run_unit_of_work import RunUnitOfWork
 
 
 async def test_telemetry_is_aggregate_and_does_not_expose_sensitive_content(session):

@@ -1,11 +1,11 @@
 import pytest
 
-from app.context_compaction.tool_outputs import (
+from app.application.context_compaction.tool_outputs import (
     ToolOutputGovernanceService,
     ToolOutputStorageError,
 )
-from app.core.config import Settings
-from app.schemas.context_compaction import ContextOwnerRole, ContextReference
+from app.common.core.config import Settings
+from app.common.schemas.context_compaction import ContextOwnerRole, ContextReference
 
 
 @pytest.mark.asyncio

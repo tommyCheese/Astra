@@ -1,14 +1,14 @@
 from fake_web_tools import fake_web_registry
 
-from app.agent_runtime.policies.reasoning import PolicyCompiler
-from app.agent_runtime.services.approval import safe_preview, similar_matcher
-from app.agent_runtime.services.loop import AgentLoop
-from app.core.config import Settings
-from app.model_clients.mock import MockModelClient
-from app.permissions.effects import DefaultEffectAnalyzer
-from app.repositories.run_unit_of_work import RunUnitOfWork
-from app.schemas.agent.run_policy import RequestedReasoningPolicy
-from app.tools.bash import BashExecuteTool
+from app.application.agent_runtime.policies.reasoning import PolicyCompiler
+from app.application.agent_runtime.services.approval import safe_preview, similar_matcher
+from app.application.agent_runtime.services.loop import AgentLoop
+from app.application.permissions.effects import DefaultEffectAnalyzer
+from app.common.core.config import Settings
+from app.common.schemas.agent.run_policy import RequestedReasoningPolicy
+from app.infrastructure.model_clients.mock import MockModelClient
+from app.infrastructure.repositories.run_unit_of_work import RunUnitOfWork
+from app.infrastructure.tools.bash import BashExecuteTool
 
 
 async def test_web_runtime_characterization_freezes_calls_events_observations_and_results(session):

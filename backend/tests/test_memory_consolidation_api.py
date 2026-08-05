@@ -3,12 +3,12 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from app.api.memory_consolidation import router
-from app.core.config import Settings, get_settings
-from app.db.model_base import Base
-from app.db.session import get_session
-from app.memory.domain import MemoryNamespace, MemoryNamespaceType
-from app.repositories.memories import MemoryRepository
+from app.common.core.config import Settings, get_settings
+from app.domain.memory import MemoryNamespace, MemoryNamespaceType
+from app.infrastructure.db.model_base import Base
+from app.infrastructure.db.session import get_session
+from app.infrastructure.repositories.memories import MemoryRepository
+from app.interfaces.api.memory_consolidation import router
 
 
 @pytest.fixture

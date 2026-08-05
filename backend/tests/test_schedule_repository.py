@@ -2,14 +2,14 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from app.db.models.conversations import TaskRecord
-from app.db.models.scheduling import ScheduledJobRecord, ScheduledJobRunRecord
-from app.repositories.schedules import (
+from app.common.schemas.schedules import ScheduledJobCreate, ScheduledJobUpdate
+from app.infrastructure.db.models.conversations import TaskRecord
+from app.infrastructure.db.models.scheduling import ScheduledJobRecord, ScheduledJobRunRecord
+from app.infrastructure.repositories.schedules import (
     ScheduleRepository,
     ScheduleVersionConflictError,
     SystemManagedScheduleError,
 )
-from app.schemas.schedules import ScheduledJobCreate, ScheduledJobUpdate
 
 UTC = timezone.utc
 

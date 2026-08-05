@@ -2,13 +2,9 @@ from datetime import timedelta
 
 import pytest
 
-from app.db.model_base import utc_now
-from app.db.models.permissions import ApprovalGrantRecord
-from app.permissions.engine import PermissionEngine
-from app.repositories.approval_contracts import ApprovalRequestCreate
-from app.repositories.run_unit_of_work import RunUnitOfWork
-from app.schemas.agent.types import ExecutionMode
-from app.schemas.permissions import (
+from app.application.permissions.engine import PermissionEngine
+from app.common.schemas.agent.types import ExecutionMode
+from app.common.schemas.permissions import (
     ActionEffectPlan,
     EffectItem,
     PermissionConditions,
@@ -18,6 +14,10 @@ from app.schemas.permissions import (
     PermissionRule,
     PermissionSubject,
 )
+from app.infrastructure.db.model_base import utc_now
+from app.infrastructure.db.models.permissions import ApprovalGrantRecord
+from app.infrastructure.repositories.approval_contracts import ApprovalRequestCreate
+from app.infrastructure.repositories.run_unit_of_work import RunUnitOfWork
 
 
 def permission_request(

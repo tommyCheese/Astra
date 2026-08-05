@@ -1,15 +1,15 @@
 import pytest
 from pydantic import ValidationError
 
-from app.agent_profile import ModelOperation
-from app.model_clients.reasoning import (
+from app.common.schemas.models import (
+    MODEL_THINKING_CAPABILITY_VERSION,
+    ModelThinkingSelection,
+)
+from app.domain.agent_profile import ModelOperation
+from app.infrastructure.model_clients.reasoning import (
     model_thinking_capability,
     normalize_model_thinking,
     resolve_model_reasoning,
-)
-from app.schemas.models import (
-    MODEL_THINKING_CAPABILITY_VERSION,
-    ModelThinkingSelection,
 )
 
 

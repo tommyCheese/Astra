@@ -5,27 +5,36 @@ from datetime import datetime, timezone
 import pytest
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
-from app.agent_runtime.policies.completion import CompletionGate
-from app.agent_runtime.policies.reasoning import build_default_contract, resolve_run_profile
-from app.agent_runtime.services.completion_gate import CompletionGateInput, CompletionGateStage
-from app.agent_runtime.services.progress import ExecutionProgress
-from app.core.config import Settings
-from app.db.models.runs import EvidenceRecord
-from app.model_clients.mock import MockModelClient
-from app.repositories.agent_executions import AgentExecutionRepository
-from app.repositories.permissions import PermissionRepository
-from app.repositories.plans import PlanRepository
-from app.repositories.run_unit_of_work import RunUnitOfWork
-from app.schemas.agent.execution_state import AgentState
-from app.schemas.agent.run_policy import (
+from app.application.agent_runtime.policies.completion import CompletionGate
+from app.application.agent_runtime.policies.reasoning import (
+    build_default_contract,
+    resolve_run_profile,
+)
+from app.application.agent_runtime.services.completion_gate import (
+    CompletionGateInput,
+    CompletionGateStage,
+)
+from app.application.agent_runtime.services.progress import ExecutionProgress
+from app.application.subagents.fan_in import (
+    SubagentJoinService,
+    SubagentResultValidationError,
+    SubagentResultValidator,
+    merge_subagent_results,
+    retry_subagent,
+)
+from app.application.subagents.governance import DelegationContractService
+from app.application.subagents.supervisor import SubagentSupervisor
+from app.common.core.config import Settings
+from app.common.schemas.agent.execution_state import AgentState
+from app.common.schemas.agent.run_policy import (
     EffectiveSubagentPolicy,
     RequestedReasoningPolicy,
     SubagentBudgetPolicy,
 )
-from app.schemas.agent.run_result import ValidationOutcome, VerificationReport
-from app.schemas.agent.types import AnswerMode, PlanExecution, TerminalState
-from app.schemas.permissions import PermissionPolicySet, PermissionRule
-from app.schemas.subagents import (
+from app.common.schemas.agent.run_result import ValidationOutcome, VerificationReport
+from app.common.schemas.agent.types import AnswerMode, PlanExecution, TerminalState
+from app.common.schemas.permissions import PermissionPolicySet, PermissionRule
+from app.common.schemas.subagents import (
     DelegationContract,
     DelegationRequest,
     DelegationScope,
@@ -35,16 +44,13 @@ from app.schemas.subagents import (
     SubagentJoinPolicy,
     SubagentResult,
 )
-from app.subagents.fan_in import (
-    SubagentJoinService,
-    SubagentResultValidationError,
-    SubagentResultValidator,
-    merge_subagent_results,
-    retry_subagent,
-)
-from app.subagents.governance import DelegationContractService
-from app.subagents.supervisor import SubagentSupervisor
-from app.tools.base import ToolRegistry
+from app.infrastructure.db.models.runs import EvidenceRecord
+from app.infrastructure.model_clients.mock import MockModelClient
+from app.infrastructure.repositories.agent_executions import AgentExecutionRepository
+from app.infrastructure.repositories.permissions import PermissionRepository
+from app.infrastructure.repositories.plans import PlanRepository
+from app.infrastructure.repositories.run_unit_of_work import RunUnitOfWork
+from app.infrastructure.tools.base import ToolRegistry
 
 NOW = datetime(2026, 1, 1, tzinfo=timezone.utc)
 

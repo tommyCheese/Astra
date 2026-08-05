@@ -2,27 +2,30 @@ from datetime import datetime, timezone
 
 import pytest
 
-from app.context_compaction import (
+from app.application.context_compaction import (
     AgentContextCompactionService,
     CompactionGeneration,
     TokenAccountingService,
     build_compaction_policy,
 )
-from app.context_compaction.parsing import extract_json_object
-from app.context_compaction.validation import CheckpointValidationError, validate_checkpoint_payload
-from app.core.config import Settings
-from app.db.model_base import utc_now
-from app.db.models.conversations import TaskRecord
-from app.db.models.executions import AgentExecutionRecord
-from app.db.models.runs import RunRecord
-from app.repositories.context_compaction import ContextCompactionAttemptRepository
-from app.schemas.context_compaction import (
+from app.application.context_compaction.parsing import extract_json_object
+from app.application.context_compaction.validation import (
+    CheckpointValidationError,
+    validate_checkpoint_payload,
+)
+from app.common.core.config import Settings
+from app.common.schemas.context_compaction import (
     ContextEnvelope,
     ContextItem,
     ContextOwnerRole,
     ContextReference,
     ContinuationManifest,
 )
+from app.infrastructure.db.model_base import utc_now
+from app.infrastructure.db.models.conversations import TaskRecord
+from app.infrastructure.db.models.executions import AgentExecutionRecord
+from app.infrastructure.db.models.runs import RunRecord
+from app.infrastructure.repositories.context_compaction import ContextCompactionAttemptRepository
 
 
 def envelope(*, total_body: int = 1_000) -> ContextEnvelope:

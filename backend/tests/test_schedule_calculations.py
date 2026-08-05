@@ -3,8 +3,8 @@ from datetime import datetime, timezone
 import pytest
 from pydantic import ValidationError
 
-from app.scheduling.calculations import initial_fire_time, next_fire_time
-from app.schemas.schedules import ScheduleSpec
+from app.application.scheduling.calculations import initial_fire_time, next_fire_time
+from app.common.schemas.schedules import ScheduleSpec
 
 UTC = timezone.utc
 

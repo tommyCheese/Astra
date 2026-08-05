@@ -6,37 +6,37 @@ import pytest
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from app.agent_runtime.policies.reasoning import build_default_contract
-from app.db.model_base import Base, utc_now
-from app.db.models.executions import AgentJoinRecord, NodeExecutionRecord
-from app.planning.scheduler import PlanScheduler
-from app.planning.service import PlanService
-from app.repositories.agent_executions import AgentExecutionRepository
-from app.repositories.executions import (
-    NodeExecutionRepository,
-    NodeExecutionStateError,
-)
-from app.repositories.plans import PlanRepository
-from app.repositories.run_unit_of_work import RunUnitOfWork
-from app.repositories.run_view_projection import RunViewProjector
-from app.run_management.recovery import ExecutionRecovery
-from app.runner.concurrency import (
+from app.application.agent_runtime.policies.reasoning import build_default_contract
+from app.application.planning.scheduler import PlanScheduler
+from app.application.planning.service import PlanService
+from app.application.run_management.recovery import ExecutionRecovery
+from app.application.runner.concurrency import (
     ResourceClaim,
     acquire_resource_claims,
     resource_claims_conflict,
     resource_claims_from_effect_plan,
 )
-from app.runner.coordinator import NodeExecutionResult, RunCoordinator
-from app.schemas.agent.execution_state import AgentState
-from app.schemas.agent.planning import (
+from app.application.runner.coordinator import NodeExecutionResult, RunCoordinator
+from app.common.schemas.agent.execution_state import AgentState
+from app.common.schemas.agent.planning import (
     ExpectedObservation,
     PlanDraft,
     PlanNodeDraft,
     PlanPatch,
     PlanPatchOperation,
 )
-from app.schemas.agent.types import NodeExecutionPhase, NodeExecutionStatus
-from app.schemas.permissions import ActionEffectPlan, EffectItem, EffectKind
+from app.common.schemas.agent.types import NodeExecutionPhase, NodeExecutionStatus
+from app.common.schemas.permissions import ActionEffectPlan, EffectItem, EffectKind
+from app.infrastructure.db.model_base import Base, utc_now
+from app.infrastructure.db.models.executions import AgentJoinRecord, NodeExecutionRecord
+from app.infrastructure.repositories.agent_executions import AgentExecutionRepository
+from app.infrastructure.repositories.executions import (
+    NodeExecutionRepository,
+    NodeExecutionStateError,
+)
+from app.infrastructure.repositories.plans import PlanRepository
+from app.infrastructure.repositories.run_unit_of_work import RunUnitOfWork
+from app.infrastructure.repositories.run_view_projection import RunViewProjector
 
 
 def parallel_plan() -> PlanDraft:

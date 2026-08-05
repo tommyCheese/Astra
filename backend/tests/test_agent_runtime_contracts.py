@@ -3,12 +3,14 @@ from typing import assert_never
 
 import pytest
 
-from app.agent_runtime.services.action_resolution import (
+from app.application.agent_runtime.services.action_resolution import (
     ActionResolutionInput,
     ActionResolutionStage,
 )
-from app.agent_runtime.services.loop import AgentRunOrchestrator
-from app.execution.contracts import (
+from app.application.agent_runtime.services.loop import AgentRunOrchestrator
+from app.common.schemas.agent.execution_state import AgentDecision
+from app.common.schemas.agent.run_result import FinalAnswer
+from app.domain.execution.contracts import (
     BlockedOutcome,
     CompletedOutcome,
     ContinueOutcome,
@@ -18,8 +20,6 @@ from app.execution.contracts import (
     StageOutcome,
     WaitingOutcome,
 )
-from app.schemas.agent.execution_state import AgentDecision
-from app.schemas.agent.run_result import FinalAnswer
 
 
 def outcome_label(outcome: StageOutcome) -> str:

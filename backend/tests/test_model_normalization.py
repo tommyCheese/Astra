@@ -2,11 +2,14 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from app.agent_profile import ModelOperation
-from app.agent_runtime.policies.reasoning import build_default_contract
-from app.core.config import Settings
-from app.model_clients.factory import build_model_client
-from app.model_clients.normalization import (
+from app.application.agent_runtime.policies.reasoning import build_default_contract
+from app.common.core.config import Settings
+from app.common.schemas.agent.execution_state import AgentReflection
+from app.common.schemas.agent.planning import PlanDraft, TaskContract
+from app.common.schemas.agent.run_result import FinalAnswer, MemoryRecord
+from app.domain.agent_profile import ModelOperation
+from app.infrastructure.model_clients.factory import build_model_client
+from app.infrastructure.model_clients.normalization import (
     StreamingJsonFieldExtractor,
     extract_partial_json_string,
     json_string_field_complete,
@@ -17,10 +20,7 @@ from app.model_clients.normalization import (
     normalize_reflection_payload,
     parse_json_object,
 )
-from app.model_clients.openai_compatible import OpenAICompatibleModelClient
-from app.schemas.agent.execution_state import AgentReflection
-from app.schemas.agent.planning import PlanDraft, TaskContract
-from app.schemas.agent.run_result import FinalAnswer, MemoryRecord
+from app.infrastructure.model_clients.openai_compatible import OpenAICompatibleModelClient
 
 
 def test_model_json_parser_accepts_fences_and_leading_text():

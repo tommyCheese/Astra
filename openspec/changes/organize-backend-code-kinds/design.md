@@ -26,7 +26,7 @@
 
 ### 1. 两级归类：能力先于代码类型
 
-路径采用 `app/<capability>/<role>/...`，而不是 `app/<role>/<capability>/...`。例如模型 Provider 的纯响应归一化属于 `app.model_clients.normalization`，Memory consolidation 的验证属于 `app.memory.consolidation.validation`。这样业务内聚不被技术分类破坏。
+路径采用 `app/<capability>/<role>/...`，而不是 `app/<role>/<capability>/...`。例如模型 Provider 的纯响应归一化属于 `app.infrastructure.model_clients.normalization`，Memory consolidation 的验证属于 `app.application.memory.consolidation.validation`。这样业务内聚不被技术分类破坏。
 
 备选方案是创建全局 `app.models`、`app.validators` 和 `app.utils`。该方案会形成跨领域耦合和不可发现的杂物目录，因此不采用。
 

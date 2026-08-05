@@ -28,8 +28,8 @@ where = ["."]
 include = ["app*"]
 
 [tool.setuptools.package-data]
-"app.agent_profile" = ["*.md"]
-"app.builtin_skills" = ["**/*"]
+"app.domain.agent_profile" = ["*.md"]
+"app.infrastructure.builtin_skills" = ["**/*"]
 
 [project.optional-dependencies]
 dev = [

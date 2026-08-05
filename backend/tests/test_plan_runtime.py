@@ -1,26 +1,31 @@
 import pytest
 from sqlalchemy.exc import IntegrityError
 
-from app.agent_runtime.policies.reasoning import build_default_contract
-from app.db.models.plans import PlanNodeRecord
-from app.planning.scheduler import PlanScheduler
-from app.planning.service import (
+from app.application.agent_runtime.policies.reasoning import build_default_contract
+from app.application.planning.scheduler import PlanScheduler
+from app.application.planning.service import (
     PlanService,
     PlanValidationError,
     PlanValidator,
     canonical_agent_state,
 )
-from app.repositories.plans import PlanRepository, PlanStateError, diff_plans, plan_to_view
-from app.repositories.run_unit_of_work import RunUnitOfWork
-from app.repositories.run_view_projection import RunViewProjector
-from app.schemas.agent.planning import (
+from app.common.schemas.agent.planning import (
     ExpectedObservation,
     PlanDraft,
     PlanNodeDraft,
     PlanPatch,
     PlanPatchOperation,
 )
-from app.schemas.agent.types import PlanNodeStatus
+from app.common.schemas.agent.types import PlanNodeStatus
+from app.infrastructure.db.models.plans import PlanNodeRecord
+from app.infrastructure.repositories.plans import (
+    PlanRepository,
+    PlanStateError,
+    diff_plans,
+    plan_to_view,
+)
+from app.infrastructure.repositories.run_unit_of_work import RunUnitOfWork
+from app.infrastructure.repositories.run_view_projection import RunViewProjector
 
 
 def weather_plan() -> PlanDraft:

@@ -7,20 +7,20 @@ from pydantic import ValidationError
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from app.conversation_lifecycle import ConversationLifecycleService
-from app.conversation_retention import ConversationRetentionService
-from app.core.config import Settings
-from app.db.model_base import Base
-from app.db.models.conversations import ConversationShareRecord, TaskRecord
-from app.db.models.evolution import (
+from app.application.run_management.conversation_lifecycle import ConversationLifecycleService
+from app.application.run_management.conversation_retention import ConversationRetentionService
+from app.common.core.config import Settings
+from app.infrastructure.db.model_base import Base
+from app.infrastructure.db.models.conversations import ConversationShareRecord, TaskRecord
+from app.infrastructure.db.models.evolution import (
     AgentEvolutionAuditRecord,
     AgentEvolutionCandidateRecord,
     AgentEvolutionSourceRecord,
 )
-from app.db.models.memory import MemoryAuditRecord, MemorySourceRecord
-from app.repositories.conversations import ConversationRepository
-from app.repositories.memories import MemoryRepository
-from app.repositories.run_unit_of_work import RunUnitOfWork
+from app.infrastructure.db.models.memory import MemoryAuditRecord, MemorySourceRecord
+from app.infrastructure.repositories.conversations import ConversationRepository
+from app.infrastructure.repositories.memories import MemoryRepository
+from app.infrastructure.repositories.run_unit_of_work import RunUnitOfWork
 
 
 @pytest.fixture

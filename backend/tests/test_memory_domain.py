@@ -1,6 +1,6 @@
 import pytest
 
-from app.memory.domain import (
+from app.domain.memory import (
     MemoryKind,
     MemoryStatus,
     normalize_memory_kind,

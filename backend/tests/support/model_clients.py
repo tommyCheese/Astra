@@ -6,10 +6,10 @@ from collections import deque
 from dataclasses import dataclass
 from typing import Any
 
-from app.model_clients.contracts import AnswerDeltaCallback
-from app.model_clients.mock import MockModelClient
-from app.schemas.agent.execution_state import AgentDecision
-from app.schemas.agent.run_result import FinalAnswer
+from app.common.schemas.agent.execution_state import AgentDecision
+from app.common.schemas.agent.run_result import FinalAnswer
+from app.infrastructure.model_clients.contracts import AnswerDeltaCallback
+from app.infrastructure.model_clients.mock import MockModelClient
 
 
 @dataclass(frozen=True)

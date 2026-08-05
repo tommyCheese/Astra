@@ -3,13 +3,8 @@ from datetime import timedelta
 import pytest
 from pydantic import ValidationError
 
-from app.db.model_base import utc_now
-from app.db.models.workspaces import WorkspaceFileRecord
-from app.repositories.approval_contracts import ApprovalRequestCreate
-from app.repositories.permissions import PermissionRepository
-from app.repositories.run_unit_of_work import RunUnitOfWork
-from app.repositories.workspaces import WorkspaceRepository, validate_workspace_path
-from app.schemas.permissions import (
+from app.application.workspaces.runtime import WorkspaceRuntimeService
+from app.common.schemas.permissions import (
     ActionEffectPlan,
     EffectItem,
     PermissionConditions,
@@ -18,7 +13,12 @@ from app.schemas.permissions import (
     PermissionRule,
     PermissionSubject,
 )
-from app.workspaces.runtime import WorkspaceRuntimeService
+from app.infrastructure.db.model_base import utc_now
+from app.infrastructure.db.models.workspaces import WorkspaceFileRecord
+from app.infrastructure.repositories.approval_contracts import ApprovalRequestCreate
+from app.infrastructure.repositories.permissions import PermissionRepository
+from app.infrastructure.repositories.run_unit_of_work import RunUnitOfWork
+from app.infrastructure.repositories.workspaces import WorkspaceRepository, validate_workspace_path
 
 
 def test_permission_and_effect_schemas_preserve_identity_and_integrity_fields():

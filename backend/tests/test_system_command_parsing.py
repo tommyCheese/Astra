@@ -1,6 +1,6 @@
 import pytest
 
-from app.system_command_parsing import (
+from app.application.scheduling.command_parsing import (
     CommandUsageError,
     parse_heartbeat_command,
     parse_schedule_command,

@@ -26,37 +26,37 @@ JSON 输出是完整清单，包含每个生产模块的行数、公共符号、
 
 | 行数 | 模块 | 公共符号 | 内部 imports |
 | ---: | --- | ---: | ---: |
-| 3,292 | `app.runner.agent_loop` | 7 | 39 |
-| 2,685 | `app.repositories.runs` | 6 | 9 |
-| 1,841 | `app.runner.model_client` | 20 | 11 |
-| 1,636 | `app.db.models` | 57 | 0 |
-| 1,582 | `app.tools.web` | 32 | 3 |
-| 1,249 | `app.memory.consolidation` | 19 | 3 |
-| 1,176 | `app.schemas.agent` | 94 | 2 |
-| 1,075 | `app.repositories.memory_consolidation` | 7 | 3 |
-| 1,047 | `app.subagents.executor` | 3 | 18 |
-| 986 | `app.api.skills` | 26 | 14 |
-| 984 | `app.repositories.memories` | 1 | 2 |
-| 976 | `app.runner.planning` | 7 | 4 |
-| 952 | `app.runner.engine` | 6 | 22 |
+| 3,292 | `app.application.runner.agent_loop` | 7 | 39 |
+| 2,685 | `app.infrastructure.repositories.runs` | 6 | 9 |
+| 1,841 | `app.application.runner.model_client` | 20 | 11 |
+| 1,636 | `app.infrastructure.db.models` | 57 | 0 |
+| 1,582 | `app.infrastructure.tools.web` | 32 | 3 |
+| 1,249 | `app.application.memory.consolidation` | 19 | 3 |
+| 1,176 | `app.interfaces.schemas.agent` | 94 | 2 |
+| 1,075 | `app.infrastructure.repositories.memory_consolidation` | 7 | 3 |
+| 1,047 | `app.application.subagents.executor` | 3 | 18 |
+| 986 | `app.interfaces.api.skills` | 26 | 14 |
+| 984 | `app.infrastructure.repositories.memories` | 1 | 2 |
+| 976 | `app.application.runner.planning` | 7 | 4 |
+| 952 | `app.application.runner.engine` | 6 | 22 |
 
 ## 最大与最复杂函数
 
 | 行数 | 复杂度 | 函数 |
 | ---: | ---: | --- |
-| 2,372 | 374 | `app.runner.agent_loop.AgentLoop.run` |
-| 477 | 26 | `app.runner.node_worker.ReadOnlyAgentNodeExecutor.__call__` |
-| 340 | 49 | `app.subagents.executor.LocalAstraAgentExecutor.execute` |
-| 324 | 66 | `app.repositories.runs.run_to_view` |
-| 264 | 48 | `app.skills.packages.parse_skill_package` |
-| 260 | 75 | `app.deliverables.DeliverableCatalog.list` |
-| 238 | 28 | `app.repositories.memory_consolidation.MemoryConsolidationRepository.publish` |
-| 227 | 12 | `app.subagents.executor.LocalAstraAgentExecutor._call_tool` |
-| 216 | 55 | `app.runner.agent_loop.ContextAssembler.assemble` |
-| 214 | 42 | `app.subagents.context.SubagentContextComposer.compose` |
-| 200 | 31 | `app.runner.engine.RunEngine._run_with_repo` |
-| 184 | 57 | `app.repositories.runs.RunRepository.decide_approval` |
-| 179 | 72 | `app.runner.reasoning.CompletionGate.evaluate` |
+| 2,372 | 374 | `app.application.runner.agent_loop.AgentLoop.run` |
+| 477 | 26 | `app.application.runner.node_worker.ReadOnlyAgentNodeExecutor.__call__` |
+| 340 | 49 | `app.application.subagents.executor.LocalAstraAgentExecutor.execute` |
+| 324 | 66 | `app.infrastructure.repositories.runs.run_to_view` |
+| 264 | 48 | `app.application.skills.packages.parse_skill_package` |
+| 260 | 75 | `app.application.workspaces.deliverables.DeliverableCatalog.list` |
+| 238 | 28 | `app.infrastructure.repositories.memory_consolidation.MemoryConsolidationRepository.publish` |
+| 227 | 12 | `app.application.subagents.executor.LocalAstraAgentExecutor._call_tool` |
+| 216 | 55 | `app.application.runner.agent_loop.ContextAssembler.assemble` |
+| 214 | 42 | `app.application.subagents.context.SubagentContextComposer.compose` |
+| 200 | 31 | `app.application.runner.engine.RunEngine._run_with_repo` |
+| 184 | 57 | `app.infrastructure.repositories.runs.RunRepository.decide_approval` |
+| 179 | 72 | `app.application.runner.reasoning.CompletionGate.evaluate` |
 
 复杂度是以 1 为基础，对分支、循环、异常分支、布尔分支、match 分支和 comprehension 分支累加的确定性近似值。它用于发现热点和防止恶化，不替代设计评审。
 

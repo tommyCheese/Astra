@@ -2,9 +2,9 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from app.core.config import Settings
-from app.db import session as session_module
-from app.db.session import configure_sqlite_engine, engine_options_for_settings
+from app.common.core.config import Settings
+from app.infrastructure.db import session as session_module
+from app.infrastructure.db.session import configure_sqlite_engine, engine_options_for_settings
 
 
 async def test_sqlite_engine_uses_concurrent_runtime_pragmas(tmp_path):

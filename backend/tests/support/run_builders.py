@@ -5,10 +5,10 @@ from __future__ import annotations
 from dataclasses import dataclass, field, replace
 from typing import Any
 
-from app.schemas.agent.api_views import CreateRunRequest
-from app.schemas.agent.run_policy import RequestedReasoningPolicy
-from app.schemas.agent.types import AnswerMode
-from app.schemas.models import RunModelConfig
+from app.common.schemas.agent.api_views import CreateRunRequest
+from app.common.schemas.agent.run_policy import RequestedReasoningPolicy
+from app.common.schemas.agent.types import AnswerMode
+from app.common.schemas.models import RunModelConfig
 
 
 @dataclass(frozen=True)

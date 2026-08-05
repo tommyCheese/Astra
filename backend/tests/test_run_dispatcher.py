@@ -2,8 +2,8 @@ import asyncio
 
 import pytest
 
-from app.core.config import Settings
-from app.run_management.dispatcher import InProcessRunDispatcher
+from app.application.run_management.dispatcher import InProcessRunDispatcher
+from app.common.core.config import Settings
 
 
 @pytest.mark.asyncio

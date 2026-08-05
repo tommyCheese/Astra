@@ -5,23 +5,27 @@ import pytest
 from sqlalchemy import event as sqlalchemy_event
 from sqlalchemy import func, select
 
-from app.agent_runtime.policies.reasoning import resolve_run_profile
-from app.core.config import Settings
-from app.db.models.skills import RunSkillSnapshotRecord, SkillBlobRecord
-from app.model_clients.mock import MockModelClient
-from app.repositories.run_unit_of_work import RunUnitOfWork
-from app.runner.engine import RunEngine
-from app.schemas.agent.execution_state import AgentDecision
-from app.schemas.agent.run_policy import RequestedReasoningPolicy
-from app.schemas.agent.run_result import FinalAnswer
-from app.schemas.agent.types import AnswerMode
-from app.skills.activation import SkillActivationService
-from app.skills.builtin_catalog import ensure_builtin_skills
-from app.skills.catalog import SkillCatalogBuilder
-from app.skills.errors import SkillStorageError
-from app.skills.packages import SkillPackageError, normalize_skill_path, parse_skill_package
-from app.skills.storage import SkillService
-from app.tools.base import ToolRegistry
+from app.application.agent_runtime.policies.reasoning import resolve_run_profile
+from app.application.runner.engine import RunEngine
+from app.application.skills.activation import SkillActivationService
+from app.application.skills.builtin_catalog import ensure_builtin_skills
+from app.application.skills.catalog import SkillCatalogBuilder
+from app.application.skills.errors import SkillStorageError
+from app.application.skills.packages import (
+    SkillPackageError,
+    normalize_skill_path,
+    parse_skill_package,
+)
+from app.application.skills.storage import SkillService
+from app.common.core.config import Settings
+from app.common.schemas.agent.execution_state import AgentDecision
+from app.common.schemas.agent.run_policy import RequestedReasoningPolicy
+from app.common.schemas.agent.run_result import FinalAnswer
+from app.common.schemas.agent.types import AnswerMode
+from app.infrastructure.db.models.skills import RunSkillSnapshotRecord, SkillBlobRecord
+from app.infrastructure.model_clients.mock import MockModelClient
+from app.infrastructure.repositories.run_unit_of_work import RunUnitOfWork
+from app.infrastructure.tools.base import ToolRegistry
 
 
 def skill_md(name: str = "research-notes", body: str = "Follow the workflow.") -> str:
@@ -204,7 +208,7 @@ async def test_catalog_snapshot_activation_and_resource_verification(session, tm
         },
     )
     await service.publish(skill.id, skill.draft.revision_token)
-    from app.repositories.run_unit_of_work import RunUnitOfWork
+    from app.infrastructure.repositories.run_unit_of_work import RunUnitOfWork
 
     run = await RunUnitOfWork(session).create_task_run("research", {})
     catalog = await SkillCatalogBuilder(session).build(goal="research")
@@ -332,7 +336,7 @@ async def test_frozen_catalog_survives_republish_and_rejects_drift(session):
         },
     )
     first_revision = await service.publish(skill.id, skill.draft.revision_token)
-    from app.repositories.run_unit_of_work import RunUnitOfWork
+    from app.infrastructure.repositories.run_unit_of_work import RunUnitOfWork
 
     run = await RunUnitOfWork(session).create_task_run("snapshot", {})
     builder = SkillCatalogBuilder(session)
@@ -378,7 +382,7 @@ async def test_activation_quota_deactivation_and_revocation(session):
             files={"SKILL.md": skill_md(name)},
         )
         revisions.append(await service.publish(skill.id, skill.draft.revision_token))
-    from app.repositories.run_unit_of_work import RunUnitOfWork
+    from app.infrastructure.repositories.run_unit_of_work import RunUnitOfWork
 
     run = await RunUnitOfWork(session).create_task_run("quota", {})
     builder = SkillCatalogBuilder(session)

@@ -7,9 +7,9 @@ from datetime import datetime, timedelta, timezone
 import pytest
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
-from app.core.config import Settings
-from app.db.models.executions import RuntimeBuildRecord, RuntimeProfileRecord
-from app.runtime_profiles import RuntimeProfileService
+from app.common.core.config import Settings
+from app.infrastructure.db.models.executions import RuntimeBuildRecord, RuntimeProfileRecord
+from app.infrastructure.sandbox.profiles import RuntimeProfileService
 
 
 async def test_profile_write_is_atomic_and_finished_tasks_are_removed(tmp_path, monkeypatch):

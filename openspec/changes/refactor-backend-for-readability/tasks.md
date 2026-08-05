@@ -85,10 +85,10 @@
 
 - [x] 9.1 按 conversations/runs/plans/executions/permissions/workspaces/memory/skills/evolution/scheduling 拆分 ORM model 模块
 - [x] 9.2 建立显式 ORM metadata 聚合入口并更新 Alembic env、relationship resolution 与测试 fixtures
-- [x] 9.3 提供临时 `app.db.models` re-export 并禁止新增消费者依赖该兼容入口
+- [x] 9.3 提供临时 `app.infrastructure.db.models` re-export 并禁止新增消费者依赖该兼容入口
 - [x] 9.4 迁移生产和测试导入到模型所有者模块，保持表名、列名、约束、索引和级联语义不变
 - [x] 9.5 运行全新数据库、历史数据库、Alembic upgrade/no-diff 和 metadata table-set 验证
-- [x] 9.6 删除 `app.db.models` 兼容 re-export 并确认 import graph 中不存在旧路径
+- [x] 9.6 删除 `app.infrastructure.db.models` 兼容 re-export 并确认 import graph 中不存在旧路径
 
 ## 10. Schema、状态与公共 Contract 拆分
 

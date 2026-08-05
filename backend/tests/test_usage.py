@@ -1,11 +1,11 @@
 from datetime import datetime, timedelta, timezone
 
-from app.api.usage import _as_utc
-from app.db.model_base import utc_now
-from app.db.models.permissions import ToolCallRecord
-from app.db.models.runs import AgentTurnRecord
-from app.repositories.run_unit_of_work import RunUnitOfWork
-from app.repositories.usage import UsageRepository, normalize_usage
+from app.infrastructure.db.model_base import utc_now
+from app.infrastructure.db.models.permissions import ToolCallRecord
+from app.infrastructure.db.models.runs import AgentTurnRecord
+from app.infrastructure.repositories.run_unit_of_work import RunUnitOfWork
+from app.infrastructure.repositories.usage import UsageRepository, normalize_usage
+from app.interfaces.api.usage import _as_utc
 
 
 async def test_usage_summary_persists_exact_provider_tokens(session):

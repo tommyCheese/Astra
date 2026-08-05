@@ -2,13 +2,13 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from app.automation_commands import AutomationCommandService
-from app.core.config import Settings
-from app.core.errors import ValidationError
-from app.db.models.conversations import TaskRecord
-from app.db.models.runs import RunRecord
-from app.permissions.governance import permission_bundle_digest
-from app.schemas.permissions import PermissionBundle
+from app.application.permissions.governance import permission_bundle_digest
+from app.application.scheduling.commands import AutomationCommandService
+from app.common.core.config import Settings
+from app.common.core.errors import ValidationError
+from app.common.schemas.permissions import PermissionBundle
+from app.infrastructure.db.models.conversations import TaskRecord
+from app.infrastructure.db.models.runs import RunRecord
 
 UTC = timezone.utc
 

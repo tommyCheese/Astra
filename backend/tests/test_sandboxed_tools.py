@@ -3,12 +3,12 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.core.config import Settings
-from app.sandbox.runtime import SandboxResult
-from app.tools.base import ToolExecutionContext, ToolExecutionError
-from app.tools.registry import build_tool_registry
-from app.tools.sandboxed import SandboxedWebTool, _web_runtime_config
-from app.tools.web.fetching import WebFetchTool
+from app.common.core.config import Settings
+from app.infrastructure.sandbox.runtime import SandboxResult
+from app.infrastructure.tools.base import ToolExecutionContext, ToolExecutionError
+from app.infrastructure.tools.registry import build_tool_registry
+from app.infrastructure.tools.sandboxed import SandboxedWebTool, _web_runtime_config
+from app.infrastructure.tools.web.fetching import WebFetchTool
 
 
 class RecordingSandboxService:

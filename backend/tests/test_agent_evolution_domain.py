@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from app.evolution import (
+from app.application.evolution import (
     EvaluationCaseResult,
     EvaluationCaseSplit,
     EvaluationManifest,

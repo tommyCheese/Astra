@@ -1,8 +1,12 @@
 import pytest
 
-from app.agent_runtime.policies.completion import CompletionGate
-from app.agent_runtime.policies.loop import InvalidTransition, LoopOrchestrator, NoProgressDetector
-from app.agent_runtime.policies.reasoning import (
+from app.application.agent_runtime.policies.completion import CompletionGate
+from app.application.agent_runtime.policies.loop import (
+    InvalidTransition,
+    LoopOrchestrator,
+    NoProgressDetector,
+)
+from app.application.agent_runtime.policies.reasoning import (
     ObservationEvaluator,
     PolicyCompiler,
     ReflectionGate,
@@ -15,17 +19,17 @@ from app.agent_runtime.policies.reasoning import (
     resolve_run_profile,
     validate_contract,
 )
-from app.agent_runtime.result_adapters import WebTaskAdapter
-from app.schemas.agent.execution_state import (
+from app.application.agent_runtime.result_adapters import WebTaskAdapter
+from app.common.schemas.agent.execution_state import (
     AgentObservation,
     AgentState,
     NodeResult,
     ReflectionPatch,
 )
-from app.schemas.agent.planning import ExpectedObservation, TaskContract
-from app.schemas.agent.run_policy import ReasoningPolicySnapshot, RequestedReasoningPolicy
-from app.schemas.agent.run_result import ValidationIssue, ValidationOutcome
-from app.schemas.agent.types import (
+from app.common.schemas.agent.planning import ExpectedObservation, TaskContract
+from app.common.schemas.agent.run_policy import ReasoningPolicySnapshot, RequestedReasoningPolicy
+from app.common.schemas.agent.run_result import ValidationIssue, ValidationOutcome
+from app.common.schemas.agent.types import (
     AnswerMode,
     CriterionStatus,
     ExecutionMode,

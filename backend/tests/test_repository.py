@@ -4,16 +4,16 @@ import pytest
 from pydantic import ValidationError
 from sqlalchemy import event as sqlalchemy_event
 
-from app.agent_profile import load_agent_profile
-from app.agent_runtime.policies.reasoning import build_default_contract
-from app.db.models.executions import ModelInvocationRecord
-from app.repositories.conversation_strategy import ConversationStrategyRepository
-from app.repositories.run_unit_of_work import RunUnitOfWork
-from app.repositories.run_view_projection import RunViewProjector
-from app.repositories.tool_settings import ToolSettingsRepository
-from app.repositories.usage import UsageRepository
-from app.schemas.agent.api_views import RunView
-from app.schemas.agent.execution_state import AgentState
+from app.application.agent_runtime.policies.reasoning import build_default_contract
+from app.common.schemas.agent.api_views import RunView
+from app.common.schemas.agent.execution_state import AgentState
+from app.domain.agent_profile import load_agent_profile
+from app.infrastructure.db.models.executions import ModelInvocationRecord
+from app.infrastructure.repositories.conversation_strategy import ConversationStrategyRepository
+from app.infrastructure.repositories.run_unit_of_work import RunUnitOfWork
+from app.infrastructure.repositories.run_view_projection import RunViewProjector
+from app.infrastructure.repositories.tool_settings import ToolSettingsRepository
+from app.infrastructure.repositories.usage import UsageRepository
 
 
 async def test_tool_settings_are_created_and_persisted(session):

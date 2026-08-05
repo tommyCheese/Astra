@@ -3,41 +3,41 @@ from types import SimpleNamespace
 import pytest
 from fake_web_tools import fake_web_registry
 
-from app.agent_profile import ModelOperation, load_agent_profile
-from app.agent_profile.prompts import PromptComposer
-from app.agent_runtime.policies.reasoning import (
+from app.application.agent_runtime.policies.reasoning import (
     PolicyCompiler,
     build_default_contract,
     compile_subagent_policy,
     resolve_run_profile,
 )
-from app.agent_runtime.services.completion import (
+from app.application.agent_runtime.services.completion import (
     INVALID_ARTIFACT_REFERENCE_WARNING,
     CompletionVerificationStage,
     normalize_final_answer_artifact_references,
     quick_workspace_change_completes_goal,
 )
-from app.agent_runtime.services.loop import AgentLoop, ToolRouter
-from app.core.config import Settings
-from app.model_clients.contracts import ModelOutputError
-from app.model_clients.mock import MockModelClient
-from app.planning.service import PlanService, canonical_agent_state
-from app.repositories.agent_executions import AgentExecutionRepository
-from app.repositories.plans import PlanRepository, plan_to_view
-from app.repositories.run_unit_of_work import RunUnitOfWork
-from app.schemas.agent.execution_state import (
+from app.application.agent_runtime.services.loop import AgentLoop, ToolRouter
+from app.application.planning.service import PlanService, canonical_agent_state
+from app.common.core.config import Settings
+from app.common.schemas.agent.execution_state import (
     AcceptedFact,
     AgentDecision,
     AgentReflection,
     ReflectionPatch,
 )
-from app.schemas.agent.planning import ExpectedObservation, PlanDraft, PlanNodeDraft
-from app.schemas.agent.run_policy import RequestedReasoningPolicy
-from app.schemas.agent.run_result import FinalAnswer, ValidationOutcome
-from app.schemas.agent.types import AnswerMode
-from app.tools.base import ToolExecutionError
-from app.tools.runtime import SwarmTool
-from app.tools.web import build_web_registry
+from app.common.schemas.agent.planning import ExpectedObservation, PlanDraft, PlanNodeDraft
+from app.common.schemas.agent.run_policy import RequestedReasoningPolicy
+from app.common.schemas.agent.run_result import FinalAnswer, ValidationOutcome
+from app.common.schemas.agent.types import AnswerMode
+from app.domain.agent_profile import ModelOperation, load_agent_profile
+from app.domain.agent_profile.prompts import PromptComposer
+from app.infrastructure.model_clients.contracts import ModelOutputError
+from app.infrastructure.model_clients.mock import MockModelClient
+from app.infrastructure.repositories.agent_executions import AgentExecutionRepository
+from app.infrastructure.repositories.plans import PlanRepository, plan_to_view
+from app.infrastructure.repositories.run_unit_of_work import RunUnitOfWork
+from app.infrastructure.tools.base import ToolExecutionError
+from app.infrastructure.tools.runtime import SwarmTool
+from app.infrastructure.tools.web import build_web_registry
 
 
 async def initialize_canonical_plan(repo, run, contract):

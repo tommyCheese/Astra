@@ -6,14 +6,14 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from app.core.config import Settings, get_settings
-from app.db.model_base import Base
-from app.db.session import get_session
+from app.application.skills.builtin_catalog import ensure_builtin_skills
+from app.common.core.config import Settings, get_settings
+from app.common.schemas.agent.execution_state import AgentDecision
+from app.common.schemas.agent.run_result import FinalAnswer
+from app.infrastructure.db.model_base import Base
+from app.infrastructure.db.session import get_session
+from app.infrastructure.model_clients.mock import MockModelClient
 from app.main import create_app
-from app.model_clients.mock import MockModelClient
-from app.schemas.agent.execution_state import AgentDecision
-from app.schemas.agent.run_result import FinalAnswer
-from app.skills.builtin_catalog import ensure_builtin_skills
 
 
 def skill_md(name: str = "research-notes", body: str = "Follow the workflow.") -> str:

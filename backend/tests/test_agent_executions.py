@@ -3,15 +3,15 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from sqlalchemy import func, select
 
-from app.db.models.executions import AgentExecutionRecord
-from app.db.models.runs import RunRecord
-from app.repositories.agent_executions import (
+from app.common.schemas.subagents import DelegationContract, DelegationRequest
+from app.infrastructure.db.models.executions import AgentExecutionRecord
+from app.infrastructure.db.models.runs import RunRecord
+from app.infrastructure.repositories.agent_executions import (
     AgentExecutionRepository,
     AgentExecutionStateError,
 )
-from app.repositories.conversations import ConversationRepository
-from app.repositories.run_unit_of_work import RunUnitOfWork
-from app.schemas.subagents import DelegationContract, DelegationRequest
+from app.infrastructure.repositories.conversations import ConversationRepository
+from app.infrastructure.repositories.run_unit_of_work import RunUnitOfWork
 
 
 def child_contract(

@@ -4,11 +4,14 @@ from datetime import datetime, timezone
 
 import pytest
 
-from app.grounding.ledger import EvidenceConflictError
-from app.grounding.schemas import EvidenceFragment, EvidenceKind
-from app.repositories.agent_executions import AgentExecutionRepository
-from app.repositories.run_unit_of_work import RunUnitOfWork
-from app.schemas.subagents import (
+from app.application.subagents.context import (
+    SubagentContextComposer,
+    SubagentContinuationService,
+    SubagentExchangeService,
+    create_context_checkpoint,
+)
+from app.application.subagents.governance import FrozenChildCatalog
+from app.common.schemas.subagents import (
     DelegationContract,
     DelegationInput,
     DelegationRequest,
@@ -16,13 +19,10 @@ from app.schemas.subagents import (
     EffectiveDelegationScope,
     SubagentBudgetEnvelope,
 )
-from app.subagents.context import (
-    SubagentContextComposer,
-    SubagentContinuationService,
-    SubagentExchangeService,
-    create_context_checkpoint,
-)
-from app.subagents.governance import FrozenChildCatalog
+from app.domain.grounding.ledger import EvidenceConflictError
+from app.domain.grounding.schemas import EvidenceFragment, EvidenceKind
+from app.infrastructure.repositories.agent_executions import AgentExecutionRepository
+from app.infrastructure.repositories.run_unit_of_work import RunUnitOfWork
 
 NOW = datetime(2026, 1, 1, tzinfo=timezone.utc)
 

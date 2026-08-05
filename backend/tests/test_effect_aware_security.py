@@ -7,27 +7,22 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.db.model_base import utc_now
-from app.db.models.permissions import ApprovalGrantRecord
-from app.permissions.effects import (
+from app.application.permissions.effects import (
     ANALYZER_DIGEST,
     BashEffectAnalyzer,
     DefaultEffectAnalyzer,
     grant_proposals,
     workspace_mount_mode,
 )
-from app.permissions.engine import PermissionEngine
-from app.permissions.governance import (
+from app.application.permissions.engine import PermissionEngine
+from app.application.permissions.governance import (
     ExtensionTrustPolicy,
     PermissionBundleEvaluator,
     permission_bundle_digest,
 )
-from app.repositories.approval_contracts import ApprovalRequestCreate
-from app.repositories.permissions import PermissionRepository
-from app.repositories.run_unit_of_work import RunUnitOfWork
-from app.repositories.workspaces import WorkspaceRepository
-from app.schemas.agent.types import ExecutionMode
-from app.schemas.permissions import (
+from app.application.workspaces.runtime import WorkspaceRuntimeService
+from app.common.schemas.agent.types import ExecutionMode
+from app.common.schemas.permissions import (
     ActionEffectPlan,
     EffectItem,
     ExtensionDescriptor,
@@ -37,10 +32,15 @@ from app.schemas.permissions import (
     PermissionRule,
     PermissionSubject,
 )
-from app.tools.base import ToolExecutionError, ToolSpec
-from app.tools.bash import BashExecuteTool
-from app.tools.chart import ChartRenderTool
-from app.workspaces.runtime import WorkspaceRuntimeService
+from app.infrastructure.db.model_base import utc_now
+from app.infrastructure.db.models.permissions import ApprovalGrantRecord
+from app.infrastructure.repositories.approval_contracts import ApprovalRequestCreate
+from app.infrastructure.repositories.permissions import PermissionRepository
+from app.infrastructure.repositories.run_unit_of_work import RunUnitOfWork
+from app.infrastructure.repositories.workspaces import WorkspaceRepository
+from app.infrastructure.tools.base import ToolExecutionError, ToolSpec
+from app.infrastructure.tools.bash import BashExecuteTool
+from app.infrastructure.tools.chart import ChartRenderTool
 
 
 def bash_plan(command: str):

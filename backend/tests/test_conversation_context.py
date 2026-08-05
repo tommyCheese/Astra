@@ -3,20 +3,23 @@ from datetime import timedelta
 import pytest
 from pydantic import ValidationError as PydanticValidationError
 
-from app.context_commands import execute_system_command
-from app.context_compaction.service import AgentContextCompactionService, CompactionResult
-from app.context_windows import resolve_context_window
-from app.conversation_context import (
+from app.application.context_compaction.service import (
+    AgentContextCompactionService,
+    CompactionResult,
+)
+from app.application.run_management.conversation_commands import execute_system_command
+from app.application.run_management.conversation_context import (
     ConversationContextManager,
     estimate_tokens,
 )
-from app.core.config import Settings
-from app.core.errors import StateError
-from app.db.model_base import utc_now
-from app.db.models.conversations import TaskRecord
-from app.db.models.runs import RunRecord
-from app.schemas.context_compaction import CompactionLifecycleStatus
-from app.schemas.models import RunModelConfig
+from app.common.core.config import Settings
+from app.common.core.errors import StateError
+from app.common.schemas.context_compaction import CompactionLifecycleStatus
+from app.common.schemas.models import RunModelConfig
+from app.infrastructure.db.model_base import utc_now
+from app.infrastructure.db.models.conversations import TaskRecord
+from app.infrastructure.db.models.runs import RunRecord
+from app.infrastructure.model_clients.context_windows import resolve_context_window
 
 
 def test_context_window_resolution_and_estimation_are_model_aware():

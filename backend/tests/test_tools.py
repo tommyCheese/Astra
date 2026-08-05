@@ -4,8 +4,8 @@ from unittest.mock import AsyncMock
 import httpx
 import pytest
 
-from app.core.config import Settings
-from app.tools.base import (
+from app.common.core.config import Settings
+from app.infrastructure.tools.base import (
     ArtifactRef,
     Tool,
     ToolExecutionError,
@@ -13,16 +13,16 @@ from app.tools.base import (
     ToolResultEnvelope,
     ToolSpec,
 )
-from app.tools.web import build_web_registry
-from app.tools.web.content import extract_source
-from app.tools.web.fetching import WebFetchTool
-from app.tools.web.providers import (
+from app.infrastructure.tools.web import build_web_registry
+from app.infrastructure.tools.web.content import extract_source
+from app.infrastructure.tools.web.fetching import WebFetchTool
+from app.infrastructure.tools.web.providers import (
     DuckDuckGoHTMLParser,
     normalize_bing_rss,
     normalize_google_items,
     normalize_search_result_url,
 )
-from app.tools.web.search import WebSearchTool
+from app.infrastructure.tools.web.search import WebSearchTool
 
 
 async def test_unconfigured_web_search_provider_is_rejected():
@@ -159,7 +159,7 @@ async def test_duckduckgo_web_search_uses_real_provider_response(monkeypatch):
                 ),
             )
 
-    monkeypatch.setattr("app.tools.web.providers.httpx.AsyncClient", FakeClient)
+    monkeypatch.setattr("app.infrastructure.tools.web.providers.httpx.AsyncClient", FakeClient)
     output = await WebSearchTool(Settings(web_search_provider="duckduckgo")).run(
         {"query": "Astra", "num_results": 1}
     )
@@ -204,7 +204,7 @@ async def test_bing_web_search_uses_rss_response(monkeypatch):
                 ),
             )
 
-    monkeypatch.setattr("app.tools.web.providers.httpx.AsyncClient", FakeClient)
+    monkeypatch.setattr("app.infrastructure.tools.web.providers.httpx.AsyncClient", FakeClient)
     output = await WebSearchTool(Settings(web_search_provider="bing")).run(
         {"query": "Astra", "num_results": 1}
     )
@@ -422,7 +422,7 @@ async def test_google_web_search_api_error(monkeypatch):
             response = httpx.Response(500, request=request)
             raise httpx.HTTPStatusError("boom", request=request, response=response)
 
-    monkeypatch.setattr("app.tools.web.providers.httpx.AsyncClient", FakeClient)
+    monkeypatch.setattr("app.infrastructure.tools.web.providers.httpx.AsyncClient", FakeClient)
     tool = WebSearchTool(
         Settings(
             web_search_provider="google",
@@ -468,7 +468,7 @@ async def test_brave_web_search_wraps_provider_errors(monkeypatch):
             response = httpx.Response(503, request=request)
             raise httpx.HTTPStatusError("unavailable", request=request, response=response)
 
-    monkeypatch.setattr("app.tools.web.providers.httpx.AsyncClient", FakeClient)
+    monkeypatch.setattr("app.infrastructure.tools.web.providers.httpx.AsyncClient", FakeClient)
     tool = WebSearchTool(Settings(web_search_provider="brave", web_search_api_key="secret"))
 
     with pytest.raises(ToolExecutionError) as exc_info:
@@ -594,7 +594,7 @@ async def test_web_fetch_revalidates_redirect_targets(monkeypatch):
         async def getaddrinfo(self, _host, port, **_kwargs):
             return [(2, 1, 6, "", ("93.184.216.34", port))]
 
-    monkeypatch.setattr("app.tools.web.security.asyncio.get_running_loop", lambda: Resolver())
+    monkeypatch.setattr("app.infrastructure.tools.web.security.asyncio.get_running_loop", lambda: Resolver())
 
     def respond(request: httpx.Request) -> httpx.Response:
         return httpx.Response(
@@ -614,7 +614,7 @@ async def test_web_fetch_rejects_hostnames_resolving_to_private_addresses(monkey
         async def getaddrinfo(self, _host, port, **_kwargs):
             return [(2, 1, 6, "", ("127.0.0.1", port))]
 
-    monkeypatch.setattr("app.tools.web.security.asyncio.get_running_loop", lambda: Resolver())
+    monkeypatch.setattr("app.infrastructure.tools.web.security.asyncio.get_running_loop", lambda: Resolver())
     tool = WebFetchTool(Settings())
     async with httpx.AsyncClient(transport=httpx.MockTransport(lambda request: None)) as client:
         with pytest.raises(ToolExecutionError) as exc_info:
@@ -628,7 +628,7 @@ async def test_web_fetch_proxy_fake_ip_compatibility_is_explicit(monkeypatch):
         async def getaddrinfo(self, _host, port, **_kwargs):
             return [(2, 1, 6, "", ("198.18.0.42", port))]
 
-    monkeypatch.setattr("app.tools.web.security.asyncio.get_running_loop", lambda: Resolver())
+    monkeypatch.setattr("app.infrastructure.tools.web.security.asyncio.get_running_loop", lambda: Resolver())
 
     async def respond(request: httpx.Request) -> httpx.Response:
         return httpx.Response(
@@ -652,7 +652,7 @@ async def test_web_fetch_streams_with_a_hard_response_limit(monkeypatch):
     async def allow_public_target(_url, **_kwargs):
         return {"93.184.216.34"}
 
-    monkeypatch.setattr("app.tools.web.fetching.validate_public_http_target", allow_public_target)
+    monkeypatch.setattr("app.infrastructure.tools.web.fetching.validate_public_http_target", allow_public_target)
 
     def respond(request: httpx.Request) -> httpx.Response:
         return httpx.Response(
@@ -676,7 +676,7 @@ async def test_web_fetch_rejects_non_text_content(monkeypatch):
     async def allow_public_target(_url, **_kwargs):
         return {"93.184.216.34"}
 
-    monkeypatch.setattr("app.tools.web.fetching.validate_public_http_target", allow_public_target)
+    monkeypatch.setattr("app.infrastructure.tools.web.fetching.validate_public_http_target", allow_public_target)
 
     def respond(request: httpx.Request) -> httpx.Response:
         return httpx.Response(
@@ -698,7 +698,7 @@ async def test_web_fetch_records_the_validated_final_url(monkeypatch):
     async def allow_public_target(_url, **_kwargs):
         return {"93.184.216.34"}
 
-    monkeypatch.setattr("app.tools.web.fetching.validate_public_http_target", allow_public_target)
+    monkeypatch.setattr("app.infrastructure.tools.web.fetching.validate_public_http_target", allow_public_target)
 
     def respond(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/start":

@@ -1,10 +1,10 @@
 import pytest
 
-from app.core.config import Settings
-from app.model_clients.mock import MockModelClient
-from app.repositories.agent_executions import AgentExecutionRepository
-from app.repositories.run_unit_of_work import RunUnitOfWork
-from app.root_context_compaction import compact_root_context
+from app.application.context_compaction.root import compact_root_context
+from app.common.core.config import Settings
+from app.infrastructure.model_clients.mock import MockModelClient
+from app.infrastructure.repositories.agent_executions import AgentExecutionRepository
+from app.infrastructure.repositories.run_unit_of_work import RunUnitOfWork
 
 
 def root_context(observations):

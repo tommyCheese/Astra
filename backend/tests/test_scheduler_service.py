@@ -3,10 +3,10 @@ import asyncio
 import pytest
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from app.core.config import Settings
-from app.db.model_base import Base
-from app.run_management.dispatcher import InProcessRunDispatcher
-from app.scheduling.service import SchedulerService
+from app.application.run_management.dispatcher import InProcessRunDispatcher
+from app.application.scheduling.service import SchedulerService
+from app.common.core.config import Settings
+from app.infrastructure.db.model_base import Base
 
 
 @pytest.mark.asyncio

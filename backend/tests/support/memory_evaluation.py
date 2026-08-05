@@ -9,8 +9,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from app.memory.domain import MemoryNamespace, MemoryNamespaceType, MemoryStatus
-from app.memory.retrieval import (
+from app.application.memory.retrieval import (
     MemoryRetrievalBudget,
     MemoryRetrievalCandidate,
     MemoryRetrievalPolicy,
@@ -18,6 +17,7 @@ from app.memory.retrieval import (
     estimate_text_tokens,
     retrieve_memories,
 )
+from app.domain.memory import MemoryNamespace, MemoryNamespaceType, MemoryStatus
 
 EVALUATION_STRATEGIES = (
     "no_memory",

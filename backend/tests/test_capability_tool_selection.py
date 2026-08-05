@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-from app.tools.base import Tool, ToolRegistry, ToolSpec
-from app.tools.bash import BashExecuteTool
-from app.tools.chart import ChartRenderTool
-from app.tools.router import ToolRouter
-from app.tools.selection import CapabilityToolResolver
-from app.tools.web.fetching import WebFetchTool
-from app.tools.web.search import WebSearchTool
+from app.infrastructure.tools.base import Tool, ToolRegistry, ToolSpec
+from app.infrastructure.tools.bash import BashExecuteTool
+from app.infrastructure.tools.chart import ChartRenderTool
+from app.infrastructure.tools.router import ToolRouter
+from app.infrastructure.tools.selection import CapabilityToolResolver
+from app.infrastructure.tools.web.fetching import WebFetchTool
+from app.infrastructure.tools.web.search import WebSearchTool
 
 
 class StaticTool(Tool):

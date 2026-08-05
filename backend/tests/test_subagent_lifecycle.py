@@ -2,18 +2,22 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from app.db.models.executions import AgentJoinRecord
-from app.db.models.permissions import AgentDelegationRecord, AgentIdentityRecord, ToolCallRecord
-from app.repositories.agent_executions import (
+from app.application.subagents.lifecycle import SubagentCancellationService
+from app.application.subagents.recovery import SubagentExecutionRecovery
+from app.common.schemas.subagents import DelegationContract, DelegationRequest
+from app.infrastructure.db.models.executions import AgentJoinRecord
+from app.infrastructure.db.models.permissions import (
+    AgentDelegationRecord,
+    AgentIdentityRecord,
+    ToolCallRecord,
+)
+from app.infrastructure.repositories.agent_executions import (
     AgentExecutionRepository,
     AgentExecutionStateError,
 )
-from app.repositories.approval_contracts import ApprovalRequestCreate
-from app.repositories.run_unit_of_work import RunUnitOfWork
-from app.repositories.run_view_projection import RunViewProjector
-from app.schemas.subagents import DelegationContract, DelegationRequest
-from app.subagents.lifecycle import SubagentCancellationService
-from app.subagents.recovery import SubagentExecutionRecovery
+from app.infrastructure.repositories.approval_contracts import ApprovalRequestCreate
+from app.infrastructure.repositories.run_unit_of_work import RunUnitOfWork
+from app.infrastructure.repositories.run_view_projection import RunViewProjector
 
 
 def _contract(run, root, request_id: str) -> DelegationContract:

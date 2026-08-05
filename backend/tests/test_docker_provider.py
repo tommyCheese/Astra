@@ -4,8 +4,8 @@ import json
 
 import pytest
 
-from app.sandbox.docker_provider import DockerSandboxProvider
-from app.sandbox.runtime import SandboxError, SandboxRequest, SandboxSupervisor
+from app.infrastructure.sandbox.docker_provider import DockerSandboxProvider
+from app.infrastructure.sandbox.runtime import SandboxError, SandboxRequest, SandboxSupervisor
 
 
 class RecordingDockerProvider(DockerSandboxProvider):

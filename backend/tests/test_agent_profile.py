@@ -3,7 +3,8 @@ from pathlib import Path
 
 import pytest
 
-from app.agent_profile import (
+from app.common.core.config import Settings
+from app.domain.agent_profile import (
     SYNCHRONOUS_MODEL_OPERATIONS,
     AgentProfile,
     AgentProfileConfigurationError,
@@ -11,8 +12,7 @@ from app.agent_profile import (
     ModelOperation,
     load_agent_profile,
 )
-from app.agent_profile.prompts import PromptComposer
-from app.core.config import Settings
+from app.domain.agent_profile.prompts import PromptComposer
 
 
 def profile_contents() -> dict[str, str]:

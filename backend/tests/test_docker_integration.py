@@ -6,10 +6,10 @@ from pathlib import Path
 
 import pytest
 
-from app.sandbox.docker_provider import DockerSandboxProvider
-from app.sandbox.runtime import SandboxRequest, SandboxSupervisor
-from app.tools.bash import RUNNER
-from app.tools.chart import ChartRenderTool
+from app.infrastructure.sandbox.docker_provider import DockerSandboxProvider
+from app.infrastructure.sandbox.runtime import SandboxRequest, SandboxSupervisor
+from app.infrastructure.tools.bash import RUNNER
+from app.infrastructure.tools.chart import ChartRenderTool
 
 DOCKER_INTEGRATION = pytest.mark.skipif(
     os.getenv("ASTRA_RUN_DOCKER_INTEGRATION") != "1" or shutil.which("docker") is None,

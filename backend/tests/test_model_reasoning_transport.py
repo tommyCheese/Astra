@@ -3,16 +3,16 @@ from typing import ClassVar
 
 import pytest
 
-from app.agent_profile import ModelOperation
-from app.core.config import Settings
-from app.model_clients.anthropic import AnthropicModelClient
-from app.model_clients.openai_compatible import OpenAICompatibleModelClient
-from app.runner.engine import (
+from app.application.runner.engine import (
     close_shared_model_http_clients,
     shared_model_http_client,
     shared_tool_registry,
 )
-from app.tools.base import ToolRegistry
+from app.common.core.config import Settings
+from app.domain.agent_profile import ModelOperation
+from app.infrastructure.model_clients.anthropic import AnthropicModelClient
+from app.infrastructure.model_clients.openai_compatible import OpenAICompatibleModelClient
+from app.infrastructure.tools.base import ToolRegistry
 
 
 class RecordingUsage:
@@ -95,7 +95,7 @@ async def test_openai_compatible_transport_applies_supported_reasoning_fields(
     monkeypatch, provider, model, effort, expected, has_json_mode
 ):
     FakeOpenAIAsyncClient.requests = []
-    monkeypatch.setattr("app.model_clients.openai_compatible.httpx.AsyncClient", FakeOpenAIAsyncClient)
+    monkeypatch.setattr("app.infrastructure.model_clients.openai_compatible.httpx.AsyncClient", FakeOpenAIAsyncClient)
     client = OpenAICompatibleModelClient(
         Settings(model_provider=provider, model_name=model, model_api_key="secret")
     )
@@ -125,7 +125,7 @@ async def test_explicit_model_thinking_depth_overrides_agent_effort_in_transport
     monkeypatch,
 ):
     FakeOpenAIAsyncClient.requests = []
-    monkeypatch.setattr("app.model_clients.openai_compatible.httpx.AsyncClient", FakeOpenAIAsyncClient)
+    monkeypatch.setattr("app.infrastructure.model_clients.openai_compatible.httpx.AsyncClient", FakeOpenAIAsyncClient)
     client = OpenAICompatibleModelClient(
         Settings(
             model_provider="openai",
@@ -168,7 +168,7 @@ async def test_openai_compatible_transport_reuses_connection_pool(monkeypatch):
     FakeOpenAIAsyncClient.requests = []
     FakeOpenAIAsyncClient.instances = 0
     FakeOpenAIAsyncClient.closes = 0
-    monkeypatch.setattr("app.model_clients.openai_compatible.httpx.AsyncClient", FakeOpenAIAsyncClient)
+    monkeypatch.setattr("app.infrastructure.model_clients.openai_compatible.httpx.AsyncClient", FakeOpenAIAsyncClient)
     client = OpenAICompatibleModelClient(
         Settings(model_provider="openai", model_name="gpt-5", model_api_key="secret")
     )
@@ -189,7 +189,7 @@ async def test_openai_prompt_cache_key_tracks_only_the_static_system_prefix(
     monkeypatch,
 ):
     FakeOpenAIAsyncClient.requests = []
-    monkeypatch.setattr("app.model_clients.openai_compatible.httpx.AsyncClient", FakeOpenAIAsyncClient)
+    monkeypatch.setattr("app.infrastructure.model_clients.openai_compatible.httpx.AsyncClient", FakeOpenAIAsyncClient)
     client = OpenAICompatibleModelClient(
         Settings(model_provider="openai", model_name="gpt-5", model_api_key="secret")
     )
@@ -520,7 +520,7 @@ async def test_server_reuses_model_connections_across_runs(
     FakeOpenAIAsyncClient.instances = 0
     FakeOpenAIAsyncClient.closes = 0
     FakeOpenAIAsyncClient.options = []
-    monkeypatch.setattr("app.runner.engine.httpx.AsyncClient", FakeOpenAIAsyncClient)
+    monkeypatch.setattr("app.application.runner.engine.httpx.AsyncClient", FakeOpenAIAsyncClient)
     settings = Settings(
         model_provider=provider,
         model_name=model,
@@ -552,7 +552,7 @@ async def test_server_reuses_tool_registry_across_model_overrides(monkeypatch):
         builds += 1
         return ToolRegistry()
 
-    monkeypatch.setattr("app.runner.engine.build_tool_registry", build_registry)
+    monkeypatch.setattr("app.application.runner.engine.build_tool_registry", build_registry)
     settings = Settings(
         model_provider="openai",
         model_name="first-model",
@@ -611,7 +611,7 @@ async def test_anthropic_transport_applies_adaptive_thinking_and_effort(monkeypa
             requests.append(kwargs["json"])
             return FakeResponse()
 
-    monkeypatch.setattr("app.model_clients.openai_compatible.httpx.AsyncClient", FakeAnthropicAsyncClient)
+    monkeypatch.setattr("app.infrastructure.model_clients.openai_compatible.httpx.AsyncClient", FakeAnthropicAsyncClient)
     client = AnthropicModelClient(
         Settings(
             model_provider="anthropic",

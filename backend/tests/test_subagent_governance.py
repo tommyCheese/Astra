@@ -3,18 +3,21 @@ from __future__ import annotations
 import pytest
 from sqlalchemy import select
 
-from app.db.models.skills import RunSkillSnapshotRecord
-from app.repositories.agent_executions import AgentExecutionRepository
-from app.repositories.permissions import PermissionRepository
-from app.repositories.run_unit_of_work import RunUnitOfWork
-from app.schemas.agent.run_policy import EffectiveSubagentPolicy, SubagentBudgetPolicy
-from app.schemas.permissions import (
+from app.application.subagents.governance import (
+    ChildInvocationAuthorizer,
+    DelegationAuthorizationError,
+    DelegationContractService,
+    DelegationScopeAttenuator,
+    FrozenChildCatalog,
+)
+from app.common.schemas.agent.run_policy import EffectiveSubagentPolicy, SubagentBudgetPolicy
+from app.common.schemas.permissions import (
     ActionEffectPlan,
     EffectItem,
     PermissionPolicySet,
     PermissionRule,
 )
-from app.schemas.subagents import (
+from app.common.schemas.subagents import (
     DelegatedExecutionContext,
     DelegationRejectionCode,
     DelegationRequest,
@@ -22,13 +25,10 @@ from app.schemas.subagents import (
     EffectiveDelegationScope,
     SubagentBudgetEnvelope,
 )
-from app.subagents.governance import (
-    ChildInvocationAuthorizer,
-    DelegationAuthorizationError,
-    DelegationContractService,
-    DelegationScopeAttenuator,
-    FrozenChildCatalog,
-)
+from app.infrastructure.db.models.skills import RunSkillSnapshotRecord
+from app.infrastructure.repositories.agent_executions import AgentExecutionRepository
+from app.infrastructure.repositories.permissions import PermissionRepository
+from app.infrastructure.repositories.run_unit_of_work import RunUnitOfWork
 
 
 def _policy(*, read_only: bool = True, max_depth: int = 1) -> EffectiveSubagentPolicy:

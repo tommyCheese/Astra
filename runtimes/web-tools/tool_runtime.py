@@ -7,8 +7,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from app.tools.base import ToolExecutionError
-from app.tools.web import WebFetchTool, WebSearchTool
+from app.infrastructure.tools.base import ToolExecutionError
+from app.infrastructure.tools.web import WebFetchTool, WebSearchTool
 
 REQUEST_PATH = Path("/input/request.json")
 CONFIG_PATH = Path("/input/runtime-config.json")

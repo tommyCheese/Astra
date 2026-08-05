@@ -4,8 +4,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.artifacts import ArtifactCollector, LocalArtifactStore, prune_store
-from app.sandbox.runtime import (
+from app.application.workspaces.artifacts import ArtifactCollector, LocalArtifactStore, prune_store
+from app.infrastructure.sandbox.runtime import (
     SandboxError,
     SandboxHandle,
     SandboxJobService,
@@ -16,7 +16,7 @@ from app.sandbox.runtime import (
     sanitize_log,
     transition,
 )
-from app.tools.base import ToolExecutionError
+from app.infrastructure.tools.base import ToolExecutionError
 
 
 def test_local_artifact_store_rejects_path_escape(tmp_path):

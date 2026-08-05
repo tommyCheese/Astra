@@ -1,11 +1,20 @@
 import pytest
 
-from app.agent_runtime.policies.completion import CompletionGate
-from app.agent_runtime.policies.reasoning import apply_validation_outcomes, build_default_contract
-from app.db.models.conversations import TaskRecord
-from app.db.models.runs import RunRecord
-from app.grounding.fragments import fragments_from_web_result
-from app.grounding.identity import (
+from app.application.agent_runtime.policies.completion import CompletionGate
+from app.application.agent_runtime.policies.reasoning import (
+    apply_validation_outcomes,
+    build_default_contract,
+)
+from app.common.schemas.agent.execution_state import AgentState
+from app.common.schemas.agent.run_result import (
+    FinalAnswer,
+    Finding,
+    SourceReference,
+    ValidationOutcome,
+)
+from app.common.schemas.agent.types import TerminalState
+from app.domain.grounding.fragments import fragments_from_web_result
+from app.domain.grounding.identity import (
     canonical_url,
     digest_text,
     search_trace_id,
@@ -13,14 +22,13 @@ from app.grounding.identity import (
     snapshot_id,
     source_id,
 )
-from app.grounding.ledger import EvidenceConflictError, EvidenceLedger
-from app.grounding.projection import project_grounded_answer
-from app.grounding.repository import EvidenceRepository, EvidenceWriter
-from app.grounding.schemas import EvidenceFragment, EvidenceKind
-from app.grounding.validators import grounding_validation_outcomes
-from app.schemas.agent.execution_state import AgentState
-from app.schemas.agent.run_result import FinalAnswer, Finding, SourceReference, ValidationOutcome
-from app.schemas.agent.types import TerminalState
+from app.domain.grounding.ledger import EvidenceConflictError, EvidenceLedger
+from app.domain.grounding.projection import project_grounded_answer
+from app.domain.grounding.schemas import EvidenceFragment, EvidenceKind
+from app.domain.grounding.validators import grounding_validation_outcomes
+from app.infrastructure.db.models.conversations import TaskRecord
+from app.infrastructure.db.models.runs import RunRecord
+from app.infrastructure.repositories.evidence import EvidenceRepository, EvidenceWriter
 
 
 def test_grounding_identities_are_stable_and_tracking_parameters_are_removed():

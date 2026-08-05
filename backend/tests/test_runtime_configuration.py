@@ -3,9 +3,13 @@ from pathlib import Path
 
 import pytest
 
-from app.agent_profile import AgentProfileConfigurationError
-from app.core.config import Settings
-from app.runtime_profiles import CORE_DEPENDENCIES, RuntimeProfileService, normalize_dependencies
+from app.common.core.config import Settings
+from app.domain.agent_profile import AgentProfileConfigurationError
+from app.infrastructure.sandbox.profiles import (
+    CORE_DEPENDENCIES,
+    RuntimeProfileService,
+    normalize_dependencies,
+)
 
 
 def test_dependencies_are_normalized_sorted_and_pinned():

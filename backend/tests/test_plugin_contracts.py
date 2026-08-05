@@ -3,7 +3,7 @@ from types import SimpleNamespace
 import pytest
 from pydantic import ValidationError
 
-from app.plugins.contracts import (
+from app.infrastructure.plugins.contracts import (
     ApplicabilityBinding,
     ComponentContribution,
     ComponentIdentity,
@@ -13,7 +13,7 @@ from app.plugins.contracts import (
     PluginLifecycleState,
     ToolContribution,
 )
-from app.tools.base import (
+from app.infrastructure.tools.base import (
     Tool,
     ToolExecutionError,
     ToolResultEnvelope,

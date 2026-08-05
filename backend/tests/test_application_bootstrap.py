@@ -1,6 +1,6 @@
 import pytest
 
-from app.bootstrap.lifecycle import LifecycleCoordinator
+from app.infrastructure.bootstrap.lifecycle import LifecycleCoordinator
 
 
 class RecordingService:

@@ -78,7 +78,7 @@ Repository 方法执行查询和状态转换，但不自行提交。跨多个 Re
 
 ### 拆分 ORM 与 schema，但保留数据库和外部契约兼容
 
-ORM record 按能力移动到独立模块，通过一个 metadata 聚合入口确保 Alembic 能加载全部模型。迁移期间 `app.db.models` 可短暂 re-export，但新增代码必须直接导入拥有该模型的能力模块；re-export 在所有调用点迁移后删除。
+ORM record 按能力移动到独立模块，通过一个 metadata 聚合入口确保 Alembic 能加载全部模型。迁移期间 `app.infrastructure.db.models` 可短暂 re-export，但新增代码必须直接导入拥有该模型的能力模块；re-export 在所有调用点迁移后删除。
 
 Pydantic 模型按 `run_policy`、`planning`、`execution_state`、`tool_invocation`、`run_result` 和 API request/view 等概念族拆分。持久化 JSON、provider payload 和 API DTO 在边界显式转换，不共用一个“万能 schema”。
 

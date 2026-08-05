@@ -6,26 +6,29 @@ from fake_web_tools import fake_web_registry
 from sqlalchemy import event, select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from app.agent_profile import load_agent_profile
-from app.agent_runtime.policies.reasoning import build_default_contract, resolve_run_profile
-from app.core.config import Settings
-from app.db.model_base import Base
-from app.db.models.permissions import AgentIdentityRecord, ToolCatalogSnapshotRecord
-from app.db.models.workspaces import TaskWorkspaceRecord, WorkspaceCheckpointRecord
-from app.model_clients.contracts import ModelOutputError
-from app.model_clients.mock import MockModelClient
-from app.planning.scheduler import PlanScheduler
-from app.planning.service import PlanService, canonical_agent_state
-from app.repositories.plans import PlanRepository, plan_to_view
-from app.repositories.run_unit_of_work import RunUnitOfWork
-from app.runner import engine as engine_module
-from app.runner.engine import RunEngine
-from app.schemas.agent.execution_state import AgentDecision
-from app.schemas.agent.planning import ExpectedObservation, PlanDraft, PlanNodeDraft
-from app.schemas.agent.run_policy import RequestedReasoningPolicy
-from app.schemas.agent.run_result import FinalAnswer
-from app.schemas.agent.types import AnswerMode, PlanExecution
-from app.tools.base import Tool, ToolRegistry, ToolSpec
+from app.application.agent_runtime.policies.reasoning import (
+    build_default_contract,
+    resolve_run_profile,
+)
+from app.application.planning.scheduler import PlanScheduler
+from app.application.planning.service import PlanService, canonical_agent_state
+from app.application.runner import engine as engine_module
+from app.application.runner.engine import RunEngine
+from app.common.core.config import Settings
+from app.common.schemas.agent.execution_state import AgentDecision
+from app.common.schemas.agent.planning import ExpectedObservation, PlanDraft, PlanNodeDraft
+from app.common.schemas.agent.run_policy import RequestedReasoningPolicy
+from app.common.schemas.agent.run_result import FinalAnswer
+from app.common.schemas.agent.types import AnswerMode, PlanExecution
+from app.domain.agent_profile import load_agent_profile
+from app.infrastructure.db.model_base import Base
+from app.infrastructure.db.models.permissions import AgentIdentityRecord, ToolCatalogSnapshotRecord
+from app.infrastructure.db.models.workspaces import TaskWorkspaceRecord, WorkspaceCheckpointRecord
+from app.infrastructure.model_clients.contracts import ModelOutputError
+from app.infrastructure.model_clients.mock import MockModelClient
+from app.infrastructure.repositories.plans import PlanRepository, plan_to_view
+from app.infrastructure.repositories.run_unit_of_work import RunUnitOfWork
+from app.infrastructure.tools.base import Tool, ToolRegistry, ToolSpec
 
 
 class FakeWeather(Tool):

@@ -2,12 +2,12 @@ import pytest
 from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from app.core.config import Settings
-from app.db.model_base import Base
-from app.memory.consolidation import service as autodream_module
-from app.memory.consolidation.service import AutoDreamService
-from app.memory.domain import MemoryNamespace, MemoryNamespaceType
-from app.repositories.memories import MemoryRepository
+from app.application.memory.consolidation import service as autodream_module
+from app.application.memory.consolidation.service import AutoDreamService
+from app.common.core.config import Settings
+from app.domain.memory import MemoryNamespace, MemoryNamespaceType
+from app.infrastructure.db.model_base import Base
+from app.infrastructure.repositories.memories import MemoryRepository
 
 
 class ForbiddenSessionFactory:
@@ -78,7 +78,7 @@ async def test_enabled_worker_scans_and_processes_bounded_namespace():
     assert len(result["created_job_ids"]) == 1
     assert result["processed_job_ids"] == result["created_job_ids"]
     async with sessions() as session:
-        from app.repositories.memory_consolidation import (
+        from app.infrastructure.repositories.memory_consolidation import (
             MemoryConsolidationRepository,
         )
 
@@ -143,7 +143,7 @@ async def test_worker_isolates_one_failed_job_and_continues(monkeypatch):
     assert len(result["created_job_ids"]) == 2
     assert len(result["processed_job_ids"]) == 2
     async with sessions() as session:
-        from app.repositories.memory_consolidation import (
+        from app.infrastructure.repositories.memory_consolidation import (
             MemoryConsolidationRepository,
         )
 

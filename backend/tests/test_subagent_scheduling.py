@@ -7,24 +7,27 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from app.db.model_base import Base
-from app.db.models.executions import AgentBudgetReservationRecord, AgentExecutionRecord
-from app.repositories.agent_executions import AgentExecutionRepository
-from app.repositories.run_unit_of_work import RunUnitOfWork
-from app.schemas.subagents import (
+from app.application.subagents.budget import (
+    DelegationGateInput,
+    HierarchicalBudgetError,
+    HierarchicalBudgetManager,
+    evaluate_delegation,
+)
+from app.application.subagents.coordinator import AgentCoordinator, HierarchicalSemaphoreRegistry
+from app.common.schemas.subagents import (
     DelegationContract,
     DelegationRequest,
     DelegationScope,
     SubagentBudgetEnvelope,
     SubagentExecutionStatus,
 )
-from app.subagents.budget import (
-    DelegationGateInput,
-    HierarchicalBudgetError,
-    HierarchicalBudgetManager,
-    evaluate_delegation,
+from app.infrastructure.db.model_base import Base
+from app.infrastructure.db.models.executions import (
+    AgentBudgetReservationRecord,
+    AgentExecutionRecord,
 )
-from app.subagents.coordinator import AgentCoordinator, HierarchicalSemaphoreRegistry
+from app.infrastructure.repositories.agent_executions import AgentExecutionRepository
+from app.infrastructure.repositories.run_unit_of_work import RunUnitOfWork
 
 NOW = datetime(2026, 1, 1, tzinfo=timezone.utc)
 

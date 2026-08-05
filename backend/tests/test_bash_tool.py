@@ -3,11 +3,11 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.core.config import Settings
-from app.sandbox.runtime import SandboxError, SandboxResult
-from app.tools.base import ToolExecutionContext, ToolExecutionError
-from app.tools.bash import BashExecuteTool
-from app.tools.registry import build_tool_registry
+from app.common.core.config import Settings
+from app.infrastructure.sandbox.runtime import SandboxError, SandboxResult
+from app.infrastructure.tools.base import ToolExecutionContext, ToolExecutionError
+from app.infrastructure.tools.bash import BashExecuteTool
+from app.infrastructure.tools.registry import build_tool_registry
 
 
 class BashSandboxService:

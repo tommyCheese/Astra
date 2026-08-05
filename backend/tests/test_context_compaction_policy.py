@@ -1,12 +1,12 @@
-from app.context_compaction import (
+from app.application.context_compaction import (
     TokenAccountingService,
     build_compaction_policy,
     evaluate_compaction_trigger,
     project_shadow_compaction,
     select_recent_tail,
 )
-from app.core.config import Settings
-from app.schemas.context_compaction import ContextItem, ContextOwnerRole
+from app.common.core.config import Settings
+from app.common.schemas.context_compaction import ContextItem, ContextOwnerRole
 
 
 def item(item_id: str, tokens: int) -> ContextItem:

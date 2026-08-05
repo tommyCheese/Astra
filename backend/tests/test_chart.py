@@ -1,18 +1,18 @@
 import pytest
 from pydantic import ValidationError
 
-from app.agent_runtime.policies.reasoning import PolicyCompiler
-from app.agent_runtime.services.loop import AgentLoop
-from app.core.config import Settings
-from app.model_clients.mock import MockModelClient
-from app.repositories.run_unit_of_work import RunUnitOfWork
-from app.sandbox.runtime import SandboxHandle, SandboxProvider, SandboxResult
-from app.schemas.agent.execution_state import AgentDecision
-from app.schemas.agent.run_policy import RequestedReasoningPolicy
-from app.schemas.agent.run_result import FinalAnswer
-from app.tools.chart import ChartRenderTool, ChartRequest, select_backend
-from app.tools.registry import build_tool_registry
-from app.tools.router import ToolRouter
+from app.application.agent_runtime.policies.reasoning import PolicyCompiler
+from app.application.agent_runtime.services.loop import AgentLoop
+from app.common.core.config import Settings
+from app.common.schemas.agent.execution_state import AgentDecision
+from app.common.schemas.agent.run_policy import RequestedReasoningPolicy
+from app.common.schemas.agent.run_result import FinalAnswer
+from app.infrastructure.model_clients.mock import MockModelClient
+from app.infrastructure.repositories.run_unit_of_work import RunUnitOfWork
+from app.infrastructure.sandbox.runtime import SandboxHandle, SandboxProvider, SandboxResult
+from app.infrastructure.tools.chart import ChartRenderTool, ChartRequest, select_backend
+from app.infrastructure.tools.registry import build_tool_registry
+from app.infrastructure.tools.router import ToolRouter
 
 
 def request(**updates):
@@ -214,5 +214,5 @@ async def test_chart_only_agent_run_creates_sandbox_artifact_without_web_evidenc
 
 
 def test_chart_tool_is_hidden_when_provider_is_not_configured(monkeypatch):
-    monkeypatch.setattr("app.tools.registry.shutil.which", lambda _: None)
+    monkeypatch.setattr("app.infrastructure.tools.registry.shutil.which", lambda _: None)
     assert "chart.render" not in build_tool_registry(Settings(sandbox_enabled=True)).specs()

@@ -8,19 +8,7 @@ from fastapi.responses import JSONResponse
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from app.api.evolution import (
-    get_available_evolution_tools,
-)
-from app.api.evolution import (
-    router as evolution_router,
-)
-from app.core.errors import AstraError, ErrorEnvelope
-from app.db.model_base import Base, utc_now
-from app.db.models.conversations import TaskRecord
-from app.db.models.evolution import AgentEvolutionCandidateRecord
-from app.db.models.runs import RunRecord
-from app.db.session import get_session
-from app.evolution import (
+from app.application.evolution import (
     EvaluationCaseResult,
     EvaluationCaseSplit,
     EvaluationManifest,
@@ -32,6 +20,18 @@ from app.evolution import (
     EvolutionTarget,
     SafetyMetricDirection,
     SafetyMetricResult,
+)
+from app.common.core.errors import AstraError, ErrorEnvelope
+from app.infrastructure.db.model_base import Base, utc_now
+from app.infrastructure.db.models.conversations import TaskRecord
+from app.infrastructure.db.models.evolution import AgentEvolutionCandidateRecord
+from app.infrastructure.db.models.runs import RunRecord
+from app.infrastructure.db.session import get_session
+from app.interfaces.api.evolution import (
+    get_available_evolution_tools,
+)
+from app.interfaces.api.evolution import (
+    router as evolution_router,
 )
 
 

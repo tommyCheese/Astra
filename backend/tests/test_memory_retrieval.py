@@ -4,8 +4,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from app.memory.domain import MemoryNamespace, MemoryNamespaceType
-from app.memory.retrieval import (
+from app.application.memory.retrieval import (
     MemoryRetrievalBudget,
     MemoryRetrievalCandidate,
     MemoryRetrievalPolicy,
@@ -18,6 +17,7 @@ from app.memory.retrieval import (
     structural_tags,
     tokenize_text,
 )
+from app.domain.memory import MemoryNamespace, MemoryNamespaceType
 
 NOW = datetime(2026, 7, 30, 12, tzinfo=timezone.utc)
 SESSION = MemoryNamespace(MemoryNamespaceType.session, "session-a")

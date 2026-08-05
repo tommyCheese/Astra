@@ -1,15 +1,15 @@
 import pytest
 
-from app.agent_runtime.policies.reasoning import PolicyCompiler
-from app.agent_runtime.services.approval import matcher_matches, similar_matcher
-from app.agent_runtime.services.loop import AgentLoop
-from app.core.config import Settings
-from app.model_clients.mock import MockModelClient
-from app.repositories.run_unit_of_work import RunUnitOfWork
-from app.repositories.run_view_projection import RunViewProjector
-from app.schemas.agent.execution_state import AgentDecision
-from app.schemas.agent.run_policy import RequestedReasoningPolicy
-from app.tools.base import Tool, ToolExecutionError, ToolRegistry, ToolSpec
+from app.application.agent_runtime.policies.reasoning import PolicyCompiler
+from app.application.agent_runtime.services.approval import matcher_matches, similar_matcher
+from app.application.agent_runtime.services.loop import AgentLoop
+from app.common.core.config import Settings
+from app.common.schemas.agent.execution_state import AgentDecision
+from app.common.schemas.agent.run_policy import RequestedReasoningPolicy
+from app.infrastructure.model_clients.mock import MockModelClient
+from app.infrastructure.repositories.run_unit_of_work import RunUnitOfWork
+from app.infrastructure.repositories.run_view_projection import RunViewProjector
+from app.infrastructure.tools.base import Tool, ToolExecutionError, ToolRegistry, ToolSpec
 
 
 class FakeWrite(Tool):

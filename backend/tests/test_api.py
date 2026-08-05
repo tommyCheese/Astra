@@ -7,25 +7,28 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from app.agent_runtime.policies.reasoning import build_default_contract, resolve_run_profile
-from app.api import runs as runs_api
-from app.api.models import get_runtime_default_model
-from app.core.config import Settings, get_settings
-from app.db.model_base import Base, utc_now
-from app.db.models.conversations import TaskRecord
-from app.db.models.runs import RunRecord
-from app.db.session import get_session
+from app.application.agent_runtime.policies.reasoning import (
+    build_default_contract,
+    resolve_run_profile,
+)
+from app.application.planning import revision as plan_revision_module
+from app.application.planning.service import PlanService, canonical_agent_state
+from app.common.core.config import Settings, get_settings
+from app.common.schemas.agent.planning import ExpectedObservation, PlanDraft, PlanNodeDraft
+from app.common.schemas.agent.run_policy import RequestedReasoningPolicy
+from app.common.schemas.agent.types import AnswerMode, PlanExecution, PlanNodeStatus
+from app.domain.memory import MemoryStatus
+from app.infrastructure.db.model_base import Base, utc_now
+from app.infrastructure.db.models.conversations import TaskRecord
+from app.infrastructure.db.models.runs import RunRecord
+from app.infrastructure.db.session import get_session
+from app.infrastructure.repositories.approval_contracts import ApprovalRequestCreate
+from app.infrastructure.repositories.memories import MemoryRepository
+from app.infrastructure.repositories.plans import PlanRepository, plan_to_view
+from app.infrastructure.repositories.run_unit_of_work import RunUnitOfWork
+from app.interfaces.api import runs as runs_api
+from app.interfaces.api.models import get_runtime_default_model
 from app.main import create_app
-from app.memory.domain import MemoryStatus
-from app.planning import revision as plan_revision_module
-from app.planning.service import PlanService, canonical_agent_state
-from app.repositories.approval_contracts import ApprovalRequestCreate
-from app.repositories.memories import MemoryRepository
-from app.repositories.plans import PlanRepository, plan_to_view
-from app.repositories.run_unit_of_work import RunUnitOfWork
-from app.schemas.agent.planning import ExpectedObservation, PlanDraft, PlanNodeDraft
-from app.schemas.agent.run_policy import RequestedReasoningPolicy
-from app.schemas.agent.types import AnswerMode, PlanExecution, PlanNodeStatus
 
 
 @pytest.fixture
@@ -147,8 +150,8 @@ async def test_scheduled_tasks_api_is_global_and_versioned(app_client):
 async def test_scheduled_tasks_api_binds_result_conversation_and_resolves_execution(
     app_client, monkeypatch
 ):
-    from app.scheduling.execution import ScheduledExecutionResolver
-    from app.schemas.schedules import ScheduledExecutionConfig
+    from app.application.scheduling.execution import ScheduledExecutionResolver
+    from app.common.schemas.schedules import ScheduledExecutionConfig
 
     now = utc_now()
     async with app_client._astra_session() as session:
@@ -684,8 +687,8 @@ async def test_policy_simulation_reports_shadow_decision_change(app_client):
 
 
 async def test_workspace_file_view_and_safe_download(app_client):
-    from app.repositories.workspaces import WorkspaceRepository
-    from app.workspaces.runtime import WorkspaceRuntimeService
+    from app.application.workspaces.runtime import WorkspaceRuntimeService
+    from app.infrastructure.repositories.workspaces import WorkspaceRepository
 
     async with app_client._astra_session() as session:
         run = await RunUnitOfWork(session).create_task_run("生成文件", {})
@@ -721,8 +724,8 @@ async def test_workspace_file_view_and_safe_download(app_client):
 
 
 async def test_library_lists_present_files_with_conversation_context(app_client):
-    from app.repositories.workspaces import WorkspaceRepository
-    from app.workspaces.runtime import WorkspaceRuntimeService
+    from app.application.workspaces.runtime import WorkspaceRuntimeService
+    from app.infrastructure.repositories.workspaces import WorkspaceRepository
 
     async with app_client._astra_session() as session:
         run = await RunUnitOfWork(session).create_task_run("资料库测试", {})
@@ -1187,12 +1190,12 @@ async def test_conversation_detail_eager_loads_canonical_plan(app_client):
 async def test_create_run_rejects_invalid_agent_profile_as_configuration_error(
     app_client, monkeypatch
 ):
-    from app.agent_profile import AgentProfileConfigurationError
+    from app.domain.agent_profile import AgentProfileConfigurationError
 
     def invalid_profile():
         raise AgentProfileConfigurationError("invalid test profile")
 
-    monkeypatch.setattr("app.run_management.creation.load_agent_profile", invalid_profile)
+    monkeypatch.setattr("app.application.run_management.creation.load_agent_profile", invalid_profile)
     response = await app_client.post("/api/runs", json={"goal": "Profile 配置测试"})
 
     assert response.status_code == 503
@@ -1524,8 +1527,8 @@ async def test_runtime_build_defaults_missing_version_to_latest(app_client, monk
 async def test_artifact_content_enforces_workspace_scope_without_leaking_storage_key(
     app_client, tmp_path
 ):
-    from app.artifacts import LocalArtifactStore
-    from app.repositories.run_unit_of_work import RunUnitOfWork
+    from app.application.workspaces.artifacts import LocalArtifactStore
+    from app.infrastructure.repositories.run_unit_of_work import RunUnitOfWork
 
     source = tmp_path / "chart.png"
     source.write_bytes(b"\x89PNG\r\n\x1a\nmock")
@@ -1633,8 +1636,8 @@ async def test_run_api_preserves_grounding_result_and_legacy_defaults(app_client
 
 
 async def test_conversation_management_and_share_lifecycle(app_client):
-    from app.db.models.runs import AgentTurnRecord
-    from app.repositories.run_unit_of_work import RunUnitOfWork
+    from app.infrastructure.db.models.runs import AgentTurnRecord
+    from app.infrastructure.repositories.run_unit_of_work import RunUnitOfWork
 
     created = await app_client.post("/api/runs", json={"goal": "需要安全分享的对话"})
     conversation_id = created.json()["task_id"]
@@ -1708,7 +1711,7 @@ async def test_conversation_management_and_share_lifecycle(app_client):
 
 
 async def test_run_event_stream_starts_with_ready_signal(app_client, monkeypatch):
-    from app.repositories.run_unit_of_work import RunUnitOfWork
+    from app.infrastructure.repositories.run_unit_of_work import RunUnitOfWork
 
     created = await app_client.post("/api/runs", json={"goal": "流连接测试"})
     run_id = created.json()["run_id"]
@@ -1725,8 +1728,8 @@ async def test_run_event_stream_starts_with_ready_signal(app_client, monkeypatch
 
 
 async def test_create_run_stream_returns_identity_before_starting_engine(app_client, monkeypatch):
-    from app.run_management.application import RunApplicationService
-    from app.schemas.agent.api_views import CreateRunRequest
+    from app.application.run_management.application import RunApplicationService
+    from app.common.schemas.agent.api_views import CreateRunRequest
 
     scheduled: list[str] = []
 
@@ -1758,7 +1761,7 @@ async def test_create_run_stream_returns_identity_before_starting_engine(app_cli
 
 
 async def test_run_event_stream_unsubscribes_when_closed_after_ready(app_client, monkeypatch):
-    from app.runtime_events import RunEventBroker
+    from app.application.run_management.events import RunEventBroker
 
     created = await app_client.post("/api/runs", json={"goal": "流断连测试"})
     run_id = created.json()["run_id"]
@@ -1777,7 +1780,7 @@ async def test_run_event_stream_unsubscribes_when_closed_after_ready(app_client,
 async def test_run_event_stream_delivers_committed_broker_event_without_second_query(
     monkeypatch,
 ):
-    from app.runtime_events import PublishedRunEvent, RunEventBroker
+    from app.application.run_management.events import PublishedRunEvent, RunEventBroker
 
     query_count = 0
 
@@ -1870,7 +1873,7 @@ async def test_new_run_engine_gets_scheduled_before_event_replay(monkeypatch):
 
 
 async def test_run_event_stream_resumes_after_event_id(app_client, monkeypatch):
-    from app.repositories.run_unit_of_work import RunUnitOfWork
+    from app.infrastructure.repositories.run_unit_of_work import RunUnitOfWork
 
     created = await app_client.post("/api/runs", json={"goal": "断流恢复测试"})
     run_id = created.json()["run_id"]
@@ -2029,7 +2032,7 @@ async def test_cancel_run_returns_completed_snapshot_and_missing_run_is_404(app_
     created = await app_client.post("/api/runs", json={"goal": "已完成任务"})
     run_id = created.json()["run_id"]
     async with app_client._astra_session() as session:
-        from app.repositories.run_unit_of_work import RunUnitOfWork
+        from app.infrastructure.repositories.run_unit_of_work import RunUnitOfWork
 
         repository = RunUnitOfWork(session)
         await repository.update_run_status(
@@ -2235,7 +2238,7 @@ async def test_create_run_rejects_unknown_model_provider(app_client):
 
 @pytest.mark.parametrize("provider", ["anthropic", "google", "azure", "groq", "qwen"])
 def test_model_config_accepts_supported_cloud_providers(provider):
-    from app.run_management.settings import RunSettingsResolver
+    from app.application.run_management.settings import RunSettingsResolver
 
     configured = RunSettingsResolver.apply_model_config(
         Settings(model_provider="mock"),
@@ -2252,7 +2255,7 @@ def test_model_config_accepts_supported_cloud_providers(provider):
 
 @pytest.mark.parametrize("provider", ["ollama", "lmstudio", "vllm", "localai", "compatible"])
 def test_model_config_allows_keyless_local_providers(provider):
-    from app.run_management.settings import RunSettingsResolver
+    from app.application.run_management.settings import RunSettingsResolver
 
     configured = RunSettingsResolver.apply_model_config(
         Settings(model_provider="mock"),
@@ -2298,7 +2301,7 @@ async def test_resume_rejects_switching_the_frozen_run_model(app_client, monkeyp
     created = await app_client.post("/api/runs", json={"goal": "需要补充信息"})
     run_id = created.json()["run_id"]
     async with app_client._astra_session() as session:
-        from app.repositories.run_unit_of_work import RunUnitOfWork
+        from app.infrastructure.repositories.run_unit_of_work import RunUnitOfWork
 
         await RunUnitOfWork(session).set_waiting_state(
             run_id,

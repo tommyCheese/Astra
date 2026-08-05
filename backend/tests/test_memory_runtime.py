@@ -1,15 +1,15 @@
 from sqlalchemy import select
 
-from app.agent_runtime.services.context import ContextAssembler
-from app.agent_runtime.services.memory_candidates import MemoryCandidateWriter
-from app.core.config import Settings
-from app.db.models.memory import MemoryRecallEventRecord
-from app.db.models.runs import RunEventRecord
-from app.repositories.memories import MemoryRepository
-from app.repositories.memory_recall import MemoryRecallRepository
-from app.repositories.run_unit_of_work import RunUnitOfWork
-from app.schemas.agent.run_result import MemoryRecord
-from app.tools.base import ToolRegistry
+from app.application.agent_runtime.services.context import ContextAssembler
+from app.application.agent_runtime.services.memory_candidates import MemoryCandidateWriter
+from app.common.core.config import Settings
+from app.common.schemas.agent.run_result import MemoryRecord
+from app.infrastructure.db.models.memory import MemoryRecallEventRecord
+from app.infrastructure.db.models.runs import RunEventRecord
+from app.infrastructure.repositories.memories import MemoryRepository
+from app.infrastructure.repositories.memory_recall import MemoryRecallRepository
+from app.infrastructure.repositories.run_unit_of_work import RunUnitOfWork
+from app.infrastructure.tools.base import ToolRegistry
 
 
 class CandidateModelClient:

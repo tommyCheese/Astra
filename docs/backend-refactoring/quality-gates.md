@@ -30,16 +30,16 @@ PYTHON=.venv/bin/python bash scripts/check_backend_quality.sh
 
 当前门禁冻结全部模块级循环，并重点禁止增加以下反向依赖：
 
-- `app.scheduling -> app.api`
-- `app.repositories -> app.runner`
-- `app.runner -> app.subagents`
-- `app.subagents -> app.runner`
+- `app.application.scheduling -> app.interfaces.api`
+- `app.infrastructure.repositories -> app.application.runner`
+- `app.application.runner -> app.application.subagents`
+- `app.application.subagents -> app.application.runner`
 
 检查器保存的是实际模块边和互相可达的循环模块对。删除依赖永远允许；新增 forbidden edge 或让此前独立的模块进入同一循环会失败，并输出完整模块名称。
 
 ## 类型边界
 
-新架构的 `app.bootstrap`、`app.execution`、`app.planning` 和 `app.run_management` 公共函数/方法必须完整标注参数与返回类型。范围随着能力迁移扩大。Ruff 同时拒绝无错误码的 `type: ignore` 和失效 suppression；架构基线禁止新增任何 `type: ignore`。
+新架构的 `app.infrastructure.bootstrap`、`app.domain.execution`、`app.application.planning` 和 `app.application.run_management` 公共函数/方法必须完整标注参数与返回类型。范围随着能力迁移扩大。Ruff 同时拒绝无错误码的 `type: ignore` 和失效 suppression；架构基线禁止新增任何 `type: ignore`。
 
 ## 更新基线
 

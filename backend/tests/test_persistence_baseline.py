@@ -4,7 +4,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from app.db.base import Base
+from app.infrastructure.db.base import Base
 
 BACKEND_ROOT = Path(__file__).parents[1]
 BASELINE_REVISION = "0001_current_baseline"

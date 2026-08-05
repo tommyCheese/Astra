@@ -3,17 +3,17 @@ from datetime import datetime, timezone
 import pytest
 from sqlalchemy import select
 
-from app.api.permissions import library_deliverables
-from app.api.schedules import list_schedule_deliverables
-from app.artifacts import LocalArtifactStore
-from app.db.models.conversations import TaskRecord
-from app.db.models.permissions import ToolCallRecord
-from app.db.models.runs import RunRecord
-from app.db.models.workspaces import ArtifactRecord
-from app.repositories.schedules import ScheduleRepository
-from app.repositories.workspaces import WorkspaceRepository
-from app.schemas.schedules import ScheduledJobCreate
-from app.workspaces.runtime import WorkspaceRuntimeService
+from app.application.workspaces.artifacts import LocalArtifactStore
+from app.application.workspaces.runtime import WorkspaceRuntimeService
+from app.common.schemas.schedules import ScheduledJobCreate
+from app.infrastructure.db.models.conversations import TaskRecord
+from app.infrastructure.db.models.permissions import ToolCallRecord
+from app.infrastructure.db.models.runs import RunRecord
+from app.infrastructure.db.models.workspaces import ArtifactRecord
+from app.infrastructure.repositories.schedules import ScheduleRepository
+from app.infrastructure.repositories.workspaces import WorkspaceRepository
+from app.interfaces.api.permissions import library_deliverables
+from app.interfaces.api.schedules import list_schedule_deliverables
 
 UTC = timezone.utc
 

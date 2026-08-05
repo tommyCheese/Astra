@@ -3,19 +3,19 @@ from datetime import timedelta
 import pytest
 from sqlalchemy import select, update
 
-from app.db.model_base import utc_now
-from app.db.models.conversations import TaskRecord
-from app.db.models.memory import MemoryAuditRecord, MemorySourceRecord
-from app.memory.domain import (
+from app.domain.memory import (
     MemoryConflictError,
     MemoryNamespace,
     MemoryNamespaceType,
     MemoryStatus,
     MemoryValidationError,
 )
-from app.repositories.memories import MemoryRepository
-from app.repositories.memory_queries import MemoryQueryRepository
-from app.repositories.run_unit_of_work import RunUnitOfWork
+from app.infrastructure.db.model_base import utc_now
+from app.infrastructure.db.models.conversations import TaskRecord
+from app.infrastructure.db.models.memory import MemoryAuditRecord, MemorySourceRecord
+from app.infrastructure.repositories.memories import MemoryRepository
+from app.infrastructure.repositories.memory_queries import MemoryQueryRepository
+from app.infrastructure.repositories.run_unit_of_work import RunUnitOfWork
 
 
 async def _run_with_identity(

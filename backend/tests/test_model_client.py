@@ -2,17 +2,17 @@ import json
 
 import pytest
 
-from app.agent_profile import ModelOperation
-from app.agent_runtime.policies.reasoning import build_default_contract
-from app.core.config import Settings
-from app.model_clients.anthropic import AnthropicModelClient
-from app.model_clients.contracts import (
+from app.application.agent_runtime.policies.reasoning import build_default_contract
+from app.common.core.config import Settings
+from app.domain.agent_profile import ModelOperation
+from app.infrastructure.model_clients.anthropic import AnthropicModelClient
+from app.infrastructure.model_clients.contracts import (
     ModelConfigurationError,
     ModelOutputError,
 )
-from app.model_clients.factory import build_model_client
-from app.model_clients.mock import MockModelClient
-from app.model_clients.openai_compatible import OpenAICompatibleModelClient
+from app.infrastructure.model_clients.factory import build_model_client
+from app.infrastructure.model_clients.mock import MockModelClient
+from app.infrastructure.model_clients.openai_compatible import OpenAICompatibleModelClient
 
 
 async def test_mock_model_client_returns_structured_outputs():
@@ -195,7 +195,7 @@ async def test_anthropic_client_translates_messages_and_stream_callbacks(monkeyp
             requests.append((url, kwargs))
             return FakeStreamContext()
 
-    monkeypatch.setattr("app.model_clients.openai_compatible.httpx.AsyncClient", FakeAsyncClient)
+    monkeypatch.setattr("app.infrastructure.model_clients.openai_compatible.httpx.AsyncClient", FakeAsyncClient)
     client = AnthropicModelClient(
         Settings(
             model_provider="anthropic",
@@ -288,7 +288,7 @@ async def test_invalid_json_does_not_retry_after_streaming_visible_summary(monke
             requests.append((method, url, kwargs))
             return FakeStreamContext()
 
-    monkeypatch.setattr("app.model_clients.openai_compatible.httpx.AsyncClient", FakeAsyncClient)
+    monkeypatch.setattr("app.infrastructure.model_clients.openai_compatible.httpx.AsyncClient", FakeAsyncClient)
     settings = Settings(
         model_provider=provider,
         model_api_key="secret",

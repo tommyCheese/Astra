@@ -1,9 +1,9 @@
-from app.agent_runtime.policies.reasoning import resolve_run_profile
-from app.core.config import Settings
-from app.repositories.run_unit_of_work import RunUnitOfWork
-from app.runner.model_thinking_stream import ModelThinkingEventWriter
-from app.schemas.agent.run_policy import RequestedReasoningPolicy
-from app.schemas.agent.types import AnswerMode
+from app.application.agent_runtime.policies.reasoning import resolve_run_profile
+from app.application.runner.model_thinking_stream import ModelThinkingEventWriter
+from app.common.core.config import Settings
+from app.common.schemas.agent.run_policy import RequestedReasoningPolicy
+from app.common.schemas.agent.types import AnswerMode
+from app.infrastructure.repositories.run_unit_of_work import RunUnitOfWork
 
 
 async def _create_run(repo: RunUnitOfWork):
@@ -79,9 +79,9 @@ async def test_model_thinking_writer_records_unavailable_without_sensitive_field
 
 async def test_model_thinking_writer_marks_truncation_explicitly(session, monkeypatch):
     monkeypatch.setattr(
-        "app.runner.model_thinking_stream.MODEL_THINKING_MAX_CHARS_PER_INVOCATION", 5
+        "app.application.runner.model_thinking_stream.MODEL_THINKING_MAX_CHARS_PER_INVOCATION", 5
     )
-    monkeypatch.setattr("app.runner.model_thinking_stream.MODEL_THINKING_MAX_CHARS_PER_RUN", 5)
+    monkeypatch.setattr("app.application.runner.model_thinking_stream.MODEL_THINKING_MAX_CHARS_PER_RUN", 5)
     repo = RunUnitOfWork(session)
     run = await _create_run(repo)
     writer = ModelThinkingEventWriter(repo, run.id)

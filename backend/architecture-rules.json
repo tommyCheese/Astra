@@ -11,30 +11,57 @@
   },
   "forbidden_dependencies": [
     {
-      "importer": "app.scheduling",
-      "imported": "app.api"
+      "importer": "app.common",
+      "imported": "app.application"
     },
     {
-      "importer": "app.repositories",
-      "imported": "app.runner"
+      "importer": "app.common",
+      "imported": "app.infrastructure"
     },
     {
-      "importer": "app.runner",
-      "imported": "app.subagents"
+      "importer": "app.common",
+      "imported": "app.interfaces"
     },
     {
-      "importer": "app.subagents",
-      "imported": "app.runner"
+      "importer": "app.domain",
+      "imported": "app.application"
+    },
+    {
+      "importer": "app.domain",
+      "imported": "app.infrastructure"
+    },
+    {
+      "importer": "app.domain",
+      "imported": "app.interfaces"
+    },
+    {
+      "importer": "app.application",
+      "imported": "app.interfaces"
+    },
+    {
+      "importer": "app.application.scheduling",
+      "imported": "app.interfaces.api"
+    },
+    {
+      "importer": "app.infrastructure.repositories",
+      "imported": "app.application.runner"
+    },
+    {
+      "importer": "app.application.runner",
+      "imported": "app.application.subagents"
+    },
+    {
+      "importer": "app.application.subagents",
+      "imported": "app.application.runner"
     }
   ],
   "typed_module_prefixes": [
-    "app.bootstrap",
-    "app.execution",
-    "app.planning",
-    "app.run_management"
+    "app.infrastructure.bootstrap",
+    "app.domain.execution",
+    "app.application.planning",
+    "app.application.run_management"
   ],
   "forbidden_generic_module_names": [
-    "common",
     "helpers",
     "utils"
   ],
@@ -50,10 +77,10 @@
     "compatibility"
   ],
   "complexity_budget": {
-    "production_lines": 61539,
-    "modules": 298,
+    "production_lines": 61709,
+    "modules": 303,
     "classes": 766,
-    "functions": 2473,
+    "functions": 2474,
     "public_symbols": 1249
   }
 }

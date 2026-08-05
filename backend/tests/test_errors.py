@@ -1,8 +1,8 @@
 import httpx
 import pytest
 
-from app.core.errors import run_error_from_exception
-from app.tools.base import ToolExecutionError
+from app.common.core.errors import run_error_from_exception
+from app.infrastructure.tools.base import ToolExecutionError
 
 
 def test_model_connection_timeout_is_classified_as_dependency_error():
