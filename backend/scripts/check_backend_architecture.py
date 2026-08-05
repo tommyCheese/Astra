@@ -182,12 +182,12 @@ def quality_baseline(
     source_root: Path,
 ) -> dict[str, Any]:
     default = rules.default_budget
-    legacy_modules = {
+    baseline_module_lines = {
         module.module: module.lines
         for module in inventory.modules
         if module.lines > default.module_lines
     }
-    legacy_functions = {
+    baseline_functions = {
         f"{function.module}:{function.qualified_name}": {
             "lines": function.lines,
             "complexity": function.complexity,
@@ -198,8 +198,8 @@ def quality_baseline(
     }
     edges = forbidden_edges(dependency_edges(inventory), rules)
     return {
-        "legacy_modules": dict(sorted(legacy_modules.items())),
-        "legacy_functions": dict(sorted(legacy_functions.items())),
+        "baseline_module_lines": dict(sorted(baseline_module_lines.items())),
+        "baseline_functions": dict(sorted(baseline_functions.items())),
         "forbidden_edges": [list(edge) for edge in sorted(edges)],
         "cyclic_pairs": [list(pair) for pair in sorted(cyclic_pairs(inventory))],
         "type_ignore_counts": type_ignore_counts(source_root),
@@ -265,7 +265,7 @@ def check_module_budgets(
     baseline: dict[str, Any],
     exceptions: dict[str, QualityException],
 ) -> Iterable[str]:
-    legacy_modules = baseline["legacy_modules"]
+    baseline_module_lines = baseline["baseline_module_lines"]
     for module in inventory.modules:
         if module.lines <= rules.default_budget.module_lines:
             continue
@@ -273,10 +273,10 @@ def check_module_budgets(
         if module.lines > rules.hard_limit.module_lines:
             yield f"{symbol} has {module.lines} lines; hard limit is {rules.hard_limit.module_lines}"
             continue
-        legacy_lines = legacy_modules.get(symbol)
-        if legacy_lines is not None:
-            if module.lines > legacy_lines and not exception_is_valid(exceptions.get(symbol)):
-                yield f"{symbol} grew from {legacy_lines} to {module.lines} lines"
+        baseline_lines = baseline_module_lines.get(symbol)
+        if baseline_lines is not None:
+            if module.lines > baseline_lines and not exception_is_valid(exceptions.get(symbol)):
+                yield f"{symbol} grew from {baseline_lines} to {module.lines} lines"
             continue
         if not exception_is_valid(exceptions.get(symbol)):
             yield f"{symbol} exceeds the default module budget without a valid exception"
@@ -288,7 +288,7 @@ def check_function_budgets(
     baseline: dict[str, Any],
     exceptions: dict[str, QualityException],
 ) -> Iterable[str]:
-    legacy_functions = baseline["legacy_functions"]
+    baseline_functions = baseline["baseline_functions"]
     for function in inventory.functions:
         exceeds_default = (
             function.lines > rules.default_budget.function_lines
@@ -309,13 +309,13 @@ def check_function_budgets(
                 f"hard limit is {rules.hard_limit.function_complexity}"
             )
             continue
-        legacy = legacy_functions.get(symbol)
-        if legacy is not None:
-            if function.lines > legacy["lines"]:
-                yield f"{symbol} grew from {legacy['lines']} to {function.lines} lines"
-            if function.complexity > legacy["complexity"]:
+        baseline_metric = baseline_functions.get(symbol)
+        if baseline_metric is not None:
+            if function.lines > baseline_metric["lines"]:
+                yield f"{symbol} grew from {baseline_metric['lines']} to {function.lines} lines"
+            if function.complexity > baseline_metric["complexity"]:
                 yield (
-                    f"{symbol} complexity grew from {legacy['complexity']} "
+                    f"{symbol} complexity grew from {baseline_metric['complexity']} "
                     f"to {function.complexity}"
                 )
             continue

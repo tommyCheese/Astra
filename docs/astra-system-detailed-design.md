@@ -670,7 +670,7 @@ child scope ⊆ parent scope ∩ task policy ∩ explicit delegated scope
 | Task Contract | `TaskContract`、`RunRecord.task_contract` | 结构化目标、歧义状态、成功标准和验证要求 | 1、2、5.2、6.2、6.3 |
 | Plan Graph | `PlanRecord`、`PlanNodeRecord`、`PlanEdgeRecord`、`RunRecord.plan_graph` | 有版本的执行计划、节点依赖和替换关系 | 1、2、5.1、5.3、6.2、6.3、10.2 |
 | Agent State | `RunRecord.agent_state`、`state_version` | 当前计划节点、观察、失败、预算用量和评估的可恢复状态 | 1、2、5.2、6.2、6.3、10.1、10.2 |
-| Step | `StepRecord` | 兼容性的线性步骤视图及其执行证据 | 5.1、5.3、6.3 |
+| Step | `StepRecord` | standard 模式的线性执行记录及其执行证据 | 5.1、5.3、6.3 |
 | Agent Turn | `AgentTurnRecord` | 单轮决策、执行阶段、观察、评估、反思和检查点 | 1、2、5.1、5.3、6.3、10.3 |
 | Decision | `AgentTurnRecord.decision`、模型结构化输出 | 模型提出的回答、工具调用、继续或终止意图 | 2、5.3、6.3 |
 | Observation | `AgentTurnRecord.observation`、AgentState observations | ToolResult、模式阻断、失败或反思形成的受控观察 | 1、2、5.3、6.3、8.3、10.2 |

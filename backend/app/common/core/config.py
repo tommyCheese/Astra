@@ -88,7 +88,6 @@ class Settings(BaseSettings):
     agent_memory_autodream_max_model_calls: int = Field(default=0, ge=0, le=8)
     agent_memory_autodream_lease_seconds: int = Field(default=120, ge=30, le=3_600)
     agent_memory_autodream_batch_size: int = Field(default=4, ge=1, le=32)
-    agent_use_general_runtime: bool = True
     allow_network_read: bool = True
     cors_origins: str = "http://localhost:5173"
     api_allow_remote: bool = False
@@ -111,10 +110,9 @@ class Settings(BaseSettings):
     context_output_reserve_tokens: int = Field(default=8_192, ge=1_024)
     context_auto_compact_ratio: float = Field(default=0.8, ge=0.5, le=0.95)
     context_compact_retain_runs: int = Field(default=4, ge=1, le=20)
-    context_summary_max_chars: int = Field(default=12_000, ge=2_000, le=100_000)
-    context_compaction_v2_enabled: bool = False
-    context_compaction_shadow_mode: bool = True
-    context_compaction_conversation_enabled: bool = False
+    context_compaction_v2_enabled: bool = True
+    context_compaction_shadow_mode: bool = False
+    context_compaction_conversation_enabled: bool = True
     context_compaction_root_enabled: bool = False
     context_compaction_child_enabled: bool = False
     context_compaction_threshold_scope: str = "body_after_prefix"

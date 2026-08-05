@@ -21,25 +21,11 @@ class HeartbeatRepository:
         self.session = session
 
     async def get(self) -> ScheduledJobRecord | None:
-        global_job = await self.session.scalar(
+        return await self.session.scalar(
             select(ScheduledJobRecord).where(
                 ScheduledJobRecord.system_key == self.GLOBAL_KEY,
                 ScheduledJobRecord.deleted_at.is_(None),
             )
-        )
-        if global_job is not None:
-            return global_job
-        return await self.session.scalar(
-            select(ScheduledJobRecord)
-            .where(
-                ScheduledJobRecord.kind == ScheduledJobKind.heartbeat.value,
-                ScheduledJobRecord.deleted_at.is_(None),
-            )
-            .order_by(
-                ScheduledJobRecord.updated_at.desc(),
-                ScheduledJobRecord.created_at.desc(),
-            )
-            .limit(1)
         )
 
     async def upsert(
@@ -72,7 +58,6 @@ class HeartbeatRepository:
         else:
             self._update_job(job, payload, schedule, heartbeat, next_fire_at, reference)
         await self.session.flush()
-        await self._retire_legacy_jobs(job.id, reference)
         await self.session.commit()
         return job
 
@@ -128,27 +113,6 @@ class HeartbeatRepository:
         job.lease_expires_at = None
         job.version += 1
         job.updated_at = reference
-
-    async def _retire_legacy_jobs(self, current_id: str, reference: datetime) -> None:
-        legacy_jobs = list(
-            (
-                await self.session.scalars(
-                    select(ScheduledJobRecord).where(
-                        ScheduledJobRecord.kind == ScheduledJobKind.heartbeat.value,
-                        ScheduledJobRecord.id != current_id,
-                        ScheduledJobRecord.deleted_at.is_(None),
-                    )
-                )
-            ).all()
-        )
-        for legacy in legacy_jobs:
-            legacy.enabled = False
-            legacy.next_fire_at = None
-            legacy.lease_owner = None
-            legacy.lease_expires_at = None
-            legacy.deleted_at = reference
-            legacy.updated_at = reference
-            legacy.version += 1
 
     async def disable(self, *, now: datetime | None = None) -> ScheduledJobRecord:
         job = await self.get()

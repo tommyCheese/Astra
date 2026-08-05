@@ -98,9 +98,9 @@ class ContextWindowStatus(BaseModel):
     status: Literal["normal", "warning", "compact_required", "overflow"]
     estimated: bool = True
     summary_active: bool = False
-    compaction_implementation: Literal["astra_semantic", "deterministic_emergency", "legacy_v1"] | None = None
+    compaction_implementation: Literal["astra_semantic", "deterministic_emergency"] | None = None
     compaction_failure_code: str | None = None
-    checkpoint_status: Literal["none", "legacy", "active"] = "none"
+    checkpoint_status: Literal["none", "active"] = "none"
     window_number: int = 0
     token_before: int | None = None
     token_after: int | None = None

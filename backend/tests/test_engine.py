@@ -1213,6 +1213,7 @@ async def test_follow_up_contract_excludes_private_conversation_transcript(sessi
         execution_profile=profile.model_dump(mode="json"),
     )
     previous.summary = "上一轮回答"
+    previous.status = "completed"
     current = await repo.create_task_run(
         "当前问题",
         settings.model_policy,

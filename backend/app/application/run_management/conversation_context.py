@@ -20,7 +20,7 @@ from app.infrastructure.db.models.conversations import TaskRecord
 from app.infrastructure.db.models.runs import RunRecord
 from app.infrastructure.model_clients.context_windows import resolve_context_window
 
-CONTEXT_STATE_VERSION = 1
+CONTEXT_STATE_VERSION = 2
 CONTEXT_TERMINAL_STATUSES = frozenset(
     {"completed", "completed_with_warnings", "failed", "blocked", "cancelled"}
 )
@@ -74,7 +74,6 @@ class ConversationContextManager:
         raw = task.context_state if isinstance(task.context_state, dict) else {}
         return {
             "version": int(raw.get("version", CONTEXT_STATE_VERSION)),
-            "summary": str(raw.get("summary") or ""),
             "checkpoint": raw.get("checkpoint")
             if isinstance(raw.get("checkpoint"), dict)
             else None,
@@ -106,16 +105,10 @@ class ConversationContextManager:
         visible = tuple(
             run
             for run in all_runs
-            if run.id not in folded
-            and (
-                run.status in CONTEXT_TERMINAL_STATUSES
-                # Older records and test fixtures may carry a finalized summary
-                # before their status transition is persisted.
-                or bool(run.summary)
-            )
+            if run.id not in folded and run.status in CONTEXT_TERMINAL_STATUSES
         )
         return ContextProjection(
-            summary=self._checkpoint_text(state["checkpoint"]) or state["summary"],
+            summary=self._checkpoint_text(state["checkpoint"]),
             runs=visible,
             folded_run_ids=folded,
         )
@@ -214,16 +207,10 @@ class ConversationContextManager:
             "compaction_implementation": (
                 state["compaction_implementation"] or "astra_semantic"
                 if state["checkpoint"]
-                else "legacy_v1"
-                if state["summary"]
                 else None
             ),
             "compaction_failure_code": state["compaction_failure_code"],
-            "checkpoint_status": "active"
-            if state["checkpoint"]
-            else "legacy"
-            if state["summary"]
-            else "none",
+            "checkpoint_status": "active" if state["checkpoint"] else "none",
             "window_number": state["window_number"],
             "token_before": state.get("token_before"),
             "token_after": state.get("token_after"),
@@ -296,26 +283,6 @@ class ConversationContextManager:
                 "对话仍在执行或等待继续，暂时不能修改上下文。",
             )
 
-    def _build_summary(
-        self,
-        previous_summary: str,
-        runs: list[RunRecord],
-        direction: str = "",
-    ) -> str:
-        sections: list[str] = []
-        if previous_summary:
-            sections.append(previous_summary.strip())
-        for run in runs:
-            goal, answer = self._run_context(run)
-            sections.append(
-                "- 用户目标：" + goal.strip()[:600] + "\n" + "  回答要点：" + answer.strip()[:1200]
-            )
-        combined = "\n".join(item for item in sections if item)
-        if direction.strip():
-            combined += f"\n压缩方向：{direction.strip()}"
-        limit = self.settings.context_summary_max_chars
-        return combined[-limit:]
-
     async def compact(
         self,
         task: TaskRecord,
@@ -327,45 +294,19 @@ class ConversationContextManager:
         direction: str = "",
     ) -> dict[str, int | str]:
         policy = build_compaction_policy(self.settings, ContextOwnerRole.conversation)
-        if policy.enabled and not policy.shadow_mode:
-            return await self._semantic_compact(
-                task,
-                retain_runs=retain_runs,
-                action=action,
-                require_idle=require_idle,
-                commit=commit,
-                direction=direction,
+        if not policy.enabled or policy.shadow_mode:
+            raise StateError(
+                "CONTEXT_COMPACTION_UNAVAILABLE",
+                "Semantic context compaction is not enabled.",
             )
-        runs = await self.list_runs(task.id)
-        if require_idle:
-            await self.ensure_idle(task.id, runs=runs)
-        projection = await self.projection(task, runs=runs)
-        retain = (
-            self.settings.context_compact_retain_runs
-            if retain_runs is None
-            else max(0, retain_runs)
+        return await self._semantic_compact(
+            task,
+            retain_runs=retain_runs,
+            action=action,
+            require_idle=require_idle,
+            commit=commit,
+            direction=direction,
         )
-        eligible = list(projection.runs[:-retain] if retain else projection.runs)
-        if not eligible:
-            return {"folded": 0, "retained": len(projection.runs)}
-        state = self._state(task)
-        folded = list(dict.fromkeys([*state["folded_run_ids"], *(run.id for run in eligible)]))
-        now = utc_now()
-        task.context_state = {
-            "version": CONTEXT_STATE_VERSION,
-            "summary": self._build_summary(state["summary"], eligible, direction),
-            "folded_run_ids": folded,
-            "last_action": action,
-            "last_action_at": now.isoformat(),
-            "command_history": state["command_history"],
-            "compaction_direction": direction.strip(),
-        }
-        task.updated_at = now
-        if commit:
-            await self.session.commit()
-        else:
-            await self.session.flush()
-        return {"folded": len(eligible), "retained": len(projection.runs) - len(eligible)}
 
     async def _semantic_compact(
         self,
@@ -394,7 +335,10 @@ class ConversationContextManager:
         now = utc_now()
         task.context_state = {
             "version": CONTEXT_STATE_VERSION,
-            "summary": "",
+            "state_version": state["state_version"] + 1,
+            "window_number": state["window_number"],
+            "checkpoint": None,
+            "retained_tail_ids": [],
             "folded_run_ids": folded,
             "last_action": "clear",
             "last_action_at": now.isoformat(),

@@ -101,7 +101,10 @@ async def _conversation_with_runs(session, count: int = 7) -> TaskRecord:
 @pytest.mark.asyncio
 async def test_compact_and_clear_change_projection_without_deleting_runs(session):
     task = await _conversation_with_runs(session)
-    manager = ConversationContextManager(session, Settings(model_provider="mock"))
+    manager = ConversationContextManager(
+        session,
+        Settings(model_provider="mock", context_compaction_recent_tail_tokens=0),
+    )
 
     before = await manager.projection(task)
     assert len(before.runs) == 7
@@ -129,18 +132,19 @@ async def test_automatic_compaction_and_active_run_guard(session):
     task = await _conversation_with_runs(session, count=12)
     settings = Settings(
         model_provider="mock",
-        context_window_fallback_tokens=16_384,
-        context_auto_compact_ratio=0.5,
+        context_window_fallback_tokens=65_536,
+        context_auto_compact_ratio=0.8,
         context_compact_retain_runs=2,
-        context_summary_max_chars=2_000,
         context_output_reserve_tokens=4_096,
+        context_compaction_recent_tail_tokens=0,
+        context_compaction_recovery_ratio=0.79,
     )
     manager = ConversationContextManager(session, settings)
     status = await manager.prepare_for_run(
         task,
         provider="unknown",
         model="small-private",
-        draft="新问题" * 300,
+        draft="新问题" * 12_000,
     )
     assert task.context_state["last_action"] == "auto_compact"
     assert status["usage_ratio"] < 1

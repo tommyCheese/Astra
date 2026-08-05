@@ -4221,9 +4221,7 @@ function ContextCapacityPanel({ status, selectedSkills, actionLabel }: {
           ? t('Astra 语义整理 · 窗口 {window}').replace('{window}', String(status.window_number ?? 0))
           : status.compaction_implementation === 'deterministic_emergency'
             ? t('确定性应急整理 · 窗口 {window}').replace('{window}', String(status.window_number ?? 0))
-            : status.compaction_implementation === 'legacy_v1'
-              ? t('旧版对话摘要')
-              : t('使用量为发送前估算')}</span>
+            : t('使用量为发送前估算')}</span>
       {status.token_before != null && status.token_after != null && <span>{t('整理 Token {before} → {after}').replace('{before}', compactTokenCount(status.token_before)).replace('{after}', compactTokenCount(status.token_after))}</span>}
       {status.summary_active && <span>{t('保留 {retained} 轮 · 折叠 {folded} 轮').replace('{retained}', String(status.retained_run_count ?? status.visible_run_count)).replace('{folded}', String(status.folded_run_count))}</span>}
       {status.max_output_tokens && <span>{t('模型最大输出 {tokens}').replace('{tokens}', compactTokenCount(status.max_output_tokens))}</span>}

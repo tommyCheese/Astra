@@ -12,7 +12,7 @@
 | Plan | 某个版本的有向执行图及其生命周期 | workflow、task list |
 | Plan node | Plan 中描述意图、能力需求、依赖和成功条件的逻辑工作单元 | step（新代码） |
 | Node execution | Plan node 的一次实际执行尝试，包含 claim、fencing、phase、checkpoint 和结果 | node run、worker task |
-| Legacy step | standard/兼容路径中的线性展示记录；仅用于现有 `StepRecord` 契约，禁止表示 Plan node | plan step |
+| Execution step | standard 模式中的线性执行记录；仅用于当前 `StepRecord` 契约，禁止表示 Plan node | plan step |
 | Tool invocation | Agent 请求调用一个冻结工具输入的应用层意图 | action、call（缺少 tool 限定时） |
 | Tool call | Tool invocation 的持久化执行与审计记录 | invocation record（无必要时） |
 | Effect plan | 对具体工具输入可能产生的副作用和资源影响的冻结分析 | permission list、risk data |

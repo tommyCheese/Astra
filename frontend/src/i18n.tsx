@@ -195,7 +195,6 @@ const english: Record<string, string> = {
   '已使用 {percent}%': '{percent}% used', '上下文构成': 'Context breakdown', '已启用对话整理': 'Conversation compaction is active',
   'Astra 语义整理 · 窗口 {window}': 'Astra semantic compaction · window {window}',
   '确定性应急整理 · 窗口 {window}': 'Deterministic emergency compaction · window {window}',
-  '旧版对话摘要': 'Legacy conversation summary',
   '最近整理失败：{code}': 'Latest compaction failed: {code}',
   '整理 Token {before} → {after}': 'Compaction tokens {before} → {after}',
   '保留 {retained} 轮 · 折叠 {folded} 轮': '{retained} retained · {folded} folded',

@@ -1,5 +1,5 @@
 {
-  "legacy_modules": {
+  "baseline_module_lines": {
     "app.interfaces.api.skills": 782,
     "app.application.workspaces.deliverables": 529,
     "app.domain.evolution": 571,
@@ -26,7 +26,7 @@
     "app.application.subagents.governance": 597,
     "app.application.subagents.runtime": 566
   },
-  "legacy_functions": {
+  "baseline_functions": {
     "app.application.agent_runtime.policies.reasoning:normalize_contract": {
       "lines": 37,
       "complexity": 11

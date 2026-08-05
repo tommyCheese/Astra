@@ -101,9 +101,9 @@ export type ContextWindowStatus = {
   status: 'normal' | 'warning' | 'compact_required' | 'overflow';
   estimated: boolean;
   summary_active: boolean;
-  compaction_implementation?: 'astra_semantic' | 'deterministic_emergency' | 'legacy_v1' | null;
+  compaction_implementation?: 'astra_semantic' | 'deterministic_emergency' | null;
   compaction_failure_code?: string | null;
-  checkpoint_status?: 'none' | 'legacy' | 'active';
+  checkpoint_status?: 'none' | 'active';
   window_number?: number;
   token_before?: number | null;
   token_after?: number | null;

@@ -489,11 +489,6 @@ class RunEngine(PlanPreparationMixin, AnswerStreamMixin):
         fresh_run: bool = False,
         initial_skill_snapshot: RunSkillSnapshotRecord | None = None,
     ) -> None:
-        if not self.settings.agent_use_general_runtime:
-            raise RuntimeError(
-                "The general Agent runtime is required; the legacy Web workflow has been removed"
-            )
-
         run = initial_run or await repo.require_run_core(run_id)
         quick_mode = run.answer_mode == AnswerMode.standard.value
         logger.info("run.phase run_id=%s phase=executing quick=%s", run_id, quick_mode)

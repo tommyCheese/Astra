@@ -1,6 +1,5 @@
 """FastAPI application factory backed by the typed composition root."""
 
-import json
 from importlib.metadata import PackageNotFoundError, version
 
 from fastapi import FastAPI
@@ -14,11 +13,6 @@ from app.infrastructure.bootstrap.routes import register_routes
 from app.infrastructure.db.session import SessionLocal
 from app.interfaces.platform.http.errors import register_exception_handlers
 from app.interfaces.platform.http.middleware import register_http_middleware
-
-OPENAPI_SCHEMA_ALIASES = {
-    "app__common__schemas__agent__MemoryView": "app__schemas__agent__MemoryView",
-    "app__common__schemas__memory__MemoryView": "app__schemas__memory__MemoryView",
-}
 
 
 def application_version() -> str:
@@ -51,14 +45,4 @@ def create_app(
     register_routes(application)
     register_http_middleware(application, resolved_settings)
     register_exception_handlers(application)
-    default_openapi = application.openapi
-
-    def stable_openapi() -> dict:
-        openapi_json = json.dumps(default_openapi(), ensure_ascii=False)
-        for generated_name, stable_name in OPENAPI_SCHEMA_ALIASES.items():
-            openapi_json = openapi_json.replace(generated_name, stable_name)
-        application.openapi_schema = json.loads(openapi_json)
-        return application.openapi_schema
-
-    application.openapi = stable_openapi
     return application

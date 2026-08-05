@@ -507,7 +507,11 @@ async def test_context_status_and_registered_commands_preserve_history(app_clien
     )
     assert compacted.status_code == 200
     assert compacted.json()["context"]["summary_active"] is True
-    assert compacted.json()["details"]["folded"] == 2
+    assert compacted.json()["details"] == {
+        "folded": 0,
+        "retained": 6,
+        "direction": "保留后续任务所需的关键上下文",
+    }
 
     cleared = await app_client.post(
         f"/api/conversations/{task_id}/commands/clear",

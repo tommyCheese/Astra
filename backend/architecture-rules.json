@@ -77,10 +77,10 @@
     "compatibility"
   ],
   "complexity_budget": {
-    "production_lines": 61609,
+    "production_lines": 61478,
     "modules": 302,
     "classes": 764,
-    "functions": 2473,
+    "functions": 2470,
     "public_symbols": 1205
   }
 }

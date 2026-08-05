@@ -72,18 +72,6 @@ class SemanticConversationCompactor:
 
     def _build_envelope(self, task, eligible, state, direction, accounting):
         body = self._body_items(eligible, accounting)
-        if state["summary"] and not state["checkpoint"]:
-            count, _, _ = accounting.count_text(state["summary"])
-            body.insert(
-                0,
-                ContextItem(
-                    id=f"legacy:{task.id}",
-                    kind="legacy_v1_summary",
-                    content=state["summary"],
-                    summary=state["summary"],
-                    token_count=count,
-                ),
-            )
         prefix_text = direction.strip() or task.description or task.title
         prefix = self._prefix_item(task.id, prefix_text, accounting)
         window = self.window_resolver(

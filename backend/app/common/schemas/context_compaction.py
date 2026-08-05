@@ -23,7 +23,6 @@ class ContextThresholdScope(str, Enum):
 class CompactionImplementation(str, Enum):
     astra_semantic = "astra_semantic"
     deterministic_emergency = "deterministic_emergency"
-    legacy_v1 = "legacy_v1"
 
 
 class CompactionLifecycleStatus(str, Enum):

@@ -19,7 +19,7 @@ from app.infrastructure.repositories.run_unit_of_work import RunUnitOfWork
 from app.infrastructure.tools.base import ToolRegistry
 from app.main import create_app
 
-EXPECTED_OPENAPI_SHA256 = "b85baa9be39afdc6a7a984469df2c191b7c96aa05c689865db59758556d3e7f4"
+EXPECTED_OPENAPI_SHA256 = "3dc527eb42c6af0c08ac949928f08bda9c8a1bba1c2dcc3d02d4a6918967290c"
 EXPECTED_ORM_TABLES = {
     "agent_budget_reservations",
     "agent_delegations",
