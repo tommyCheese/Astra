@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 
 from alembic import context
 from app.common.core.config import get_settings
-from app.infrastructure.db.base import metadata
+from app.infrastructure.db.models.metadata import metadata
 
 config = context.config
 if config.config_file_name is not None:

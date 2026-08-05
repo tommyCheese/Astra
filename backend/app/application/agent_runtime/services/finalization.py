@@ -32,7 +32,7 @@ from app.domain.grounding.projection import project_grounded_answer
 from app.domain.grounding.validators import grounding_validation_outcomes
 from app.infrastructure.db.models.workspaces import ArtifactRecord
 from app.infrastructure.model_clients.contracts import ModelClient
-from app.infrastructure.repositories.evidence import EvidenceRepository, EvidenceWriter
+from app.infrastructure.repositories.evidence import EvidenceRepository
 from app.infrastructure.repositories.plans import PlanRepository
 from app.infrastructure.repositories.run_unit_of_work import RunUnitOfWork
 
@@ -189,7 +189,7 @@ class AgentFinalizationStage:
             },
         )
         evidence_pack["artifact_id"] = artifact.id
-        await EvidenceWriter(EvidenceRepository(self._repository.session)).write(
+        await EvidenceRepository(self._repository.session).append_with_lineage(
             stage_input.run_id,
             records,
             artifact_ids=[artifact.id],

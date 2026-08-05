@@ -96,26 +96,7 @@ class EvidenceRepository:
     ) -> list[EvidenceRecord]:
         return [await self.append(run_id, fragment) for fragment in fragments]
 
-    async def list_for_run(self, run_id: str) -> list[EvidenceRecord]:
-        result = await self.session.execute(
-            select(EvidenceRecord)
-            .where(EvidenceRecord.run_id == run_id)
-            .order_by(EvidenceRecord.created_at, EvidenceRecord.id)
-        )
-        return list(result.scalars().all())
-
-    async def ledger_for_run(self, run_id: str) -> EvidenceLedger:
-        records = await self.list_for_run(run_id)
-        return EvidenceLedger(
-            EvidenceFragment.model_validate(record.fragment) for record in records
-        )
-
-
-class EvidenceWriter:
-    def __init__(self, repository: EvidenceRepository):
-        self.repository = repository
-
-    async def write(
+    async def append_with_lineage(
         self,
         run_id: str,
         fragments: Iterable[EvidenceFragment],
@@ -130,8 +111,7 @@ class EvidenceWriter:
                 update={
                     "lineage": EvidenceLineage(
                         run_id=run_id,
-                        plan_node_id=plan_node_id
-                        or fragment.lineage.plan_node_id,
+                        plan_node_id=plan_node_id or fragment.lineage.plan_node_id,
                         node_execution_id=node_execution_id
                         or fragment.lineage.node_execution_id,
                         tool_call_id=tool_call_id or fragment.lineage.tool_call_id,
@@ -148,4 +128,18 @@ class EvidenceWriter:
             )
             for fragment in fragments
         ]
-        return await self.repository.append_many(run_id, bound)
+        return await self.append_many(run_id, bound)
+
+    async def list_for_run(self, run_id: str) -> list[EvidenceRecord]:
+        result = await self.session.execute(
+            select(EvidenceRecord)
+            .where(EvidenceRecord.run_id == run_id)
+            .order_by(EvidenceRecord.created_at, EvidenceRecord.id)
+        )
+        return list(result.scalars().all())
+
+    async def ledger_for_run(self, run_id: str) -> EvidenceLedger:
+        records = await self.list_for_run(run_id)
+        return EvidenceLedger(
+            EvidenceFragment.model_validate(record.fragment) for record in records
+        )

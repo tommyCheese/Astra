@@ -159,7 +159,7 @@
       "lines": 38,
       "complexity": 11
     },
-    "app.application.permissions.engine:LeaseValidator.matches": {
+    "app.application.permissions.engine:_lease_matches": {
       "lines": 23,
       "complexity": 12
     },
@@ -528,7 +528,6 @@
     "app.application.run_management.conversation_lifecycle:ConversationLifecycleService",
     "app.application.workspaces.deliverables:DeliverableCatalog",
     "app.domain.evolution:SafetyMetricResult",
-    "app.infrastructure.repositories.evidence:EvidenceWriter",
     "app.application.memory.consolidation.service:AutoDreamProcessor",
     "app.infrastructure.model_clients.normalization.streaming:StreamingJsonFieldExtractor",
     "app.infrastructure.model_clients.transports.anthropic:AnthropicTransport",
@@ -537,7 +536,6 @@
     "app.application.permissions.effects:ChartEffectAnalyzer",
     "app.application.permissions.effects:DefaultEffectAnalyzer",
     "app.application.permissions.effects:WebEffectAnalyzer",
-    "app.application.permissions.engine:LeaseValidator",
     "app.application.permissions.governance:PermissionBundleEvaluator",
     "app.application.permissions.invocation:InvocationAuthorizationMixin",
     "app.application.planning.service:PlanValidator",
@@ -554,6 +552,7 @@
     "app.application.run_management.recovery:ExecutionRecovery",
     "app.application.runner.coordinator:NodeWorker",
     "app.application.runner.engine:RunEngine",
+    "app.application.runner.model_thinking_stream:ModelThinkingEventWriter",
     "app.application.runner.node_worker:ReadOnlyAgentNodeExecutor",
     "app.infrastructure.sandbox.runtime:SandboxJobService",
     "app.infrastructure.sandbox.runtime:SandboxSupervisor",

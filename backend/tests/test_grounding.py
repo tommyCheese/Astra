@@ -28,7 +28,7 @@ from app.domain.grounding.schemas import EvidenceFragment, EvidenceKind
 from app.domain.grounding.validators import grounding_validation_outcomes
 from app.infrastructure.db.models.conversations import TaskRecord
 from app.infrastructure.db.models.runs import RunRecord
-from app.infrastructure.repositories.evidence import EvidenceRepository, EvidenceWriter
+from app.infrastructure.repositories.evidence import EvidenceRepository
 
 
 def test_grounding_identities_are_stable_and_tracking_parameters_are_removed():
@@ -123,13 +123,13 @@ async def test_evidence_writer_persists_run_lineage_idempotently(session):
         "web_search",
         {"query": "Astra", "provider": "google", "candidates": []},
     )
-    writer = EvidenceWriter(EvidenceRepository(session))
-    first = await writer.write(
+    repository = EvidenceRepository(session)
+    first = await repository.append_with_lineage(
         run.id,
         fragments,
         tool_call_id="tool-call-1",
     )
-    second = await writer.write(
+    second = await repository.append_with_lineage(
         run.id,
         fragments,
         tool_call_id="tool-call-1",

@@ -93,6 +93,6 @@ analysis、authorization、invocation、observation/evidence、progress/reflecti
 保持同文件，无状态包装类、单实现抽象和旧路径 re-export 应直接删除。
 
 复杂度预算是只减不增的架构契约。DDD 路径加深带来的纯导入换行、5 个分层包入口以及
-保持旧 OpenAPI Schema ID 的惰性边界适配计入结构迁移基线；当前上限为 61,709 行、303 个
-模块、766 个类、2,474 个函数/方法和 1,249 个公共 symbol。后续重构或新增能力不得通过
+保持旧 OpenAPI Schema ID 的惰性边界适配计入结构迁移基线；当前上限为 61,609 行、302 个
+模块、764 个类、2,473 个函数/方法和 1,205 个公共 symbol。后续重构或新增能力不得通过
 修改预算掩盖净增长。

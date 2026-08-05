@@ -33,7 +33,7 @@ from app.common.schemas.subagents import (
     SubagentJoinPolicy,
     SubagentJoinSpec,
 )
-from app.infrastructure.db.base import Base
+from app.infrastructure.db.model_base import Base
 from app.infrastructure.db.models.executions import NodeExecutionRecord
 from app.infrastructure.db.models.permissions import ToolCallRecord
 from app.infrastructure.db.models.plans import PlanRecord

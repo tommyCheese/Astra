@@ -32,7 +32,7 @@ JSON 输出是完整清单，包含每个生产模块的行数、公共符号、
 | 1,636 | `app.infrastructure.db.models` | 57 | 0 |
 | 1,582 | `app.infrastructure.tools.web` | 32 | 3 |
 | 1,249 | `app.application.memory.consolidation` | 19 | 3 |
-| 1,176 | `app.interfaces.schemas.agent` | 94 | 2 |
+| 1,176 | `app.common.schemas.agent` | 94 | 2 |
 | 1,075 | `app.infrastructure.repositories.memory_consolidation` | 7 | 3 |
 | 1,047 | `app.application.subagents.executor` | 3 | 18 |
 | 986 | `app.interfaces.api.skills` | 26 | 14 |

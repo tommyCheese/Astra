@@ -59,30 +59,28 @@ DECISION_ORDER = {
 }
 
 
-class LeaseValidator:
-    def matches(
-        self,
-        grant: ApprovalGrantRecord,
-        request: PermissionRequest,
-        *,
-        now: datetime | None = None,
-    ) -> tuple[bool, str]:
-        now = now or utc_now()
-        invalid_reason = _grant_state_reason(grant, now) or _grant_scope_reason(grant, request)
-        if invalid_reason:
-            return False, invalid_reason
-        grant_subject = dict(grant.subject or {})
-        if grant.scope == "task":
-            grant_subject.pop("run_id", None)
-        if not _subject_matches(grant_subject, request):
-            return False, "grant_subject_mismatch"
-        if not _grant_effects_match(grant, request):
-            return False, "grant_effect_mismatch"
-        if not _resource_matcher_matches(grant.resource_matcher or {}, request.resource):
-            return False, "grant_resource_mismatch"
-        if not _invocation_matches(grant.invocation_constraints or {}, request):
-            return False, "grant_invocation_mismatch"
-        return True, "grant_match"
+def _lease_matches(
+    grant: ApprovalGrantRecord,
+    request: PermissionRequest,
+    *,
+    now: datetime | None = None,
+) -> tuple[bool, str]:
+    now = now or utc_now()
+    invalid_reason = _grant_state_reason(grant, now) or _grant_scope_reason(grant, request)
+    if invalid_reason:
+        return False, invalid_reason
+    grant_subject = dict(grant.subject or {})
+    if grant.scope == "task":
+        grant_subject.pop("run_id", None)
+    if not _subject_matches(grant_subject, request):
+        return False, "grant_subject_mismatch"
+    if not _grant_effects_match(grant, request):
+        return False, "grant_effect_mismatch"
+    if not _resource_matcher_matches(grant.resource_matcher or {}, request.resource):
+        return False, "grant_resource_mismatch"
+    if not _invocation_matches(grant.invocation_constraints or {}, request):
+        return False, "grant_invocation_mismatch"
+    return True, "grant_match"
 
 
 def _grant_state_reason(grant, now) -> str | None:
@@ -119,7 +117,6 @@ class PermissionEngine(InvocationAuthorizationMixin):
         protected_resource_patterns: Iterable[str] = PROTECTED_RESOURCE_PATTERNS,
     ):
         self.protected_resource_patterns = tuple(protected_resource_patterns)
-        self.lease_validator = LeaseValidator()
 
     def authorize_request(
         self,
@@ -209,7 +206,7 @@ class PermissionEngine(InvocationAuthorizationMixin):
     def _lease_decision(self, request, grants, policy_matches, now):
         reasons = []
         for grant in grants:
-            matched, reason = self.lease_validator.matches(grant, request, now=now)
+            matched, reason = _lease_matches(grant, request, now=now)
             reasons.append(f"{grant.id}:{reason}")
             if matched:
                 explanation = PolicyExplanation(
