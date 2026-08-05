@@ -11,6 +11,7 @@
 - [Agent Skills](agent-skills.md)：Skill 包、Draft/Revision、Monaco 工作台、两种回答模式、安全边界和 API。
 - [深度记忆、AutoDream 与 Agent 自进化运维](deep-memory-autodream-evolution.md)：命名空间、生命周期、召回评分、后台 consolidation、受治理候选、删除传播、评估、发布与回滚。
 - [历史对话老化运维](conversation-retention-operations.md)：后台保留策略、保护条件、批量扫描、日志、启用与回滚。
+- [Astra Token 消耗与性能](token-performance.md)：使用友好 Case 配对测量简单/可信模式的 Token、模型调用与完成时延，并说明结果口径。
 
 ## 阅读建议
 
@@ -21,6 +22,7 @@
 - 修改文件交付能力：重点读“Task Workspace、Sandbox 与 Artifact”。
 - 配置历史数据生命周期：阅读“历史对话老化运维”。
 - 发布跨 Session Memory 或 AutoDream：阅读“深度记忆、AutoDream 与 Agent 自进化运维”。
+- 评估简单/可信模式成本：阅读“Astra Token 消耗与性能”，运行配对端到端基准。
 - 修改前端：重点读“前端状态与 SSE 展示链路”。
 
 > 文档基线：`main` 分支提交 `e1bdc3b`。代码持续演进时，应优先相信可执行代码和测试，并同步更新本文。
