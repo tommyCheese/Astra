@@ -387,6 +387,15 @@ describe('App', () => {
     expect(screen.getByRole('link', { name: '如何选择' })).toHaveAttribute('href', '#answer-mode-choose');
     expect(screen.getByRole('button', { name: /快速模式与可信模式.*定义、差异与选择建议/ })).toHaveAttribute('aria-current', 'page');
     expect(screen.queryByText('什么时候真正生效？')).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: /Token 消耗与性能.*配对基准、指标与结果解读/ }));
+    expect(screen.getByRole('heading', { name: 'Token 消耗与性能' })).toBeInTheDocument();
+    for (const heading of ['Token 消耗来自哪里', '两种模式为何不同', '配对基准如何设计', '如何运行基准', '如何阅读结果', '结果适用边界']) {
+      expect(screen.getByRole('heading', { name: heading })).toBeInTheDocument();
+    }
+    expect(screen.getByText(/python -m benchmarks\.mode_performance --runs-per-case 3/)).toBeInTheDocument();
+    expect(screen.getByText('不存在通用固定倍数')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: '如何阅读结果' })).toHaveAttribute('href', '#token-performance-results');
+    expect(screen.getByRole('button', { name: /Token 消耗与性能.*配对基准、指标与结果解读/ })).toHaveAttribute('aria-current', 'page');
     await userEvent.click(screen.getByRole('button', { name: /模型与运行设置.*思考、计划、反思、批准与上下文/ }));
     expect(screen.getByRole('heading', { name: '模型与运行设置' })).toBeInTheDocument();
     for (const heading of ['这些设置分别控制什么', '模型思考', '计划执行', '推理资源与工具调用上限', '反思循环与触发方式', '请求批准与自动批准', '上下文容量如何计算', '设置何时生效']) {
@@ -416,6 +425,16 @@ describe('App', () => {
 
     expect(await screen.findByRole('heading', { name: '反思循环与触发方式' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /模型与运行设置.*思考、计划、反思、批准与上下文/ })).toHaveAttribute('aria-current', 'page');
+
+    window.history.replaceState(null, '', '/');
+  });
+
+  it('opens the token performance help topic from a deep link', async () => {
+    window.history.replaceState(null, '', '/help#token-performance-benchmark');
+    render(<DocumentationPage />);
+
+    expect(await screen.findByRole('heading', { name: '配对基准如何设计' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Token 消耗与性能.*配对基准、指标与结果解读/ })).toHaveAttribute('aria-current', 'page');
 
     window.history.replaceState(null, '', '/');
   });

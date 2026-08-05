@@ -421,6 +421,8 @@ p {
 .documentation-callout.neutral { background: var(--surface-subtle); border-color: var(--app-line); }
 .documentation-callout strong { color: var(--app-text); font-size: 12px; }
 .documentation-callout p { color: var(--app-muted); font-size: 12px; line-height: 1.7; margin: 6px 0 0; }
+.documentation-command { background: var(--surface-subtle); border: 1px solid var(--app-line); border-radius: var(--radius-md); color: var(--astra-mint-strong); margin: 18px 0; overflow-x: auto; padding: 16px 18px; }
+.documentation-command code { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 12px; line-height: 1.7; white-space: pre; }
 
 .documentation-boundary-list { display: grid; gap: 1px; overflow: hidden; }
 .documentation-boundary-list > div { align-items: start; background: var(--surface-subtle); border-bottom: 1px solid var(--app-line); display: grid; gap: 22px; grid-template-columns: 150px minmax(0, 1fr); padding: 18px; }

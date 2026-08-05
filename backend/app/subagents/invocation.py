@@ -214,6 +214,9 @@ class ChildToolInvocationStage:
         effect_plan: Any,
     ) -> dict[str, Any]:
         call = await self._start_tool_call(action, tool)
+        # Make the running ToolCall durable and release the child transaction before
+        # external I/O. The result transition resumes in a fresh short transaction.
+        await action.runtime.session.commit()
         try:
             raw_output = await tool.run(
                 action.intent.tool_input,

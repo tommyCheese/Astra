@@ -77,6 +77,36 @@ Existing Runs keep their frozen policy snapshot. Restart the backend after chang
 
 Users enable or disable **Swarm / 子 Agent** under Settings → Tools. This is the only product enablement switch; there is no separate deployment execution toggle. The UI switch cannot override the rollout cohort or emergency kill switch. Turning it off immediately makes `/subagent` unavailable, removes `swarm` from subsequent root decision contexts, and makes the Supervisor reject new fan-out from an already-running Run. Existing children are not implicitly cancelled.
 
+## Single-Agent versus concurrent-subagent benchmark
+
+Use the paired benchmark for release decisions instead of comparing unrelated historical Runs. It runs the same breadth-research and independent-review prompts in two controlled configurations:
+
+- `single_agent`: trusted mode with Swarm disabled and `subagent_mode=auto`;
+- `concurrent_subagent`: trusted mode with Swarm enabled and `subagent_mode=required`.
+
+The order reverses on alternating repetitions. The report includes p50/p95 completion latency, model calls, total tokens, estimated cost, deterministic heading coverage, quality-pass rate, failure rate, and actual child count. A concurrent sample with fewer than two children and a single-Agent sample with any child are counted as failures. Provider usage must be complete by default.
+
+Run this only against an isolated benchmark deployment because it temporarily changes the persisted global Swarm tool switch. The original switch value is restored in a `finally` block. Supply the actual model prices at collection time:
+
+```bash
+cd backend
+python -m benchmarks.subagent_performance \
+  --runs-per-case 3 \
+  --input-cost-per-million 3.00 \
+  --cached-input-cost-per-million 0.30 \
+  --output-cost-per-million 15.00
+```
+
+The prices above are examples, not Astra defaults. Use the provider's current prices and record the provider, model, configuration, timestamp, and emitted JSON with the release evidence. Cost is estimated as uncached input, cached input, and output tokens multiplied by those supplied rates. Do not use incomplete-usage samples for a release comparison.
+
+The deterministic benchmark contract is tested with:
+
+```bash
+cd backend
+python -m pytest -q tests/test_subagent_performance_benchmark.py
+python -m ruff check benchmarks/subagent_performance.py tests/test_subagent_performance_benchmark.py
+```
+
 ## `/subagent` command
 
 `/subagent <task>` is a Run-creation command, not a host-side context mutation. The UI removes the command prefix, preserves the current answer mode, freezes `subagent_mode=required`, and preserves the original draft if validation or Run creation fails. In quick mode it creates a standard Run without a canonical Plan or DAG. In trusted mode it creates a trusted Run with automatic Plan execution. A required-subagent Run in either mode cannot complete until it has created at least one governed Swarm group. The command remains visible but unavailable when Swarm is disabled, killed, shadow-only, or outside an executable rollout cohort.
@@ -116,6 +146,17 @@ Do not force-resume. Preserve joins/reservations/events, inspect incompatibility
 ### Kill-switch drain
 
 Stop new delegation, increment Run/child epochs, cancel descendants, terminate interruptible sandboxes, settle unused reservations, retain immutable-effect reports, and wait for descendant terminal barriers.
+
+### Operational rollout drill
+
+Before promotion, run the deterministic operational drill:
+
+```bash
+cd backend
+python -m pytest -q tests/test_subagent_executor.py -k rollout_drill
+```
+
+The drill proves the complete rollback path: shadow records a would-delegate decision without creating a child; the trusted read-only canary creates a child with attenuated `network_read` authority; the kill switch rejects new delegation; drain fences and cancels the existing child; and an already-completed non-idempotent effect remains in both the cancellation report and the durable child error record. Treat any missing shadow event, newly accepted post-kill child, non-terminal drained child, or lost immutable-effect record as a failed rollout gate.
 
 ## UI, events, and privacy
 

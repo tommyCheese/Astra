@@ -1,13 +1,15 @@
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Iterable
 from datetime import datetime, timezone
 
 import pytest
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import async_sessionmaker
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.core.config import Settings
+from app.db.base import Base
 from app.db.models.executions import NodeExecutionRecord
 from app.db.models.permissions import ToolCallRecord
 from app.db.models.plans import PlanRecord
@@ -40,7 +42,9 @@ from app.schemas.subagents import (
 )
 from app.subagents.executor import AgentExecutorRuntime, LocalAstraAgentExecutor
 from app.subagents.governance import FrozenChildCatalog
+from app.subagents.lifecycle import SubagentCancellationService
 from app.subagents.runtime import SubagentRuntimeOperations
+from app.subagents.scope import DelegationAuthorizationError
 from app.subagents.supervisor import SubagentSupervisor
 from app.tools.base import (
     ArtifactRef,
@@ -150,6 +154,43 @@ class ScriptedChildClient(MockModelClient):
             summary="Tool failed safely.",
             next_action="stop",
         )
+
+
+class BlockingDecisionClient(ScriptedChildClient):
+    def __init__(self, decision: AgentDecision, session, entered, release):
+        super().__init__([decision])
+        self.session = session
+        self.entered = entered
+        self.release = release
+        self.transaction_states = []
+
+    async def decide_with_answer(
+        self, goal, context, *, on_delta=None, on_reasoning_delta=None
+    ):
+        self.transaction_states.append(self.session.in_transaction())
+        self.entered.set()
+        await self.release.wait()
+        return await super().decide_with_answer(
+            goal,
+            context,
+            on_delta=on_delta,
+            on_reasoning_delta=on_reasoning_delta,
+        )
+
+
+class BlockingReadTool(ReadTool):
+    def __init__(self, session, entered, release):
+        super().__init__()
+        self.session = session
+        self.entered = entered
+        self.release = release
+        self.transaction_states = []
+
+    async def run(self, tool_input, *, context=None):
+        self.transaction_states.append(self.session.in_transaction())
+        self.entered.set()
+        await self.release.wait()
+        return await super().run(tool_input, context=context)
 
 
 def _allow_delegation() -> PermissionPolicySet:
@@ -384,6 +425,107 @@ async def test_local_child_executes_tool_with_full_lineage_and_completes(session
     assert all(turn.agent_execution_id == child.id for turn in turns)
     assert tool.last_context.agent_execution_id == child.id
     assert tool.last_context.delegation_context.identity_id == child.identity_id
+
+
+async def _commit_competing_writer(sessions, run_id: str, marker: str) -> None:
+    async with sessions() as writer:
+        await RunUnitOfWork(writer).add_event(run_id, marker, {"writer": "sibling"})
+        await writer.commit()
+
+
+async def test_child_model_wait_releases_transaction_for_competing_writer(tmp_path):
+    engine = create_async_engine(
+        f"sqlite+aiosqlite:///{tmp_path / 'child-model-wait.db'}",
+        connect_args={"timeout": 0.2},
+    )
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+    sessions = async_sessionmaker(engine, expire_on_commit=False)
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    async with sessions() as child_session:
+        tool = ReadTool()
+        child, contract, manifest, runtime, registry = await _child_runtime(
+            child_session, tool
+        )
+        client = BlockingDecisionClient(
+            AgentDecision(
+                decision_type="finalize",
+                reasoning_summary="Finish after the contention probe",
+                node_result={"outputs": {"finding": "model wait remained nonblocking"}},
+            ),
+            child_session,
+            entered,
+            release,
+        )
+        running = asyncio.create_task(
+            LocalAstraAgentExecutor(
+                model_client=client,
+                tool_registry=registry,
+            ).execute(contract=contract, context_manifest=manifest, runtime=runtime)
+        )
+        await asyncio.wait_for(entered.wait(), timeout=1)
+        try:
+            await asyncio.wait_for(
+                _commit_competing_writer(sessions, child.run_id, "test.model_wait.writer"),
+                timeout=1,
+            )
+        finally:
+            release.set()
+        result = await running
+        assert result.status == SubagentExecutionStatus.completed
+        assert client.transaction_states == [False]
+    await engine.dispose()
+
+
+async def test_child_tool_wait_releases_transaction_for_competing_writer(tmp_path):
+    engine = create_async_engine(
+        f"sqlite+aiosqlite:///{tmp_path / 'child-tool-wait.db'}",
+        connect_args={"timeout": 0.2},
+    )
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+    sessions = async_sessionmaker(engine, expire_on_commit=False)
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    async with sessions() as child_session:
+        tool = BlockingReadTool(child_session, entered, release)
+        child, contract, manifest, runtime, registry = await _child_runtime(
+            child_session, tool
+        )
+        client = ScriptedChildClient(
+            [
+                AgentDecision(
+                    decision_type="call_tool",
+                    reasoning_summary="Run the blocking read probe",
+                    tool_name="web_search",
+                    tool_input={"query": "contention"},
+                ),
+                AgentDecision(
+                    decision_type="finalize",
+                    reasoning_summary="Finish after the tool probe",
+                    node_result={"outputs": {"finding": "tool wait remained nonblocking"}},
+                ),
+            ]
+        )
+        running = asyncio.create_task(
+            LocalAstraAgentExecutor(
+                model_client=client,
+                tool_registry=registry,
+            ).execute(contract=contract, context_manifest=manifest, runtime=runtime)
+        )
+        await asyncio.wait_for(entered.wait(), timeout=1)
+        try:
+            await asyncio.wait_for(
+                _commit_competing_writer(sessions, child.run_id, "test.tool_wait.writer"),
+                timeout=1,
+            )
+        finally:
+            release.set()
+        result = await running
+        assert result.status == SubagentExecutionStatus.completed
+        assert tool.transaction_states == [False]
+    await engine.dispose()
 
 
 @pytest.mark.parametrize(
@@ -686,6 +828,86 @@ async def test_runtime_fanout_creates_two_children_and_one_idempotent_join(sessi
     assert replay.join_id == accepted.join_id
     assert replay.idempotent_replay is True
     assert len(await AgentExecutionRepository(session).descendants(root.id)) == 2
+
+
+async def test_rollout_drill_shadow_canary_kill_switch_drain_and_immutable_effects(session):
+    run, root, parent, operations, request, _ = await _operations_runtime(session)
+    runtime_kwargs = {
+        "permission_policies": _allow_delegation(),
+        "task_policy_scope": parent.attributes["permission_scope"],
+    }
+
+    shadow = SubagentRuntimeOperations(
+        session,
+        policy=operations.policy.model_copy(update={"rollout_cohort": "shadow"}),
+        **runtime_kwargs,
+    )
+    with pytest.raises(DelegationAuthorizationError, match="Shadow cohort"):
+        await shadow.delegate_task(
+            parent_execution_id=root.id,
+            parent_identity_id=parent.id,
+            request=request,
+        )
+    assert await AgentExecutionRepository(session).descendants(root.id) == []
+    assert "subagent.shadow_decision" in {
+        event.type for event in await RunUnitOfWork(session).list_events(run.id)
+    }
+
+    canary_policy = operations.policy.model_copy(
+        update={"rollout_cohort": "trusted_read_only", "read_only": True}
+    )
+    canary = SubagentRuntimeOperations(
+        session, policy=canary_policy, **runtime_kwargs
+    )
+    child = await canary.delegate_task(
+        parent_execution_id=root.id,
+        parent_identity_id=parent.id,
+        request=request,
+    )
+    assert child.status == "queued"
+    assert child.context_manifest["execution_context"]["effective_scope"]["actions"] == [
+        "network_read"
+    ]
+
+    killed = SubagentRuntimeOperations(
+        session,
+        policy=canary_policy.model_copy(update={"kill_switch": True}),
+        **runtime_kwargs,
+    )
+    with pytest.raises(DelegationAuthorizationError, match="disabled"):
+        await killed.delegate_task(
+            parent_execution_id=root.id,
+            parent_identity_id=parent.id,
+            request=request.model_copy(
+                update={"request_id": "after-kill", "dedupe_key": "after-kill"}
+            ),
+        )
+    assert len(await AgentExecutionRepository(session).descendants(root.id)) == 1
+
+    runs = RunUnitOfWork(session)
+    effect = await runs.start_tool_call(
+        run.id,
+        None,
+        "external.publish",
+        "1",
+        {"value": "already-published"},
+        "external_write",
+        "external_write",
+        agent_execution_id=child.id,
+    )
+    await runs.finish_tool_call(effect.id, output={"remote_id": "immutable-result"})
+    await session.commit()
+
+    drain = await SubagentCancellationService(session).cancel_tree(
+        child.id, reason="kill_switch_drain"
+    )
+    assert drain.cancelled_execution_ids == (child.id,)
+    assert drain.immutable_effects[0]["output"] == {
+        "remote_id": "immutable-result"
+    }
+    drained = await AgentExecutionRepository(session).require(child.id)
+    assert drained.status == "cancelled"
+    assert drained.error["immutable_effects"] == list(drain.immutable_effects)
 
 
 async def test_live_swarm_switch_blocks_new_children_for_running_supervisor(session):

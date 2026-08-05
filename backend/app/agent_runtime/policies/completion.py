@@ -144,7 +144,9 @@ def _descendant_barrier_decision(
     terminal = {"completed", "completed_with_warnings", "blocked", "failed", "cancelled"}
     unfinished = _with_status(descendants, terminal, invert=True)
     blocked_joins = _with_status(joins, {"blocked"})
-    waiting_joins = _with_status(joins, {"ready", "blocked"}, invert=True)
+    # A ready Join still has a durable merge result to consume into the parent.
+    # Only consumed (or terminally blocked) Joins clear the completion barrier.
+    waiting_joins = _with_status(joins, {"consumed", "blocked"}, invert=True)
     if blocked_joins:
         return CompletionDecision(
             state=TerminalState.blocked,

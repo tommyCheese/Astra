@@ -22,7 +22,7 @@
 - [x] 3.2 Create a per-child ModelClient wrapper and usage recorder while reusing only the shared HTTP transport and immutable Tool Registry
 - [x] 3.3 Bind child Artifact, Evidence, Workspace, Sandbox, permission, continuation, and budget services to the child Session and lineage
 - [x] 3.4 Add simultaneous model/tool execution tests proving usage, turns, events, artifacts, checkpoints, and failures remain attributed to the correct child
-- [ ] 3.5 Add contention tests ensuring no database transaction is held across child model or tool waits
+- [x] 3.5 Add contention tests ensuring no database transaction is held across child model or tool waits
 
 ## 4. Run-scoped SubagentSupervisor
 
@@ -52,7 +52,7 @@
 - [x] 6.3 Make verified fact and Artifact promotion idempotent across retries and recovery
 - [x] 6.4 Emit one sanitized parent Observation per consumed Join without child hidden reasoning, transcripts, secrets, or scratchpads
 - [x] 6.5 Implement required, optional, and first-success failure behavior including safe loser cancellation and unsafe loser reporting
-- [ ] 6.6 Add crash-point tests before merge, during promotion, and before consumed commit to prove exactly-once parent-visible results
+- [x] 6.6 Add crash-point tests before merge, during promotion, and before consumed commit to prove exactly-once parent-visible results
 - [x] 6.7 Add multi-child conflict, duplicate claim, missing evidence, invalid output, and partial failure tests
 
 ## 7. Plan Scheduling and Completion Barriers
@@ -62,7 +62,7 @@
 - [x] 7.3 Extend root CompletionGate to require mandatory descendants terminal, required/first-success Joins consumed, child budgets settled, approvals resolved, and blocking conflicts handled
 - [x] 7.4 Ensure optional child failures produce policy-governed warnings without blocking unrelated mandatory completion
 - [x] 7.5 Add scheduler tests for barrier-free root progress, required/optional/first-success branches, and no premature node completion
-- [ ] 7.6 Add end-to-end tests proving the root cannot finalize while required children or merge consumption remain outstanding
+- [x] 7.6 Add end-to-end tests proving the root cannot finalize while required children or merge consumption remain outstanding
 
 ## 8. Rollout, API, UI, and Observability
 
@@ -89,8 +89,8 @@
 
 - [x] 10.1 Run backend unit, integration, migration, protocol, concurrency, cancellation, recovery, permission, Swarm, and slash-command suites
 - [x] 10.2 Run frontend unit tests, type checking, production build, and event-gap reconciliation tests
-- [ ] 10.3 Add paired single-Agent versus concurrent-subagent benchmarks for breadth research, independent review, latency, tokens, cost, quality, and failure rate
+- [x] 10.3 Add paired single-Agent versus concurrent-subagent benchmarks for breadth research, independent review, latency, tokens, cost, quality, and failure rate
 - [x] 10.4 Validate SQLite two-worker contention behavior and document or enforce the supported production database boundary
-- [ ] 10.5 Exercise shadow, trusted-read-only canary, kill-switch rollback, drain, and immutable-effect operational drills
+- [x] 10.5 Exercise shadow, trusted-read-only canary, kill-switch rollback, drain, and immutable-effect operational drills
 - [x] 10.6 Update governed-subagent and slash-command documentation for Swarm built-in, bounded concurrency, `/subagent`, and the production supervision loop
 - [x] 10.7 Run strict OpenSpec validation and record release-gate evidence before enabling execution for new trusted Runs

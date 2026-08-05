@@ -116,6 +116,10 @@ class ChildRunSessionBuilder:
             )
         state.node_execution = node_execution
         model_context = self._model_context(state, active_node)
+        # Persist the selected node boundary and release the connection before a
+        # potentially slow provider wait. Child workers use independent sessions,
+        # but an open write transaction would still serialize sibling writers.
+        await self._runtime.session.commit()
         decision, _ = await self._services.model_client.decide_with_answer(
             self._contract.request.objective,
             model_context,
@@ -184,6 +188,8 @@ class ChildRunSessionBuilder:
         )
         if plan is not None:
             return plan
+        # The lookup starts a read transaction. Do not retain it while planning.
+        await self._runtime.session.commit()
         draft = await self._services.model_client.plan(
             self._contract.request.objective,
             contract=task_contract,

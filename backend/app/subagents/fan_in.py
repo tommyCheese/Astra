@@ -262,6 +262,20 @@ class SubagentJoinService:
             ).all()
         )
 
+    async def consumed_for_parent(self, parent_execution_id: str) -> list[AgentJoinRecord]:
+        return list(
+            (
+                await self.session.scalars(
+                    select(AgentJoinRecord)
+                    .where(
+                        AgentJoinRecord.parent_execution_id == parent_execution_id,
+                        AgentJoinRecord.status == "consumed",
+                    )
+                    .order_by(AgentJoinRecord.completed_at, AgentJoinRecord.id)
+                )
+            ).all()
+        )
+
     async def begin_merge(self, join_id: str, *, expected_version: int) -> AgentJoinRecord:
         outcome = await self.session.execute(
             update(AgentJoinRecord)

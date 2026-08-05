@@ -74,6 +74,7 @@ class SubagentSupervisor:
         self._dispatch_lock = asyncio.Lock()
         self._closed = False
         self._reported_blocked_joins: set[str] = set()
+        self._reported_consumed_joins: set[str] = set()
 
     async def delegate_tasks(self, fanout: SubagentFanoutRequest) -> SubagentFanoutResult:
         if self._closed:
@@ -190,6 +191,23 @@ class SubagentSupervisor:
         """Consume newly terminal Joins once and return sanitized root observations."""
         observations: list[dict[str, Any]] = []
         joins = SubagentJoinService(self.session)
+        run = await RunUnitOfWork(self.session).require_run_core(self.run_id)
+        persisted_join_ids = {
+            str(item.get("data", {}).get("join_id"))
+            for item in (run.agent_state or {}).get("observations", [])
+            if item.get("kind") == "subagent_join" and item.get("data", {}).get("join_id")
+        }
+        # A process may stop after the Join/event commit but before the in-memory
+        # observation is checkpointed into AgentState. Re-project the durable result
+        # once on recovery; canonical AgentState and the live guard suppress repeats.
+        for consumed in await joins.consumed_for_parent(self.parent_execution_id):
+            if (
+                consumed.id in persisted_join_ids
+                or consumed.id in self._reported_consumed_joins
+            ):
+                continue
+            observations.append(self._consumed_observation(consumed.result))
+            self._reported_consumed_joins.add(consumed.id)
         for join in await joins.ready_for_parent(self.parent_execution_id):
             evaluation = await joins.evaluate(join.id)
             join = await self.session.get(type(join), join.id)
@@ -253,15 +271,18 @@ class SubagentSupervisor:
                 agent_execution_id=self.parent_execution_id,
             )
             await self.session.commit()
-            observations.append(
-                {
-                    "kind": "subagent_join",
-                    "status": "succeeded",
-                    "summary": "Subagent results were validated and merged.",
-                    "data": payload,
-                }
-            )
+            observations.append(self._consumed_observation(payload))
+            self._reported_consumed_joins.add(join.id)
         return observations
+
+    @staticmethod
+    def _consumed_observation(payload: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "kind": "subagent_join",
+            "status": "succeeded",
+            "summary": "Subagent results were validated and merged.",
+            "data": deepcopy(payload),
+        }
 
     async def has_pending(self) -> bool:
         joins = await SubagentJoinService(self.session).ready_for_parent(self.parent_execution_id)

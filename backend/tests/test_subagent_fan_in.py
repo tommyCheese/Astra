@@ -3,16 +3,27 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 import pytest
+from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.agent_runtime.policies.completion import CompletionGate
-from app.agent_runtime.policies.reasoning import build_default_contract
+from app.agent_runtime.policies.reasoning import build_default_contract, resolve_run_profile
+from app.agent_runtime.services.completion_gate import CompletionGateInput, CompletionGateStage
+from app.agent_runtime.services.progress import ExecutionProgress
+from app.core.config import Settings
 from app.db.models.runs import EvidenceRecord
+from app.model_clients.mock import MockModelClient
 from app.repositories.agent_executions import AgentExecutionRepository
 from app.repositories.permissions import PermissionRepository
+from app.repositories.plans import PlanRepository
 from app.repositories.run_unit_of_work import RunUnitOfWork
 from app.schemas.agent.execution_state import AgentState
-from app.schemas.agent.run_policy import EffectiveSubagentPolicy, SubagentBudgetPolicy
-from app.schemas.agent.run_result import ValidationOutcome
+from app.schemas.agent.run_policy import (
+    EffectiveSubagentPolicy,
+    RequestedReasoningPolicy,
+    SubagentBudgetPolicy,
+)
+from app.schemas.agent.run_result import ValidationOutcome, VerificationReport
+from app.schemas.agent.types import AnswerMode, PlanExecution, TerminalState
 from app.schemas.permissions import PermissionPolicySet, PermissionRule
 from app.schemas.subagents import (
     DelegationContract,
@@ -32,6 +43,8 @@ from app.subagents.fan_in import (
     retry_subagent,
 )
 from app.subagents.governance import DelegationContractService
+from app.subagents.supervisor import SubagentSupervisor
+from app.tools.base import ToolRegistry
 
 NOW = datetime(2026, 1, 1, tzinfo=timezone.utc)
 
@@ -261,6 +274,102 @@ async def test_result_merger_deduplicates_and_preserves_conflicts_and_warnings(s
     assert set(merged.source_execution_ids) == {first.id, second.id}
 
 
+def _supervisor(session, run, root) -> SubagentSupervisor:
+    return SubagentSupervisor(
+        settings=Settings(model_provider="mock"),
+        session=session,
+        session_factory=async_sessionmaker(
+            session.bind,
+            expire_on_commit=False,
+            class_=type(session),
+        ),
+        run_id=run.id,
+        parent_execution_id=root.id,
+        parent_identity_id=root.identity_id or "test-root-identity",
+        policy=EffectiveSubagentPolicy(
+            enabled=True,
+            read_only=True,
+            rollout_cohort="trusted_read_only",
+        ),
+        tool_registry=ToolRegistry(),
+        model_client_factory=MockModelClient,
+    )
+
+
+async def _merged_payload(session, join, child) -> dict:
+    validated = await SubagentResultValidator(session).validate(child.id)
+    merged = merge_subagent_results([validated])
+    return {
+        **{
+            key: list(value) if isinstance(value, tuple) else value
+            for key, value in merged.__dict__.items()
+        },
+        "group_id": join.group_id,
+        "join_id": join.id,
+        "unsafe_loser_execution_ids": [],
+    }
+
+
+@pytest.mark.parametrize(
+    "crash_point",
+    [
+        "before_merge",
+        "during_promotion",
+        "before_consumed_commit",
+        "after_consumed_commit_before_projection",
+    ],
+)
+async def test_join_crash_recovery_projects_parent_result_exactly_once(session, crash_point):
+    run = await RunUnitOfWork(session).create_task_run("Join crash recovery", {})
+    root = await AgentExecutionRepository(session).root_for_run(run.id)
+    child = await _child(session, root, f"crash-{crash_point}")
+    await _complete(session, child, finding="durable finding")
+    joins = SubagentJoinService(session)
+    join = await joins.create(
+        parent_execution_id=root.id,
+        join_key=f"join:{crash_point}",
+        group_id=f"group:{crash_point}",
+        child_execution_ids=[child.id],
+        policy=SubagentJoinPolicy.required,
+    )
+    await joins.evaluate(join.id)
+    await session.refresh(join)
+    assert join.status == "ready"
+
+    if crash_point != "before_merge":
+        join = await joins.begin_merge(join.id, expected_version=join.state_version)
+        if crash_point == "during_promotion":
+            await session.commit()
+        else:
+            payload = await _merged_payload(session, join, child)
+            await joins.mark_consumed(
+                join.id,
+                expected_version=join.state_version,
+                parent_state_version=run.state_version,
+                result=payload,
+            )
+            if crash_point == "before_consumed_commit":
+                await session.rollback()
+                await session.refresh(run)
+                await session.refresh(root)
+                await session.refresh(join)
+            else:
+                await session.commit()
+
+    recovered = _supervisor(session, run, root)
+    observations = await recovered.reconcile(parent_state_version=run.state_version)
+    assert len(observations) == 1
+    assert observations[0]["data"]["join_id"] == join.id
+    assert observations[0]["data"]["facts"][0]["value"] == "durable finding"
+    assert await recovered.reconcile(parent_state_version=run.state_version) == []
+
+    await session.refresh(run)
+    run.agent_state = {"observations": observations}
+    await session.commit()
+    after_checkpoint_recovery = _supervisor(session, run, root)
+    assert await after_checkpoint_recovery.reconcile(parent_state_version=run.state_version) == []
+
+
 def test_root_completion_gate_waits_for_descendants_and_required_joins():
     state = AgentState(task_contract=build_default_contract("Complete with children"))
     gate = CompletionGate()
@@ -280,6 +389,77 @@ def test_root_completion_gate_waits_for_descendants_and_required_joins():
     assert waiting.state.value == "continue"
     assert "agent-execution:child-1" in waiting.unmet_criteria
     assert blocked.state.value == "blocked"
+
+
+async def test_persisted_root_completion_barrier_waits_through_join_consumption(session):
+    settings = Settings(model_provider="mock")
+    profile = resolve_run_profile(
+        AnswerMode.trusted,
+        RequestedReasoningPolicy(execution_mode="auto_approval"),
+        plan_execution=PlanExecution.auto,
+    )
+    repository = RunUnitOfWork(session)
+    run = await repository.create_task_run(
+        "Complete only after child merge",
+        settings.model_policy,
+        reasoning_policy=profile.reasoning_policy.model_dump(mode="json"),
+        answer_mode=profile.answer_mode.value,
+        execution_profile=profile.model_dump(mode="json"),
+    )
+    contract = build_default_contract(run.task.description)
+    state = AgentState(task_contract=contract)
+    await repository.initialize_reasoning_state(
+        run.id,
+        task_contract=contract.model_dump(mode="json"),
+        plan_graph={},
+        agent_state=state.model_dump(mode="json"),
+    )
+    root = await AgentExecutionRepository(session).root_for_run(run.id)
+    child = await _child(session, root, "completion-barrier")
+    joins = SubagentJoinService(session)
+    join = await joins.create(
+        parent_execution_id=root.id,
+        join_key="join:completion-barrier",
+        group_id="group:completion-barrier",
+        child_execution_ids=[child.id],
+        policy=SubagentJoinPolicy.required,
+    )
+    stage = CompletionGateStage(repository, PlanRepository(session), CompletionGate())
+    progress = ExecutionProgress(active_plan=None)
+    verification = VerificationReport(
+        status="passed",
+        validation_outcomes=[ValidationOutcome(validator="task_adapter", passed=True)],
+    )
+
+    while_child_runs = await stage.evaluate(
+        CompletionGateInput(run.id, profile, progress, None), verification
+    )
+    assert while_child_runs.state == TerminalState.continue_run
+    assert f"agent-execution:{child.id}" in while_child_runs.unmet_criteria
+
+    await _complete(session, child, finding="merged before root completion")
+    await joins.evaluate(join.id)
+    await session.refresh(join)
+    assert join.status == "ready"
+    while_merge_is_unconsumed = await stage.evaluate(
+        CompletionGateInput(run.id, profile, progress, None), verification
+    )
+    assert while_merge_is_unconsumed.state == TerminalState.continue_run
+    assert f"agent-join:{join.id}" in while_merge_is_unconsumed.unmet_criteria
+
+    join = await joins.begin_merge(join.id, expected_version=join.state_version)
+    current = await repository.require_run_core(run.id)
+    await joins.mark_consumed(
+        join.id,
+        expected_version=join.state_version,
+        parent_state_version=current.state_version,
+        result=await _merged_payload(session, join, child),
+    )
+    await session.commit()
+    after_consumption = await stage.evaluate(
+        CompletionGateInput(run.id, profile, progress, None), verification
+    )
+    assert after_consumption.state == TerminalState.completed
 
 
 async def test_safe_retry_preserves_failed_attempt_and_creates_new_identity(session):

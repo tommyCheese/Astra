@@ -2,11 +2,12 @@ import { ReactNode, useEffect, useState } from 'react';
 import { CloseButton } from './CloseButton';
 import { useI18n } from './i18n';
 
-type DocumentationTopic = 'memory' | 'answer-modes' | 'runtime-settings' | 'about';
+type DocumentationTopic = 'memory' | 'answer-modes' | 'token-performance' | 'runtime-settings' | 'about';
 
 const topics: Array<{ id: DocumentationTopic; label: string; description: string }> = [
   { id: 'memory', label: '记忆', description: '生产、召回、范围与整理' },
   { id: 'answer-modes', label: '快速模式与可信模式', description: '定义、差异与选择建议' },
+  { id: 'token-performance', label: 'Token 消耗与性能', description: '配对基准、指标与结果解读' },
   { id: 'runtime-settings', label: '模型与运行设置', description: '思考、计划、反思、批准与上下文' },
   { id: 'about', label: '关于 Astra', description: '创建动机、使命与版权信息' },
 ];
@@ -42,6 +43,15 @@ const runtimeSettingsSections = [
   ['runtime-settings-effective-scope', '设置何时生效'],
 ] as const;
 
+const tokenPerformanceSections = [
+  ['token-performance-source', 'Token 消耗来自哪里'],
+  ['token-performance-modes', '两种模式为何不同'],
+  ['token-performance-benchmark', '配对基准如何设计'],
+  ['token-performance-run', '如何运行基准'],
+  ['token-performance-results', '如何阅读结果'],
+  ['token-performance-boundaries', '结果适用边界'],
+] as const;
+
 const aboutSections = [
   ['about-origin', '为什么创建 Astra'],
   ['about-mission', '我们的使命'],
@@ -54,6 +64,7 @@ const aboutSections = [
 const topicBySection = new Map<string, DocumentationTopic>([
   ...memorySections.map(([id]) => [id, 'memory'] as const),
   ...answerModeSections.map(([id]) => [id, 'answer-modes'] as const),
+  ...tokenPerformanceSections.map(([id]) => [id, 'token-performance'] as const),
   ...runtimeSettingsSections.map(([id]) => [id, 'runtime-settings'] as const),
   ...aboutSections.map(([id]) => [id, 'about'] as const),
 ]);
@@ -70,9 +81,11 @@ export function DocumentationCenter({ onClose }: { onClose: () => void }) {
     ? memorySections
     : topic === 'answer-modes'
       ? answerModeSections
-      : topic === 'runtime-settings'
-        ? runtimeSettingsSections
-        : aboutSections;
+      : topic === 'token-performance'
+        ? tokenPerformanceSections
+        : topic === 'runtime-settings'
+          ? runtimeSettingsSections
+          : aboutSections;
 
   useEffect(() => {
     const syncTopicToHash = () => {
@@ -130,6 +143,7 @@ export function DocumentationCenter({ onClose }: { onClose: () => void }) {
           <DocumentationToc sections={sections} />
           {topic === 'memory' && <MemoryArticle />}
           {topic === 'answer-modes' && <AnswerModesArticle />}
+          {topic === 'token-performance' && <TokenPerformanceArticle />}
           {topic === 'runtime-settings' && <RuntimeSettingsArticle />}
           {topic === 'about' && <AboutArticle />}
         </div>
@@ -332,6 +346,86 @@ function AnswerModesArticle() {
         <details><summary>{t('切换模式会修改当前正在运行的任务吗？')}</summary><p>{t('不会。回答模式在 Run 创建时固化；开关影响之后创建的 Run，当前运行继续使用原模式。')}</p></details>
         <details><summary>{t('模型思考深度等于回答模式吗？')}</summary><p>{t('不等于。思考深度是模型级设置，回答模式决定规划、编排和验证生命周期；调整思考深度不会自动启用或关闭可信模式。')}</p></details>
       </div>
+    </DocumentSection>
+  </article>;
+}
+
+function TokenPerformanceArticle() {
+  const { t } = useI18n();
+  return <article className="documentation-article" aria-labelledby="token-performance-document-title">
+    <div className="documentation-hero">
+      <span className="documentation-kicker">Performance</span>
+      <h2 id="token-performance-document-title">{t('Token 消耗与性能')}</h2>
+      <p>{t('Astra 的可信模式会用额外的模型调用换取显式计划、严格验证和更完整的完成判断。实际增幅取决于任务，不能用一个固定百分比代表所有场景；配对基准可以在相同模型和相同任务下给出可复核结果。')}</p>
+      <div className="documentation-summary-grid">
+        <div><span>01</span><strong>{t('校验不等于模型调用')}</strong><small>{t('确定性权限、Schema 和完成校验本身不消耗模型 Token')}</small></div>
+        <div><span>02</span><strong>{t('可信模式有固定开销')}</strong><small>{t('Task Contract 和 Plan DAG 通常会增加模型调用')}</small></div>
+        <div><span>03</span><strong>{t('用配对结果比较')}</strong><small>{t('相同 Case、模型、配置和时间窗口才具有可比性')}</small></div>
+      </div>
+    </div>
+
+    <DocumentSection id="token-performance-source" eyebrow="Accounting" title="Token 消耗来自哪里">
+      <p>{t('权限判断、工具输入 Schema 校验、Artifact 与 Evidence 引用检查、Completion Gate 等主要由 Astra 本地确定性代码执行。它们会产生少量本地计算时延，但不会直接产生供应商模型 Token。')}</p>
+      <div className="documentation-boundary-list">
+        <Boundary term="0 model calls" title="确定性治理" description="权限、预算、引用、计划结构和完成状态检查在运行时执行，不需要额外模型调用。" />
+        <Boundary term="model calls" title="模型驱动阶段" description="回答决策、Task Contract、Plan、反思、重规划、综合和可选记忆提取会产生 Token。" />
+        <Boundary term="provider usage" title="权威统计来源" description="性能基准读取每个 Run 的供应商 usage；缺失上报时不会把未知 Token 当作零。" />
+      </div>
+    </DocumentSection>
+
+    <DocumentSection id="token-performance-modes" eyebrow="Modes" title="两种模式为何不同">
+      <div className="documentation-table-wrap"><table>
+        <thead><tr><th>{t('阶段')}</th><th>{t('快速模式')}</th><th>{t('可信模式')}</th></tr></thead>
+        <tbody>
+          <tr><td>{t('任务启动')}</td><td>{t('直接进入 Agent Loop')}</td><td>{t('先生成 Task Contract 和 Plan DAG')}</td></tr>
+          <tr><td>{t('结果检查')}</td><td>{t('基础完成检查')}</td><td>{t('成功标准、计划状态和完整 Completion Gate')}</td></tr>
+          <tr><td>{t('失败恢复')}</td><td>{t('快速循环内收敛')}</td><td>{t('可按预算反思、重规划并再次验证')}</td></tr>
+          <tr><td>{t('典型表现')}</td><td>{t('小任务通常更快且 Token 更少')}</td><td>{t('复杂任务可获得更强过程控制，但 Token 和时延通常更高')}</td></tr>
+        </tbody>
+      </table></div>
+      <aside className="documentation-callout"><strong>{t('不存在通用固定倍数')}</strong><p>{t('短答案中，契约和计划的固定成本占比可能很高；复杂任务中，可信计划可能减少无效行动，也可能因为反思和重规划增加消耗。')}</p></aside>
+    </DocumentSection>
+
+    <DocumentSection id="token-performance-benchmark" eyebrow="Paired benchmark" title="配对基准如何设计">
+      <p>{t('内置基准选择三个不依赖 Web、文件或外部服务的友好 Case。每个 Case 都由快速模式和可信模式各执行一次，并在下一轮反转顺序，以降低供应商负载随时间变化造成的偏差。')}</p>
+      <div className="documentation-problem-grid">
+        <div><strong>short_explanation</strong><p>{t('三句话解释递归并给出极短伪代码，用于观察小任务的固定治理开销。')}</p></div>
+        <div><strong>structured_comparison</strong><p>{t('用有界表格比较列表与元组，用于观察结构化交付约束的成本。')}</p></div>
+        <div><strong>bounded_checklist</strong><p>{t('生成恰好五项的短清单，用于观察明确成功条件的规划和验证成本。')}</p></div>
+      </div>
+      <ol className="documentation-checklist">
+        <li>{t('两种模式使用相同模型、Case、工具开关和运行配置。')}</li>
+        <li>{t('所有计量 Run 串行执行，可信模式自动执行计划，不计入人工确认等待。')}</li>
+        <li>{t('默认每个 Case 重复三次，并在计量前为两种模式各预热一次。')}</li>
+      </ol>
+    </DocumentSection>
+
+    <DocumentSection id="token-performance-run" eyebrow="Run" title="如何运行基准">
+      <p>{t('先启动后端并配置需要评估的真实模型。内置 mock provider 不会上报真实 Token，不能用来形成成本结论。')}</p>
+      <pre className="documentation-command"><code>cd backend{`\n`}python -m benchmarks.mode_performance --runs-per-case 3 --warmup 1</code></pre>
+      <p>{t('如果模型价格较高，可以先运行单 Case 冒烟测试：')}</p>
+      <pre className="documentation-command"><code>python -m benchmarks.mode_performance --case short_explanation --runs-per-case 1 --warmup 0</code></pre>
+      <aside className="documentation-callout neutral"><strong>{t('默认保护')}</strong><p>{t('任一模型调用缺失 Token usage 时基准会失败；完成统计后会清理创建的对话。使用 --keep-runs 可以保留记录。')}</p></aside>
+    </DocumentSection>
+
+    <DocumentSection id="token-performance-results" eyebrow="Results" title="如何阅读结果">
+      <div className="documentation-boundary-list">
+        <Boundary term="trusted_token_ratio" title="可信模式 Token 倍数" description="可信模式总 Token 除以快速模式总 Token；1.35 表示使用 1.35 倍 Token。" />
+        <Boundary term="trusted_token_overhead_percent" title="可信模式 Token 增幅" description="相对快速模式增加的百分比；35 表示增加 35%。" />
+        <Boundary term="complete_ms" title="端到端完成时延" description="从提交请求到 answer.completed，并同时报告 mean、p50 和 p95。" />
+        <Boundary term="minimum_usage_coverage" title="Token 上报覆盖率" description="只有值为 1.0 时，所有模型调用才都有供应商 usage。" />
+      </div>
+      <p>{t('结果还分别提供输入、缓存输入、输出、推理 Token 和模型调用数，并按单个 Case 展示，避免总体平均值掩盖任务差异。')}</p>
+    </DocumentSection>
+
+    <DocumentSection id="token-performance-boundaries" eyebrow="Interpretation" title="结果适用边界">
+      <ol className="documentation-checklist">
+        <li>{t('不要把不同任务的历史 Run 平均值直接相除；必须比较同一批配对 Case。')}</li>
+        <li>{t('记录模型供应商、模型名、采集时间，以及 Memory、Subagent、模型思考和缓存是否开启。')}</li>
+        <li>{t('Token 比例描述本次配置和样本，不代表其他模型、长任务或工具密集任务。')}</li>
+        <li>{t('确定性校验的本地耗时属于运行时性能，不应误报为模型 Token。')}</li>
+      </ol>
+      <aside className="documentation-callout emphasis"><strong>{t('推荐报告')}</strong><p>{t('同时报告每种模式的 Token mean/p50/p95、模型调用数、完成时延、总体增幅和 usage coverage，不只给出一个倍数。')}</p></aside>
     </DocumentSection>
   </article>;
 }
