@@ -59,7 +59,7 @@ NOW = datetime(2026, 1, 1, tzinfo=timezone.utc)
 
 class ReadTool(AstraTool):
     spec = AstraToolSpec(
-        name="web_search",
+        name="catalog_search",
         version="1",
         input_schema={"type": "object"},
         output_schema={
@@ -216,11 +216,11 @@ async def _child_runtime(session, tool: AstraTool, *, max_model_calls: int = 5):
     assert root is not None
     permissions = PermissionRepository(session)
     tool_name = tool.spec.name
-    if tool_name == "web_search":
+    if tool_name == "catalog_search":
         actions = ("network_read",)
-        resources = ("provider://astra.builtin/web_search",)
+        resources = ("provider://astra.builtin/catalog_search",)
         effects = ("network_read",)
-        destinations = ("provider://astra.builtin/web_search",)
+        destinations = ("provider://astra.builtin/catalog_search",)
     else:
         actions = ("credential_use",)
         resources = ("credential://records",)
@@ -360,7 +360,7 @@ async def test_local_child_executes_tool_with_full_lineage_and_completes(session
             AgentDecision(
                 decision_type="call_tool",
                 reasoning_summary="Search first",
-                tool_name="web_search",
+                tool_name="catalog_search",
                 tool_input={"query": "astra"},
             ),
             AgentDecision(
@@ -498,7 +498,7 @@ async def test_child_tool_wait_releases_transaction_for_competing_writer(tmp_pat
                 AgentDecision(
                     decision_type="call_tool",
                     reasoning_summary="Run the blocking read probe",
-                    tool_name="web_search",
+                    tool_name="catalog_search",
                     tool_input={"query": "contention"},
                 ),
                 AgentDecision(
@@ -622,7 +622,7 @@ async def test_local_child_reflects_on_invalid_tool_result_then_fails_safely(ses
             AgentDecision(
                 decision_type="call_tool",
                 reasoning_summary="Try the tool",
-                tool_name="web_search",
+                tool_name="catalog_search",
                 tool_input={"query": "astra"},
             ),
             AgentDecision(
@@ -680,14 +680,14 @@ async def _operations_runtime(session, *, enabled: bool = True):
     permissions = PermissionRepository(session)
     parent_scope = {
         "actions": ["network_read"],
-        "resources": ["provider://astra.builtin/web_search"],
+        "resources": ["provider://astra.builtin/catalog_search"],
         "effect_kinds": ["network_read"],
-        "tools": ["web_search"],
+        "tools": ["catalog_search"],
         "skills": [],
         "credential_scopes": [],
         "data_labels": [],
         "allowed_purposes": ["research"],
-        "network_destinations": ["provider://astra.builtin/web_search"],
+        "network_destinations": ["provider://astra.builtin/catalog_search"],
         "workspace_read_roots": [],
         "workspace_write_roots": [],
         "max_tool_calls": 4,
@@ -749,16 +749,16 @@ async def _operations_runtime(session, *, enabled: bool = True):
             "properties": {"finding": {"type": "string"}},
             "required": ["finding"],
         },
-        requested_tools=["web_search"],
+        requested_tools=["catalog_search"],
         resource_scope={
             "purpose": "research",
             "actions": ["network_read"],
-            "resources": ["provider://astra.builtin/web_search"],
+            "resources": ["provider://astra.builtin/catalog_search"],
             "effect_kinds": ["network_read"],
-            "tools": ["web_search"],
+            "tools": ["catalog_search"],
             "data_labels": [],
             "allowed_purposes": ["research"],
-            "network_destinations": ["provider://astra.builtin/web_search"],
+            "network_destinations": ["provider://astra.builtin/catalog_search"],
             "workspace_read_roots": [],
             "workspace_write_roots": [],
             "max_tool_calls": 4,

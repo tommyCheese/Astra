@@ -1,6 +1,6 @@
 import { Component, CSSProperties, FormEvent, KeyboardEvent as ReactKeyboardEvent, lazy, memo, MouseEvent, PointerEvent as ReactPointerEvent, ReactNode, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { AstraApiError, ApiErrorPayload, buildRuntime, cancelRun, cancelRuntimeBuild, confirmPlanExecution, createConversationShare, createRun, decideToolApproval, deleteConversation, executeConversationCommand, getConversation, getConversationContext, getConversationStrategy, getPermissionCenter, getRun, getRuntimeDefaultModel, getRuntimeProfile, getToolSettings, listConversationShares, listConversations, listLibraryDeliverables, listRuns, listSkills, listSystemCommands, resetRuntimeAgentProfile, resolveModelContextCapabilities, resolveModelThinkingCapabilities, resumeRun, revisePlan, revokeConversationShare, revokePermissionGrant, streamRunEvents, takeCreatedRunStream, testModelConnection, updateConversation, updateConversationStrategy, updateRuntimeAgentProfile, updateRuntimeMemorySettings, updateToolProviderConfiguration, updateToolProviderState, updateToolState, type AgentProfileDocuments, type ContextWindowStatus, type ConversationStrategyPreferences, type Deliverable, type MemoryRuntimeSettings, type ModelConnectionTestResult, type ModelContextCapability, type ModelThinkingCapability, type ModelThinkingDepth, type ModelThinkingSelection, type PermissionCenterView, type RunModelConfig, type RunStreamEvent, type RunStreamHandle, type RuntimeDefaultModel, type SkillSummary, type SlashSystemCommand, type ToolProviderSetting, type ToolSetting } from './api';
+import { AstraApiError, ApiErrorPayload, buildRuntime, cancelRun, cancelRuntimeBuild, confirmPlanExecution, createConversationShare, createRun, decideToolApproval, deleteConversation, executeConversationCommand, getConversation, getConversationContext, getConversationStrategy, getPermissionCenter, getRun, getRuntimeDefaultModel, getRuntimeProfile, getToolSettings, listConversationShares, listConversations, listLibraryDeliverables, listRuns, listSkills, listSystemCommands, resetRuntimeAgentProfile, resolveModelContextCapabilities, resolveModelThinkingCapabilities, resumeRun, revisePlan, revokeConversationShare, revokePermissionGrant, streamRunEvents, takeCreatedRunStream, testModelConnection, updateConversation, updateConversationStrategy, updateRuntimeAgentProfile, updateRuntimeMemorySettings, updateToolState, type AgentProfileDocuments, type ContextWindowStatus, type ConversationStrategyPreferences, type Deliverable, type MemoryRuntimeSettings, type ModelConnectionTestResult, type ModelContextCapability, type ModelThinkingCapability, type ModelThinkingDepth, type ModelThinkingSelection, type PermissionCenterView, type RunModelConfig, type RunStreamEvent, type RunStreamHandle, type RuntimeDefaultModel, type SkillSummary, type SlashSystemCommand, type ToolSetting } from './api';
 import { cancelSubagent } from './api';
 import { buildAuditLog } from './auditPresentation';
 import { I18nProvider, useI18n } from './i18n';
@@ -3061,14 +3061,12 @@ function SettingSection({ category, providerConfigs, onProviderConfigsChange }: 
 function ToolSettings() {
   const { t } = useI18n();
   const [tools, setTools] = useState<ToolSetting[]>([]);
-  const [providers, setProviders] = useState<ToolProviderSetting[]>([]);
   const [busyTool, setBusyTool] = useState<string | null>(null);
   const [message, setMessage] = useState('正在读取工具配置…');
   useEffect(() => {
     const controller = new AbortController();
     void getToolSettings(controller.signal).then((value) => {
       setTools(value.tools);
-      setProviders(value.providers);
       setMessage('');
     }).catch((error) => {
       if (error instanceof DOMException && error.name === 'AbortError') return;
@@ -3076,10 +3074,6 @@ function ToolSettings() {
     });
     return () => controller.abort();
   }, []);
-  function applySaved(saved: { tools: ToolSetting[]; providers: ToolProviderSetting[] }) {
-    setTools(saved.tools);
-    setProviders(saved.providers);
-  }
   async function changeTool(name: string, enabled: boolean) {
     const previous = tools;
     const next = tools.map((tool) => tool.name === name ? { ...tool, enabled } : tool);
@@ -3087,7 +3081,8 @@ function ToolSettings() {
     setBusyTool(name);
     setMessage('');
     try {
-      applySaved(await updateToolState(name, enabled));
+      const saved = await updateToolState(name, enabled);
+      setTools(saved.tools);
     } catch {
       setTools(previous);
       setMessage('保存工具配置失败，已恢复原状态。');
@@ -3095,56 +3090,13 @@ function ToolSettings() {
       setBusyTool(null);
     }
   }
-  async function changeProvider(providerId: string, enabled: boolean) {
-    setBusyTool(providerId);
-    try {
-      applySaved(await updateToolProviderState(providerId, enabled));
-    } catch {
-      setMessage('保存 Provider 配置失败。');
-    } finally {
-      setBusyTool(null);
-    }
-  }
-  async function saveProviderConfiguration(providerId: string, configuration: Record<string, unknown>) {
-    setBusyTool(providerId);
-    try {
-      applySaved(await updateToolProviderConfiguration(providerId, configuration));
-      setMessage('Provider 配置已保存。');
-    } catch {
-      setMessage('保存 Provider 配置失败。');
-    } finally {
-      setBusyTool(null);
-    }
-  }
   return <SettingsGroup title="工具" description="管理 Agent 可用工具。修改会应用到之后新建的任务，运行中的任务不受影响。">
     <div className="capability-settings">
-      {providers.map((provider) => <div className="tool-provider" key={provider.provider_id} data-setting-search-key={provider.label}>
-        <div className="tool-provider-heading">
-          <div><strong>{t(provider.label)}</strong><small>{provider.provider_id} · v{provider.version} · {provider.health}</small></div>
-          <Toggle checked={provider.enabled} onChange={(enabled) => void changeProvider(provider.provider_id, enabled)} disabled={busyTool !== null} label={`${provider.label} · ${provider.state}`} />
-        </div>
-        {!provider.available && <p className="capability-warning">{t(provider.unavailable_reason ?? '当前不可用')}</p>}
-        <ProviderConfigurationFields provider={provider} busy={busyTool !== null} onSave={(configuration) => void saveProviderConfiguration(provider.provider_id, configuration)} />
-        {tools.filter((tool) => tool.provider_id === provider.provider_id).map((tool) => <CapabilityItem key={tool.name} tool={tool} busy={busyTool !== null} onChange={(enabled) => void changeTool(tool.name, enabled)} />)}
-      </div>)}
+      {tools.map((tool) => <CapabilityItem key={tool.name} tool={tool} busy={busyTool !== null} onChange={(enabled) => void changeTool(tool.name, enabled)} />)}
       {!tools.length && <p className="tool-settings-message">{t(message)}</p>}
     </div>
     {tools.length > 0 && message && <p className="tool-settings-message" role="status">{t(message)}</p>}
   </SettingsGroup>;
-}
-
-function ProviderConfigurationFields({ provider, busy, onSave }: { provider: ToolProviderSetting; busy: boolean; onSave: (configuration: Record<string, unknown>) => void }) {
-  const schemaProperties = (provider.configuration_schema.properties ?? {}) as Record<string, { type?: string; title?: string; enum?: string[]; 'x-secret'?: boolean }>;
-  const editableFields = Object.entries(schemaProperties);
-  const [values, setValues] = useState<Record<string, string>>(() => Object.fromEntries(editableFields.map(([name, schema]) => [name, schema['x-secret'] ? '' : String(provider.configuration[name] ?? '')])));
-  useEffect(() => {
-    setValues(Object.fromEntries(editableFields.map(([name, schema]) => [name, schema['x-secret'] ? '' : String(provider.configuration[name] ?? '')])));
-  }, [provider.configuration_revision]);
-  if (!editableFields.length) return null;
-  return <div className="tool-provider-config">
-    {editableFields.map(([name, schema]) => <label key={name}><span>{schema.title ?? name}</span>{schema.enum ? <select value={values[name] ?? ''} onChange={(event) => setValues((current) => ({ ...current, [name]: event.target.value }))}><option value="">—</option>{schema.enum.map((option) => <option key={option} value={option}>{option}</option>)}</select> : <input type={schema['x-secret'] ? 'password' : 'text'} placeholder={schema['x-secret'] && provider.configuration[name] ? '已配置；输入新的凭据引用以替换' : ''} value={values[name] ?? ''} onChange={(event) => setValues((current) => ({ ...current, [name]: event.target.value }))} />}</label>)}
-    <button type="button" disabled={busy} onClick={() => onSave(Object.fromEntries(editableFields.flatMap(([name, schema]) => values[name] ? [[name, schema['x-secret'] ? { credential_ref: values[name] } : values[name]]] : [])))}>保存配置</button>
-  </div>;
 }
 
 type MemoryCenterTab = 'settings' | 'stored' | 'maintenance';
@@ -3899,7 +3851,7 @@ function SettingRow({ title, description, children }: { title: string; descripti
 function Toggle({ checked = false, onChange, disabled = false, label, describedBy }: { checked?: boolean; onChange?: (checked: boolean) => void; disabled?: boolean; label?: string; describedBy?: string }) {
   const [localChecked, setLocalChecked] = useState(checked);
   const value = onChange ? checked : localChecked;
-  return <button className={`toggle ${value ? 'on' : ''}`} type="button" role="switch" aria-checked={value} aria-label={label} aria-describedby={describedBy} disabled={disabled} onClick={() => onChange ? onChange(!value) : setLocalChecked(!value)}><span /></button>;
+  return <button className={`toggle ${value ? 'on' : ''}`} type="button" role="switch" aria-checked={value} aria-label={label} aria-describedby={describedBy} disabled={disabled} onClick={() => onChange ? onChange(!value) : setLocalChecked(!value)}><span className="toggle-knob" aria-hidden="true" /></button>;
 }
 
 function DocumentationLink({ anchor, label, className = '' }: { anchor: string; label: string; className?: string }) {
@@ -4077,8 +4029,6 @@ function permissionToolLabel(toolName: string) {
   const labels: Record<string, string> = {
     bash_execute: '命令工具',
     'chart.render': '图表工具',
-    web_search: '网页搜索',
-    web_fetch: '网页读取',
   };
   return labels[toolName] || toolName.replace(/_/g, ' ');
 }
@@ -4818,8 +4768,6 @@ function externalHref(value: string) {
 
 function activeState(run: RunView) {
   const latest = [...(run.turns ?? [])].sort((a, b) => b.turn_index - a.turn_index)[0];
-  if (latest?.selected_tool === 'web_search') return '正在搜索候选来源...';
-  if (latest?.selected_tool === 'web_fetch') return '正在阅读和验证来源...';
   if (latest?.decision_type === 'reflect') return '正在反思并调整策略...';
   if (run.status === 'verifying') return '正在验证证据...';
   return '正在处理...';

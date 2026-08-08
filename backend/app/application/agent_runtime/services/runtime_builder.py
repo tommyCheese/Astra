@@ -20,6 +20,7 @@ from app.application.agent_runtime.services.plugin_runtime import PluginRuntimeS
 from app.application.agent_runtime.services.progress import ExecutionProgress
 from app.application.agent_runtime.services.recovery import RunRecoveryStage
 from app.application.agent_runtime.services.runtime_composition import RootRuntimeComposer
+from app.application.memory.tool_service import MemoryToolService
 from app.application.permissions.governance import ExtensionTrustPolicy
 from app.application.subagents.eligibility import subagent_execution_eligibility
 from app.application.subagents.supervisor import SubagentSupervisor
@@ -329,6 +330,10 @@ class AgentRuntimeBuilder:
             "workspace_repository": workspace_repository,
             "workspace_service": workspace_service,
             "sandbox_service": sandbox_service,
+            "memory_service": MemoryToolService(
+                repository,
+                writes_enabled=self._settings.agent_memory_write_enabled,
+            ),
         }
 
     async def _subagent_supervisor(

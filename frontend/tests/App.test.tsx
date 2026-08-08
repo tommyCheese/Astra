@@ -48,28 +48,36 @@ vi.mock('../src/api', () => ({
   }))),
   updateConversationStrategy: vi.fn(async (strategy) => strategy),
   getToolSettings: vi.fn(async () => ({ tools: [
-    { name: 'web_search', provider_id: 'astra.web', label: 'Web Search', description: '搜索公开网页并生成候选来源', enabled: true, available: true },
-    { name: 'web_fetch', provider_id: 'astra.web', label: 'Web Fetch', description: '自适应提取页面主要内容', enabled: true, available: true },
-    { name: 'chart.render', provider_id: 'astra.chart', label: 'Chart Render', description: '生成图表', enabled: true, available: false, unavailable_reason: '需要先启用安全运行环境。' },
-    { name: 'bash_execute', provider_id: 'astra.shell', label: 'Bash Execute', description: '在隔离容器中执行命令', enabled: false, available: true },
-    { name: 'swarm', provider_id: 'astra.builtin', label: 'Swarm / 子 Agent', description: '并发创建受治理的子 Agent 并自动汇合结果', enabled: true, available: true, unavailable_reason: null },
+    { name: 'chart.render', provider_id: 'astra.chart', label: 'Chart Render', description: 'Render a declarative chart with an isolated runtime', enabled: true, available: false, unavailable_reason: '需要先启用安全运行环境。' },
+    { name: 'bash_execute', provider_id: 'astra.shell', label: 'Bash Execute', description: 'Execute an offline Bash command in the current Task Workspace. Files written under /workspace persist for later tools and Runs.', enabled: false, available: true },
+    { name: 'swarm', provider_id: 'astra.builtin', label: 'Swarm / 子 Agent', description: 'Delegate two or more independent pieces of trusted work to a bounded Astra child-Agent group and join their verified results.', enabled: true, available: true, unavailable_reason: null },
+    { name: 'workspace.list', provider_id: 'astra.builtin', label: 'Workspace List', description: 'List files and directories in the current Task Workspace with bounded results.', enabled: true, available: true },
+    { name: 'workspace.read', provider_id: 'astra.builtin', label: 'Workspace Read', description: 'Read a bounded UTF-8 text range from a file in the current Task Workspace.', enabled: true, available: true },
+    { name: 'workspace.search', provider_id: 'astra.builtin', label: 'Workspace Search', description: 'Search UTF-8 Workspace files for literal text with file and result limits.', enabled: true, available: true },
+    { name: 'workspace.write', provider_id: 'astra.builtin', label: 'Workspace Write', description: 'Atomically create or replace a UTF-8 text file in the current Task Workspace.', enabled: true, available: true },
+    { name: 'workspace.edit', provider_id: 'astra.builtin', label: 'Workspace Edit', description: 'Apply an exact, atomic text replacement to a UTF-8 file in the current Task Workspace.', enabled: true, available: true },
+    { name: 'remember', provider_id: 'astra.builtin', label: 'Remember', description: 'Create an auditable Memory candidate from the current Run for later human activation.', enabled: true, available: true },
+    { name: 'forget', provider_id: 'astra.builtin', label: 'Forget', description: 'Revoke a Memory accessible to the current Run while preserving its audit history.', enabled: true, available: true },
   ], providers: [
     { provider_id: 'astra.builtin', label: 'Builtin', version: '1', enabled: true, state: 'enabled', health: 'healthy', available: true, configuration_schema: {}, configuration: {}, configuration_revision: '1' },
     { provider_id: 'astra.chart', label: 'Chart', version: '1', enabled: true, state: 'enabled', health: 'unhealthy', available: false, unavailable_reason: '需要先启用安全运行环境。', configuration_schema: {}, configuration: {}, configuration_revision: '1' },
     { provider_id: 'astra.shell', label: 'Shell', version: '1', enabled: true, state: 'enabled', health: 'healthy', available: true, configuration_schema: {}, configuration: {}, configuration_revision: '1' },
-    { provider_id: 'astra.web', label: 'Web', version: '1', enabled: true, state: 'enabled', health: 'healthy', available: true, configuration_schema: {}, configuration: {}, configuration_revision: '1' },
   ] })),
   updateToolState: vi.fn(async (name, enabled) => ({ tools: [
-    { name: 'web_search', provider_id: 'astra.web', label: 'Web Search', description: '搜索公开网页并生成候选来源', enabled: name === 'web_search' ? enabled : true, available: true },
-    { name: 'web_fetch', provider_id: 'astra.web', label: 'Web Fetch', description: '自适应提取页面主要内容', enabled: true, available: true },
-    { name: 'chart.render', provider_id: 'astra.chart', label: 'Chart Render', description: '生成图表', enabled: true, available: false, unavailable_reason: '需要先启用安全运行环境。' },
-    { name: 'bash_execute', provider_id: 'astra.shell', label: 'Bash Execute', description: '在隔离容器中执行命令', enabled: false, available: true },
-    { name: 'swarm', provider_id: 'astra.builtin', label: 'Swarm / 子 Agent', description: '并发创建受治理的子 Agent 并自动汇合结果', enabled: name === 'swarm' ? enabled : true, available: true },
+    { name: 'chart.render', provider_id: 'astra.chart', label: 'Chart Render', description: 'Render a declarative chart with an isolated runtime', enabled: true, available: false, unavailable_reason: '需要先启用安全运行环境。' },
+    { name: 'bash_execute', provider_id: 'astra.shell', label: 'Bash Execute', description: 'Execute an offline Bash command in the current Task Workspace. Files written under /workspace persist for later tools and Runs.', enabled: name === 'bash_execute' ? enabled : false, available: true },
+    { name: 'swarm', provider_id: 'astra.builtin', label: 'Swarm / 子 Agent', description: 'Delegate two or more independent pieces of trusted work to a bounded Astra child-Agent group and join their verified results.', enabled: name === 'swarm' ? enabled : true, available: true },
+    { name: 'workspace.list', provider_id: 'astra.builtin', label: 'Workspace List', description: 'List files and directories in the current Task Workspace with bounded results.', enabled: name === 'workspace.list' ? enabled : true, available: true },
+    { name: 'workspace.read', provider_id: 'astra.builtin', label: 'Workspace Read', description: 'Read a bounded UTF-8 text range from a file in the current Task Workspace.', enabled: name === 'workspace.read' ? enabled : true, available: true },
+    { name: 'workspace.search', provider_id: 'astra.builtin', label: 'Workspace Search', description: 'Search UTF-8 Workspace files for literal text with file and result limits.', enabled: name === 'workspace.search' ? enabled : true, available: true },
+    { name: 'workspace.write', provider_id: 'astra.builtin', label: 'Workspace Write', description: 'Atomically create or replace a UTF-8 text file in the current Task Workspace.', enabled: name === 'workspace.write' ? enabled : true, available: true },
+    { name: 'workspace.edit', provider_id: 'astra.builtin', label: 'Workspace Edit', description: 'Apply an exact, atomic text replacement to a UTF-8 file in the current Task Workspace.', enabled: name === 'workspace.edit' ? enabled : true, available: true },
+    { name: 'remember', provider_id: 'astra.builtin', label: 'Remember', description: 'Create an auditable Memory candidate from the current Run for later human activation.', enabled: name === 'remember' ? enabled : true, available: true },
+    { name: 'forget', provider_id: 'astra.builtin', label: 'Forget', description: 'Revoke a Memory accessible to the current Run while preserving its audit history.', enabled: name === 'forget' ? enabled : true, available: true },
   ], providers: [
     { provider_id: 'astra.builtin', label: 'Builtin', version: '1', enabled: true, state: 'enabled', health: 'healthy', available: true, configuration_schema: {}, configuration: {}, configuration_revision: '1' },
     { provider_id: 'astra.chart', label: 'Chart', version: '1', enabled: true, state: 'enabled', health: 'unhealthy', available: false, unavailable_reason: '需要先启用安全运行环境。', configuration_schema: {}, configuration: {}, configuration_revision: '1' },
     { provider_id: 'astra.shell', label: 'Shell', version: '1', enabled: true, state: 'enabled', health: 'healthy', available: true, configuration_schema: {}, configuration: {}, configuration_revision: '1' },
-    { provider_id: 'astra.web', label: 'Web', version: '1', enabled: true, state: 'enabled', health: 'healthy', available: true, configuration_schema: {}, configuration: {}, configuration_revision: '1' },
   ] })),
   updateToolProviderState: vi.fn(),
   updateToolProviderConfiguration: vi.fn(),
@@ -193,21 +201,21 @@ vi.mock('../src/api', () => ({
       },
     },
     steps: [
-      { id: 's1', index: 1, title: '搜索候选来源', intent: '调用 web_search', status: 'completed' },
+      { id: 's1', index: 1, title: '搜索候选来源', intent: '调用 catalog_search', status: 'completed' },
       { id: 's2', index: 2, title: '筛选和去重来源', intent: '筛选', status: 'completed' },
-      { id: 's3', index: 3, title: '抓取来源内容', intent: '调用 web_fetch', status: 'completed' },
+      { id: 's3', index: 3, title: '抓取来源内容', intent: '调用 catalog_read', status: 'completed' },
     ],
     tool_calls: [
       {
         id: 't1',
-        tool_name: 'web_search',
+        tool_name: 'catalog_search',
         status: 'succeeded',
         input: {},
         output: { candidate_count: 2 },
       },
       {
         id: 't2',
-        tool_name: 'web_fetch',
+        tool_name: 'catalog_read',
         status: 'succeeded',
         input: {},
         output: { extraction_strategy: 'readability', quality_score: 0.92 },
@@ -220,7 +228,7 @@ vi.mock('../src/api', () => ({
         turn_index: 1,
         decision_type: 'call_tool',
         reasoning_summary: '先搜索候选来源',
-        selected_tool: 'web_search',
+        selected_tool: 'catalog_search',
         decision: {},
         observation: { kind: 'tool_result', status: 'succeeded' },
         reflection: null,
@@ -554,7 +562,7 @@ describe('App', () => {
     expect(screen.getByRole('link', { name: /Example/ })).toHaveAttribute('href', 'https://example.com/docs');
     expect(screen.getByRole('link', { name: '关联来源' })).toHaveAttribute('href', 'https://example.com');
     expect(screen.queryByText('审计详情')).not.toBeInTheDocument();
-    expect(screen.getAllByText(/web_search/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/catalog_search/).length).toBeGreaterThan(0);
     expect(screen.queryByText('这里展示 Astra 的公开执行过程摘要，不是模型隐藏思维链。')).not.toBeInTheDocument();
     expect(screen.getByRole('navigation', { name: '问题导航' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '跳转到问题 1' })).toBeInTheDocument();
@@ -566,7 +574,7 @@ describe('App', () => {
     expect(completedProcessTitle.closest('summary')?.querySelector('.process-thinking-dots')).not.toBeInTheDocument();
     expect(screen.getByText('至少一个抓取来源支撑了最终答案。')).toBeInTheDocument();
     expect(screen.getAllByText('已完成查询')).toHaveLength(1);
-    expect(screen.getByText('web_search').closest('details')).not.toHaveAttribute('open');
+    expect(screen.getByText('catalog_search').closest('details')).not.toHaveAttribute('open');
     expect(document.querySelectorAll('.answer-message')).toHaveLength(1);
     expect(screen.getByRole('img', { name: 'chart.png' })).toHaveAttribute('src', '/api/artifacts/a-chart/content');
     expect(screen.getByTitle('chart.html')).toHaveAttribute('sandbox', 'allow-scripts');
@@ -1385,11 +1393,11 @@ describe('App', () => {
     expect(vi.mocked(getRun)).toHaveBeenCalledTimes(snapshotCalls);
 
     act(() => {
-      emit?.({ id: 12, type: 'tool_call.started', payload: { tool_call_id: 'call-live', tool_name: 'web_search' } });
-      emit?.({ id: 13, type: 'tool_call.completed', payload: { tool_call_id: 'call-live', tool_name: 'web_search', status: 'succeeded' } });
+      emit?.({ id: 12, type: 'tool_call.started', payload: { tool_call_id: 'call-live', tool_name: 'catalog_search' } });
+      emit?.({ id: 13, type: 'tool_call.completed', payload: { tool_call_id: 'call-live', tool_name: 'catalog_search', status: 'succeeded' } });
     });
     expect(screen.queryByText('正在评估执行结果')).not.toBeInTheDocument();
-    expect(await screen.findByText('web_search')).toBeInTheDocument();
+    expect(await screen.findByText('catalog_search')).toBeInTheDocument();
     expect(panel?.querySelectorAll('.process-step.status-running')).toHaveLength(1);
 
     act(() => emit?.({ id: 14, type: 'reasoning.phase.started', payload: { phase: 'selecting_action', turn_index: 2 } }));
@@ -1888,23 +1896,34 @@ describe('App', () => {
   it('opens settings and moves capabilities into the settings view', async () => {
     render(<App />);
 
-    expect(screen.queryByText('Web Fetch')).not.toBeInTheDocument();
+    expect(screen.queryByText('Bash Execute')).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: /设置/ }));
 
     expect(screen.getByRole('heading', { name: '模型管理' })).toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: '工具' }));
 
     expect(screen.getByRole('heading', { name: '工具' })).toBeInTheDocument();
-    expect(screen.getByText('Web Fetch')).toBeInTheDocument();
+    expect(screen.queryByText('Web Fetch')).not.toBeInTheDocument();
     expect(screen.getByText('Chart Render')).toBeInTheDocument();
     expect(screen.getByText('Swarm / 子 Agent')).toBeInTheDocument();
+    expect(screen.getByText('使用隔离运行时渲染声明式图表')).toBeInTheDocument();
+    expect(screen.getByText('在当前任务工作区中执行离线 Bash 命令。写入 /workspace 的文件会保留，供后续工具和运行使用。')).toBeInTheDocument();
+    expect(screen.getByText('将两个或更多独立的可信工作委派给受限的 Astra 子 Agent 组，并汇合已验证的结果。')).toBeInTheDocument();
+    expect(screen.getByText('对当前任务工作区中的 UTF-8 文件执行精确、原子的文本替换。')).toBeInTheDocument();
+    expect(screen.getByText('根据当前运行创建可审计的记忆候选，等待之后人工激活。')).toBeInTheDocument();
+    expect(screen.getByText('撤销当前运行可访问的记忆，同时保留其审计历史。')).toBeInTheDocument();
+    expect(screen.queryByText('Render a declarative chart with an isolated runtime')).not.toBeInTheDocument();
     expect(screen.queryByText('需要先启用受治理子 Agent 执行。')).not.toBeInTheDocument();
     expect(screen.queryByText('关闭 Swarm 会立即阻止创建新的子 Agent，但不会取消已经创建的子 Agent。')).not.toBeInTheDocument();
-    expect(screen.getAllByText('需要先启用安全运行环境。')).toHaveLength(2);
-    const searchSwitch = screen.getByRole('switch', { name: /Web Search/ });
-    await userEvent.click(searchSwitch);
-    await waitFor(() => expect(updateToolState).toHaveBeenCalledWith('web_search', false));
-    expect(searchSwitch).toHaveAttribute('aria-checked', 'false');
+    expect(screen.getByText('需要先启用安全运行环境。')).toBeInTheDocument();
+    expect(screen.queryByText('Builtin')).not.toBeInTheDocument();
+    expect(screen.queryByText('astra.builtin · v1 · healthy')).not.toBeInTheDocument();
+    expect(screen.getAllByRole('switch')).toHaveLength(10);
+    expect(screen.getByRole('switch', { name: /Chart Render/ }).querySelector(':scope > .toggle-knob')).toBeInTheDocument();
+    const bashSwitch = screen.getByRole('switch', { name: /Bash Execute/ });
+    await userEvent.click(bashSwitch);
+    await waitFor(() => expect(updateToolState).toHaveBeenCalledWith('bash_execute', true));
+    expect(bashSwitch).toHaveAttribute('aria-checked', 'true');
     expect(screen.queryByText('工具已启用，将用于之后新建的任务。')).not.toBeInTheDocument();
     expect(screen.queryByText('工具已停用，之后新建的任务不会调用它。')).not.toBeInTheDocument();
     expect(screen.queryByText('设置已保存，并会应用于之后创建的任务。')).not.toBeInTheDocument();
@@ -3237,7 +3256,7 @@ describe('App', () => {
       status: 'waiting_user',
       result: null,
       pending_approval: {
-        id: 'approval-exact', tool_call_id: 'call-exact', tool_name: 'web_search',
+        id: 'approval-exact', tool_call_id: 'call-exact', tool_name: 'catalog_search',
         preview: '{"query":"Astra"}', permission: 'network_read', impact: 'read_only',
         decisions: ['approve_once', 'reject'] as Array<'approve_once' | 'allow_similar' | 'reject'>, created_at: 'now',
       },

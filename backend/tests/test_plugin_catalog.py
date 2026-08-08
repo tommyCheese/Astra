@@ -248,14 +248,7 @@ def test_builtin_providers_contribute_domain_components_without_agent_loop_wirin
     )
     by_provider = {item.descriptor.provider_id: item for item in contributions}
 
-    assert {"astra.web", "astra.chart", "astra.shell"} == set(by_provider)
-    assert {item.tool.spec.name for item in by_provider["astra.web"].tools} == {
-        "web_search",
-        "web_fetch",
-    }
-    assert by_provider["astra.web"].effect_analyzers
-    assert by_provider["astra.web"].result_processors
-    assert by_provider["astra.web"].validators
+    assert {"astra.chart", "astra.shell"} == set(by_provider)
     assert by_provider["astra.chart"].effect_analyzers
     assert by_provider["astra.chart"].result_processors
     assert by_provider["astra.chart"].validators

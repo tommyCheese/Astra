@@ -34,7 +34,7 @@ def skill_md(name: str = "research-notes", body: str = "Follow the workflow.") -
         f"name: {name}\n"
         "description: Collect and organize research notes.\n"
         "compatibility: Astra 0.1+\n"
-        "allowed-tools: web_search sandbox\n"
+        "allowed-tools: catalog_search sandbox\n"
         "metadata:\n"
         "  category: research\n"
         "---\n\n"
@@ -67,7 +67,7 @@ def test_skill_package_validation_and_digest_drift():
     )
     assert package.qualified_identity == "custom:research-notes"
     assert package.frontmatter.compatibility == "Astra 0.1+"
-    assert package.requested_tool_patterns == ["web_search", "sandbox"]
+    assert package.requested_tool_patterns == ["catalog_search", "sandbox"]
     assert [item.path for item in package.resources] == sorted(files)
     assert normalized["SKILL.md"].startswith(b"---")
 
@@ -292,12 +292,12 @@ async def test_catalog_is_deterministic_shortlisted_and_capability_filtered(sess
     settings = AstraRuntimeSettings(model_provider="mock")
     service = SkillService(session, settings)
     for name, tool in (
-        ("alpha-notes", "web_search"),
+        ("alpha-notes", "catalog_search"),
         ("beta-notes", "sandbox"),
         ("gamma-notes", ""),
     ):
         content = skill_md(name).replace(
-            "allowed-tools: web_search sandbox",
+            "allowed-tools: catalog_search sandbox",
             f"allowed-tools: {tool}" if tool else "",
         )
         skill = await service.create_custom(
@@ -308,8 +308,8 @@ async def test_catalog_is_deterministic_shortlisted_and_capability_filtered(sess
         await service.publish(skill.id, skill.draft.revision_token)
 
     builder = SkillCatalogBuilder(session, metadata_chars=1_000_000)
-    first = await builder.build(runtime_capabilities={"web_search"})
-    second = await builder.build(runtime_capabilities={"web_search"})
+    first = await builder.build(runtime_capabilities={"catalog_search"})
+    second = await builder.build(runtime_capabilities={"catalog_search"})
     assert first.digest == second.digest
     assert [item.qualified_identity for item in first.entries] == [
         "custom:alpha-notes",

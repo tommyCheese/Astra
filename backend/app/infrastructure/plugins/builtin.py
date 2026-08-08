@@ -5,7 +5,6 @@ from collections.abc import Iterable
 from app.application.permissions.effects import (
     BashEffectAnalyzer,
     ChartEffectAnalyzer,
-    WebEffectAnalyzer,
 )
 from app.common.core.config import AstraRuntimeSettings
 from app.infrastructure.plugins.builtin_components import (
@@ -13,8 +12,6 @@ from app.infrastructure.plugins.builtin_components import (
     BashResultProcessor,
     ChartArtifactValidator,
     ChartResultProcessor,
-    WebEvidenceValidator,
-    WebResultProcessor,
 )
 from app.infrastructure.plugins.contracts import (
     PluginApplicabilityBinding,
@@ -27,8 +24,6 @@ from app.infrastructure.plugins.contracts import (
 from app.infrastructure.tools.base import AstraTool
 from app.infrastructure.tools.bash import BashExecuteTool
 from app.infrastructure.tools.chart import ChartRenderTool
-from app.infrastructure.tools.sandboxed import SandboxedWebTool
-from app.infrastructure.tools.web import build_web_registry
 
 
 def builtin_contributions(
@@ -38,33 +33,6 @@ def builtin_contributions(
 ) -> tuple[PluginContribution, ...]:
     contributions = []
     if settings.sandbox_enabled:
-        native_web = build_web_registry(settings)
-        web_tools = [
-            SandboxedWebTool(
-                native_web.get(name),
-                settings,
-                _web_runtime_config(settings, name),
-            )
-            for name in native_web.specs()
-        ]
-        if not include_disabled:
-            web_tools = [tool for tool in web_tools if _tool_enabled(settings, tool.spec.name)]
-        if web_tools and (
-            include_disabled or _provider_enabled(settings, "astra.web")
-        ):
-            contributions.append(
-                _provider(
-                    "astra.web",
-                    web_tools,
-                    configuration_schema=_web_configuration_schema(),
-                    configuration_revision=_configuration_revision(settings, "astra.web"),
-                    analyzers=[("web.effect", ("web_search", "web_fetch"), WebEffectAnalyzer)],
-                    processors=[("web.result", ("web_search", "web_fetch"), WebResultProcessor)],
-                    validators=[
-                        ("web.validator", ("web_search", "web_fetch"), WebEvidenceValidator)
-                    ],
-                )
-            )
         if include_disabled or (
             _tool_enabled(settings, "chart.render")
             and _provider_enabled(settings, "astra.chart")
@@ -111,58 +79,6 @@ def _tool_enabled(
 
 def _configuration_revision(settings: AstraRuntimeSettings, provider_id: str) -> str:
     return settings.tool_provider_configuration_revisions.get(provider_id, "default")
-
-
-def _web_configuration_schema() -> dict:
-    return {
-        "type": "object",
-        "properties": {
-            "search_provider": {
-                "type": "string",
-                "enum": ["auto", "google", "duckduckgo"],
-                "title": "Search provider",
-            },
-            "search_credential": {
-                "type": "object",
-                "title": "Search credential",
-                "x-secret": True,
-                "properties": {
-                    "credential_ref": {"type": "string", "minLength": 1, "maxLength": 240}
-                },
-                "required": ["credential_ref"],
-                "additionalProperties": False,
-            },
-        },
-        "additionalProperties": False,
-    }
-
-
-def _web_runtime_config(settings: AstraRuntimeSettings, tool_name: str) -> dict[str, str]:
-    """Provider-owned configuration allowlist for its isolated executors."""
-    common = {"ALLOW_NETWORK_READ": "true"}
-    configs = {
-        "web_search": {
-            "WEB_SEARCH_PROVIDER": settings.web_search_provider,
-            "WEB_SEARCH_API_KEY": settings.web_search_api_key,
-            "GOOGLE_SEARCH_API_KEY": settings.google_search_api_key,
-            "GOOGLE_SEARCH_ENGINE_ID": settings.google_search_engine_id,
-            "GOOGLE_SEARCH_RESULT_COUNT": str(settings.google_search_result_count),
-            "GOOGLE_SEARCH_LANGUAGE": settings.google_search_language,
-            "GOOGLE_SEARCH_REGION": settings.google_search_region,
-            "GOOGLE_SEARCH_SAFE": settings.google_search_safe,
-        },
-        "web_fetch": {
-            "CRAWLER_MAX_CONTENT_CHARS": str(settings.crawler_max_content_chars),
-            "CRAWLER_MAX_RESPONSE_BYTES": str(settings.crawler_max_response_bytes),
-            "CRAWLER_MIN_QUALITY_CHARS": str(settings.crawler_min_quality_chars),
-            "CRAWLER_ALLOW_PROXY_FAKE_IP": (
-                "true" if settings.crawler_allow_proxy_fake_ip else "false"
-            ),
-        },
-    }
-    if tool_name not in configs:
-        raise ValueError(f"Unsupported astra.web tool: {tool_name}")
-    return {**common, **configs[tool_name]}
 
 
 def _provider(

@@ -454,6 +454,21 @@ const english: Record<string, string> = {
   '记忆确认列表': 'Memory confirmation list', '待人工确认': 'Pending confirmation', '全部记录': 'All records', '确认并激活': 'Confirm and activate', '拒绝候选': 'Reject candidate', '确认激活这条记忆？': 'Activate this Memory?', '激活后该记忆才有资格参与后续召回；此确认表示人工准入，不代表来源事实绝对正确。': 'After activation, this Memory becomes eligible for later recall. Confirmation grants human admission; it does not guarantee that the source claim is absolutely correct.', '记忆已由人工确认并激活，可参与后续召回。': 'Memory was human-confirmed and activated; it can participate in later recall.', '候选已拒绝；内容和来源仍保留用于审计。': 'Candidate rejected; its content and provenance remain available for audit.',
 };
 
+// Tool metadata is defined by the backend in English. Keep API-originated
+// translations explicit so arbitrary model or user content is never reversed.
+const chineseFromEnglish: Record<string, string> = {
+  'Render a declarative chart with an isolated runtime': '使用隔离运行时渲染声明式图表',
+  'Execute an offline Bash command in the current Task Workspace. Files written under /workspace persist for later tools and Runs.': '在当前任务工作区中执行离线 Bash 命令。写入 /workspace 的文件会保留，供后续工具和运行使用。',
+  'Delegate two or more independent pieces of trusted work to a bounded Astra child-Agent group and join their verified results.': '将两个或更多独立的可信工作委派给受限的 Astra 子 Agent 组，并汇合已验证的结果。',
+  'List files and directories in the current Task Workspace with bounded results.': '列出当前任务工作区中的文件和目录，并限制返回数量。',
+  'Read a bounded UTF-8 text range from a file in the current Task Workspace.': '分段读取当前任务工作区文件中的 UTF-8 文本。',
+  'Search UTF-8 Workspace files for literal text with file and result limits.': '在工作区的 UTF-8 文件中搜索文本，并限制扫描文件和结果数量。',
+  'Atomically create or replace a UTF-8 text file in the current Task Workspace.': '在当前任务工作区中原子创建或替换 UTF-8 文本文件。',
+  'Apply an exact, atomic text replacement to a UTF-8 file in the current Task Workspace.': '对当前任务工作区中的 UTF-8 文件执行精确、原子的文本替换。',
+  'Create an auditable Memory candidate from the current Run for later human activation.': '根据当前运行创建可审计的记忆候选，等待之后人工激活。',
+  'Revoke a Memory accessible to the current Run while preserving its audit history.': '撤销当前运行可访问的记忆，同时保留其审计历史。',
+};
+
 type I18nValue = { language: Language; setLanguage: (language: Language) => void; t: (text: string) => string };
 const I18nContext = createContext<I18nValue | null>(null);
 
@@ -469,7 +484,7 @@ export function I18nProvider({ children }: { children: ReactNode }) {
     globalThis.localStorage?.setItem('astra.language', language);
     document.documentElement.lang = language;
   }, [language]);
-  const value = useMemo<I18nValue>(() => ({ language, setLanguage, t: (text) => language === 'en' ? english[text] ?? text : text }), [language]);
+  const value = useMemo<I18nValue>(() => ({ language, setLanguage, t: (text) => language === 'en' ? english[text] ?? text : chineseFromEnglish[text] ?? text }), [language]);
   return <I18nContext.Provider value={value}>{children}</I18nContext.Provider>;
 }
 

@@ -22,7 +22,7 @@ def skill_md(name: str = "research-notes", body: str = "Follow the workflow.") -
         f"name: {name}\n"
         "description: Collect and organize research notes.\n"
         "compatibility: Astra 0.1+\n"
-        "allowed-tools: web_search sandbox\n"
+        "allowed-tools: catalog_search sandbox\n"
         "metadata:\n"
         "  category: research\n"
         "---\n\n"

@@ -110,7 +110,7 @@ def test_structural_tags_only_extract_allowlisted_exact_fields():
         {
             "tags": ["Python", " 数据 "],
             "keywords": "Memory",
-            "tool_names": ["web_search"],
+            "tool_names": ["catalog_search"],
             "task_signature": "QA-v2",
             "environment_signature": "PROD",
             "secret": "must-not-be-indexed",
@@ -122,7 +122,7 @@ def test_structural_tags_only_extract_allowlisted_exact_fields():
             "python",
             "数据",
             "memory",
-            "web_search",
+            "catalog_search",
             "task:qa-v2",
             "environment:prod",
         }

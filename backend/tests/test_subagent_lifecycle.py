@@ -315,7 +315,7 @@ async def test_run_projection_exposes_sanitized_nested_agent_tree(session):
         }
     }
     child.catalog_snapshot = {
-        "tools": [{"name": "web_search", "input_schema": {"secret": "hidden"}}]
+        "tools": [{"name": "catalog_search", "input_schema": {"secret": "hidden"}}]
     }
     child.result = {
         "summary": "bounded result",
@@ -335,7 +335,7 @@ async def test_run_projection_exposes_sanitized_nested_agent_tree(session):
     assert projected_root["id"] == root.id
     assert projected_child["id"] == child.id
     assert projected_child["permissions"] == ["network_read"]
-    assert projected_child["capabilities"] == ["web_search"]
+    assert projected_child["capabilities"] == ["catalog_search"]
     assert projected_child["result_summary"] == "bounded result"
     assert payload["subagent_summary"]["completed"] == 1
     assert payload["agent_joins"][0]["join_key"] == "final-review"

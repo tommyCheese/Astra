@@ -3,7 +3,7 @@
 import hashlib
 import json
 
-from fake_web_tools import FakeSearch
+from fake_information_tools import FakeSearch
 from sqlalchemy import create_mock_engine
 from support import DecisionStep, RunRequestBuilder, ScriptedDecisionClient
 
@@ -19,7 +19,7 @@ from app.infrastructure.repositories.run_unit_of_work import RunUnitOfWork
 from app.infrastructure.tools.base import AstraToolRegistry
 from app.main import create_app
 
-EXPECTED_OPENAPI_SHA256 = "5b64c91233df24f4a8bf2ddd6498251ec607932c7df99d9b54ce62508cd606af"
+EXPECTED_OPENAPI_SHA256 = "824cff460d53033747ccf5d83297460fc25eb5ee4f7beb1f948f6009ac110d44"
 EXPECTED_ORM_TABLES = {
     "agent_budget_reservations",
     "agent_delegations",
@@ -135,7 +135,7 @@ class TransactionInspectingSearch(FakeSearch):
 
 
 async def test_tool_execution_does_not_hold_a_database_transaction(session):
-    settings = AstraRuntimeSettings(model_provider="mock", web_search_provider="mock")
+    settings = AstraRuntimeSettings(model_provider="mock")
     execution_profile = resolve_run_profile(
         AnswerMode.standard,
         RequestedReasoningPolicy(execution_mode="auto_approval", reflection_enabled=False),
@@ -157,7 +157,7 @@ async def test_tool_execution_does_not_hold_a_database_transaction(session):
                 AgentDecision(
                     decision_type="call_tool",
                     reasoning_summary="先检索证据",
-                    tool_name="web_search",
+                    tool_name="catalog_search",
                     tool_input={"query": "Astra"},
                 )
             ),

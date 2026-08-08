@@ -85,13 +85,13 @@ def _request(
             "properties": {"finding": {"type": "string"}},
             "required": ["finding"],
         },
-        requested_tools=["web_search"],
+        requested_tools=["catalog_search"],
         requested_skills=skills or [],
         resource_scope={
             "actions": ["network_read"],
             "resources": ["https://example.com/**"],
             "effect_kinds": ["network_read"],
-            "tools": ["web_search"],
+            "tools": ["catalog_search"],
             "skills": skills or [],
             "data_labels": ["public"],
             "allowed_purposes": ["research"],
@@ -121,7 +121,7 @@ async def _runtime(session, *, skills: bool = False):
         "actions": ["network_read", "credential_use"],
         "resources": ["https://example.com/**"],
         "effect_kinds": ["network_read"],
-        "tools": ["web_search"],
+        "tools": ["catalog_search"],
         "skills": ["managed:research"] if skills else [],
         "credential_scopes": ["records.read"],
         "data_labels": ["public"],
@@ -143,7 +143,7 @@ async def _runtime(session, *, skills: bool = False):
         run.id,
         catalog=[
             {
-                "name": "web_search",
+                "name": "catalog_search",
                 "version": "1",
                 "permissions": ["network_read"],
                 "side_effect_level": "none",
@@ -167,7 +167,7 @@ async def _runtime(session, *, skills: bool = False):
                         "qualified_identity": "managed:research",
                         "revision_id": "revision-1",
                         "digest": "sha256:skill",
-                        "requested_tool_patterns": ["web_*"],
+                        "requested_tool_patterns": ["catalog_*"],
                     }
                 ],
                 answer_mode="trusted",
@@ -195,7 +195,7 @@ async def test_contract_service_attenuates_identity_catalog_and_deduplicates(ses
 
     assert child.run_id == run.id
     assert child.contract["contract_hash"].startswith("sha256:")
-    assert child.catalog_snapshot["tools"][0]["name"] == "web_search"
+    assert child.catalog_snapshot["tools"][0]["name"] == "catalog_search"
     assert child.catalog_snapshot["skills"][0]["revision_id"] == "revision-1"
     assert child_identity.attributes["parent_secrets_inherited"] is False
     assert child_identity.attributes["permission_scope"]["actions"] == ["network_read"]
@@ -330,7 +330,7 @@ def _execution_context(frozen: FrozenChildCatalog) -> DelegatedExecutionContext:
         actions=("network_read", "credential_use"),
         resources=("https://example.com/**",),
         effect_kinds=("network_read",),
-        tools=("web_search",),
+        tools=("catalog_search",),
         credential_scopes=("records.read",),
         data_labels=("public",),
         allowed_purposes=("research",),
@@ -368,7 +368,7 @@ def _execution_context(frozen: FrozenChildCatalog) -> DelegatedExecutionContext:
 def test_child_invocation_binds_context_and_rejects_context_drop_or_escape():
     tools = (
         {
-            "name": "web_search",
+            "name": "catalog_search",
             "version": "1",
             "permissions": ["network_read"],
         },
@@ -381,7 +381,7 @@ def test_child_invocation_binds_context_and_rejects_context_drop_or_escape():
     )
     context = _execution_context(frozen)
     plan = ActionEffectPlan(
-        tool_name="web_search",
+        tool_name="catalog_search",
         tool_version="1",
         summary="Read a public page",
         effects=[
@@ -397,7 +397,7 @@ def test_child_invocation_binds_context_and_rejects_context_drop_or_escape():
     decision = ChildInvocationAuthorizer().authorize(
         context=context,
         frozen_catalog=frozen,
-        tool_name="web_search",
+        tool_name="catalog_search",
         tool_version="1",
         effect_plan=plan,
         effect_plan_hash="sha256:effect",
@@ -414,7 +414,7 @@ def test_child_invocation_binds_context_and_rejects_context_drop_or_escape():
         ChildInvocationAuthorizer().authorize(
             context=drifted,
             frozen_catalog=frozen,
-            tool_name="web_search",
+            tool_name="catalog_search",
             tool_version="1",
             effect_plan=plan,
             effect_plan_hash="sha256:effect",
@@ -435,7 +435,7 @@ def test_child_invocation_binds_context_and_rejects_context_drop_or_escape():
         ChildInvocationAuthorizer().authorize(
             context=context,
             frozen_catalog=frozen,
-            tool_name="web_search",
+            tool_name="catalog_search",
             tool_version="1",
             effect_plan=escaped,
             effect_plan_hash="sha256:escaped",

@@ -2,11 +2,7 @@ from app.application.agent_runtime.policies.reasoning import (
     AgentReasoningPolicyCompiler,
 )
 from app.application.agent_runtime.services.loop import AstraAgentLoop
-from app.application.permissions.effects import (
-    ChartEffectAnalyzer,
-    DefaultEffectAnalyzer,
-    WebEffectAnalyzer,
-)
+from app.application.permissions.effects import DefaultEffectAnalyzer
 from app.common.core.config import AstraRuntimeSettings
 from app.common.schemas.agent.execution_state import AgentDecision, AgentObservation
 from app.common.schemas.agent.run_policy import RequestedReasoningPolicy
@@ -18,8 +14,6 @@ from app.infrastructure.model_clients.mock import MockModelClient
 from app.infrastructure.plugins.builtin_components import (
     ChartArtifactValidator,
     ChartResultProcessor,
-    WebEvidenceValidator,
-    WebResultProcessor,
 )
 from app.infrastructure.plugins.catalog import PluginCatalogBuilder
 from app.infrastructure.plugins.contracts import (
@@ -210,38 +204,22 @@ async def test_synthetic_provider_executes_processes_validates_and_completes_wit
     assert loaded.turns[0].observation["kind"] == "synthetic_result"
 
 
-async def test_mixed_web_and_chart_run_aggregates_both_plugin_validators(session):
-    web_provider = "example.web"
+async def test_mixed_source_and_chart_run_aggregates_both_plugin_validators(session):
+    source_provider = "example.sources"
     chart_provider = "example.chart"
-    search_spec = _spec("web_search", web_provider)
-    fetch_spec = _spec("web_fetch", web_provider)
+    search_spec = _spec("source_lookup", source_provider)
+    fetch_spec = _spec("source_read", source_provider)
     chart_spec = _spec("chart.render", chart_provider, "artifact_write")
     search = StaticTool(
         search_spec,
         ToolResultEnvelope(
-            data={
-                "query": "astra",
-                "provider": "test",
-                "candidates": [
-                    {
-                        "url": "https://example.test/source",
-                        "title": "Example",
-                        "snippet": "Astra evidence",
-                    }
-                ],
-            }
+            data={"value": "candidate"}
         ).model_dump(mode="json"),
     )
     fetch = StaticTool(
         fetch_spec,
         ToolResultEnvelope(
-            data={
-                "url": "https://example.test/source",
-                "final_url": "https://example.test/source",
-                "title": "Example",
-                "content": "Astra evidence from the fetched source.",
-                "quality_score": 0.9,
-            }
+            data={"value": "document"}
         ).model_dump(mode="json"),
     )
     chart = StaticTool(
@@ -259,27 +237,27 @@ async def test_mixed_web_and_chart_run_aggregates_both_plugin_validators(session
             ],
         ).model_dump(mode="json"),
     )
-    web = PluginContribution(
-        descriptor=_descriptor(web_provider),
+    source_contribution = PluginContribution(
+        descriptor=_descriptor(source_provider),
         tools=tuple(
             PluginToolContribution(tool=tool, executor_id="in_process")
             for tool in (search, fetch)
         ),
         effect_analyzers=(
-            _component(web_provider, "effect", (search_spec.name, fetch_spec.name), WebEffectAnalyzer),
+            _component(source_provider, "effect", (search_spec.name, fetch_spec.name), DefaultEffectAnalyzer),
         ),
         result_processors=(
-            _component(web_provider, "processor", (search_spec.name, fetch_spec.name), WebResultProcessor),
+            _component(source_provider, "processor", (search_spec.name, fetch_spec.name), SyntheticProcessor),
         ),
         validators=(
-            _component(web_provider, "validator", (search_spec.name, fetch_spec.name), WebEvidenceValidator),
+            _component(source_provider, "validator", (search_spec.name, fetch_spec.name), SyntheticValidator),
         ),
     )
     chart_contribution = PluginContribution(
         descriptor=_descriptor(chart_provider),
         tools=(PluginToolContribution(tool=chart, executor_id="in_process"),),
         effect_analyzers=(
-            _component(chart_provider, "effect", (chart_spec.name,), ChartEffectAnalyzer),
+            _component(chart_provider, "effect", (chart_spec.name,), DefaultEffectAnalyzer),
         ),
         result_processors=(
             _component(chart_provider, "processor", (chart_spec.name,), ChartResultProcessor),
@@ -290,7 +268,7 @@ async def test_mixed_web_and_chart_run_aggregates_both_plugin_validators(session
     )
     settings = AstraRuntimeSettings(
         model_provider="mock",
-        trusted_tool_providers="example.web=builtin,example.chart=builtin",
+        trusted_tool_providers="example.sources=builtin,example.chart=builtin",
     )
     repository = RunUnitOfWork(session)
     run = await repository.create_task_run(
@@ -309,20 +287,14 @@ async def test_mixed_web_and_chart_run_aggregates_both_plugin_validators(session
             ],
             AgentFinalAnswer(
                 summary="research and chart complete",
-                findings=[
-                    {
-                        "text": "Astra evidence was fetched and charted.",
-                        "source_urls": ["https://example.test/source"],
-                    }
-                ],
-                sources=[{"url": "https://example.test/source", "title": "Example"}],
+                findings=[{"text": "Synthetic data was processed and charted."}],
             ),
         ),
-        tool_registry=_catalog(web, chart_contribution).tool_registry(),
+        tool_registry=_catalog(source_contribution, chart_contribution).tool_registry(),
     ).run(repository, run.id, run.task.description)
 
     outcomes = output["result"]["verification_report"]["validation_outcomes"]
     by_validator = {item["validator"]: item for item in outcomes}
     assert output["status"] == "completed"
-    assert by_validator["web_evidence"]["passed"] is True
+    assert by_validator["synthetic_validation"]["passed"] is True
     assert by_validator["chart_artifact"]["passed"] is True

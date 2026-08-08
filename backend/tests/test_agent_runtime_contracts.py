@@ -64,7 +64,7 @@ def test_action_resolution_rejects_tools_outside_capability_candidates():
                 tool_name="unsafe_tool",
                 reasoning_summary="test",
             ),
-            tool_selection={"candidate_names": ["web_search"]},
+            tool_selection={"candidate_names": ["catalog_search"]},
             has_canonical_plan=False,
             active_plan_node_id=None,
             active_plan_node_key=None,

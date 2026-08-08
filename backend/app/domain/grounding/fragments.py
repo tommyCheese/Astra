@@ -43,16 +43,16 @@ def _fragment(
     )
 
 
-def fragments_from_web_result(
+def fragments_from_source_result(
     tool_name: str,
     output: dict[str, Any],
     *,
     lineage: GroundingEvidenceLineage | None = None,
 ) -> list[GroundingEvidenceFragment]:
     data = dict(output.get("data") or output)
-    if tool_name == "web_search" or "candidates" in data:
+    if "candidates" in data:
         return _search_fragments(data, lineage=lineage)
-    if tool_name == "web_fetch" or "snapshot" in data or "content" in data:
+    if "snapshot" in data or "content" in data:
         return _read_fragments(data, lineage=lineage)
     return []
 

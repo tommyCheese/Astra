@@ -126,9 +126,6 @@ jobs:
           - image: astra-data-viz
             context: runtimes/data-viz
             file: Dockerfile
-          - image: astra-web-tools
-            context: .
-            file: runtimes/web-tools/Dockerfile
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-qemu-action@v3
@@ -242,7 +239,7 @@ jobs:
           VERSION: ${{ needs.prepare.outputs.version }}
         run: |
           registry="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}"
-          for name in astra-backend astra-frontend astra-data-viz astra-web-tools; do
+          for name in astra-backend astra-frontend astra-data-viz; do
             docker buildx imagetools create \
               --tag "$registry/$name:latest" \
               "$registry/$name:$VERSION"

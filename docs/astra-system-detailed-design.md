@@ -274,9 +274,13 @@ AgentLoop 在 Run 开始时：
 
 `DefaultEffectAnalyzer` 按本次输入生成行为计划。例如：
 
-- `web_search` / `web_fetch` → `network_read`；
+- 第三方网络读取工具 → `network_read`；
 - `chart.render` → `temporary_compute + artifact_write`，可附加 `workspace_read`；
 - `bash_execute` → 由 Bash analyzer 识别读、写、删除、网络和未知程序；
+- `workspace.list/read/search` → 只读 `workspace_read`，使用受限的结构化输出；
+- `workspace.write/edit` → 按具体相对路径生成 `workspace_write`，要求审批并记录变更；
+- `remember` → 按 scope 和稳定 key 生成持久 `memory_write`，只写入待人工确认的候选；
+- `forget` → 按 Memory ID 生成高风险 `memory_delete`，执行保留审计信息的逻辑撤销；
 - 其他工具 → 从声明权限映射 effect；无法分类时使用高风险 `process_execute_unknown`。
 
 ```python
@@ -484,7 +488,9 @@ Turn phase 区分 `executing`、`result_recorded`、`committed` 等阶段：
 
 ### 10.4 深度记忆与受治理自进化
 
-Memory 是 Run 证据的派生投影，不替代 Run、Turn、ToolCall、Artifact 或 evaluation。每个版本包含稳定 `memory_key`、显式 Run/Task/Workspace/user 命名空间、类型、生命周期、有效时间、来源、置信度、重要度和受限 utility。缺失 Workspace/user 身份时拒绝跨 Session 写入；召回先做命名空间、来源、生命周期和时态过滤，再执行确定性 lexical/kind/tag/recency/confidence/importance/utility 评分及完整条目预算。注入 Prompt 的内容始终是无 authority 的不可信数据，Turn 审计只保留 ID、版本和分数。
+Memory 是 Run 证据的派生投影，不替代 Run、Turn、ToolCall、Artifact 或 evaluation。每个版本包含稳定 `memory_key`、显式 Run/Task/Session/user 命名空间、类型、生命周期、有效时间、来源、置信度、重要度和受限 utility。缺失 Session/user 身份时拒绝对应范围写入；召回先做命名空间、来源、生命周期和时态过滤，再执行确定性 lexical/kind/tag/recency/confidence/importance/utility 评分及完整条目预算。注入 Prompt 的内容始终是无 authority 的不可信数据，Turn 审计只保留 ID、版本和分数。
+
+根 Agent 可通过 `remember` 显式生成 Memory candidate。该工具沿统一 ToolRouter、effect analyzer、审批与 ToolCall 审计管线执行，来源至少绑定当前 Run 和 ToolCall；即使模型主动调用，也必须由人类激活后才有资格参与召回。`forget` 只接受当前 Run 可见命名空间内的 Memory ID，并将可撤销状态迁移为 `revoked`；重复调用为幂等 no-op，内容、来源、撤销原因和 lifecycle audit 均保留。子 Agent 的只读工具策略不会获得这两个写权限。
 
 AutoDream 只运行绑定 consolidation job 的专用 Profile operation。输入 manifest 和 Profile 摘要被冻结并哈希；发布在事务中创建新 generation 与 supersession，支持期望状态版本和审计 rollback。后台调度、模型调用和自动发布均有独立预算，其中调度默认关闭。
 
@@ -548,7 +554,7 @@ Run snapshot 是权威状态，SSE 是低延迟增量。`reconcileProcessSnapsho
 配置集中在 `backend/app/core/config.py::Settings`。重要分组：
 
 - 模型：provider、name、API key、base URL；
-- 工具：web search/fetch、chart、bash 开关；
+- 工具：Workspace list/read/search/write/edit、Remember、Forget、Swarm、chart 和 bash 独立开关；
 - Agent 预算：turn/tool/reflection/replan 上限；
 - 网络：`allow_network_read`；
 - Workspace / Artifact：路径和配额；

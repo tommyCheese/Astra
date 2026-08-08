@@ -56,29 +56,6 @@ def effect_plan_hash(plan: ActionEffectPlan) -> str:
     ).hexdigest()
 
 
-class WebEffectAnalyzer(ToolEffectAnalyzer):
-    def analyze(
-        self,
-        spec: AstraToolSpec,
-        tool_input: dict[str, Any],
-        *,
-        task_id: str,
-    ) -> ActionEffectPlan:
-        resource = (
-            f"web://search/{str(tool_input.get('query', '')).strip()}"
-            if "query" in tool_input and not tool_input.get("url")
-            else str(tool_input.get("url", "web://unknown"))
-        )
-        return _effect_plan(
-            spec,
-            "读取公开网络内容",
-            [EffectItem(kind=EffectKind.network_read, resource=resource)],
-            ["network_read"],
-            approval_required=False,
-            network_scope={"mode": "public_read"},
-        )
-
-
 class ChartEffectAnalyzer(ToolEffectAnalyzer):
     def analyze(
         self,
@@ -159,6 +136,7 @@ class DefaultEffectAnalyzer(ToolEffectAnalyzer):
             approval_required=True,
         )
 
+
 def _declared_effects(spec, tool_input, task_id, declared) -> list[EffectItem]:
     effects = []
     workspace_effect = _declared_workspace_effect(tool_input, task_id, declared)
@@ -207,13 +185,41 @@ def _declared_workspace_effect(tool_input, task_id, declared) -> EffectItem | No
 
 def _mapped_declared_effects(spec, tool_input, task_id, declared) -> list[EffectItem]:
     mappings = {
-        "artifact_write": (EffectKind.artifact_write, f"artifact://task/{task_id}/{tool_input.get('name', spec.name)}"),
-        "dependency_change": (EffectKind.dependency_change, f"task://{task_id}/dependencies/{tool_input.get('package', '**')}"),
-        "credential_use": (EffectKind.credential_use, f"credential://{tool_input.get('service', spec.name)}"),
-        "delegation_create": (EffectKind.delegation_create, f"identity://{tool_input.get('delegate', 'new-agent')}"),
-        "external_write": (EffectKind.external_write, str(tool_input.get("destination") or tool_input.get("url") or "external://unknown")),
+        "artifact_write": (
+            EffectKind.artifact_write,
+            f"artifact://task/{task_id}/{tool_input.get('name', spec.name)}",
+        ),
+        "dependency_change": (
+            EffectKind.dependency_change,
+            f"task://{task_id}/dependencies/{tool_input.get('package', '**')}",
+        ),
+        "credential_use": (
+            EffectKind.credential_use,
+            f"credential://{tool_input.get('service', spec.name)}",
+        ),
+        "delegation_create": (
+            EffectKind.delegation_create,
+            f"identity://{tool_input.get('delegate', 'new-agent')}",
+        ),
+        "external_write": (
+            EffectKind.external_write,
+            str(tool_input.get("destination") or tool_input.get("url") or "external://unknown"),
+        ),
+        "memory_write": (
+            EffectKind.memory_write,
+            f"memory://{tool_input.get('scope', 'task')}/{tool_input.get('memory_key', 'new')}",
+        ),
+        "memory_delete": (
+            EffectKind.memory_delete,
+            f"memory://id/{tool_input.get('memory_id', 'unknown')}",
+        ),
     }
-    high_risk = {EffectKind.credential_use, EffectKind.delegation_create, EffectKind.external_write}
+    high_risk = {
+        EffectKind.credential_use,
+        EffectKind.delegation_create,
+        EffectKind.external_write,
+        EffectKind.memory_delete,
+    }
     return [
         EffectItem(
             kind=kind,
@@ -226,6 +232,7 @@ def _mapped_declared_effects(spec, tool_input, task_id, declared) -> list[Effect
         for permission, (kind, resource) in mappings.items()
         if permission in declared
     ]
+
 
 def _effect_plan(
     spec: AstraToolSpec,
@@ -276,9 +283,7 @@ class BashEffectAnalyzer(ToolEffectAnalyzer):
             )
         classified = _classify_mutating_command(
             task_id, tokens, executable, trusted_executable, complex_shell
-        ) or _classify_nonmutating_command(
-            task_id, tokens, executable, trusted_executable
-        )
+        ) or _classify_nonmutating_command(task_id, tokens, executable, trusted_executable)
         classified_effects, summary = classified
         effects.extend(classified_effects)
         return _bash_effect_plan(spec, summary, effects)
@@ -305,9 +310,7 @@ def _special_file_mutation(task_id, tokens, executable):
     if executable == "find" and "-delete" in tokens:
         return [_path_mutation_effect(task_id, "**", delete=True)], "删除 find 匹配的任务工作区文件"
     if executable == "sed" and _sed_edits_in_place(tokens):
-        target = next(
-            (token for token in reversed(tokens[1:]) if not token.startswith("-")), "**"
-        )
+        target = next((token for token in reversed(tokens[1:]) if not token.startswith("-")), "**")
         return [_path_mutation_effect(task_id, target, delete=False)], "原地修改任务工作区文件"
     return None
 
@@ -329,9 +332,8 @@ def _classify_nonmutating_command(task_id, tokens, executable, trusted):
         return [effect], "通过 Bash 访问外部网络"
     if executable == "git" and _safe_git_invocation(tokens):
         return [_workspace_read_effect(task_id)], "读取 Git 工作区状态"
-    is_safe_read = (
-        executable in READ_ONLY_COMMANDS
-        and _safe_read_only_invocation(executable, tokens)
+    is_safe_read = executable in READ_ONLY_COMMANDS and _safe_read_only_invocation(
+        executable, tokens
     )
     if is_safe_read:
         return [_workspace_read_effect(task_id)], "读取任务工作区"
@@ -370,9 +372,7 @@ def _bash_effect_plan(spec: AstraToolSpec, summary: str, effects: list[EffectIte
         effects,
         permissions,
         approval_required=bool(effect_kinds & side_effects),
-        network_scope={
-            "mode": "blocked" if EffectKind.network_write in effect_kinds else "none"
-        },
+        network_scope={"mode": "blocked" if EffectKind.network_write in effect_kinds else "none"},
     )
 
 
@@ -398,8 +398,7 @@ def _move_command_effects(task_id: str, operands: list[str]):
         return [_unknown_process_effect(task_id)], "执行目标范围不明确的文件修改命令"
     sources, destination = operands[:-1], operands[-1]
     effects = [
-        _path_mutation_effect(task_id, _clean_shell_path(source), delete=True)
-        for source in sources
+        _path_mutation_effect(task_id, _clean_shell_path(source), delete=True) for source in sources
     ]
     destination = f"{destination.rstrip('/')}/**" if len(sources) > 1 else destination
     effects.append(_path_mutation_effect(task_id, _clean_shell_path(destination), delete=False))
@@ -450,6 +449,8 @@ def is_side_effecting(plan: ActionEffectPlan) -> bool:
             EffectKind.delegation_create,
             EffectKind.permission_change,
             EffectKind.process_execute_unknown,
+            EffectKind.memory_write,
+            EffectKind.memory_delete,
         }
         for item in plan.effects
     )

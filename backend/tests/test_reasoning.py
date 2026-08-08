@@ -19,7 +19,6 @@ from app.application.agent_runtime.policies.reasoning import (
     resolve_run_profile,
     validate_contract,
 )
-from app.infrastructure.plugins.builtin_components import WebEvidenceValidator
 from app.common.schemas.agent.execution_state import (
     AgentObservation,
     AgentState,
@@ -340,41 +339,3 @@ def test_non_actionable_reflection_is_rejected():
     state = AgentState(task_contract=build_default_contract("goal"))
     with pytest.raises(ValueError, match="not actionable"):
         apply_reflection_patch(state, ReflectionPatch(level="local"), expected_version=1)
-
-
-def test_web_plugin_validator_completion_variants():
-    validator = WebEvidenceValidator()
-    result = {"sources": [{"url": "https://example.com"}]}
-    assert (
-        validator.validate(
-            result,
-            {
-                "fragments": [
-                    {
-                        "domain": "web",
-                        "kind": "fetch",
-                        "source": {"url": "https://example.com", "quality_score": 0.9},
-                    }
-                ]
-            },
-        ).passed
-        is True
-    )
-    blocked = validator.validate(
-        {"sources": []},
-        {
-            "fragments": [
-                {
-                    "domain": "web",
-                    "kind": "failure",
-                    "source": {"url": "https://bad.example"},
-                }
-            ]
-        },
-    )
-    assert blocked.passed is False
-    assert blocked.blocking is True
-    assert {issue.code for issue in blocked.issues} == {
-        "web_sources_not_fetched",
-        "web_source_citations_missing",
-    }

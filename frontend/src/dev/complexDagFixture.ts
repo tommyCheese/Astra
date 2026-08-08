@@ -19,7 +19,7 @@ function node(
     intent: `${title}；用于验证复杂多路 DAG 的布局、状态传播和节点检查器。`,
     status,
     depends_on,
-    required_capabilities: index % 3 === 0 ? ['web_search'] : [],
+    required_capabilities: index % 3 === 0 ? ['artifact.generate'] : [],
     success_criteria_refs: [`SC-${String(index).padStart(2, '0')}`],
     expected_outcome: {
       kind: 'structured_result',
@@ -135,7 +135,7 @@ export const complexDagRunFixture: RunView = {
   tool_calls: [{
     id: 'call-primary-sources',
     plan_node_id: 'primary_sources',
-    tool_name: 'web_search',
+    tool_name: 'chart.render',
     status: 'running',
     input: {},
   }],

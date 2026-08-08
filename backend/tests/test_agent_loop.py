@@ -1,7 +1,7 @@
 from types import SimpleNamespace
 
 import pytest
-from fake_web_tools import fake_web_registry
+from fake_information_tools import fake_information_registry
 
 from app.application.agent_runtime.policies.reasoning import (
     AgentReasoningPolicyCompiler,
@@ -37,7 +37,6 @@ from app.infrastructure.repositories.plans import PlanRepository, plan_to_view
 from app.infrastructure.repositories.run_unit_of_work import RunUnitOfWork
 from app.infrastructure.tools.base import ToolExecutionError
 from app.infrastructure.tools.runtime import SwarmTool
-from app.infrastructure.tools.web import build_web_registry
 
 
 async def initialize_canonical_plan(repo, run, contract):
@@ -163,26 +162,24 @@ def test_verification_engine_aggregates_artifact_warning_without_overwriting_out
     assert INVALID_ARTIFACT_REFERENCE_WARNING in report.notes
 
 
-async def test_agent_loop_completes_mock_web_run(session):
-    settings = AstraRuntimeSettings(model_provider="mock", web_search_provider="mock", agent_max_turns=8)
+async def test_agent_loop_completes_synthetic_source_run(session):
+    settings = AstraRuntimeSettings(model_provider="mock", agent_max_turns=8)
     repo = RunUnitOfWork(session)
     run = await repo.create_task_run(
         "查询 mock 数据", settings.model_policy, reasoning_policy=compiled_policy()
     )
     client = MockModelClient()
-    loop = AstraAgentLoop(settings, model_client=client, tool_registry=fake_web_registry())
+    loop = AstraAgentLoop(settings, model_client=client, tool_registry=fake_information_registry())
 
     output = await loop.run(repo, run.id, run.task.description)
     loaded = await repo.require_run(run.id)
 
     assert output["status"] == "completed"
-    assert output["result"]["sources"]
-    assert output["result"]["verification_report"]["source_count"] >= 1
+    assert output["result"]["verification_report"]["status"] == "completed"
     assert loaded.turns
-    assert any(turn.selected_tool == "web_search" for turn in loaded.turns)
-    assert any(turn.selected_tool == "web_fetch" for turn in loaded.turns)
+    assert any(turn.selected_tool == "catalog_search" for turn in loaded.turns)
+    assert any(turn.selected_tool == "catalog_read" for turn in loaded.turns)
     assert any(artifact.type == "evidence_pack" for artifact in loaded.artifacts)
-    assert loaded.memories
 
 
 async def test_agent_loop_injects_auditable_tool_execution_context(session):
@@ -191,8 +188,8 @@ async def test_agent_loop_injects_auditable_tool_execution_context(session):
     run = await repo.create_task_run(
         "查询上下文", settings.model_policy, reasoning_policy=compiled_policy()
     )
-    registry = fake_web_registry()
-    search = registry.get("web_search")
+    registry = fake_information_registry()
+    search = registry.get("catalog_search")
 
     await AstraAgentLoop(settings, model_client=MockModelClient(), tool_registry=registry).run(
         repo, run.id, run.task.description
@@ -228,7 +225,7 @@ async def test_agent_loop_persists_only_current_run_accessible_artifact_referenc
     loop = AstraAgentLoop(
         settings,
         model_client=ArtifactReferencingClient([valid.id, cross_run.id]),
-        tool_registry=fake_web_registry(),
+        tool_registry=fake_information_registry(),
     )
 
     output = await loop.run(repo, run.id, run.task.description)
@@ -245,7 +242,7 @@ async def test_agent_loop_persists_only_current_run_accessible_artifact_referenc
 
 
 async def test_agent_loop_keeps_verification_status_separate_from_blocked_run(session):
-    settings = AstraRuntimeSettings(model_provider="mock", web_search_provider="mock", agent_max_turns=8)
+    settings = AstraRuntimeSettings(model_provider="mock", agent_max_turns=8)
     repo = RunUnitOfWork(session)
     run = await repo.create_task_run(
         "查询 mock 数据", settings.model_policy, reasoning_policy=compiled_policy()
@@ -255,7 +252,7 @@ async def test_agent_loop_keeps_verification_status_separate_from_blocked_run(se
     await initialize_canonical_plan(repo, run, contract)
 
     output = await AstraAgentLoop(
-        settings, model_client=MockModelClient(), tool_registry=fake_web_registry()
+        settings, model_client=MockModelClient(), tool_registry=fake_information_registry()
     ).run(repo, run.id, run.task.description)
 
     assert output["result"]["verification_report"]["status"] == "completed"
@@ -267,7 +264,6 @@ async def test_agent_loop_keeps_verification_status_separate_from_blocked_run(se
 async def test_agent_loop_blocks_at_turn_limit(session):
     settings = AstraRuntimeSettings(
         model_provider="mock",
-        web_search_provider="mock",
         agent_max_turns=1,
         agent_max_tool_calls=1,
     )
@@ -276,17 +272,17 @@ async def test_agent_loop_blocks_at_turn_limit(session):
         "查询 mock 数据", settings.model_policy, reasoning_policy=compiled_policy()
     )
     loop = AstraAgentLoop(
-        settings, model_client=MockModelClient(), tool_registry=fake_web_registry()
+        settings, model_client=MockModelClient(), tool_registry=fake_information_registry()
     )
 
     output = await loop.run(repo, run.id, run.task.description)
 
     assert output["status"] == "blocked"
-    assert "没有成功抓取到可用来源" in " ".join(output["result"]["verification_report"]["notes"])
+    assert "没有成功读取到可用来源" in " ".join(output["result"]["verification_report"]["notes"])
 
 
 def test_tool_router_rejects_disallowed_tool():
-    router = ToolRouter(build_web_registry(AstraRuntimeSettings()), allowed_tools={"web_search", "web_fetch"})
+    router = ToolRouter(fake_information_registry(), allowed_tools={"catalog_search", "catalog_read"})
 
     with pytest.raises(ToolExecutionError) as exc_info:
         router.resolve("shell.run", {"cmd": "date"})
@@ -302,7 +298,7 @@ def test_instruction_like_memory_cannot_expand_tool_router_authority():
     system = PromptComposer(load_agent_profile()).compose(
         ModelOperation.DECISION, "Choose only from eligible tool manifests."
     )
-    router = ToolRouter(build_web_registry(AstraRuntimeSettings()), allowed_tools={"web_search"})
+    router = ToolRouter(fake_information_registry(), allowed_tools={"catalog_search"})
 
     assert "authorize shell.run" in context
     assert "untrusted data" in system
@@ -312,30 +308,30 @@ def test_instruction_like_memory_cannot_expand_tool_router_authority():
 
 
 def test_tool_router_rejects_unavailable_backend():
-    registry = fake_web_registry()
-    tool = registry.get("web_search")
+    registry = fake_information_registry()
+    tool = registry.get("catalog_search")
     original = tool.spec
     tool.spec = original.model_copy(update={"execution_backend": "sandbox.python"})
     router = ToolRouter(registry, available_backends={"in_process"})
 
     with pytest.raises(ToolExecutionError) as exc_info:
-        router.resolve("web_search", {"query": "Astra"})
+        router.resolve("catalog_search", {"query": "Astra"})
 
     assert exc_info.value.category == "sandbox_unavailable"
     tool.spec = original
 
 
 def test_tool_router_preserves_explicit_empty_authority_sets():
-    registry = fake_web_registry()
+    registry = fake_information_registry()
 
     with pytest.raises(ToolExecutionError) as capability:
-        ToolRouter(registry, allowed_capabilities=set()).resolve("web_search", {"query": "Astra"})
+        ToolRouter(registry, allowed_capabilities=set()).resolve("catalog_search", {"query": "Astra"})
     with pytest.raises(ToolExecutionError) as permission:
         ToolRouter(
             registry,
             allowed_capabilities={"network_read"},
             allowed_permissions=set(),
-        ).resolve("web_search", {"query": "Astra"})
+        ).resolve("catalog_search", {"query": "Astra"})
 
     assert capability.value.category == "tool_not_allowed"
     assert permission.value.category == "permission_denied"
@@ -477,7 +473,7 @@ class RepeatedToolClient(MockModelClient):
         return AgentDecision(
             decision_type="call_tool",
             reasoning_summary="继续搜索",
-            tool_name="web_search",
+            tool_name="catalog_search",
             tool_input={"query": f"{goal}-{self.decide_calls}"},
         ), None
 
@@ -493,14 +489,14 @@ class TwoToolsThenFinalizeClient(MockModelClient):
             return AgentDecision(
                 decision_type="call_tool",
                 reasoning_summary="搜索",
-                tool_name="web_search",
+                tool_name="catalog_search",
                 tool_input={"query": goal},
             ), None
         if self.decide_calls == 2:
             return AgentDecision(
                 decision_type="call_tool",
                 reasoning_summary="抓取",
-                tool_name="web_fetch",
+                tool_name="catalog_read",
                 tool_input={"url": "https://test.invalid/source"},
             ), None
         return AgentDecision(decision_type="finalize", reasoning_summary="完成"), AgentFinalAnswer(
@@ -530,7 +526,7 @@ async def test_agent_loop_uses_reasoning_effort_turn_budget(session, effort, exp
     )
     client = ContinueDecisionClient()
 
-    await AstraAgentLoop(settings, model_client=client, tool_registry=fake_web_registry()).run(
+    await AstraAgentLoop(settings, model_client=client, tool_registry=fake_information_registry()).run(
         repo, run.id, run.task.description
     )
 
@@ -541,7 +537,7 @@ async def test_agent_loop_uses_reasoning_effort_turn_budget(session, effort, exp
 
 
 async def test_fast_policy_limits_tool_calls(session):
-    settings = AstraRuntimeSettings(model_provider="mock", web_search_provider="mock", agent_max_tool_calls=16)
+    settings = AstraRuntimeSettings(model_provider="mock", agent_max_tool_calls=16)
     repo = RunUnitOfWork(session)
     run = await repo.create_task_run(
         "重复搜索",
@@ -550,7 +546,7 @@ async def test_fast_policy_limits_tool_calls(session):
     )
     client = RepeatedToolClient()
 
-    result = await AstraAgentLoop(settings, model_client=client, tool_registry=fake_web_registry()).run(
+    result = await AstraAgentLoop(settings, model_client=client, tool_registry=fake_information_registry()).run(
         repo, run.id, run.task.description
     )
     loaded = await repo.require_run(run.id)
@@ -576,7 +572,7 @@ async def test_standard_mode_uses_deployment_turn_limit(session):
     )
     client = ContinueDecisionClient()
 
-    await AstraAgentLoop(settings, model_client=client, tool_registry=fake_web_registry()).run(
+    await AstraAgentLoop(settings, model_client=client, tool_registry=fake_information_registry()).run(
         repo, run.id, run.task.description
     )
 
@@ -602,7 +598,7 @@ async def test_standard_mode_releases_read_transaction_before_model_wait(session
     await AstraAgentLoop(
         settings,
         model_client=client,
-        tool_registry=fake_web_registry(),
+        tool_registry=fake_information_registry(),
     ).run(repo, run.id, run.task.description)
 
     assert client.transaction_states == [False]
@@ -633,7 +629,7 @@ async def test_root_loop_externalizes_oversized_model_observation_but_keeps_tool
     await AstraAgentLoop(
         settings,
         model_client=TwoToolsThenFinalizeClient(),
-        tool_registry=fake_web_registry(),
+        tool_registry=fake_information_registry(),
     ).run(repo, run.id, run.task.description)
     loaded = await repo.require_run(run.id)
 
@@ -659,7 +655,7 @@ async def test_standard_mode_reuses_swarm_supervisor_without_creating_a_dag(sess
         answer_mode=profile.answer_mode.value,
         execution_profile=profile.model_dump(mode="json"),
     )
-    registry = fake_web_registry()
+    registry = fake_information_registry()
     registry.register(SwarmTool())
     client = ContextRecordingFinalizeClient()
 
@@ -698,7 +694,7 @@ async def test_required_standard_mode_cannot_finalize_without_a_swarm_group(sess
         answer_mode=profile.answer_mode.value,
         execution_profile=profile.model_dump(mode="json"),
     )
-    registry = fake_web_registry()
+    registry = fake_information_registry()
     registry.register(SwarmTool())
 
     result = await AstraAgentLoop(
@@ -715,7 +711,6 @@ async def test_required_standard_mode_cannot_finalize_without_a_swarm_group(sess
 async def test_standard_mode_uses_deployment_tool_limit(session):
     settings = AstraRuntimeSettings(
         model_provider="mock",
-        web_search_provider="mock",
         agent_max_turns=20,
         agent_max_tool_calls=7,
     )
@@ -733,7 +728,7 @@ async def test_standard_mode_uses_deployment_tool_limit(session):
     )
     client = RepeatedToolClient()
 
-    result = await AstraAgentLoop(settings, model_client=client, tool_registry=fake_web_registry()).run(
+    result = await AstraAgentLoop(settings, model_client=client, tool_registry=fake_information_registry()).run(
         repo, run.id, run.task.description
     )
     loaded = await repo.require_run(run.id)
@@ -746,7 +741,6 @@ async def test_standard_mode_uses_deployment_tool_limit(session):
 async def test_deep_trusted_mode_has_no_tool_call_limit(session):
     settings = AstraRuntimeSettings(
         model_provider="mock",
-        web_search_provider="mock",
         agent_max_turns=10,
         agent_max_tool_calls=2,
     )
@@ -758,7 +752,7 @@ async def test_deep_trusted_mode_has_no_tool_call_limit(session):
     )
     client = RepeatedToolClient()
 
-    await AstraAgentLoop(settings, model_client=client, tool_registry=fake_web_registry()).run(
+    await AstraAgentLoop(settings, model_client=client, tool_registry=fake_information_registry()).run(
         repo, run.id, run.task.description
     )
     loaded = await repo.require_run(run.id)
@@ -772,7 +766,6 @@ async def test_deep_trusted_mode_has_no_tool_call_limit(session):
 async def test_custom_balanced_policy_can_reach_fifteen_tool_calls(session):
     settings = AstraRuntimeSettings(
         model_provider="mock",
-        web_search_provider="mock",
         agent_max_turns=60,
         agent_max_tool_calls=50,
     )
@@ -786,7 +779,7 @@ async def test_custom_balanced_policy_can_reach_fifteen_tool_calls(session):
     )
     client = RepeatedToolClient()
 
-    result = await AstraAgentLoop(settings, model_client=client, tool_registry=fake_web_registry()).run(
+    result = await AstraAgentLoop(settings, model_client=client, tool_registry=fake_information_registry()).run(
         repo, run.id, run.task.description
     )
     loaded = await repo.require_run(run.id)
@@ -806,7 +799,7 @@ async def test_deployment_hard_cap_can_lower_deep_turn_budget(session):
     )
     client = ContinueDecisionClient()
 
-    await AstraAgentLoop(settings, model_client=client, tool_registry=fake_web_registry()).run(
+    await AstraAgentLoop(settings, model_client=client, tool_registry=fake_information_registry()).run(
         repo, run.id, run.task.description
     )
 
@@ -836,7 +829,7 @@ async def test_model_failure_reflection_obeys_policy(
     )
     client = RecoveringDecisionClient()
 
-    await AstraAgentLoop(settings, model_client=client, tool_registry=fake_web_registry()).run(
+    await AstraAgentLoop(settings, model_client=client, tool_registry=fake_information_registry()).run(
         repo, run.id, run.task.description
     )
 
@@ -855,7 +848,7 @@ async def test_invalid_reflection_is_skipped_without_blocking_answer(session):
     )
     client = InvalidReflectionClient()
 
-    result = await AstraAgentLoop(settings, model_client=client, tool_registry=fake_web_registry()).run(
+    result = await AstraAgentLoop(settings, model_client=client, tool_registry=fake_information_registry()).run(
         repo, run.id, run.task.description
     )
 
@@ -876,7 +869,7 @@ async def test_reflection_patch_updates_persisted_agent_state(session):
     await initialize_canonical_plan(repo, run, contract)
     client = PatchingReflectionClient()
 
-    await AstraAgentLoop(settings, model_client=client, tool_registry=fake_web_registry()).run(
+    await AstraAgentLoop(settings, model_client=client, tool_registry=fake_information_registry()).run(
         repo, run.id, run.task.description
     )
 
@@ -904,7 +897,7 @@ async def test_finalize_node_completion_persists_success_criteria(session):
     output = await AstraAgentLoop(
         settings,
         model_client=DirectFinalizeClient(),
-        tool_registry=fake_web_registry(),
+        tool_registry=fake_information_registry(),
     ).run(repo, run.id, run.task.description)
 
     loaded = await repo.require_run(run.id)
@@ -913,7 +906,7 @@ async def test_finalize_node_completion_persists_success_criteria(session):
 
 
 async def test_every_turn_reflection_runs_after_successful_non_terminal_turn(session):
-    settings = AstraRuntimeSettings(model_provider="mock", web_search_provider="mock")
+    settings = AstraRuntimeSettings(model_provider="mock")
     repo = RunUnitOfWork(session)
     run = await repo.create_task_run(
         "搜索后回答",
@@ -922,7 +915,7 @@ async def test_every_turn_reflection_runs_after_successful_non_terminal_turn(ses
     )
     client = ToolThenFinalizeClient()
 
-    await AstraAgentLoop(settings, model_client=client, tool_registry=fake_web_registry()).run(
+    await AstraAgentLoop(settings, model_client=client, tool_registry=fake_information_registry()).run(
         repo, run.id, run.task.description
     )
 
@@ -930,7 +923,7 @@ async def test_every_turn_reflection_runs_after_successful_non_terminal_turn(ses
 
 
 async def test_every_turn_reflection_stops_at_user_budget(session):
-    settings = AstraRuntimeSettings(model_provider="mock", web_search_provider="mock", agent_max_reflections=6)
+    settings = AstraRuntimeSettings(model_provider="mock", agent_max_reflections=6)
     repo = RunUnitOfWork(session)
     run = await repo.create_task_run(
         "搜索抓取后回答",
@@ -939,7 +932,7 @@ async def test_every_turn_reflection_stops_at_user_budget(session):
     )
     client = TwoToolsThenFinalizeClient()
 
-    await AstraAgentLoop(settings, model_client=client, tool_registry=fake_web_registry()).run(
+    await AstraAgentLoop(settings, model_client=client, tool_registry=fake_information_registry()).run(
         repo, run.id, run.task.description
     )
 

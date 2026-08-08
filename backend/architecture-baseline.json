@@ -463,10 +463,6 @@
       "lines": 19,
       "complexity": 14
     },
-    "app.infrastructure.tools.sandboxed:SandboxedWebTool.run": {
-      "lines": 79,
-      "complexity": 6
-    },
     "app.infrastructure.tools.selection:CapabilityToolResolver._satisfied_capabilities": {
       "lines": 32,
       "complexity": 15
@@ -561,10 +557,7 @@
     "app.infrastructure.tools.bash:BashExecuteTool",
     "app.infrastructure.tools.chart:ChartRenderTool",
     "app.infrastructure.tools.runtime:SwarmTool",
-    "app.infrastructure.tools.sandboxed:SandboxedWebTool",
-    "app.infrastructure.tools.selection:CapabilityToolResolver",
-    "app.infrastructure.tools.web.fetching:WebFetchTool",
-    "app.infrastructure.tools.web.search:WebSearchTool"
+    "app.infrastructure.tools.selection:CapabilityToolResolver"
   ],
   "compatibility_symbols": []
 }

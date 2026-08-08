@@ -114,6 +114,7 @@ def evidence_pack(observations: list[dict[str, Any]]) -> dict[str, Any]:
         observation.get("data", {})
         for observation in observations
         if observation.get("kind") == "tool_result"
-        and observation.get("data", {}).get("tool_name") == "web_fetch"
+        and observation.get("data", {}).get("url")
+        and (observation.get("data", {}).get("content") or observation.get("data", {}).get("snapshot"))
     ]
     return {"fetched_sources": fetched_sources}

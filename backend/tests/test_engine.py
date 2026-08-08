@@ -2,7 +2,7 @@ from collections import Counter
 from unittest.mock import AsyncMock
 
 import pytest
-from fake_web_tools import fake_web_registry
+from fake_information_tools import fake_information_registry
 from sqlalchemy import event, select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
@@ -420,7 +420,7 @@ class QuickForbiddenToolClient(QuickStreamingClient):
 
 
 async def test_engine_completes_mock_web_query(session):
-    settings = AstraRuntimeSettings(model_provider="mock", web_search_provider="mock")
+    settings = AstraRuntimeSettings(model_provider="mock")
     repo = RunUnitOfWork(session)
     profile = resolve_run_profile(
         AnswerMode.trusted,
@@ -438,7 +438,7 @@ async def test_engine_completes_mock_web_query(session):
     engine = RunEngine(
         settings,
         model_client=MockModelClient(),
-        tool_registry=fake_web_registry(),
+        tool_registry=fake_information_registry(),
     )
     await engine._run_with_repo(repo, run.id)
 
@@ -487,7 +487,7 @@ async def test_engine_completes_mock_web_query(session):
     )
     assert {
         event.payload["tool_name"] for event in events if event.type == "tool.selection.accepted"
-    } >= {"web_search", "web_fetch"}
+    } >= {"catalog_search", "catalog_read"}
 
 
 async def test_trusted_skill_checks_become_provenanced_completion_criteria():
@@ -626,10 +626,10 @@ async def test_trusted_confirmation_activates_exact_plan_once_before_execution(s
 
 
 async def test_answer_delta_batching_flushes_first_and_final_content(session):
-    settings = AstraRuntimeSettings(model_provider="mock", web_search_provider="mock")
+    settings = AstraRuntimeSettings(model_provider="mock")
     repo = RunUnitOfWork(session)
     run = await repo.create_task_run("流式批处理", settings.model_policy)
-    engine = RunEngine(settings, model_client=MockModelClient(), tool_registry=fake_web_registry())
+    engine = RunEngine(settings, model_client=MockModelClient(), tool_registry=fake_information_registry())
     commit = AsyncMock(wraps=session.commit)
     session.commit = commit
 
@@ -1065,7 +1065,7 @@ class EffortSpyClient(MockModelClient):
 
 
 async def test_engine_binds_effective_reasoning_effort_before_model_operations(session):
-    settings = AstraRuntimeSettings(model_provider="mock", web_search_provider="mock")
+    settings = AstraRuntimeSettings(model_provider="mock")
     repo = RunUnitOfWork(session)
     profile = resolve_run_profile(
         AnswerMode.trusted,
@@ -1096,7 +1096,7 @@ async def test_engine_binds_effective_reasoning_effort_before_model_operations(s
     client = EffortSpyClient()
 
     await RunEngine(
-        settings, model_client=client, tool_registry=fake_web_registry()
+        settings, model_client=client, tool_registry=fake_information_registry()
     )._run_with_repo(repo, run.id)
 
     assert client.bound_efforts == ["deep"]
@@ -1107,7 +1107,7 @@ async def test_engine_binds_effective_reasoning_effort_before_model_operations(s
 
 
 async def test_disabled_model_thinking_does_not_suppress_public_process_events(session):
-    settings = AstraRuntimeSettings(model_provider="mock", web_search_provider="mock")
+    settings = AstraRuntimeSettings(model_provider="mock")
     profile = resolve_run_profile(
         AnswerMode.standard,
         RequestedReasoningPolicy(),
@@ -1136,7 +1136,7 @@ async def test_disabled_model_thinking_does_not_suppress_public_process_events(s
     )
 
     await RunEngine(
-        settings, model_client=MockModelClient(), tool_registry=fake_web_registry()
+        settings, model_client=MockModelClient(), tool_registry=fake_information_registry()
     )._run_with_repo(repo, run.id)
 
     events = await repo.list_events(run.id)
@@ -1147,7 +1147,7 @@ async def test_disabled_model_thinking_does_not_suppress_public_process_events(s
 
 
 async def test_standard_profile_skips_planning_and_quality_assurance_objects(session):
-    settings = AstraRuntimeSettings(model_provider="mock", web_search_provider="mock")
+    settings = AstraRuntimeSettings(model_provider="mock")
     profile = resolve_run_profile(
         AnswerMode.standard,
         RequestedReasoningPolicy(reasoning_effort="deep", execution_mode="auto_approval"),
@@ -1163,7 +1163,7 @@ async def test_standard_profile_skips_planning_and_quality_assurance_objects(ses
     client = PlanningSpyClient()
 
     await RunEngine(
-        settings, model_client=client, tool_registry=fake_web_registry()
+        settings, model_client=client, tool_registry=fake_information_registry()
     )._run_with_repo(repo, run.id)
 
     loaded = await repo.require_run(run.id)
@@ -1179,7 +1179,7 @@ async def test_standard_profile_skips_planning_and_quality_assurance_objects(ses
 
 
 async def test_trusted_engine_always_builds_contract_and_complete_plan(session):
-    settings = AstraRuntimeSettings(model_provider="mock", web_search_provider="mock")
+    settings = AstraRuntimeSettings(model_provider="mock")
     repo = RunUnitOfWork(session)
     profile = resolve_run_profile(
         AnswerMode.trusted,
@@ -1196,7 +1196,7 @@ async def test_trusted_engine_always_builds_contract_and_complete_plan(session):
     client = PlanningSpyClient()
 
     await RunEngine(
-        settings, model_client=client, tool_registry=fake_web_registry()
+        settings, model_client=client, tool_registry=fake_information_registry()
     )._run_with_repo(repo, run.id)
 
     assert client.contract_calls == 1
@@ -1204,7 +1204,7 @@ async def test_trusted_engine_always_builds_contract_and_complete_plan(session):
 
 
 async def test_follow_up_contract_excludes_private_conversation_transcript(session):
-    settings = AstraRuntimeSettings(model_provider="mock", web_search_provider="mock")
+    settings = AstraRuntimeSettings(model_provider="mock")
     repo = RunUnitOfWork(session)
     profile = resolve_run_profile(
         AnswerMode.trusted,
@@ -1231,7 +1231,7 @@ async def test_follow_up_contract_excludes_private_conversation_transcript(sessi
     client = PlanningSpyClient()
 
     await RunEngine(
-        settings, model_client=client, tool_registry=fake_web_registry()
+        settings, model_client=client, tool_registry=fake_information_registry()
     )._run_with_repo(repo, current.id)
 
     loaded = await repo.require_run(current.id)
@@ -1242,7 +1242,7 @@ async def test_follow_up_contract_excludes_private_conversation_transcript(sessi
 
 
 async def test_engine_falls_back_when_model_returns_empty_plan(session):
-    settings = AstraRuntimeSettings(model_provider="mock", web_search_provider="mock")
+    settings = AstraRuntimeSettings(model_provider="mock")
     repo = RunUnitOfWork(session)
     profile = resolve_run_profile(
         AnswerMode.trusted,
@@ -1258,7 +1258,7 @@ async def test_engine_falls_back_when_model_returns_empty_plan(session):
     )
 
     await RunEngine(
-        settings, model_client=EmptyPlanClient(), tool_registry=fake_web_registry()
+        settings, model_client=EmptyPlanClient(), tool_registry=fake_information_registry()
     )._run_with_repo(repo, run.id)
 
     loaded = await repo.require_run(run.id)
@@ -1268,7 +1268,7 @@ async def test_engine_falls_back_when_model_returns_empty_plan(session):
 
 
 async def test_trusted_engine_falls_back_when_plan_requests_unavailable_capability(session):
-    settings = AstraRuntimeSettings(model_provider="mock", web_search_provider="mock")
+    settings = AstraRuntimeSettings(model_provider="mock")
     repo = RunUnitOfWork(session)
     profile = resolve_run_profile(
         AnswerMode.trusted,
@@ -1286,7 +1286,7 @@ async def test_trusted_engine_falls_back_when_plan_requests_unavailable_capabili
     await RunEngine(
         settings,
         model_client=UnavailableCapabilityPlanClient(),
-        tool_registry=fake_web_registry(),
+        tool_registry=fake_information_registry(),
     )._run_with_repo(repo, run.id)
 
     loaded = await repo.require_run(run.id)
@@ -1297,7 +1297,7 @@ async def test_trusted_engine_falls_back_when_plan_requests_unavailable_capabili
 
 
 async def test_engine_replays_recorded_checkpoint_without_duplicate_tool_call(session):
-    settings = AstraRuntimeSettings(model_provider="mock", web_search_provider="mock")
+    settings = AstraRuntimeSettings(model_provider="mock")
     repo = RunUnitOfWork(session)
     profile = resolve_run_profile(
         AnswerMode.trusted,
@@ -1320,7 +1320,7 @@ async def test_engine_replays_recorded_checkpoint_without_duplicate_tool_call(se
                     node_key="step-1",
                     title="查询资料",
                     intent="查询并恢复结果",
-                    required_capabilities=["web_search"],
+                    required_capabilities=["catalog_search"],
                     success_criteria_refs=[criterion.id for criterion in contract.success_criteria],
                     expected_outcome=ExpectedObservation(
                         kind="tool_result",
@@ -1330,7 +1330,7 @@ async def test_engine_replays_recorded_checkpoint_without_duplicate_tool_call(se
             ],
         ),
         contract=contract,
-        capabilities={"web_search", "network_read"},
+        capabilities={"catalog_search", "network_read"},
     )
     state = canonical_agent_state(contract, plan, policy_version=1)
     await repo.initialize_reasoning_state(
@@ -1346,7 +1346,7 @@ async def test_engine_replays_recorded_checkpoint_without_duplicate_tool_call(se
         1,
         "call_tool",
         "执行搜索",
-        selected_tool="web_search",
+        selected_tool="catalog_search",
         plan_node_id=node.id,
         state_version_before=run.state_version,
         phase="executing",
@@ -1355,7 +1355,7 @@ async def test_engine_replays_recorded_checkpoint_without_duplicate_tool_call(se
     call = await repo.start_tool_call(
         run.id,
         None,
-        "web_search",
+        "catalog_search",
         "test",
         {"query": "checkpoint"},
         "network_read",
@@ -1384,7 +1384,7 @@ async def test_engine_replays_recorded_checkpoint_without_duplicate_tool_call(se
     await RunEngine(
         settings,
         model_client=RecoveryClient(),
-        tool_registry=fake_web_registry(),
+        tool_registry=fake_information_registry(),
     )._run_with_repo(repo, run.id)
 
     loaded = await repo.require_run(run.id)

@@ -8,14 +8,28 @@ from app.infrastructure.db.model_base import AstraOrmRecordBase
 
 BACKEND_ROOT = Path(__file__).parents[1]
 BASELINE_REVISION = "0001_current_baseline"
-HEAD_REVISION = "0009_remove_legacy_tool_settings"
+HEAD_REVISION = "0010_remove_builtin_web_tools"
 
 
 def _alembic(database_path: Path, *arguments: str) -> subprocess.CompletedProcess[str]:
-    environment = {
-        **os.environ,
-        "DATABASE_URL": f"sqlite+aiosqlite:///{database_path}",
-    }
+    environment = dict(os.environ)
+    for retired in (
+        "WEB_SEARCH_PROVIDER",
+        "WEB_SEARCH_API_KEY",
+        "GOOGLE_SEARCH_API_KEY",
+        "GOOGLE_SEARCH_ENGINE_ID",
+        "GOOGLE_SEARCH_RESULT_COUNT",
+        "GOOGLE_SEARCH_LANGUAGE",
+        "GOOGLE_SEARCH_REGION",
+        "GOOGLE_SEARCH_SAFE",
+        "CRAWLER_MAX_CONTENT_CHARS",
+        "CRAWLER_MAX_RESPONSE_BYTES",
+        "CRAWLER_MIN_QUALITY_CHARS",
+        "CRAWLER_ALLOW_PROXY_FAKE_IP",
+        "SANDBOX_WEB_RUNTIME_IMAGE",
+    ):
+        environment.pop(retired, None)
+    environment["DATABASE_URL"] = f"sqlite+aiosqlite:///{database_path}"
     return subprocess.run(
         [sys.executable, "-m", "alembic", *arguments],
         cwd=BACKEND_ROOT,
@@ -102,6 +116,51 @@ def test_legacy_chart_tool_state_is_migrated_to_canonical_identity(tmp_path: Pat
         connection.close()
 
     assert rows == [("chart.render", 0)]
+
+
+def test_retired_web_settings_are_removed_without_touching_other_settings(tmp_path: Path):
+    database_path = tmp_path / "retired-web-settings.db"
+    upgraded = _alembic(database_path, "upgrade", "0009_remove_legacy_tool_settings")
+    assert upgraded.returncode == 0, upgraded.stderr
+
+    connection = sqlite3.connect(database_path)
+    try:
+        connection.executemany(
+            """
+            INSERT INTO tool_settings (tool_name, enabled, created_at, updated_at)
+            VALUES (?, 1, '2026-08-01 00:00:00', '2026-08-01 00:00:00')
+            """,
+            [("web_search",), ("web_fetch",), ("chart.render",)],
+        )
+        connection.executemany(
+            """
+            INSERT INTO tool_provider_settings (
+                provider_id, enabled, configuration, configuration_revision,
+                created_at, updated_at
+            ) VALUES (?, 1, '{}', 1, '2026-08-01 00:00:00', '2026-08-01 00:00:00')
+            """,
+            [("astra.web",), ("astra.chart",)],
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+    migrated = _alembic(database_path, "upgrade", "head")
+    assert migrated.returncode == 0, migrated.stderr
+
+    connection = sqlite3.connect(database_path)
+    try:
+        tools = connection.execute(
+            "SELECT tool_name FROM tool_settings ORDER BY tool_name"
+        ).fetchall()
+        providers = connection.execute(
+            "SELECT provider_id FROM tool_provider_settings ORDER BY provider_id"
+        ).fetchall()
+    finally:
+        connection.close()
+
+    assert tools == [("chart.render",)]
+    assert providers == [("astra.chart",)]
 
 
 def test_subagent_migration_backfills_root_execution_and_lineage(tmp_path: Path):

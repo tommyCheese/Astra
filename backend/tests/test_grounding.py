@@ -13,7 +13,7 @@ from app.common.schemas.agent.run_result import (
     AgentValidationOutcome,
 )
 from app.common.schemas.agent.types import TerminalState
-from app.domain.grounding.fragments import fragments_from_web_result
+from app.domain.grounding.fragments import fragments_from_source_result
 from app.domain.grounding.identity import (
     canonical_url,
     digest_text,
@@ -64,8 +64,8 @@ def test_segment_passages_is_bounded_and_find_open_are_local():
     )
     assert 1 < len(passages) <= 8
     assert all(len(item.text) <= 240 for item in passages)
-    fragments = fragments_from_web_result(
-        "web_fetch",
+    fragments = fragments_from_source_result(
+        "catalog_read",
         {
             "url": "https://example.com/report",
             "content": content,
@@ -79,8 +79,8 @@ def test_segment_passages_is_bounded_and_find_open_are_local():
 
 
 def test_search_snippets_are_candidate_only_evidence():
-    fragments = fragments_from_web_result(
-        "web_search",
+    fragments = fragments_from_source_result(
+        "catalog_search",
         {
             "query": "Astra",
             "provider": "google",
@@ -102,8 +102,8 @@ def test_search_snippets_are_candidate_only_evidence():
 
 
 def test_evidence_ledger_replay_is_idempotent_and_conflicts_fail():
-    fragments = fragments_from_web_result(
-        "web_search",
+    fragments = fragments_from_source_result(
+        "catalog_search",
         {"query": "Astra", "provider": "google", "candidates": []},
     )
     ledger = GroundingEvidenceLedger(fragments)
@@ -125,8 +125,8 @@ async def test_evidence_writer_persists_run_lineage_idempotently(session):
     run = RunRecord(task_id=task.id)
     session.add(run)
     await session.flush()
-    fragments = fragments_from_web_result(
-        "web_search",
+    fragments = fragments_from_source_result(
+        "catalog_search",
         {"query": "Astra", "provider": "google", "candidates": []},
     )
     repository = EvidenceRepository(session)
@@ -155,7 +155,7 @@ def test_grounded_projection_binds_findings_to_passages_and_validates():
         "content_length": 48,
         "title": "Report",
     }
-    ledger = GroundingEvidenceLedger(fragments_from_web_result("web_fetch", output))
+    ledger = GroundingEvidenceLedger(fragments_from_source_result("catalog_read", output))
     answer = project_grounded_answer(
         AgentFinalAnswer(
             summary="Material conclusion",
@@ -186,8 +186,8 @@ def test_grounded_projection_binds_findings_to_passages_and_validates():
 
 def test_candidate_only_evidence_cannot_support_material_claim():
     ledger = GroundingEvidenceLedger(
-        fragments_from_web_result(
-            "web_search",
+        fragments_from_source_result(
+            "catalog_search",
             {
                 "query": "Astra",
                 "provider": "google",

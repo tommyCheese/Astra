@@ -29,8 +29,8 @@ async def test_mock_model_client_returns_structured_outputs():
 
     assert plan.nodes
     assert all(
-        "web_search" not in node.required_capabilities
-        and "web_fetch" not in node.required_capabilities
+        "catalog_search" not in node.required_capabilities
+        and "catalog_read" not in node.required_capabilities
         for node in plan.nodes
     )
     assert plan.nodes[1].required_capabilities == [
@@ -43,7 +43,13 @@ async def test_mock_model_client_returns_structured_outputs():
 
 async def test_mock_model_client_agent_decisions():
     client = MockModelClient()
-    first = await client.decide("查询 Astra", {"observations": []})
+    manifests = {
+        "catalog_search": {"task_capabilities": ["information.search"]},
+        "catalog_read": {"task_capabilities": ["information.read"]},
+    }
+    first = await client.decide(
+        "查询 Astra", {"observations": [], "tool_manifests": manifests}
+    )
     second = await client.decide(
         "查询 Astra",
         {
@@ -52,11 +58,12 @@ async def test_mock_model_client_agent_decisions():
                     "kind": "tool_result",
                     "status": "succeeded",
                     "data": {
-                        "tool_name": "web_search",
+                        "tool_name": "catalog_search",
                         "candidates": [{"url": "https://example.com/a", "snippet": "A"}],
                     },
                 }
-            ]
+            ],
+            "tool_manifests": manifests,
         },
     )
     final = await client.decide(
@@ -67,21 +74,26 @@ async def test_mock_model_client_agent_decisions():
                     "kind": "tool_result",
                     "status": "succeeded",
                     "data": {
-                        "tool_name": "web_search",
+                        "tool_name": "catalog_search",
                         "candidates": [{"url": "https://example.com/a", "snippet": "A"}],
                     },
                 },
                 {
                     "kind": "tool_result",
                     "status": "succeeded",
-                    "data": {"tool_name": "web_fetch", "url": "https://example.com/a"},
+                    "data": {
+                        "tool_name": "catalog_read",
+                        "url": "https://example.com/a",
+                        "content": "A",
+                    },
                 },
-            ]
+            ],
+            "tool_manifests": manifests,
         },
     )
 
-    assert first.tool_name == "web_search"
-    assert second.tool_name == "web_fetch"
+    assert first.tool_name == "catalog_search"
+    assert second.tool_name == "catalog_read"
     assert final.decision_type == "finalize"
 
 
@@ -93,7 +105,7 @@ async def test_mock_model_client_does_not_retry_failed_fetch_url():
                 "kind": "tool_result",
                 "status": "succeeded",
                 "data": {
-                    "tool_name": "web_search",
+                    "tool_name": "catalog_search",
                     "candidates": [
                         {"url": "https://example.com/fails", "snippet": "bad"},
                         {"url": "https://example.com/next", "snippet": "next"},
@@ -104,17 +116,21 @@ async def test_mock_model_client_does_not_retry_failed_fetch_url():
                 "kind": "tool_error",
                 "status": "failed",
                 "data": {
-                    "tool_name": "web_fetch",
+                    "tool_name": "catalog_read",
                     "url": "https://example.com/fails",
                 },
             },
-        ]
+        ],
+        "tool_manifests": {
+            "catalog_search": {"task_capabilities": ["information.search"]},
+            "catalog_read": {"task_capabilities": ["information.read"]},
+        },
     }
 
     decision = await client.decide("查询 Astra", context)
 
     assert decision.decision_type == "call_tool"
-    assert decision.tool_name == "web_fetch"
+    assert decision.tool_name == "catalog_read"
     assert decision.tool_input["url"] == "https://example.com/next"
 
 

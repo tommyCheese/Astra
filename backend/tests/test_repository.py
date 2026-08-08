@@ -18,11 +18,11 @@ from app.infrastructure.repositories.usage import UsageRepository
 
 async def test_tool_settings_are_created_and_persisted(session):
     repo = ToolSettingsRepository(session)
-    defaults = {"web_search": True, "web_fetch": True, "chart.render": False}
+    defaults = {"catalog_search": True, "catalog_read": True, "chart.render": False}
     assert await repo.get_or_create(defaults) == defaults
     await session.commit()
 
-    updated = {"web_search": False, "web_fetch": True, "chart.render": True}
+    updated = {"catalog_search": False, "catalog_read": True, "chart.render": True}
     assert await repo.set_all(updated, defaults) == updated
     await session.commit()
 
@@ -31,18 +31,18 @@ async def test_tool_settings_are_created_and_persisted(session):
 
 async def test_tool_settings_cache_publishes_only_after_commit(session):
     repo = ToolSettingsRepository(session)
-    defaults = {"web_search": True, "web_fetch": True, "chart.render": False}
+    defaults = {"catalog_search": True, "catalog_read": True, "chart.render": False}
     assert await repo.get_or_create(defaults) == defaults
     await session.commit()
 
-    await repo.set_all({"web_search": False}, defaults)
+    await repo.set_all({"catalog_search": False}, defaults)
     await session.rollback()
 
     assert await ToolSettingsRepository(session).get_or_create(defaults) == defaults
 
 
 async def test_committed_tool_settings_cache_avoids_database_reads(session):
-    defaults = {"web_search": True, "web_fetch": True, "chart.render": False}
+    defaults = {"catalog_search": True, "catalog_read": True, "chart.render": False}
     assert await ToolSettingsRepository(session).get_or_create(defaults) == defaults
     await session.commit()
     statements: list[str] = []
@@ -90,12 +90,12 @@ async def test_run_lifecycle_persistence(session):
     run = await repo.create_task_run("查询一个主题", {"provider": "mock", "model": "mock"})
 
     await repo.update_run_status(run.id, "planning")
-    step = await repo.create_step(run.id, 1, "搜索", "调用 web_search")
+    step = await repo.create_step(run.id, 1, "搜索", "调用 catalog_search")
     await repo.update_step(step.id, "running")
     call = await repo.start_tool_call(
         run.id,
         step.id,
-        "web_search",
+        "catalog_search",
         "0.1.0",
         {"query": "Astra"},
         "network_read",
@@ -133,7 +133,7 @@ async def test_cancel_run_is_idempotent_and_preserves_partial_answer(session):
     step = await repo.create_step(run.id, 1, "检索", "收集证据")
     await repo.update_step(step.id, "running")
     call = await repo.start_tool_call(
-        run.id, step.id, "web_search", "0.1.0", {"query": "Astra"}, "network_read", "read_only"
+        run.id, step.id, "catalog_search", "0.1.0", {"query": "Astra"}, "network_read", "read_only"
     )
     turn = await repo.create_agent_turn(run.id, 1, "call_tool", "继续检索")
     invocation_id = await UsageRepository(session).create_invocation(
@@ -370,8 +370,8 @@ async def test_agent_turn_and_memory_persistence(session):
         1,
         "call_tool",
         "搜索候选来源",
-        selected_tool="web_search",
-        decision={"decision_type": "call_tool", "tool_name": "web_search"},
+        selected_tool="catalog_search",
+        decision={"decision_type": "call_tool", "tool_name": "catalog_search"},
     )
     memory = await repo.create_memory(
         run_id=run.id,
@@ -391,7 +391,7 @@ async def test_agent_turn_and_memory_persistence(session):
     loaded = await repo.require_run(run.id)
     view = RunViewProjector().payload(loaded)
 
-    assert view["turns"][0]["selected_tool"] == "web_search"
+    assert view["turns"][0]["selected_tool"] == "catalog_search"
     assert view["memories"][0]["content"] == "本次任务找到一个来源。"
     assert any(message["role"] == "tool" for message in view["chat_messages"])
 

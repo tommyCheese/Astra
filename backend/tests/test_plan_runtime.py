@@ -96,7 +96,7 @@ def test_validator_rejects_unknown_references_and_capabilities():
     draft.nodes[1].success_criteria_refs = ["criterion-result"]
     with pytest.raises(PlanValidationError, match="Unavailable capabilities"):
         PlanValidator().validate(
-            draft, task_contract=contract, available_capabilities={"web_search"}
+            draft, task_contract=contract, available_capabilities={"catalog_search"}
         )
 
 

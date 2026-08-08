@@ -26,24 +26,12 @@ class AstraRuntimeSettings(BaseSettings):
     tool_provider_configurations: dict[str, dict] = Field(default_factory=dict)
     tool_provider_configuration_revisions: dict[str, str] = Field(default_factory=dict)
     trusted_tool_providers: str = (
-        "astra.builtin=builtin,astra.web=builtin,astra.chart=builtin,astra.shell=builtin"
+        "astra.builtin=builtin,astra.chart=builtin,astra.shell=builtin"
     )
     tool_managed_plugin_discovery_enabled: bool = False
     tool_external_plugin_discovery_enabled: bool = False
     tool_plugin_rollout_mode: str = "builtin_only"
     permission_bundle_signing_secret: str = ""
-    web_search_provider: str = "auto"
-    web_search_api_key: str = ""
-    google_search_api_key: str = ""
-    google_search_engine_id: str = ""
-    google_search_result_count: int = 5
-    google_search_language: str = "lang_zh-CN"
-    google_search_region: str = ""
-    google_search_safe: str = "active"
-    crawler_max_content_chars: int = 12000
-    crawler_max_response_bytes: int = 2 * 1024 * 1024
-    crawler_min_quality_chars: int = 240
-    crawler_allow_proxy_fake_ip: bool = False
     agent_max_turns: int = 60
     agent_max_tool_calls: int = 50
     agent_max_reflections: int = 6
@@ -141,7 +129,6 @@ class AstraRuntimeSettings(BaseSettings):
     sandbox_provider: str = "docker"
     docker_binary: str = "docker"
     sandbox_runtime_image: str = "astra-data-viz:0.1.0"
-    sandbox_web_runtime_image: str = "astra-web-tools:0.1.0"
     sandbox_runtime_lock_digest: str = ""
     sandbox_wall_time_seconds: int = 30
     sandbox_memory_mb: int = 1024
@@ -168,7 +155,11 @@ class AstraRuntimeSettings(BaseSettings):
     skills_max_artifact_bytes_per_run: int = 20 * 1024 * 1024
     skills_safety_scanner_required: bool = True
 
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
 
     @model_validator(mode="after")
     def validate_runtime_bounds(self) -> "AstraRuntimeSettings":

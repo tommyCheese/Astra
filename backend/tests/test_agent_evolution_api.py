@@ -138,7 +138,7 @@ async def evolution_client():
     app.include_router(evolution_router)
     app.dependency_overrides[get_session] = override_session
     app.dependency_overrides[get_available_evolution_tools] = lambda: frozenset(
-        {"web_search"}
+        {"catalog_search"}
     )
 
     @app.exception_handler(AstraError)

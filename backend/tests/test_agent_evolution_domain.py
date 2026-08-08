@@ -43,7 +43,7 @@ def source(seed: str = "run-1") -> EvolutionSourceReference:
 def procedure_candidate(
     *,
     content: str = "Use the verified read-only workflow.",
-    required_tools: tuple[str, ...] = ("web_search",),
+    required_tools: tuple[str, ...] = ("catalog_search",),
 ) -> EvolutionCandidate:
     return EvolutionCandidate(
         candidate_key="procedure.research",
@@ -155,11 +155,11 @@ def manifest(
 
 
 def test_candidate_revision_is_frozen_and_digest_is_canonical():
-    first = procedure_candidate(required_tools=("web_search", "web_fetch"))
-    reordered = procedure_candidate(required_tools=("web_fetch", "web_search"))
+    first = procedure_candidate(required_tools=("catalog_search", "catalog_read"))
+    reordered = procedure_candidate(required_tools=("catalog_read", "catalog_search"))
 
     assert first.digest == reordered.digest
-    assert first.required_tools == ("web_fetch", "web_search")
+    assert first.required_tools == ("catalog_read", "catalog_search")
     with pytest.raises(ValidationError):
         first.content = "mutated"
 
@@ -194,7 +194,7 @@ def test_lifecycle_uses_immutable_state_snapshots_and_rejects_stale_versions():
         original,
         EvolutionCandidateStatus.evaluating,
         expected_state_version=1,
-        available_tools={"web_search"},
+        available_tools={"catalog_search"},
     )
 
     assert original.status == EvolutionCandidateStatus.draft
@@ -207,7 +207,7 @@ def test_lifecycle_uses_immutable_state_snapshots_and_rejects_stale_versions():
             evaluating,
             EvolutionCandidateStatus.rejected,
             expected_state_version=1,
-            available_tools={"web_search"},
+            available_tools={"catalog_search"},
         )
     assert raised.value.code == "EVOLUTION_STATE_STALE"
 
@@ -225,7 +225,7 @@ def test_approval_requires_matching_passing_evaluation():
             evaluating,
             EvolutionCandidateStatus.approved,
             expected_state_version=2,
-            available_tools={"web_search"},
+            available_tools={"catalog_search"},
         )
     assert missing.value.code == "EVOLUTION_EVALUATION_REQUIRED"
 
@@ -234,7 +234,7 @@ def test_approval_requires_matching_passing_evaluation():
         evaluating,
         EvolutionCandidateStatus.approved,
         expected_state_version=2,
-        available_tools={"web_search"},
+        available_tools={"catalog_search"},
         evaluation_manifest=manifest(candidate),
     )
     assert approved.status == EvolutionCandidateStatus.approved
@@ -264,7 +264,7 @@ def test_rollout_states_are_rejected_while_promotion_is_disabled(target):
             state,
             target,
             expected_state_version=3,
-            available_tools={"web_search"},
+            available_tools={"catalog_search"},
             evaluation_manifest=manifest(candidate),
             promotion_enabled=False,
         )
@@ -400,7 +400,7 @@ def test_policy_parameter_allowlist_and_bounds_are_fail_closed():
 
 
 def test_disabled_tool_reference_cannot_advance_candidate():
-    candidate = procedure_candidate(required_tools=("web_search", "bash_execute"))
+    candidate = procedure_candidate(required_tools=("catalog_search", "bash_execute"))
     state = EvolutionCandidateState(candidate_digest=candidate.digest)
 
     with pytest.raises(EvolutionDomainError) as raised:
@@ -409,7 +409,7 @@ def test_disabled_tool_reference_cannot_advance_candidate():
             state,
             EvolutionCandidateStatus.evaluating,
             expected_state_version=1,
-            available_tools={"web_search"},
+            available_tools={"catalog_search"},
         )
     assert raised.value.code == "EVOLUTION_AUTHORITY_VIOLATION"
     assert raised.value.details["issues"][0]["code"] == "evolution.tool_unavailable"
@@ -421,7 +421,7 @@ def test_instruction_like_authority_relaxation_is_rejected_but_negation_is_safe(
         issue.code
         for issue in validate_candidate_authority(
             unsafe,
-            available_tools={"web_search"},
+            available_tools={"catalog_search"},
         )
     } == {"evolution.protected_authority_instruction"}
 
@@ -431,7 +431,7 @@ def test_instruction_like_authority_relaxation_is_rejected_but_negation_is_safe(
     assert (
         validate_candidate_authority(
             safe,
-            available_tools={"web_search"},
+            available_tools={"catalog_search"},
         )
         == ()
     )

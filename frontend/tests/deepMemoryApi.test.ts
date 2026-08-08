@@ -73,7 +73,7 @@ const rawCandidate = {
     title: 'Research safely',
     content: '<img src=x onerror=alert(1)>',
     source_refs: [{ source_type: 'run', source_id: 'run-1', digest: 'sha256:run' }],
-    required_tools: ['web_search'],
+    required_tools: ['catalog_search'],
     environment_constraints: [{ key: 'runtime.mode', value: 'local' }],
     parameter_changes: [],
     supersedes_id: null,
@@ -223,7 +223,7 @@ describe('deepMemoryApi', () => {
       title: 'Research safely',
       target_component: 'procedure',
       content: '<img src=x onerror=alert(1)>',
-      required_tools: ['web_search'],
+      required_tools: ['catalog_search'],
       executable: false,
       production_promotion_enabled: false,
     });

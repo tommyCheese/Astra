@@ -56,7 +56,7 @@ def _scope() -> EffectiveDelegationScope:
         actions=("network_read",),
         resources=("https://example.com/**",),
         effect_kinds=("network_read",),
-        tools=("web_search",),
+        tools=("catalog_search",),
         skills=("managed:research",),
         data_labels=("public",),
         allowed_purposes=("research",),
@@ -68,7 +68,7 @@ def _scope() -> EffectiveDelegationScope:
 
 def _catalog() -> FrozenChildCatalog:
     return FrozenChildCatalog(
-        tools=({"name": "web_search", "version": "1"},),
+        tools=({"name": "catalog_search", "version": "1"},),
         tool_digest="sha256:tools",
         skills=(
             {

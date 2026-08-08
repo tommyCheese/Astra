@@ -8,7 +8,7 @@ vi.mock('../src/api', () => ({
     title: '公开标题',
     messages: [
       { role: 'user', content: '公开问题', items: [] },
-      { role: 'process', content: '', items: [{ kind: 'reasoning', title: '思考', detail: '正在分析公开问题', status: 'completed' }, { kind: 'tool', title: 'web_search', detail: '', status: 'completed' }] },
+      { role: 'process', content: '', items: [{ kind: 'reasoning', title: '思考', detail: '正在分析公开问题', status: 'completed' }, { kind: 'tool', title: 'catalog_search', detail: '', status: 'completed' }] },
       { role: 'assistant', content: '**公开回答**', items: [] },
     ],
     shared_at: '2026-07-14T00:00:00Z',
@@ -31,7 +31,7 @@ describe('SharedConversationPage', () => {
       title: '公开标题',
       messages: [
         { role: 'user', content: '公开问题', items: [] },
-        { role: 'process', content: '', items: [{ kind: 'reasoning', title: '思考', detail: '正在分析公开问题', status: 'completed' }, { kind: 'tool', title: 'web_search', detail: '', status: 'completed' }] },
+        { role: 'process', content: '', items: [{ kind: 'reasoning', title: '思考', detail: '正在分析公开问题', status: 'completed' }, { kind: 'tool', title: 'catalog_search', detail: '', status: 'completed' }] },
         { role: 'assistant', content: '**公开回答**', items: [] },
       ],
       shared_at: '2026-07-14T00:00:00Z',

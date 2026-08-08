@@ -51,7 +51,7 @@ const custom = {
   created_at: '2026-01-01T00:00:00Z',
   updated_at: '2026-01-01T00:00:00Z',
   compatibility: 'Astra 0.1+',
-  requested_tool_patterns: ['web_search'],
+  requested_tool_patterns: ['catalog_search'],
   files: [{
     path: 'SKILL.md', uri: 'skill-draft://skill-1/token-1/SKILL.md',
     digest: 'sha256:file', size_bytes: 10, media_type: 'text/markdown',

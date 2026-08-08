@@ -11,7 +11,6 @@ from app.application.agent_runtime.policies.reasoning import (
     AgentObservationEvaluator,
     AgentReflectionGate,
 )
-from app.application.agent_runtime.services.plugin_runtime import PluginRuntimeState
 from app.application.agent_runtime.services.approval import ApprovalRoutingStage
 from app.application.agent_runtime.services.authorization import PermissionAuthorizationStage
 from app.application.agent_runtime.services.completion import CompletionVerificationStage
@@ -23,6 +22,7 @@ from app.application.agent_runtime.services.invocation import ToolInvocationStag
 from app.application.agent_runtime.services.memory_candidates import MemoryCandidateWriter
 from app.application.agent_runtime.services.node_completion import NodeCompletionStage
 from app.application.agent_runtime.services.observation import ObservationNormalizationStage
+from app.application.agent_runtime.services.plugin_runtime import PluginRuntimeState
 from app.application.agent_runtime.services.progress import (
     ExecutionProgress,
     ProgressEvaluationStage,
@@ -159,6 +159,7 @@ class RootRuntimeComposer:
             infrastructure["sandbox_service"],
             activation,
             self._plugin_runtime,
+            infrastructure["memory_service"],
         )
         return {
             "authorization": authorization,

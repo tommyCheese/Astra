@@ -9,8 +9,6 @@ from app.infrastructure.tools.bash import BashExecuteTool
 from app.infrastructure.tools.chart import ChartRenderTool
 from app.infrastructure.tools.router import ToolRouter
 from app.infrastructure.tools.selection import CapabilityToolResolver
-from app.infrastructure.tools.web.fetching import WebFetchTool
-from app.infrastructure.tools.web.search import WebSearchTool
 
 
 class StaticTool(AstraTool):
@@ -191,15 +189,6 @@ def test_empty_requirement_keeps_all_safe_eligible_tools_available():
 
 
 def test_builtin_tools_declare_provider_neutral_task_capabilities():
-    assert WebSearchTool.spec.task_capabilities == [
-        "information.search",
-        "source.discover",
-    ]
-    assert WebFetchTool.spec.task_capabilities == [
-        "information.read",
-        "source.retrieve",
-        "evidence.extract",
-    ]
     assert ChartRenderTool.spec.task_capabilities == [
         "data.visualize",
         "artifact.render",

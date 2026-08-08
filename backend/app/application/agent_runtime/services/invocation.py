@@ -6,8 +6,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from app.application.permissions.effects import workspace_mount_mode
 from app.application.agent_runtime.services.plugin_runtime import PluginRuntimeState
+from app.application.permissions.effects import workspace_mount_mode
 from app.application.skills.activation import SkillActivationService
 from app.application.workspaces.artifacts import ArtifactService
 from app.application.workspaces.runtime import WorkspaceRuntimeService
@@ -62,6 +62,7 @@ class ToolInvocationStage:
         sandbox_service: SandboxJobService,
         skill_activation_service: SkillActivationService,
         plugin_runtime: PluginRuntimeState,
+        memory_service: Any,
     ) -> None:
         self._run_repository = run_repository
         self._permission_repository = permission_repository
@@ -71,6 +72,7 @@ class ToolInvocationStage:
         self._sandbox_service = sandbox_service
         self._skill_activation_service = skill_activation_service
         self._plugin_runtime = plugin_runtime
+        self._memory_service = memory_service
 
     async def execute(self, stage_input: InvocationStageInput) -> InvocationStageResult:
         # Authorization and the prepared tool-call record form the durable
@@ -83,12 +85,39 @@ class ToolInvocationStage:
         execution_context = self._execution_context(stage_input, workspace_path, mount_mode)
         await self._record_skill_attribution(stage_input, execution_context)
         await self._run_repository.commit()
+        capture_in_process_write = (
+            stage_input.tool.spec.execution_backend == "in_process"
+            and mount_mode == "read_write"
+            and workspace_path is not None
+        )
+        before_manifest = (
+            self._workspace_service.scan(workspace_path) if capture_in_process_write else None
+        )
+        before_protected_paths = (
+            self._workspace_service.protected_paths(workspace_path)
+            if capture_in_process_write
+            else None
+        )
+        guard = (
+            self._workspace_service.access_guard(workspace_path, mount_mode)
+            if capture_in_process_write
+            else _empty_workspace_guard()
+        )
         try:
-            raw_output = await self._plugin_runtime.execute(
-                stage_input.tool,
-                stage_input.tool_input,
-                context=execution_context,
-            )
+            async with guard:
+                raw_output = await self._plugin_runtime.execute(
+                    stage_input.tool,
+                    stage_input.tool_input,
+                    context=execution_context,
+                )
+                if before_manifest is not None and workspace_path is not None:
+                    await self._workspace_service.capture_changes(
+                        run_id=stage_input.run_id,
+                        tool_call_id=stage_input.tool_call.id,
+                        workspace_dir=workspace_path,
+                        before=before_manifest,
+                        before_protected_paths=before_protected_paths,
+                    )
             tool_output = self._plugin_runtime.adapt_and_validate(
                 stage_input.tool.spec,
                 raw_output,
@@ -137,6 +166,7 @@ class ToolInvocationStage:
             skill_input_provider=self._skill_activation_service,
             agent_execution_id=supervisor.parent_execution_id if supervisor else None,
             delegation_context=supervisor,
+            memory_service=self._memory_service,
         )
 
     async def _record_skill_attribution(
@@ -226,3 +256,11 @@ class ToolInvocationStage:
             list(dict.fromkeys(trust_sources)),
             list(dict.fromkeys(data_labels)),
         )
+
+
+class _empty_workspace_guard:
+    async def __aenter__(self):
+        return None
+
+    async def __aexit__(self, exc_type, exc, traceback):
+        return False

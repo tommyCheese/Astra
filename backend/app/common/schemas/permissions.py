@@ -125,6 +125,8 @@ class EffectKind(str, Enum):
     credential_use = "credential_use"
     delegation_create = "delegation_create"
     permission_change = "permission_change"
+    memory_write = "memory_write"
+    memory_delete = "memory_delete"
 
 
 class EffectItem(BaseModel):

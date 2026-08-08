@@ -13,14 +13,3 @@ docker build -t astra-data-viz:0.1.0 .
 
 服务端配置 `SANDBOX_PROVIDER=docker`、`SANDBOX_RUNTIME_IMAGE` 和
 `SANDBOX_RUNTIME_LOCK_DIGEST`。普通 Job 使用 hardened 容器、默认断网，禁止运行时安装依赖。
-
-`web-tools` 是 `web_search` 与 `web_fetch` 的隔离运行环境。它只复制运行所需的
-Python 模块，依赖由 `requirements.lock` 固定，不会把 `backend/.env`、本地数据库
-或 artifact 打入镜像：
-
-```bash
-docker build -f runtimes/web-tools/Dockerfile -t astra-web-tools:0.1.0 .
-```
-
-服务端通过 `SANDBOX_WEB_RUNTIME_IMAGE` 选择该镜像。请求经 `/input/request.json`
-传入，stdout 只返回版本化 JSON envelope；容器不挂载任何宿主目录。

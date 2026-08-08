@@ -29,6 +29,8 @@ DEFAULT_TOOL_AUTHORITIES = frozenset(
         "credential_use",
         "delegation_create",
         "permission_change",
+        "memory_write",
+        "memory_delete",
     }
 )
 
@@ -82,10 +84,13 @@ class ToolRouter:
                 "permission_denied", f"AstraTool permission is not allowed: {tool_name}"
             )
         if tool.spec.risk not in self.allowed_risks:
-            raise ToolExecutionError("permission_denied", f"AstraTool risk is not allowed: {tool_name}")
+            raise ToolExecutionError(
+                "permission_denied", f"AstraTool risk is not allowed: {tool_name}"
+            )
         if tool.spec.execution_backend not in self.available_backends:
             raise ToolExecutionError(
-                "sandbox_unavailable", f"AstraTool backend is unavailable: {tool.spec.execution_backend}"
+                "sandbox_unavailable",
+                f"AstraTool backend is unavailable: {tool.spec.execution_backend}",
             )
         return tool
 

@@ -228,6 +228,7 @@ class ToolExecutionContext:
     skill_input_provider: Any = None
     agent_execution_id: str | None = None
     delegation_context: Any = None
+    memory_service: Any = None
 
 
 async def materialize_skill_inputs(

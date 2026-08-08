@@ -178,7 +178,7 @@ const evolutionCandidate: EvolutionCandidate = {
   content: '<script>globalThis.__candidateInjected=true</script>Use only currently enabled tools.',
   content_digest: 'sha256:candidate',
   environment_constraints: [{ key: 'runtime.mode', value: 'local' }],
-  required_tools: ['web_search'],
+  required_tools: ['catalog_search'],
   parameter_changes: [],
   current_evaluation_id: 'evaluation-1',
   current_evaluation_verdict: 'passed',

@@ -6,8 +6,8 @@ Astra 的发布目标是：维护者给 Codex 一句自然语言指令，其余�
 ## 一次性设置
 
 1. 在仓库的 Actions 设置中允许工作流读取仓库并写入 Releases 与 Packages。
-2. 首次发布后，在 GitHub Packages 中把 `astra-backend`、`astra-frontend`、
-   `astra-data-viz` 和 `astra-web-tools` 四个 GHCR 包设为 Public。
+2. 首次发布后，在 GitHub Packages 中把 `astra-backend`、`astra-frontend`
+   和 `astra-data-viz` 三个 GHCR 包设为 Public。
 3. 建议为仓库启用 Immutable Releases。工作流会先创建草稿、上传并证明全部
    产物，最后才公开 Release。
 4. 保护 `main`，要求 `CI / Backend`、`CI / Frontend`、
@@ -26,7 +26,7 @@ Codex 应执行以下发布契约：
 3. 运行后端、前端、版本与发行包校验。
 4. 将版本变更通过 PR 合入 `main`。
 5. 在合入的提交上触发 `Release` 工作流，或推送签名/注释 tag `v0.2.0`。
-6. 监控工作流直到 Release 与四个多架构 GHCR 镜像全部发布。
+6. 监控工作流直到 Release 与三个多架构 GHCR 镜像全部发布。
 
 正式发布不会绕过测试。稳定版本只有在 GitHub Release 草稿和所有产物都准备
 完成后，才会把四个容器镜像提升为 `latest`。

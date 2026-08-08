@@ -50,8 +50,8 @@ async def test_docker_provider_uses_bridge_only_for_explicit_internet_access(tmp
     provider = RecordingDockerProvider()
     await SandboxSupervisor(provider).run(
         SandboxRequest(
-            "astra-web-tools:0.1.0",
-            ["/opt/astra/bin/tool-runtime"],
+            "astra-data-viz:0.1.0",
+            ["/opt/astra/bin/render"],
             tmp_path,
             tmp_path / "out",
             allow_internet_access=True,

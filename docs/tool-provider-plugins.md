@@ -4,7 +4,7 @@ Astra 的工具扩展以 `PluginDescriptor` 和 `PluginContribution` 为边界�
 
 ## 信任与执行边界
 
-- `builtin` Provider 由平台装配；当前内建 Provider 是 `astra.web`、`astra.chart`、`astra.shell` 和控制面的 `astra.builtin`。
+- `builtin` Provider 由平台装配；当前内建 Provider 是 `astra.chart`、`astra.shell` 和平台运行时 `astra.builtin`。`astra.builtin` 提供 Swarm、结构化的 Workspace list/read/search/write/edit，以及受治理的 `remember` / `forget` 记忆工具。
 - `managed_package` 只允许管理员明确配置的包入口和 digest。发现功能默认关闭，也不会扫描 Task Workspace。
 - `isolated_descriptor` 只能声明工具清单，不能向 Host 注入可执行 Analyzer、Processor、Validator、Presenter 或 Backend。每个外部工具必须解析到 Host 管理的 `RuntimeBackend`。
 - 隔离传输只发送版本化 JSON：不传 Artifact、Workspace、数据库、Sandbox、Credential Broker 或 Delegation service 对象。网络权限和凭据只以显式开关与 credential reference 传递。
@@ -23,6 +23,10 @@ Provider 状态依次经过 discovered、verified、loaded、healthy、enabled�
 标记为 `x-secret` 的配置字段只接受 `{ "credential_ref": "..." }`，读取接口仅返回是否已配置，不返回引用或 secret。每次状态和配置写入都有审计记录，配置 revision 会进入后续 Run 的目录快照。
 
 旧的固定字段 `PUT /api/tools` 已在兼容窗口结束后删除。客户端必须使用按 identity 定位的 Tool/Provider 状态接口。
+
+Workspace 工具只能使用 Task Workspace 相对路径，拒绝路径穿越、链接和 `.astra` / `.git` / `.codex` 保护目录。读取与检索有文件、字节和结果上限；写入与精确替换使用原子落盘，进入 `workspace_write` 审批和 Workspace change 审计。
+
+`remember` 只创建带 Run 与 ToolCall 来源的 `candidate`，不会绕过人工确认直接进入召回；全局关闭记忆写入后不向新 Run 暴露该工具。`forget` 只能撤销当前 Run 命名空间可访问的记忆，使用高风险 `memory_delete` effect，保留内容、来源和审计记录，不执行物理删除。
 
 ## 发布与回滚
 

@@ -18,7 +18,7 @@ def build_application_tool_registry(
     extra_sources: Iterable[PluginDiscoverySource] = (),
     host_runtime_backends: Iterable[PluginRuntimeBackendContribution] = (),
 ) -> AstraToolRegistry:
-    runtime_registry = build_runtime_tool_registry()
+    runtime_registry = build_runtime_tool_registry(settings)
     catalog = build_plugin_catalog(
         settings,
         extra_sources=extra_sources,

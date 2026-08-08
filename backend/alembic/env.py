@@ -24,6 +24,7 @@ SUPPORTED_REVISIONS = {
     "0007_plugin_tool_catalog_snapshots",
     "0008_dynamic_tool_provider_settings",
     "0009_remove_legacy_tool_settings",
+    "0010_remove_builtin_web_tools",
 }
 
 

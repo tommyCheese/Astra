@@ -114,8 +114,6 @@ def available_mock_tools(context: dict[str, Any], capability: str) -> list[str]:
         for name, manifest in context.get("tool_manifests", {}).items()
         if capability in manifest.get("task_capabilities", [])
     ]
-    if "tool_manifests" not in context:
-        return ["web_search" if capability == "information.search" else "web_fetch"]
     return tools
 
 
@@ -176,7 +174,6 @@ def mock_fetch_decision(goal: str, context: dict[str, Any]) -> AgentDecision | N
             "url": candidate.get("url"),
             "query": goal,
             "snippet": candidate.get("snippet", ""),
-            "crawler_plan": context.get("crawler_plan", {}),
         },
         expected_observation="返回正文、质量评分、抓取策略和 warning。",
         stop_condition="抓取足够来源后进行综合验证。",
@@ -189,7 +186,7 @@ def _search_observation(observations: list[dict[str, Any]]) -> dict[str, Any] | 
             observation
             for observation in observations
             if observation.get("kind") == "tool_result"
-            and observation.get("data", {}).get("tool_name") == "web_search"
+            and "candidates" in observation.get("data", {})
         ),
         None,
     )
@@ -200,5 +197,10 @@ def _attempted_fetch_urls(observations: list[dict[str, Any]]) -> set[str | None]
         observation.get("data", {}).get("url")
         for observation in observations
         if observation.get("kind") in {"tool_result", "tool_error"}
-        and observation.get("data", {}).get("tool_name") == "web_fetch"
+        and observation.get("data", {}).get("url")
+        and (
+            observation.get("kind") == "tool_error"
+            or observation.get("data", {}).get("content")
+            or observation.get("data", {}).get("snapshot")
+        )
     }

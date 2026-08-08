@@ -200,18 +200,18 @@ async def test_permission_repository_persists_identity_delegation_catalog_and_da
     )
     snapshot = await repository.freeze_tool_catalog(
         run.id,
-        catalog=[{"name": "web_search", "version": "1"}],
+        catalog=[{"name": "catalog_search", "version": "1"}],
         digest="sha256:catalog",
     )
     same_snapshot = await repository.freeze_tool_catalog(
         run.id,
-        catalog=[{"name": "web_search", "version": "1"}],
+        catalog=[{"name": "catalog_search", "version": "1"}],
         digest="sha256:catalog",
     )
     with pytest.raises(ValueError):
         await repository.freeze_tool_catalog(
             run.id,
-            catalog=[{"name": "web_search", "version": "2"}],
+            catalog=[{"name": "catalog_search", "version": "2"}],
             digest="sha256:changed",
         )
     credential = await repository.create_credential_grant(

@@ -121,18 +121,18 @@ describe('process stream reducer', () => {
 
   it('tracks tools and terminal status without exposing tool input', () => {
     let state = createOptimisticProcessState('run-1');
-    state = reduceProcessEvent(state, { id: 1, type: 'tool_call.started', payload: { tool_call_id: 'call-1', tool_name: 'web_search', input: { api_key: 'secret' } } });
-    state = reduceProcessEvent(state, { id: 2, type: 'tool_call.completed', payload: { tool_call_id: 'call-1', tool_name: 'web_search', status: 'succeeded' } });
+    state = reduceProcessEvent(state, { id: 1, type: 'tool_call.started', payload: { tool_call_id: 'call-1', tool_name: 'catalog_search', input: { api_key: 'secret' } } });
+    state = reduceProcessEvent(state, { id: 2, type: 'tool_call.completed', payload: { tool_call_id: 'call-1', tool_name: 'catalog_search', status: 'succeeded' } });
     state = reduceProcessEvent(state, { id: 3, type: 'run.completed', payload: { status: 'completed' } });
 
     expect(state.active).toBe(false);
-    expect(state.items.find((item) => item.id === 'tool-call-1')).toEqual(expect.objectContaining({ title: 'web_search', status: 'completed' }));
+    expect(state.items.find((item) => item.id === 'tool-call-1')).toEqual(expect.objectContaining({ title: 'catalog_search', status: 'completed' }));
     expect(JSON.stringify(state)).not.toContain('secret');
   });
 
   it('marks active process rows as cancelled when the run is stopped', () => {
     let state = createOptimisticProcessState('run-1');
-    state = reduceProcessEvent(state, { id: 1, type: 'tool_call.started', payload: { tool_call_id: 'call-1', tool_name: 'web_search' } });
+    state = reduceProcessEvent(state, { id: 1, type: 'tool_call.started', payload: { tool_call_id: 'call-1', tool_name: 'catalog_search' } });
     state = reduceProcessEvent(state, { id: 2, type: 'run.cancelled', payload: { status: 'cancelled' } });
 
     expect(state.active).toBe(false);
@@ -143,10 +143,10 @@ describe('process stream reducer', () => {
     let state = createOptimisticProcessState('run-1');
     state = reduceProcessEvent(state, { id: 1, type: 'reasoning.phase.started', payload: { phase: 'selecting_action', turn_index: 1 } });
     state = reduceProcessEvent(state, { id: 2, type: 'reasoning.summary.completed', payload: { turn_index: 1, summary: '先搜索' } });
-    state = reduceProcessEvent(state, { id: 3, type: 'tool_call.started', payload: { tool_call_id: 'call-1', tool_name: 'web_search' } });
+    state = reduceProcessEvent(state, { id: 3, type: 'tool_call.started', payload: { tool_call_id: 'call-1', tool_name: 'catalog_search' } });
     state = reduceProcessEvent(state, { id: 4, type: 'reasoning.phase.started', payload: { phase: 'selecting_action', turn_index: 2 } });
     state = reduceProcessEvent(state, { id: 5, type: 'reasoning.summary.completed', payload: { turn_index: 2, summary: '再抓取' } });
-    state = reduceProcessEvent(state, { id: 6, type: 'tool_call.started', payload: { tool_call_id: 'call-2', tool_name: 'web_fetch' } });
+    state = reduceProcessEvent(state, { id: 6, type: 'tool_call.started', payload: { tool_call_id: 'call-2', tool_name: 'catalog_read' } });
 
     expect(state.items.find((item) => item.id === 'reasoning-1')?.groupId).toBe('phase-selecting_action-1');
     expect(state.items.find((item) => item.id === 'tool-call-1')?.groupId).toBe('phase-selecting_action-1');
@@ -157,8 +157,8 @@ describe('process stream reducer', () => {
   it('shows a running evaluation handoff after a tool completes and replaces it with the next phase', () => {
     let state = createOptimisticProcessState('run-1');
     state = reduceProcessEvent(state, { id: 1, type: 'reasoning.phase.started', payload: { phase: 'selecting_action', turn_index: 1 } });
-    state = reduceProcessEvent(state, { id: 2, type: 'tool_call.started', payload: { tool_call_id: 'call-1', tool_name: 'web_search' } });
-    state = reduceProcessEvent(state, { id: 3, type: 'tool_call.completed', payload: { tool_call_id: 'call-1', tool_name: 'web_search', status: 'succeeded' } });
+    state = reduceProcessEvent(state, { id: 2, type: 'tool_call.started', payload: { tool_call_id: 'call-1', tool_name: 'catalog_search' } });
+    state = reduceProcessEvent(state, { id: 3, type: 'tool_call.completed', payload: { tool_call_id: 'call-1', tool_name: 'catalog_search', status: 'succeeded' } });
 
     expect(state.items.find((item) => item.id === 'phase-selecting_action-1')?.status).toBe('completed');
     expect(state.items.find((item) => item.id === 'phase-processing_result-call-1')).toMatchObject({
@@ -177,8 +177,8 @@ describe('process stream reducer', () => {
   it('does not retain the evaluation handoff after a terminal event', () => {
     let state = createOptimisticProcessState('run-1');
     state = reduceProcessEvent(state, { id: 1, type: 'reasoning.phase.started', payload: { phase: 'selecting_action', turn_index: 1 } });
-    state = reduceProcessEvent(state, { id: 2, type: 'tool_call.started', payload: { tool_call_id: 'call-1', tool_name: 'web_search' } });
-    state = reduceProcessEvent(state, { id: 3, type: 'tool_call.completed', payload: { tool_call_id: 'call-1', tool_name: 'web_search', status: 'succeeded' } });
+    state = reduceProcessEvent(state, { id: 2, type: 'tool_call.started', payload: { tool_call_id: 'call-1', tool_name: 'catalog_search' } });
+    state = reduceProcessEvent(state, { id: 3, type: 'tool_call.completed', payload: { tool_call_id: 'call-1', tool_name: 'catalog_search', status: 'succeeded' } });
     state = reduceProcessEvent(state, { id: 4, type: 'run.completed', payload: { status: 'completed' } });
 
     expect(state.items.find((item) => item.id === 'phase-processing_result-call-1')).toBeUndefined();
@@ -191,10 +191,10 @@ describe('process stream reducer', () => {
       steps: [], artifacts: [], sandbox_jobs: [], events: [], memories: [], chat_messages: [],
       turns: [{
         id: 'turn-1', run_id: 'run-1', turn_index: 1, decision_type: 'call_tool', reasoning_summary: '先搜索',
-        selected_tool: 'web_search', decision: {}, observation: null, reflection: null, tool_call_id: 'call-1',
+        selected_tool: 'catalog_search', decision: {}, observation: null, reflection: null, tool_call_id: 'call-1',
         artifact_id: null, memory_reads: [], memory_writes: [], status: 'completed', created_at: 'now', updated_at: 'now',
       }],
-      tool_calls: [{ id: 'call-1', tool_name: 'web_search', status: 'succeeded', input: {}, output: {} }],
+      tool_calls: [{ id: 'call-1', tool_name: 'catalog_search', status: 'succeeded', input: {}, output: {} }],
     } as RunView);
 
     expect(state.items.find((item) => item.id === 'phase-selecting_action-1')).toBeDefined();
@@ -221,7 +221,7 @@ describe('process stream reducer', () => {
       agent_execution_id: 'child-1',
       agent_sequence: 1,
       type: 'tool_call.started',
-      payload: { tool_call_id: 'call-1', tool_name: 'web_search' },
+      payload: { tool_call_id: 'call-1', tool_name: 'catalog_search' },
     });
     const unchanged = reduceProcessEvent(state, {
       id: 11,
@@ -239,7 +239,7 @@ describe('process stream reducer', () => {
       agent_execution_id: 'child-1',
       agent_sequence: 3,
       type: 'tool_call.completed',
-      payload: { tool_call_id: 'call-1', tool_name: 'web_search', status: 'succeeded' },
+      payload: { tool_call_id: 'call-1', tool_name: 'catalog_search', status: 'succeeded' },
     });
     expect(state.cursorGap).toBe(true);
     expect(state.agentCursors['child-1']).toBe(3);

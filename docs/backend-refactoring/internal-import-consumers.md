@@ -1,16 +1,15 @@
 # 后端内部导入消费者登记
 
-基线日期：2026-08-04。生产包以外共有 78 个 Python 文件直接导入 `app.*`：76 个测试、1 个 Alembic 入口和 1 个 Web Tool runtime。迁移内部模块路径时必须搜索并更新这些消费者；以下登记使用受控集合而非承诺兼容私有路径。
+基线日期：2026-08-04。生产包以外的 Python 消费者包含测试和 Alembic 入口。迁移内部模块路径时必须搜索并更新这些消费者；以下登记使用受控集合而非承诺兼容私有路径。
 
 ## 基础设施消费者
 
 - `backend/alembic/env.py`
-- `runtimes/web-tools/tool_runtime.py`
 
 ## 测试消费者
 
 - `backend/tests/conftest.py`
-- `backend/tests/fake_web_tools.py`
+- `backend/tests/fake_information_tools.py`
 - `backend/tests/test_agent_evolution_api.py`
 - `backend/tests/test_agent_evolution_domain.py`
 - `backend/tests/test_agent_executions.py`

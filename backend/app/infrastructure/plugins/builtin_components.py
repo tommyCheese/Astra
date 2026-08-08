@@ -3,12 +3,9 @@ from __future__ import annotations
 import re
 import shlex
 from typing import Any
-from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 from app.common.schemas.agent.execution_state import AgentObservation
 from app.common.schemas.agent.run_result import AgentValidationIssue, AgentValidationOutcome
-from app.domain.grounding.fragments import fragments_from_web_result
-from app.domain.grounding.schemas import GroundingEvidenceLineage
 from app.infrastructure.plugins.interfaces import (
     PluginApprovalPresenter,
     PluginResultProcessingOutput,
@@ -21,142 +18,6 @@ _SECRET_VALUE = re.compile(
     r"(?i)\b(api[_-]?key|token|authorization|password)\s*[:=]\s*(?:bearer\s+)?\S+"
 )
 _SHELL_META = re.compile(r"(?:&&|\|\||[|;&<>`]|\$\(|\$\{|\n|\r)")
-
-
-class WebResultProcessor(PluginResultProcessor):
-    def __init__(self):
-        self._candidates: list[dict[str, Any]] = []
-
-    def process(self, spec, tool_input, result):
-        data = dict(result.get("data") or {})
-        fragments = fragments_from_web_result(
-            spec.name,
-            data,
-            lineage=GroundingEvidenceLineage(
-                plan_node_id=str(result.get("plan_node_id") or "") or None,
-                node_execution_id=str(result.get("node_execution_id") or "") or None,
-                tool_call_id=str(result.get("tool_call_id") or "") or None,
-            ),
-        )
-        evidence: dict[str, Any]
-        if "candidates" in data:
-            candidates, dedupe = self._filter_candidates(
-                [*self._candidates, *data.get("candidates", [])]
-            )
-            self._candidates = candidates
-            data["candidates"] = candidates
-            data["dedupe"] = dedupe
-            evidence = {
-                "domain": "web",
-                "kind": "search",
-                "candidates": candidates,
-                "warnings": list(data.get("warnings", [])),
-                "fragments": [
-                    item.model_dump(mode="json", exclude_none=True)
-                    for item in fragments
-                ],
-            }
-        else:
-            evidence = {
-                "domain": "web",
-                "kind": "fetch",
-                "source": data,
-                "fragments": [
-                    item.model_dump(mode="json", exclude_none=True)
-                    for item in fragments
-                ],
-            }
-        return PluginResultProcessingOutput(
-            observation=AgentObservation(
-                kind="tool_result",
-                status="succeeded",
-                summary=f"{spec.name} completed",
-                data={"tool_name": spec.name, **data},
-            ),
-            evidence=evidence,
-            validation_input={"domain": "web"},
-        )
-
-    @staticmethod
-    def _filter_candidates(candidates):
-        filtered = []
-        seen = set()
-        skipped = []
-        for candidate in candidates:
-            url = str(candidate.get("url") or "")
-            parsed = urlparse(url)
-            if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-                skipped.append({"url": url, "reason": "unsupported_url"})
-                continue
-            if parsed.path.lower().endswith(
-                (".zip", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".mp4", ".mov")
-            ):
-                skipped.append({"url": url, "reason": "unsupported_content_type"})
-                continue
-            query = [
-                (key, value)
-                for key, value in parse_qsl(parsed.query, keep_blank_values=True)
-                if not key.lower().startswith("utm_")
-                and key.lower() not in {"fbclid", "gclid"}
-            ]
-            canonical = urlunparse(
-                (
-                    parsed.scheme.lower(),
-                    parsed.netloc.lower(),
-                    parsed.path.rstrip("/") or "/",
-                    "",
-                    urlencode(query),
-                    "",
-                )
-            )
-            if canonical in seen:
-                skipped.append({"url": url, "reason": "duplicate"})
-                continue
-            seen.add(canonical)
-            filtered.append({**candidate, "canonical_url": canonical})
-        return filtered, {
-            "candidate_count": len(candidates),
-            "deduped_count": len(filtered),
-            "skipped_count": len(skipped),
-            "skipped": skipped[:8],
-        }
-
-    def process_failure(self, spec, tool_input, error):
-        return {
-            "domain": "web",
-            "kind": "failure",
-            "source": {
-                **({"url": tool_input.get("url")} if tool_input.get("url") else {}),
-                **error,
-            },
-        }
-
-
-class WebEvidenceValidator(PluginResultValidator):
-    def validate(self, result, evidence):
-        fragments = evidence.get("fragments", [])
-        fetched = [item["source"] for item in fragments if item.get("kind") == "fetch"]
-        attempted = any(item.get("domain") == "web" for item in fragments)
-        if not attempted:
-            return AgentValidationOutcome(validator="web_evidence", passed=True, blocking=True)
-        issues = []
-        if not fetched:
-            issues.append(
-                AgentValidationIssue(code="web_sources_not_fetched", message="没有成功抓取到可用来源。")
-            )
-        if not result.get("sources"):
-            issues.append(
-                AgentValidationIssue(
-                    code="web_source_citations_missing", message="最终答案缺少来源引用。"
-                )
-            )
-        return AgentValidationOutcome(
-            validator="web_evidence",
-            passed=not issues,
-            blocking=True,
-            issues=issues,
-            evidence_refs=[str(item.get("url")) for item in fetched if item.get("url")],
-        )
 
 
 class ChartResultProcessor(PluginResultProcessor):
