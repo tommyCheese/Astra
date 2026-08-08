@@ -9,7 +9,7 @@ from app.application.agent_runtime.policies.reasoning import (
     normalize_contract,
     validate_contract,
 )
-from app.application.run_management.conversation_context import ConversationContextManager
+from app.application.run_management.conversations.context import ConversationContextManager
 from app.common.schemas.agent.planning import (
     ExpectedObservation,
     PlanDraft,

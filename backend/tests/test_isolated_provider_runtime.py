@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from app.application.agent_runtime.services.plugin_runtime import PluginRuntimeState
+from app.application.agent_runtime.services.tooling.plugin_runtime import PluginRuntimeState
 from app.infrastructure.plugins.catalog import PluginCatalogBuilder, PluginCatalogError
 from app.infrastructure.plugins.contracts import (
     PluginComponentIdentity,

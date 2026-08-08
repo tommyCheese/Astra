@@ -3,10 +3,10 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
-from app.application.agent_runtime.services.approval import ApprovalRoutingStage, ApprovalStageInput
-from app.application.agent_runtime.services.authorization import AuthorizationStageInput, PermissionAuthorizationStage
-from app.application.agent_runtime.services.invocation import InvocationStageInput, ToolInvocationStage
-from app.application.agent_runtime.services.plugin_runtime import PluginRuntimeState
+from app.application.agent_runtime.services.tooling.approval import ApprovalRoutingStage, ApprovalStageInput
+from app.application.agent_runtime.services.tooling.authorization import AuthorizationStageInput, PermissionAuthorizationStage
+from app.application.agent_runtime.services.tooling.invocation import InvocationStageInput, ToolInvocationStage
+from app.application.agent_runtime.services.tooling.plugin_runtime import PluginRuntimeState
 from app.application.memory.tool_service import MemoryToolService
 from app.application.skills.activation import SkillActivationService
 from app.application.workspaces.artifacts import ArtifactService, LocalArtifactStore

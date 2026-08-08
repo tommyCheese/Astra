@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.application.run_management.contracts import RunExecutionDispatcher
+from app.application.run_management.lifecycle.contracts import RunExecutionDispatcher
 from app.application.scheduling.dispatcher import ScheduledRunDispatcher
 from app.common.core.config import AstraRuntimeSettings
 from app.infrastructure.repositories.schedules import ScheduleRepository

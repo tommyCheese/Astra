@@ -1210,7 +1210,7 @@ async def test_create_run_rejects_invalid_agent_profile_as_configuration_error(
         raise AgentProfileConfigurationError("invalid test profile")
 
     monkeypatch.setattr(
-        "app.application.run_management.creation.load_agent_profile", invalid_profile
+        "app.application.run_management.lifecycle.creation.load_agent_profile", invalid_profile
     )
     response = await app_client.post("/api/runs", json={"goal": "Profile 配置测试"})
 
@@ -1778,7 +1778,7 @@ async def test_run_event_stream_starts_with_ready_signal(app_client, monkeypatch
 
 
 async def test_create_run_stream_returns_identity_before_starting_engine(app_client, monkeypatch):
-    from app.application.run_management.application import RunApplicationService
+    from app.application.run_management.lifecycle.service import RunApplicationService
     from app.common.schemas.agent.api_views import CreateRunRequest
 
     scheduled: list[str] = []
@@ -1811,7 +1811,7 @@ async def test_create_run_stream_returns_identity_before_starting_engine(app_cli
 
 
 async def test_run_event_stream_unsubscribes_when_closed_after_ready(app_client, monkeypatch):
-    from app.application.run_management.events import RunEventBroker
+    from app.application.run_management.projections.events import RunEventBroker
 
     created = await app_client.post("/api/runs", json={"goal": "流断连测试"})
     run_id = created.json()["run_id"]
@@ -1830,7 +1830,7 @@ async def test_run_event_stream_unsubscribes_when_closed_after_ready(app_client,
 async def test_run_event_stream_delivers_committed_broker_event_without_second_query(
     monkeypatch,
 ):
-    from app.application.run_management.events import PublishedRunEvent, RunEventBroker
+    from app.application.run_management.projections.events import PublishedRunEvent, RunEventBroker
 
     query_count = 0
 
@@ -2327,7 +2327,7 @@ async def test_create_run_rejects_unknown_model_provider(app_client):
 
 @pytest.mark.parametrize("provider", ["anthropic", "google", "azure", "groq", "qwen"])
 def test_model_config_accepts_supported_cloud_providers(provider):
-    from app.application.run_management.settings import RunSettingsResolver
+    from app.application.run_management.lifecycle.settings import RunSettingsResolver
 
     configured = RunSettingsResolver.apply_model_config(
         AstraRuntimeSettings(model_provider="mock"),
@@ -2344,7 +2344,7 @@ def test_model_config_accepts_supported_cloud_providers(provider):
 
 @pytest.mark.parametrize("provider", ["ollama", "lmstudio", "vllm", "localai", "compatible"])
 def test_model_config_allows_keyless_local_providers(provider):
-    from app.application.run_management.settings import RunSettingsResolver
+    from app.application.run_management.lifecycle.settings import RunSettingsResolver
 
     configured = RunSettingsResolver.apply_model_config(
         AstraRuntimeSettings(model_provider="mock"),

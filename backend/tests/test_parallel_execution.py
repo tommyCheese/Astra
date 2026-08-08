@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from app.application.agent_runtime.policies.reasoning import build_default_contract
 from app.application.planning.scheduler import PlanScheduler
 from app.application.planning.service import PlanService
-from app.application.run_management.recovery import RunExecutionRecovery
+from app.application.run_management.execution.recovery import RunExecutionRecovery
 from app.application.runner.concurrency import (
     ResourceClaim,
     acquire_resource_claims,

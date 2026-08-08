@@ -8,7 +8,7 @@ from fastapi import Request
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.application.memory.consolidation.service import AutoDreamService
-from app.application.run_management.contracts import RunExecutionDispatcher
+from app.application.run_management.lifecycle.contracts import RunExecutionDispatcher
 from app.application.scheduling.service import SchedulerService
 from app.infrastructure.sandbox.profiles import RuntimeProfileService
 

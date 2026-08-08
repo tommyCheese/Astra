@@ -1,12 +1,12 @@
 from fastapi import APIRouter, Depends, Query, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.application.run_management.conversation_commands import (
+from app.application.run_management.conversations.commands import (
     execute_system_command,
     list_system_commands,
 )
-from app.application.run_management.conversation_context import ConversationContextManager
-from app.application.run_management.conversation_lifecycle import ConversationLifecycleService
+from app.application.run_management.conversations.context import ConversationContextManager
+from app.application.run_management.conversations.lifecycle import ConversationLifecycleService
 from app.common.core.config import AstraRuntimeSettings, get_settings
 from app.common.core.errors import (
     AstraInputValidationError,

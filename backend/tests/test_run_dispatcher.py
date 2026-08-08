@@ -2,7 +2,7 @@ import asyncio
 
 import pytest
 
-from app.application.run_management.dispatcher import InProcessRunDispatcher
+from app.application.run_management.execution.dispatcher import InProcessRunDispatcher
 from app.common.core.config import AstraRuntimeSettings
 
 

@@ -7,9 +7,9 @@ from fastapi import APIRouter, Depends, Header, Query
 from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.application.run_management.application import RunApplicationService
-from app.application.run_management.events import run_event_broker
-from app.application.run_management.query_service import RunQueryService
+from app.application.run_management.lifecycle.service import RunApplicationService
+from app.application.run_management.projections.events import run_event_broker
+from app.application.run_management.projections.query_service import RunQueryService
 from app.application.subagents.lifecycle import SubagentCancellationService
 from app.application.subagents.observability import SubagentTelemetryRepository
 from app.application.workspaces.artifacts import LocalArtifactStore

@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 
-from app.application.agent_runtime.services.plugin_runtime import PluginRuntimeState
+from app.application.agent_runtime.services.tooling.plugin_runtime import PluginRuntimeState
 from app.infrastructure.repositories.permissions import PermissionRepository
 from app.infrastructure.tools.base import AstraToolRegistry
 

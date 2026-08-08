@@ -2,7 +2,7 @@ import asyncio
 
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from app.application.run_management.events import (
+from app.application.run_management.projections.events import (
     MAX_PUBLISHED_EVENTS_PER_RUN,
     PublishedRunEvent,
     RunEventBroker,

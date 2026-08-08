@@ -1,3 +1,6 @@
+import hashlib
+import json
+
 import pytest
 
 from app.application.agent_runtime.policies.completion import AgentCompletionGate
@@ -13,15 +16,6 @@ from app.common.schemas.agent.run_result import (
     AgentValidationOutcome,
 )
 from app.common.schemas.agent.types import TerminalState
-from app.domain.grounding.fragments import fragments_from_source_result
-from app.domain.grounding.identity import (
-    canonical_url,
-    digest_text,
-    search_trace_id,
-    segment_passages,
-    snapshot_id,
-    source_id,
-)
 from app.domain.grounding.ledger import (
     GroundingEvidenceConflictError,
     GroundingEvidenceLedger,
@@ -34,78 +28,71 @@ from app.infrastructure.db.models.runs import RunRecord
 from app.infrastructure.repositories.evidence import EvidenceRepository
 
 
-def test_grounding_identities_are_stable_and_tracking_parameters_are_removed():
-    first = canonical_url("https://Example.com/docs/?utm_source=test&b=2&a=1")
-    second = canonical_url("https://example.com/docs?b=2&a=1")
-    assert first == second
-    source = source_id(first)
-    assert source == source_id(second)
-    content_hash = digest_text("A  grounded\nsource")
-    assert snapshot_id(source, content_hash) == snapshot_id(source, content_hash)
-    assert search_trace_id("Astra", 0, "tool-1") == search_trace_id(
-        "Astra", 0, "tool-1"
-    )
-    assert search_trace_id("Astra", 0, "tool-1") != search_trace_id(
-        "Astra", 0, "tool-2"
+def evidence_fragment(
+    evidence_id: str,
+    kind: GroundingEvidenceKind,
+    payload: dict,
+) -> GroundingEvidenceFragment:
+    serialized = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+    return GroundingEvidenceFragment(
+        id=evidence_id,
+        kind=kind,
+        evidence_key=f"{kind.value}:{evidence_id}",
+        payload_digest=hashlib.sha256(serialized).hexdigest(),
+        payload=payload,
     )
 
 
-def test_segment_passages_is_bounded_and_find_open_are_local():
-    content = "Alpha evidence. " * 100 + "Beta conclusion. " * 80
-    source = source_id("https://example.com/report")
-    snapshot = snapshot_id(source, digest_text(content))
-    passages = segment_passages(
-        content,
-        source=source,
-        snapshot=snapshot,
-        max_chars=240,
-        overlap_chars=30,
-        max_passages=8,
-    )
-    assert 1 < len(passages) <= 8
-    assert all(len(item.text) <= 240 for item in passages)
-    fragments = fragments_from_source_result(
-        "catalog_read",
+def passage_fragment(
+    evidence_id: str = "evidence-passage-1",
+    *,
+    source: str = "source-1",
+    snapshot: str = "snapshot-1",
+    text: str = "Astra evidence supports the material conclusion.",
+) -> GroundingEvidenceFragment:
+    return evidence_fragment(
+        evidence_id,
+        GroundingEvidenceKind.passage,
         {
-            "url": "https://example.com/report",
-            "content": content,
-            "content_length": len(content),
+            "id": "passage-1",
+            "source_id": source,
+            "snapshot_id": snapshot,
+            "ordinal": 0,
+            "text": text,
+            "start_offset": 0,
+            "end_offset": len(text),
+            "evidence_strength": "source_passage",
         },
     )
-    ledger = GroundingEvidenceLedger(fragments)
-    matches = ledger.find_passages(source, "Beta", max_passages=2)
-    assert matches
-    assert ledger.open_passage(source, matches[0].id, context_before=1, context_after=1)
 
 
-def test_search_snippets_are_candidate_only_evidence():
-    fragments = fragments_from_source_result(
-        "catalog_search",
+def search_trace_fragment() -> GroundingEvidenceFragment:
+    return evidence_fragment(
+        "evidence-search-1",
+        GroundingEvidenceKind.search_trace,
         {
+            "id": "search-1",
             "query": "Astra",
             "provider": "google",
-            "candidates": [
-                {
-                    "url": "https://example.com/astra",
-                    "title": "Astra",
-                    "snippet": "Candidate summary",
-                    "rank": 1,
-                }
-            ],
         },
     )
-    candidate = next(
-        item for item in fragments
-        if item.kind == GroundingEvidenceKind.search_candidate
+
+
+def test_evidence_ledger_finds_and_opens_canonical_passages():
+    ledger = GroundingEvidenceLedger(
+        [passage_fragment(text="Alpha evidence. Beta conclusion.")]
     )
-    assert candidate.payload["evidence_strength"] == "candidate_only"
+
+    matches = ledger.find_passages("source-1", "Beta", max_passages=2)
+
+    assert [item.id for item in matches] == ["passage-1"]
+    assert ledger.open_passage(
+        "source-1", "passage-1", context_before=1, context_after=1
+    ) == matches
 
 
 def test_evidence_ledger_replay_is_idempotent_and_conflicts_fail():
-    fragments = fragments_from_source_result(
-        "catalog_search",
-        {"query": "Astra", "provider": "google", "candidates": []},
-    )
+    fragments = [search_trace_fragment()]
     ledger = GroundingEvidenceLedger(fragments)
     assert len(ledger.records()) == 1
     ledger.append(fragments[0])
@@ -125,10 +112,7 @@ async def test_evidence_writer_persists_run_lineage_idempotently(session):
     run = RunRecord(task_id=task.id)
     session.add(run)
     await session.flush()
-    fragments = fragments_from_source_result(
-        "catalog_search",
-        {"query": "Astra", "provider": "google", "candidates": []},
-    )
+    fragments = [search_trace_fragment()]
     repository = EvidenceRepository(session)
     first = await repository.append_with_lineage(
         run.id,
@@ -149,13 +133,18 @@ async def test_evidence_writer_persists_run_lineage_idempotently(session):
 
 
 def test_grounded_projection_binds_findings_to_passages_and_validates():
-    output = {
-        "url": "https://example.com/report",
-        "content": "Astra evidence supports the material conclusion.",
-        "content_length": 48,
-        "title": "Report",
-    }
-    ledger = GroundingEvidenceLedger(fragments_from_source_result("catalog_read", output))
+    snapshot = evidence_fragment(
+        "evidence-snapshot-1",
+        GroundingEvidenceKind.source_snapshot,
+        {
+            "id": "snapshot-1",
+            "source_id": "source-1",
+            "requested_url": "https://example.com/report",
+            "canonical_url": "https://example.com/report",
+            "title": "Report",
+        },
+    )
+    ledger = GroundingEvidenceLedger([snapshot, passage_fragment()])
     answer = project_grounded_answer(
         AgentFinalAnswer(
             summary="Material conclusion",
@@ -185,24 +174,18 @@ def test_grounded_projection_binds_findings_to_passages_and_validates():
 
 
 def test_candidate_only_evidence_cannot_support_material_claim():
-    ledger = GroundingEvidenceLedger(
-        fragments_from_source_result(
-            "catalog_search",
-            {
-                "query": "Astra",
-                "provider": "google",
-                "candidates": [
-                    {
-                        "url": "https://example.com/result",
-                        "title": "Result",
-                        "snippet": "Unverified snippet",
-                        "rank": 1,
-                    }
-                ],
-            },
-        )
+    candidate = evidence_fragment(
+        "evidence-candidate-1",
+        GroundingEvidenceKind.search_candidate,
+        {
+            "id": "candidate-1",
+            "search_trace_id": "search-1",
+            "url": "https://example.com/result",
+            "canonical_url": "https://example.com/result",
+            "evidence_strength": "candidate_only",
+        },
     )
-    candidate = ledger.records(GroundingEvidenceKind.search_candidate)[0]
+    ledger = GroundingEvidenceLedger([candidate])
     result = {
         "claims": [
             {

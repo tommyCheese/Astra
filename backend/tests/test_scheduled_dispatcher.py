@@ -5,8 +5,8 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from app.application.run_management.contracts import PreparedRunExecution
-from app.application.run_management.dispatcher import InProcessRunDispatcher
+from app.application.run_management.lifecycle.contracts import PreparedRunExecution
+from app.application.run_management.execution.dispatcher import InProcessRunDispatcher
 from app.application.scheduling.dispatcher import ScheduledRunDispatcher
 from app.common.core.config import AstraRuntimeSettings
 from app.common.core.errors import AstraInputValidationError

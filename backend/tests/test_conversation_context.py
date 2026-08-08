@@ -7,8 +7,8 @@ from app.application.context_compaction.service import (
     AgentContextCompactionService,
     CompactionResult,
 )
-from app.application.run_management.conversation_commands import execute_system_command
-from app.application.run_management.conversation_context import (
+from app.application.run_management.conversations.commands import execute_system_command
+from app.application.run_management.conversations.context import (
     ConversationContextManager,
     estimate_tokens,
 )

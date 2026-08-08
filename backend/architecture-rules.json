@@ -53,6 +53,26 @@
     {
       "importer": "app.application.subagents",
       "imported": "app.application.runner"
+    },
+    {
+      "importer": "app.application.agent_runtime.services.shared",
+      "imported": "app.application.agent_runtime.services.execution"
+    },
+    {
+      "importer": "app.application.agent_runtime.services.context",
+      "imported": "app.application.agent_runtime.services.execution"
+    },
+    {
+      "importer": "app.application.agent_runtime.services.tooling",
+      "imported": "app.application.agent_runtime.services.execution"
+    },
+    {
+      "importer": "app.application.agent_runtime.services.decisions",
+      "imported": "app.application.agent_runtime.services.execution"
+    },
+    {
+      "importer": "app.application.agent_runtime.services.completion",
+      "imported": "app.application.agent_runtime.services.execution"
     }
   ],
   "typed_module_prefixes": [

@@ -1,7 +1,7 @@
 from sqlalchemy import select
 
-from app.application.agent_runtime.services.context import AgentContextAssembler
-from app.application.agent_runtime.services.memory_candidates import MemoryCandidateWriter
+from app.application.agent_runtime.services.context.assembler import AgentContextAssembler
+from app.application.agent_runtime.services.completion.memory_candidates import MemoryCandidateWriter
 from app.common.core.config import AstraRuntimeSettings
 from app.common.schemas.agent.run_result import AgentRunMemoryCandidate
 from app.infrastructure.db.models.memory import MemoryRecallEventRecord

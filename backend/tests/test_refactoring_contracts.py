@@ -8,7 +8,7 @@ from sqlalchemy import create_mock_engine
 from support import DecisionStep, RunRequestBuilder, ScriptedDecisionClient
 
 from app.application.agent_runtime.policies.reasoning import resolve_run_profile
-from app.application.agent_runtime.services.loop import AstraAgentLoop
+from app.application.agent_runtime.services.execution.loop import AstraAgentLoop
 from app.common.core.config import AstraRuntimeSettings
 from app.common.schemas.agent.execution_state import AgentDecision
 from app.common.schemas.agent.run_policy import RequestedReasoningPolicy

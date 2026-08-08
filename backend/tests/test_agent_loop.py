@@ -9,13 +9,13 @@ from app.application.agent_runtime.policies.reasoning import (
     compile_subagent_policy,
     resolve_run_profile,
 )
-from app.application.agent_runtime.services.completion import (
+from app.application.agent_runtime.services.completion.verification import (
     INVALID_ARTIFACT_REFERENCE_WARNING,
     CompletionVerificationStage,
     normalize_final_answer_artifact_references,
     quick_workspace_change_completes_goal,
 )
-from app.application.agent_runtime.services.loop import AstraAgentLoop, ToolRouter
+from app.application.agent_runtime.services.execution.loop import AstraAgentLoop, ToolRouter
 from app.application.planning.service import PlanService, canonical_agent_state
 from app.common.core.config import AstraRuntimeSettings
 from app.common.schemas.agent.execution_state import (

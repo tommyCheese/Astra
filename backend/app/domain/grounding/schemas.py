@@ -22,59 +22,6 @@ class GroundingEvidenceKind(str, Enum):
     citation = "citation"
 
 
-class GroundingSearchConstraints(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    language: str | None = None
-    region: str | None = None
-    after: str | None = None
-    before: str | None = None
-    include_domains: list[str] = Field(default_factory=list, max_length=16)
-    exclude_domains: list[str] = Field(default_factory=list, max_length=16)
-    content_types: list[str] = Field(default_factory=list, max_length=8)
-    max_results: int = Field(default=5, ge=1, le=20)
-
-
-class GroundingConstraintAudit(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    applied: list[str] = Field(default_factory=list)
-    emulated: list[str] = Field(default_factory=list)
-    post_filtered: list[str] = Field(default_factory=list)
-    unsupported: list[str] = Field(default_factory=list)
-
-
-class GroundingSearchTrace(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    id: str
-    query: str
-    purpose: str | None = None
-    provider: str
-    constraints: GroundingSearchConstraints = Field(default_factory=GroundingSearchConstraints)
-    constraint_audit: GroundingConstraintAudit = Field(default_factory=GroundingConstraintAudit)
-    retrieved_at: str = Field(default_factory=utc_iso)
-
-
-class GroundingSearchCandidate(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    id: str
-    search_trace_id: str
-    url: str
-    canonical_url: str
-    title: str = ""
-    snippet: str = ""
-    provider: str
-    provider_rank: int = Field(ge=1)
-    display_link: str | None = None
-    published_at: str | None = None
-    source_type: str = "web"
-    evidence_strength: Literal["candidate_only"] = "candidate_only"
-    retrieved_at: str = Field(default_factory=utc_iso)
-    metadata: dict[str, Any] = Field(default_factory=dict)
-
-
 class GroundingSourcePassage(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -93,29 +40,6 @@ class GroundingSourcePassage(BaseModel):
         if self.end_offset < self.start_offset:
             raise ValueError("passage end_offset precedes start_offset")
         return self
-
-
-class GroundingSourceSnapshot(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    id: str
-    source_id: str
-    requested_url: str
-    canonical_url: str
-    title: str | None = None
-    description: str | None = None
-    published_at: str | None = None
-    retrieved_at: str = Field(default_factory=utc_iso)
-    content_digest: str
-    content_length: int = Field(ge=0)
-    segmentation_version: str = "passages.v1"
-    extraction_strategy: str | None = None
-    source_type: str = "web"
-    artifact_ids: list[str] = Field(default_factory=list)
-    passage_ids: list[str] = Field(default_factory=list)
-    links: list[str] = Field(default_factory=list)
-    signals: dict[str, Any] = Field(default_factory=dict)
-    warnings: list[str] = Field(default_factory=list)
 
 
 class GroundedAnswerClaim(BaseModel):

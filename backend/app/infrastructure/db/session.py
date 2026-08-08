@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import (
 )
 from sqlalchemy.orm import Session
 
-from app.application.run_management.events import PublishedRunEvent, run_event_broker
+from app.application.run_management.projections.events import PublishedRunEvent, run_event_broker
 from app.common.core.config import AstraRuntimeSettings, get_settings
 from app.infrastructure.db.models.metadata import metadata as metadata
 from app.infrastructure.db.models.runs import RunEventRecord

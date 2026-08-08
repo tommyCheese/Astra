@@ -3,11 +3,11 @@ from typing import assert_never
 
 import pytest
 
-from app.application.agent_runtime.services.action_resolution import (
+from app.application.agent_runtime.services.decisions.action_resolution import (
     ActionResolutionInput,
     ActionResolutionStage,
 )
-from app.application.agent_runtime.services.loop import execute_turns
+from app.application.agent_runtime.services.execution.loop import execute_turns
 from app.common.schemas.agent.execution_state import AgentDecision
 from app.common.schemas.agent.run_result import AgentFinalAnswer
 from app.domain.execution.contracts import (

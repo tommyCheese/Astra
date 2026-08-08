@@ -7,8 +7,8 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.application.run_management.application import RunApplicationService
-from app.application.run_management.contracts import RunExecutionDispatcher
+from app.application.run_management.lifecycle.service import RunApplicationService
+from app.application.run_management.lifecycle.contracts import RunExecutionDispatcher
 from app.common.core.config import AstraRuntimeSettings
 from app.common.core.errors import AstraError
 from app.common.schemas.agent.api_views import CreateRunRequest

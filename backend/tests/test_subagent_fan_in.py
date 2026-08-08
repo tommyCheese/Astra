@@ -10,11 +10,11 @@ from app.application.agent_runtime.policies.reasoning import (
     build_default_contract,
     resolve_run_profile,
 )
-from app.application.agent_runtime.services.completion_gate import (
+from app.application.agent_runtime.services.completion.gate import (
     CompletionGateInput,
     CompletionGateStage,
 )
-from app.application.agent_runtime.services.progress import ExecutionProgress
+from app.application.agent_runtime.services.shared.progress import ExecutionProgress
 from app.application.subagents.fan_in import (
     SubagentJoinService,
     SubagentResultValidationError,

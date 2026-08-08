@@ -12,11 +12,11 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 from app.application.agent_runtime.policies.reasoning import (
     build_default_contract,
 )
-from app.application.agent_runtime.services.loop import AstraAgentLoop
+from app.application.agent_runtime.services.execution.loop import AstraAgentLoop
 from app.application.fast_agent_runtime import FastAgentExecutor
 from app.application.fast_agent_runtime.context import fast_compatible_skills
 from app.application.planning.service import PlanService, PlanValidationError, canonical_agent_state
-from app.application.run_management.recovery import RunExecutionRecovery
+from app.application.run_management.execution.recovery import RunExecutionRecovery
 from app.application.runner.answer_stream import AnswerStreamMixin
 from app.application.runner.coordinator import RunCoordinator
 from app.application.runner.model_thinking_stream import ModelThinkingEventWriter

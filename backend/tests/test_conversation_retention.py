@@ -7,8 +7,8 @@ from pydantic import ValidationError
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from app.application.run_management.conversation_lifecycle import ConversationLifecycleService
-from app.application.run_management.conversation_retention import ConversationRetentionService
+from app.application.run_management.conversations.lifecycle import ConversationLifecycleService
+from app.application.run_management.conversations.retention import ConversationRetentionService
 from app.common.core.config import AstraRuntimeSettings
 from app.infrastructure.db.model_base import AstraOrmRecordBase
 from app.infrastructure.db.models.conversations import ConversationShareRecord, TaskRecord

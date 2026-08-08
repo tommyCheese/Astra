@@ -5,9 +5,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from app.application.agent_runtime.services.finalization import AgentFinalizationStage
-from app.application.agent_runtime.services.progress import ExecutionProgress
-from app.application.agent_runtime.services.root_iteration import (
+from app.application.agent_runtime.services.completion.finalization import AgentFinalizationStage
+from app.application.agent_runtime.services.shared.progress import ExecutionProgress
+from app.application.agent_runtime.services.execution.root_iteration import (
     RootAgentIterationStage,
     RootRuntimeState,
 )

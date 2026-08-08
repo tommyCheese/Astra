@@ -3,7 +3,7 @@ import json
 
 import pytest
 
-from app.application.agent_runtime.services.plugin_runtime import PluginRuntimeState
+from app.application.agent_runtime.services.tooling.plugin_runtime import PluginRuntimeState
 from app.application.permissions.effects import DefaultEffectAnalyzer
 from app.common.core.config import AstraRuntimeSettings
 from app.infrastructure.plugins.catalog import PluginCatalogBuilder

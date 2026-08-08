@@ -2,7 +2,7 @@ import pytest
 from pydantic import ValidationError
 
 from app.application.agent_runtime.policies.reasoning import AgentReasoningPolicyCompiler
-from app.application.agent_runtime.services.loop import AstraAgentLoop
+from app.application.agent_runtime.services.execution.loop import AstraAgentLoop
 from app.common.core.config import AstraRuntimeSettings
 from app.common.schemas.agent.execution_state import AgentDecision
 from app.common.schemas.agent.run_policy import RequestedReasoningPolicy

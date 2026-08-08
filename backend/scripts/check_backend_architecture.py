@@ -15,6 +15,20 @@ from typing import Any
 
 from analyze_backend_architecture import ArchitectureInventory, build_inventory
 
+DECLARED_DYNAMIC_MODULES = {
+    "app.infrastructure.plugins.isolated",
+}
+DECLARED_DYNAMIC_MODULE_PREFIXES = (
+    "app.infrastructure.builtin_skills.",
+)
+RETIRED_MODULE_PREFIXES = (
+    "app.infrastructure.tools.web",
+)
+COHESIVE_PACKAGE_ROOTS = (
+    Path("app/application/agent_runtime/services"),
+    Path("app/application/run_management"),
+)
+
 
 @dataclass(frozen=True)
 class QualityBudget:
@@ -418,6 +432,36 @@ def check_structural_budget(
         yield f"new compatibility symbol is forbidden: {symbol}"
 
 
+def check_runtime_surface(inventory: ArchitectureInventory) -> Iterable[str]:
+    """Reject retired modules and unexplained production modules outside the app graph."""
+    modules = {module.module: module for module in inventory.modules}
+    for module in modules:
+        if any(matches_prefix(module, prefix) for prefix in RETIRED_MODULE_PREFIXES):
+            yield f"retired production module remains: {module}"
+
+    reachable = transitive_reachability(
+        set(modules), dependency_edges(inventory)
+    ).get("app.main", set()) | {"app.main"}
+    for module, metric in sorted(modules.items()):
+        if module in reachable or metric.path.endswith("/__init__.py"):
+            continue
+        if module in DECLARED_DYNAMIC_MODULES or module.startswith(
+            DECLARED_DYNAMIC_MODULE_PREFIXES
+        ):
+            continue
+        yield f"production module is unreachable from app.main: {module}"
+
+    for package_root in COHESIVE_PACKAGE_ROOTS:
+        root_modules = sorted(
+            metric.path
+            for metric in inventory.modules
+            if Path(metric.path).parent == package_root
+            and not metric.path.endswith("/__init__.py")
+        )
+        for module_path in root_modules:
+            yield f"implementation module must move into a capability package: {module_path}"
+
+
 def check_architecture(
     inventory: ArchitectureInventory,
     rules: ArchitectureRules,
@@ -432,6 +476,7 @@ def check_architecture(
         *check_role_package_names(inventory, rules),
         *check_global_class_names(source_root, rules),
         *check_structural_budget(inventory, rules, baseline, source_root),
+        *check_runtime_surface(inventory),
     ]
     current_forbidden = forbidden_edges(dependency_edges(inventory), rules)
     baseline_forbidden = {tuple(edge) for edge in baseline["forbidden_edges"]}
