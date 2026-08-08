@@ -108,6 +108,12 @@ class AnswerMode(str, Enum):
     trusted = "trusted"
 
 
+class RuntimeKind(str, Enum):
+    fast_v1 = "fast-v1"
+    trusted_v1 = "trusted-v1"
+    legacy_standard_v1 = "legacy-standard-v1"
+
+
 class AssuranceLevel(str, Enum):
     basic = "basic"
     full = "full"

@@ -191,15 +191,12 @@ async def _execute_parameterized_command(
 
 
 def _compaction_message(details: dict[str, object], *, customized: bool) -> str:
+    del customized
     if details.get("status") == "failed":
         return f"未能完成对话整理（{details['failure_code']}）；原上下文保持不变。"
     if not details.get("model_used"):
-        return "当前没有需要折叠的较早上下文，未调用模型；主要信息上下文保持不变。"
-    folded = int(details.get("folded") or 0)
-    retained = int(details.get("retained") or 0)
-    if customized:
-        return f"已按指定方向调用模型完成上下文压缩：折叠 {folded} 轮，保留最近 {retained} 轮；完整聊天记录仍保留。"
-    return f"已调用模型完成主要信息上下文压缩：折叠 {folded} 轮，保留最近 {retained} 轮；完整聊天记录仍保留。"
+        return "当前上下文无需压缩。"
+    return "当前上下文已完成压缩。"
 
 
 def _command_invocation(command: str, arguments: str) -> str:

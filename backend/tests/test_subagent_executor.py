@@ -453,6 +453,16 @@ async def test_child_context_compaction_uses_an_independent_automatic_window(ses
             "agent_execution_id": child.id,
             "manifest_hash": "sha256:unused-v1-hash",
             "local_summary": "child initialized",
+            "continuation_round_trips": 1,
+            "continuation_answers": [
+                {
+                    "agent_execution_id": child.id,
+                    "continuation_token": "signed-token",
+                    "round_trip": 1,
+                    "values": {"scope": "continue"},
+                    "answered_at": NOW.isoformat(),
+                }
+            ],
             "created_at": NOW.isoformat(),
         }
     )
@@ -474,6 +484,8 @@ async def test_child_context_compaction_uses_an_independent_automatic_window(ses
     assert len(visible) < len(observations)
     assert execution.checkpoint["context_compaction"]["source_item_ids"]
     assert execution.checkpoint["context_continuation"]["contract_hash"] == contract.contract_hash
+    assert checkpoint.continuation_round_trips == 1
+    assert checkpoint.continuation_answers[0].values == {"scope": "continue"}
 
 
 async def _commit_competing_writer(sessions, run_id: str, marker: str) -> None:

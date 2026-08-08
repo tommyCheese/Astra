@@ -67,7 +67,7 @@ class ToolActionInput:
     active_node_execution_id: str | None
     model_context: dict[str, Any]
     execution_mode: str
-    quick_mode: bool
+    legacy_standard_mode: bool
     is_approved_resume: bool
     approved_request_snapshot: dict[str, Any] | None
     approved_tool_call: ToolCallRecord | None
@@ -125,13 +125,13 @@ class InvocationPipeline:
                     turn=action.turn,
                     decision=action.decision,
                     error=error,
-                    quick_mode=action.quick_mode,
+                    legacy_standard_mode=action.legacy_standard_mode,
                 )
             )
             return "continue", action.workspace_path, False, False, None, None
 
     async def _execute_authorized(self, action: ToolActionInput) -> ToolActionOutcome:
-        self._validate_execution_transition(action.quick_mode)
+        self._validate_execution_transition(action.legacy_standard_mode)
         invocation, step, tool_call, waiting_summary = await self._prepare_tool_call(action)
         if waiting_summary is not None:
             return (
@@ -297,7 +297,7 @@ class InvocationPipeline:
         normalized: NormalizedObservation,
     ) -> Literal["continue", "stop"]:
         tool, _, _, _, _, _ = authorized
-        if action.quick_mode:
+        if action.legacy_standard_mode:
             return await self._persist_quick_result(
                 action,
                 tool.spec.name,
@@ -434,7 +434,7 @@ class InvocationPipeline:
     ) -> PlanNodeRecord | StepRecord | None:
         if self._progress.active_plan is not None:
             return action.active_node
-        if action.quick_mode:
+        if action.legacy_standard_mode:
             return None
         run = await self._repository.require_run(action.run_id)
         spec = self._tool_registry.get(tool_name).spec
@@ -475,8 +475,8 @@ class InvocationPipeline:
         )
         return expected, criterion_refs
 
-    def _validate_execution_transition(self, quick_mode: bool) -> None:
-        if quick_mode:
+    def _validate_execution_transition(self, legacy_standard_mode: bool) -> None:
+        if legacy_standard_mode:
             return
         validate_transition(
             "select_action",

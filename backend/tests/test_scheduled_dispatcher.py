@@ -63,9 +63,11 @@ async def test_dispatcher_reuses_target_conversation_workspace(tmp_path, monkeyp
         )
 
     captured_task_ids: list[str | None] = []
+    captured_answer_modes: list[AnswerMode] = []
 
     async def fake_prepare(_service, payload, *, commit=True):
         captured_task_ids.append(payload.task_id)
+        captured_answer_modes.append(payload.answer_mode)
         run = RunRecord(
             task_id=payload.task_id,
             status="completed",
@@ -104,6 +106,7 @@ async def test_dispatcher_reuses_target_conversation_workspace(tmp_path, monkeyp
         reused_workspace = await WorkspaceRepository(session).get_or_create(target.id)
 
         assert captured_task_ids == [target.id]
+        assert captured_answer_modes == [AnswerMode.standard]
         assert run.task_id == target.id
         assert stored_schedule_run.task_id == target.id
         assert reused_workspace.id == target_workspace.id

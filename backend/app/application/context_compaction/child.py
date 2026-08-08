@@ -167,10 +167,23 @@ async def compact_child_context(
     )
     if result.checkpoint is None:
         return execution, checkpoint, observations
+    # Continuation answers are typed, parent-bound state.  They are never left
+    # to a lossy model summary and remain available after a V1→V2 migration.
+    compacted_checkpoint = result.checkpoint.model_copy(
+        update={
+            "continuation_round_trips": checkpoint.continuation_round_trips,
+            "continuation_answers": checkpoint.continuation_answers,
+            "remaining_budget": dict(execution.budget_envelope or usage),
+        }
+    )
     retained = set(result.retained_tail_ids)
     visible = [item.content for item in body if item.id in retained]
     current = await session.get(AgentExecutionRecord, execution.id)
     assert current is not None
-    current.checkpoint = {**(current.checkpoint or {}), "observations": visible}
+    current.checkpoint = {
+        **(current.checkpoint or {}),
+        "observations": visible,
+        "context_checkpoint": compacted_checkpoint.model_dump(mode="json"),
+    }
     await session.flush()
-    return current, result.checkpoint, visible
+    return current, compacted_checkpoint, visible

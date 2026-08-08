@@ -8,6 +8,7 @@ from sqlalchemy import and_, func, select
 from app.application.agent_runtime.policies.reasoning import resolve_run_profile
 from app.common.contracts.json_values import JsonObject
 from app.common.schemas.agent.run_policy import (
+    FastRuntimeSnapshot,
     ReasoningPolicySnapshot,
     RequestedReasoningPolicy,
     RunExecutionProfile,
@@ -25,6 +26,8 @@ from app.infrastructure.repositories.run_query_store import safe_agent_profile_m
 @dataclass(frozen=True)
 class PreparedRunConfiguration:
     answer_mode: str
+    runtime_kind: str
+    runtime_version: int
     execution_profile: JsonObject
     reasoning_policy: JsonObject
     model_policy: JsonObject
@@ -49,10 +52,22 @@ def prepare_run_configuration(
     AgentProfile.from_snapshot(snapshot)
     return PreparedRunConfiguration(
         answer_mode=profile.answer_mode.value,
+        runtime_kind=(profile.runtime_kind or _legacy_runtime_kind(profile.answer_mode)).value,
+        runtime_version=profile.runtime_version,
         execution_profile=profile.model_dump(mode="json"),
         reasoning_policy=frozen_reasoning.model_dump(mode="json"),
         model_policy=_model_policy(model_policy),
         agent_profile_snapshot=deepcopy(snapshot),
+    )
+
+
+def _legacy_runtime_kind(answer_mode: AnswerMode):
+    from app.common.schemas.agent.types import RuntimeKind
+
+    return (
+        RuntimeKind.legacy_standard_v1
+        if answer_mode == AnswerMode.standard
+        else RuntimeKind.trusted_v1
     )
 
 
@@ -161,6 +176,14 @@ class RunCoreStore:
             status="created",
             mode="web_agent",
             answer_mode=prepared.answer_mode,
+            runtime_kind=prepared.runtime_kind,
+            runtime_version=prepared.runtime_version,
+            fast_runtime_snapshot=(
+                FastRuntimeSnapshot().model_dump(mode="json")
+                if prepared.runtime_kind == "fast-v1"
+                else {}
+            ),
+            fast_state_version=0,
             execution_profile=deepcopy(prepared.execution_profile),
             model_policy=policy,
             agent_profile_snapshot=deepcopy(prepared.agent_profile_snapshot),
@@ -169,6 +192,43 @@ class RunCoreStore:
             created_at=now,
             updated_at=now,
         )
+
+    async def update_fast_runtime_snapshot(
+        self,
+        run_id: str,
+        *,
+        expected_version: int,
+        snapshot: FastRuntimeSnapshot | dict[str, Any],
+    ) -> RunRecord:
+        run = await self.require_run_core(run_id)
+        if run.runtime_kind != "fast-v1":
+            raise ValueError("Fast Runtime snapshot is only valid for fast-v1 runs")
+        if run.fast_state_version != expected_version:
+            raise ValueError(
+                f"Fast state version conflict: expected {expected_version}, "
+                f"got {run.fast_state_version}"
+            )
+        validated = FastRuntimeSnapshot.model_validate(snapshot)
+        if validated.snapshot_version != expected_version + 1:
+            raise ValueError("Fast snapshot version must increase by one")
+        run.fast_runtime_snapshot = validated.model_dump(mode="json")
+        run.fast_state_version = validated.snapshot_version
+        run.updated_at = utc_now()
+        await self.add_event(
+            run_id,
+            "fast.snapshot.updated",
+            {
+                "previous_version": expected_version,
+                "snapshot_version": validated.snapshot_version,
+                "turn_index": validated.turn_index,
+                "pending_action_kind": (
+                    validated.pending_action.kind if validated.pending_action else None
+                ),
+                "terminal_intent": validated.terminal_intent,
+            },
+        )
+        await self.session.flush()
+        return run
 
     @staticmethod
     def _root_execution(

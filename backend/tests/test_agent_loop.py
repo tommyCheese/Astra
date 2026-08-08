@@ -640,12 +640,13 @@ async def test_root_loop_externalizes_oversized_model_observation_but_keeps_tool
     assert "output" not in normalized
 
 
-async def test_standard_mode_reuses_swarm_supervisor_without_creating_a_dag(session):
+async def test_legacy_standard_mode_reuses_swarm_supervisor_without_creating_a_dag(session):
     settings = AstraRuntimeSettings(model_provider="mock", tool_states={"swarm": True})
     profile = resolve_run_profile(
         AnswerMode.standard,
         RequestedReasoningPolicy(execution_mode="auto_approval"),
         subagent_policy=compile_subagent_policy(settings),
+        fast_runtime_enabled=False,
     )
     repo = RunUnitOfWork(session)
     run = await repo.create_task_run(
@@ -674,7 +675,7 @@ async def test_standard_mode_reuses_swarm_supervisor_without_creating_a_dag(sess
     assert loaded.state_version == 0
 
 
-async def test_required_standard_mode_cannot_finalize_without_a_swarm_group(session):
+async def test_required_legacy_standard_mode_cannot_finalize_without_a_swarm_group(session):
     settings = AstraRuntimeSettings(
         model_provider="mock",
         tool_states={"swarm": True},
@@ -685,6 +686,7 @@ async def test_required_standard_mode_cannot_finalize_without_a_swarm_group(sess
         RequestedReasoningPolicy(execution_mode="auto_approval"),
         subagent_policy=compile_subagent_policy(settings),
         subagent_mode="required",
+        fast_runtime_enabled=False,
     )
     repo = RunUnitOfWork(session)
     run = await repo.create_task_run(

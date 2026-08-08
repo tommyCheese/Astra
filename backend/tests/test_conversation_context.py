@@ -231,7 +231,7 @@ async def test_manual_compact_forces_checkpoint_for_any_completed_history(sessio
     message, details, _ = await execute_system_command(manager, task, "compact")
 
     assert details == {"folded": 1, "retained": 0, "model_used": True, "direction": ""}
-    assert "折叠 1 轮" in message
+    assert message == "当前上下文已完成压缩。"
     assert task.context_state["checkpoint"]["checkpoint_role"] == "conversation"
     assert len((await manager.projection(task)).runs) == 0
 

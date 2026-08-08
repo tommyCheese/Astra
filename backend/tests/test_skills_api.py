@@ -124,6 +124,7 @@ async def test_skill_api_authoring_publish_and_run_selection(skill_client):
     quick_view = await skill_client.get(f"/api/runs/{run.json()['run_id']}")
     assert quick_view.status_code == 200
     assert quick_view.json()["answer_mode"] == "standard"
+    assert quick_view.json()["runtime_kind"] == "fast-v1"
     assert quick_view.json()["steps"] == []
 
     detail = await skill_client.get(f"/api/skills/{skill['id']}")
@@ -158,6 +159,7 @@ async def test_skill_api_authoring_publish_and_run_selection(skill_client):
     assert test_audit.json()["answer_mode"] == "standard"
     test_digest = test_audit.json()["catalog"][0]["digest"]
     test_view = await skill_client.get(f"/api/runs/{draft_test.json()['run_id']}")
+    assert test_view.json()["runtime_kind"] == "fast-v1"
     assert test_view.json()["steps"] == []
     assert test_view.json()["model_policy"]["thinking"]["source"] == "model_default"
     assert test_view.json()["model_policy"]["thinking"]["capability_version"] == 2
@@ -196,6 +198,8 @@ async def test_skill_api_authoring_publish_and_run_selection(skill_client):
     trusted_audit = await skill_client.get(f"/api/runs/{trusted_test.json()['run_id']}/skills")
     assert trusted_audit.json()["draft_test"] is True
     assert trusted_audit.json()["answer_mode"] == "trusted"
+    trusted_view = await skill_client.get(f"/api/runs/{trusted_test.json()['run_id']}")
+    assert trusted_view.json()["runtime_kind"] == "trusted-v1"
     metrics = await skill_client.get("/api/skills/metrics/summary")
     assert metrics.status_code == 200
     assert metrics.json()["answer_modes"]["standard"] >= 2

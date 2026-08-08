@@ -37,7 +37,7 @@ class RootRuntimeState:
 
     run: RunRecord
     profile: RunExecutionProfile
-    quick_mode: bool
+    legacy_standard_mode: bool
     approved_tool_call: ToolCallRecord | None = None
     approved_turn: AgentTurnRecord | None = None
     approved_request_snapshot: dict | None = None
@@ -119,7 +119,7 @@ class RootAgentIterationStage:
             model_context=model_context,
             subagent_supervisor=self._subagents,
             subagent_mode=self._state.profile.subagent_mode,
-            quick_mode=self._state.quick_mode,
+            legacy_standard_mode=self._state.legacy_standard_mode,
         )
         if completion.action == "continue":
             self._state.required_subagent_missing |= completion.required_subagent_missing
@@ -190,7 +190,7 @@ class RootAgentIterationStage:
                 active_node_execution_id=prepared.active_node_execution_id,
                 model_context=model_context,
                 execution_mode=self._execution_mode,
-                quick_mode=self._state.quick_mode,
+                legacy_standard_mode=self._state.legacy_standard_mode,
                 is_approved_resume=resolved.is_approved_resume,
                 approved_request_snapshot=self._state.approved_request_snapshot,
                 approved_tool_call=self._state.approved_tool_call,

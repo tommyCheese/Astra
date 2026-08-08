@@ -313,6 +313,7 @@ def create_context_checkpoint(
     local_facts: list[dict[str, Any]],
     prior: SubagentContextCheckpoint | None = None,
 ) -> SubagentContextCheckpoint:
+    """Compatibility constructor retained for persisted child continuations."""
     return SubagentContextCheckpoint(
         agent_execution_id=composed.manifest.agent_execution_id,
         manifest_hash=composed.manifest_hash,

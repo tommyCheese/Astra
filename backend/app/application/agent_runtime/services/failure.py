@@ -27,7 +27,7 @@ class ToolFailureInput:
     turn: AgentTurnRecord
     decision: AgentDecision
     error: ToolExecutionError
-    quick_mode: bool
+    legacy_standard_mode: bool
 
 
 class ToolFailureStage:
@@ -83,7 +83,7 @@ class ToolFailureStage:
                     "retry_count": self._retry_counts[tool_name],
                 },
             )
-            if not stage_input.quick_mode
+            if not stage_input.legacy_standard_mode
             else None
         )
         await self._repository.update_agent_turn(
@@ -98,7 +98,7 @@ class ToolFailureStage:
             ),
             phase="failed",
         )
-        if not stage_input.quick_mode:
+        if not stage_input.legacy_standard_mode:
             await self._repository.add_event(
                 stage_input.run_id,
                 "reasoning.failure_fingerprinted",

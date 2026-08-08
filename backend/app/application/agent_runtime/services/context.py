@@ -81,13 +81,13 @@ async def _load_conversation(
     run_id: str,
     *,
     skills_enabled: bool,
-    quick_mode: bool,
+    legacy_standard_mode: bool,
     initial_run: RunRecord | None,
     initial_skill_snapshot: RunSkillSnapshotRecord | None,
 ) -> tuple[RunRecord, list[Any], RunSkillSnapshotRecord | None]:
-    if quick_mode and initial_run is not None:
+    if legacy_standard_mode and initial_run is not None:
         return initial_run, [], initial_skill_snapshot
-    if quick_mode:
+    if legacy_standard_mode:
         run, memories, snapshot = await repository.require_run_quick_context(
             run_id,
             include_skills=skills_enabled,
@@ -158,9 +158,9 @@ async def _load_skills(
     snapshot: RunSkillSnapshotRecord | None,
     *,
     enabled: bool,
-    quick_mode: bool,
+    legacy_standard_mode: bool,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], bool]:
-    if enabled and not quick_mode:
+    if enabled and not legacy_standard_mode:
         snapshot = await repository.session.scalar(
             select(RunSkillSnapshotRecord).where(RunSkillSnapshotRecord.run_id == run_id)
         )
@@ -298,7 +298,7 @@ class AgentContextAssembler:
         tool_router: ToolRouter | None = None,
         observations: list[dict[str, Any]],
         evidence_pack: dict[str, Any] | None = None,
-        quick_mode: bool = False,
+        legacy_standard_mode: bool = False,
         initial_run: RunRecord | None = None,
         initial_skill_snapshot: RunSkillSnapshotRecord | None = None,
     ) -> dict[str, Any]:
@@ -307,7 +307,7 @@ class AgentContextAssembler:
             self._repository,
             run_id,
             skills_enabled=self._skills_enabled,
-            quick_mode=quick_mode,
+            legacy_standard_mode=legacy_standard_mode,
             initial_run=initial_run,
             initial_skill_snapshot=initial_skill_snapshot,
         )
@@ -337,7 +337,7 @@ class AgentContextAssembler:
             run_id,
             skill_snapshot,
             enabled=self._skills_enabled,
-            quick_mode=quick_mode,
+            legacy_standard_mode=legacy_standard_mode,
         )
         context = {
             "run_id": run_id,

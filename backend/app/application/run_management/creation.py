@@ -131,6 +131,7 @@ class RunCreator:
             plan_execution=request.plan_execution,
             subagent_policy=compile_subagent_policy(run_settings),
             subagent_mode=request.subagent_mode,
+            fast_runtime_enabled=run_settings.agent_fast_runtime_enabled,
         )
         if request.subagent_mode == "required":
             eligibility = subagent_execution_eligibility(

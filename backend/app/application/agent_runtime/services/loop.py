@@ -140,7 +140,7 @@ class AstraAgentLoop:
                 terminal_status=runtime.state.terminal_status,
                 terminal_summary=runtime.state.terminal_summary,
                 required_subagent_missing=runtime.state.required_subagent_missing,
-                quick_mode=runtime.state.quick_mode,
+                legacy_standard_mode=runtime.state.legacy_standard_mode,
                 workspace_changed=runtime.state.workspace_changed,
                 workspace_path=runtime.state.workspace_path,
             )
@@ -179,7 +179,7 @@ class AstraAgentLoop:
             limits.max_reflections,
             limits.max_replans,
         )
-        if runtime.state.quick_mode:
+        if runtime.state.legacy_standard_mode:
             return
         await repo.add_event(
             run_id,

@@ -472,11 +472,25 @@ export type RunView = {
   task_id: string;
   status: string;
   mode: string;
+  runtime_kind?: 'fast-v1' | 'trusted-v1' | 'legacy-standard-v1';
+  runtime_version?: number;
+  fast_runtime_snapshot?: {
+    protocol_version: 1;
+    snapshot_version: number;
+    turn_index: number;
+    messages: Array<Record<string, unknown>>;
+    recent_observations: Array<Record<string, unknown>>;
+    pending_action?: Record<string, unknown> | null;
+    terminal_intent?: 'answer' | 'ask_user' | 'stop' | null;
+  };
+  fast_state_version?: number;
   processing_duration_ms?: number | null;
   answer_mode?: 'standard' | 'trusted';
   execution_profile?: {
     version: 2;
     answer_mode: 'standard' | 'trusted';
+    runtime_kind?: 'fast-v1' | 'trusted-v1' | 'legacy-standard-v1';
+    runtime_version?: number;
     plan_execution: 'auto' | 'confirm' | null;
     contract_mode: 'system_minimal' | 'model';
     assurance_level: 'basic' | 'full';

@@ -8,7 +8,7 @@ from app.infrastructure.db.model_base import AstraOrmRecordBase
 
 BACKEND_ROOT = Path(__file__).parents[1]
 BASELINE_REVISION = "0001_current_baseline"
-HEAD_REVISION = "0010_remove_builtin_web_tools"
+HEAD_REVISION = "0011_fast_agent_runtime"
 
 
 def _alembic(database_path: Path, *arguments: str) -> subprocess.CompletedProcess[str]:

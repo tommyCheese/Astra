@@ -32,7 +32,7 @@ from app.common.schemas.agent.run_policy import (
     ReasoningPolicySnapshot,
     RunExecutionProfile,
 )
-from app.common.schemas.agent.types import AnswerMode, ReasoningEffort
+from app.common.schemas.agent.types import AnswerMode, ReasoningEffort, RuntimeKind
 from app.common.schemas.permissions import ExtensionDescriptor
 from app.infrastructure.db.models.permissions import AgentIdentityRecord
 from app.infrastructure.db.models.runs import RunRecord
@@ -171,10 +171,10 @@ class AgentRuntimeBuilder:
         run = loaded.run
         profile = RunExecutionProfile.model_validate(run.execution_profile)
         policy = ReasoningPolicySnapshot.model_validate(run.reasoning_policy or {}).effective
-        quick_mode = profile.answer_mode == AnswerMode.standard
+        legacy_standard_mode = profile.runtime_kind == RuntimeKind.legacy_standard_v1
         permissions, permission_runtime = self._permission_runtime(repository, run, run_id)
         await permission_runtime.freeze_catalog()
-        if not quick_mode:
+        if not legacy_standard_mode:
             await permission_runtime.ensure()
         infrastructure = self._infrastructure(repository, permissions)
         supervisor = await self._subagent_supervisor(

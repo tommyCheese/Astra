@@ -48,6 +48,34 @@ type SkillActionDialog =
   | { kind: 'delete-file' | 'delete-skill' }
   | { kind: 'test-draft'; value: string; mode: 'standard' | 'trusted' };
 
+type SkillUiIconName = 'chevron' | 'folder' | 'file' | 'markdown' | 'code-file' | 'image-file' | 'data-file' | 'new-file' | 'new-folder' | 'rename' | 'delete' | 'search' | 'lock';
+
+function SkillUiIcon({ name, open = false }: { name: SkillUiIconName; open?: boolean }) {
+  const paths: Record<SkillUiIconName, ReactNode> = {
+    chevron: <path d="m7 9 5 5 5-5" />,
+    folder: <path d="M3.5 6.5h6l2-2h3l2 2h4v12h-17z" />,
+    file: <><path d="M6 3.5h7l5 5v12H6z" /><path d="M13 3.5v5h5" /></>,
+    markdown: <><rect x="3.5" y="5.5" width="17" height="13" rx="2" /><path d="M6.5 15v-6l2.5 3 2.5-3v6M16 9v6m-2-2 2 2 2-2" /></>,
+    'code-file': <><path d="M6 3.5h7l5 5v12H6zM13 3.5v5h5" /><path d="m11 12-2 2 2 2m3-4 2 2-2 2" /></>,
+    'image-file': <><path d="M6 3.5h7l5 5v12H6zM13 3.5v5h5" /><circle cx="10" cy="11" r="1" /><path d="m8 18 3-3 2 2 2-2 3 3" /></>,
+    'data-file': <><path d="M6 3.5h7l5 5v12H6zM13 3.5v5h5" /><path d="M11 11c-1 0-1.5.5-1.5 1.5v1c0 .5-.5.5-1 .5.5 0 1 0 1 .5v1c0 1 .5 1.5 1.5 1.5M14 11c1 0 1.5.5 1.5 1.5v1c0 .5.5.5 1 .5-.5 0-1 0-1 .5v1c0 1-.5 1.5-1.5 1.5" /></>,
+    'new-file': <><path d="M5.5 3.5h7l5 5v12h-12z" /><path d="M12.5 3.5v5h5M8.5 14h6M11.5 11v6" /></>,
+    'new-folder': <><path d="M3.5 6.5h6l2-2h3l2 2h4v12h-17z" /><path d="M9 13h6M12 10v6" /></>,
+    rename: <><path d="m5 17-.8 3.8L8 20l10.8-10.8-3-3zM14.8 7.2l3 3" /><path d="M4 4h7" /></>,
+    delete: <><path d="M5 7h14M9 7V4h6v3M7 7l1 13h8l1-13M10 11v5M14 11v5" /></>,
+    search: <><circle cx="10.5" cy="10.5" r="5.5" /><path d="m15 15 4 4" /></>,
+    lock: <><rect x="6" y="10" width="12" height="10" rx="2" /><path d="M9 10V7a3 3 0 0 1 6 0v3" /></>,
+  };
+  return <svg className={`skill-ui-icon${open ? ' is-open' : ''}`} viewBox="0 0 24 24" aria-hidden="true" focusable="false">{paths[name]}</svg>;
+}
+
+function SkillFileIcon({ file }: { file: SkillFile }) {
+  const icon = file.path.endsWith('.md') ? 'markdown' : file.kind === 'script' ? 'code-file' : file.kind === 'asset' ? 'image-file' : 'data-file';
+  return <span className={`skill-file-icon kind-${file.kind}`} aria-hidden="true">
+    <SkillUiIcon name={icon} />
+  </span>;
+}
+
 const languageByExtension: Record<string, string> = {
   md: 'markdown', yaml: 'yaml', yml: 'yaml', json: 'json', py: 'python',
   js: 'javascript', mjs: 'javascript', cjs: 'javascript', ts: 'typescript',
@@ -161,8 +189,8 @@ function SkillTree({
             });
           }}
         >
-          <span className="skill-tree-chevron">{isCollapsed ? '›' : '⌄'}</span>
-          <span className={`skill-tree-icon ${isCollapsed ? '' : 'open'}`} aria-hidden="true" />
+          <span className="skill-tree-chevron"><SkillUiIcon name="chevron" open={!isCollapsed} /></span>
+          <span className="skill-tree-icon"><SkillUiIcon name="folder" open={!isCollapsed} /></span>
           <span>{node.name}</span>
         </button>
         {!isCollapsed && renderNodes(node.children, depth + 1)}
@@ -176,15 +204,15 @@ function SkillTree({
       style={{ paddingInlineStart: `${25 + depth * 14}px` }}
       onClick={() => onOpenFile(node.file)}
     >
-      <span className={`skill-file-type kind-${node.file.kind}`}>{node.file.path.endsWith('.md') ? 'MD' : node.file.kind === 'script' ? '</>' : node.file.kind === 'asset' ? 'IMG' : '{}'}</span>
+      <SkillFileIcon file={node.file} />
       <span>{node.name}</span>
       {!node.file.text && <small>{t('二进制')}</small>}
-      {readonly && <small>◉</small>}
+      {readonly && <small className="skill-tree-readonly" title={t('只读')}><SkillUiIcon name="lock" /></small>}
     </button>;
   });
   return <div className="skill-tree" role="tree">
     <button className={`skill-tree-row folder root ${selectedFolder === '' ? 'selected' : ''}`} role="treeitem" aria-expanded type="button" onClick={() => onSelectFolder('')}>
-      <span className="skill-tree-chevron">⌄</span><span className="skill-tree-icon open" aria-hidden="true" /><span>{t('Skill 根目录')}</span>
+      <span className="skill-tree-chevron"><SkillUiIcon name="chevron" open /></span><span className="skill-tree-icon"><SkillUiIcon name="folder" open /></span><span>{t('Skill 根目录')}</span>
     </button>
     {renderNodes(tree)}
   </div>;
@@ -654,13 +682,13 @@ export function SkillWorkbench({
       <select aria-label={t('状态筛选')} value={stateFilter} onChange={(event) => setStateFilter(event.currentTarget.value as StateFilter)}>
         <option value="all">{t('全部状态')}</option><option value="enabled">{t('已启用')}</option><option value="disabled">{t('已停用')}</option>
       </select>
-      <select aria-label={t('排序方式')} value={sortMode} onChange={(event) => setSortMode(event.currentTarget.value as SortMode)}>
-        <option value="updated">{t('最近更新')}</option><option value="created">{t('最近创建')}</option><option value="name">{t('按名称')}</option>
-      </select>
-      <div className="skill-view-switch" role="group" aria-label={t('显示方式')}>
-        <button type="button" className={displayMode === 'grid' ? 'active' : ''} aria-label={t('网格视图')} aria-pressed={displayMode === 'grid'} onClick={() => setDisplayMode('grid')}>▦</button>
-        <button type="button" className={displayMode === 'list' ? 'active' : ''} aria-label={t('列表视图')} aria-pressed={displayMode === 'list'} onClick={() => setDisplayMode('list')}>☷</button>
+      <div className="library-view-switch skill-view-switch" role="group" aria-label={t('显示方式')}>
+        <button type="button" aria-label={t('网格视图')} aria-pressed={displayMode === 'grid'} onClick={() => setDisplayMode('grid')}><span className="gallery-view-icon" aria-hidden="true"><i /><i /><i /><i /></span><span>{t('网格')}</span></button>
+        <button type="button" aria-label={t('列表视图')} aria-pressed={displayMode === 'list'} onClick={() => setDisplayMode('list')}><span className="list-view-icon" aria-hidden="true"><i /><i /><i /></span><span>{t('列表')}</span></button>
       </div>
+      <label className="library-sort skill-sort"><span>{t('排序')}</span><select aria-label={t('排序方式')} value={sortMode} onChange={(event) => setSortMode(event.currentTarget.value as SortMode)}>
+        <option value="updated">{t('最近更新')}</option><option value="created">{t('最近创建')}</option><option value="name">{t('按名称')}</option>
+      </select></label>
     </div>
 
     <div className="skill-library-summary"><span>{t('{count} 个 Skill').replace('{count}', String(visibleSkills.length))}</span><span>{t('点击卡片查看详情')}</span></div>
@@ -797,12 +825,12 @@ export function SkillWorkbench({
               <span>{t('{count} 个文件').replace('{count}', String(selected.files.length))}</span>
             </header>
             <div className="skill-explorer-tools">
-              <button type="button" disabled={selected.readonly} title={t('新建文件')} aria-label={t('新建文件')} onClick={createFile}><span aria-hidden="true">＋</span>{t('文件')}</button>
-              <button type="button" disabled={selected.readonly} title={t('新建文件夹')} aria-label={t('新建文件夹')} onClick={createFolder}><span aria-hidden="true">＋</span>{t('文件夹')}</button>
-              <button type="button" disabled={selected.readonly || !activePath || activePath === 'SKILL.md'} title={t('重命名')} aria-label={t('重命名')} onClick={renameFile}><span aria-hidden="true">✎</span>{t('重命名')}</button>
-              <button className="danger" type="button" disabled={selected.readonly || !activePath || activePath === 'SKILL.md'} title={t('删除')} aria-label={t('删除')} onClick={deleteFile}><span aria-hidden="true">⌫</span>{t('删除')}</button>
+              <button type="button" disabled={selected.readonly} title={t('新建文件')} aria-label={t('新建文件')} onClick={createFile}><SkillUiIcon name="new-file" />{t('文件')}</button>
+              <button type="button" disabled={selected.readonly} title={t('新建文件夹')} aria-label={t('新建文件夹')} onClick={createFolder}><SkillUiIcon name="new-folder" />{t('文件夹')}</button>
+              <button type="button" disabled={selected.readonly || !activePath || activePath === 'SKILL.md'} title={t('重命名')} aria-label={t('重命名')} onClick={renameFile}><SkillUiIcon name="rename" />{t('重命名')}</button>
+              <button className="danger" type="button" disabled={selected.readonly || !activePath || activePath === 'SKILL.md'} title={t('删除')} aria-label={t('删除')} onClick={deleteFile}><SkillUiIcon name="delete" />{t('删除')}</button>
             </div>
-            <label className="skill-file-search"><span>⌕</span><input aria-label={t('搜索 Skill 文件')} placeholder={t('筛选文件')} value={fileQuery} onChange={(event) => setFileQuery(event.currentTarget.value)} /></label>
+            <label className="skill-file-search"><SkillUiIcon name="search" /><input aria-label={t('搜索 Skill 文件')} placeholder={t('筛选文件')} value={fileQuery} onChange={(event) => setFileQuery(event.currentTarget.value)} /></label>
             <SkillTree files={visibleFiles} activePath={activePath} selectedFolder={selectedFolder} virtualFolders={virtualFolders} onOpenFile={(file) => void openFile(file)} onSelectFolder={setSelectedFolder} readonly={selected.readonly} />
             <div className="skill-explorer-meta"><span>{selected.qualified_identity}</span><span>{selected.compatibility || t('无兼容性声明')}</span></div>
           </aside>

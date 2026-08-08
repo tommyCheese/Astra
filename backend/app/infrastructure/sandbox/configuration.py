@@ -76,6 +76,7 @@ class SandboxRuntimeConfiguration:
             "source": "user" if state.get("agent_profile") is not None else "default",
             "version": self.active_profile.manifest.version,
             "documents": self._profile_documents(self.active_profile),
+            "default_documents": self._profile_documents(self.packaged_profile),
         }
 
     def update_agent_profile(self, documents: dict[str, str]) -> dict[str, Any]:

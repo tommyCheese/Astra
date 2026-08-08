@@ -109,13 +109,11 @@ python -m ruff check benchmarks/subagent_performance.py tests/test_subagent_perf
 
 ## `/subagent` command
 
-`/subagent <task>` is a Run-creation command, not a host-side context mutation. The UI removes the command prefix, preserves the current answer mode, freezes `subagent_mode=required`, and preserves the original draft if validation or Run creation fails. In quick mode it creates a standard Run without a canonical Plan or DAG. In trusted mode it creates a trusted Run with automatic Plan execution. A required-subagent Run in either mode cannot complete until it has created at least one governed Swarm group. The command remains visible but unavailable when Swarm is disabled, killed, shadow-only, or outside an executable rollout cohort.
+`/subagent <task>` is a Run-creation command, not a host-side context mutation. The UI removes the command prefix, creates a `trusted-v1` Run with automatic Plan execution, freezes `subagent_mode=required`, and preserves the original draft if validation or Run creation fails. A required-subagent Run cannot complete until it has created at least one governed Swarm group. The command remains visible but unavailable when Swarm is disabled, killed, shadow-only, or outside an executable rollout cohort.
 
-## Lightweight quick Subagents
+## Fast Runtime boundary
 
-Eligible standard Runs can expose the same `swarm` built-in directly inside the quick Agent Loop. Quick Runs remain planless: they do not create a `TaskContract`, canonical Plan, trusted `AgentState`, or execution-graph placeholder. `subagent_mode=auto` keeps delegation opportunistic, while the explicit `/subagent` command makes at least one governed group mandatory.
-
-Quick and trusted Runs share `SubagentSupervisor`, durable Agent executions, attenuated read-only catalogs, hierarchical budgets, Join reconciliation, cancellation, recovery, and sanitized result consumption. Quick mode applies a smaller depth-one budget envelope and basic final verification; trusted mode additionally uses its versioned Plan DAG, node evaluation, evidence requirements, and full Completion Gate. Do not add a quick-only child executor or Join implementation.
+`fast-v1` does not expose `swarm`, `SubagentSupervisor`, child budgets or Join state. Explicit Subagent workflows are routed to `trusted-v1` until an independent Fast extension is specified. This keeps the governed child runtime, durable Agent executions, attenuated catalogs, hierarchical budgets, Join reconciliation, cancellation and recovery owned by the trusted path; do not add a Fast-only child executor implicitly through a Skill or tool manifest.
 
 ## Operations and troubleshooting
 

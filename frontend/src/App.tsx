@@ -1,6 +1,6 @@
 import { Component, CSSProperties, FormEvent, KeyboardEvent as ReactKeyboardEvent, lazy, memo, MouseEvent, PointerEvent as ReactPointerEvent, ReactNode, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { AstraApiError, ApiErrorPayload, buildRuntime, cancelRun, cancelRuntimeBuild, confirmPlanExecution, createConversationShare, createRun, decideToolApproval, deleteConversation, executeConversationCommand, getConversation, getConversationContext, getConversationStrategy, getPermissionCenter, getRun, getRuntimeDefaultModel, getRuntimeProfile, getToolSettings, listConversationShares, listConversations, listLibraryDeliverables, listRuns, listSkills, listSystemCommands, resetRuntimeAgentProfile, resolveModelContextCapabilities, resolveModelThinkingCapabilities, resumeRun, revisePlan, revokeConversationShare, revokePermissionGrant, streamRunEvents, takeCreatedRunStream, testModelConnection, updateConversation, updateConversationStrategy, updateRuntimeAgentProfile, updateRuntimeMemorySettings, updateToolState, type AgentProfileDocuments, type ContextWindowStatus, type ConversationStrategyPreferences, type Deliverable, type MemoryRuntimeSettings, type ModelConnectionTestResult, type ModelContextCapability, type ModelThinkingCapability, type ModelThinkingDepth, type ModelThinkingSelection, type PermissionCenterView, type RunModelConfig, type RunStreamEvent, type RunStreamHandle, type RuntimeDefaultModel, type SkillSummary, type SlashSystemCommand, type ToolSetting } from './api';
+import { AstraApiError, ApiErrorPayload, buildRuntime, cancelRun, cancelRuntimeBuild, confirmPlanExecution, createConversationShare, createRun, decideToolApproval, deleteConversation, executeConversationCommand, getConversation, getConversationContext, getConversationStrategy, getPermissionCenter, getRun, getRuntimeDefaultModel, getRuntimeProfile, getToolSettings, listConversationShares, listConversations, listLibraryDeliverables, listRuns, listSkills, listSystemCommands, resolveModelContextCapabilities, resolveModelThinkingCapabilities, resumeRun, revisePlan, revokeConversationShare, revokePermissionGrant, streamRunEvents, takeCreatedRunStream, testModelConnection, updateConversation, updateConversationStrategy, updateRuntimeAgentProfile, updateRuntimeMemorySettings, updateToolState, type AgentProfileDocuments, type ContextWindowStatus, type ConversationStrategyPreferences, type Deliverable, type MemoryRuntimeSettings, type ModelConnectionTestResult, type ModelContextCapability, type ModelThinkingCapability, type ModelThinkingDepth, type ModelThinkingSelection, type PermissionCenterView, type RunModelConfig, type RunStreamEvent, type RunStreamHandle, type RuntimeDefaultModel, type SkillSummary, type SlashSystemCommand, type ToolSetting } from './api';
 import { cancelSubagent } from './api';
 import { buildAuditLog } from './auditPresentation';
 import { I18nProvider, useI18n } from './i18n';
@@ -27,6 +27,9 @@ const TrustedExecutionGraph = lazy(() => import('./TrustedExecutionGraph'));
 const SkillWorkbench = lazy(() => import('./SkillWorkbench').then((module) => ({
   default: module.SkillWorkbench,
 })));
+const AgentProfileEditor = lazy(() => import('./AgentProfileEditor').then((module) => ({
+  default: module.AgentProfileEditor,
+})));
 const MemoryWorkbench = lazy(() => import('./MemoryWorkbench').then((module) => ({
   default: module.MemoryWorkbench,
 })));
@@ -51,6 +54,9 @@ class GraphErrorBoundary extends Component<{ children: ReactNode; fallback: Reac
 
 const terminalStatuses = new Set(['completed', 'completed_with_warnings', 'failed', 'blocked', 'waiting_user', 'cancelled']);
 const completedConversationStatuses = new Set(['completed', 'completed_with_warnings']);
+const isTrustedRuntime = (run: RunView | null | undefined) => Boolean(
+  run && (run.runtime_kind === 'trusted-v1' || (!run.runtime_kind && run.answer_mode === 'trusted'))
+);
 const STORAGE_KEYS = {
   conversations: 'astra.conversations.v2',
   processPanelDefaultOpen: 'astra.process-panel-default-open.v2',
@@ -900,7 +906,7 @@ function AppContent() {
     const commandArguments = options.argumentsText?.trim() ?? '';
     const pendingMessageId = `pending-command-${command.name}-${Date.now()}`;
     const progressContent = command.name === 'compact'
-      ? '正在检查并压缩主要信息上下文…'
+      ? '正在压缩当前上下文…'
       : command.name === 'clear'
         ? '正在清除模型上下文…'
         : '正在执行快捷操作…';
@@ -1176,7 +1182,8 @@ function AppContent() {
           return;
         }
         submissionGoal = argumentsText;
-        if (submissionAnswerMode === 'trusted') submissionPlanExecution = 'auto';
+        submissionAnswerMode = 'trusted';
+        submissionPlanExecution = 'auto';
         submissionSubagentMode = 'required';
       } else {
         await runSlashSystemCommand(registeredCommand, {
@@ -1214,36 +1221,23 @@ function AppContent() {
       const previousMessages = resumingWaitingRun ? priorMessages : run ? messages : [];
       const explicitSkillIds = normalizeSelectedSkillIds(selectedSkillIds);
       const modelConfig = selectedRunModel(resumingWaitingRun ? run : undefined);
+      const trustedReasoningPolicy = submissionAnswerMode === 'trusted' ? {
+        reasoning_effort: conversationStrategyRef.current.reasoning_effort,
+        max_tool_calls: conversationStrategyRef.current.max_tool_calls,
+        reflection_enabled: conversationStrategyRef.current.reflection_enabled,
+        reflection_trigger: conversationStrategyRef.current.reflection_trigger,
+        execution_mode: executionMode === 'bypass' ? 'auto_approval' as const : 'request_approval' as const,
+        verification_level: 'standard' as const,
+      } : undefined;
       const created = resumingWaitingRun
         ? await resumeRun(run.id, trimmedGoal, typeof run.waiting_state?.continuation_token === 'string' ? run.waiting_state.continuation_token : undefined, modelConfig)
         : submissionSubagentMode === 'required'
-          ? await createRun(submissionGoal, run?.task_id, submissionAnswerMode, {
-            reasoning_effort: conversationStrategyRef.current.reasoning_effort,
-            max_tool_calls: conversationStrategyRef.current.max_tool_calls,
-            reflection_enabled: conversationStrategyRef.current.reflection_enabled,
-            reflection_trigger: conversationStrategyRef.current.reflection_trigger,
-            execution_mode: executionMode === 'bypass' ? 'auto_approval' : 'request_approval',
-            verification_level: 'standard',
-          }, modelConfig, submissionAnswerMode === 'trusted' ? submissionPlanExecution : undefined,
+          ? await createRun(submissionGoal, run?.task_id, submissionAnswerMode, trustedReasoningPolicy, modelConfig, submissionAnswerMode === 'trusted' ? submissionPlanExecution : undefined,
           explicitSkillIds.length ? explicitSkillIds : undefined, 'required')
           : explicitSkillIds.length
-            ? await createRun(submissionGoal, run?.task_id, submissionAnswerMode, {
-              reasoning_effort: conversationStrategyRef.current.reasoning_effort,
-              max_tool_calls: conversationStrategyRef.current.max_tool_calls,
-              reflection_enabled: conversationStrategyRef.current.reflection_enabled,
-              reflection_trigger: conversationStrategyRef.current.reflection_trigger,
-              execution_mode: executionMode === 'bypass' ? 'auto_approval' : 'request_approval',
-              verification_level: 'standard',
-            }, modelConfig, submissionAnswerMode === 'trusted' ? submissionPlanExecution : undefined,
+            ? await createRun(submissionGoal, run?.task_id, submissionAnswerMode, trustedReasoningPolicy, modelConfig, submissionAnswerMode === 'trusted' ? submissionPlanExecution : undefined,
             explicitSkillIds)
-            : await createRun(submissionGoal, run?.task_id, submissionAnswerMode, {
-              reasoning_effort: conversationStrategyRef.current.reasoning_effort,
-              max_tool_calls: conversationStrategyRef.current.max_tool_calls,
-              reflection_enabled: conversationStrategyRef.current.reflection_enabled,
-              reflection_trigger: conversationStrategyRef.current.reflection_trigger,
-              execution_mode: executionMode === 'bypass' ? 'auto_approval' : 'request_approval',
-              verification_level: 'standard',
-            }, modelConfig, submissionAnswerMode === 'trusted' ? submissionPlanExecution : undefined);
+            : await createRun(submissionGoal, run?.task_id, submissionAnswerMode, trustedReasoningPolicy, modelConfig, submissionAnswerMode === 'trusted' ? submissionPlanExecution : undefined);
       const fastStream = takeCreatedRunStream(created.run_id);
       if (fastStream) {
         preconnectedRunStreamRef.current?.stream.close();
@@ -1546,7 +1540,7 @@ function AppContent() {
       setProcessState((state) => {
         let next = state?.runId === run.id
           ? state
-          : createOptimisticProcessState(run.id, run.answer_mode === 'standard' ? 'standard' : 'trusted');
+          : createOptimisticProcessState(run.id, isTrustedRuntime(run) ? 'trusted' : 'standard');
         return reduceProcessEvents(next, events);
       });
     };
@@ -1632,7 +1626,7 @@ function AppContent() {
         scheduleRefresh(true);
         return;
       }
-      const isProcessEvent = event.type.startsWith('reasoning.') || event.type.startsWith('model_thinking.') || ['agent_turn.created', 'tool_call.started', 'tool_call.completed', 'reflection.created', 'verification.created'].includes(event.type);
+      const isProcessEvent = event.type.startsWith('fast.') || event.type.startsWith('reasoning.') || event.type.startsWith('model_thinking.') || ['agent_turn.created', 'tool_call.started', 'tool_call.completed', 'reflection.created', 'verification.created'].includes(event.type);
       if (event.type.startsWith('plan.')) {
         queuePlanGraphEvent(event);
         if (event.type !== 'plan.node.updated' && event.type !== 'plan.graph.snapshot') scheduleRefresh();
@@ -1676,7 +1670,7 @@ function AppContent() {
       plan_versions: planGraphState.versions.length ? planGraphState.versions : run.plan_versions,
     }
     : run, [run, planGraphState]);
-  const trustedGraphRun = effectiveRun?.answer_mode === 'trusted'
+  const trustedGraphRun = effectiveRun && isTrustedRuntime(effectiveRun)
     && effectiveRun.plan_graph
     && 'id' in effectiveRun.plan_graph
     ? effectiveRun
@@ -2230,7 +2224,7 @@ function AppContent() {
                 setExecutionMenuOpen(false);
               }}>
                 <span>{selectedModel || t('未配置模型')}</span>
-                <small>{answerMode === 'trusted' ? `${t(reasoningEffort)} · ${toolCallLimit === null ? t('工具不限') : t('{count} 次工具').replace('{count}', String(toolCallLimit))} · ${reflectionEnabled ? `${t(reflectionTrigger)} ${t('反思')}` : t('反思关闭')}` : t('快速策略 · 工具按需')} · {modelThinkingSummary}</small>
+                <small>{answerMode === 'trusted' ? `${t(reasoningEffort)} · ${toolCallLimit === null ? t('工具不限') : t('{count} 次工具').replace('{count}', String(toolCallLimit))} · ${reflectionEnabled ? `${t(reflectionTrigger)} ${t('反思')}` : t('反思关闭')}` : t('快速模式 · 模型驱动 · 未经可信校验')} · {modelThinkingSummary}</small>
                 {displayedContextStatus && <span className="compact-model-context-indicator"><ContextUsageRing status={displayedContextStatus} actionLabel={contextActionLabel} /></span>}
                 <b>⌄</b>
               </button>
@@ -2794,17 +2788,65 @@ function QuestionRail({ messages }: { messages: ChatMessage[] }) {
   })}</nav>;
 }
 
+type ToolPresentation = {
+  group: 'files' | 'execution' | 'memory' | 'agents' | 'extensions';
+  label: string;
+  description: string;
+  term?: string;
+  function: string;
+  scenarios: string;
+  implementation: string;
+};
+
+const toolPresentations: Record<string, ToolPresentation> = {
+  'workspace.list': { group: 'files', label: '浏览文件', description: '查看任务中的文件和文件夹', term: 'list', function: '列出目录与文件', scenarios: '查看任务结构、定位输入或产物', implementation: '内置文件服务 · 已实现' },
+  'workspace.read': { group: 'files', label: '读取文件', description: '读取任务中的文本文件内容', term: 'read', function: '读取受限范围的 UTF-8 文本', scenarios: '分析代码、配置或已有内容', implementation: '内置文件服务 · 已实现' },
+  'workspace.search': { group: 'files', label: '搜索文件内容', description: '在任务文件中查找文本', term: 'search', function: '检索文本文件中的字面内容', scenarios: '跨文件定位代码、配置或关键词', implementation: '内置文件服务 · 已实现' },
+  'workspace.write': { group: 'files', label: '创建或覆盖文件', description: '在任务中创建或替换文本文件', term: 'write', function: '原子创建或替换文本文件', scenarios: '生成文档、代码、配置或结果文件', implementation: '内置文件服务 · 已实现' },
+  'workspace.edit': { group: 'files', label: '编辑文件', description: '精确替换任务文件中的文本', term: 'edit', function: '原子替换文件中的指定文本', scenarios: '小范围修改代码、配置或文档', implementation: '内置文件服务 · 已实现' },
+  bash_execute: { group: 'execution', label: '执行命令', description: '在隔离环境中运行命令', term: 'execute', function: '在隔离环境中执行 Bash 命令', scenarios: '运行脚本、构建项目或处理数据', implementation: 'Docker 沙箱 · 已实现' },
+  'chart.render': { group: 'execution', label: '生成图表', description: '在隔离环境中创建图表', term: 'render', function: '根据结构化数据渲染图表', scenarios: '将分析结果生成可视化图表', implementation: 'Docker 沙箱 · 已实现' },
+  remember: { group: 'memory', label: '保存记忆', description: '将本次任务中的信息保存为待审核记忆', term: 'remember', function: '创建可审计的记忆候选', scenarios: '保留稳定偏好、事实或任务经验', implementation: '内置记忆治理 · 已实现' },
+  forget: { group: 'memory', label: '撤销记忆', description: '撤销当前任务可访问的记忆', term: 'forget', function: '撤销记忆并保留审计记录', scenarios: '移除过期、错误或不再适用的信息', implementation: '内置记忆治理 · 已实现' },
+  swarm: { group: 'agents', label: '委派子 Agent', description: '并发创建受治理的子 Agent 并汇合结果', term: 'delegate', function: '并发委派独立子任务并汇合结果', scenarios: '多路径研究、复核或可并行的复杂任务', implementation: '内置委派运行时 · 已实现' },
+};
+
+const toolGroupDetails = {
+  files: { title: '文件操作', type: '任务文件', description: '管理当前任务中的文件和内容。' },
+  execution: { title: '执行与生成', type: '隔离运行', description: '在受保护的运行环境中执行命令或生成结果。' },
+  memory: { title: '记忆管理', type: '长期信息', description: '保存或撤销 Agent 可在后续任务中使用的信息。' },
+  agents: { title: 'Agent 协作', type: '任务委派', description: '将可独立完成的工作委派给受治理的子 Agent。' },
+  extensions: { title: '扩展工具', type: '外部提供方', description: '由已连接的工具提供方提供的能力。' },
+} as const;
+
+function toolPresentation(tool: ToolSetting): ToolPresentation {
+  return toolPresentations[tool.name] ?? {
+    group: 'extensions',
+    label: tool.label.replace(/^Workspace\s+/i, ''),
+    description: tool.description,
+    function: tool.description,
+    scenarios: '通过已连接的提供方完成特定任务',
+    implementation: tool.provider_id === 'astra.builtin' ? '内置运行时 · 已实现' : '扩展提供方 · 已连接',
+  };
+}
+
 function CapabilityItem({ tool, busy, onChange }: { tool: ToolSetting; busy: boolean; onChange: (enabled: boolean) => void }) {
   const { t } = useI18n();
+  const presentation = toolPresentation(tool);
   const state = !tool.available ? tool.unavailable_reason ?? '当前不可用' : tool.enabled ? '已启用' : '已停用';
   return (
-    <div className={`capability-item ${!tool.available ? 'unavailable' : ''}`} data-setting-search-key={tool.label}>
+    <div className={`capability-item ${!tool.available ? 'unavailable' : ''}`} data-setting-search-key={presentation.label}>
       <div>
-        <strong>{t(tool.label)}</strong>
-        <span>{t(tool.description)}</span>
+        <strong>{t(presentation.label)}{presentation.term && <code className="capability-term">{presentation.term}</code>}</strong>
+        <span>{t(presentation.description)}</span>
+        <dl className="capability-details">
+          <div><dt>{t('功能')}</dt><dd>{t(presentation.function)}</dd></div>
+          <div><dt>{t('适用场景')}</dt><dd>{t(presentation.scenarios)}</dd></div>
+          <div><dt>{t('实现现状')}</dt><dd className={!tool.available ? 'unavailable' : ''}>{t(!tool.available ? '当前不可用' : presentation.implementation)}</dd></div>
+        </dl>
         <small className={tool.available ? '' : 'capability-warning'}>{t(state)}</small>
       </div>
-      <Toggle checked={tool.enabled} onChange={onChange} disabled={busy} label={`${t(tool.label)} · ${t(state)}`} />
+      <Toggle checked={tool.enabled} onChange={onChange} disabled={busy} label={`${t(presentation.label)} · ${t(state)}`} />
     </div>
   );
 }
@@ -3090,9 +3132,24 @@ function ToolSettings() {
       setBusyTool(null);
     }
   }
+  const groupedTools = tools.reduce((groups, tool) => {
+    const group = toolPresentation(tool).group;
+    groups[group].push(tool);
+    return groups;
+  }, { files: [] as ToolSetting[], execution: [] as ToolSetting[], memory: [] as ToolSetting[], agents: [] as ToolSetting[], extensions: [] as ToolSetting[] });
   return <SettingsGroup title="工具" description="管理 Agent 可用工具。修改会应用到之后新建的任务，运行中的任务不受影响。">
     <div className="capability-settings">
-      {tools.map((tool) => <CapabilityItem key={tool.name} tool={tool} busy={busyTool !== null} onChange={(enabled) => void changeTool(tool.name, enabled)} />)}
+      {(Object.keys(toolGroupDetails) as Array<keyof typeof toolGroupDetails>).map((group) => {
+        const groupTools = groupedTools[group];
+        if (!groupTools.length) return null;
+        const detail = toolGroupDetails[group];
+        return <section className="tool-settings-group" key={group} aria-labelledby={`tool-group-${group}`}>
+          <header><div><h3 id={`tool-group-${group}`}>{t(detail.title)}</h3><p>{t(detail.description)}</p></div><span>{t(detail.type)} · {t('{count} 个工具').replace('{count}', String(groupTools.length))}</span></header>
+          <div className="tool-settings-group-list">
+            {groupTools.map((tool) => <CapabilityItem key={tool.name} tool={tool} busy={busyTool !== null} onChange={(enabled) => void changeTool(tool.name, enabled)} />)}
+          </div>
+        </section>;
+      })}
       {!tools.length && <p className="tool-settings-message">{t(message)}</p>}
     </div>
     {tools.length > 0 && message && <p className="tool-settings-message" role="status">{t(message)}</p>}
@@ -3215,10 +3272,12 @@ function RuntimeSettings({ mode = 'runtime' }: { mode?: 'runtime' | 'agent' }) {
   const [dirty, setDirty] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [agentDocuments, setAgentDocuments] = useState<AgentProfileDocuments | null>(null);
+  const [agentDefaultDocuments, setAgentDefaultDocuments] = useState<AgentProfileDocuments | null>(null);
   const [agentProfileDirty, setAgentProfileDirty] = useState(false);
   const [agentProfileBusy, setAgentProfileBusy] = useState(false);
   const [agentProfileMessage, setAgentProfileMessage] = useState('');
   const [agentProfileError, setAgentProfileError] = useState(false);
+  const [agentProfileEditorDocument, setAgentProfileEditorDocument] = useState<keyof AgentProfileDocuments | null>(null);
   const nextDependencyId = useRef(0);
   const dirtyRef = useRef(dirty);
   dirtyRef.current = dirty;
@@ -3241,6 +3300,7 @@ function RuntimeSettings({ mode = 'runtime' }: { mode?: 'runtime' | 'agent' }) {
           setDependencies(value.dependencies.map((item) => ({ id: `saved-${item.name}`, name: item.name, version: item.version ?? '' })));
         }
         if (!agentProfileDirtyRef.current && value.agent_profile) setAgentDocuments(value.agent_profile.documents);
+        if (value.agent_profile?.default_documents) setAgentDefaultDocuments(value.agent_profile.default_documents);
         if (value.build?.status === 'failed') setDirty(true);
       } catch (error) {
         if (!active || (error instanceof DOMException && error.name === 'AbortError')) return;
@@ -3316,29 +3376,12 @@ function RuntimeSettings({ mode = 'runtime' }: { mode?: 'runtime' | 'agent' }) {
       const saved = await updateRuntimeAgentProfile(agentDocuments);
       setProfile((current) => current ? { ...current, agent_profile: saved } : current);
       setAgentDocuments(saved.documents);
+      if (saved.default_documents) setAgentDefaultDocuments(saved.default_documents);
       setAgentProfileDirty(false);
       setAgentProfileMessage('Agent Profile 已保存，将应用于之后新建的任务。');
     } catch (error) {
       setAgentProfileError(true);
       setAgentProfileMessage(error instanceof Error ? error.message : '保存 Agent Profile 失败');
-    } finally {
-      setAgentProfileBusy(false);
-    }
-  }
-  async function restoreAgentProfile() {
-    if (!window.confirm(t('恢复内置 Agent Profile？你的自定义内容将被替换。'))) return;
-    try {
-      setAgentProfileBusy(true);
-      setAgentProfileMessage('');
-      setAgentProfileError(false);
-      const restored = await resetRuntimeAgentProfile();
-      setProfile((current) => current ? { ...current, agent_profile: restored } : current);
-      setAgentDocuments(restored.documents);
-      setAgentProfileDirty(false);
-      setAgentProfileMessage('已恢复内置 Agent Profile。');
-    } catch (error) {
-      setAgentProfileError(true);
-      setAgentProfileMessage(error instanceof Error ? error.message : '恢复 Agent Profile 失败');
     } finally {
       setAgentProfileBusy(false);
     }
@@ -3365,16 +3408,26 @@ function RuntimeSettings({ mode = 'runtime' }: { mode?: 'runtime' | 'agent' }) {
           ['soul', 'SOUL.md', '人格、沟通方式与协作原则'],
           ['memory', 'MEMORY.md', '记忆写入、召回与遗忘治理'],
           ['autodream', 'AUTODREAM.md', '后台记忆整理治理协议'],
-        ] as const).map(([name, filename, description]) => <details key={name} open={name === 'identity'}>
-          <summary><span><strong>{filename}</strong><small>{t(description)}</small></span><span aria-hidden="true">⌄</span></summary>
-          <textarea aria-label={filename} value={agentDocuments[name]} onChange={(event) => editAgentDocument(name, event.target.value)} disabled={agentProfileBusy} spellCheck={false} />
-        </details>)}
+        ] as const).map(([name, filename, description]) => <button className="runtime-agent-profile-document" type="button" key={name} aria-label={t('编辑 {name}').replace('{name}', filename)} disabled={agentProfileBusy} onClick={() => setAgentProfileEditorDocument(name)}>
+          <span><strong>{filename}</strong><small>{t(description)}</small></span><span>{t('编辑')}</span>
+        </button>)}
       </div> : <p className="runtime-agent-profile-loading">{t('正在读取 Agent Profile…')}</p>}
       <div className="runtime-agent-profile-actions">
         <span>{agentProfileDirty ? t('有未保存修改') : t('配置已同步')}</span>
-        <div><button type="button" className="secondary-button" disabled={agentProfileBusy || profile?.agent_profile?.source !== 'user'} onClick={() => void restoreAgentProfile()}>{t('恢复内置默认')}</button><button type="button" className="primary-button" disabled={!agentProfileDirty || agentProfileBusy || !agentDocuments} onClick={() => void saveAgentProfile()}>{t(agentProfileBusy ? '正在保存…' : '保存 Agent Profile')}</button></div>
       </div>
       {agentProfileMessage && <p className={agentProfileError ? 'runtime-build-error' : 'runtime-agent-profile-success'} role="status">{t(agentProfileMessage)}</p>}
+      {agentDocuments && agentDefaultDocuments && agentProfileEditorDocument && <Suspense fallback={null}><AgentProfileEditor
+        documents={agentDocuments}
+        defaultDocuments={agentDefaultDocuments}
+        initialDocument={agentProfileEditorDocument}
+        dirty={agentProfileDirty}
+        busy={agentProfileBusy}
+        message={agentProfileMessage}
+        error={agentProfileError}
+        onChange={editAgentDocument}
+        onSave={() => void saveAgentProfile()}
+        onClose={() => setAgentProfileEditorDocument(null)}
+      /></Suspense>}
     </section></>}
     {mode === 'runtime' && <section className="runtime-dependencies" aria-labelledby="runtime-dependencies-title">
       <div className="runtime-dependency-heading"><div><strong id="runtime-dependencies-title">{t('Python 依赖管理')}</strong><span>{t('版本可留空，构建时将安装最新版本。核心绘图库由基础镜像锁定。')}</span></div></div>
@@ -4470,12 +4523,20 @@ function CommandProgressMessage({ message }: { message: ChatMessage }) {
     return () => window.clearInterval(timer);
   }, [startedAt]);
 
+  const isCompacting = message.metadata.command === '/compact';
+  const progressHint = isCompacting
+    ? elapsedSeconds < 10
+      ? t('通常几秒内完成')
+      : t('上下文较长，可能需要 10–30 秒')
+    : null;
+
   return <article className="bubble assistant command-progress-message" id={`message-${message.id}`} role="status" aria-live="polite">
     <span className="bubble-label">Astra</span>
     <div className="command-progress-line">
       <span className="command-progress-spinner" aria-hidden="true" />
       <span>{t(message.content)}</span>
       <small>{t('已用时 {seconds} 秒').replace('{seconds}', String(elapsedSeconds))}</small>
+      {progressHint && <small className="command-progress-hint">· {progressHint}</small>}
     </div>
   </article>;
 }
@@ -4494,7 +4555,7 @@ function ProcessPanel({ run, messageId, liveState, open, isLatestRun, onInitiali
   const notes = [...new Set([...(run.result?.verification_notes ?? []), ...(report?.notes ?? [])])];
   const streamedVerificationText = processItems.filter((item) => item.kind === 'verification').map((item) => item.detail ?? '').join('；');
   const remainingNotes = notes.filter((note) => !streamedVerificationText.includes(note));
-  const hasHistoricalGraph = !isLatestRun && run.answer_mode === 'trusted' && run.plan_graph && 'id' in run.plan_graph;
+  const hasHistoricalGraph = !isLatestRun && isTrustedRuntime(run) && run.plan_graph && 'id' in run.plan_graph;
   useEffect(() => onInitialize(run.id), [onInitialize, run.id]);
   const toggle = (event: MouseEvent<HTMLElement>) => {
     event.preventDefault();
@@ -4699,7 +4760,7 @@ function CitationMarkers({ citations }: { citations: PresentedCitation[] }) {
 }
 
 function trustedResultStatus(run: RunView) {
-  if (run.answer_mode !== 'trusted') return null;
+  if (!isTrustedRuntime(run)) return null;
   if (run.status === 'completed') return '已校验';
   if (run.status === 'completed_with_warnings') return '校验带警告';
   if (['blocked', 'failed'].includes(run.status)) return '未通过完整校验';

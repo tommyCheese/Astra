@@ -39,7 +39,7 @@ from app.application.planning.scheduler import PlanScheduler
 from app.application.skills.activation import SkillActivationService
 from app.common.core.config import AstraRuntimeSettings
 from app.common.schemas.agent.run_policy import EffectiveReasoningPolicy
-from app.common.schemas.agent.types import AnswerMode
+from app.common.schemas.agent.types import RuntimeKind
 from app.infrastructure.model_clients.contracts import ModelClient
 from app.infrastructure.repositories.plans import PlanRepository
 from app.infrastructure.repositories.run_unit_of_work import RunUnitOfWork
@@ -264,7 +264,9 @@ class RootRuntimeComposer:
         state = RootRuntimeState(
             run=run,
             profile=values["profile"],
-            quick_mode=values["profile"].answer_mode == AnswerMode.standard,
+            legacy_standard_mode=(
+                values["profile"].runtime_kind == RuntimeKind.legacy_standard_v1
+            ),
             approved_tool_call=recovered.approved_tool_call,
             approved_turn=recovered.approved_turn,
             approved_request_snapshot=recovered.approved_request_snapshot,
@@ -280,7 +282,7 @@ class RootRuntimeComposer:
             skill_action_stage=collaborators["skill"],
             ensure_permission_runtime=values["permission_runtime"].ensure,
             answer_mode=values["profile"].answer_mode,
-            quick_mode=state.quick_mode,
+            legacy_standard_mode=state.legacy_standard_mode,
             on_answer_delta=values["on_answer_delta"],
         )
         iteration = RootAgentIterationStage(
@@ -333,7 +335,7 @@ class RootRuntimeComposer:
             initial_run=values["run"],
             initial_skill_snapshot=values["initial_skill_snapshot"],
             fresh_run=values["fresh_run"],
-            quick_mode=state.quick_mode,
+            legacy_standard_mode=state.legacy_standard_mode,
             subagent_supervisor=values["supervisor"],
         )
 

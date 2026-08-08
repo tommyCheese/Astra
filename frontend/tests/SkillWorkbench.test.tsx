@@ -269,14 +269,26 @@ describe('SkillWorkbench', () => {
     expect(await screen.findByRole('heading', { name: 'Skill Library' })).toBeInTheDocument();
     expect(screen.getByLabelText('Search skills')).toBeInTheDocument();
     expect(screen.getByLabelText('Grid view')).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByLabelText('Grid view')).toHaveTextContent('Grid');
     fireEvent.click(screen.getByLabelText('List view'));
     expect(screen.getByLabelText('List view')).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByLabelText('Sort by').closest('label')).toHaveTextContent('Sort');
     fireEvent.click(await screen.findByRole('button', { name: /research-notes/ }));
     fireEvent.click(await screen.findByRole('button', { name: 'Edit' }));
     expect(screen.getByRole('button', { name: 'Validate' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Publish' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '0 issues' })).toBeInTheDocument();
     expect(screen.queryByText('选择或创建一个 Skill')).not.toBeInTheDocument();
+  });
+
+  it('opens the editor as a full-viewport workspace with accessible vector icons', async () => {
+    const { container } = renderWorkbench();
+    await openCustomEditor();
+
+    expect(container.querySelector('.editor-layer .skill-editor-dialog')).toBeInTheDocument();
+    expect(container.querySelector('.skill-tree-icon svg')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '新建文件' }).querySelector('svg')).toBeInTheDocument();
+    expect(screen.getByLabelText('搜索 Skill 文件').previousElementSibling).toMatchObject({ tagName: 'svg' });
   });
 
   it('opens a published revision as a read-only historical file tree', async () => {

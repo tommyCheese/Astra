@@ -46,6 +46,8 @@ class AstraRuntimeSettings(BaseSettings):
     agent_node_max_safe_retries: int = 1
     agent_subagent_kill_switch: bool = False
     agent_subagent_rollout_cohort: str = "trusted_read_only"
+    agent_fast_runtime_enabled: bool = True
+    agent_legacy_standard_runtime_enabled: bool = True
     agent_subagent_read_only: bool = True
     agent_subagent_max_children_total: int = Field(default=4, ge=1, le=64)
     agent_subagent_max_children_per_parent: int = Field(default=2, ge=1, le=16)
@@ -189,6 +191,8 @@ class AstraRuntimeSettings(BaseSettings):
             raise ValueError("Compaction recovery ratio must be below the trigger ratio")
         if self.tool_plugin_rollout_mode not in {"builtin_only", "configured"}:
             raise ValueError("Tool plugin rollout mode must be builtin_only or configured")
+        if not self.agent_fast_runtime_enabled and not self.agent_legacy_standard_runtime_enabled:
+            raise ValueError("At least one standard runtime must remain enabled")
         return self
 
     @property

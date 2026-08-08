@@ -19,7 +19,7 @@ from app.infrastructure.repositories.run_unit_of_work import RunUnitOfWork
 from app.infrastructure.tools.base import AstraToolRegistry
 from app.main import create_app
 
-EXPECTED_OPENAPI_SHA256 = "824cff460d53033747ccf5d83297460fc25eb5ee4f7beb1f948f6009ac110d44"
+EXPECTED_OPENAPI_SHA256 = "11068a9f5d8d0fb453ae69787b631659fa4b06a0c7299a062e3c67f5593c5460"
 EXPECTED_ORM_TABLES = {
     "agent_budget_reservations",
     "agent_delegations",
@@ -90,7 +90,7 @@ def test_openapi_contract_matches_refactoring_baseline():
     ).encode()
 
     assert len(openapi_document["paths"]) == 97
-    assert len(openapi_document["components"]["schemas"]) == 200
+    assert len(openapi_document["components"]["schemas"]) == 201
     assert hashlib.sha256(canonical_openapi).hexdigest() == EXPECTED_OPENAPI_SHA256
 
 

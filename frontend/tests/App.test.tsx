@@ -1,9 +1,15 @@
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { App, DocumentationPage } from '../src/App';
-import { buildRuntime, cancelRun, cancelRuntimeBuild, confirmPlanExecution, createConversationShare, createRun, decideToolApproval, deleteConversation, executeConversationCommand, getConversation, getConversationContext, getConversationStrategy, getRun, getRuntimeDefaultModel, getRuntimeProfile, listConversationShares, listConversations, listLibraryDeliverables, listRuns, listSkills, listSystemCommands, resetRuntimeAgentProfile, resolveModelContextCapabilities, resolveModelThinkingCapabilities, resumeRun, revisePlan, revokeConversationShare, streamRunEvents, takeCreatedRunStream, testModelConnection, updateConversation, updateConversationStrategy, updateRuntimeAgentProfile, updateRuntimeMemorySettings, updateToolState, type ModelThinkingCapability, type RunStreamEvent, type SkillSummary } from '../src/api';
+import { buildRuntime, cancelRun, cancelRuntimeBuild, confirmPlanExecution, createConversationShare, createRun, decideToolApproval, deleteConversation, executeConversationCommand, getConversation, getConversationContext, getConversationStrategy, getRun, getRuntimeDefaultModel, getRuntimeProfile, listConversationShares, listConversations, listLibraryDeliverables, listRuns, listSkills, listSystemCommands, resolveModelContextCapabilities, resolveModelThinkingCapabilities, resumeRun, revisePlan, revokeConversationShare, streamRunEvents, takeCreatedRunStream, testModelConnection, updateConversation, updateConversationStrategy, updateRuntimeAgentProfile, updateRuntimeMemorySettings, updateToolState, type ModelThinkingCapability, type RunStreamEvent, type SkillSummary } from '../src/api';
 import type { PlanGraphSnapshot, RunView } from '../src/types';
+
+vi.mock('@monaco-editor/react', () => ({
+  default: ({ path, value, onChange, options }: { path: string; value: string; onChange: (value: string) => void; options: { readOnly: boolean; ariaLabel?: string } }) => (
+    <textarea aria-label={options.ariaLabel ?? 'Monaco editor'} data-model-path={path} value={value} readOnly={options.readOnly} onChange={(event) => onChange(event.currentTarget.value)} />
+  ),
+}));
 
 vi.mock('../src/api', () => ({
   AstraApiError: class AstraApiError extends Error {
@@ -81,9 +87,8 @@ vi.mock('../src/api', () => ({
   ] })),
   updateToolProviderState: vi.fn(),
   updateToolProviderConfiguration: vi.fn(),
-  getRuntimeProfile: vi.fn(async () => ({ dependencies: [], core_dependencies: [{ name: 'numpy', version: '2.2.6' }, { name: 'matplotlib', version: '3.10.3' }], active_image: 'astra-data-viz:0.1.0', dependency_digest: 'base', build: null, agent_profile: { source: 'default', version: 'profile-default', documents: { identity: '# Astra Identity\n\n## Identity\nDefault', soul: '# Astra Soul', memory: '# Astra Memory Protocol', autodream: '# Astra AutoDream Protocol' } }, memory_settings: { write_enabled: true, recall_enabled: false, retrieval_max_items: 8, retrieval_max_tokens: 2000, retrieval_min_confidence: 0.2, retrieval_min_score: 0.05, autodream_enabled: false, autodream_scan_seconds: 3600, autodream_min_candidates: 2 } })),
+  getRuntimeProfile: vi.fn(async () => ({ dependencies: [], core_dependencies: [{ name: 'numpy', version: '2.2.6' }, { name: 'matplotlib', version: '3.10.3' }], active_image: 'astra-data-viz:0.1.0', dependency_digest: 'base', build: null, agent_profile: { source: 'default', version: 'profile-default', documents: { identity: '# Astra Identity\n\n## Identity\nDefault', soul: '# Astra Soul', memory: '# Astra Memory Protocol', autodream: '# Astra AutoDream Protocol' }, default_documents: { identity: '# Astra Identity\n\n## Identity\nDefault', soul: '# Astra Soul', memory: '# Astra Memory Protocol', autodream: '# Astra AutoDream Protocol' } }, memory_settings: { write_enabled: true, recall_enabled: false, retrieval_max_items: 8, retrieval_max_tokens: 2000, retrieval_min_confidence: 0.2, retrieval_min_score: 0.05, autodream_enabled: false, autodream_scan_seconds: 3600, autodream_min_candidates: 2 } })),
   updateRuntimeAgentProfile: vi.fn(async (documents) => ({ source: 'user', version: 'profile-user', documents })),
-  resetRuntimeAgentProfile: vi.fn(async () => ({ source: 'default', version: 'profile-default', documents: { identity: '# Astra Identity\n\n## Identity\nDefault', soul: '# Astra Soul', memory: '# Astra Memory Protocol', autodream: '# Astra AutoDream Protocol' } })),
   updateRuntimeMemorySettings: vi.fn(async (settings) => settings),
   buildRuntime: vi.fn(async () => ({ dependencies: [{ name: 'polars', version: '' }], core_dependencies: [], active_image: 'astra-data-viz:0.1.0', dependency_digest: 'base', build: { id: 'build-1', status: 'queued', phase: '等待构建', progress: 0, log: '等待构建' } })),
   cancelRuntimeBuild: vi.fn(async () => ({ dependencies: [{ name: 'polars', version: '' }], core_dependencies: [], active_image: 'astra-data-viz:0.1.0', dependency_digest: 'base', build: { id: 'build-1', status: 'cancelled', phase: '已取消', progress: 12, log: '构建已由用户取消' } })),
@@ -410,7 +415,7 @@ describe('App', () => {
     expect(screen.getByRole('heading', { name: '快速模式与可信模式' })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: '完整差异对比' })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Subagent 的行为差异' })).toBeInTheDocument();
-    expect(screen.getByText('快速 Subagent 的轻量预算')).toBeInTheDocument();
+    expect(screen.getByText('运行时不会中途切换')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: '如何选择' })).toHaveAttribute('href', '#answer-mode-choose');
     expect(screen.getByRole('button', { name: /快速模式与可信模式.*定义、差异与选择建议/ })).toHaveAttribute('aria-current', 'page');
     expect(screen.queryByText('什么时候真正生效？')).not.toBeInTheDocument();
@@ -635,7 +640,7 @@ describe('App', () => {
       '介绍一下你自己',
       undefined,
       'standard',
-      expect.any(Object),
+      undefined,
       expect.any(Object),
       undefined,
       ['custom:hello-astra'],
@@ -737,12 +742,13 @@ describe('App', () => {
     await userEvent.type(textbox, '/compact');
     await userEvent.click(screen.getByRole('button', { name: '发送' }));
 
-    expect(await screen.findByText('正在检查并压缩主要信息上下文…')).toBeInTheDocument();
+    expect(await screen.findByText('正在压缩当前上下文…')).toBeInTheDocument();
     expect(screen.getByText('已用时 0 秒')).toBeInTheDocument();
+    expect(screen.getByText(/通常几秒内完成/)).toBeInTheDocument();
 
     act(() => finishCompact({
       command: '/compact',
-      message: '已调用模型完成主要信息上下文压缩：折叠 3 轮，保留最近 4 轮；完整聊天记录仍保留。',
+      message: '当前上下文已完成压缩。',
       context: {
         provider: 'openai', model: 'gpt-5', window_tokens: 400000, max_output_tokens: 128000,
         context_source: 'catalog', context_verified: true, context_documentation_url: null, available_input_tokens: 391808,
@@ -756,14 +762,14 @@ describe('App', () => {
         command: '/compact',
         content: '/compact',
         arguments: '',
-        assistant_content: '已调用模型完成主要信息上下文压缩：折叠 3 轮，保留最近 4 轮；完整聊天记录仍保留。',
+        assistant_content: '当前上下文已完成压缩。',
         after_run_count: 1,
         created_at: new Date().toISOString(),
       },
     }));
 
-    expect(await screen.findByText(/已调用模型完成主要信息上下文压缩/)).toBeInTheDocument();
-    expect(screen.queryByText('正在检查并压缩主要信息上下文…')).not.toBeInTheDocument();
+    expect(await screen.findByText('当前上下文已完成压缩。')).toBeInTheDocument();
+    expect(screen.queryByText('正在压缩当前上下文…')).not.toBeInTheDocument();
   });
 
   it('stages parameterized automation commands and submits them as host operations', async () => {
@@ -873,7 +879,7 @@ describe('App', () => {
     expect(screen.getByText('当前没有可整理的模型上下文。').closest('article')).toHaveClass('command-result-message');
   });
 
-  it('routes /subagent to a quick required-subagent Run and preserves arguments on failure', async () => {
+  it('routes /subagent to a trusted required-subagent Run and preserves arguments on failure', async () => {
     vi.mocked(listSystemCommands).mockResolvedValueOnce([
       {
         name: 'subagent',
@@ -898,10 +904,10 @@ describe('App', () => {
     await waitFor(() => expect(createRun).toHaveBeenCalledWith(
       '调研三个独立方案',
       undefined,
-      'standard',
+      'trusted',
       expect.any(Object),
       expect.any(Object),
-      undefined,
+      'auto',
       undefined,
       'required',
     ));
@@ -1196,7 +1202,7 @@ describe('App', () => {
     await waitFor(() => expect(cancelRun).toHaveBeenCalledWith('run-pending'));
     await userEvent.type(screen.getByRole('textbox'), '继续追问');
     await userEvent.click(screen.getByRole('button', { name: '发送' }));
-    await waitFor(() => expect(createRun).toHaveBeenLastCalledWith('继续追问', 'task-1', 'standard', expect.anything(), expect.anything(), undefined));
+    await waitFor(() => expect(createRun).toHaveBeenLastCalledWith('继续追问', 'task-1', 'standard', undefined, expect.anything(), undefined));
   });
 
   it('promotes the primary referenced output and keeps remaining evidence supplementary', async () => {
@@ -1499,7 +1505,7 @@ describe('App', () => {
     vi.mocked(updateConversationStrategy).mockClear();
     render(<App />);
 
-    await waitFor(() => expect(screen.getByRole('button', { name: '当前模型：gpt-5' })).toHaveTextContent('快速策略 · 工具按需'));
+    await waitFor(() => expect(screen.getByRole('button', { name: '当前模型：gpt-5' })).toHaveTextContent('快速模式 · 模型驱动 · 未经可信校验'));
     expect(screen.getByRole('switch', { name: '快速响应' })).toHaveAttribute('aria-checked', 'false');
     await userEvent.click(screen.getByRole('switch', { name: '快速响应' }));
     await userEvent.click(await screen.findByRole('button', { name: '当前模型：gpt-5' }));
@@ -1746,12 +1752,14 @@ describe('App', () => {
     await userEvent.type(screen.getByRole('textbox'), '继续追问{Enter}');
     await screen.findAllByText('已完成查询');
 
-    expect(vi.mocked(createRun)).toHaveBeenLastCalledWith('继续追问', 'task-1', 'standard', expect.objectContaining({
-      reasoning_effort: 'balanced',
-      max_tool_calls: 8,
-      reflection_enabled: true,
-      execution_mode: 'request_approval',
-    }), expect.objectContaining({ provider: 'openai', name: 'gpt-5' }), undefined);
+    expect(vi.mocked(createRun)).toHaveBeenLastCalledWith(
+      '继续追问',
+      'task-1',
+      'standard',
+      undefined,
+      expect.objectContaining({ provider: 'openai', name: 'gpt-5' }),
+      undefined,
+    );
     expect(screen.getAllByRole('button', { name: '查询 Astra' })).toHaveLength(1);
     expect(screen.getAllByRole('button', { name: /跳转到问题/ })).toHaveLength(2);
     const firstQuestion = screen.getByRole('button', { name: '跳转到问题 1' });
@@ -1904,14 +1912,14 @@ describe('App', () => {
 
     expect(screen.getByRole('heading', { name: '工具' })).toBeInTheDocument();
     expect(screen.queryByText('Web Fetch')).not.toBeInTheDocument();
-    expect(screen.getByText('Chart Render')).toBeInTheDocument();
-    expect(screen.getByText('Swarm / 子 Agent')).toBeInTheDocument();
-    expect(screen.getByText('使用隔离运行时渲染声明式图表')).toBeInTheDocument();
-    expect(screen.getByText('在当前任务工作区中执行离线 Bash 命令。写入 /workspace 的文件会保留，供后续工具和运行使用。')).toBeInTheDocument();
-    expect(screen.getByText('将两个或更多独立的可信工作委派给受限的 Astra 子 Agent 组，并汇合已验证的结果。')).toBeInTheDocument();
-    expect(screen.getByText('对当前任务工作区中的 UTF-8 文件执行精确、原子的文本替换。')).toBeInTheDocument();
-    expect(screen.getByText('根据当前运行创建可审计的记忆候选，等待之后人工激活。')).toBeInTheDocument();
-    expect(screen.getByText('撤销当前运行可访问的记忆，同时保留其审计历史。')).toBeInTheDocument();
+    expect(await screen.findByText('生成图表')).toBeInTheDocument();
+    expect(screen.getByText('委派子 Agent')).toBeInTheDocument();
+    expect(screen.getByText('在隔离环境中创建图表')).toBeInTheDocument();
+    expect(screen.getByText('在隔离环境中运行命令')).toBeInTheDocument();
+    expect(screen.getByText('并发创建受治理的子 Agent 并汇合结果')).toBeInTheDocument();
+    expect(screen.getByText('精确替换任务文件中的文本')).toBeInTheDocument();
+    expect(screen.getByText('将本次任务中的信息保存为待审核记忆')).toBeInTheDocument();
+    expect(screen.getByText('撤销当前任务可访问的记忆')).toBeInTheDocument();
     expect(screen.queryByText('Render a declarative chart with an isolated runtime')).not.toBeInTheDocument();
     expect(screen.queryByText('需要先启用受治理子 Agent 执行。')).not.toBeInTheDocument();
     expect(screen.queryByText('关闭 Swarm 会立即阻止创建新的子 Agent，但不会取消已经创建的子 Agent。')).not.toBeInTheDocument();
@@ -1919,15 +1927,15 @@ describe('App', () => {
     expect(screen.queryByText('Builtin')).not.toBeInTheDocument();
     expect(screen.queryByText('astra.builtin · v1 · healthy')).not.toBeInTheDocument();
     expect(screen.getAllByRole('switch')).toHaveLength(10);
-    expect(screen.getByRole('switch', { name: /Chart Render/ }).querySelector(':scope > .toggle-knob')).toBeInTheDocument();
-    const bashSwitch = screen.getByRole('switch', { name: /Bash Execute/ });
+    expect(screen.getByRole('switch', { name: /生成图表/ }).querySelector(':scope > .toggle-knob')).toBeInTheDocument();
+    const bashSwitch = screen.getByRole('switch', { name: /执行命令/ });
     await userEvent.click(bashSwitch);
     await waitFor(() => expect(updateToolState).toHaveBeenCalledWith('bash_execute', true));
     expect(bashSwitch).toHaveAttribute('aria-checked', 'true');
     expect(screen.queryByText('工具已启用，将用于之后新建的任务。')).not.toBeInTheDocument();
     expect(screen.queryByText('工具已停用，之后新建的任务不会调用它。')).not.toBeInTheDocument();
     expect(screen.queryByText('设置已保存，并会应用于之后创建的任务。')).not.toBeInTheDocument();
-    const swarmSwitch = screen.getByRole('switch', { name: /Swarm \/ 子 Agent/ });
+    const swarmSwitch = screen.getByRole('switch', { name: /委派子 Agent/ });
     await userEvent.click(swarmSwitch);
     await waitFor(() => expect(updateToolState).toHaveBeenLastCalledWith('swarm', false));
     expect(swarmSwitch).toHaveAttribute('aria-checked', 'false');
@@ -2143,19 +2151,30 @@ describe('App', () => {
 
     await userEvent.click(screen.getByRole('button', { name: /设置/ }));
     await userEvent.click(screen.getByRole('button', { name: 'Agent' }));
+    expect(screen.queryByRole('button', { name: '保存 Agent Profile' })).not.toBeInTheDocument();
+    await userEvent.click(await screen.findByRole('button', { name: '编辑 IDENTITY.md' }));
     const identity = await screen.findByLabelText('IDENTITY.md');
+    expect(identity).toHaveAttribute('data-model-path', 'agent-profile://IDENTITY.md');
+    expect(screen.getAllByRole('button', { name: '保存 Agent Profile' })).toHaveLength(1);
     fireEvent.change(identity, { target: { value: '# Astra Identity\n\n## Identity\nCustomized' } });
 
-    expect(screen.getByText('有未保存修改')).toBeInTheDocument();
-    await userEvent.click(screen.getByRole('button', { name: '保存 Agent Profile' }));
+    const editorDialog = screen.getByRole('dialog', { name: 'Astra 身份文档' });
+    expect(within(editorDialog).getAllByText('有未保存修改').length).toBeGreaterThan(0);
+    await userEvent.click(within(editorDialog).getByRole('button', { name: '保存 Agent Profile' }));
     await waitFor(() => expect(updateRuntimeAgentProfile).toHaveBeenCalledWith(expect.objectContaining({ identity: expect.stringContaining('Customized') })));
     expect(await screen.findByText('用户配置')).toBeInTheDocument();
-    expect(screen.getByText('Agent Profile 已保存，将应用于之后新建的任务。')).toBeInTheDocument();
+    expect(screen.getAllByText('Agent Profile 已保存，将应用于之后新建的任务。').length).toBeGreaterThan(0);
 
-    await userEvent.click(screen.getByRole('button', { name: '恢复内置默认' }));
-    expect(confirm).toHaveBeenCalled();
-    await waitFor(() => expect(resetRuntimeAgentProfile).toHaveBeenCalled());
+    await userEvent.click(within(editorDialog).getByRole('button', { name: '恢复内置默认' }));
+    expect(confirm).toHaveBeenCalledWith('恢复 IDENTITY.md 的内置默认内容？');
     expect((identity as HTMLTextAreaElement).value).toContain('Default');
+    expect(updateRuntimeAgentProfile).toHaveBeenCalledTimes(1);
+    expect(within(editorDialog).getByRole('button', { name: '保存 Agent Profile' })).toBeEnabled();
+    await userEvent.click(within(editorDialog).getByRole('button', { name: '保存 Agent Profile' }));
+    await waitFor(() => expect(updateRuntimeAgentProfile).toHaveBeenLastCalledWith(expect.objectContaining({
+      identity: expect.stringContaining('Default'),
+      soul: '# Astra Soul',
+    })));
   });
 
   it('preserves unsaved Agent Profile text when validation fails', async () => {
@@ -2164,13 +2183,15 @@ describe('App', () => {
 
     await userEvent.click(screen.getByRole('button', { name: /设置/ }));
     await userEvent.click(screen.getByRole('button', { name: 'Agent' }));
+    await userEvent.click(await screen.findByRole('button', { name: '编辑 IDENTITY.md' }));
     const identity = await screen.findByLabelText('IDENTITY.md');
     fireEvent.change(identity, { target: { value: 'invalid profile text' } });
-    await userEvent.click(screen.getByRole('button', { name: '保存 Agent Profile' }));
+    const editorDialog = screen.getByRole('dialog', { name: 'Astra 身份文档' });
+    await userEvent.click(within(editorDialog).getByRole('button', { name: '保存 Agent Profile' }));
 
-    expect(await screen.findByRole('status')).toHaveTextContent('IDENTITY.md 缺少必需章节');
+    await waitFor(() => expect(within(editorDialog).getByRole('status')).toHaveTextContent('IDENTITY.md 缺少必需章节'));
     expect(identity).toHaveValue('invalid profile text');
-    expect(screen.getByRole('button', { name: '保存 Agent Profile' })).toBeEnabled();
+    expect(within(editorDialog).getByRole('button', { name: '保存 Agent Profile' })).toBeEnabled();
   });
 
   it('separates Agent, Runtime, Memory, and experimental improvement settings', async () => {
@@ -2179,10 +2200,10 @@ describe('App', () => {
 
     await userEvent.click(screen.getByRole('button', { name: '运行时' }));
     expect(screen.getByRole('heading', { name: '安全运行环境' })).toBeInTheDocument();
-    expect(screen.queryByLabelText('IDENTITY.md')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '编辑 IDENTITY.md' })).not.toBeInTheDocument();
 
     await userEvent.click(screen.getByRole('button', { name: 'Agent' }));
-    expect(await screen.findByLabelText('IDENTITY.md')).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: '编辑 IDENTITY.md' })).toBeInTheDocument();
     expect(screen.getByText(/不会开启记忆、工具或后台作业/)).toBeInTheDocument();
 
     await userEvent.click(screen.getByRole('button', { name: '记忆' }));
@@ -2340,7 +2361,7 @@ describe('App', () => {
     await userEvent.type(search, '子 Agent');
     await userEvent.click(screen.getByRole('option', { name: /Swarm \/ 子 Agent.*工具/ }));
     expect(screen.getByRole('button', { name: '工具' })).toHaveAttribute('aria-current', 'page');
-    expect(await screen.findByText('Swarm / 子 Agent')).toBeInTheDocument();
+    expect(await screen.findByText('委派子 Agent')).toBeInTheDocument();
     await userEvent.clear(search);
     await userEvent.type(search, '运行时');
     await userEvent.click(screen.getByRole('option', { name: /运行时.*Tab/ }));
@@ -2481,7 +2502,7 @@ describe('App', () => {
       expect.any(String),
       undefined,
       'standard',
-      expect.objectContaining({ reasoning_effort: 'balanced' }),
+      undefined,
       expect.objectContaining({
         provider: 'qwen',
         name: 'qwen3.7-plus',
@@ -2535,7 +2556,7 @@ describe('App', () => {
       expect.any(String),
       undefined,
       'standard',
-      expect.any(Object),
+      undefined,
       expect.objectContaining({
         thinking: { enabled: false, depth: null, capability_version: 2 },
       }),
@@ -2610,7 +2631,7 @@ describe('App', () => {
       '等待能力解析',
       undefined,
       'standard',
-      expect.any(Object),
+      undefined,
       expect.objectContaining({
         thinking: { enabled: true, depth: 'medium', capability_version: 2 },
       }),

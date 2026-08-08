@@ -28,7 +28,7 @@ class DecisionStageInput:
     turn_index: int
     context: dict[str, Any]
     answer_mode: str
-    quick_mode: bool
+    legacy_standard_mode: bool
     may_stream_answer: bool
     active_plan_node_id: str | None
     approved_tool_call: ToolCallRecord | None = None
@@ -151,7 +151,7 @@ class ModelDecisionStage:
         if stage_input.approved_tool_call and stage_input.approved_turn:
             return self._forced_decision(stage_input)
         await self._record_skill_binding(stage_input)
-        if stage_input.quick_mode:
+        if stage_input.legacy_standard_mode:
             await self._repository.session.commit()
         streamed_answer = StreamedAgentAnswer()
         try:

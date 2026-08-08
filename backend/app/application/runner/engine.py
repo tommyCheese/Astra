@@ -13,6 +13,8 @@ from app.application.agent_runtime.policies.reasoning import (
     build_default_contract,
 )
 from app.application.agent_runtime.services.loop import AstraAgentLoop
+from app.application.fast_agent_runtime import FastAgentExecutor
+from app.application.fast_agent_runtime.context import fast_compatible_skills
 from app.application.planning.service import PlanService, PlanValidationError, canonical_agent_state
 from app.application.run_management.recovery import RunExecutionRecovery
 from app.application.runner.answer_stream import AnswerStreamMixin
@@ -28,7 +30,7 @@ from app.common.schemas.agent.planning import (
 )
 from app.common.schemas.agent.run_policy import ReasoningPolicySnapshot, RunExecutionProfile
 from app.common.schemas.agent.run_result import AgentFinalAnswer
-from app.common.schemas.agent.types import AnswerMode, PlanExecution
+from app.common.schemas.agent.types import AnswerMode, PlanExecution, RuntimeKind
 from app.common.schemas.models import ModelThinkingSnapshot
 from app.domain.agent_profile import (
     AgentProfile,
@@ -49,6 +51,7 @@ from app.infrastructure.repositories.run_unit_of_work import RunUnitOfWork
 from app.infrastructure.tools.base import AstraToolRegistry
 from app.infrastructure.tools.registry import build_application_tool_registry
 from app.infrastructure.tools.selection import forbidden_plan_bindings, task_capability_catalog
+from app.infrastructure.tools.router import ToolRouter
 
 logger = logging.getLogger("astra.engine")
 
@@ -196,8 +199,15 @@ class RunEngine(PlanPreparationMixin, AnswerStreamMixin):
         skill_snapshot = await self._bind_skills(repo, run, skill_snapshot)
         goal = await self._conversation_goal(repo, run)
         execution_profile = RunExecutionProfile.model_validate(run.execution_profile or {})
-        if execution_profile.answer_mode == AnswerMode.standard:
-            await self._execute_agent_loop(
+        if execution_profile.runtime_kind == RuntimeKind.fast_v1:
+            await self._execute_fast_runtime(repo, run_id, goal)
+            return
+        if execution_profile.runtime_kind == RuntimeKind.legacy_standard_v1:
+            if not self.settings.agent_legacy_standard_runtime_enabled:
+                raise RuntimeError(
+                    "Legacy standard runtime is retired; this historical Run cannot be resumed"
+                )
+            await self._execute_legacy_standard_runtime(
                 repo,
                 run_id,
                 goal,
@@ -213,6 +223,58 @@ class RunEngine(PlanPreparationMixin, AnswerStreamMixin):
         if await self._prepare_trusted_run(repo, run, goal, execution_profile):
             return
         await self._execute_trusted_runtime(repo, run_id, goal)
+
+    async def _execute_legacy_standard_runtime(self, repo, run_id, goal, **kwargs) -> None:
+        """Compatibility-only path for standard Runs created before fast-v1."""
+        await self._execute_agent_loop(repo, run_id, goal, **kwargs)
+
+    async def _execute_fast_runtime(
+        self,
+        repo: RunUnitOfWork,
+        run_id: str,
+        goal: str,
+    ) -> None:
+        backends = {"in_process", "astra.runtime"}
+        if self.settings.sandbox_enabled:
+            backends.add("sandbox.remote")
+        executor = FastAgentExecutor(
+            settings=self.settings,
+            model_client=self.model_client,
+            router=ToolRouter(self.tool_registry, available_backends=backends),
+        )
+        await self._start_answer_stream(repo, run_id)
+        try:
+            execution = await executor.run(
+                repo,
+                run_id,
+                goal,
+                active_skills=getattr(self, "_active_skill_blocks", []),
+                on_answer_delta=lambda delta: self._handle_answer_delta(
+                    repo,
+                    run_id,
+                    delta,
+                    background_verification=False,
+                ),
+            )
+        except asyncio.CancelledError:
+            self._answer_buffers.pop(run_id, None)
+            self._answer_flush_at.pop(run_id, None)
+            self._answer_start_pending.discard(run_id)
+            await repo.add_event(run_id, "fast.cancelled", {"status": "cancelled"})
+            await repo.session.commit()
+            raise
+        except Exception:
+            self._answer_buffers.pop(run_id, None)
+            self._answer_flush_at.pop(run_id, None)
+            self._answer_start_pending.discard(run_id)
+            raise
+        if execution.status == "waiting_user":
+            await self._ensure_answer_stream_started(repo, run_id)
+            await repo.add_event(run_id, "answer.paused", {"status": execution.status})
+            await repo.session.commit()
+            return
+        persisted = await repo.require_run_core(run_id)
+        await self._complete_answer_stream(repo, run_id, persisted.summary or execution.answer)
 
     async def _bind_skills(self, repo, run, skill_snapshot):
         run_id = run.id
@@ -231,7 +293,25 @@ class RunEngine(PlanPreparationMixin, AnswerStreamMixin):
                 if "snapshot is unavailable" not in str(exc):
                     raise
                 skill_blocks = []
-            self.model_client.bind_skills(skill_blocks)
+            execution = RunExecutionProfile.model_validate(run.execution_profile or {})
+            bound_skill_blocks = (
+                fast_compatible_skills(skill_blocks)
+                if execution.runtime_kind == RuntimeKind.fast_v1
+                else skill_blocks
+            )
+            self.model_client.bind_skills(bound_skill_blocks)
+            if len(bound_skill_blocks) != len(skill_blocks):
+                await repo.add_event(
+                    run_id,
+                    "skill.fast_incompatible",
+                    {
+                        "excluded": [
+                            item["qualified_identity"]
+                            for item in skill_blocks
+                            if item not in bound_skill_blocks
+                        ]
+                    },
+                )
             if skill_blocks:
                 await repo.add_event(
                     run_id,
@@ -247,7 +327,6 @@ class RunEngine(PlanPreparationMixin, AnswerStreamMixin):
                         ]
                     },
                 )
-            execution = RunExecutionProfile.model_validate(run.execution_profile or {})
             if execution.answer_mode == AnswerMode.trusted:
                 await repo.add_event(
                     run_id,
@@ -257,7 +336,7 @@ class RunEngine(PlanPreparationMixin, AnswerStreamMixin):
                         "phase": "before_task_contract",
                     },
                 )
-            self._active_skill_blocks = skill_blocks
+            self._active_skill_blocks = bound_skill_blocks
         return skill_snapshot
 
     async def _prepare_trusted_run(self, repo, run, goal, execution_profile) -> bool:

@@ -57,6 +57,12 @@ class RunRecord(AstraOrmRecordBase):
     status: Mapped[str] = mapped_column(String(40), default="created")
     mode: Mapped[str] = mapped_column(String(80), default="web_data_query")
     answer_mode: Mapped[str] = mapped_column(String(40), nullable=False, default="standard")
+    runtime_kind: Mapped[str] = mapped_column(
+        String(40), nullable=False, default="legacy-standard-v1"
+    )
+    runtime_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    fast_runtime_snapshot: Mapped[dict] = mapped_column(JsonType, default=dict)
+    fast_state_version: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     execution_profile: Mapped[dict] = mapped_column(JsonType, default=dict)
     model_policy: Mapped[dict] = mapped_column(JsonType, default=dict)
     agent_profile_snapshot: Mapped[dict] = mapped_column(JsonType, default=dict)

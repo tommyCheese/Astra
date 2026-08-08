@@ -174,6 +174,12 @@ def _run_identity(run: RunRecord) -> dict[str, Any]:
         "mode": run.mode,
         "processing_duration_ms": _processing_duration_ms(run),
         "answer_mode": run.answer_mode or "trusted",
+        "runtime_kind": run.runtime_kind or (
+            "legacy-standard-v1" if run.answer_mode == "standard" else "trusted-v1"
+        ),
+        "runtime_version": run.runtime_version or 1,
+        "fast_runtime_snapshot": run.fast_runtime_snapshot or {},
+        "fast_state_version": run.fast_state_version or 0,
         "execution_profile": run.execution_profile or {},
         "summary": run.summary,
         "result": _result_view(run),

@@ -56,6 +56,7 @@ def test_runtime_profile_exposes_updates_and_resets_agent_profile(tmp_path):
     initial = service.read()["agent_profile"]
     assert initial["source"] == "default"
     assert set(initial["documents"]) == {"identity", "soul", "memory", "autodream"}
+    assert initial["default_documents"] == initial["documents"]
 
     documents = dict(initial["documents"])
     documents["identity"] = documents["identity"].replace(
@@ -66,6 +67,7 @@ def test_runtime_profile_exposes_updates_and_resets_agent_profile(tmp_path):
 
     assert updated["source"] == "user"
     assert updated["version"] != initial["version"]
+    assert updated["default_documents"] == initial["documents"]
     assert service.active_agent_profile().manifest.version == updated["version"]
     persisted = json.loads(profile_path.read_text())["agent_profile"]
     assert set(persisted) == {"documents"}

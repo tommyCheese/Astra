@@ -153,6 +153,75 @@ class ModelClient(ABC):
             await on_reasoning_delta("\1")
         return decision, None
 
+    async def fast_decide(
+        self,
+        goal: str,
+        context: dict[str, Any],
+        *,
+        on_delta: AnswerDeltaCallback | None = None,
+    ) -> dict[str, Any]:
+        """Compatibility adapter for the independent fast-v1 action protocol."""
+        streamed_parts: list[str] = []
+
+        async def capture(delta: str) -> None:
+            if delta and delta not in {"\0", "\1"}:
+                streamed_parts.append(delta)
+            if on_delta is not None:
+                await on_delta(delta)
+
+        async def ignore_reasoning(_delta: str) -> None:
+            return None
+
+        try:
+            decision, answer = await self.decide_with_answer(
+                goal,
+                context,
+                on_delta=capture if on_delta is not None else None,
+                on_reasoning_delta=ignore_reasoning,
+            )
+        except ModelOutputError:
+            streamed = "".join(streamed_parts).strip()
+            if not streamed:
+                raise
+            return {
+                "protocol_version": 1,
+                "action": "answer",
+                "content": streamed,
+                "tool_name": None,
+                "tool_input": {},
+                "reason": "Adopted the already-streamed answer after a protocol error.",
+            }
+        mapping = {
+            "finalize": "answer",
+            "call_tool": "call_tool",
+            "ask_user": "ask_user",
+            "blocked": "stop",
+        }
+        action = mapping.get(decision.decision_type, "stop")
+        adopted_stream = answer is None and bool("".join(streamed_parts).strip())
+        content = answer.summary if answer is not None else "".join(streamed_parts).strip() or None
+        if action == "answer" and content is None:
+            synthesized = await self.synthesize(
+                goal,
+                list(context.get("recent_observations") or []),
+                on_delta=on_delta,
+            )
+            content = synthesized.summary
+        if action == "ask_user":
+            content = decision.expected_observation or "请告诉我你希望我完成的具体任务或问题。"
+        return {
+            "protocol_version": 1,
+            "action": action,
+            "content": content,
+            "tool_name": decision.tool_name if action == "call_tool" else None,
+            "tool_input": decision.tool_input if action == "call_tool" else {},
+            "reason": (
+                "Adopted the streamed answer because no structured answer was returned."
+                if action == "answer" and adopted_stream
+                else decision.reasoning_summary
+            ),
+        }
+
     @abstractmethod
     async def reflect(self, goal: str, context: dict[str, Any]) -> AgentReflection:
         raise NotImplementedError

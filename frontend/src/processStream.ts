@@ -61,7 +61,10 @@ export function createOptimisticProcessState(
 }
 
 export function reconcileProcessSnapshot(_state: ProcessStreamState | null, run: RunView): ProcessStreamState {
-  const answerMode: ProcessStreamState['answerMode'] = run.answer_mode === 'standard' ? 'standard' : 'trusted';
+  const answerMode: ProcessStreamState['answerMode'] = run.runtime_kind === 'trusted-v1'
+    || (!run.runtime_kind && run.answer_mode === 'trusted')
+    ? 'trusted'
+    : 'standard';
   // A Run snapshot is authoritative and already contains the persisted events.
   // Replaying it on top of the live projection would append streaming deltas twice.
   let next: ProcessStreamState = createOptimisticProcessState(run.id, answerMode);
@@ -171,6 +174,50 @@ export function reduceProcessEvent(state: ProcessStreamState, event: RunStreamEv
       kind: 'phase',
       title: phaseTitles[phase] ?? '正在处理',
       status: 'running',
+      turnIndex,
+    });
+  } else if (event.type === 'fast.started') {
+    items = upsert(items, {
+      id: 'fast-runtime',
+      kind: 'phase',
+      title: '快速 Agent 已启动',
+      detail: '模型驱动执行',
+      status: 'running',
+    });
+  } else if (event.type === 'fast.action.decided') {
+    items = items.filter((item) => item.id !== 'reasoning-0');
+    const action = safeString(payload.action);
+    const labels: Record<string, string> = {
+      answer: '生成回答',
+      call_tool: '选择工具',
+      ask_user: '请求补充信息',
+      stop: '停止执行',
+    };
+    items = upsert(items, {
+      id: `fast-action-${turnIndex ?? items.length}`,
+      kind: action === 'call_tool' ? 'tool' : 'reasoning',
+      title: labels[action] ?? '模型行动',
+      detail: safeString(payload.tool_name),
+      status: 'completed',
+      turnIndex,
+    });
+  } else if (event.type === 'fast.approval.waiting') {
+    const toolCallId = safeString(payload.tool_call_id);
+    items = upsert(items, {
+      id: `tool-${toolCallId || items.length}`,
+      kind: 'tool',
+      title: safeString(payload.tool_name) || '工具调用',
+      detail: '等待批准',
+      status: 'running',
+      toolCallId: toolCallId || undefined,
+    });
+  } else if (event.type === 'fast.tool.failed') {
+    items = upsert(items, {
+      id: `fast-tool-error-${turnIndex ?? items.length}`,
+      kind: 'tool',
+      title: safeString(payload.tool_name) || '工具调用',
+      detail: safeString(payload.category),
+      status: 'failed',
       turnIndex,
     });
   } else if (
@@ -325,7 +372,7 @@ export function reduceProcessEvent(state: ProcessStreamState, event: RunStreamEv
   }
 
   const status = safeString(payload.status);
-  if (terminalStatuses.has(status) || ['run.completed', 'run.failed', 'run.blocked', 'run.cancelled'].includes(event.type)) {
+  if (terminalStatuses.has(status) || ['run.completed', 'run.failed', 'run.blocked', 'run.cancelled', 'fast.completed', 'fast.waiting', 'fast.blocked', 'fast.cancelled'].includes(event.type)) {
     active = false;
     items = items
       .filter((item) => !isProcessingResultHandoff(item))

@@ -51,7 +51,7 @@ class FinalizationInput:
     terminal_status: str | None
     terminal_summary: str | None
     required_subagent_missing: bool
-    quick_mode: bool
+    legacy_standard_mode: bool
     workspace_changed: bool
     workspace_path: Path | None
 
@@ -100,7 +100,7 @@ class AgentFinalizationStage:
 
     async def execute(self, stage_input: FinalizationInput) -> dict[str, Any]:
         prepared = await self._prepare_answer(stage_input)
-        if stage_input.quick_mode:
+        if stage_input.legacy_standard_mode:
             return await self._finalize_quick(stage_input, prepared)
         final_context = self._final_context(stage_input, prepared.evidence_pack)
         memory_writes = await self._memory_writer.write_candidates(
@@ -168,7 +168,7 @@ class AgentFinalizationStage:
         stage_input: FinalizationInput,
     ) -> tuple[dict[str, Any], ArtifactRecord | None]:
         evidence_pack = self._plugin_runtime.evidence_pack(stage_input.goal)
-        if stage_input.quick_mode:
+        if stage_input.legacy_standard_mode:
             return evidence_pack, None
         records = self._plugin_runtime.grounding.records()
         artifact = await self._repository.create_artifact(

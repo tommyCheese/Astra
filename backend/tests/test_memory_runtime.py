@@ -56,7 +56,7 @@ async def test_cross_session_retrieval_injects_task_memory_and_persists_safe_aud
         goal="项目使用什么数据库？",
         tool_registry=AstraToolRegistry(),
         observations=[],
-        quick_mode=True,
+        legacy_standard_mode=True,
         initial_run=target_run,
     )
 
@@ -113,7 +113,7 @@ async def test_session_retrieval_crosses_tasks_with_matching_identity(session):
         goal="用户有什么偏好？",
         tool_registry=AstraToolRegistry(),
         observations=[],
-        quick_mode=True,
+        legacy_standard_mode=True,
         initial_run=target_run,
     )
 
@@ -142,7 +142,7 @@ async def test_session_retrieval_crosses_tasks_with_matching_identity(session):
         goal="用户有什么偏好？",
         tool_registry=AstraToolRegistry(),
         observations=[],
-        quick_mode=True,
+        legacy_standard_mode=True,
         initial_run=isolated_run,
     )
     assert isolated_context["memory_context"] == []

@@ -20,6 +20,7 @@ from app.common.schemas.agent.planning import (
 from app.common.schemas.agent.run_policy import (
     EffectiveReasoningPolicy,
     EffectiveSubagentPolicy,
+    FastRuntimePolicy,
     PolicyAdjustment,
     ReasoningPolicySnapshot,
     RequestedReasoningPolicy,
@@ -39,6 +40,7 @@ from app.common.schemas.agent.types import (
     PlanExecution,
     ReasoningEffort,
     ReflectionTrigger,
+    RuntimeKind,
     VerificationLevel,
 )
 
@@ -210,6 +212,7 @@ def resolve_run_profile(
     complexity: str = "normal",
     subagent_policy: EffectiveSubagentPolicy | None = None,
     subagent_mode: Literal["auto", "required"] = "auto",
+    fast_runtime_enabled: bool = True,
 ) -> RunExecutionProfile:
     """Resolve product answer modes into immutable runtime facts."""
     if answer_mode == AnswerMode.standard:
@@ -226,9 +229,17 @@ def resolve_run_profile(
         assurance_level = AssuranceLevel.basic
         validators = STANDARD_VALIDATORS
         resolved_plan_execution = None
-        effective_subagent_policy = quick_subagent_policy(
-            subagent_policy or EffectiveSubagentPolicy()
+        effective_subagent_policy = (
+            EffectiveSubagentPolicy()
+            if fast_runtime_enabled
+            else quick_subagent_policy(subagent_policy or EffectiveSubagentPolicy())
         )
+        runtime_kind = (
+            RuntimeKind.fast_v1
+            if fast_runtime_enabled
+            else RuntimeKind.legacy_standard_v1
+        )
+        fast_runtime_policy = FastRuntimePolicy() if fast_runtime_enabled else None
     else:
         effective_request = requested.model_copy(
             update={"verification_level": VerificationLevel.strict}
@@ -238,6 +249,8 @@ def resolve_run_profile(
         validators = TRUSTED_VALIDATORS
         resolved_plan_execution = plan_execution or PlanExecution.confirm
         effective_subagent_policy = subagent_policy or EffectiveSubagentPolicy()
+        runtime_kind = RuntimeKind.trusted_v1
+        fast_runtime_policy = None
     policy = AgentReasoningPolicyCompiler().compile(
         effective_request,
         risk_level=risk_level,
@@ -253,6 +266,9 @@ def resolve_run_profile(
         )
     return RunExecutionProfile(
         answer_mode=answer_mode,
+        runtime_kind=runtime_kind,
+        runtime_version=1,
+        fast_runtime_policy=fast_runtime_policy,
         contract_mode=contract_mode,
         assurance_level=assurance_level,
         reasoning_policy=policy,

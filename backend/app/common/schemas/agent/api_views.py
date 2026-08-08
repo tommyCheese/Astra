@@ -16,7 +16,7 @@ from app.common.schemas.agent.planning import (
 from app.common.schemas.agent.run_policy import RequestedReasoningPolicy
 from app.common.schemas.agent.run_result import AgentRunResult
 from app.common.schemas.agent.tool_invocation import PendingApprovalView
-from app.common.schemas.agent.types import AnswerMode, ContinuationAction, PlanExecution
+from app.common.schemas.agent.types import AnswerMode, ContinuationAction, PlanExecution, RuntimeKind
 from app.common.schemas.models import RunModelConfig
 
 SKILL_QUALIFIED_IDENTITY_RE = re.compile(
@@ -53,6 +53,9 @@ class CreateRunRequest(BaseModel):
 
     @model_validator(mode="after")
     def validate_plan_execution(self) -> CreateRunRequest:
+        if self.subagent_mode == "required" and self.answer_mode == AnswerMode.standard:
+            self.answer_mode = AnswerMode.trusted
+            self.plan_execution = PlanExecution.auto
         if self.answer_mode == AnswerMode.standard and self.plan_execution is not None:
             raise ValueError("plan_execution is only valid for trusted runs")
         return self
@@ -319,6 +322,10 @@ class RunView(BaseModel):
     mode: str
     processing_duration_ms: int | None = None
     answer_mode: AnswerMode = AnswerMode.trusted
+    runtime_kind: RuntimeKind = RuntimeKind.trusted_v1
+    runtime_version: int = 1
+    fast_runtime_snapshot: dict[str, Any] = Field(default_factory=dict)
+    fast_state_version: int = 0
     execution_profile: dict[str, Any] = Field(default_factory=dict)
     summary: str | None
     result: AgentRunResult | None

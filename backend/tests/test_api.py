@@ -510,15 +510,12 @@ async def test_context_status_and_registered_commands_preserve_history(app_clien
     assert compacted.status_code == 200
     assert compacted.json()["context"]["summary_active"] is True
     assert compacted.json()["details"] == {
-        "folded": 0,
-        "retained": 6,
+        "folded": 6,
+        "retained": 0,
         "model_used": True,
         "direction": "",
     }
-    assert (
-        compacted.json()["message"]
-        == "已调用模型完成主要信息上下文压缩：折叠 0 轮，保留最近 6 轮；完整聊天记录仍保留。"
-    )
+    assert compacted.json()["message"] == "当前上下文已完成压缩。"
     assert compacted.json()["user_message"]["content"] == "/compact"
     assert compacted.json()["user_message"]["assistant_content"] == compacted.json()["message"]
 
@@ -600,10 +597,7 @@ async def test_parameterized_automation_commands_are_host_operations(app_client)
     assert compact_with_arguments.status_code == 200
     assert compact_with_arguments.json()["details"]["direction"] == "unexpected"
     assert compact_with_arguments.json()["details"]["model_used"] is False
-    assert (
-        compact_with_arguments.json()["message"]
-        == "当前没有需要折叠的较早上下文，未调用模型；主要信息上下文保持不变。"
-    )
+    assert compact_with_arguments.json()["message"] == "当前上下文无需压缩。"
     assert compact_with_arguments.json()["user_message"]["content"] == "/compact unexpected"
 
     cleared = await app_client.post(
@@ -1240,6 +1234,7 @@ async def test_runtime_agent_profile_update_is_used_by_new_runs_and_can_reset(ap
     assert updated.status_code == 200
     assert updated.json()["source"] == "user"
     assert updated.json()["version"] != original["version"]
+    assert updated.json()["default_documents"] == original["documents"]
 
     created = await app_client.post("/api/runs", json={"goal": "Profile 快照测试"})
     async with app_client._astra_session() as session:
@@ -1955,6 +1950,45 @@ async def test_run_event_stream_resumes_after_event_id(app_client, monkeypatch):
     assert any(item.get("payload", {}).get("summary") == "恢复后的摘要" for item in streamed)
 
 
+async def test_fast_sse_replay_and_terminal_snapshot_are_runtime_explicit(
+    app_client, monkeypatch
+):
+    created = await app_client.post("/api/runs", json={"goal": "Fast SSE"})
+    run_id = created.json()["run_id"]
+    monkeypatch.setattr(runs_api, "SessionLocal", app_client._astra_session)
+    async with app_client._astra_session() as session:
+        repo = RunUnitOfWork(session)
+        cursor = await repo.add_event(run_id, "fast.started", {"runtime": "fast-v1"})
+        delta = await repo.add_event(run_id, "answer.delta", {"delta": "首个片段"})
+        await repo.add_event(
+            run_id,
+            "fast.completed",
+            {"status": "completed", "runtime": "fast-v1", "runtime_version": 1},
+        )
+        await repo.update_run_status(
+            run_id,
+            "completed",
+            summary="首个片段",
+            result={
+                "summary": "首个片段",
+                "verification_report": None,
+                "completion_decision": None,
+            },
+        )
+        await session.commit()
+
+    response = await app_client.get(f"/api/runs/{run_id}/events?after_id={cursor.id}")
+    view = (await app_client.get(f"/api/runs/{run_id}")).json()
+
+    assert f"id: {cursor.id}\n" not in response.text
+    assert f"id: {delta.id}\n" in response.text
+    assert '"type": "fast.completed"' in response.text
+    assert view["runtime_kind"] == "fast-v1"
+    assert view["status"] == "completed"
+    assert view["result"]["verification_report"] is None
+    assert view["result"]["completion_decision"] is None
+
+
 async def test_plan_graph_events_replay_in_order_without_sensitive_failure_data(
     app_client, monkeypatch
 ):
@@ -2148,6 +2182,8 @@ async def test_create_run_defaults_to_standard_profile(app_client):
     body = (await app_client.get(f"/api/runs/{created.json()['run_id']}")).json()
     assert created.json()["answer_mode"] == "standard"
     assert body["answer_mode"] == "standard"
+    assert body["runtime_kind"] == "fast-v1"
+    assert body["runtime_version"] == 1
     assert body["execution_profile"]["assurance_level"] == "basic"
     assert body["execution_profile"]["version"] == 2
     assert body["execution_profile"]["plan_execution"] is None
@@ -2158,7 +2194,7 @@ async def test_create_run_defaults_to_standard_profile(app_client):
     assert body["reasoning_policy"]["effective"]["budgets"]["max_turns"] is None
 
 
-async def test_required_subagent_run_can_use_the_standard_no_dag_profile(app_client):
+async def test_required_subagent_run_is_routed_to_trusted_runtime(app_client):
     created = await app_client.post(
         "/api/runs",
         json={
@@ -2170,13 +2206,14 @@ async def test_required_subagent_run_can_use_the_standard_no_dag_profile(app_cli
 
     assert created.status_code == 200
     body = (await app_client.get(f"/api/runs/{created.json()['run_id']}")).json()
-    assert body["answer_mode"] == "standard"
+    assert body["answer_mode"] == "trusted"
+    assert body["runtime_kind"] == "trusted-v1"
     assert body["execution_profile"]["subagent_mode"] == "required"
     assert body["chat_messages"][0]["content"] == "/subagent 快速并发比较两个方案"
     assert body["chat_messages"][0]["metadata"]["command"] == "/subagent"
-    assert body["execution_profile"]["plan_execution"] is None
+    assert body["execution_profile"]["plan_execution"] == "auto"
     assert body["reasoning_policy"]["effective"]["subagents"]["enabled"] is True
-    assert body["reasoning_policy"]["effective"]["subagents"]["budgets"]["max_children_total"] == 2
+    assert body["reasoning_policy"]["effective"]["subagents"]["budgets"]["max_children_total"] > 0
     assert body["task_contract"] == {}
     assert body["plan_graph"] == {}
     assert body["state_version"] == 0

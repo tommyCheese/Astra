@@ -53,7 +53,7 @@ class RootTurnPreparationStage:
         initial_run: RunRecord,
         initial_skill_snapshot: RunSkillSnapshotRecord | None,
         fresh_run: bool,
-        quick_mode: bool,
+        legacy_standard_mode: bool,
         subagent_supervisor: SubagentSupervisorPort | None,
     ) -> None:
         self._repository = repository
@@ -68,7 +68,7 @@ class RootTurnPreparationStage:
         self._initial_run = initial_run
         self._initial_skill_snapshot = initial_skill_snapshot
         self._fresh_run = fresh_run
-        self._quick_mode = quick_mode
+        self._quick_mode = legacy_standard_mode
         self._subagents = subagent_supervisor
 
     async def execute(self, *, run_id: str, goal: str) -> PreparedRootTurn:
@@ -150,7 +150,7 @@ class RootTurnPreparationStage:
             tool_registry=self._tool_registry,
             tool_router=self._tool_router,
             observations=self._progress.observations,
-            quick_mode=self._quick_mode,
+            legacy_standard_mode=self._quick_mode,
             initial_run=self._initial_run if self._fresh_run else None,
             initial_skill_snapshot=(self._initial_skill_snapshot if self._fresh_run else None),
         )

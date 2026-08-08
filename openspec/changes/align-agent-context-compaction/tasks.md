@@ -59,11 +59,11 @@
 ## 7. Child Agent Loop Integration
 
 - [x] 7.1 Rebuild the child protected prefix each window from DelegationContract, role protocol, attenuated permissions/catalogs, Workspace scope, local Plan, budget and termination rules
-- [ ] 7.2 Replace the unused `SubagentContextCheckpointService.compress()` wrapper with the shared child compaction policy and strict checkpoint generator
+- [x] 7.2 Replace the unused `SubagentContextCheckpointService.compress()` wrapper with the shared child compaction policy and strict checkpoint generator
 - [x] 7.3 Include the active child checkpoint and retained observations in every child model context instead of persisting an unread `local_summary`
 - [x] 7.4 Add child pre-model, post-tool and post-recovery pressure checks using its independent window and body-after-prefix baseline
 - [ ] 7.5 Validate all child checkpoint Evidence/Artifact refs against child identity, data labels, purposes, contract hash and manifest hash
-- [ ] 7.6 Preserve bounded structured continuation answers and remaining budget across child compaction and waiting-parent recovery
+- [x] 7.6 Preserve bounded structured continuation answers and remaining budget across child compaction and waiting-parent recovery
 - [ ] 7.7 Return classified budget-limited, waiting or blocked `SubagentResult` when child protected context cannot fit, without exposing or promoting private state
 
 ## 8. Conversation Compaction and Migration

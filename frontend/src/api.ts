@@ -358,7 +358,7 @@ export async function resolveModelContextCapabilities(
 }
 export type RuntimeDependency = { name: string; version: string };
 export type AgentProfileDocuments = { identity: string; soul: string; memory: string; autodream: string };
-export type RuntimeAgentProfile = { source: 'default' | 'user'; version: string; documents: AgentProfileDocuments };
+export type RuntimeAgentProfile = { source: 'default' | 'user'; version: string; documents: AgentProfileDocuments; default_documents?: AgentProfileDocuments };
 export type MemoryRuntimeSettings = {
   write_enabled: boolean;
   recall_enabled: boolean;

@@ -284,9 +284,10 @@ class QuickStreamingClient(MockModelClient):
     async def decide_with_answer(self, goal, context, *, on_delta=None, on_reasoning_delta=None):
         self.decide_calls += 1
         assert context["answer_mode"] == "standard"
-        assert context["task_contract"] == {}
-        assert context["plan_graph"] == {}
-        assert context["memory_reads"] == []
+        assert context["runtime"] == "fast-v1"
+        assert "task_contract" not in context
+        assert "plan_graph" not in context
+        assert "memory_reads" not in context
         assert on_delta is not None
         assert on_reasoning_delta is not None
         await on_reasoning_delta("正在")
@@ -812,10 +813,12 @@ async def test_standard_fast_path_skips_plan_state_and_all_quality_gates(session
     assert loaded.agent_state == {}
     assert loaded.steps == []
     # A newly created standard Run freezes its Tool Catalog before the model,
-    # then performs startup, legacy Skill-snapshot, and Subagent eligibility reads.
-    assert client.selects_before_decide == 4
-    # The original full-graph loading path issued 129 SELECTs here.
-    assert len(select_statements) <= 12, Counter(
+    # then performs startup, Skill-snapshot, pending Fast recovery, and
+    # approval eligibility reads.
+    assert client.selects_before_decide == 6
+    # The original full-graph loading path issued 129 SELECTs here. Fast
+    # finalization adds one bounded artifact-visibility read.
+    assert len(select_statements) <= 13, Counter(
         statement.rsplit("FROM ", 1)[-1].split()[0] for statement in select_statements
     )
     assert (
@@ -838,13 +841,10 @@ async def test_standard_fast_path_skips_plan_state_and_all_quality_gates(session
         "立即",
         "流式回答",
     ]
-    reasoning_deltas = [
-        event.payload["delta"] for event in events if event.type == "reasoning.summary.delta"
+    assert not [event for event in events if event.type.startswith("reasoning.")]
+    assert [event.payload["action"] for event in events if event.type == "fast.action.decided"] == [
+        "answer"
     ]
-    assert reasoning_deltas == ["正在", "直接回答"]
-    assert events.index(
-        next(event for event in events if event.type == "reasoning.summary.delta")
-    ) < events.index(next(event for event in events if event.type == "answer.delta"))
     assert "verification.created" not in [event.type for event in events]
     assert "reasoning.completion_decided" not in [event.type for event in events]
     assert "reasoning.runtime_limits" not in [event.type for event in events]
@@ -1140,7 +1140,7 @@ async def test_disabled_model_thinking_does_not_suppress_public_process_events(s
     )._run_with_repo(repo, run.id)
 
     events = await repo.list_events(run.id)
-    summaries = [event for event in events if event.type == "reasoning.summary.completed"]
+    summaries = [event for event in events if event.type == "fast.action.decided"]
     assert summaries
     assert all("reasoning_content" not in event.payload for event in summaries)
     assert all(not event.type.startswith("model_thinking.") for event in events)
