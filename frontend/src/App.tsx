@@ -2793,22 +2793,19 @@ type ToolPresentation = {
   label: string;
   description: string;
   term?: string;
-  function: string;
-  scenarios: string;
-  implementation: string;
 };
 
 const toolPresentations: Record<string, ToolPresentation> = {
-  'workspace.list': { group: 'files', label: '浏览文件', description: '查看任务中的文件和文件夹', term: 'list', function: '列出目录与文件', scenarios: '查看任务结构、定位输入或产物', implementation: '内置文件服务 · 已实现' },
-  'workspace.read': { group: 'files', label: '读取文件', description: '读取任务中的文本文件内容', term: 'read', function: '读取受限范围的 UTF-8 文本', scenarios: '分析代码、配置或已有内容', implementation: '内置文件服务 · 已实现' },
-  'workspace.search': { group: 'files', label: '搜索文件内容', description: '在任务文件中查找文本', term: 'search', function: '检索文本文件中的字面内容', scenarios: '跨文件定位代码、配置或关键词', implementation: '内置文件服务 · 已实现' },
-  'workspace.write': { group: 'files', label: '创建或覆盖文件', description: '在任务中创建或替换文本文件', term: 'write', function: '原子创建或替换文本文件', scenarios: '生成文档、代码、配置或结果文件', implementation: '内置文件服务 · 已实现' },
-  'workspace.edit': { group: 'files', label: '编辑文件', description: '精确替换任务文件中的文本', term: 'edit', function: '原子替换文件中的指定文本', scenarios: '小范围修改代码、配置或文档', implementation: '内置文件服务 · 已实现' },
-  bash_execute: { group: 'execution', label: '执行命令', description: '在隔离环境中运行命令', term: 'execute', function: '在隔离环境中执行 Bash 命令', scenarios: '运行脚本、构建项目或处理数据', implementation: 'Docker 沙箱 · 已实现' },
-  'chart.render': { group: 'execution', label: '生成图表', description: '在隔离环境中创建图表', term: 'render', function: '根据结构化数据渲染图表', scenarios: '将分析结果生成可视化图表', implementation: 'Docker 沙箱 · 已实现' },
-  remember: { group: 'memory', label: '保存记忆', description: '将本次任务中的信息保存为待审核记忆', term: 'remember', function: '创建可审计的记忆候选', scenarios: '保留稳定偏好、事实或任务经验', implementation: '内置记忆治理 · 已实现' },
-  forget: { group: 'memory', label: '撤销记忆', description: '撤销当前任务可访问的记忆', term: 'forget', function: '撤销记忆并保留审计记录', scenarios: '移除过期、错误或不再适用的信息', implementation: '内置记忆治理 · 已实现' },
-  swarm: { group: 'agents', label: '委派子 Agent', description: '并发创建受治理的子 Agent 并汇合结果', term: 'delegate', function: '并发委派独立子任务并汇合结果', scenarios: '多路径研究、复核或可并行的复杂任务', implementation: '内置委派运行时 · 已实现' },
+  'workspace.list': { group: 'files', label: '浏览文件', description: '查看任务中的文件和文件夹', term: 'list' },
+  'workspace.read': { group: 'files', label: '读取文件', description: '读取任务中的文本文件内容', term: 'read' },
+  'workspace.search': { group: 'files', label: '搜索文件内容', description: '在任务文件中查找文本', term: 'search' },
+  'workspace.write': { group: 'files', label: '创建或覆盖文件', description: '在任务中创建或替换文本文件', term: 'write' },
+  'workspace.edit': { group: 'files', label: '编辑文件', description: '精确替换任务文件中的文本', term: 'edit' },
+  bash_execute: { group: 'execution', label: '执行命令', description: '在隔离环境中运行命令', term: 'execute' },
+  'chart.render': { group: 'execution', label: '生成图表', description: '在隔离环境中创建图表', term: 'render' },
+  remember: { group: 'memory', label: '保存记忆', description: '将本次任务中的信息保存为待审核记忆', term: 'remember' },
+  forget: { group: 'memory', label: '撤销记忆', description: '撤销当前任务可访问的记忆', term: 'forget' },
+  swarm: { group: 'agents', label: '委派子 Agent', description: '并发创建受治理的子 Agent 并汇合结果', term: 'delegate' },
 };
 
 const toolGroupDetails = {
@@ -2824,9 +2821,6 @@ function toolPresentation(tool: ToolSetting): ToolPresentation {
     group: 'extensions',
     label: tool.label.replace(/^Workspace\s+/i, ''),
     description: tool.description,
-    function: tool.description,
-    scenarios: '通过已连接的提供方完成特定任务',
-    implementation: tool.provider_id === 'astra.builtin' ? '内置运行时 · 已实现' : '扩展提供方 · 已连接',
   };
 }
 
@@ -2839,11 +2833,6 @@ function CapabilityItem({ tool, busy, onChange }: { tool: ToolSetting; busy: boo
       <div>
         <strong>{t(presentation.label)}{presentation.term && <code className="capability-term">{presentation.term}</code>}</strong>
         <span>{t(presentation.description)}</span>
-        <dl className="capability-details">
-          <div><dt>{t('功能')}</dt><dd>{t(presentation.function)}</dd></div>
-          <div><dt>{t('适用场景')}</dt><dd>{t(presentation.scenarios)}</dd></div>
-          <div><dt>{t('实现现状')}</dt><dd className={!tool.available ? 'unavailable' : ''}>{t(!tool.available ? '当前不可用' : presentation.implementation)}</dd></div>
-        </dl>
         <small className={tool.available ? '' : 'capability-warning'}>{t(state)}</small>
       </div>
       <Toggle checked={tool.enabled} onChange={onChange} disabled={busy} label={`${t(presentation.label)} · ${t(state)}`} />
