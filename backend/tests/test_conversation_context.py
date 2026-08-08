@@ -147,6 +147,7 @@ async def test_automatic_compaction_and_active_run_guard(session):
         draft="新问题" * 12_000,
     )
     assert task.context_state["last_action"] == "auto_compact"
+    assert len(task.context_state["source_item_ids"]) == 12
     assert status["usage_ratio"] < 1
     assert status["summary_active"] is True
 
@@ -211,6 +212,28 @@ async def test_v2_compaction_keeps_token_selected_recent_tail_visible(session):
     assert len(task.context_state["retained_tail_ids"]) == 5
     assert task.context_state["folded_run_ids"] == []
     assert len((await manager.projection(task)).runs) == 7
+
+
+@pytest.mark.asyncio
+async def test_manual_compact_forces_checkpoint_for_any_completed_history(session):
+    task = await _conversation_with_runs(session, count=1)
+    manager = ConversationContextManager(
+        session,
+        AstraRuntimeSettings(
+            model_provider="mock",
+            context_auto_compact_ratio=0.95,
+            context_compaction_v2_enabled=True,
+            context_compaction_conversation_enabled=True,
+            context_compaction_shadow_mode=False,
+        ),
+    )
+
+    message, details, _ = await execute_system_command(manager, task, "compact")
+
+    assert details == {"folded": 1, "retained": 0, "model_used": True, "direction": ""}
+    assert "折叠 1 轮" in message
+    assert task.context_state["checkpoint"]["checkpoint_role"] == "conversation"
+    assert len((await manager.projection(task)).runs) == 0
 
 
 @pytest.mark.asyncio

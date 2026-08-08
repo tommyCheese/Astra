@@ -292,6 +292,7 @@ class ConversationContextManager:
         require_idle: bool = True,
         commit: bool = True,
         direction: str = "",
+        force: bool = False,
     ) -> dict[str, int | str | bool]:
         policy = build_compaction_policy(self.settings, ContextOwnerRole.conversation)
         if not policy.enabled or policy.shadow_mode:
@@ -306,6 +307,7 @@ class ConversationContextManager:
             require_idle=require_idle,
             commit=commit,
             direction=direction,
+            force=force,
         )
 
     async def _semantic_compact(
@@ -317,6 +319,7 @@ class ConversationContextManager:
         require_idle: bool,
         commit: bool,
         direction: str,
+        force: bool,
     ) -> dict[str, int | str | bool]:
         return await SemanticConversationCompactor(self, resolve_context_window).compact(
             task,
@@ -325,6 +328,7 @@ class ConversationContextManager:
             require_idle=require_idle,
             commit=commit,
             direction=direction,
+            force=force,
         )
 
     async def clear(self, task: TaskRecord, *, commit: bool = True) -> dict[str, int]:
@@ -369,7 +373,7 @@ class ConversationContextManager:
         if current["usage_ratio"] >= self.settings.context_auto_compact_ratio:
             await self.compact(
                 task,
-                retain_runs=self.settings.context_compact_retain_runs,
+                retain_runs=None,
                 action="auto_compact",
                 require_idle=False,
                 commit=False,

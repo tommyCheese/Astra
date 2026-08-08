@@ -35,16 +35,17 @@ class SemanticConversationCompactor:
         require_idle: bool,
         commit: bool,
         direction: str,
+        force: bool = False,
     ) -> dict[str, int | str | bool]:
         projection, eligible = await self._eligible_runs(
-            task, retain_runs=retain_runs, require_idle=require_idle
+            task, retain_runs=retain_runs, require_idle=require_idle, force=force
         )
         if not eligible:
             return {"folded": 0, "retained": len(projection.runs), "model_used": False}
         state = self.manager._state(task)
         accounting = TokenAccountingService()
         envelope = self._build_envelope(task, eligible, state, direction, accounting)
-        result = await self._generate_checkpoint(envelope, accounting)
+        result = await self._generate_checkpoint(envelope, accounting, force=force)
         if result.checkpoint is None:
             return await self._record_failure(task, projection, result, commit=commit)
         return await self._record_success(
@@ -57,17 +58,19 @@ class SemanticConversationCompactor:
             commit=commit,
         )
 
-    async def _eligible_runs(self, task, *, retain_runs, require_idle):
+    async def _eligible_runs(self, task, *, retain_runs, require_idle, force):
         runs = await self.manager.list_runs(task.id)
         if require_idle:
             await self.manager.ensure_idle(task.id, runs=runs)
         projection = await self.manager.projection(task, runs=runs)
-        retain = (
-            self.settings.context_compact_retain_runs
-            if retain_runs is None
-            else max(0, retain_runs)
-        )
-        eligible = list(projection.runs[:-retain] if retain else projection.runs)
+        # The shared Token policy, rather than a fixed number of turns, decides
+        # which recent raw Runs survive.  A caller may still explicitly request
+        # a count for backwards-compatible administrative operations.
+        if force or retain_runs is None:
+            eligible = list(projection.runs)
+        else:
+            retain = max(0, retain_runs)
+            eligible = list(projection.runs[:-retain] if retain else projection.runs)
         return projection, eligible
 
     def _build_envelope(self, task, eligible, state, direction, accounting):
@@ -157,16 +160,25 @@ class SemanticConversationCompactor:
             ),
         )
 
-    async def _generate_checkpoint(self, envelope, accounting):
+    async def _generate_checkpoint(self, envelope, accounting, *, force: bool):
         from app.infrastructure.model_clients.factory import build_model_client
 
         attempts = ContextCompactionAttemptRepository(self.session)
         service = AgentContextCompactionService(attempts, accounting=accounting)
         client = build_model_client(self.settings)
         try:
+            policy = build_compaction_policy(self.settings, ContextOwnerRole.conversation)
+            # Manual /compact is an explicit request to replace every completed
+            # model-visible Run with a checkpoint, not merely a threshold hint.
+            # The current user request is absent while the conversation is idle,
+            # so no raw tail needs to be retained for this forced operation.
+            if force:
+                policy = policy.model_copy(
+                    update={"recent_tail_tokens": 0, "recent_tail_max_ratio": 0}
+                )
             return await service.compact(
                 envelope,
-                build_compaction_policy(self.settings, ContextOwnerRole.conversation),
+                policy,
                 generate=client.generate_context_checkpoint,
                 install=attempts.install_conversation_checkpoint,
             )

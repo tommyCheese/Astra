@@ -8,6 +8,7 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
+from app.application.context_compaction.child import compact_child_context
 from app.application.subagents.executor import AgentExecutorRuntime, LocalAstraAgentExecutor
 from app.application.subagents.governance import FrozenChildCatalog
 from app.application.subagents.lifecycle import SubagentCancellationService
@@ -18,6 +19,7 @@ from app.common.core.config import AstraRuntimeSettings
 from app.common.schemas.agent.execution_state import AgentDecision, AgentReflection
 from app.common.schemas.agent.planning import ExpectedObservation, PlanDraft, PlanNodeDraft
 from app.common.schemas.agent.run_policy import EffectiveSubagentPolicy, SubagentBudgetPolicy
+from app.common.schemas.context_compaction import parse_child_checkpoint
 from app.common.schemas.permissions import PermissionPolicySet, PermissionRule
 from app.common.schemas.subagents import (
     DelegatedExecutionContext,
@@ -425,6 +427,53 @@ async def test_local_child_executes_tool_with_full_lineage_and_completes(session
     assert all(turn.agent_execution_id == child.id for turn in turns)
     assert tool.last_context.agent_execution_id == child.id
     assert tool.last_context.delegation_context.identity_id == child.identity_id
+
+
+@pytest.mark.asyncio
+async def test_child_context_compaction_uses_an_independent_automatic_window(session):
+    tool = ReadTool()
+    child, contract, manifest, _runtime, _registry = await _child_runtime(session, tool)
+    settings = AstraRuntimeSettings(
+        model_provider="mock",
+        context_window_fallback_tokens=16_384,
+        context_output_reserve_tokens=1_024,
+        context_compaction_output_reserve_tokens=512,
+        context_auto_compact_ratio=0.5,
+        context_compaction_recovery_ratio=0.3,
+        context_compaction_v2_enabled=True,
+        context_compaction_child_enabled=True,
+        context_compaction_shadow_mode=False,
+    )
+    observations = [
+        {"kind": "tool_result", "summary": f"result-{index}", "data": {"text": "界" * 2_000}}
+        for index in range(6)
+    ]
+    initial = parse_child_checkpoint(
+        {
+            "agent_execution_id": child.id,
+            "manifest_hash": "sha256:unused-v1-hash",
+            "local_summary": "child initialized",
+            "created_at": NOW.isoformat(),
+        }
+    )
+
+    execution, checkpoint, visible = await compact_child_context(
+        session=session,
+        settings=settings,
+        model_client=MockModelClient(),
+        execution=child,
+        contract=contract,
+        manifest=manifest,
+        plan={"id": "child-plan", "version": 1, "nodes": []},
+        usage={"model_calls": 0},
+        observations=observations,
+        checkpoint=initial,
+    )
+
+    assert checkpoint.checkpoint_role == "child_execution"
+    assert len(visible) < len(observations)
+    assert execution.checkpoint["context_compaction"]["source_item_ids"]
+    assert execution.checkpoint["context_continuation"]["contract_hash"] == contract.contract_hash
 
 
 async def _commit_competing_writer(sessions, run_id: str, marker: str) -> None:

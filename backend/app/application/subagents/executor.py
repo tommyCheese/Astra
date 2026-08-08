@@ -378,6 +378,7 @@ class LocalAstraAgentExecutor(AgentExecutor):
         plan_id: str,
         context_checkpoint: ChildCheckpoint,
     ) -> AgentExecutionRecord:
+        existing = execution.checkpoint or {}
         return await executions.save_checkpoint(
             execution.id,
             worker_id=runtime.worker_id,
@@ -393,6 +394,11 @@ class LocalAstraAgentExecutor(AgentExecutor):
                 "tool_catalog_digest": runtime.frozen_catalog.tool_digest,
                 "skill_catalog_digest": runtime.frozen_catalog.skill_digest,
                 "context_checkpoint": context_checkpoint.model_dump(mode="json"),
+                **{
+                    key: deepcopy(existing[key])
+                    for key in ("context_compaction", "context_continuation")
+                    if key in existing
+                },
             },
             budget_usage=usage,
             cancellation_epoch=execution.cancellation_epoch,

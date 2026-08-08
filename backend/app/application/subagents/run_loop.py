@@ -5,6 +5,7 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import TYPE_CHECKING, Any
 
+from app.application.context_compaction.child import compact_child_context
 from app.application.subagents.executor_contracts import AgentExecutorRuntime
 from app.application.subagents.run_session import (
     ChildRunSessionBuilder,
@@ -266,6 +267,18 @@ class ChildAgentRun:
                 reflection=reflection.model_dump(mode="json"),
                 phase="reflected",
             )
+        state.execution, state.context_checkpoint, state.observations = await compact_child_context(
+            session=self._runtime.session,
+            settings=self._services.settings,
+            model_client=self._services.model_client,
+            execution=state.execution,
+            contract=self._contract,
+            manifest=self._manifest,
+            plan=self._services._plan_context(state.plan),
+            usage=state.usage,
+            observations=state.observations,
+            checkpoint=state.context_checkpoint,
+        )
         state.execution = await self._services._checkpoint(
             state.executions,
             state.execution,

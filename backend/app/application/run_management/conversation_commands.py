@@ -164,7 +164,7 @@ async def _execute_command(
             {"usage": definition.usage, "command": f"/{command}"},
         )
     if command == "compact":
-        details = await manager.compact(task, direction=arguments)
+        details = await manager.compact(task, direction=arguments, force=True)
         details["direction"] = arguments
         message = _compaction_message(details, customized=bool(arguments))
         return message, details, arguments
