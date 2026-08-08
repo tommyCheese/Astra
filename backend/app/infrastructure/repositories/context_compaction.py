@@ -71,6 +71,9 @@ class ContextCompactionAttemptRepository:
         payload = {
             **(current.checkpoint or {}),
             "context_checkpoint": checkpoint.model_dump(mode="json"),
+            "context_continuation": envelope.continuation.model_copy(
+                update={"retained_tail_ids": retained_tail_ids}
+            ).model_dump(mode="json"),
             "context_compaction": {
                 "schema_version": 2,
                 "policy_version": "astra-context-compaction-v2",

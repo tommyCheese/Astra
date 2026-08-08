@@ -49,12 +49,12 @@
 ## 6. Root Agent Loop Integration
 
 - [x] 6.1 Build the standard-root protected prefix from current request, authorization boundary, active Skills, budget and current verified runtime state without creating trusted-only structures
-- [ ] 6.2 Build the trusted-root protected prefix from TaskContract, Profile/Skill snapshot, permissions, Plan/AgentState versions, budget and Completion Gate inputs
+- [x] 6.2 Build the trusted-root protected prefix from TaskContract, Profile/Skill snapshot, permissions, Plan/AgentState versions, budget and Completion Gate inputs
 - [x] 6.3 Insert pre-model context-pressure checks into all standard and trusted decision/model-call paths
 - [x] 6.4 Insert post-tool checks after result persistence/normalization and before any follow-up model call
 - [x] 6.5 Inject `RootContextCheckpointV2` plus retained recent observations into model context while continuing to evaluate completion from canonical state
-- [ ] 6.6 Preserve action idempotency, waiting continuations, cancellation, Plan node state and Evidence lineage across root compaction and recovery
-- [ ] 6.7 Integrate verified child fan-in results as references in root checkpoints without promoting unaccepted child local facts
+- [x] 6.6 Preserve action idempotency, waiting continuations, cancellation, Plan node state and Evidence lineage across root compaction and recovery
+- [x] 6.7 Integrate verified child fan-in results as references in root checkpoints without promoting unaccepted child local facts
 
 ## 7. Child Agent Loop Integration
 

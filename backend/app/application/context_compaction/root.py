@@ -5,6 +5,8 @@ import json
 from dataclasses import dataclass
 from typing import Any
 
+from sqlalchemy import select
+
 from app.application.context_compaction import (
     AgentContextCompactionService,
     TokenAccountingService,
@@ -20,6 +22,7 @@ from app.common.schemas.context_compaction import (
     ContextOwnerRole,
     ContinuationManifest,
 )
+from app.infrastructure.db.models.runs import AgentTurnRecord
 from app.infrastructure.model_clients.context_windows import resolve_context_window
 from app.infrastructure.model_clients.contracts import ModelClient
 from app.infrastructure.repositories.agent_executions import AgentExecutionRepository
@@ -61,6 +64,20 @@ def _reference_manifest(observations: list[dict[str, Any]]) -> tuple[CompactionC
         if isinstance(raw, dict):
             reference = CompactionContextReference.model_validate(raw)
             references[reference.ref] = reference
+        if observation.get("kind") != "subagent_join" or observation.get("status") != "succeeded":
+            continue
+        join_id = data.get("join_id") if isinstance(data, dict) else None
+        execution_ids = data.get("source_execution_ids", ()) if isinstance(data, dict) else ()
+        if not join_id or not isinstance(execution_ids, list | tuple):
+            continue
+        for execution_id in execution_ids:
+            if not execution_id:
+                continue
+            ref = f"subagent_join:{join_id}:child:{execution_id}"
+            references[ref] = CompactionContextReference(
+                kind="child_result",
+                ref=ref,
+            )
     return tuple(references.values())
 
 
@@ -98,12 +115,76 @@ def _protected_prefix(
         sections.extend(
             [
                 ("task_contract", context.get("task_contract", {})),
+                ("profile_snapshot", context.get("agent_profile_snapshot", {})),
+                (
+                    "skill_snapshot",
+                    {
+                        "catalog": context.get("skill_catalog", []),
+                        "active": context.get("active_skills", []),
+                    },
+                ),
+                (
+                    "permissions",
+                    {
+                        "candidate_tools": {
+                            name: {
+                                key: manifest.get(key)
+                                for key in (
+                                    "permission",
+                                    "permissions",
+                                    "side_effect_level",
+                                    "risk",
+                                    "capabilities",
+                                )
+                                if manifest.get(key) is not None
+                            }
+                            for name, manifest in sorted(
+                                (context.get("tool_manifests") or {}).items()
+                            )
+                            if isinstance(manifest, dict)
+                        },
+                        "selection": context.get("tool_selection", {}),
+                        "execution_profile_permissions": (
+                            (context.get("execution_profile") or {}).get("permission_bundle")
+                        ),
+                    },
+                ),
                 ("plan_graph", context.get("plan_graph", {})),
+                (
+                    "agent_state_versions",
+                    {
+                        "run_state_version": context.get("state_version"),
+                        "plan_version": context.get("plan_version"),
+                        "agent_state_version": (context.get("agent_state") or {}).get(
+                            "version"
+                        ),
+                        "active_plan_version": (context.get("agent_state") or {}).get(
+                            "active_plan_version"
+                        ),
+                        "active_executions": (context.get("agent_state") or {}).get(
+                            "active_executions", []
+                        ),
+                    },
+                ),
                 (
                     "completion_gate",
                     {
+                        "success_criteria": (context.get("task_contract") or {}).get(
+                            "success_criteria", []
+                        ),
+                        "verification_requirements": (
+                            (context.get("task_contract") or {}).get(
+                                "verification_requirements", []
+                            )
+                        ),
                         "evidence_pack": context.get("evidence_pack", {}),
                         "subagent_active_groups": context.get("subagent_active_groups", []),
+                        "waiting_state": (context.get("agent_state") or {}).get(
+                            "waiting_state"
+                        ),
+                        "terminal_intent": (context.get("agent_state") or {}).get(
+                            "terminal_intent"
+                        ),
                     },
                 ),
             ]
@@ -185,6 +266,20 @@ async def _prepare_compaction_state(
         body=body,
     )
     run = await repo.require_run_core(run_id)
+    action_idempotency_keys = tuple(
+        value
+        for value in (
+            await repo.session.scalars(
+                select(AgentTurnRecord.idempotency_key)
+                .where(
+                    AgentTurnRecord.run_id == run_id,
+                    AgentTurnRecord.idempotency_key.is_not(None),
+                )
+                .order_by(AgentTurnRecord.turn_index)
+            )
+        ).all()
+        if value
+    )
     continuation = ContinuationManifest(
         owner_type=ContextOwnerRole.root_execution,
         owner_id=root.id,
@@ -192,6 +287,7 @@ async def _prepare_compaction_state(
         cancellation_epoch=root.cancellation_epoch,
         window_number=int(metadata.get("window_number", 0)),
         source_item_ids=tuple(item.id for item in body),
+        action_idempotency_keys=action_idempotency_keys,
         waiting_state=dict(run.waiting_state or {}),
         remaining_budget=dict(root.budget_envelope or {}),
     )

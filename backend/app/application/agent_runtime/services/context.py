@@ -393,6 +393,7 @@ class AgentContextAssembler:
             context["skill_draft_test"] = True
         if run.answer_mode != AnswerMode.standard.value:
             context.update(
+                agent_profile_snapshot=run.agent_profile_snapshot or {},
                 evidence_pack=evidence_pack or {},
                 reasoning_policy=run.reasoning_policy or {},
                 execution_profile=run.execution_profile or {},
