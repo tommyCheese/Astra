@@ -176,9 +176,7 @@ class RunStepTurnStore:
         return step
 
     async def _require_agent_turn(self, turn_id: str) -> AgentTurnRecord:
-        result = await self.session.execute(
-            select(AgentTurnRecord).where(AgentTurnRecord.id == turn_id)
-        )
+        result = await self.session.execute(select(AgentTurnRecord).where(AgentTurnRecord.id == turn_id))
         turn = result.scalar_one_or_none()
         if turn is None:
             raise ValueError(f"AgentTurn not found: {turn_id}")
@@ -285,9 +283,7 @@ class RunStepTurnStore:
         return call
 
     async def _require_tool_call(self, tool_call_id: str) -> ToolCallRecord:
-        result = await self.session.execute(
-            select(ToolCallRecord).where(ToolCallRecord.id == tool_call_id)
-        )
+        result = await self.session.execute(select(ToolCallRecord).where(ToolCallRecord.id == tool_call_id))
         call = result.scalar_one_or_none()
         if call is None:
             raise ValueError(f"ToolCall not found: {tool_call_id}")

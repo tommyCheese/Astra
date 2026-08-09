@@ -57,9 +57,7 @@ async def test_remember_creates_a_sourced_candidate_and_deduplicates(session):
     assert created["data"]["deduplicated"] is False
     assert repeated["data"]["memory_id"] == created["data"]["memory_id"]
     assert repeated["data"]["deduplicated"] is True
-    memory = await MemoryRepository(session).require(
-        created["data"]["memory_id"], include_sources=True
-    )
+    memory = await MemoryRepository(session).require(created["data"]["memory_id"], include_sources=True)
     assert {(source.source_kind, source.source_ref) for source in memory.sources} == {
         ("run", run.id),
         ("tool_call", context.tool_call_id),

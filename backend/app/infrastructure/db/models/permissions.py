@@ -32,14 +32,10 @@ class ToolCallRecord(AstraOrmRecordBase):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_str)
     run_id: Mapped[str] = mapped_column(ForeignKey("runs.id"))
-    agent_execution_id: Mapped[str | None] = mapped_column(
-        ForeignKey("agent_executions.id"), nullable=True
-    )
+    agent_execution_id: Mapped[str | None] = mapped_column(ForeignKey("agent_executions.id"), nullable=True)
     step_id: Mapped[str | None] = mapped_column(ForeignKey("steps.id"), nullable=True)
     plan_node_id: Mapped[str | None] = mapped_column(ForeignKey("plan_nodes.id"), nullable=True)
-    node_execution_id: Mapped[str | None] = mapped_column(
-        ForeignKey("node_executions.id"), nullable=True
-    )
+    node_execution_id: Mapped[str | None] = mapped_column(ForeignKey("node_executions.id"), nullable=True)
     tool_name: Mapped[str] = mapped_column(String(120))
     tool_version: Mapped[str] = mapped_column(String(40))
     input: Mapped[dict] = mapped_column(JsonType)
@@ -55,9 +51,7 @@ class ToolCallRecord(AstraOrmRecordBase):
     step: Mapped[StepRecord | None] = relationship(back_populates="tool_calls")
     plan_node: Mapped[PlanNodeRecord | None] = relationship(back_populates="tool_calls")
     node_execution: Mapped[NodeExecutionRecord | None] = relationship(back_populates="tool_calls")
-    approval_request: Mapped[ApprovalRequestRecord | None] = relationship(
-        back_populates="tool_call", uselist=False
-    )
+    approval_request: Mapped[ApprovalRequestRecord | None] = relationship(back_populates="tool_call", uselist=False)
 
 
 class ApprovalRequestRecord(AstraOrmRecordBase):
@@ -69,20 +63,12 @@ class ApprovalRequestRecord(AstraOrmRecordBase):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_str)
     run_id: Mapped[str] = mapped_column(ForeignKey("runs.id"))
-    agent_execution_id: Mapped[str | None] = mapped_column(
-        ForeignKey("agent_executions.id"), nullable=True
-    )
-    requester_identity_id: Mapped[str | None] = mapped_column(
-        ForeignKey("agent_identities.id"), nullable=True
-    )
-    delegation_id: Mapped[str | None] = mapped_column(
-        ForeignKey("agent_delegations.id"), nullable=True
-    )
+    agent_execution_id: Mapped[str | None] = mapped_column(ForeignKey("agent_executions.id"), nullable=True)
+    requester_identity_id: Mapped[str | None] = mapped_column(ForeignKey("agent_identities.id"), nullable=True)
+    delegation_id: Mapped[str | None] = mapped_column(ForeignKey("agent_delegations.id"), nullable=True)
     turn_id: Mapped[str] = mapped_column(ForeignKey("agent_turns.id"))
     tool_call_id: Mapped[str] = mapped_column(ForeignKey("tool_calls.id"))
-    node_execution_id: Mapped[str | None] = mapped_column(
-        ForeignKey("node_executions.id"), nullable=True
-    )
+    node_execution_id: Mapped[str | None] = mapped_column(ForeignKey("node_executions.id"), nullable=True)
     execution_attempt: Mapped[int | None] = mapped_column(Integer, nullable=True)
     expected_execution_state_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
     tool_name: Mapped[str] = mapped_column(String(120))
@@ -108,9 +94,7 @@ class ApprovalRequestRecord(AstraOrmRecordBase):
 
     run: Mapped[RunRecord] = relationship(back_populates="approval_requests")
     tool_call: Mapped[ToolCallRecord] = relationship(back_populates="approval_request")
-    node_execution: Mapped[NodeExecutionRecord | None] = relationship(
-        back_populates="approval_requests"
-    )
+    node_execution: Mapped[NodeExecutionRecord | None] = relationship(back_populates="approval_requests")
 
 
 class ApprovalGrantRecord(AstraOrmRecordBase):
@@ -153,9 +137,7 @@ class AgentIdentityRecord(AstraOrmRecordBase):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_str)
     task_id: Mapped[str | None] = mapped_column(ForeignKey("tasks.id"), nullable=True)
     run_id: Mapped[str | None] = mapped_column(ForeignKey("runs.id"), nullable=True)
-    parent_identity_id: Mapped[str | None] = mapped_column(
-        ForeignKey("agent_identities.id"), nullable=True
-    )
+    parent_identity_id: Mapped[str | None] = mapped_column(ForeignKey("agent_identities.id"), nullable=True)
     identity_type: Mapped[str] = mapped_column(String(80))
     principal: Mapped[str] = mapped_column(String(240))
     trust_level: Mapped[str] = mapped_column(String(40), default="internal")

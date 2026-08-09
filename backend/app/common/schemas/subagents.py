@@ -70,9 +70,7 @@ class DelegationScope(BaseModel):
     def normalize_scope_items(cls, values: list[str]) -> list[str]:
         normalized = [value.strip() for value in values if value.strip()]
         if len(normalized) != len(set(normalized)):
-            raise ValueError(
-                f"{DelegationRejectionCode.incomplete_scope.value}: scope entries must be unique"
-            )
+            raise ValueError(f"{DelegationRejectionCode.incomplete_scope.value}: scope entries must be unique")
         return normalized
 
 
@@ -129,14 +127,10 @@ class DelegationRequest(BaseModel):
         normalized = [value.strip() for value in values if value.strip()]
         if not normalized:
             raise ValueError(
-                f"{DelegationRejectionCode.missing_success_criteria.value}: "
-                "at least one success criterion is required"
+                f"{DelegationRejectionCode.missing_success_criteria.value}: at least one success criterion is required"
             )
         if len(normalized) != len(set(normalized)):
-            raise ValueError(
-                f"{DelegationRejectionCode.missing_success_criteria.value}: "
-                "success criteria must be unique"
-            )
+            raise ValueError(f"{DelegationRejectionCode.missing_success_criteria.value}: success criteria must be unique")
         return normalized
 
     @field_validator("required_capabilities", "requested_tools", "requested_skills")
@@ -151,26 +145,20 @@ class DelegationRequest(BaseModel):
     @classmethod
     def validate_output_schema(cls, value: dict[str, Any]) -> dict[str, Any]:
         if value.get("type") != "object":
-            raise ValueError(
-                f"{DelegationRejectionCode.invalid_output_schema.value}: "
-                "output_schema.type must be object"
-            )
+            raise ValueError(f"{DelegationRejectionCode.invalid_output_schema.value}: output_schema.type must be object")
         properties = value.get("properties")
         if properties is not None and not isinstance(properties, dict):
             raise ValueError(
-                f"{DelegationRejectionCode.invalid_output_schema.value}: "
-                "output_schema.properties must be an object"
+                f"{DelegationRejectionCode.invalid_output_schema.value}: output_schema.properties must be an object"
             )
         required = value.get("required", [])
         if not isinstance(required, list) or any(not isinstance(item, str) for item in required):
             raise ValueError(
-                f"{DelegationRejectionCode.invalid_output_schema.value}: "
-                "output_schema.required must be a string array"
+                f"{DelegationRejectionCode.invalid_output_schema.value}: output_schema.required must be a string array"
             )
         if properties is not None and any(item not in properties for item in required):
             raise ValueError(
-                f"{DelegationRejectionCode.invalid_output_schema.value}: "
-                "required output fields must be declared in properties"
+                f"{DelegationRejectionCode.invalid_output_schema.value}: required output fields must be declared in properties"
             )
         return value
 
@@ -280,21 +268,17 @@ class DelegatedExecutionContext(BaseModel):
     def validate_identity_chain(self) -> DelegatedExecutionContext:
         if self.delegation_chain[-1] != self.identity_id:
             raise ValueError(
-                f"{DelegationRejectionCode.context_dropped.value}: "
-                "delegation chain must terminate at the child identity"
+                f"{DelegationRejectionCode.context_dropped.value}: delegation chain must terminate at the child identity"
             )
         if self.parent_identity_id not in self.delegation_chain[:-1]:
             raise ValueError(
-                f"{DelegationRejectionCode.context_dropped.value}: "
-                "delegation chain must contain the parent identity"
+                f"{DelegationRejectionCode.context_dropped.value}: delegation chain must contain the parent identity"
             )
         if self.effective_scope.allowed_purposes and not any(
-            self.purpose == allowed
-            for allowed in self.effective_scope.allowed_purposes
+            self.purpose == allowed for allowed in self.effective_scope.allowed_purposes
         ):
             raise ValueError(
-                f"{DelegationRejectionCode.context_dropped.value}: "
-                "execution purpose is outside the delegated scope"
+                f"{DelegationRejectionCode.context_dropped.value}: execution purpose is outside the delegated scope"
             )
         expected_workspace = {
             "read_roots": list(self.effective_scope.workspace_read_roots),
@@ -303,8 +287,7 @@ class DelegatedExecutionContext(BaseModel):
         }
         if self.workspace_scope != expected_workspace:
             raise ValueError(
-                f"{DelegationRejectionCode.context_dropped.value}: "
-                "workspace scope does not match the effective delegation"
+                f"{DelegationRejectionCode.context_dropped.value}: workspace scope does not match the effective delegation"
             )
         budget_limits = self.budget_envelope.model_dump()
         usage_to_limit = {
@@ -315,14 +298,10 @@ class DelegatedExecutionContext(BaseModel):
             "cost_usd": "max_cost_usd",
         }
         if any(
-            float(self.budget_usage.get(usage_key, 0))
-            > float(budget_limits[limit_key])
+            float(self.budget_usage.get(usage_key, 0)) > float(budget_limits[limit_key])
             for usage_key, limit_key in usage_to_limit.items()
         ):
-            raise ValueError(
-                f"{DelegationRejectionCode.budget_rejected.value}: "
-                "child budget usage exceeds its frozen envelope"
-            )
+            raise ValueError(f"{DelegationRejectionCode.budget_rejected.value}: child budget usage exceeds its frozen envelope")
         return self
 
 

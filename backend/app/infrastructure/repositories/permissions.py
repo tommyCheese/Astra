@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from dataclasses import dataclass
 from datetime import datetime
 from fnmatch import fnmatchcase
 from typing import Any
@@ -27,9 +28,9 @@ from app.infrastructure.db.models.permissions import (
 from app.infrastructure.db.models.runs import RunRecord
 
 
+@dataclass
 class PermissionRepository:
-    def __init__(self, session: AsyncSession):
-        self.session = session
+    session: AsyncSession
 
     async def create_identity(
         self,
@@ -139,9 +140,7 @@ class PermissionRepository:
             policies,
         )
         if decision.decision != PermissionDecisionKind.allow:
-            raise PermissionError(
-                f"Delegation is not authorized: {decision.explanation.reason_code}"
-            )
+            raise PermissionError(f"Delegation is not authorized: {decision.explanation.reason_code}")
         child.parent_identity_id = parent.id
         delegation = AgentDelegationRecord(
             parent_identity_id=parent.id,
@@ -257,9 +256,7 @@ class PermissionRepository:
         retention: dict[str, Any] | None = None,
     ) -> DataFlowStateRecord:
         await self._require_run(run_id)
-        state = await self.session.scalar(
-            select(DataFlowStateRecord).where(DataFlowStateRecord.run_id == run_id)
-        )
+        state = await self.session.scalar(select(DataFlowStateRecord).where(DataFlowStateRecord.run_id == run_id))
         if state is None:
             if expected_version not in {None, 0}:
                 raise ValueError("DataFlowState version conflict")
@@ -284,9 +281,7 @@ class PermissionRepository:
         return state
 
     async def get_data_flow_state(self, run_id: str) -> DataFlowStateRecord | None:
-        return await self.session.scalar(
-            select(DataFlowStateRecord).where(DataFlowStateRecord.run_id == run_id)
-        )
+        return await self.session.scalar(select(DataFlowStateRecord).where(DataFlowStateRecord.run_id == run_id))
 
     async def _require_run(self, run_id: str) -> RunRecord:
         run = await self.session.get(RunRecord, run_id)
@@ -329,9 +324,7 @@ def _scope_is_subset(child: dict[str, Any], parent: dict[str, Any]) -> bool:
             return False
         if any(
             not any(
-                parent_value == "*"
-                or child_value == parent_value
-                or fnmatchcase(child_value, parent_value)
+                parent_value == "*" or child_value == parent_value or fnmatchcase(child_value, parent_value)
                 for parent_value in parent_values
             )
             for child_value in child_values
@@ -340,8 +333,6 @@ def _scope_is_subset(child: dict[str, Any], parent: dict[str, Any]) -> bool:
     for key in ("max_uses", "max_tool_calls", "max_runtime_seconds"):
         parent_budget = parent.get(key)
         child_budget = child.get(key)
-        if parent_budget is not None and (
-            child_budget is None or child_budget > parent_budget
-        ):
+        if parent_budget is not None and (child_budget is None or child_budget > parent_budget):
             return False
     return True

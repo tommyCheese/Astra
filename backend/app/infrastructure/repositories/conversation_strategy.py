@@ -1,3 +1,5 @@
+from dataclasses import dataclass
+
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.infrastructure.db.model_base import utc_now
@@ -12,16 +14,14 @@ DEFAULT_CONVERSATION_STRATEGY = {
 }
 
 
+@dataclass
 class ConversationStrategyRepository:
-    def __init__(self, session: AsyncSession):
-        self.session = session
+    session: AsyncSession
 
     async def get_or_create(self) -> dict[str, str | bool | int | None]:
         record = await self.session.get(ConversationStrategyPreferenceRecord, "default")
         if record is None:
-            record = ConversationStrategyPreferenceRecord(
-                id="default", **DEFAULT_CONVERSATION_STRATEGY
-            )
+            record = ConversationStrategyPreferenceRecord(id="default", **DEFAULT_CONVERSATION_STRATEGY)
             self.session.add(record)
             await self.session.flush()
         return self._serialize(record)

@@ -33,10 +33,7 @@ class HierarchicalSemaphoreRegistry:
             existing = self._semaphores.get(key)
             if existing is not None:
                 if self._capacities[key] != capacity:
-                    raise ValueError(
-                        f"Semaphore capacity changed for {key}: "
-                        f"{self._capacities[key]} -> {capacity}"
-                    )
+                    raise ValueError(f"Semaphore capacity changed for {key}: {self._capacities[key]} -> {capacity}")
                 return existing
             semaphore = asyncio.Semaphore(capacity)
             self._semaphores[key] = semaphore
@@ -123,13 +120,16 @@ class AgentCoordinator:
         selected = queued[: self.run_max_agents]
         remaining = queued[self.run_max_agents :]
         if not selected or self._cancelled.is_set():
-            return AgentCoordinatorResult(
-                (), (), (), tuple(item.id for item in queued), 0, self.run_max_nodes
-            )
+            return AgentCoordinatorResult((), (), (), tuple(item.id for item in queued), 0, self.run_max_nodes)
         node_allowance = max(1, self.run_max_nodes // len(selected))
         limits = self._limits(
-            run_id, provider, provider_limit, tool_group, tool_limit,
-            capability, capability_limit,
+            run_id,
+            provider,
+            provider_limit,
+            tool_group,
+            tool_limit,
+            capability,
+            capability_limit,
         )
         peak = 0
         active = 0
@@ -147,10 +147,7 @@ class AgentCoordinator:
                     async with active_lock:
                         active -= 1
 
-        tasks = {
-            asyncio.create_task(run_one(item.id), name=f"subagent-worker:{item.id}")
-            for item in selected
-        }
+        tasks = {asyncio.create_task(run_one(item.id), name=f"subagent-worker:{item.id}") for item in selected}
         self._tasks.update(tasks)
         results = await asyncio.gather(*tasks, return_exceptions=True)
         self._tasks.difference_update(tasks)
@@ -173,8 +170,14 @@ class AgentCoordinator:
         )
 
     def _limits(
-        self, run_id, provider, provider_limit, tool_group, tool_limit,
-        capability, capability_limit,
+        self,
+        run_id,
+        provider,
+        provider_limit,
+        tool_group,
+        tool_limit,
+        capability,
+        capability_limit,
     ):
         limits = {
             "deployment:agents": self.deployment_max_agents,

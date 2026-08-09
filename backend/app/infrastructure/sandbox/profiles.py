@@ -94,9 +94,7 @@ class RuntimeProfileService:
         state.setdefault("images", [])
         images = state.setdefault("images", [])
         active_image = state.get("active_image", self.settings.sandbox_runtime_image)
-        if active_image.startswith("astra-data-viz:custom-") and not any(
-            item.get("image") == active_image for item in images
-        ):
+        if active_image.startswith("astra-data-viz:custom-") and not any(item.get("image") == active_image for item in images):
             images.append(
                 {
                     "image": active_image,
@@ -232,9 +230,7 @@ class RuntimeProfileService:
             return "\n".join(recent_output) if capture_output else returncode
 
         try:
-            return await asyncio.wait_for(
-                consume_output(), self.settings.runtime_build_timeout_seconds
-            )
+            return await asyncio.wait_for(consume_output(), self.settings.runtime_build_timeout_seconds)
         except BaseException:
             if process.returncode is None:
                 process.terminate()
@@ -289,9 +285,7 @@ class RuntimeProfileService:
         )
         keep_recent = max(0, self.settings.runtime_image_keep_recent)
         protected = {item.get("image") for item in inactive[:keep_recent]}
-        cutoff = datetime.now(timezone.utc) - timedelta(
-            days=max(0, self.settings.runtime_image_retention_days)
-        )
+        cutoff = datetime.now(timezone.utc) - timedelta(days=max(0, self.settings.runtime_image_retention_days))
         removed = set()
         cleanup_failed = False
         for item in inactive:
@@ -306,9 +300,7 @@ class RuntimeProfileService:
                 cleanup_failed = True
         if removed:
             state = self.read()
-            state["images"] = [
-                item for item in state.get("images", []) if item.get("image") not in removed
-            ]
+            state["images"] = [item for item in state.get("images", []) if item.get("image") not in removed]
             self.write(state)
             await self._persist_database_state(state)
         return cleanup_failed
@@ -350,14 +342,9 @@ class RuntimeProfileService:
         has_unpinned = any(not item["version"] for item in deps)
         image = staging_image
         with tempfile.TemporaryDirectory(prefix="astra-runtime-build-") as root:
-            requirements = " ".join(
-                f"{item['name']}=={item['version']}" if item["version"] else item["name"]
-                for item in deps
-            )
+            requirements = " ".join(f"{item['name']}=={item['version']}" if item["version"] else item["name"] for item in deps)
             install = (
-                f"RUN uv pip install --python /opt/astra/runtime/.venv/bin/python {requirements}\n"
-                if requirements
-                else ""
+                f"RUN uv pip install --python /opt/astra/runtime/.venv/bin/python {requirements}\n" if requirements else ""
             )
             Path(root, "Dockerfile").write_text(
                 f"FROM {self.settings.sandbox_runtime_image}\n"
@@ -390,9 +377,7 @@ class RuntimeProfileService:
                     "for name in names}, sort_keys=True))"
                 )
             else:
-                smoke_code = (
-                    f"import importlib.metadata as m; [m.version(name) for name in {package_names}]"
-                )
+                smoke_code = f"import importlib.metadata as m; [m.version(name) for name in {package_names}]"
             await self._update_build(
                 build_id,
                 phase="验证依赖导入",
@@ -422,11 +407,7 @@ class RuntimeProfileService:
             if has_unpinned:
                 prefix = "ASTRA_DEPENDENCIES="
                 version_line = next(
-                    (
-                        line
-                        for line in reversed(verification_output.splitlines())
-                        if line.startswith(prefix)
-                    ),
+                    (line for line in reversed(verification_output.splitlines()) if line.startswith(prefix)),
                     None,
                 )
                 if version_line is None:
@@ -439,16 +420,10 @@ class RuntimeProfileService:
                     }
                     for item in deps
                 ]
-                digest = hashlib.sha256(
-                    json.dumps(resolved_dependencies, sort_keys=True).encode()
-                ).hexdigest()[:16]
-            await self._activate_built_image(
-                build_id, image, digest, resolved_dependencies, staging_image
-            )
+                digest = hashlib.sha256(json.dumps(resolved_dependencies, sort_keys=True).encode()).hexdigest()[:16]
+            await self._activate_built_image(build_id, image, digest, resolved_dependencies, staging_image)
 
-    async def _activate_built_image(
-        self, build_id, source_image, digest, dependencies, cleanup_image
-    ) -> None:
+    async def _activate_built_image(self, build_id, source_image, digest, dependencies, cleanup_image) -> None:
         image = f"astra-data-viz:custom-{digest}"
         await self._run_with_progress(
             build_id,
@@ -486,6 +461,4 @@ class RuntimeProfileService:
         cleanup_failed = not await self._remove_managed_image(build_id, cleanup_image)
         cleanup_failed = await self._prune_images(build_id) or cleanup_failed
         if cleanup_failed:
-            await self._update_build(
-                build_id, log="构建与导入验证成功；部分旧镜像暂未清理，将在后续构建重试"
-            )
+            await self._update_build(build_id, log="构建与导入验证成功；部分旧镜像暂未清理，将在后续构建重试")

@@ -168,9 +168,7 @@ def _normalize_files(
     max_package_bytes: int,
 ) -> tuple[list[SkillDiagnostic], dict[str, bytes]]:
     if len(files) > max_files:
-        raise SkillPackageError(
-            [SkillDiagnostic(code="skill.too_many_files", message="Skill 文件数量超过限制。")]
-        )
+        raise SkillPackageError([SkillDiagnostic(code="skill.too_many_files", message="Skill 文件数量超过限制。")])
     diagnostics: list[SkillDiagnostic] = []
     normalized: dict[str, bytes] = {}
     total_bytes = 0
@@ -187,9 +185,7 @@ def _normalize_files(
                 )
             )
             continue
-        content = (
-            raw_content.encode("utf-8") if isinstance(raw_content, str) else bytes(raw_content)
-        )
+        content = raw_content.encode("utf-8") if isinstance(raw_content, str) else bytes(raw_content)
         total_bytes += len(content)
         if len(content) > max_file_bytes:
             diagnostics.append(
@@ -223,9 +219,7 @@ def _normalize_files(
 def _skill_document(normalized: dict[str, bytes], diagnostics: list[SkillDiagnostic]) -> str:
     skill_bytes = normalized.get("SKILL.md")
     if skill_bytes is None:
-        diagnostics.append(
-            SkillDiagnostic(code="skill.instructions_missing", message="Skill 缺少 SKILL.md。")
-        )
+        diagnostics.append(SkillDiagnostic(code="skill.instructions_missing", message="Skill 缺少 SKILL.md。"))
         raise SkillPackageError(diagnostics)
     try:
         return skill_bytes.decode("utf-8")
@@ -240,9 +234,7 @@ def _skill_document(normalized: dict[str, bytes], diagnostics: list[SkillDiagnos
         raise SkillPackageError(diagnostics) from exc
 
 
-def _parse_frontmatter(
-    skill_text: str, diagnostics: list[SkillDiagnostic]
-) -> tuple[dict[str, object], str]:
+def _parse_frontmatter(skill_text: str, diagnostics: list[SkillDiagnostic]) -> tuple[dict[str, object], str]:
     match = FRONTMATTER_RE.match(skill_text)
     if not match:
         diagnostics.append(
@@ -295,11 +287,7 @@ def _validate_frontmatter(
         reject_reserved_custom_identity=reject_reserved_custom_identity,
     )
     if not isinstance(description, str) or not 1 <= len(description) <= 1024:
-        diagnostics.append(
-            _frontmatter_diagnostic(
-                "skill.description_invalid", "Skill description 必须为 1–1024 个字符。"
-            )
-        )
+        diagnostics.append(_frontmatter_diagnostic("skill.description_invalid", "Skill description 必须为 1–1024 个字符。"))
     _validate_optional_frontmatter(frontmatter, diagnostics)
 
 
@@ -312,23 +300,11 @@ def _validate_identity(
     reject_reserved_custom_identity: bool,
 ) -> None:
     if not _valid_skill_name(name):
-        diagnostics.append(
-            _frontmatter_diagnostic(
-                "skill.name_invalid", "Skill name 必须为 1–64 位小写字母、数字或单连字符。"
-            )
-        )
+        diagnostics.append(_frontmatter_diagnostic("skill.name_invalid", "Skill name 必须为 1–64 位小写字母、数字或单连字符。"))
     if isinstance(name, str) and directory_name and name != directory_name:
-        diagnostics.append(
-            _frontmatter_diagnostic(
-                "skill.directory_name_mismatch", "Skill name 必须与父目录名称一致。"
-            )
-        )
+        diagnostics.append(_frontmatter_diagnostic("skill.directory_name_mismatch", "Skill name 必须与父目录名称一致。"))
     if _reserved_identity(name, origin, reject_reserved_custom_identity):
-        diagnostics.append(
-            _frontmatter_diagnostic(
-                "skill.identity_reserved", "astra- 前缀仅供 Astra 内建 Skill 使用。"
-            )
-        )
+        diagnostics.append(_frontmatter_diagnostic("skill.identity_reserved", "astra- 前缀仅供 Astra 内建 Skill 使用。"))
 
 
 def _valid_skill_name(name: object) -> bool:
@@ -336,37 +312,20 @@ def _valid_skill_name(name: object) -> bool:
 
 
 def _reserved_identity(name: object, origin: SkillOrigin, reject_reserved: bool) -> bool:
-    return (
-        origin == SkillOrigin.custom
-        and reject_reserved
-        and isinstance(name, str)
-        and name.startswith("astra-")
-    )
+    return origin == SkillOrigin.custom and reject_reserved and isinstance(name, str) and name.startswith("astra-")
 
 
-def _validate_optional_frontmatter(
-    frontmatter: dict[str, object], diagnostics: list[SkillDiagnostic]
-) -> None:
+def _validate_optional_frontmatter(frontmatter: dict[str, object], diagnostics: list[SkillDiagnostic]) -> None:
     compatibility = frontmatter.get("compatibility")
-    if compatibility is not None and (
-        not isinstance(compatibility, str) or len(compatibility) > 500
-    ):
+    if compatibility is not None and (not isinstance(compatibility, str) or len(compatibility) > 500):
         diagnostics.append(
-            _frontmatter_diagnostic(
-                "skill.compatibility_invalid", "Skill compatibility 必须是至多 500 字符的字符串。"
-            )
+            _frontmatter_diagnostic("skill.compatibility_invalid", "Skill compatibility 必须是至多 500 字符的字符串。")
         )
     if not isinstance(frontmatter.get("metadata", {}), dict):
-        diagnostics.append(
-            _frontmatter_diagnostic("skill.metadata_invalid", "Skill metadata 必须是对象。")
-        )
+        diagnostics.append(_frontmatter_diagnostic("skill.metadata_invalid", "Skill metadata 必须是对象。"))
     allowed_tools = frontmatter.get("allowed-tools")
     if allowed_tools is not None and not isinstance(allowed_tools, str):
-        diagnostics.append(
-            _frontmatter_diagnostic(
-                "skill.allowed_tools_invalid", "allowed-tools 必须是空格分隔的字符串。"
-            )
-        )
+        diagnostics.append(_frontmatter_diagnostic("skill.allowed_tools_invalid", "allowed-tools 必须是空格分隔的字符串。"))
 
 
 def _frontmatter_diagnostic(code: str, message: str) -> SkillDiagnostic:
@@ -382,12 +341,8 @@ def _validate_package_content(
     max_instruction_chars: int,
 ) -> None:
     if len(instructions) > max_instruction_chars:
-        diagnostics.append(
-            _frontmatter_diagnostic("skill.instructions_too_large", "SKILL.md 指令超过上下文限制。")
-        )
-    if frontmatter.get("compatibility") is None and any(
-        _resource_kind(path) == "script" for path in normalized
-    ):
+        diagnostics.append(_frontmatter_diagnostic("skill.instructions_too_large", "SKILL.md 指令超过上下文限制。"))
+    if frontmatter.get("compatibility") is None and any(_resource_kind(path) == "script" for path in normalized):
         diagnostics.append(
             SkillDiagnostic(
                 code="skill.compatibility_undeclared",
@@ -436,8 +391,7 @@ def _raise_for_diagnostics(diagnostics: list[SkillDiagnostic], *, raise_on_safet
     errors = [
         diagnostic
         for diagnostic in diagnostics
-        if diagnostic.severity in {"error", "critical"}
-        and (raise_on_safety or diagnostic.code not in safety_codes)
+        if diagnostic.severity in {"error", "critical"} and (raise_on_safety or diagnostic.code not in safety_codes)
     ]
     if errors:
         raise SkillPackageError(diagnostics)

@@ -165,9 +165,7 @@ async def test_skill_api_authoring_publish_and_run_selection(skill_client):
     assert test_view.json()["model_policy"]["thinking"]["capability_version"] == 2
     ordinary_catalog = await skill_client.get("/api/skills/catalog")
     published_entry = next(
-        item
-        for item in ordinary_catalog.json()["skills"]
-        if item["qualified_identity"] == "custom:research-notes"
+        item for item in ordinary_catalog.json()["skills"] if item["qualified_identity"] == "custom:research-notes"
     )
     assert published_entry["digest"] != test_digest
     edited_again = await skill_client.put(
@@ -248,9 +246,7 @@ async def test_run_skill_selection_validation_and_atomic_activation(skill_client
     )
     assert unavailable.status_code == 422
     assert unavailable.json()["error"]["code"] == "SKILL_SELECTION_INVALID"
-    assert unavailable.json()["error"]["details"]["qualified_identity"] == (
-        "custom:no-longer-available"
-    )
+    assert unavailable.json()["error"]["details"]["qualified_identity"] == ("custom:no-longer-available")
     assert (await skill_client.get("/api/runs")).json() == []
     assert skill_client.schedule_calls == []
 
@@ -260,9 +256,7 @@ async def test_run_skill_selection_validation_and_atomic_activation(skill_client
     )
     assert created.status_code == 200, created.text
     audit = await skill_client.get(f"/api/runs/{created.json()['run_id']}/skills")
-    assert {item["qualified_identity"] for item in audit.json()["activations"]} == set(
-        identities[:2]
-    )
+    assert {item["qualified_identity"] for item in audit.json()["activations"]} == set(identities[:2])
     assert all(item["initiator"] == "explicit" for item in audit.json()["activations"])
     assert skill_client.schedule_calls == [created.json()["run_id"]]
 
@@ -394,9 +388,7 @@ async def test_skill_api_stale_write_preview_and_history(skill_client):
         json={"revision_token": next_draft.json()["revision_token"]},
     )
     assert second_publish.status_code == 200
-    historical_diff = await skill_client.get(
-        f"/api/skills/{created['id']}/revisions/{revision_id}/diff"
-    )
+    historical_diff = await skill_client.get(f"/api/skills/{created['id']}/revisions/{revision_id}/diff")
     assert historical_diff.status_code == 200
     assert historical_diff.json()["base_version"] == 1
     assert historical_diff.json()["target_version"] == 2

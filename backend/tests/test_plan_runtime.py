@@ -25,7 +25,7 @@ from app.infrastructure.repositories.plans import (
     plan_to_view,
 )
 from app.infrastructure.repositories.run_unit_of_work import RunUnitOfWork
-from app.infrastructure.repositories.run_view_projection import RunViewProjector
+from app.infrastructure.repositories.run_view_projection import run_payload
 
 
 def weather_plan() -> PlanDraft:
@@ -61,9 +61,7 @@ def weather_plan() -> PlanDraft:
                 intent="给出天气与出行建议",
                 depends_on=["fetch-weather"],
                 success_criteria_refs=["criterion-result"],
-                expected_outcome=ExpectedObservation(
-                    kind="final_answer", success_condition="answer is supported"
-                ),
+                expected_outcome=ExpectedObservation(kind="final_answer", success_condition="answer is supported"),
             ),
         ],
     )
@@ -95,9 +93,7 @@ def test_validator_rejects_unknown_references_and_capabilities():
         PlanValidator().validate(draft, task_contract=contract)
     draft.nodes[1].success_criteria_refs = ["criterion-result"]
     with pytest.raises(PlanValidationError, match="Unavailable capabilities"):
-        PlanValidator().validate(
-            draft, task_contract=contract, available_capabilities={"catalog_search"}
-        )
+        PlanValidator().validate(draft, task_contract=contract, available_capabilities={"catalog_search"})
 
 
 def test_validator_rejects_concrete_tool_bindings_and_honors_empty_catalog():
@@ -121,9 +117,7 @@ def test_validator_rejects_concrete_tool_bindings_and_honors_empty_catalog():
 
 
 async def test_plan_repository_persists_graph_and_projects_run_view(session):
-    run = await RunUnitOfWork(session).create_task_run(
-        "查询天气", {"provider": "mock"}, answer_mode="trusted"
-    )
+    run = await RunUnitOfWork(session).create_task_run("查询天气", {"provider": "mock"}, answer_mode="trusted")
     contract = build_default_contract("查询天气")
     repository = PlanRepository(session)
     plan = await PlanService(repository).create(
@@ -141,7 +135,7 @@ async def test_plan_repository_persists_graph_and_projects_run_view(session):
     )
 
     loaded = await RunUnitOfWork(session).require_run(run.id)
-    view = RunViewProjector().payload(loaded)
+    view = run_payload(loaded)
     assert view["plan_graph"]["id"] == plan.id
     assert [item["node_key"] for item in view["steps"]] == [
         "resolve-location",
@@ -159,16 +153,14 @@ async def test_standard_run_never_projects_a_plan_graph(session):
     run.plan_graph = plan_to_view(plan).model_dump(mode="json")
     await session.commit()
 
-    view = RunViewProjector().payload(await RunUnitOfWork(session).require_run(run.id))
+    view = run_payload(await RunUnitOfWork(session).require_run(run.id))
     assert view["plan_graph"] == {}
     assert view["plan_versions"] == []
     assert view["steps"] == []
 
 
 async def test_plan_projection_uses_explicit_edges_and_keeps_depends_on(session):
-    run = await RunUnitOfWork(session).create_task_run(
-        "图投影", {"provider": "mock"}, answer_mode="trusted"
-    )
+    run = await RunUnitOfWork(session).create_task_run("图投影", {"provider": "mock"}, answer_mode="trusted")
     plan = await PlanRepository(session).create(run.id, weather_plan())
 
     view = plan_to_view(plan)
@@ -283,9 +275,7 @@ async def test_plan_patch_creates_version_and_preserves_lineage(session):
                     intent="补充空气质量",
                     depends_on=["fetch-weather"],
                     success_criteria_refs=["criterion-result"],
-                    expected_outcome=ExpectedObservation(
-                        kind="air_quality", success_condition="AQI available"
-                    ),
+                    expected_outcome=ExpectedObservation(kind="air_quality", success_condition="AQI available"),
                     optional=True,
                 ),
             ),
@@ -351,9 +341,7 @@ async def test_plan_patch_preserves_completed_nodes_and_evidence(session):
     )
     first = plan.nodes[0]
     await repository.transition_node(first.id, PlanNodeStatus.running)
-    await repository.transition_node(
-        first.id, PlanNodeStatus.completed, evidence_refs=["evidence-1"]
-    )
+    await repository.transition_node(first.id, PlanNodeStatus.completed, evidence_refs=["evidence-1"])
     revised = await service.apply_patch(
         run.id,
         PlanPatch(
@@ -376,10 +364,7 @@ async def test_plan_patch_preserves_completed_nodes_and_evidence(session):
     assert preserved.lineage_node_id == first.id
 
     graph_diff = diff_plans(plan, revised)
-    assert (
-        next(item for item in graph_diff.nodes if item.node_key == "resolve-location").change
-        == "inherited_completed"
-    )
+    assert next(item for item in graph_diff.nodes if item.node_key == "resolve-location").change == "inherited_completed"
     assert next(item for item in graph_diff.nodes if item.node_key == "answer").change == "modified"
 
 

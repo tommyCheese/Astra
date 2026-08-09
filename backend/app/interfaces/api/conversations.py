@@ -83,9 +83,7 @@ async def get_system_commands(
     settings: AstraRuntimeSettings = Depends(get_settings),
     session: AsyncSession = Depends(get_session),
 ):
-    states = await ToolSettingsRepository(session).get_or_create(
-        default_tool_states(settings)
-    )
+    states = await ToolSettingsRepository(session).get_or_create(default_tool_states(settings))
     await session.commit()
     return list_system_commands(apply_tool_states(settings, states))
 
@@ -151,7 +149,8 @@ async def run_conversation_command(
 
 @router.patch("/conversations/{conversation_id}", response_model=ConversationSummary)
 async def update_conversation(
-    conversation_id: str, payload: ConversationUpdateRequest,
+    conversation_id: str,
+    payload: ConversationUpdateRequest,
     session: AsyncSession = Depends(get_session),
 ):
     repo = ConversationRepository(session)
@@ -171,7 +170,8 @@ async def update_conversation(
 
 @router.delete("/conversations/{conversation_id}", status_code=204)
 async def delete_conversation(
-    conversation_id: str, session: AsyncSession = Depends(get_session),
+    conversation_id: str,
+    session: AsyncSession = Depends(get_session),
     settings: AstraRuntimeSettings = Depends(get_settings),
 ):
     repo = ConversationRepository(session)

@@ -79,16 +79,12 @@ def search_trace_fragment() -> GroundingEvidenceFragment:
 
 
 def test_evidence_ledger_finds_and_opens_canonical_passages():
-    ledger = GroundingEvidenceLedger(
-        [passage_fragment(text="Alpha evidence. Beta conclusion.")]
-    )
+    ledger = GroundingEvidenceLedger([passage_fragment(text="Alpha evidence. Beta conclusion.")])
 
     matches = ledger.find_passages("source-1", "Beta", max_passages=2)
 
     assert [item.id for item in matches] == ["passage-1"]
-    assert ledger.open_passage(
-        "source-1", "passage-1", context_before=1, context_after=1
-    ) == matches
+    assert ledger.open_passage("source-1", "passage-1", context_before=1, context_after=1) == matches
 
 
 def test_evidence_ledger_replay_is_idempotent_and_conflicts_fail():
@@ -97,10 +93,7 @@ def test_evidence_ledger_replay_is_idempotent_and_conflicts_fail():
     assert len(ledger.records()) == 1
     ledger.append(fragments[0])
     assert len(ledger.records()) == 1
-    conflicting = GroundingEvidenceFragment.model_validate(
-        fragments[0].model_dump(mode="json")
-        | {"payload_digest": "0" * 64}
-    )
+    conflicting = GroundingEvidenceFragment.model_validate(fragments[0].model_dump(mode="json") | {"payload_digest": "0" * 64})
     with pytest.raises(GroundingEvidenceConflictError):
         ledger.append(conflicting)
 
@@ -201,19 +194,19 @@ def test_candidate_only_evidence_cannot_support_material_claim():
         result,
         {"grounding": ledger.model_dump()},
     )
-    support = next(
-        outcome for outcome in outcomes
-        if outcome.validator == "grounding.claim_support"
-    )
+    support = next(outcome for outcome in outcomes if outcome.validator == "grounding.claim_support")
     assert support.passed is False
     assert support.issues[0].code == "grounding_material_claim_unsupported"
 
 
 def test_non_web_result_does_not_activate_grounding_validators():
-    assert grounding_validation_outcomes(
-        {"summary": "Stable general knowledge"},
-        {},
-    ) == []
+    assert (
+        grounding_validation_outcomes(
+            {"summary": "Stable general knowledge"},
+            {},
+        )
+        == []
+    )
 
 
 def test_grounding_failure_blocks_trusted_completion_without_affecting_non_web():
@@ -226,10 +219,15 @@ def test_grounding_failure_blocks_trusted_completion_without_affecting_non_web()
         AgentState(task_contract=build_default_contract("General task")),
         [task_adapter_passed],
     )
-    assert AgentCompletionGate().evaluate(
-        non_web_state,
-        validation_outcomes=[task_adapter_passed],
-    ).state == TerminalState.completed
+    assert (
+        AgentCompletionGate()
+        .evaluate(
+            non_web_state,
+            validation_outcomes=[task_adapter_passed],
+        )
+        .state
+        == TerminalState.completed
+    )
 
     grounding_failed = AgentValidationOutcome(
         validator="grounding.claim_support",

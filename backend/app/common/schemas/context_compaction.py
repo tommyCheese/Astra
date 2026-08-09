@@ -113,10 +113,7 @@ class CompactionContextEnvelope(BaseModel):
 
     @model_validator(mode="after")
     def validate_owner_binding(self) -> CompactionContextEnvelope:
-        if (
-            self.continuation.owner_type != self.owner_type
-            or self.continuation.owner_id != self.owner_id
-        ):
+        if self.continuation.owner_type != self.owner_type or self.continuation.owner_id != self.owner_id:
             raise ValueError("continuation manifest owner does not match envelope")
         return self
 

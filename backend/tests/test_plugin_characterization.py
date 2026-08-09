@@ -1,7 +1,7 @@
 from fake_information_tools import fake_information_registry
+from support import TrustedRuntimeHarness as AstraAgentLoop
 
 from app.application.agent_runtime.policies.reasoning import AgentReasoningPolicyCompiler
-from app.application.agent_runtime.services.execution.loop import AstraAgentLoop
 from app.application.permissions.effects import BashEffectAnalyzer
 from app.common.core.config import AstraRuntimeSettings
 from app.common.schemas.agent.run_policy import RequestedReasoningPolicy

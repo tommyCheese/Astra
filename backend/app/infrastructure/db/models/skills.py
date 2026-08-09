@@ -60,9 +60,7 @@ class SkillRecord(AstraOrmRecordBase):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
-    draft: Mapped[SkillDraftRecord | None] = relationship(
-        back_populates="skill", uselist=False, cascade="all, delete-orphan"
-    )
+    draft: Mapped[SkillDraftRecord | None] = relationship(back_populates="skill", uselist=False, cascade="all, delete-orphan")
     revisions: Mapped[list[SkillRevisionRecord]] = relationship(
         back_populates="skill",
         cascade="all, delete-orphan",
@@ -97,9 +95,7 @@ class SkillRevisionRecord(AstraOrmRecordBase):
     frontmatter: Mapped[dict] = mapped_column(JsonType, default=dict)
     manifest: Mapped[dict] = mapped_column(JsonType, default=dict)
     validation_report: Mapped[dict] = mapped_column(JsonType, default=dict)
-    predecessor_id: Mapped[str | None] = mapped_column(
-        ForeignKey("skill_revisions.id"), nullable=True
-    )
+    predecessor_id: Mapped[str | None] = mapped_column(ForeignKey("skill_revisions.id"), nullable=True)
     test_only: Mapped[bool] = mapped_column(Boolean, default=False)
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)

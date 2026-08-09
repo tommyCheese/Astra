@@ -14,6 +14,7 @@ from app.infrastructure.plugins.contracts import (
     PluginLifecycleState,
     PluginToolContribution,
 )
+from app.infrastructure.plugins.diagnostics import plugin_diagnostics
 from app.infrastructure.plugins.discovery import (
     BuiltinDiscoverySource,
     IsolatedDescriptorDiscoverySource,
@@ -21,8 +22,6 @@ from app.infrastructure.plugins.discovery import (
     ManagedPackageDiscoverySource,
     PluginDiscoverySource,
 )
-from app.infrastructure.plugins.diagnostics import plugin_diagnostics
-from app.infrastructure.tools.registry import build_plugin_catalog
 from app.infrastructure.plugins.interfaces import (
     PluginHealthProbe,
     PluginHealthReport,
@@ -33,6 +32,7 @@ from app.infrastructure.tools.base import (
     AstraToolSpec,
     ToolExecutionError,
 )
+from app.infrastructure.tools.registry import build_plugin_catalog
 
 
 class CatalogTool(AstraTool):
@@ -228,14 +228,10 @@ async def test_isolated_descriptor_cannot_smuggle_in_process_code():
         descriptor=descriptor,
         tools=(PluginToolContribution(tool=tool, executor_id="in_process"),),
     )
-    source = IsolatedDescriptorDiscoverySource(
-        [IsolatedProviderReference(descriptor, contribution)]
-    )
+    source = IsolatedDescriptorDiscoverySource([IsolatedProviderReference(descriptor, contribution)])
 
     with pytest.raises(PluginCatalogError) as rejected:
-        await PluginCatalogBuilder(
-            [source], allowed_providers={"catalog.provider": {"sha256:catalog"}}
-        ).build()
+        await PluginCatalogBuilder([source], allowed_providers={"catalog.provider": {"sha256:catalog"}}).build()
     assert rejected.value.category == "invalid_plugin"
 
 

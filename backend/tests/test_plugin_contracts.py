@@ -84,9 +84,7 @@ def test_applicability_matches_explicit_tool_capability_result_and_media():
 
 
 def test_malformed_contribution_fails_with_safe_contract_error():
-    identity = PluginComponentIdentity(
-        component_id="processor", provider_id="other.provider", version="1", digest="sha256:x"
-    )
+    identity = PluginComponentIdentity(component_id="processor", provider_id="other.provider", version="1", digest="sha256:x")
     contribution = PluginContribution(
         descriptor=descriptor(),
         tools=(PluginToolContribution(tool=ExampleTool(), executor_id="in_process"),),
@@ -104,9 +102,7 @@ def test_malformed_contribution_fails_with_safe_contract_error():
 
 
 def test_tool_result_envelope_is_strict_versioned_and_validates_output_schema():
-    valid = validate_tool_result(
-        ToolResultEnvelope(data={"value": "ok"}).model_dump(mode="json"), ExampleTool.spec
-    )
+    valid = validate_tool_result(ToolResultEnvelope(data={"value": "ok"}).model_dump(mode="json"), ExampleTool.spec)
     assert valid.protocol_version == "1"
     assert valid.data == {"value": "ok"}
 

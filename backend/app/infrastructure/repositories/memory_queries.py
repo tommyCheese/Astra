@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from sqlalchemy import and_, or_, select
@@ -12,11 +13,11 @@ from app.infrastructure.db.model_base import utc_now
 from app.infrastructure.db.models.memory import PersistedMemoryRecord
 
 
+@dataclass
 class MemoryQueryRepository:
     """Read-only Memory projections and version history."""
 
-    def __init__(self, session: AsyncSession):
-        self.session = session
+    session: AsyncSession
 
     async def list_records(
         self,

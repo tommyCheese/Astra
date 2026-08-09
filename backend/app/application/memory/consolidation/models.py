@@ -14,7 +14,6 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from app.infrastructure.db.models.memory import MemorySourceRecord, PersistedMemoryRecord
 
-
 INPUT_MANIFEST_SCHEMA_VERSION = 1
 CONSOLIDATION_PROPOSAL_SCHEMA_VERSION = 1
 MAX_CONSOLIDATION_INPUTS = 100
@@ -23,6 +22,7 @@ MAX_OPERATION_SOURCES = 100
 MAX_MODEL_OUTPUT_BYTES = 256 * 1024
 MAX_PROPOSAL_CONTENT_CHARS = 20_000
 MAX_TOTAL_PROPOSAL_CONTENT_CHARS = 100_000
+
 
 class ConsolidationAction(str, Enum):
     add = "add"
@@ -71,9 +71,7 @@ def _normalize_json(value: Any) -> Any:
             if not key:
                 raise ConsolidationValidationError("JSON object keys must be non-empty")
             if key in normalized:
-                raise ConsolidationValidationError(
-                    f"JSON object has duplicate normalized key: {key}"
-                )
+                raise ConsolidationValidationError(f"JSON object has duplicate normalized key: {key}")
             normalized[key] = _normalize_json(raw_value)
         return normalized
     if isinstance(value, (list, tuple)):
@@ -122,13 +120,9 @@ def _strict_fields(
     missing = sorted(required - keys)
     unexpected = sorted(keys - allowed)
     if missing:
-        raise ConsolidationValidationError(
-            f"{label} is missing required fields: {', '.join(missing)}"
-        )
+        raise ConsolidationValidationError(f"{label} is missing required fields: {', '.join(missing)}")
     if unexpected:
-        raise ConsolidationValidationError(
-            f"{label} has unexpected fields: {', '.join(unexpected)}"
-        )
+        raise ConsolidationValidationError(f"{label} has unexpected fields: {', '.join(unexpected)}")
 
 
 def _bounded_string(value: Any, *, label: str, maximum: int) -> str:
@@ -174,9 +168,7 @@ def _bounded_ids(
     if required and not value:
         raise ConsolidationValidationError(f"{label} must be non-empty")
     if len(value) > MAX_OPERATION_SOURCES:
-        raise ConsolidationValidationError(
-            f"{label} exceeds the {MAX_OPERATION_SOURCES} item limit"
-        )
+        raise ConsolidationValidationError(f"{label} exceeds the {MAX_OPERATION_SOURCES} item limit")
     normalized = tuple(_bounded_string(item, label=f"{label} item", maximum=120) for item in value)
     if len(normalized) != len(set(normalized)):
         raise ConsolidationValidationError(f"{label} contains duplicate IDs")
@@ -246,12 +238,8 @@ class FrozenSourceReference:
             accessible=value["accessible"],
             run_id=_optional_string(value.get("run_id"), label="Run ID", maximum=120),
             turn_id=_optional_string(value.get("turn_id"), label="Turn ID", maximum=120),
-            tool_call_id=_optional_string(
-                value.get("tool_call_id"), label="AstraTool call ID", maximum=120
-            ),
-            artifact_id=_optional_string(
-                value.get("artifact_id"), label="Artifact ID", maximum=120
-            ),
+            tool_call_id=_optional_string(value.get("tool_call_id"), label="AstraTool call ID", maximum=120),
+            artifact_id=_optional_string(value.get("artifact_id"), label="Artifact ID", maximum=120),
         )
 
 
@@ -357,12 +345,8 @@ class FrozenMemoryInput:
             created_by=memory.created_by,
             observed_at=_normalize_datetime(memory.observed_at),
             valid_from=_normalize_datetime(memory.valid_from),
-            valid_to=(
-                _normalize_datetime(memory.valid_to) if memory.valid_to is not None else None
-            ),
-            expires_at=(
-                _normalize_datetime(memory.expires_at) if memory.expires_at is not None else None
-            ),
+            valid_to=(_normalize_datetime(memory.valid_to) if memory.valid_to is not None else None),
+            expires_at=(_normalize_datetime(memory.expires_at) if memory.expires_at is not None else None),
             consolidation_generation=int(memory.consolidation_generation),
             sources=sources,
             content_hash=hashlib.sha256(content.encode("utf-8")).hexdigest(),
@@ -388,9 +372,7 @@ class FrozenMemoryInput:
                 **_frozen_memory_lifecycle(value),
                 "sources": _frozen_sources(value["sources"]),
                 "content_hash": content_hash,
-                "memory_hash": _bounded_string(
-                    value["memory_hash"], label="Frozen Memory hash", maximum=128
-                ),
+                "memory_hash": _bounded_string(value["memory_hash"], label="Frozen Memory hash", maximum=128),
             }
         )
         if canonical_digest(candidate._payload()) != candidate.memory_hash:
@@ -452,9 +434,7 @@ def _frozen_sources(value: Any) -> tuple[FrozenSourceReference, ...]:
 
 def _validated_frozen_content(value: Mapping[str, Any]) -> tuple[str, str]:
     content = _bounded_string(value["content"], label="Frozen Memory content", maximum=50_000)
-    content_hash = _bounded_string(
-        value["content_hash"], label="Frozen Memory content hash", maximum=128
-    )
+    content_hash = _bounded_string(value["content_hash"], label="Frozen Memory content hash", maximum=128)
     if hashlib.sha256(content.encode("utf-8")).hexdigest() != content_hash:
         raise ConsolidationValidationError("Frozen Memory content hash mismatch")
     return content, content_hash
@@ -467,9 +447,7 @@ def _frozen_memory_identity(value: Mapping[str, Any], content: str) -> dict[str,
         "version": value["version"],
         "state_version": value["state_version"],
         "status": _bounded_string(value["status"], label="Memory status", maximum=40),
-        "namespace_type": _bounded_string(
-            value["namespace_type"], label="Namespace type", maximum=40
-        ),
+        "namespace_type": _bounded_string(value["namespace_type"], label="Namespace type", maximum=40),
         "namespace_id": _bounded_string(value["namespace_id"], label="Namespace ID", maximum=120),
         "scope": _bounded_string(value["scope"], label="Memory scope", maximum=40),
         "kind": _bounded_string(value["kind"], label="Memory kind", maximum=80),
@@ -556,9 +534,7 @@ class ConsolidationInputManifest:
         if not normalized_items:
             raise ConsolidationValidationError("Consolidation input manifest must be non-empty")
         if len(normalized_items) > MAX_CONSOLIDATION_INPUTS:
-            raise ConsolidationValidationError(
-                f"Consolidation input exceeds the {MAX_CONSOLIDATION_INPUTS} item limit"
-            )
+            raise ConsolidationValidationError(f"Consolidation input exceeds the {MAX_CONSOLIDATION_INPUTS} item limit")
         if len({item.id for item in normalized_items}) != len(normalized_items):
             raise ConsolidationValidationError("Consolidation input contains duplicate Memory IDs")
         normalized_type = _bounded_string(namespace_type, label="Namespace type", maximum=40)
@@ -717,13 +693,9 @@ class ConsolidationProposal:
         operations: Iterable[ConsolidationOperation],
     ) -> ConsolidationProposal:
         normalized_producer = _bounded_string(producer, label="Proposal producer", maximum=40)
-        normalized_operations = tuple(
-            sorted(operations, key=lambda operation: operation.operation_id)
-        )
+        normalized_operations = tuple(sorted(operations, key=lambda operation: operation.operation_id))
         if len(normalized_operations) > MAX_PROPOSAL_OPERATIONS:
-            raise ConsolidationValidationError(
-                f"Proposal exceeds the {MAX_PROPOSAL_OPERATIONS} operation limit"
-            )
+            raise ConsolidationValidationError(f"Proposal exceeds the {MAX_PROPOSAL_OPERATIONS} operation limit")
         operation_ids = [operation.operation_id for operation in normalized_operations]
         if len(operation_ids) != len(set(operation_ids)):
             raise ConsolidationValidationError("Proposal contains duplicate normalized operations")
@@ -784,9 +756,7 @@ def _stored_operation(value: Any) -> ConsolidationOperation:
             structured_data=_json_object(value.get("structured_data")),
             confidence=float(value["confidence"]),
             importance=float(value["importance"]),
-            source_memory_ids=_bounded_ids(
-                value["source_memory_ids"], label="source ids", required=True
-            ),
+            source_memory_ids=_bounded_ids(value["source_memory_ids"], label="source ids", required=True),
             replace_memory_ids=_bounded_ids(
                 value.get("replace_memory_ids", []),
                 label="replacement ids",

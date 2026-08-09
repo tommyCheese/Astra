@@ -117,9 +117,7 @@ class MockModelClient(ModelClient):
             else:
                 evidence.caveats.append("未能获取足够的来源内容，结果只能报告证据不足。")
         elif artifact_ids:
-            evidence.findings[0] = evidence.findings[0].model_copy(
-                update={"artifact_ids": list(dict.fromkeys(artifact_ids))}
-            )
+            evidence.findings[0] = evidence.findings[0].model_copy(update={"artifact_ids": list(dict.fromkeys(artifact_ids))})
 
         answer = AgentFinalAnswer(
             summary=f"已围绕目标完成 Web 数据查询：{goal}",
@@ -136,11 +134,7 @@ class MockModelClient(ModelClient):
         return answer
 
     async def decide(self, goal: str, context: dict[str, Any]) -> AgentDecision:
-        decision = (
-            mock_terminal_decision(context)
-            or mock_search_decision(goal, context)
-            or mock_fetch_decision(goal, context)
-        )
+        decision = mock_terminal_decision(context) or mock_search_decision(goal, context) or mock_fetch_decision(goal, context)
         if decision is not None:
             return decision
         if context.get("active_node") is not None:
@@ -167,9 +161,7 @@ class MockModelClient(ModelClient):
     async def finalize(
         self, goal: str, context: dict[str, Any], *, on_delta: AnswerDeltaCallback | None = None
     ) -> AgentFinalAnswer:
-        return await self.synthesize(
-            goal, [{"evidence_pack": context.get("evidence_pack", {})}], on_delta=on_delta
-        )
+        return await self.synthesize(goal, [{"evidence_pack": context.get("evidence_pack", {})}], on_delta=on_delta)
 
     async def extract_memory_candidates(
         self,

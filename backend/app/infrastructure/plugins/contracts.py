@@ -101,6 +101,7 @@ class PluginComponentContribution:
     applicability: PluginApplicabilityBinding
     factory: Callable[[], Any]
 
+
 @dataclass(frozen=True)
 class PluginRuntimeBackendContribution:
     identity: PluginComponentIdentity
@@ -127,12 +128,8 @@ class PluginContribution:
                 raise PluginContractError("tool contribution requires an executor binding")
             if not entry.result_adapter_id:
                 raise PluginContractError("tool contribution requires a result adapter identity")
-            if entry.result_adapter_id != "envelope.v1" and not callable(
-                entry.result_adapter_factory
-            ):
-                raise PluginContractError(
-                    "non-envelope tool contribution requires a result adapter factory"
-                )
+            if entry.result_adapter_id != "envelope.v1" and not callable(entry.result_adapter_factory):
+                raise PluginContractError("non-envelope tool contribution requires a result adapter factory")
         components = (
             *self.effect_analyzers,
             *self.result_processors,

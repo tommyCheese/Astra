@@ -71,12 +71,8 @@ class ArtifactCollector:
 
     def collect(self) -> list[dict]:
         if any(path.is_symlink() for path in self.output_dir.rglob("*")):
-            raise ToolExecutionError(
-                "sandbox_policy_violation", "Artifact symlinks are not allowed"
-            )
-        files = [
-            path for path in self.output_dir.rglob("*") if path.is_file() and not path.is_symlink()
-        ]
+            raise ToolExecutionError("sandbox_policy_violation", "Artifact symlinks are not allowed")
+        files = [path for path in self.output_dir.rglob("*") if path.is_file() and not path.is_symlink()]
         if len(files) > self.max_files:
             raise ToolExecutionError("artifact_limit_exceeded", "Artifact file count exceeded")
         total = sum(path.stat().st_size for path in files)
@@ -87,9 +83,7 @@ class ArtifactCollector:
     def inspect(self, path: Path) -> dict:
         resolved = path.resolve(strict=True)
         if not resolved.is_relative_to(self.output_dir):
-            raise ToolExecutionError(
-                "sandbox_policy_violation", "Artifact escaped output directory"
-            )
+            raise ToolExecutionError("sandbox_policy_violation", "Artifact escaped output directory")
         suffix = resolved.suffix.lower()
         if suffix not in self.MAGIC:
             raise ToolExecutionError("invalid_artifact", "Unsupported artifact type")
@@ -155,39 +149,27 @@ class ArtifactCollector:
         missing_restrictive_csp = csp_index < 0 or b"default-src 'none'" not in lowered
         script_precedes_csp = script_index >= 0 and csp_index > script_index
         if missing_restrictive_csp or script_precedes_csp:
-            raise ToolExecutionError(
-                "invalid_artifact", "HTML artifact is missing an effective restrictive CSP"
-            )
+            raise ToolExecutionError("invalid_artifact", "HTML artifact is missing an effective restrictive CSP")
 
     def _validate_office_archive(self, path: Path, suffix: str) -> None:
         try:
             with zipfile.ZipFile(path) as archive:
                 entries = archive.infolist()
                 if len(entries) > self.max_files:
-                    raise ToolExecutionError(
-                        "artifact_limit_exceeded", "Office document contains too many entries"
-                    )
+                    raise ToolExecutionError("artifact_limit_exceeded", "Office document contains too many entries")
                 expanded = sum(item.file_size for item in entries)
                 if expanded > self.max_bytes * 20:
-                    raise ToolExecutionError(
-                        "artifact_limit_exceeded", "Office document expansion exceeds policy"
-                    )
+                    raise ToolExecutionError("artifact_limit_exceeded", "Office document expansion exceeds policy")
                 names = {item.filename for item in entries}
                 for item in entries:
                     candidate = Path(item.filename)
                     if candidate.is_absolute() or ".." in candidate.parts:
-                        raise ToolExecutionError(
-                            "sandbox_policy_violation", "Office document contains path traversal"
-                        )
+                        raise ToolExecutionError("sandbox_policy_violation", "Office document contains path traversal")
                 required = "word/document.xml" if suffix == ".docx" else "xl/workbook.xml"
                 if "[Content_Types].xml" not in names or required not in names:
-                    raise ToolExecutionError(
-                        "invalid_artifact", "Office document structure is incomplete"
-                    )
+                    raise ToolExecutionError("invalid_artifact", "Office document structure is incomplete")
                 if any(name.lower().endswith((".bin", ".vba", ".vbs", ".exe")) for name in names):
-                    raise ToolExecutionError(
-                        "invalid_artifact", "Active Office document content is not allowed"
-                    )
+                    raise ToolExecutionError("invalid_artifact", "Active Office document content is not allowed")
         except zipfile.BadZipFile as exc:
             raise ToolExecutionError("invalid_artifact", "Office artifact is malformed") from exc
 
@@ -219,9 +201,7 @@ class ArtifactService:
         provenance: dict,
     ) -> list[ToolArtifactReference]:
         refs = []
-        for item in ArtifactCollector(
-            output_dir, max_files=self.max_files, max_bytes=self.max_bytes
-        ).collect():
+        for item in ArtifactCollector(output_dir, max_files=self.max_files, max_bytes=self.max_bytes).collect():
             path = item.pop("path")
             key = self.store.put(path, path.suffix.lower())
             try:
@@ -242,6 +222,7 @@ class ArtifactService:
                 raise
             refs.append(artifact_ref(record))
         return refs
+
 
 def prune_store(store: LocalArtifactStore, records: list, retention_days: int) -> int:
     cutoff = datetime.now(timezone.utc) - timedelta(days=retention_days)

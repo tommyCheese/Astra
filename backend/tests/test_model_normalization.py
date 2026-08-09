@@ -39,10 +39,7 @@ def test_partial_json_string_streams_only_complete_characters():
 
 
 def test_partial_json_stream_separates_reasoning_summary_from_final_answer():
-    content = (
-        '{"decision_type":"finalize","reasoning_summary":"先检查已有信息。",'
-        '"final_answer":{"summary":"这是最终回答。"}}'
-    )
+    content = '{"decision_type":"finalize","reasoning_summary":"先检查已有信息。","final_answer":{"summary":"这是最终回答。"}}'
 
     assert extract_partial_json_string(content, "reasoning_summary") == "先检查已有信息。"
     assert extract_partial_json_string(content, "summary") == "这是最终回答。"
@@ -60,9 +57,7 @@ def test_streaming_json_field_extractor_handles_chunked_keys_and_escapes():
     for index in range(0, len(content), 3):
         events.extend(extractor.feed(content[index : index + 3]))
 
-    reasoning = "".join(
-        value for field, value in events if field == "reasoning_summary" and value != "\1"
-    )
+    reasoning = "".join(value for field, value in events if field == "reasoning_summary" and value != "\1")
     summary = "".join(value for field, value in events if field == "summary" and value != "\1")
     assert reasoning == "先\n检查信息。"
     assert summary == '回答包含 "引号"。'

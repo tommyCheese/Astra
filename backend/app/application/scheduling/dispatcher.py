@@ -7,8 +7,8 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.application.run_management.lifecycle.service import RunApplicationService
 from app.application.run_management.lifecycle.contracts import RunExecutionDispatcher
+from app.application.run_management.lifecycle.service import RunApplicationService
 from app.common.core.config import AstraRuntimeSettings
 from app.common.core.errors import AstraError
 from app.common.schemas.agent.api_views import CreateRunRequest
@@ -193,15 +193,9 @@ class ScheduledRunDispatcher:
                 return
             status = run.status if run.status in TERMINAL_RUN_STATUSES else "failed"
             trigger = (run.execution_profile or {}).get("trigger") or {}
-            silent_heartbeat = (
-                trigger.get("type") == "heartbeat" and (run.summary or "").strip() == "HEARTBEAT_OK"
-            )
+            silent_heartbeat = trigger.get("type") == "heartbeat" and (run.summary or "").strip() == "HEARTBEAT_OK"
             schedule_run.status = (
-                "silent_ok"
-                if silent_heartbeat
-                else "completed"
-                if status == "completed_with_warnings"
-                else status
+                "silent_ok" if silent_heartbeat else "completed" if status == "completed_with_warnings" else status
             )
             if silent_heartbeat:
                 run.execution_profile = {

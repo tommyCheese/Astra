@@ -149,10 +149,7 @@ async def get_runtime_default_model(
                 settings.model_provider in SUPPORTED_MODEL_PROVIDERS
                 and bool(settings.model_name.strip())
                 and bool(settings.model_base_url.strip())
-                and (
-                    settings.model_provider in API_KEY_OPTIONAL_MODEL_PROVIDERS
-                    or bool(settings.model_api_key.strip())
-                )
+                and (settings.model_provider in API_KEY_OPTIONAL_MODEL_PROVIDERS or bool(settings.model_api_key.strip()))
             )
         ),
     )
@@ -173,10 +170,7 @@ async def resolve_thinking_capabilities(
     payload: ModelThinkingCapabilitiesRequest,
 ) -> ModelThinkingCapabilitiesResponse:
     return ModelThinkingCapabilitiesResponse(
-        capabilities=[
-            model_thinking_capability(provider=item.provider, model=item.model)
-            for item in payload.models
-        ]
+        capabilities=[model_thinking_capability(provider=item.provider, model=item.model) for item in payload.models]
     )
 
 

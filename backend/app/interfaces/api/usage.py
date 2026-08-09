@@ -37,4 +37,6 @@ async def get_usage_summary(
         raise AstraInputValidationError("RUN_ID_REQUIRED", "查询单次运行用量时必须提供 run_id。")
     if from_time and to_time and from_time >= to_time:
         raise AstraInputValidationError("USAGE_RANGE_INVALID", "用量查询的开始时间必须早于结束时间。")
-    return await UsageRepository(session).summary(scope=scope, task_id=task_id, run_id=run_id, from_time=from_time, to_time=to_time)
+    return await UsageRepository(session).summary(
+        scope=scope, task_id=task_id, run_id=run_id, from_time=from_time, to_time=to_time
+    )

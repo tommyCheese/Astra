@@ -48,18 +48,10 @@ class ToolRouter:
     ):
         self.registry = registry
         self.allowed_tools = allowed_tools
-        self.allowed_capabilities = set(
-            DEFAULT_TOOL_AUTHORITIES if allowed_capabilities is None else allowed_capabilities
-        )
-        self.allowed_permissions = set(
-            self.allowed_capabilities if allowed_permissions is None else allowed_permissions
-        )
-        self.allowed_risks = set(
-            {"low", "sandboxed", "high"} if allowed_risks is None else allowed_risks
-        )
-        self.available_backends = set(
-            {"in_process"} if available_backends is None else available_backends
-        )
+        self.allowed_capabilities = set(DEFAULT_TOOL_AUTHORITIES if allowed_capabilities is None else allowed_capabilities)
+        self.allowed_permissions = set(self.allowed_capabilities if allowed_permissions is None else allowed_permissions)
+        self.allowed_risks = set({"low", "sandboxed", "high"} if allowed_risks is None else allowed_risks)
+        self.available_backends = set({"in_process"} if available_backends is None else available_backends)
 
     def resolve(
         self,
@@ -76,17 +68,11 @@ class ToolRouter:
         if validate_input:
             self.validate_input(tool.spec, tool_input)
         if not set(tool.spec.capabilities) <= self.allowed_capabilities:
-            raise ToolExecutionError(
-                "tool_not_allowed", f"AstraTool capability is not allowed: {tool_name}"
-            )
+            raise ToolExecutionError("tool_not_allowed", f"AstraTool capability is not allowed: {tool_name}")
         if not set(tool.spec.permissions) <= self.allowed_permissions:
-            raise ToolExecutionError(
-                "permission_denied", f"AstraTool permission is not allowed: {tool_name}"
-            )
+            raise ToolExecutionError("permission_denied", f"AstraTool permission is not allowed: {tool_name}")
         if tool.spec.risk not in self.allowed_risks:
-            raise ToolExecutionError(
-                "permission_denied", f"AstraTool risk is not allowed: {tool_name}"
-            )
+            raise ToolExecutionError("permission_denied", f"AstraTool risk is not allowed: {tool_name}")
         if tool.spec.execution_backend not in self.available_backends:
             raise ToolExecutionError(
                 "sandbox_unavailable",
@@ -99,18 +85,14 @@ class ToolRouter:
         try:
             validate_json_schema(tool_input, spec.input_schema, path="input")
         except (TypeError, ValueError) as exc:
-            raise ToolExecutionError(
-                "invalid_input", f"AstraTool input does not match the schema for {spec.name}"
-            ) from exc
+            raise ToolExecutionError("invalid_input", f"AstraTool input does not match the schema for {spec.name}") from exc
 
     def availability(self, tool_name: str) -> CapabilityAvailability:
         try:
             self.resolve(tool_name, {}, validate_input=False)
             return CapabilityAvailability(capability=tool_name, available=True)
         except ToolExecutionError as exc:
-            return CapabilityAvailability(
-                capability=tool_name, available=False, reason=exc.category
-            )
+            return CapabilityAvailability(capability=tool_name, available=False, reason=exc.category)
 
     def eligible_specs(self) -> tuple[Mapping[str, AstraToolSpec], dict[str, dict]]:
         eligible, unavailable = {}, {}

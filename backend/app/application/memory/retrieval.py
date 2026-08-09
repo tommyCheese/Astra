@@ -94,9 +94,7 @@ def lexical_overlap(query_tokens: Sequence[str], candidate_tokens: Sequence[str]
         return 0.0
     query_counts = Counter(query_tokens)
     candidate_counts = Counter(candidate_tokens)
-    numerator = sum(
-        query_count * candidate_counts.get(token, 0) for token, query_count in query_counts.items()
-    )
+    numerator = sum(query_count * candidate_counts.get(token, 0) for token, query_count in query_counts.items())
     if not numerator:
         return 0.0
     query_norm = math.sqrt(sum(count * count for count in query_counts.values()))
@@ -132,11 +130,7 @@ def structural_tags(structured_data: Mapping[str, Any] | None) -> frozenset[str]
 
 
 def _query_tags(query: MemoryRetrievalQuery) -> frozenset[str]:
-    tags = {
-        normalized
-        for tag in (*query.tags, *query.required_tags)
-        if (normalized := _normalize_tag(tag))
-    }
+    tags = {normalized for tag in (*query.tags, *query.required_tags) if (normalized := _normalize_tag(tag))}
     task_signature = _normalize_tag(query.task_signature)
     if task_signature:
         tags.add(f"task:{task_signature}")
@@ -444,9 +438,7 @@ def _provenance_reasons(candidate, policy) -> list[str]:
 
 def _tag_reasons(candidate, query) -> list[str]:
     candidate_tags = structural_tags(candidate.structured_data)
-    required_tags = {
-        normalized for tag in query.required_tags if (normalized := _normalize_tag(tag))
-    }
+    required_tags = {normalized for tag in query.required_tags if (normalized := _normalize_tag(tag))}
     if required_tags and not required_tags.issubset(candidate_tags):
         return ["required_tags_missing"]
     return []
@@ -559,9 +551,7 @@ def rank_scored_memories(memories: Sequence[ScoredMemory]) -> tuple[ScoredMemory
     ranked = sorted(memories, key=lambda item: item.candidate.id)
     ranked.sort(
         key=lambda item: as_utc(
-            item.candidate.updated_at
-            or item.candidate.observed_at
-            or datetime.min.replace(tzinfo=timezone.utc)
+            item.candidate.updated_at or item.candidate.observed_at or datetime.min.replace(tzinfo=timezone.utc)
         ),
         reverse=True,
     )
@@ -583,10 +573,7 @@ def select_scored_memories(
         reasons: list[str] = []
         if len(selected) >= budget.max_items:
             reasons.append("item_budget")
-        if (
-            budget.max_characters is not None
-            and used_characters + character_cost > budget.max_characters
-        ):
+        if budget.max_characters is not None and used_characters + character_cost > budget.max_characters:
             reasons.append("character_budget")
         if budget.max_tokens is not None and used_tokens + token_cost > budget.max_tokens:
             reasons.append("token_budget")
@@ -641,9 +628,7 @@ def retrieve_memories(
 
     eligible_candidates = [candidate for candidate, _ in eligible]
     semantic_scores = (
-        semantic_scorer.score_many(query, eligible_candidates)
-        if semantic_scorer is not None and eligible_candidates
-        else {}
+        semantic_scorer.score_many(query, eligible_candidates) if semantic_scorer is not None and eligible_candidates else {}
     )
     scored = [
         score_memory_candidate(
@@ -664,9 +649,7 @@ def retrieve_memories(
         for memory in scored
         if memory.score.total < effective_policy.minimum_score
     ]
-    ranked = rank_scored_memories(
-        [memory for memory in scored if memory.score.total >= effective_policy.minimum_score]
-    )
+    ranked = rank_scored_memories([memory for memory in scored if memory.score.total >= effective_policy.minimum_score])
     selection = select_scored_memories(ranked, effective_budget)
     return MemoryRetrievalResult(
         ranked=ranked,

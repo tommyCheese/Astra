@@ -31,9 +31,7 @@ def _read_bundle(bundle: zipfile.ZipFile, settings: AstraRuntimeSettings) -> dic
             continue
         path = _validated_entry_path(entry, settings)
         if path in files:
-            raise SkillStorageError(
-                "SKILL_ARCHIVE_DUPLICATE_PATH", "Skill 压缩包包含重复文件路径。"
-            )
+            raise SkillStorageError("SKILL_ARCHIVE_DUPLICATE_PATH", "Skill 压缩包包含重复文件路径。")
         files[path] = bundle.read(entry)
     return files
 
@@ -43,9 +41,7 @@ def _validated_entry_path(entry: zipfile.ZipInfo, settings: AstraRuntimeSettings
         raise SkillStorageError("SKILL_FILE_TOO_LARGE", "Skill 文件超过大小限制。")
     file_kind = entry.external_attr >> 16 & 0o170000
     if file_kind not in {0, 0o100000}:
-        raise SkillStorageError(
-            "SKILL_SPECIAL_FILE_NOT_ALLOWED", "Skill 压缩包不允许符号链接或特殊文件。"
-        )
+        raise SkillStorageError("SKILL_SPECIAL_FILE_NOT_ALLOWED", "Skill 压缩包不允许符号链接或特殊文件。")
     try:
         return normalize_skill_path(entry.filename)
     except ValueError as exc:
@@ -59,9 +55,7 @@ def _strip_single_root(files: dict[str, bytes]) -> dict[str, bytes]:
     if len(candidates) != 1:
         raise SkillStorageError("SKILL_ARCHIVE_ROOT_INVALID", "压缩包必须包含一个 Skill 根目录。")
     prefix = candidates[0][: -len("SKILL.md")]
-    return {
-        path[len(prefix) :]: content for path, content in files.items() if path.startswith(prefix)
-    }
+    return {path[len(prefix) :]: content for path, content in files.items() if path.startswith(prefix)}
 
 
 def write_skill_archive(name: str, files: dict[str, bytes]) -> bytes:

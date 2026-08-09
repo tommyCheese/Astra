@@ -1,4 +1,4 @@
-from app.application.runner.node_worker import ReadOnlyAgentNodeExecutor
+from app.application.planning.node_worker import ReadOnlyAgentNodeExecutor
 from app.common.core.config import AstraRuntimeSettings
 from app.infrastructure.model_clients.mock import MockModelClient
 from app.infrastructure.tools.base import (
@@ -22,11 +22,7 @@ class SelectionTool(AstraTool):
             version="test",
             input_schema={"type": "object"},
             output_schema={"type": "object"},
-            permission=(
-                "network_read"
-                if side_effect_level == "read_only"
-                else "workspace_write"
-            ),
+            permission=("network_read" if side_effect_level == "read_only" else "workspace_write"),
             side_effect_level=side_effect_level,
             idempotent=idempotent,
             task_capabilities=[task_capability],

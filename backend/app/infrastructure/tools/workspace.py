@@ -105,9 +105,7 @@ def _atomic_write(path: Path, content: str) -> int:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary: Path | None = None
     try:
-        with tempfile.NamedTemporaryFile(
-            dir=path.parent, prefix=".astra-write-", delete=False
-        ) as handle:
+        with tempfile.NamedTemporaryFile(dir=path.parent, prefix=".astra-write-", delete=False) as handle:
             temporary = Path(handle.name)
             handle.write(data)
             handle.flush()
@@ -179,11 +177,7 @@ class WorkspaceListTool(AstraTool):
         entries: list[dict[str, Any]] = []
         truncated = False
         for path in sorted(candidates, key=lambda item: item.as_posix()):
-            if (
-                path.is_symlink()
-                or _is_protected(root, path)
-                or (not include_hidden and _is_hidden(root, path))
-            ):
+            if path.is_symlink() or _is_protected(root, path) or (not include_hidden and _is_hidden(root, path)):
                 continue
             relative = _relative(root, path)
             if not fnmatchcase(relative, pattern) and not fnmatchcase(path.name, pattern):
@@ -327,15 +321,15 @@ class WorkspaceSearchTool(AstraTool):
         scanned_bytes = 0
         truncated = False
         for path in candidates:
-            if not path.is_file() or path.is_symlink() or _is_hidden(root, path) or _is_protected(root, path):
+            if any((not path.is_file(), path.is_symlink(), _is_hidden(root, path), _is_protected(root, path))):
                 continue
             relative = _relative(root, path)
-            if not fnmatchcase(relative, pattern) and not fnmatchcase(path.name, pattern):
+            if not any((fnmatchcase(relative, pattern), fnmatchcase(path.name, pattern))):
                 continue
             size = path.stat().st_size
             if size > MAX_TEXT_FILE_BYTES:
                 continue
-            if scanned_files >= MAX_SEARCH_FILES or scanned_bytes + size > MAX_SEARCH_BYTES:
+            if any((scanned_files >= MAX_SEARCH_FILES, scanned_bytes + size > MAX_SEARCH_BYTES)):
                 truncated = True
                 break
             scanned_files += 1
@@ -351,13 +345,11 @@ class WorkspaceSearchTool(AstraTool):
                 column = haystack.find(needle)
                 if column < 0:
                     continue
-                matches.append(
-                    {"path": relative, "line": line_number, "column": column + 1, "text": line[:1000]}
-                )
+                matches.append({"path": relative, "line": line_number, "column": column + 1, "text": line[:1000]})
                 if len(matches) >= limit:
                     truncated = True
                     break
-            if truncated and len(matches) >= limit:
+            if all((truncated, len(matches) >= limit)):
                 break
         return ToolResultEnvelope(
             data={
@@ -408,9 +400,9 @@ class WorkspaceWriteTool(AstraTool):
         if existed and not path.is_file():
             raise ToolExecutionError("invalid_input", "Workspace write path must be a file")
         size = _atomic_write(path, str(tool_input["content"]))
-        return ToolResultEnvelope(
-            data={"path": relative_path, "size_bytes": size, "created": not existed}
-        ).model_dump(mode="json")
+        return ToolResultEnvelope(data={"path": relative_path, "size_bytes": size, "created": not existed}).model_dump(
+            mode="json"
+        )
 
 
 class WorkspaceEditTool(AstraTool):
@@ -462,9 +454,9 @@ class WorkspaceEditTool(AstraTool):
         replacements = occurrences if replace_all else 1
         updated = content.replace(old_text, str(tool_input["new_text"]), -1 if replace_all else 1)
         size = _atomic_write(path, updated)
-        return ToolResultEnvelope(
-            data={"path": relative_path, "size_bytes": size, "replacements": replacements}
-        ).model_dump(mode="json")
+        return ToolResultEnvelope(data={"path": relative_path, "size_bytes": size, "replacements": replacements}).model_dump(
+            mode="json"
+        )
 
 
 def workspace_tools() -> tuple[AstraTool, ...]:

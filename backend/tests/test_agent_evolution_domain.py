@@ -425,9 +425,7 @@ def test_instruction_like_authority_relaxation_is_rejected_but_negation_is_safe(
         )
     } == {"evolution.protected_authority_instruction"}
 
-    safe = procedure_candidate(
-        content="Never bypass approval checks; preserve the current sandbox boundary."
-    )
+    safe = procedure_candidate(content="Never bypass approval checks; preserve the current sandbox boundary.")
     assert (
         validate_candidate_authority(
             safe,

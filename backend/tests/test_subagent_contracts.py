@@ -126,20 +126,14 @@ def test_subagent_result_status_contract_is_total():
         status="completed",
         summary="Done",
         outputs={"comparison": []},
-        artifacts=[
-            SubagentArtifactReference(
-                id="artifact-1", uri="artifact://run-1/report", name="report.md"
-            )
-        ],
+        artifacts=[SubagentArtifactReference(id="artifact-1", uri="artifact://run-1/report", name="report.md")],
         usage={"tokens": 20},
     )
     assert completed.status == SubagentExecutionStatus.completed
 
     waiting = SubagentResult(
         status="waiting_parent",
-        question=SubagentQuestion(
-            prompt="Which region?", required_fields=["region"], continuation_token="token-1"
-        ),
+        question=SubagentQuestion(prompt="Which region?", required_fields=["region"], continuation_token="token-1"),
     )
     assert waiting.question is not None
     with pytest.raises(ValidationError):
@@ -177,25 +171,17 @@ def test_policy_compiler_freezes_effective_subagent_limits():
         agent_subagent_max_parallel_children=2,
     )
     child_policy = compile_subagent_policy(settings)
-    snapshot = AgentReasoningPolicyCompiler().compile(
-        RequestedReasoningPolicy(), subagent_policy=child_policy
-    )
+    snapshot = AgentReasoningPolicyCompiler().compile(RequestedReasoningPolicy(), subagent_policy=child_policy)
 
     serialized = snapshot.model_dump(mode="json")
     assert serialized["effective"]["subagents"]["enabled"] is True
     assert serialized["effective"]["subagents"]["budgets"]["max_children_total"] == 3
-    assert serialized["effective"]["subagents"]["model_routing"]["allowed_models"] == [
-        "mock-agent"
-    ]
+    assert serialized["effective"]["subagents"]["model_routing"]["allowed_models"] == ["mock-agent"]
 
 
 def test_swarm_tool_switch_is_the_product_enablement_gate():
-    user_enabled = compile_subagent_policy(
-        AstraRuntimeSettings(tool_states={"swarm": True})
-    )
-    user_disabled = compile_subagent_policy(
-        AstraRuntimeSettings(tool_states={"swarm": False})
-    )
+    user_enabled = compile_subagent_policy(AstraRuntimeSettings(tool_states={"swarm": True}))
+    user_disabled = compile_subagent_policy(AstraRuntimeSettings(tool_states={"swarm": False}))
 
     assert user_enabled.enabled is True
     assert user_disabled.enabled is False

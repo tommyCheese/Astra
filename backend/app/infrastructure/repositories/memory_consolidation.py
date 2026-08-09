@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -50,16 +51,12 @@ def _validate_namespace(namespace_type: str, namespace_id: str) -> tuple[str, st
     try:
         normalized_type = MemoryNamespaceType(str(namespace_type).strip()).value
     except ValueError as exc:
-        raise ConsolidationValidationError(
-            f"Unsupported consolidation namespace: {namespace_type}"
-        ) from exc
+        raise ConsolidationValidationError(f"Unsupported consolidation namespace: {namespace_type}") from exc
     normalized_id = str(namespace_id or "").strip()
     if not normalized_id:
         raise ConsolidationValidationError("Consolidation namespace identity must be non-empty")
     if len(normalized_id) > 120:
-        raise ConsolidationValidationError(
-            "Consolidation namespace identity exceeds 120 characters"
-        )
+        raise ConsolidationValidationError("Consolidation namespace identity exceeds 120 characters")
     return normalized_type, normalized_id
 
 
@@ -72,11 +69,11 @@ def _idempotency_key(value: str) -> str:
     return normalized
 
 
+@dataclass
 class MemoryConsolidationRepository:
     """Persistence boundary for reviewable, atomic Memory generations."""
 
-    def __init__(self, session: AsyncSession):
-        self.session = session
+    session: AsyncSession
 
     async def require(
         self,
@@ -105,15 +102,11 @@ class MemoryConsolidationRepository:
         limit: int = 50,
     ) -> list[MemoryConsolidationJobRecord]:
         if not 1 <= limit <= 200:
-            raise ConsolidationValidationError(
-                "Consolidation job list limit must be between 1 and 200"
-            )
+            raise ConsolidationValidationError("Consolidation job list limit must be between 1 and 200")
         query = select(MemoryConsolidationJobRecord)
         if namespace_type is not None or namespace_id is not None:
             if namespace_type is None or namespace_id is None:
-                raise ConsolidationValidationError(
-                    "Both namespace_type and namespace_id are required"
-                )
+                raise ConsolidationValidationError("Both namespace_type and namespace_id are required")
             normalized_type, normalized_id = _validate_namespace(namespace_type, namespace_id)
             query = query.where(
                 MemoryConsolidationJobRecord.namespace_type == normalized_type,
@@ -122,9 +115,7 @@ class MemoryConsolidationRepository:
         if status is not None:
             normalized_status = str(status).strip()
             if normalized_status not in ACTIVE_JOB_STATUSES | TERMINAL_JOB_STATUSES:
-                raise ConsolidationValidationError(
-                    f"Unsupported consolidation job status: {status}"
-                )
+                raise ConsolidationValidationError(f"Unsupported consolidation job status: {status}")
             query = query.where(MemoryConsolidationJobRecord.status == normalized_status)
         query = query.order_by(
             MemoryConsolidationJobRecord.created_at.desc(),
@@ -143,15 +134,11 @@ class MemoryConsolidationRepository:
         normalized_type, normalized_id = _validate_namespace(namespace_type, namespace_id)
         normalized_key = _idempotency_key(idempotency_key)
         existing = await self.session.scalar(
-            select(MemoryConsolidationJobRecord).where(
-                MemoryConsolidationJobRecord.idempotency_key == normalized_key
-            )
+            select(MemoryConsolidationJobRecord).where(MemoryConsolidationJobRecord.idempotency_key == normalized_key)
         )
         if existing is not None:
             if existing.namespace_type != normalized_type or existing.namespace_id != normalized_id:
-                raise ConsolidationConflictError(
-                    "Consolidation idempotency key belongs to another namespace"
-                )
+                raise ConsolidationConflictError("Consolidation idempotency key belongs to another namespace")
             return existing
 
         active = await self.session.scalar(
@@ -202,14 +189,10 @@ class MemoryConsolidationRepository:
         except IntegrityError as exc:
             await self.session.rollback()
             existing = await self.session.scalar(
-                select(MemoryConsolidationJobRecord).where(
-                    MemoryConsolidationJobRecord.idempotency_key == normalized_key
-                )
+                select(MemoryConsolidationJobRecord).where(MemoryConsolidationJobRecord.idempotency_key == normalized_key)
             )
             if existing is None:
-                raise ConsolidationConflictError(
-                    "A consolidation job was created concurrently"
-                ) from exc
+                raise ConsolidationConflictError("A consolidation job was created concurrently") from exc
             return existing
         return job
 
@@ -224,9 +207,7 @@ class MemoryConsolidationRepository:
         if not normalized_owner or len(normalized_owner) > 120:
             raise ConsolidationValidationError("Consolidation lease owner must be 1-120 characters")
         if not 30 <= lease_seconds <= 3_600:
-            raise ConsolidationValidationError(
-                "Consolidation lease must be between 30 and 3600 seconds"
-            )
+            raise ConsolidationValidationError("Consolidation lease must be between 30 and 3600 seconds")
         job = await self.require(job_id, refresh=True)
         now = utc_now()
         expired = (
@@ -390,9 +371,7 @@ class MemoryConsolidationRepository:
     ) -> list[PersistedMemoryRecord]:
         normalized_type, normalized_id = _validate_namespace(namespace_type, namespace_id)
         if not 2 <= limit <= 100:
-            raise ConsolidationValidationError(
-                "Consolidation input limit must be between 2 and 100"
-            )
+            raise ConsolidationValidationError("Consolidation input limit must be between 2 and 100")
         now = utc_now()
         query = (
             select(PersistedMemoryRecord)
@@ -442,9 +421,7 @@ class MemoryConsolidationRepository:
         limit: int,
     ) -> list[tuple[str, str, int]]:
         if not 2 <= minimum_count <= 100:
-            raise ConsolidationValidationError(
-                "AutoDream minimum candidate count must be between 2 and 100"
-            )
+            raise ConsolidationValidationError("AutoDream minimum candidate count must be between 2 and 100")
         if not 1 <= limit <= 32:
             raise ConsolidationValidationError("AutoDream namespace batch must be between 1 and 32")
         now = utc_now()
@@ -545,9 +522,7 @@ class MemoryConsolidationRepository:
                 raise ConsolidationConflictError(f"Frozen Memory no longer exists: {frozen.id}")
             current_frozen = FrozenMemoryInput.from_record(current)
             if current_frozen.memory_hash != frozen.memory_hash:
-                raise ConsolidationConflictError(
-                    f"Frozen Memory changed before publication: {frozen.id}"
-                )
+                raise ConsolidationConflictError(f"Frozen Memory changed before publication: {frozen.id}")
         return records
 
     async def _record_publish_conflict(

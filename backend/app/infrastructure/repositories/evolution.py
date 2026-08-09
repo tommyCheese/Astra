@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Set
+from dataclasses import dataclass
 from typing import Any
 
 from sqlalchemy import func, select, update
@@ -97,9 +98,7 @@ def _state_from_record(
         candidate_digest=_qualified_digest(record.content_digest),
         status=record.status,
         state_version=record.state_version,
-        evaluation_digest=(
-            _qualified_digest(evaluation.manifest_digest) if evaluation is not None else None
-        ),
+        evaluation_digest=(_qualified_digest(evaluation.manifest_digest) if evaluation is not None else None),
     )
 
 
@@ -120,11 +119,11 @@ def _candidate_created_audit(record, candidate, actor, now):
     )
 
 
+@dataclass
 class EvolutionRepository:
     """Persistence boundary for immutable, non-executable evolution candidates."""
 
-    def __init__(self, session: AsyncSession):
-        self.session = session
+    session: AsyncSession
 
     async def _validate_namespace(self, namespace_type: str, namespace_id: str) -> None:
         normalized_id = namespace_id.strip()
@@ -146,16 +145,12 @@ class EvolutionRepository:
             exists = await self.session.get(TaskRecord, normalized_id) is not None
         elif namespace_type == "workspace":
             exists = (
-                await self.session.scalar(
-                    select(TaskRecord.id).where(TaskRecord.workspace_id == normalized_id).limit(1)
-                )
+                await self.session.scalar(select(TaskRecord.id).where(TaskRecord.workspace_id == normalized_id).limit(1))
                 is not None
             )
         elif namespace_type == "user":
             exists = (
-                await self.session.scalar(
-                    select(TaskRecord.id).where(TaskRecord.created_by == normalized_id).limit(1)
-                )
+                await self.session.scalar(select(TaskRecord.id).where(TaskRecord.created_by == normalized_id).limit(1))
                 is not None
             )
         if not exists:
@@ -257,11 +252,7 @@ class EvolutionRepository:
             content_digest=_raw_digest(candidate.digest),
             source_manifest=source_manifest,
             source_manifest_digest=_stable_digest(source_manifest),
-            environment_constraints={
-                "items": [
-                    item.model_dump(mode="json") for item in candidate.environment_constraints
-                ]
-            },
+            environment_constraints={"items": [item.model_dump(mode="json") for item in candidate.environment_constraints]},
             created_by=actor,
             created_at=now,
             updated_at=now,
@@ -269,11 +260,7 @@ class EvolutionRepository:
         self.session.add(record)
         await self.session.flush()
         for values in source_values:
-            self.session.add(
-                AgentEvolutionSourceRecord(
-                    candidate_id=record.id, **values, accessible=True, created_at=now
-                )
-            )
+            self.session.add(AgentEvolutionSourceRecord(candidate_id=record.id, **values, accessible=True, created_at=now))
         self.session.add(_candidate_created_audit(record, candidate, actor, now))
         await self.session.flush()
         if commit:
@@ -311,8 +298,7 @@ class EvolutionRepository:
             ):
                 raise EvolutionDomainError(
                     "EVOLUTION_LINEAGE_INVALID",
-                    "Candidate supersession must reference the immediately preceding "
-                    "revision in the same namespace.",
+                    "Candidate supersession must reference the immediately preceding revision in the same namespace.",
                 )
 
     async def require(
@@ -355,9 +341,7 @@ class EvolutionRepository:
                 "EVOLUTION_NAMESPACE_FILTER_INCOMPLETE",
                 "Namespace type and namespace ID must be supplied together.",
             )
-        if namespace_type is not None and (
-            namespace_type not in _NAMESPACE_TYPES or not (namespace_id or "").strip()
-        ):
+        if namespace_type is not None and (namespace_type not in _NAMESPACE_TYPES or not (namespace_id or "").strip()):
             raise EvolutionDomainError(
                 "EVOLUTION_NAMESPACE_INVALID",
                 "Evolution candidate namespace filter is invalid.",
@@ -436,9 +420,7 @@ class EvolutionRepository:
                 "EVOLUTION_EVALUATION_MISMATCH",
                 "Evaluation manifest belongs to a different candidate revision.",
             )
-        next_state = await self._evaluation_next_state(
-            record, candidate, manifest, expected_state_version, available_tools
-        )
+        next_state = await self._evaluation_next_state(record, candidate, manifest, expected_state_version, available_tools)
 
         decision = evaluate_manifest(
             manifest,
@@ -639,9 +621,7 @@ class EvolutionRepository:
             target,
             expected_state_version=expected_state_version,
             available_tools=available_tools,
-            evaluation_manifest=(
-                _manifest_from_record(evaluation) if evaluation is not None else None
-            ),
+            evaluation_manifest=(_manifest_from_record(evaluation) if evaluation is not None else None),
             promotion_enabled=False,
         )
         raise EvolutionDomainError(

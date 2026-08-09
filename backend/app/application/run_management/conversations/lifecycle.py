@@ -19,28 +19,19 @@ class ConversationDeletionOutcome:
     cleanup_failures: int
 
 
+@dataclass
 class ConversationLifecycleService:
-    def __init__(
-        self,
-        settings: AstraRuntimeSettings,
-        *,
-        artifact_store: ArtifactStore | None = None,
-    ):
-        self.settings = settings
-        self.artifact_store = artifact_store or LocalArtifactStore(
-            settings.artifact_store_path
-        )
+    settings: AstraRuntimeSettings
+    artifact_store: ArtifactStore | None = None
 
-    async def delete(
-        self, repo: ConversationRepository, task: TaskRecord
-    ) -> ConversationDeletionOutcome:
+    async def delete(self, repo: ConversationRepository, task: TaskRecord) -> ConversationDeletionOutcome:
         task_id = task.id
         storage_keys = await repo.delete(task)
         cleanup_failures = 0
 
         for key in storage_keys:
             try:
-                self.artifact_store.delete(key)
+                (self.artifact_store or LocalArtifactStore(self.settings.artifact_store_path)).delete(key)
             except Exception:
                 cleanup_failures += 1
                 logger.warning(

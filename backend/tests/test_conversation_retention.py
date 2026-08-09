@@ -89,12 +89,8 @@ async def test_candidate_selection_protects_recent_pinned_shared_active_and_empt
     retention_database,
 ):
     now = datetime.now(timezone.utc)
-    oldest = await create_conversation(
-        retention_database, goal="oldest", updated_at=now - timedelta(days=90)
-    )
-    newer = await create_conversation(
-        retention_database, goal="newer", updated_at=now - timedelta(days=60)
-    )
+    oldest = await create_conversation(retention_database, goal="oldest", updated_at=now - timedelta(days=90))
+    newer = await create_conversation(retention_database, goal="newer", updated_at=now - timedelta(days=60))
     await create_conversation(retention_database, goal="recent", updated_at=now - timedelta(days=5))
     await create_conversation(
         retention_database,
@@ -152,9 +148,7 @@ async def test_terminal_run_transition_refreshes_conversation_activity(
 
 async def test_lifecycle_deletes_database_artifact_and_workspace(retention_database, tmp_path):
     now = datetime.now(timezone.utc)
-    conversation_id = await create_conversation(
-        retention_database, goal="cleanup", updated_at=now - timedelta(days=90)
-    )
+    conversation_id = await create_conversation(retention_database, goal="cleanup", updated_at=now - timedelta(days=90))
     settings = retention_settings(tmp_path)
     artifact_key = "2026/07/28/result.txt"
     artifact_path = tmp_path / "artifacts" / artifact_key
@@ -174,9 +168,7 @@ async def test_lifecycle_deletes_database_artifact_and_workspace(retention_datab
             storage_key=artifact_key,
             security_status="verified",
         )
-        outcome = await ConversationLifecycleService(settings).delete(
-            ConversationRepository(session), task
-        )
+        outcome = await ConversationLifecycleService(settings).delete(ConversationRepository(session), task)
         assert outcome.artifact_keys == 1
         assert outcome.cleanup_failures == 0
         assert await session.get(TaskRecord, conversation_id) is None
@@ -323,18 +315,12 @@ async def test_lifecycle_revalidates_memory_and_evolution_sources_before_deletio
         assert unsupported_candidate.status == "rejected"
         assert unsupported_candidate.state_version == 3
         assert (
-            await session.scalar(
-                select(func.count(MemorySourceRecord.id)).where(
-                    MemorySourceRecord.memory_id == supported.id
-                )
-            )
+            await session.scalar(select(func.count(MemorySourceRecord.id)).where(MemorySourceRecord.memory_id == supported.id))
             == 1
         )
         assert (
             await session.scalar(
-                select(func.count(MemorySourceRecord.id)).where(
-                    MemorySourceRecord.memory_id == unsupported.id
-                )
+                select(func.count(MemorySourceRecord.id)).where(MemorySourceRecord.memory_id == unsupported.id)
             )
             == 0
         )
@@ -387,9 +373,7 @@ async def test_lifecycle_rejects_escaped_workspace_and_isolates_artifact_failure
         description="unsafe",
         status="created",
     )
-    outcome = await ConversationLifecycleService(settings, artifact_store=BrokenStore()).delete(
-        FakeRepo(), task
-    )
+    outcome = await ConversationLifecycleService(settings, artifact_store=BrokenStore()).delete(FakeRepo(), task)
 
     assert outcome.cleanup_failures == 2
     assert (outside_path / "keep.txt").read_text() == "keep"
@@ -397,12 +381,8 @@ async def test_lifecycle_rejects_escaped_workspace_and_isolates_artifact_failure
 
 async def test_retention_sweep_is_bounded_and_deletes_oldest(retention_database, tmp_path):
     now = datetime.now(timezone.utc)
-    oldest = await create_conversation(
-        retention_database, goal="oldest", updated_at=now - timedelta(days=90)
-    )
-    remaining = await create_conversation(
-        retention_database, goal="remaining", updated_at=now - timedelta(days=60)
-    )
+    oldest = await create_conversation(retention_database, goal="oldest", updated_at=now - timedelta(days=90))
+    remaining = await create_conversation(retention_database, goal="remaining", updated_at=now - timedelta(days=60))
     settings = retention_settings(tmp_path, conversation_retention_batch_size=1)
     service = ConversationRetentionService(settings, retention_database)
 
@@ -415,13 +395,9 @@ async def test_retention_sweep_is_bounded_and_deletes_oldest(retention_database,
         assert await session.get(TaskRecord, remaining) is not None
 
 
-async def test_retention_revalidates_candidates_and_counts_race_skip(
-    retention_database, tmp_path, monkeypatch
-):
+async def test_retention_revalidates_candidates_and_counts_race_skip(retention_database, tmp_path, monkeypatch):
     now = datetime.now(timezone.utc)
-    conversation_id = await create_conversation(
-        retention_database, goal="raced", updated_at=now - timedelta(days=90)
-    )
+    conversation_id = await create_conversation(retention_database, goal="raced", updated_at=now - timedelta(days=90))
 
     async def no_longer_eligible(self, candidate_id, *, cutoff):
         return False
@@ -438,12 +414,8 @@ async def test_retention_revalidates_candidates_and_counts_race_skip(
 
 async def test_retention_isolates_deletion_failure(retention_database, tmp_path):
     now = datetime.now(timezone.utc)
-    failing_id = await create_conversation(
-        retention_database, goal="failing", updated_at=now - timedelta(days=90)
-    )
-    successful_id = await create_conversation(
-        retention_database, goal="successful", updated_at=now - timedelta(days=60)
-    )
+    failing_id = await create_conversation(retention_database, goal="failing", updated_at=now - timedelta(days=90))
+    successful_id = await create_conversation(retention_database, goal="successful", updated_at=now - timedelta(days=60))
     settings = retention_settings(tmp_path)
     real_lifecycle = ConversationLifecycleService(settings)
 
@@ -467,9 +439,7 @@ async def test_retention_isolates_deletion_failure(retention_database, tmp_path)
         assert await session.get(TaskRecord, successful_id) is None
 
 
-async def test_disabled_startup_creates_no_worker_and_enabled_shutdown_is_prompt(
-    retention_database, tmp_path
-):
+async def test_disabled_startup_creates_no_worker_and_enabled_shutdown_is_prompt(retention_database, tmp_path):
     disabled = retention_settings(tmp_path, conversation_retention_enabled=False)
     disabled_service = ConversationRetentionService(disabled, retention_database)
     await disabled_service.startup()

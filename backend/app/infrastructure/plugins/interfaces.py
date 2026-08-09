@@ -47,7 +47,6 @@ class RuntimeBackend(ToolExecutor):
     """Host-owned execution backend; providers receive no host service objects."""
 
 
-
 class ToolEffectAnalyzer(ABC):
     @abstractmethod
     def analyze(
@@ -96,9 +95,7 @@ class PluginApprovalPresenter(ABC):
     def safe_preview(self, spec: AstraToolSpec, tool_input: dict[str, Any]) -> str: ...
 
     @abstractmethod
-    def similar_matcher(
-        self, spec: AstraToolSpec, tool_input: dict[str, Any]
-    ) -> dict[str, Any] | None: ...
+    def similar_matcher(self, spec: AstraToolSpec, tool_input: dict[str, Any]) -> dict[str, Any] | None: ...
 
 
 class PluginHealthProbe(ABC):

@@ -8,7 +8,7 @@ Agent runtime、Subagent、权限、Workspace/Artifact 和外部 provider 边界
 | 用例 | 可连续阅读的调用链 | 事务与副作用所有者 |
 | --- | --- | --- |
 | 创建与派发 Run | API/command/schedule → `RunApplicationService` → `RunUnitOfWork` → `RunDispatcher` | application service 先提交，dispatcher 后启动 |
-| 执行 Agent | `RunEngine` → `AgentLoop` 组装 → `AgentRunOrchestrator` → typed iteration stage | 阶段返回穷尽 outcome；外部等待不持有写事务 |
+| 执行 Agent | `RunExecution` → standard/trusted composition → canonical `run_loop` → mandatory action port | 阶段返回穷尽 outcome；外部等待不持有写事务 |
 | 计划执行 | `PlanService` → `PlanScheduler` → node worker/coordinator | validation、调度和错误分别由 `planning.py`、`plan_scheduler.py`、`plan_errors.py` 拥有 |
 | 审批恢复 | Run application service → approval store/grant store → dispatcher | 冻结输入、授权消费和恢复状态在显式 UoW 中完成 |
 | Subagent 委派 | `SubagentSupervisor` → runtime operations → contract/budget/context → executor/join | catalog、scope、预算和 lineage 在创建 child 前冻结 |
@@ -33,6 +33,11 @@ Agent runtime、Subagent、权限、Workspace/Artifact 和外部 provider 边界
 主要入口可以在不理解旧架构的前提下沿命名后的 application、runtime、port/store 和 projection
 边界导航。HTTP/OpenAPI、SSE、历史 JSON、ORM metadata 与 Alembic schema 没有发现意外外部语义
 变化；本次无需创建额外外部变更提案。
+
+2026-08-09 的 single-Loop 收敛进一步删除 `application.runner`、`fast_agent_runtime`、Fast/Trusted
+镜像结果类型和 Run projector/query facade。standard、trusted root 与 trusted node 均调用同一个
+`run_loop`；差异只存在于冻结策略与 capability registration。最终结构为 61,167 行、302 个模块、
+764 个类、2,461 个函数/方法和 1,190 个公共 symbol，全部低于重构前基线。
 
 ## 第二轮去碎片化
 

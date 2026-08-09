@@ -8,7 +8,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.common.core.config import AstraRuntimeSettings, get_settings
 from app.common.schemas.agent.run_policy import EXECUTABLE_SUBAGENT_COHORTS
-from app.infrastructure.db.models.conversations import ToolProviderSettingRecord
 from app.infrastructure.db.session import get_session
 from app.infrastructure.plugins.contracts import PluginLifecycleState
 from app.infrastructure.repositories.tool_settings import (
@@ -69,7 +68,7 @@ def _label(identifier: str) -> str:
 
 
 def _provider_defaults(settings: AstraRuntimeSettings) -> dict[str, bool]:
-    return {provider_id: True for provider_id in settings.trusted_tool_provider_map}
+    return dict.fromkeys(settings.trusted_tool_provider_map, True)
 
 
 def _tool_defaults(settings: AstraRuntimeSettings, specs: dict[str, AstraToolSpec]) -> dict[str, bool]:
@@ -116,14 +115,82 @@ def _retain_omitted_secrets(
     merged = dict(submitted)
     properties = schema.get("properties", {}) if isinstance(schema, dict) else {}
     for key, field_schema in properties.items():
-        if (
-            key not in merged
-            and key in stored
-            and isinstance(field_schema, dict)
-            and field_schema.get("x-secret") is True
-        ):
+        if key not in merged and key in stored and isinstance(field_schema, dict) and field_schema.get("x-secret") is True:
             merged[key] = stored[key]
     return merged
+
+
+def _provider_view(
+    provider_id: str,
+    record: Any,
+    status: Any,
+    specs: dict[str, AstraToolSpec],
+    sandbox_ready: bool,
+) -> ToolProviderView:
+    descriptor = status.descriptor if status else None
+    requires_sandbox = any(
+        spec.provider_id == provider_id and spec.execution_backend == "sandbox.remote" for spec in specs.values()
+    )
+    available = not requires_sandbox or sandbox_ready
+    enabled = bool(record.enabled)
+    state = (
+        PluginLifecycleState.disabled.value
+        if not enabled
+        else PluginLifecycleState.unhealthy.value
+        if not available
+        else (status.state.value if status else PluginLifecycleState.enabled.value)
+    )
+    schema = (
+        descriptor.configuration_schema if descriptor else {"type": "object", "properties": {}, "additionalProperties": False}
+    )
+    return ToolProviderView(
+        provider_id=provider_id,
+        label=_label(provider_id.removeprefix("astra.")),
+        version=descriptor.version if descriptor else "1",
+        enabled=enabled,
+        state=state,
+        health="healthy" if available else "unhealthy",
+        available=available,
+        unavailable_reason=None if available else "安全运行环境当前不可用。",
+        configuration_schema=schema,
+        configuration=_safe_configuration(dict(record.configuration or {}), schema),
+        configuration_revision=str(record.configuration_revision),
+    )
+
+
+def _tool_view(
+    name: str,
+    spec: AstraToolSpec,
+    provider: ToolProviderView,
+    enabled: bool,
+    settings: AstraRuntimeSettings,
+) -> ToolToggle:
+    available = provider.available
+    reason = provider.unavailable_reason
+    if spec.execution_backend == "astra.runtime":
+        available = bool(
+            not settings.agent_subagent_kill_switch and settings.agent_subagent_rollout_cohort in EXECUTABLE_SUBAGENT_COHORTS
+        )
+        reason = (
+            "子 Agent 已被紧急停止开关禁用。"
+            if settings.agent_subagent_kill_switch
+            else "当前发布批次不允许执行子 Agent。"
+            if not available
+            else None
+        )
+    return ToolToggle(
+        name=name,
+        provider_id=spec.provider_id,
+        version=spec.version,
+        label=_label(name),
+        description=spec.description,
+        enabled=enabled,
+        available=available,
+        health="healthy" if available else "unavailable",
+        input_schema=spec.input_schema,
+        output_schema=spec.output_schema,
+        unavailable_reason=reason,
+    )
 
 
 async def _catalog_view(
@@ -136,83 +203,20 @@ async def _catalog_view(
     specs = {**plugin_specs, **runtime_specs}
     provider_repository = ToolProviderSettingsRepository(session)
     provider_records = await provider_repository.get_or_create(_provider_defaults(settings))
-    tool_states = await ToolSettingsRepository(session).get_or_create(
-        _tool_defaults(settings, specs)
-    )
+    tool_states = await ToolSettingsRepository(session).get_or_create(_tool_defaults(settings, specs))
     sandbox_ready = settings.sandbox_enabled and sandbox_available(settings)
 
     providers: list[ToolProviderView] = []
     for provider_id in sorted(provider_records):
-        record = provider_records[provider_id]
-        status = catalog.providers.get(provider_id)
-        descriptor = status.descriptor if status else None
-        requires_sandbox = any(
-            spec.provider_id == provider_id and spec.execution_backend == "sandbox.remote"
-            for spec in specs.values()
-        )
-        available = not requires_sandbox or sandbox_ready
-        enabled = bool(record.enabled)
-        state = (
-            PluginLifecycleState.disabled.value
-            if not enabled
-            else PluginLifecycleState.unhealthy.value
-            if not available
-            else (status.state.value if status else PluginLifecycleState.enabled.value)
-        )
-        reason = None if available else "安全运行环境当前不可用。"
-        schema = descriptor.configuration_schema if descriptor else {
-            "type": "object",
-            "properties": {},
-            "additionalProperties": False,
-        }
         providers.append(
-            ToolProviderView(
-                provider_id=provider_id,
-                label=_label(provider_id.removeprefix("astra.")),
-                version=descriptor.version if descriptor else "1",
-                enabled=enabled,
-                state=state,
-                health="healthy" if available else "unhealthy",
-                available=available,
-                unavailable_reason=reason,
-                configuration_schema=schema,
-                configuration=_safe_configuration(dict(record.configuration or {}), schema),
-                configuration_revision=str(record.configuration_revision),
-            )
+            _provider_view(provider_id, provider_records[provider_id], catalog.providers.get(provider_id), specs, sandbox_ready)
         )
 
     provider_views = {provider.provider_id: provider for provider in providers}
     tools: list[ToolToggle] = []
     for name, spec in sorted(specs.items()):
         provider = provider_views[spec.provider_id]
-        available = provider.available
-        reason = provider.unavailable_reason
-        if spec.execution_backend == "astra.runtime":
-            available = bool(
-                not settings.agent_subagent_kill_switch
-                and settings.agent_subagent_rollout_cohort in EXECUTABLE_SUBAGENT_COHORTS
-            )
-            if settings.agent_subagent_kill_switch:
-                reason = "子 Agent 已被紧急停止开关禁用。"
-            elif not available:
-                reason = "当前发布批次不允许执行子 Agent。"
-            else:
-                reason = None
-        tools.append(
-            ToolToggle(
-                name=name,
-                provider_id=spec.provider_id,
-                version=spec.version,
-                label=_label(name),
-                description=spec.description,
-                enabled=bool(tool_states[name]),
-                available=available,
-                health="healthy" if available else "unavailable",
-                input_schema=spec.input_schema,
-                output_schema=spec.output_schema,
-                unavailable_reason=reason,
-            )
-        )
+        tools.append(_tool_view(name, spec, provider, bool(tool_states[name]), settings))
     return ToolSettingsResponse(tools=tools, providers=providers)
 
 

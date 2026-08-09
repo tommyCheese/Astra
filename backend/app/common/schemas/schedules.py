@@ -184,8 +184,7 @@ class HeartbeatConfig(BaseModel):
     active_hours: ActiveHours | None = None
     prompt: str = Field(
         default=(
-            "检查明确记录的未完成事项与后台结果。不要从旧对话推断重复任务。"
-            "如果没有需要用户关注的内容，只回复 HEARTBEAT_OK。"
+            "检查明确记录的未完成事项与后台结果。不要从旧对话推断重复任务。如果没有需要用户关注的内容，只回复 HEARTBEAT_OK。"
         ),
         min_length=1,
         max_length=40_000,

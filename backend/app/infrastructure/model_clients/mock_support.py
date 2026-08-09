@@ -32,11 +32,7 @@ def parse_mock_planning_goal(goal: str) -> tuple[str, str]:
     original = revision.get("original_goal")
     public_goal = original.strip() if isinstance(original, str) and original.strip() else goal
     request = revision.get("revision_request")
-    planning_goal = (
-        f"{public_goal}\n{request.strip()}"
-        if isinstance(request, str) and request.strip()
-        else public_goal
-    )
+    planning_goal = f"{public_goal}\n{request.strip()}" if isinstance(request, str) and request.strip() else public_goal
     return public_goal, planning_goal
 
 
@@ -44,15 +40,9 @@ def infer_mock_capabilities(goal: str) -> list[str]:
     normalized_goal = goal.casefold()
     if any(marker in normalized_goal for marker in WEB_MARKERS):
         return ["information.search", "information.read"]
-    if any(
-        marker in normalized_goal
-        for marker in ("图表", "绘图", "可视化", "chart", "plot", "visuali")
-    ):
+    if any(marker in normalized_goal for marker in ("图表", "绘图", "可视化", "chart", "plot", "visuali")):
         return ["data.visualize"]
-    if any(
-        marker in normalized_goal
-        for marker in ("工作区", "文件", "命令", "workspace", "file", "command")
-    ):
+    if any(marker in normalized_goal for marker in ("工作区", "文件", "命令", "workspace", "file", "command")):
         return ["workspace.execute"]
     return []
 
@@ -139,13 +129,9 @@ def mock_terminal_decision(context: dict[str, Any]) -> AgentDecision | None:
 def mock_search_decision(goal: str, context: dict[str, Any]) -> AgentDecision | None:
     search_observation = _search_observation(context.get("observations", []))
     unresolved = set((context.get("tool_selection") or {}).get("unresolved_capabilities") or [])
-    quick_web_goal = context.get("active_node") is None and any(
-        marker in goal.casefold() for marker in WEB_MARKERS
-    )
+    quick_web_goal = context.get("active_node") is None and any(marker in goal.casefold() for marker in WEB_MARKERS)
     search_tools = available_mock_tools(context, "information.search")
-    if (
-        "information.search" not in unresolved and (not quick_web_goal or search_observation)
-    ) or not search_tools:
+    if ("information.search" not in unresolved and (not quick_web_goal or search_observation)) or not search_tools:
         return None
     return AgentDecision(
         decision_type="call_tool",
@@ -185,8 +171,7 @@ def _search_observation(observations: list[dict[str, Any]]) -> dict[str, Any] | 
         (
             observation
             for observation in observations
-            if observation.get("kind") == "tool_result"
-            and "candidates" in observation.get("data", {})
+            if observation.get("kind") == "tool_result" and "candidates" in observation.get("data", {})
         ),
         None,
     )

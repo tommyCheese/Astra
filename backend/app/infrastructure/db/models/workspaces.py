@@ -69,9 +69,7 @@ class WorkspaceFileRecord(AstraOrmRecordBase):
 
 class WorkspaceCheckpointRecord(AstraOrmRecordBase):
     __tablename__ = "workspace_checkpoints"
-    __table_args__ = (
-        Index("ix_workspace_checkpoints_workspace_created", "workspace_id", "created_at"),
-    )
+    __table_args__ = (Index("ix_workspace_checkpoints_workspace_created", "workspace_id", "created_at"),)
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_str)
     workspace_id: Mapped[str] = mapped_column(ForeignKey("task_workspaces.id"))
@@ -95,9 +93,7 @@ class WorkspaceChangeRecord(AstraOrmRecordBase):
     workspace_id: Mapped[str] = mapped_column(ForeignKey("task_workspaces.id"))
     run_id: Mapped[str] = mapped_column(ForeignKey("runs.id"))
     tool_call_id: Mapped[str | None] = mapped_column(ForeignKey("tool_calls.id"), nullable=True)
-    checkpoint_id: Mapped[str | None] = mapped_column(
-        ForeignKey("workspace_checkpoints.id"), nullable=True
-    )
+    checkpoint_id: Mapped[str | None] = mapped_column(ForeignKey("workspace_checkpoints.id"), nullable=True)
     relative_path: Mapped[str] = mapped_column(String(1000))
     change_kind: Mapped[str] = mapped_column(String(40))
     before_checksum: Mapped[str | None] = mapped_column(String(120), nullable=True)
@@ -117,9 +113,7 @@ class ArtifactRecord(AstraOrmRecordBase):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_str)
     run_id: Mapped[str] = mapped_column(ForeignKey("runs.id"))
-    agent_execution_id: Mapped[str | None] = mapped_column(
-        ForeignKey("agent_executions.id"), nullable=True
-    )
+    agent_execution_id: Mapped[str | None] = mapped_column(ForeignKey("agent_executions.id"), nullable=True)
     type: Mapped[str] = mapped_column(String(80))
     path: Mapped[str | None] = mapped_column(String(500), nullable=True)
     content_ref: Mapped[str | None] = mapped_column(Text, nullable=True)

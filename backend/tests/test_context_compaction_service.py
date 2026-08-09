@@ -34,7 +34,9 @@ def envelope(*, total_body: int = 1_000) -> CompactionContextEnvelope:
         output_reserve=1_000,
         compaction_output_reserve=1_000,
         protected_prefix=(
-            CompactionContextItem(id="request", kind="current_request", content="implement safely", token_count=200, canonical=True),
+            CompactionContextItem(
+                id="request", kind="current_request", content="implement safely", token_count=200, canonical=True
+            ),
         ),
         body=(
             CompactionContextItem(id="old", kind="observation", summary="old progress", token_count=total_body),
@@ -46,15 +48,15 @@ def envelope(*, total_body: int = 1_000) -> CompactionContextEnvelope:
         owner_id="root-1",
         purpose="continue root execution",
         protected_prefix=(
-            CompactionContextItem(id="request", kind="current_request", content="implement safely", token_count=200, canonical=True),
+            CompactionContextItem(
+                id="request", kind="current_request", content="implement safely", token_count=200, canonical=True
+            ),
         ),
         compactable_body=(
             CompactionContextItem(id="old", kind="observation", summary="old progress", token_count=total_body),
             CompactionContextItem(id="new", kind="observation", summary="latest failure", token_count=300),
         ),
-        reference_manifest=(
-            CompactionContextReference(kind="evidence", ref="evidence:1"),
-        ),
+        reference_manifest=(CompactionContextReference(kind="evidence", ref="evidence:1"),),
         accounting=accounting,
         continuation=ContinuationManifest(
             owner_type=ContextOwnerRole.root_execution,
@@ -162,9 +164,7 @@ async def test_service_installs_with_cas_and_reuses_completed_attempt(session):
     async def generate(_prompt: str) -> CompactionGeneration:
         nonlocal generation_calls
         generation_calls += 1
-        return CompactionGeneration(
-            output=semantic_payload(), provider="ordinary-provider", model="ordinary-model"
-        )
+        return CompactionGeneration(output=semantic_payload(), provider="ordinary-provider", model="ordinary-model")
 
     async def install(snapshot, checkpoint, tail_ids):
         nonlocal installs
@@ -193,9 +193,7 @@ async def test_service_marks_stale_install_superseded(session):
     async def stale_install(_snapshot, _checkpoint, _tail_ids):
         return False
 
-    result = await service.compact(
-        envelope(total_body=2_000), policy(), generate=generate, install=stale_install
-    )
+    result = await service.compact(envelope(total_body=2_000), policy(), generate=generate, install=stale_install)
     assert result.status.value == "superseded"
     assert result.checkpoint is None
 
@@ -206,7 +204,9 @@ async def test_repository_agent_install_is_state_and_cancellation_cas(session):
     task = TaskRecord(title="t", description="t", context_state={}, created_at=now, updated_at=now)
     session.add(task)
     await session.flush()
-    run = RunRecord(task_id=task.id, status="executing", mode="web_agent", answer_mode="trusted", created_at=now, updated_at=now)
+    run = RunRecord(
+        task_id=task.id, status="executing", mode="web_agent", answer_mode="trusted", created_at=now, updated_at=now
+    )
     session.add(run)
     await session.flush()
     execution = AgentExecutionRecord(
@@ -222,7 +222,9 @@ async def test_repository_agent_install_is_state_and_cancellation_cas(session):
     )
     session.add(execution)
     await session.flush()
-    bound = envelope().model_copy(update={"owner_id": execution.id, "continuation": envelope().continuation.model_copy(update={"owner_id": execution.id})})
+    bound = envelope().model_copy(
+        update={"owner_id": execution.id, "continuation": envelope().continuation.model_copy(update={"owner_id": execution.id})}
+    )
     checkpoint = validate_checkpoint_payload(semantic_payload(), bound)
     repository = ContextCompactionAttemptRepository(session)
     assert await repository.install_agent_checkpoint(bound, checkpoint, ("new",)) is True

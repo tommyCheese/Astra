@@ -64,9 +64,7 @@ def test_bash_execute_is_disabled_by_default_and_registered_explicitly():
 
 
 async def test_bash_execute_uses_offline_sandbox_and_returns_nonzero_result(tmp_path):
-    service = BashSandboxService(
-        {"exit_code": 7, "stdout": "partial", "stderr": "token=secret /tmp/private"}
-    )
+    service = BashSandboxService({"exit_code": 7, "stdout": "partial", "stderr": "token=secret /tmp/private"})
     tool = BashExecuteTool(AstraRuntimeSettings())
 
     output = await tool.run(

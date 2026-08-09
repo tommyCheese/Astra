@@ -33,10 +33,7 @@ def builtin_contributions(
 ) -> tuple[PluginContribution, ...]:
     contributions = []
     if settings.sandbox_enabled:
-        if include_disabled or (
-            _tool_enabled(settings, "chart.render")
-            and _provider_enabled(settings, "astra.chart")
-        ):
+        if include_disabled or (_tool_enabled(settings, "chart.render") and _provider_enabled(settings, "astra.chart")):
             contributions.append(
                 _provider(
                     "astra.chart",
@@ -48,8 +45,7 @@ def builtin_contributions(
                 )
             )
         if include_disabled or (
-            _tool_enabled(settings, "bash_execute", default=False)
-            and _provider_enabled(settings, "astra.shell")
+            _tool_enabled(settings, "bash_execute", default=False) and _provider_enabled(settings, "astra.shell")
         ):
             contributions.append(
                 _provider(
@@ -99,7 +95,8 @@ def _provider(
         digest="builtin",
         source="builtin",
         trust_level="platform",
-        configuration_schema=configuration_schema or {
+        configuration_schema=configuration_schema
+        or {
             "type": "object",
             "properties": {},
             "additionalProperties": False,

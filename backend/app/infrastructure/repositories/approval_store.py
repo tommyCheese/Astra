@@ -49,15 +49,10 @@ class ApprovalStore(ApprovalGrantStore):
         call: ToolCallRecord,
     ) -> dict[str, str | None]:
         execution_id = command.agent_execution_id or call.agent_execution_id
-        if (
-            command.agent_execution_id is not None
-            and call.agent_execution_id != command.agent_execution_id
-        ):
+        if command.agent_execution_id is not None and call.agent_execution_id != command.agent_execution_id:
             raise ValueError("Approval AgentExecution does not match the ToolCall lineage")
         execution = await self._bound_execution(command.run_id, execution_id)
-        requester_identity_id = command.requester_identity_id or (
-            execution.identity_id if execution else None
-        )
+        requester_identity_id = command.requester_identity_id or (execution.identity_id if execution else None)
         delegation_id = command.delegation_id or (execution.delegation_id if execution else None)
         return {
             "agent_execution_id": execution_id,
@@ -263,9 +258,7 @@ class ApprovalStore(ApprovalGrantStore):
             for effect in request.frozen_effect_plan.get("effects", [])
             if isinstance(effect, dict) and isinstance(effect.get("kind"), str)
         ]
-        constraints = (
-            proposal.get("invocation_constraints", {}) if "effect_kinds" in proposal else proposal
-        )
+        constraints = proposal.get("invocation_constraints", {}) if "effect_kinds" in proposal else proposal
         self.session.add(
             ApprovalGrantRecord(
                 run_id=run.id,

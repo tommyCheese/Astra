@@ -43,9 +43,7 @@ def test_policy_defaults_and_safety_floor():
     snapshot = AgentReasoningPolicyCompiler().compile(RequestedReasoningPolicy())
     assert snapshot.effective.reasoning_effort == ReasoningEffort.balanced
     high = AgentReasoningPolicyCompiler().compile(
-        RequestedReasoningPolicy(
-            reasoning_effort="fast", execution_mode="auto_approval"
-        ),
+        RequestedReasoningPolicy(reasoning_effort="fast", execution_mode="auto_approval"),
         risk_level="high",
     )
     assert high.effective.execution_mode == ExecutionMode.request_approval
@@ -110,9 +108,7 @@ def test_removed_planning_fields_are_strictly_rejected():
     [("fast", 0), ("fast", 5), ("balanced", 6), ("balanced", 15)],
 )
 def test_policy_compiler_uses_custom_tool_call_limit(effort, limit):
-    snapshot = AgentReasoningPolicyCompiler().compile(
-        RequestedReasoningPolicy(reasoning_effort=effort, max_tool_calls=limit)
-    )
+    snapshot = AgentReasoningPolicyCompiler().compile(RequestedReasoningPolicy(reasoning_effort=effort, max_tool_calls=limit))
     assert snapshot.requested.max_tool_calls == limit
     assert snapshot.effective.budgets.max_tool_calls == limit
     assert snapshot.effective.budgets.max_turns >= limit + 1
@@ -157,9 +153,7 @@ def test_reflection_policy_patch_and_versioning():
     )
     assert AgentReflectionGate().should_reflect(policy, "expectation_mismatch", 0)
     state = AgentState(task_contract=build_default_contract("goal"))
-    patch = ReflectionPatch(
-        level="goal", criterion_updates={"criterion-result": CriterionStatus.satisfied}
-    )
+    patch = ReflectionPatch(level="goal", criterion_updates={"criterion-result": CriterionStatus.satisfied})
     updated = apply_reflection_patch(state, patch, expected_version=1)
     assert updated.version == 2
     with pytest.raises(StateVersionConflict):
@@ -181,16 +175,10 @@ def test_completion_gate_requires_criteria():
         issues=[AgentValidationIssue(code="missing", message="missing evidence")],
     )
     state = apply_validation_outcomes(state, [failed])
-    assert (
-        AgentCompletionGate().evaluate(state, validation_outcomes=[failed]).state
-        == TerminalState.blocked
-    )
+    assert AgentCompletionGate().evaluate(state, validation_outcomes=[failed]).state == TerminalState.blocked
     passed = AgentValidationOutcome(validator="task_adapter", passed=True, blocking=True)
     state = apply_validation_outcomes(state, [passed])
-    assert (
-        AgentCompletionGate().evaluate(state, validation_outcomes=[passed]).state
-        == TerminalState.completed
-    )
+    assert AgentCompletionGate().evaluate(state, validation_outcomes=[passed]).state == TerminalState.completed
 
 
 def test_completion_gate_waits_for_parallel_execution_approval_and_budget_barriers():
@@ -202,9 +190,7 @@ def test_completion_gate_waits_for_parallel_execution_approval_and_budget_barrie
     decision = AgentCompletionGate().evaluate(
         state,
         validation_outcomes=[passed],
-        active_executions=[
-            {"execution_id": "execution-1", "status": "active"}
-        ],
+        active_executions=[{"execution_id": "execution-1", "status": "active"}],
         unresolved_approvals=1,
         unmerged_budgets=1,
     )
@@ -242,10 +228,7 @@ def test_completion_gate_distinguishes_waiting_failure_and_warning():
         == TerminalState.waiting_user
     )
     assert (
-        gate.evaluate(
-            state, validation_outcomes=[failed], runtime_error="database unavailable"
-        ).state
-        == TerminalState.failed
+        gate.evaluate(state, validation_outcomes=[failed], runtime_error="database unavailable").state == TerminalState.failed
     )
     warning = AgentValidationOutcome(
         validator="task_adapter",
@@ -254,10 +237,7 @@ def test_completion_gate_distinguishes_waiting_failure_and_warning():
         warnings=["low quality"],
     )
     state = apply_validation_outcomes(state, [warning])
-    assert (
-        gate.evaluate(state, validation_outcomes=[warning]).state
-        == TerminalState.completed_with_warnings
-    )
+    assert gate.evaluate(state, validation_outcomes=[warning]).state == TerminalState.completed_with_warnings
 
 
 def test_completion_gate_blocks_when_mandatory_validator_is_missing():
@@ -280,9 +260,7 @@ def test_validation_outcomes_update_only_matching_success_criteria():
     )
     state = AgentState(task_contract=contract)
 
-    updated = apply_validation_outcomes(
-        state, [AgentValidationOutcome(validator="task_adapter", passed=True)]
-    )
+    updated = apply_validation_outcomes(state, [AgentValidationOutcome(validator="task_adapter", passed=True)])
 
     assert updated.task_contract.success_criteria[0].status == CriterionStatus.satisfied
     assert updated.task_contract.success_criteria[1].status == CriterionStatus.pending
@@ -292,38 +270,23 @@ def test_orchestrator_rejects_shortcuts_and_unauthorized_patches():
     with pytest.raises(RuntimeError):
         validate_transition("select_action", NodeResult(next_node="completed"))
     with pytest.raises(RuntimeError):
-        validate_transition(
-            "evaluate", NodeResult(next_node="update_state", state_patch={"terminal_reason": {}})
-        )
+        validate_transition("evaluate", NodeResult(next_node="update_state", state_patch={"terminal_reason": {}}))
 
 
 def test_no_progress_detection():
     signatures = []
     assert not record_progress_signature(
-        signatures,
-        threshold=2,
-        evidence_refs=[], criterion_changes={}, completed_steps=[], plan_version=1
+        signatures, threshold=2, evidence_refs=[], criterion_changes={}, completed_steps=[], plan_version=1
     )
     assert record_progress_signature(
-        signatures,
-        threshold=2,
-        evidence_refs=[], criterion_changes={}, completed_steps=[], plan_version=1
+        signatures, threshold=2, evidence_refs=[], criterion_changes={}, completed_steps=[], plan_version=1
     )
 
 
 def test_checkpoint_recovery_does_not_repeat_unknown_non_idempotent_action():
-    assert (
-        recovery_action(phase="prepared", idempotent=False, result_recorded=False)
-        == "execute"
-    )
-    assert (
-        recovery_action(phase="executing", idempotent=False, result_recorded=False)
-        == "waiting_user"
-    )
-    assert (
-        recovery_action(phase="executing", idempotent=True, result_recorded=True)
-        == "replay_result"
-    )
+    assert recovery_action(phase="prepared", idempotent=False, result_recorded=False) == "execute"
+    assert recovery_action(phase="executing", idempotent=False, result_recorded=False) == "waiting_user"
+    assert recovery_action(phase="executing", idempotent=True, result_recorded=True) == "replay_result"
 
 
 def test_reflection_gate_modes_and_exhaustion():

@@ -10,9 +10,7 @@ from app.infrastructure.db.models.runs import RunRecord
 def build_chat_messages(run: RunRecord) -> list[dict[str, Any]]:
     messages = [_user_request_message(run)]
     timeline = [_turn_timeline_entry(run, turn) for turn in run.turns]
-    timeline.extend(
-        entry for event in run.events if (entry := _resume_timeline_entry(run, event)) is not None
-    )
+    timeline.extend(entry for event in run.events if (entry := _resume_timeline_entry(run, event)) is not None)
     messages.extend(entry[2] for entry in sorted(timeline, key=lambda entry: (entry[0], entry[1])))
     _append_terminal_message(run, messages)
     _append_waiting_message(run, messages)
@@ -21,9 +19,7 @@ def build_chat_messages(run: RunRecord) -> list[dict[str, Any]]:
 
 def _user_request_message(run: RunRecord) -> dict[str, Any]:
     goal = str(run.model_policy.get("conversation_goal", run.task.description))
-    command = (
-        "/subagent" if (run.execution_profile or {}).get("subagent_mode") == "required" else ""
-    )
+    command = "/subagent" if (run.execution_profile or {}).get("subagent_mode") == "required" else ""
     visible_goal = f"{command} {goal}" if command else goal
     return {
         "id": f"{run.id}-user",
@@ -98,11 +94,7 @@ def _resume_timeline_entry(run: RunRecord, event: object) -> tuple[Any, int, dic
         return None
     observation = (event.payload or {}).get("observation") or {}
     content = observation.get("summary")
-    if (
-        observation.get("kind") != "user_response"
-        or not isinstance(content, str)
-        or not content.strip()
-    ):
+    if observation.get("kind") != "user_response" or not isinstance(content, str) or not content.strip():
         return None
     return (
         event.created_at,
@@ -135,11 +127,7 @@ def _append_terminal_message(run: RunRecord, messages: list[dict[str, Any]]) -> 
 
 
 def _append_waiting_message(run: RunRecord, messages: list[dict[str, Any]]) -> None:
-    if (
-        run.status != "waiting_user"
-        or not run.waiting_state
-        or not run.waiting_state.get("request")
-    ):
+    if run.status != "waiting_user" or not run.waiting_state or not run.waiting_state.get("request"):
         return
     messages.append(
         {

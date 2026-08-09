@@ -53,9 +53,7 @@ class AstraInputValidationError(AstraError):
 
 class AstraResourceNotFoundError(AstraError):
     def __init__(self, code: str, message: str):
-        super().__init__(
-            error_type="resource.not_found", code=code, message=message, status_code=404
-        )
+        super().__init__(error_type="resource.not_found", code=code, message=message, status_code=404)
 
 
 class AstraStateConflictError(AstraError):
@@ -146,9 +144,7 @@ def _tool_error(exc: Exception) -> dict[str, Any]:
             retryable=category == "fetch_failed",
         )
     if category == "invalid_input":
-        return _payload(
-            "validation.tool_input_invalid", "TOOL_INPUT_INVALID", "工具输入参数不正确。"
-        )
+        return _payload("validation.tool_input_invalid", "TOOL_INPUT_INVALID", "工具输入参数不正确。")
     if category == "tool_not_allowed":
         return _payload("policy.tool_not_allowed", "TOOL_NOT_ALLOWED", "当前任务不允许使用该工具。")
     return _payload("runtime.tool_failed", "TOOL_EXECUTION_FAILED", "工具执行失败，请稍后重试。")

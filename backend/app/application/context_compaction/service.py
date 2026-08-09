@@ -88,9 +88,7 @@ class AgentContextCompactionService:
             envelope.compactable_body,
             recent_tail_budget(policy, envelope.accounting),
         )
-        metadata = base_metadata.model_copy(
-            update={"retained_tail_ids": tuple(i.id for i in tail.items)}
-        )
+        metadata = base_metadata.model_copy(update={"retained_tail_ids": tuple(i.id for i in tail.items)})
         attempt = await self.attempts.start(metadata)
         (
             checkpoint,
@@ -100,20 +98,14 @@ class AgentContextCompactionService:
             duration_ms,
         ) = await self._generate_checkpoint(envelope, policy, generate)
         if checkpoint is None:
-            return await self._finish_generation_failure(
-                attempt, envelope, policy, tail, generation, failure, duration_ms
-            )
+            return await self._finish_generation_failure(attempt, envelope, policy, tail, generation, failure, duration_ms)
 
         checkpoint_tokens, _, _ = self.accounting.count_value(checkpoint.model_dump(mode="json"))
-        token_after = (
-            envelope.accounting.protected_prefix_tokens + checkpoint_tokens + tail.token_count
-        )
+        token_after = envelope.accounting.protected_prefix_tokens + checkpoint_tokens + tail.token_count
         recovery_target = int(envelope.accounting.usable_input * policy.recovery_ratio)
         if token_after > recovery_target and tail.items:
             tail = select_recent_tail(tail.items, max(0, tail.token_count // 2))
-            token_after = (
-                envelope.accounting.protected_prefix_tokens + checkpoint_tokens + tail.token_count
-            )
+            token_after = envelope.accounting.protected_prefix_tokens + checkpoint_tokens + tail.token_count
         if token_after > recovery_target:
             await self.attempts.finish(
                 attempt,
@@ -181,18 +173,14 @@ class AgentContextCompactionService:
         for _ in range(policy.max_attempts):
             try:
                 generation = await generate(build_compaction_prompt(envelope, policy))
-                checkpoint = validate_checkpoint_payload(
-                    extract_json_object(generation.output), envelope
-                )
+                checkpoint = validate_checkpoint_payload(extract_json_object(generation.output), envelope)
                 break
             except Exception as exc:  # bounded provider/validation failure
                 failure = exc
         if checkpoint is None and policy.deterministic_emergency:
             try:
                 checkpoint = deterministic_emergency_checkpoint(envelope)
-                checkpoint = validate_checkpoint_payload(
-                    checkpoint.model_dump(mode="json"), envelope
-                )
+                checkpoint = validate_checkpoint_payload(checkpoint.model_dump(mode="json"), envelope)
                 implementation = CompactionImplementation.deterministic_emergency
             except Exception as exc:
                 failure = exc

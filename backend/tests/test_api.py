@@ -100,9 +100,7 @@ async def test_runtime_default_model_reports_whether_it_is_runnable():
     )
     assert local_model.configured is True
 
-    mock_model = await get_runtime_default_model(
-        AstraRuntimeSettings(model_provider="mock", model_name="mock")
-    )
+    mock_model = await get_runtime_default_model(AstraRuntimeSettings(model_provider="mock", model_name="mock"))
     assert mock_model.configured is True
 
 
@@ -149,9 +147,7 @@ async def test_scheduled_tasks_api_is_global_and_versioned(app_client):
     assert stale.json()["error"]["code"] == "SCHEDULE_VERSION_CONFLICT"
 
 
-async def test_scheduled_tasks_api_binds_result_conversation_and_resolves_execution(
-    app_client, monkeypatch
-):
+async def test_scheduled_tasks_api_binds_result_conversation_and_resolves_execution(app_client, monkeypatch):
     from app.application.scheduling.execution import ScheduledExecutionResolver
     from app.common.schemas.schedules import ScheduledExecutionConfig
 
@@ -481,9 +477,7 @@ async def test_context_status_and_registered_commands_preserve_history(app_clien
     assert status.json()["window_tokens"] == 400_000
     assert status.json()["context_source"] == "catalog"
     assert status.json()["context_verified"] is True
-    assert status.json()["context_documentation_url"] == (
-        "https://developers.openai.com/api/docs/models/gpt-5"
-    )
+    assert status.json()["context_documentation_url"] == ("https://developers.openai.com/api/docs/models/gpt-5")
     assert status.json()["visible_run_count"] == 6
     assert status.json()["estimated"] is True
 
@@ -753,9 +747,7 @@ async def test_library_lists_present_files_with_conversation_context(app_client)
         path = await runtime.prepare(run.task_id)
         before = runtime.scan(path)
         (path / "library.md").write_text("# library", encoding="utf-8")
-        await runtime.capture_changes(
-            run_id=run.id, tool_call_id=None, workspace_dir=path, before=before
-        )
+        await runtime.capture_changes(run_id=run.id, tool_call_id=None, workspace_dir=path, before=before)
 
     response = await app_client.get("/api/library/files")
     assert response.status_code == 200
@@ -813,18 +805,14 @@ async def test_plan_confirmation_resume_consumes_bound_token_once(app_client):
                         title="生成回复",
                         intent="回应用户",
                         success_criteria_refs=["criterion-result"],
-                        expected_outcome=ExpectedObservation(
-                            kind="final_answer", success_condition="answer exists"
-                        ),
+                        expected_outcome=ExpectedObservation(kind="final_answer", success_condition="answer exists"),
                     )
                 ],
             ),
             contract=contract,
             activate=False,
         )
-        state = canonical_agent_state(contract, plan, policy_version=2).model_copy(
-            update={"active_plan_id": None}
-        )
+        state = canonical_agent_state(contract, plan, policy_version=2).model_copy(update={"active_plan_id": None})
         await repo.initialize_reasoning_state(
             run.id,
             task_contract=contract.model_dump(mode="json"),
@@ -889,18 +877,14 @@ async def _create_waiting_confirmation(
                         title="生成回复",
                         intent="回应用户",
                         success_criteria_refs=["criterion-result"],
-                        expected_outcome=ExpectedObservation(
-                            kind="final_answer", success_condition="answer exists"
-                        ),
+                        expected_outcome=ExpectedObservation(kind="final_answer", success_condition="answer exists"),
                     )
                 ],
             ),
             contract=contract,
             activate=False,
         )
-        state = canonical_agent_state(contract, plan, policy_version=2).model_copy(
-            update={"active_plan_id": None}
-        )
+        state = canonical_agent_state(contract, plan, policy_version=2).model_copy(update={"active_plan_id": None})
         await repo.initialize_reasoning_state(
             run.id,
             task_contract=contract.model_dump(mode="json"),
@@ -988,9 +972,7 @@ async def test_invalid_plan_revision_restores_original_with_fresh_token(app_clie
                         intent="触发验证",
                         depends_on=["cycle"],
                         success_criteria_refs=["criterion-result"],
-                        expected_outcome=ExpectedObservation(
-                            kind="invalid", success_condition="never"
-                        ),
+                        expected_outcome=ExpectedObservation(kind="invalid", success_condition="never"),
                     )
                 ]
             )
@@ -1035,9 +1017,7 @@ async def test_plan_revision_repairs_one_invalid_model_draft(app_client, monkeyp
         async def plan(self, goal, *, contract):
             self.goals.append(json.loads(goal))
             depends_on = ["revised"] if len(self.goals) == 1 else []
-            capabilities = (
-                ["invented_capability"] if len(self.goals) == 1 else ["information.search"]
-            )
+            capabilities = ["invented_capability"] if len(self.goals) == 1 else ["information.search"]
             return PlanDraft(
                 nodes=[
                     PlanNodeDraft(
@@ -1047,9 +1027,7 @@ async def test_plan_revision_repairs_one_invalid_model_draft(app_client, monkeyp
                         depends_on=depends_on,
                         required_capabilities=capabilities,
                         success_criteria_refs=["invented-criterion"],
-                        expected_outcome=ExpectedObservation(
-                            kind="step_result", success_condition="目标完成"
-                        ),
+                        expected_outcome=ExpectedObservation(kind="step_result", success_condition="目标完成"),
                     )
                 ]
             )
@@ -1162,9 +1140,7 @@ async def test_plan_revision_reuses_frozen_thinking_and_records_usage(app_client
 async def test_conversation_detail_eager_loads_canonical_plan(app_client):
     async with app_client._astra_session() as session:
         repo = RunUnitOfWork(session)
-        run = await repo.create_task_run(
-            "读取规范计划对话", {"provider": "mock"}, answer_mode="trusted"
-        )
+        run = await repo.create_task_run("读取规范计划对话", {"provider": "mock"}, answer_mode="trusted")
         contract = build_default_contract("读取规范计划对话")
         plan = await PlanService(PlanRepository(session)).create(
             run.id,
@@ -1175,9 +1151,7 @@ async def test_conversation_detail_eager_loads_canonical_plan(app_client):
                         title="生成回复",
                         intent="回应用户",
                         success_criteria_refs=["criterion-result"],
-                        expected_outcome=ExpectedObservation(
-                            kind="final_answer", success_condition="answer exists"
-                        ),
+                        expected_outcome=ExpectedObservation(kind="final_answer", success_condition="answer exists"),
                     )
                 ],
             ),
@@ -1201,17 +1175,13 @@ async def test_conversation_detail_eager_loads_canonical_plan(app_client):
     assert response.json()["runs"][0]["steps"][0]["node_key"] == "respond"
 
 
-async def test_create_run_rejects_invalid_agent_profile_as_configuration_error(
-    app_client, monkeypatch
-):
+async def test_create_run_rejects_invalid_agent_profile_as_configuration_error(app_client, monkeypatch):
     from app.domain.agent_profile import AgentProfileConfigurationError
 
     def invalid_profile():
         raise AgentProfileConfigurationError("invalid test profile")
 
-    monkeypatch.setattr(
-        "app.application.run_management.lifecycle.creation.load_agent_profile", invalid_profile
-    )
+    monkeypatch.setattr("app.application.run_management.lifecycle.creation.load_agent_profile", invalid_profile)
     response = await app_client.post("/api/runs", json={"goal": "Profile 配置测试"})
 
     assert response.status_code == 503
@@ -1227,9 +1197,7 @@ async def test_runtime_agent_profile_update_is_used_by_new_runs_and_can_reset(ap
 
     documents = dict(original["documents"])
     marker = "Astra Runtime Profile API test"
-    documents["identity"] = documents["identity"].replace(
-        "# Astra Identity", f"# Astra Identity\n\n{marker}"
-    )
+    documents["identity"] = documents["identity"].replace("# Astra Identity", f"# Astra Identity\n\n{marker}")
     updated = await app_client.put("/api/runtime/agent-profile", json={"documents": documents})
     assert updated.status_code == 200
     assert updated.json()["source"] == "user"
@@ -1243,13 +1211,9 @@ async def test_runtime_agent_profile_update_is_used_by_new_runs_and_can_reset(ap
 
     invalid_documents = dict(documents)
     invalid_documents["identity"] = "invalid"
-    rejected = await app_client.put(
-        "/api/runtime/agent-profile", json={"documents": invalid_documents}
-    )
+    rejected = await app_client.put("/api/runtime/agent-profile", json={"documents": invalid_documents})
     assert rejected.status_code == 422
-    assert (await app_client.get("/api/runtime")).json()["agent_profile"][
-        "version"
-    ] == updated.json()["version"]
+    assert (await app_client.get("/api/runtime")).json()["agent_profile"]["version"] == updated.json()["version"]
 
     reset = await app_client.post("/api/runtime/agent-profile/reset")
     assert reset.status_code == 200
@@ -1336,8 +1300,7 @@ async def test_tool_settings_can_be_read_and_updated(app_client):
     assert updated is not None
     states = {tool["name"]: tool["enabled"] for tool in updated.json()["tools"]}
     assert states == {
-        name: ({"chart.render": False, "bash_execute": True, "swarm": False}.get(name, True))
-        for name in expected_tools
+        name: ({"chart.render": False, "bash_execute": True, "swarm": False}.get(name, True)) for name in expected_tools
     }
     removed_legacy = await app_client.put("/api/tools", json={"swarm": True})
     assert removed_legacy.status_code == 405
@@ -1349,20 +1312,12 @@ async def test_tool_settings_can_be_read_and_updated(app_client):
 async def test_dynamic_tool_and_provider_settings_validate_identity_and_persist(app_client):
     unknown_tool = await app_client.put("/api/tools/not-a-tool/state", json={"enabled": False})
     assert unknown_tool.status_code == 404
-    unknown_provider = await app_client.put(
-        "/api/tool-providers/not-a-provider/state", json={"enabled": False}
-    )
+    unknown_provider = await app_client.put("/api/tool-providers/not-a-provider/state", json={"enabled": False})
     assert unknown_provider.status_code == 404
 
-    disabled = await app_client.put(
-        "/api/tool-providers/astra.shell/state", json={"enabled": False}
-    )
+    disabled = await app_client.put("/api/tool-providers/astra.shell/state", json={"enabled": False})
     assert disabled.status_code == 200
-    shell = next(
-        provider
-        for provider in disabled.json()["providers"]
-        if provider["provider_id"] == "astra.shell"
-    )
+    shell = next(provider for provider in disabled.json()["providers"] if provider["provider_id"] == "astra.shell")
     assert shell["enabled"] is False
     assert shell["state"] == "disabled"
 
@@ -1421,9 +1376,7 @@ async def test_disabling_swarm_hides_command_and_freezes_subagents_off(app_clien
     reenabled = await app_client.put("/api/tools/swarm/state", json={"enabled": True})
     assert reenabled.status_code == 200
     reenabled_catalog = await app_client.get("/api/system-commands")
-    reenabled_command = next(
-        item for item in reenabled_catalog.json() if item["name"] == "subagent"
-    )
+    reenabled_command = next(item for item in reenabled_catalog.json() if item["name"] == "subagent")
     assert reenabled_command["available"] is True
 
     required_after_enable = await app_client.post(
@@ -1511,9 +1464,7 @@ async def test_conversation_strategy_accepts_tool_limits_for_each_effort(app_cli
     ("effort", "limit"),
     [("fast", 6), ("balanced", 5), ("balanced", 16), ("deep", 15), ("deep", 50)],
 )
-async def test_conversation_strategy_rejects_tool_limits_outside_effort_range(
-    app_client, effort, limit
-):
+async def test_conversation_strategy_rejects_tool_limits_outside_effort_range(app_client, effort, limit):
     response = await app_client.put(
         "/api/preferences/conversation-strategy",
         json={
@@ -1566,17 +1517,13 @@ async def test_runtime_build_defaults_missing_version_to_latest(app_client, monk
         return {"dependencies": dependencies, "build": {"status": "queued"}}
 
     monkeypatch.setattr(app_client._astra_runtime_service, "start", start)
-    response = await app_client.post(
-        "/api/runtime/build", json={"dependencies": [{"name": "polars"}]}
-    )
+    response = await app_client.post("/api/runtime/build", json={"dependencies": [{"name": "polars"}]})
 
     assert response.status_code == 200
     assert captured == [{"name": "polars", "version": ""}]
 
 
-async def test_artifact_content_enforces_workspace_scope_without_leaking_storage_key(
-    app_client, tmp_path
-):
+async def test_artifact_content_enforces_workspace_scope_without_leaking_storage_key(app_client, tmp_path):
     from app.application.workspaces.artifacts import LocalArtifactStore
     from app.infrastructure.repositories.run_unit_of_work import RunUnitOfWork
 
@@ -1600,12 +1547,8 @@ async def test_artifact_content_enforces_workspace_scope_without_leaking_storage
         artifact_id = artifact.id
         await session.commit()
 
-    denied = await app_client.get(
-        f"/api/artifacts/{artifact_id}/content", headers={"X-Astra-Workspace-Id": "workspace-b"}
-    )
-    allowed = await app_client.get(
-        f"/api/artifacts/{artifact_id}/content", headers={"X-Astra-Workspace-Id": "workspace-a"}
-    )
+    denied = await app_client.get(f"/api/artifacts/{artifact_id}/content", headers={"X-Astra-Workspace-Id": "workspace-b"})
+    allowed = await app_client.get(f"/api/artifacts/{artifact_id}/content", headers={"X-Astra-Workspace-Id": "workspace-a"})
     assert denied.status_code == 404
     assert key not in denied.text
     assert allowed.status_code == 200
@@ -1931,9 +1874,7 @@ async def test_run_event_stream_resumes_after_event_id(app_client, monkeypatch):
     async with app_client._astra_session() as session:
         repo = RunUnitOfWork(session)
         skipped = await repo.add_event(run_id, "reasoning.summary.delta", {"delta": "旧片段"})
-        included = await repo.add_event(
-            run_id, "reasoning.summary.completed", {"summary": "恢复后的摘要"}
-        )
+        included = await repo.add_event(run_id, "reasoning.summary.completed", {"summary": "恢复后的摘要"})
         await repo.update_run_status(run_id, "completed", summary="完成")
         await session.commit()
 
@@ -1942,17 +1883,11 @@ async def test_run_event_stream_resumes_after_event_id(app_client, monkeypatch):
     assert response.status_code == 200
     assert f"id: {skipped.id}\n" not in response.text
     assert f"id: {included.id}\n" in response.text
-    streamed = [
-        json.loads(line.removeprefix("data: "))
-        for line in response.text.splitlines()
-        if line.startswith("data: ")
-    ]
+    streamed = [json.loads(line.removeprefix("data: ")) for line in response.text.splitlines() if line.startswith("data: ")]
     assert any(item.get("payload", {}).get("summary") == "恢复后的摘要" for item in streamed)
 
 
-async def test_fast_sse_replay_and_terminal_snapshot_are_runtime_explicit(
-    app_client, monkeypatch
-):
+async def test_fast_sse_replay_and_terminal_snapshot_are_runtime_explicit(app_client, monkeypatch):
     created = await app_client.post("/api/runs", json={"goal": "Fast SSE"})
     run_id = created.json()["run_id"]
     monkeypatch.setattr(runs_api, "SessionLocal", app_client._astra_session)
@@ -1989,9 +1924,7 @@ async def test_fast_sse_replay_and_terminal_snapshot_are_runtime_explicit(
     assert view["result"]["completion_decision"] is None
 
 
-async def test_plan_graph_events_replay_in_order_without_sensitive_failure_data(
-    app_client, monkeypatch
-):
+async def test_plan_graph_events_replay_in_order_without_sensitive_failure_data(app_client, monkeypatch):
     monkeypatch.setattr(runs_api, "SessionLocal", app_client._astra_session)
     async with app_client._astra_session() as session:
         repo = RunUnitOfWork(session)
@@ -2005,9 +1938,7 @@ async def test_plan_graph_events_replay_in_order_without_sensitive_failure_data(
                         title="执行",
                         intent="执行安全步骤",
                         success_criteria_refs=[],
-                        expected_outcome=ExpectedObservation(
-                            kind="result", success_condition="done"
-                        ),
+                        expected_outcome=ExpectedObservation(kind="result", success_condition="done"),
                     )
                 ]
             ),
@@ -2031,11 +1962,7 @@ async def test_plan_graph_events_replay_in_order_without_sensitive_failure_data(
         run_id = run.id
 
     response = await app_client.get(f"/api/runs/{run_id}/events?after_id={cursor}")
-    streamed = [
-        json.loads(line.removeprefix("data: "))
-        for line in response.text.splitlines()
-        if line.startswith("data: ")
-    ]
+    streamed = [json.loads(line.removeprefix("data: ")) for line in response.text.splitlines() if line.startswith("data: ")]
     transitions = [item for item in streamed if item.get("type") == "plan.node.updated"]
 
     assert [item["payload"]["status"] for item in transitions] == ["running", "failed"]
@@ -2124,9 +2051,7 @@ async def test_cancel_run_returns_completed_snapshot_and_missing_run_is_404(app_
         from app.infrastructure.repositories.run_unit_of_work import RunUnitOfWork
 
         repository = RunUnitOfWork(session)
-        await repository.update_run_status(
-            run_id, "completed", summary="自然完成", result={"summary": "自然完成"}
-        )
+        await repository.update_run_status(run_id, "completed", summary="自然完成", result={"summary": "自然完成"})
         await repository.commit()
 
     completed = await app_client.post(f"/api/runs/{run_id}/cancel")
@@ -2379,9 +2304,7 @@ async def test_create_run_rejects_missing_model_base_url(app_client):
 
 async def test_resume_requires_waiting_run(app_client):
     created = await app_client.post("/api/runs", json={"goal": "普通任务"})
-    response = await app_client.post(
-        f"/api/runs/{created.json()['run_id']}/resume", json={"content": "继续"}
-    )
+    response = await app_client.post(f"/api/runs/{created.json()['run_id']}/resume", json={"content": "继续"})
     assert response.status_code == 409
     assert response.json()["error"]["code"] == "RUN_NOT_WAITING"
 

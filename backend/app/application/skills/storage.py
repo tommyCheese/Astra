@@ -5,6 +5,7 @@ import json
 import uuid
 from collections.abc import Mapping
 from copy import deepcopy
+from dataclasses import dataclass
 from datetime import timedelta
 from typing import Any
 
@@ -38,10 +39,10 @@ def _blob_digest(files: dict[str, dict[str, Any]], path: str) -> str:
     return str(item["digest"])
 
 
+@dataclass
 class SkillService:
-    def __init__(self, session: AsyncSession, settings: AstraRuntimeSettings):
-        self.session = session
-        self.settings = settings
+    session: AsyncSession
+    settings: AstraRuntimeSettings
 
     def _require_custom_authoring(self) -> None:
         if not self.settings.skills_enabled or not self.settings.skills_custom_authoring_enabled:
@@ -148,9 +149,7 @@ class SkillService:
             raise SkillStorageError("SKILL_DRAFT_NOT_FOUND", "Skill 没有可编辑草稿。")
         return deepcopy(skill.draft.files or {})
 
-    async def read_file(
-        self, skill: SkillRecord, path: str, *, revision_id: str | None = None
-    ) -> bytes:
+    async def read_file(self, skill: SkillRecord, path: str, *, revision_id: str | None = None) -> bytes:
         normalized = normalize_skill_path(path)
         if revision_id:
             revision = await self.require_revision(skill.id, revision_id)
@@ -206,9 +205,7 @@ class SkillService:
         return skill.draft
 
     @staticmethod
-    def _apply_draft_operations(
-        current: dict[str, bytes], operations: list[dict[str, Any]]
-    ) -> dict[str, bytes]:
+    def _apply_draft_operations(current: dict[str, bytes], operations: list[dict[str, Any]]) -> dict[str, bytes]:
         next_files = dict(current)
         for operation in operations:
             action = str(operation.get("action", "write"))
@@ -218,9 +215,7 @@ class SkillService:
                     try:
                         content = base64.b64decode(operation["content_base64"], validate=True)
                     except ValueError as exc:
-                        raise SkillStorageError(
-                            "SKILL_FILE_ENCODING_INVALID", "文件编码无效。"
-                        ) from exc
+                        raise SkillStorageError("SKILL_FILE_ENCODING_INVALID", "文件编码无效。") from exc
                 else:
                     content = str(operation.get("content", "")).encode("utf-8")
                 next_files[path] = content
@@ -452,15 +447,11 @@ class SkillService:
         elif skill.origin == SkillOrigin.custom.value and skill.draft is not None:
             files = await self.materialize_manifest({"files": skill.draft.files})
         else:
-            files = await self.materialize_manifest(
-                (await self.require_active_revision(skill)).manifest
-            )
+            files = await self.materialize_manifest((await self.require_active_revision(skill)).manifest)
         return write_skill_archive(skill.name, files)
 
     async def _by_name(self, name: str) -> SkillRecord | None:
-        return await self.session.scalar(
-            select(SkillRecord).where(SkillRecord.name == name, SkillRecord.deleted_at.is_(None))
-        )
+        return await self.session.scalar(select(SkillRecord).where(SkillRecord.name == name, SkillRecord.deleted_at.is_(None)))
 
     def _audit(self, skill_id: str | None, type_: str, payload: dict[str, Any]) -> None:
         self.session.add(SkillAuditRecord(skill_id=skill_id, type=type_, payload=payload))
@@ -488,9 +479,7 @@ class SkillService:
         except SkillPackageError:
             raise
 
-    async def _store_files(
-        self, files: Mapping[str, bytes], package: SkillPackage
-    ) -> dict[str, dict[str, Any]]:
+    async def _store_files(self, files: Mapping[str, bytes], package: SkillPackage) -> dict[str, dict[str, Any]]:
         resources = {item.path: item for item in package.resources}
         result: dict[str, dict[str, Any]] = {}
         for path, content in files.items():
@@ -512,9 +501,7 @@ class SkillService:
     @staticmethod
     def _report(package: SkillPackage) -> dict[str, Any]:
         return {
-            "valid": not any(
-                item.severity in {"error", "critical"} for item in package.diagnostics
-            ),
+            "valid": not any(item.severity in {"error", "critical"} for item in package.diagnostics),
             "publishable": package.publishable,
             "digest": package.digest,
             "diagnostics": [item.model_dump(mode="json") for item in package.diagnostics],

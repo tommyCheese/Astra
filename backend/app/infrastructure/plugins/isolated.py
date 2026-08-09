@@ -140,13 +140,9 @@ class IsolatedProviderRuntimeBackend(RuntimeBackend, PluginHealthProbe):
         context: ToolExecutionContext | None = None,
     ) -> dict[str, Any]:
         if spec.provider_id != self.provider_id:
-            raise ToolExecutionError(
-                "isolated_provider_mismatch", "Isolated provider identity does not match"
-            )
+            raise ToolExecutionError("isolated_provider_mismatch", "Isolated provider identity does not match")
         if context is None:
-            raise ToolExecutionError(
-                "isolated_context_missing", "Isolated execution requires an audited context"
-            )
+            raise ToolExecutionError("isolated_context_missing", "Isolated execution requires an audited context")
         request = IsolatedInvocationRequest(
             request_id=f"isolated_{uuid4().hex}",
             provider_id=self.provider_id,
@@ -170,33 +166,25 @@ class IsolatedProviderRuntimeBackend(RuntimeBackend, PluginHealthProbe):
             )
         except TimeoutError as exc:
             await self._cancel(request.request_id)
-            raise ToolExecutionError(
-                "isolated_timeout", "Isolated provider exceeded its wall-time limit"
-            ) from exc
+            raise ToolExecutionError("isolated_timeout", "Isolated provider exceeded its wall-time limit") from exc
         except asyncio.CancelledError:
             await asyncio.shield(self._cancel(request.request_id))
             raise
         except ToolExecutionError:
             raise
         except Exception as exc:
-            raise ToolExecutionError(
-                "isolated_provider_crash", "Isolated provider transport failed"
-            ) from exc
+            raise ToolExecutionError("isolated_provider_crash", "Isolated provider transport failed") from exc
         self._enforce_response_size(raw)
         try:
             response = IsolatedInvocationResponse.model_validate(raw)
         except (TypeError, ValueError, ValidationError) as exc:
-            raise ToolExecutionError(
-                "isolated_protocol_invalid", "Isolated provider returned an invalid response"
-            ) from exc
+            raise ToolExecutionError("isolated_protocol_invalid", "Isolated provider returned an invalid response") from exc
         if (
             response.request_id != request.request_id
             or response.provider_id != self.provider_id
             or response.tool_name != spec.name
         ):
-            raise ToolExecutionError(
-                "isolated_identity_forged", "Isolated provider response identity is invalid"
-            )
+            raise ToolExecutionError("isolated_identity_forged", "Isolated provider response identity is invalid")
         if response.status == "failed":
             assert response.error is not None
             raise ToolExecutionError(response.error.category, response.error.message)
@@ -239,10 +227,6 @@ class IsolatedProviderRuntimeBackend(RuntimeBackend, PluginHealthProbe):
         try:
             size = len(json.dumps(payload, separators=(",", ":")).encode())
         except (TypeError, ValueError) as exc:
-            raise ToolExecutionError(
-                "isolated_protocol_invalid", "Isolated provider returned non-JSON data"
-            ) from exc
+            raise ToolExecutionError("isolated_protocol_invalid", "Isolated provider returned non-JSON data") from exc
         if size > self.policy.max_response_bytes:
-            raise ToolExecutionError(
-                "isolated_response_too_large", "Isolated provider response exceeds its limit"
-            )
+            raise ToolExecutionError("isolated_response_too_large", "Isolated provider response exceeds its limit")

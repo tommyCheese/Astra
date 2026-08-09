@@ -10,8 +10,8 @@ import uuid
 from dataclasses import dataclass
 from typing import Any
 
-from app.application.permissions.effects import grant_proposals
 from app.application.agent_runtime.services.tooling.plugin_runtime import PluginRuntimeState
+from app.application.permissions.effects import grant_proposals
 from app.application.permissions.invocation import InvocationAuthorizationResult
 from app.common.core.config import AstraRuntimeSettings
 from app.common.schemas.agent.execution_state import AgentDecision
@@ -26,9 +26,7 @@ from app.infrastructure.repositories.run_unit_of_work import RunUnitOfWork
 from app.infrastructure.tools.base import AstraTool, ToolExecutionError
 
 SHELL_META = re.compile(r"(?:&&|\|\||[|;&<>`]|\$\(|\$\{|\n|\r)")
-SECRET_VALUE = re.compile(
-    r"(?i)\b(api[_-]?key|token|authorization|password)\s*[:=]\s*(?:bearer\s+)?\S+"
-)
+SECRET_VALUE = re.compile(r"(?i)\b(api[_-]?key|token|authorization|password)\s*[:=]\s*(?:bearer\s+)?\S+")
 
 
 def canonical_input(tool_input: dict[str, Any]) -> str:
@@ -80,20 +78,13 @@ class ApprovalStageInput:
     approved_tool_call: ToolCallRecord | None
 
 
+@dataclass
 class ApprovalRoutingStage:
-    def __init__(
-        self,
-        settings: AstraRuntimeSettings,
-        repository: RunUnitOfWork,
-        plugin_runtime: PluginRuntimeState,
-    ) -> None:
-        self._settings = settings
-        self._repository = repository
-        self._plugin_runtime = plugin_runtime
+    _settings: AstraRuntimeSettings
+    _repository: RunUnitOfWork
+    _plugin_runtime: PluginRuntimeState
 
-    async def execute(
-        self, stage_input: ApprovalStageInput
-    ) -> tuple[ToolCallRecord | None, str | None]:
+    async def execute(self, stage_input: ApprovalStageInput) -> tuple[ToolCallRecord | None, str | None]:
         disposition = stage_input.authorization.decision.decision
         if disposition == PermissionDecisionKind.deny:
             await self._deny(stage_input)
@@ -157,9 +148,7 @@ class ApprovalRoutingStage:
                 "tool_call_id": tool_call.id,
                 "node_execution_id": stage_input.active_node_execution_id,
                 "execution_attempt": execution.attempt if execution else None,
-                "expected_execution_state_version": (
-                    execution.state_version if execution else None
-                ),
+                "expected_execution_state_version": (execution.state_version if execution else None),
                 "paused_node": "policy_gate",
                 "request": summary,
                 "continuation_token": continuation_token,
@@ -174,9 +163,7 @@ class ApprovalRoutingStage:
         tool = stage_input.tool
         return await self._repository.start_tool_call(
             stage_input.run_id,
-            stage_input.step.id
-            if not stage_input.has_canonical_plan and stage_input.step
-            else None,
+            stage_input.step.id if not stage_input.has_canonical_plan and stage_input.step else None,
             tool.spec.name,
             tool.spec.version,
             stage_input.decision.tool_input,
@@ -232,20 +219,14 @@ class ApprovalRoutingStage:
                 similar_matcher=(
                     proposals[0]
                     if proposals
-                    else (
-                        presenter.similar_matcher(tool.spec, stage_input.decision.tool_input)
-                        if presenter
-                        else None
-                    )
+                    else (presenter.similar_matcher(tool.spec, stage_input.decision.tool_input) if presenter else None)
                 ),
                 frozen_effect_plan=effect_plan.model_dump(mode="json"),
                 effect_plan_hash=stage_input.effect_plan_hash,
                 analyzer_version=effect_plan.analyzer_version,
                 analyzer_digest=effect_plan.analyzer_digest,
                 catalog_digest=(
-                    self._plugin_runtime.behavioral_digest(
-                        self._plugin_runtime.catalog.tool_registry()
-                    )
+                    self._plugin_runtime.behavioral_digest(self._plugin_runtime.catalog.tool_registry())
                     if self._plugin_runtime.catalog is not None
                     else None
                 ),
@@ -272,9 +253,7 @@ class ApprovalRoutingStage:
         tool = stage_input.tool
         return await self._repository.start_tool_call(
             stage_input.run_id,
-            stage_input.step.id
-            if not stage_input.has_canonical_plan and stage_input.step
-            else None,
+            stage_input.step.id if not stage_input.has_canonical_plan and stage_input.step else None,
             tool.spec.name,
             tool.spec.version,
             stage_input.decision.tool_input,

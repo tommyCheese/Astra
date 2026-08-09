@@ -4,19 +4,20 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from dataclasses import dataclass, field
 
+from app.application.run_management.execution.service import execute_run_in_process
 from app.application.run_management.lifecycle.contracts import RunCompletionCallback, RunStarter
-from app.application.runner.engine import start_run_in_process
 from app.common.core.config import AstraRuntimeSettings
 
 logger = logging.getLogger("astra.run_dispatcher")
 
 
+@dataclass
 class InProcessRunDispatcher:
-    def __init__(self, run_starter: RunStarter = start_run_in_process) -> None:
-        self._run_starter = run_starter
-        self._tasks: set[asyncio.Task[None]] = set()
-        self._tasks_by_run_id: dict[str, asyncio.Task[None]] = {}
+    _run_starter: RunStarter = execute_run_in_process
+    _tasks: set[asyncio.Task[None]] = field(default_factory=set, init=False)
+    _tasks_by_run_id: dict[str, asyncio.Task[None]] = field(default_factory=dict, init=False)
 
     def start(
         self,
@@ -35,9 +36,7 @@ class InProcessRunDispatcher:
         )
         self._tasks.add(task)
         self._tasks_by_run_id[run_id] = task
-        task.add_done_callback(
-            lambda completed_task: self._finish(run_id, completed_task, on_complete)
-        )
+        task.add_done_callback(lambda completed_task: self._finish(run_id, completed_task, on_complete))
         return task
 
     async def cancel(self, run_id: str) -> bool:

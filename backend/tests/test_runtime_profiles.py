@@ -121,9 +121,7 @@ async def test_runtime_build_command_supports_docker_without_buildx(tmp_path, mo
     assert service.read()["images"][0]["image"] == service.read()["active_image"]
 
 
-async def test_unpinned_dependency_is_resolved_persisted_and_content_addressed(
-    tmp_path, monkeypatch
-):
+async def test_unpinned_dependency_is_resolved_persisted_and_content_addressed(tmp_path, monkeypatch):
     service = RuntimeProfileService(
         AstraRuntimeSettings(
             runtime_profile_path=str(tmp_path / "profile.json"),
@@ -316,9 +314,7 @@ def test_interrupted_build_is_recovered_as_cancelled(tmp_path):
         )
     )
 
-    service = RuntimeProfileService(
-        AstraRuntimeSettings(runtime_profile_path=str(profile_path)), recover_interrupted=True
-    )
+    service = RuntimeProfileService(AstraRuntimeSettings(runtime_profile_path=str(profile_path)), recover_interrupted=True)
 
     assert service.read()["build"]["status"] == "cancelled"
     assert service.read()["build"]["phase"] == "构建已中断"
@@ -336,9 +332,7 @@ async def test_startup_cleans_recovered_staging_image(tmp_path, monkeypatch):
             }
         )
     )
-    service = RuntimeProfileService(
-        AstraRuntimeSettings(runtime_profile_path=str(profile_path)), recover_interrupted=True
-    )
+    service = RuntimeProfileService(AstraRuntimeSettings(runtime_profile_path=str(profile_path)), recover_interrupted=True)
     removed = []
 
     async def remove(build_id, image):

@@ -50,9 +50,7 @@ def test_summary_reports_cost_quality_failure_and_overheads():
     ("mode", "subagent_mode", "swarm", "children"),
     [("single_agent", "auto", False, 0), ("concurrent_subagent", "required", True, 2)],
 )
-async def test_measure_mode_enforces_paired_execution_boundary(
-    mode, subagent_mode, swarm, children
-):
+async def test_measure_mode_enforces_paired_execution_boundary(mode, subagent_mode, swarm, children):
     create_payloads = []
     tool_updates = []
 
@@ -73,9 +71,7 @@ async def test_measure_mode_enforces_paired_execution_boundary(
                 '{"type":"answer.delta"}',
                 '{"type":"answer.completed"}',
             )
-            return httpx.Response(
-                200, text="".join(f"data: {event}\n\n" for event in events)
-            )
+            return httpx.Response(200, text="".join(f"data: {event}\n\n" for event in events))
         if request.method == "GET" and request.url.path == "/api/runs/run-1":
             return httpx.Response(
                 200,
@@ -101,9 +97,7 @@ async def test_measure_mode_enforces_paired_execution_boundary(
         raise AssertionError(f"unexpected request: {request.method} {request.url}")
 
     case = SubagentBenchmarkCase("case", "same goal", "paired", ("ALPHA", "BETA"))
-    async with httpx.AsyncClient(
-        base_url="http://test", transport=httpx.MockTransport(handler)
-    ) as client:
+    async with httpx.AsyncClient(base_url="http://test", transport=httpx.MockTransport(handler)) as client:
         sample = await measure_mode(
             client,
             case=case,

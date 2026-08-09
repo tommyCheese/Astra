@@ -20,11 +20,14 @@ def test_once_schedule_preserves_absolute_time():
         "Asia/Shanghai",
         now=datetime(2026, 8, 1, 8, 0, tzinfo=UTC),
     ) == datetime(2026, 8, 1, 9, 0, tzinfo=UTC)
-    assert next_fire_time(
-        schedule,
-        "UTC",
-        after=datetime(2026, 8, 1, 9, 0, tzinfo=UTC),
-    ) is None
+    assert (
+        next_fire_time(
+            schedule,
+            "UTC",
+            after=datetime(2026, 8, 1, 9, 0, tzinfo=UTC),
+        )
+        is None
+    )
 
 
 def test_interval_advances_from_anchor_without_execution_drift():

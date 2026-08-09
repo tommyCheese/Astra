@@ -51,42 +51,37 @@ async def permission_center(
     grants = (
         await session.scalars(
             select(ApprovalGrantRecord).where(
-                (ApprovalGrantRecord.run_id == run_id)
-                | (ApprovalGrantRecord.task_id == run.task_id)
+                (ApprovalGrantRecord.run_id == run_id) | (ApprovalGrantRecord.task_id == run.task_id)
             )
         )
     ).all()
     identities = (
         await session.scalars(
             select(AgentIdentityRecord).where(
-                (AgentIdentityRecord.run_id == run_id)
-                | (AgentIdentityRecord.task_id == run.task_id)
+                (AgentIdentityRecord.run_id == run_id) | (AgentIdentityRecord.task_id == run.task_id)
             )
         )
     ).all()
     identity_ids = [identity.id for identity in identities]
     delegations = (
-        await session.scalars(
-            select(AgentDelegationRecord).where(
-                AgentDelegationRecord.parent_identity_id.in_(identity_ids)
-                | AgentDelegationRecord.child_identity_id.in_(identity_ids)
+        (
+            await session.scalars(
+                select(AgentDelegationRecord).where(
+                    AgentDelegationRecord.parent_identity_id.in_(identity_ids)
+                    | AgentDelegationRecord.child_identity_id.in_(identity_ids)
+                )
             )
-        )
-    ).all() if identity_ids else []
-    credentials = (
-        await session.scalars(
-            select(CredentialGrantRecord).where(CredentialGrantRecord.run_id == run_id)
-        )
-    ).all()
-    data_flow = await session.scalar(
-        select(DataFlowStateRecord).where(DataFlowStateRecord.run_id == run_id)
+        ).all()
+        if identity_ids
+        else []
     )
-    catalog = await session.scalar(
-        select(ToolCatalogSnapshotRecord).where(ToolCatalogSnapshotRecord.run_id == run_id)
-    )
+    credentials = (await session.scalars(select(CredentialGrantRecord).where(CredentialGrantRecord.run_id == run_id))).all()
+    data_flow = await session.scalar(select(DataFlowStateRecord).where(DataFlowStateRecord.run_id == run_id))
+    catalog = await session.scalar(select(ToolCatalogSnapshotRecord).where(ToolCatalogSnapshotRecord.run_id == run_id))
     explanations = (
         await session.scalars(
-            select(RunEventRecord).where(
+            select(RunEventRecord)
+            .where(
                 RunEventRecord.run_id == run_id,
                 RunEventRecord.type.in_(
                     [
@@ -95,7 +90,9 @@ async def permission_center(
                         "permission.decided",
                     ]
                 ),
-            ).order_by(RunEventRecord.created_at.desc()).limit(50)
+            )
+            .order_by(RunEventRecord.created_at.desc())
+            .limit(50)
         )
     ).all()
     return permission_center_view(
@@ -122,11 +119,7 @@ async def revoke_permission_grant(
 async def simulate_permission(payload: PolicySimulationRequest) -> PolicySimulationResult:
     engine = PermissionEngine()
     effective = engine.evaluate(payload.request, payload.policies)
-    shadow = (
-        engine.evaluate(payload.request, payload.shadow_policies)
-        if payload.shadow_policies is not None
-        else None
-    )
+    shadow = engine.evaluate(payload.request, payload.shadow_policies) if payload.shadow_policies is not None else None
     return PolicySimulationResult(
         effective=effective,
         shadow=shadow,
@@ -142,23 +135,23 @@ async def task_workspace_view(
     workspace = await WorkspaceRepository(session).get_or_create(task_id)
     files = (
         await session.scalars(
-            select(WorkspaceFileRecord).where(
-                WorkspaceFileRecord.workspace_id == workspace.id
-            ).order_by(WorkspaceFileRecord.relative_path)
+            select(WorkspaceFileRecord)
+            .where(WorkspaceFileRecord.workspace_id == workspace.id)
+            .order_by(WorkspaceFileRecord.relative_path)
         )
     ).all()
     changes = (
         await session.scalars(
-            select(WorkspaceChangeRecord).where(
-                WorkspaceChangeRecord.workspace_id == workspace.id
-            ).order_by(WorkspaceChangeRecord.created_at.desc())
+            select(WorkspaceChangeRecord)
+            .where(WorkspaceChangeRecord.workspace_id == workspace.id)
+            .order_by(WorkspaceChangeRecord.created_at.desc())
         )
     ).all()
     checkpoints = (
         await session.scalars(
-            select(WorkspaceCheckpointRecord).where(
-                WorkspaceCheckpointRecord.workspace_id == workspace.id
-            ).order_by(WorkspaceCheckpointRecord.created_at.desc())
+            select(WorkspaceCheckpointRecord)
+            .where(WorkspaceCheckpointRecord.workspace_id == workspace.id)
+            .order_by(WorkspaceCheckpointRecord.created_at.desc())
         )
     ).all()
     return {
@@ -235,9 +228,7 @@ async def library_files(
             "size_bytes": file.size_bytes,
             "security_status": file.security_status,
             "deliverable_candidate": file.deliverable_candidate,
-            "content_url": f"/api/tasks/{task.id}/workspace/files/{file.id}/content"
-            if file.deliverable_candidate
-            else None,
+            "content_url": f"/api/tasks/{task.id}/workspace/files/{file.id}/content" if file.deliverable_candidate else None,
             "created_at": file.created_at,
             "updated_at": file.updated_at,
         }

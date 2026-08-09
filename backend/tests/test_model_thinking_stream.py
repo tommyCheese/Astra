@@ -1,5 +1,5 @@
 from app.application.agent_runtime.policies.reasoning import resolve_run_profile
-from app.application.runner.model_thinking_stream import ModelThinkingEventWriter
+from app.application.run_management.lifecycle.model_thinking_stream import ModelThinkingEventWriter
 from app.common.core.config import AstraRuntimeSettings
 from app.common.schemas.agent.run_policy import RequestedReasoningPolicy
 from app.common.schemas.agent.types import AnswerMode
@@ -44,9 +44,7 @@ async def test_model_thinking_writer_persists_ordered_text_without_summary_conta
         "model_thinking.delta",
         "model_thinking.completed",
     ]
-    assert "".join(
-        event.payload.get("delta", "") for event in thinking_events
-    ) == "第一行\n第二行"
+    assert "".join(event.payload.get("delta", "") for event in thinking_events) == "第一行\n第二行"
     assert thinking_events[-1].payload["char_count"] == 7
     assert all(event.type != "reasoning.summary.delta" for event in events)
 
@@ -79,9 +77,13 @@ async def test_model_thinking_writer_records_unavailable_without_sensitive_field
 
 async def test_model_thinking_writer_marks_truncation_explicitly(session, monkeypatch):
     monkeypatch.setattr(
-        "app.application.runner.model_thinking_stream.MODEL_THINKING_MAX_CHARS_PER_INVOCATION", 5
+        "app.application.run_management.lifecycle.model_thinking_stream.MODEL_THINKING_MAX_CHARS_PER_INVOCATION",
+        5,
     )
-    monkeypatch.setattr("app.application.runner.model_thinking_stream.MODEL_THINKING_MAX_CHARS_PER_RUN", 5)
+    monkeypatch.setattr(
+        "app.application.run_management.lifecycle.model_thinking_stream.MODEL_THINKING_MAX_CHARS_PER_RUN",
+        5,
+    )
     repo = RunUnitOfWork(session)
     run = await _create_run(repo)
     writer = ModelThinkingEventWriter(repo, run.id)

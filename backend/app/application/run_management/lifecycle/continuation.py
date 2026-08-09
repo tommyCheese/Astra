@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.application.planning.revision import PlanRevisionError, revise_waiting_plan
@@ -17,16 +19,11 @@ from app.infrastructure.repositories.permissions import PermissionRepository
 from app.infrastructure.repositories.run_unit_of_work import RunUnitOfWork
 
 
+@dataclass
 class RunContinuationService:
-    def __init__(
-        self,
-        session: AsyncSession,
-        settings_resolver: RunSettingsResolver,
-        dispatcher: RunExecutionDispatcher,
-    ) -> None:
-        self._session = session
-        self._settings_resolver = settings_resolver
-        self._dispatcher = dispatcher
+    _session: AsyncSession
+    _settings_resolver: RunSettingsResolver
+    _dispatcher: RunExecutionDispatcher
 
     async def resume_and_start(
         self,
@@ -160,13 +157,7 @@ class RunContinuationService:
             run.id,
             {
                 "kind": "approval_result" if request.approved is not None else "user_response",
-                "status": (
-                    "approved"
-                    if request.approved
-                    else "rejected"
-                    if request.approved is False
-                    else "received"
-                ),
+                "status": ("approved" if request.approved else "rejected" if request.approved is False else "received"),
                 "summary": request.content,
                 "data": {"approved": request.approved},
             },
@@ -191,9 +182,7 @@ class RunContinuationService:
                 "计划调整未通过校验，原计划仍可继续使用。",
             ) from error
         if "plan revision" in message:
-            raise AstraStateConflictError(
-                "PLAN_REVISION_STALE", "计划已变化，请刷新后基于最新版本调整。"
-            ) from error
+            raise AstraStateConflictError("PLAN_REVISION_STALE", "计划已变化，请刷新后基于最新版本调整。") from error
         if "plan confirmation" in message:
             raise AstraStateConflictError(
                 "PLAN_CONFIRMATION_INVALID",
@@ -202,9 +191,7 @@ class RunContinuationService:
         if "not waiting" in message:
             raise AstraStateConflictError("RUN_NOT_WAITING", "该任务当前不需要补充信息。") from error
         if "continuation token" in message:
-            raise AstraStateConflictError(
-                "CONTINUATION_INVALID", "任务恢复凭据已失效，请刷新后重试。"
-            ) from error
+            raise AstraStateConflictError("CONTINUATION_INVALID", "任务恢复凭据已失效，请刷新后重试。") from error
         raise AstraStateConflictError("RUN_RESUME_CONFLICT", "当前任务无法恢复。") from error
 
     @staticmethod

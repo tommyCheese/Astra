@@ -139,9 +139,7 @@ class EvolutionCandidate(FrozenModel):
 
     @field_validator("source_refs")
     @classmethod
-    def normalize_source_refs(
-        cls, values: tuple[EvolutionSourceReference, ...]
-    ) -> tuple[EvolutionSourceReference, ...]:
+    def normalize_source_refs(cls, values: tuple[EvolutionSourceReference, ...]) -> tuple[EvolutionSourceReference, ...]:
         keys = [(item.source_type.value, item.source_id, item.digest) for item in values]
         if len(keys) != len(set(keys)):
             raise ValueError("source_refs must be unique")
@@ -154,9 +152,7 @@ class EvolutionCandidate(FrozenModel):
 
     @field_validator("environment_constraints")
     @classmethod
-    def normalize_constraints(
-        cls, values: tuple[EvolutionConstraint, ...]
-    ) -> tuple[EvolutionConstraint, ...]:
+    def normalize_constraints(cls, values: tuple[EvolutionConstraint, ...]) -> tuple[EvolutionConstraint, ...]:
         keys = [item.key for item in values]
         if len(keys) != len(set(keys)):
             raise ValueError("environment constraint keys must be unique")
@@ -164,9 +160,7 @@ class EvolutionCandidate(FrozenModel):
 
     @field_validator("parameter_changes")
     @classmethod
-    def normalize_parameter_changes(
-        cls, values: tuple[EvolutionParameterChange, ...]
-    ) -> tuple[EvolutionParameterChange, ...]:
+    def normalize_parameter_changes(cls, values: tuple[EvolutionParameterChange, ...]) -> tuple[EvolutionParameterChange, ...]:
         paths = [item.path for item in values]
         if len(paths) != len(set(paths)):
             raise ValueError("parameter change paths must be unique")
@@ -203,12 +197,8 @@ class EvolutionCandidate(FrozenModel):
                 "content": self.content,
                 "source_refs": [item.model_dump(mode="json") for item in self.source_refs],
                 "required_tools": list(self.required_tools),
-                "environment_constraints": [
-                    item.model_dump(mode="json") for item in self.environment_constraints
-                ],
-                "parameter_changes": [
-                    item.model_dump(mode="json") for item in self.parameter_changes
-                ],
+                "environment_constraints": [item.model_dump(mode="json") for item in self.environment_constraints],
+                "parameter_changes": [item.model_dump(mode="json") for item in self.parameter_changes],
                 "supersedes_id": self.supersedes_id,
             }
         )
@@ -283,9 +273,7 @@ class EvaluationManifest(FrozenModel):
 
     @field_validator("cases")
     @classmethod
-    def normalize_cases(
-        cls, values: tuple[EvaluationCaseResult, ...]
-    ) -> tuple[EvaluationCaseResult, ...]:
+    def normalize_cases(cls, values: tuple[EvaluationCaseResult, ...]) -> tuple[EvaluationCaseResult, ...]:
         ids = [item.case_id for item in values]
         if len(ids) != len(set(ids)):
             raise ValueError("evaluation case IDs must be unique")
@@ -293,9 +281,7 @@ class EvaluationManifest(FrozenModel):
 
     @field_validator("safety_metrics")
     @classmethod
-    def normalize_safety_metrics(
-        cls, values: tuple[SafetyMetricResult, ...]
-    ) -> tuple[SafetyMetricResult, ...]:
+    def normalize_safety_metrics(cls, values: tuple[SafetyMetricResult, ...]) -> tuple[SafetyMetricResult, ...]:
         names = [item.name for item in values]
         if len(names) != len(set(names)):
             raise ValueError("safety metric names must be unique")
@@ -310,9 +296,7 @@ class EvaluationManifest(FrozenModel):
         if self.baseline.sample_size != len(self.cases):
             raise ValueError("result sample size must equal the number of case results")
         held_out = sum(item.split == EvaluationCaseSplit.held_out for item in self.cases)
-        representative = sum(
-            item.split == EvaluationCaseSplit.representative for item in self.cases
-        )
+        representative = sum(item.split == EvaluationCaseSplit.representative for item in self.cases)
         if not representative:
             raise ValueError("evaluation requires representative cases")
         if held_out < self.thresholds.minimum_held_out_cases:

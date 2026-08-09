@@ -115,14 +115,10 @@ def parse_schedule_command(arguments: str) -> ScheduleCommand:
 
 
 def _create_schedule_command(flags, positionals, usage) -> ScheduleCommand:
-    _require_flags(
-        flags, allowed={"--every", "--cron", "--at", "--tz", "--name"}, usage=usage
-    )
+    _require_flags(flags, allowed={"--every", "--cron", "--at", "--tz", "--name"}, usage=usage)
     schedule_flags = [flag for flag in ("--every", "--cron", "--at") if flag in flags]
     if len(schedule_flags) != 1:
-        raise CommandUsageError(
-            "create 必须且只能指定 --every、--cron 或 --at 之一。", usage=usage
-        )
+        raise CommandUsageError("create 必须且只能指定 --every、--cron 或 --at 之一。", usage=usage)
     prompt = " ".join(positionals).strip()
     if not prompt:
         raise CommandUsageError("create 必须提供任务 prompt。", usage=usage)
@@ -148,9 +144,7 @@ def _schedule_spec(schedule_flag, flags, usage) -> ScheduleSpec:
         return ScheduleSpec(type="once", at=at)
     except (PydanticValidationError, ValueError) as error:
         message = (
-            "--cron 必须是有效的标准五字段表达式。"
-            if schedule_flag == "--cron"
-            else "--at 必须是带时区的 RFC 3339 时间。"
+            "--cron 必须是有效的标准五字段表达式。" if schedule_flag == "--cron" else "--at 必须是带时区的 RFC 3339 时间。"
         )
         raise CommandUsageError(message, usage=usage) from error
 

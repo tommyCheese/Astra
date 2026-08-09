@@ -37,11 +37,7 @@ class SandboxRuntimeConfiguration:
     def write_state(self, value: dict[str, Any], *, persist_memory_settings: bool = False) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         temporary = self.path.with_suffix(f"{self.path.suffix}.tmp")
-        persisted = {
-            key: item
-            for key, item in value.items()
-            if key not in {"core_dependencies", "image_policy"}
-        }
+        persisted = {key: item for key, item in value.items() if key not in {"core_dependencies", "image_policy"}}
         self._normalize_persisted_profile(persisted)
         if not persist_memory_settings and "memory_settings" not in self.read_persisted():
             persisted.pop("memory_settings", None)

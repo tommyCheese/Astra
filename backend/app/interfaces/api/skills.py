@@ -124,9 +124,7 @@ async def create_skill(
     settings: AstraRuntimeSettings = Depends(get_settings),
 ) -> SkillDetailView:
     try:
-        skill = await SkillService(session, settings).create_custom(
-            payload.name, payload.description
-        )
+        skill = await SkillService(session, settings).create_custom(payload.name, payload.description)
         await session.commit()
         return await _detail(session, settings, skill)
     except (SkillPackageError, SkillStorageError) as exc:
@@ -159,12 +157,8 @@ async def get_skill_catalog(
     session: AsyncSession = Depends(get_session),
     settings: AstraRuntimeSettings = Depends(get_settings),
 ) -> SkillCatalogView:
-    catalog = await SkillCatalogBuilder(
-        session, metadata_chars=settings.skills_catalog_metadata_chars
-    ).build(goal=goal)
-    return SkillCatalogView(
-        digest=catalog.digest, truncated=catalog.truncated, skills=catalog.metadata()
-    )
+    catalog = await SkillCatalogBuilder(session, metadata_chars=settings.skills_catalog_metadata_chars).build(goal=goal)
+    return SkillCatalogView(digest=catalog.digest, truncated=catalog.truncated, skills=catalog.metadata())
 
 
 @router.get("/skills/{skill_id}", response_model=SkillDetailView)
@@ -208,9 +202,7 @@ async def list_skill_files(
         files = await service.draft_files(skill)
         return SkillDraftFilesView(
             skill_id=skill.id,
-            revision_token=(
-                skill.draft.revision_token if skill.draft else str(skill.active_revision_id or "")
-            ),
+            revision_token=(skill.draft.revision_token if skill.draft else str(skill.active_revision_id or "")),
             readonly=skill.origin == "builtin",
             files=[_file_view(skill, item) for _, item in sorted(files.items())],
             diagnostics=_diagnostics(skill.draft.validation_report if skill.draft else {}),
@@ -515,27 +507,17 @@ async def diff_skill(
     try:
         service = SkillService(session, settings)
         skill = await service.require_skill(skill_id)
-        draft_files = (
-            await service.materialize_manifest({"files": await service.draft_files(skill)})
-            if skill.draft
-            else {}
-        )
+        draft_files = await service.materialize_manifest({"files": await service.draft_files(skill)}) if skill.draft else {}
         active_files: dict[str, bytes] = {}
         if skill.active_revision_id:
-            active_files = await service.materialize_manifest(
-                (await service.require_active_revision(skill)).manifest
-            )
+            active_files = await service.materialize_manifest((await service.require_active_revision(skill)).manifest)
         paths = sorted(set(draft_files) | set(active_files))
         changes = []
         for path in paths:
             before = active_files.get(path)
             after = draft_files.get(path)
             status = (
-                "added"
-                if before is None
-                else "removed"
-                if after is None
-                else ("unchanged" if before == after else "modified")
+                "added" if before is None else "removed" if after is None else ("unchanged" if before == after else "modified")
             )
             patch = None
             if status == "modified":
@@ -666,19 +648,13 @@ async def create_skill_test_run(
             execution_profile=profile.model_dump(mode="json"),
             agent_profile_snapshot=load_agent_profile().snapshot(),
         )
-        catalog_builder = SkillCatalogBuilder(
-            session, metadata_chars=settings.skills_catalog_metadata_chars
-        )
+        catalog_builder = SkillCatalogBuilder(session, metadata_chars=settings.skills_catalog_metadata_chars)
         catalog = await catalog_builder.build(
             goal=payload.goal,
             explicit_identities=[],
             revision_overrides=[test_revision],
             runtime_capabilities={
-                *(
-                    name
-                    for name, enabled in settings.tool_states.items()
-                    if enabled
-                ),
+                *(name for name, enabled in settings.tool_states.items() if enabled),
                 *({"sandbox"} if settings.sandbox_enabled else set()),
             },
         )
@@ -718,9 +694,7 @@ async def get_run_skills(
     run_id: str,
     session: AsyncSession = Depends(get_session),
 ) -> RunSkillsView:
-    snapshot = await session.scalar(
-        select(RunSkillSnapshotRecord).where(RunSkillSnapshotRecord.run_id == run_id)
-    )
+    snapshot = await session.scalar(select(RunSkillSnapshotRecord).where(RunSkillSnapshotRecord.run_id == run_id))
     if snapshot is None:
         raise AstraResourceNotFoundError("RUN_SKILLS_NOT_FOUND", "该 Run 没有 Skill 快照。")
     events = list(
@@ -743,9 +717,7 @@ async def get_run_skills(
         catalog=snapshot.catalog,
         activations=snapshot.activations,
         resource_reads=snapshot.resource_reads,
-        attributed_actions=[
-            event.payload for event in events if event.type == "skill.attributed_action"
-        ],
+        attributed_actions=[event.payload for event in events if event.type == "skill.attributed_action"],
         plan_bindings=[event.payload for event in events if event.type == "skill.plan_bound"],
     )
 

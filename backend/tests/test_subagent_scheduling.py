@@ -82,19 +82,13 @@ async def test_atomic_hierarchical_budget_race_preserves_parent_reserve(tmp_path
             "max_cost_usd": 1,
             "max_children": 2,
         }
-        first = await AgentExecutionRepository(session).create_child(
-            contract=_contract(root, request_id="first")
-        )
-        second = await AgentExecutionRepository(session).create_child(
-            contract=_contract(root, request_id="second")
-        )
+        first = await AgentExecutionRepository(session).create_child(contract=_contract(root, request_id="first"))
+        second = await AgentExecutionRepository(session).create_child(contract=_contract(root, request_id="second"))
         await session.commit()
 
     async def reserve(child_id: str):
         async with sessions() as session:
-            return await HierarchicalBudgetManager(
-                session, parent_reserve={"tokens": 20}
-            ).reserve(
+            return await HierarchicalBudgetManager(session, parent_reserve={"tokens": 20}).reserve(
                 parent_execution_id=root.id,
                 child_execution_id=child_id,
                 envelope=SubagentBudgetEnvelope(
@@ -109,9 +103,7 @@ async def test_atomic_hierarchical_budget_race_preserves_parent_reserve(tmp_path
                 max_parallel_children=2,
             )
 
-    outcomes = await asyncio.gather(
-        reserve(first.id), reserve(second.id), return_exceptions=True
-    )
+    outcomes = await asyncio.gather(reserve(first.id), reserve(second.id), return_exceptions=True)
     successes = [item for item in outcomes if isinstance(item, AgentBudgetReservationRecord)]
     failures = [item for item in outcomes if isinstance(item, BaseException)]
     assert len(successes) == 1
@@ -122,9 +114,7 @@ async def test_atomic_hierarchical_budget_race_preserves_parent_reserve(tmp_path
         reservations = list(
             (
                 await session.scalars(
-                    select(AgentBudgetReservationRecord).where(
-                        AgentBudgetReservationRecord.status == "reserved"
-                    )
+                    select(AgentBudgetReservationRecord).where(AgentBudgetReservationRecord.status == "reserved")
                 )
             ).all()
         )
@@ -144,9 +134,7 @@ async def test_budget_settlement_is_exact_once_and_returns_unused_capacity(sessi
         "max_cost_usd": 1,
         "max_children": 2,
     }
-    child = await AgentExecutionRepository(session).create_child(
-        contract=_contract(root, request_id="settle")
-    )
+    child = await AgentExecutionRepository(session).create_child(contract=_contract(root, request_id="settle"))
     await session.commit()
     manager = HierarchicalBudgetManager(session, parent_reserve={"tokens": 20})
     await manager.reserve(
@@ -261,9 +249,7 @@ async def test_agent_coordinator_bounds_parallelism_and_dynamic_node_allowance(t
         statuses = list(
             (
                 await session.scalars(
-                    select(AgentExecutionRecord.status).where(
-                        AgentExecutionRecord.id.in_([item.id for item in children])
-                    )
+                    select(AgentExecutionRecord.status).where(AgentExecutionRecord.id.in_([item.id for item in children]))
                 )
             ).all()
         )
@@ -375,9 +361,7 @@ async def test_configured_maximum_child_load_remains_bounded(tmp_path):
         run = await RunUnitOfWork(session).create_task_run("Bounded load", {})
         root = await AgentExecutionRepository(session).root_for_run(run.id)
         for index in range(12):
-            await AgentExecutionRepository(session).create_child(
-                contract=_contract(root, request_id=f"load-{index}", tokens=5)
-            )
+            await AgentExecutionRepository(session).create_child(contract=_contract(root, request_id=f"load-{index}", tokens=5))
         await session.commit()
     active = 0
     peak = 0

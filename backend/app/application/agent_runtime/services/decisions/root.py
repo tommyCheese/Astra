@@ -5,26 +5,25 @@ from __future__ import annotations
 import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any, cast
 
-from app.application.agent_runtime.services.decisions.action_resolution import (
-    ActionResolutionInput,
-    ActionResolutionStage,
-    ResolvedAgentAction,
+from app.application.agent_runtime.contracts import (
+    ContinueLoop,
+    LoopAction,
+    LoopOutcome,
+    ModelDecision,
 )
-from app.application.agent_runtime.services.decisions.model import (
-    DecisionStageFailure,
-    DecisionStageInput,
-    ModelDecisionStage,
-)
+from app.application.agent_runtime.services.decisions.action_resolution import resolve_action
+from app.application.agent_runtime.services.decisions.model import ModelDecisionStage
 from app.application.agent_runtime.services.decisions.skills import SkillActionStage
 from app.application.agent_runtime.services.shared.progress import (
     ExecutionProgress,
     ProgressEvaluationStage,
 )
-from app.common.schemas.agent.execution_state import AgentDecision
+from app.common.schemas.agent.execution_state import AgentDecision, AgentObservation
 from app.common.schemas.agent.run_result import AgentFinalAnswer
 from app.common.schemas.agent.types import AnswerMode
+from app.domain.execution.contracts import InvocationIntent
 from app.infrastructure.db.models.permissions import AgentIdentityRecord, ToolCallRecord
 from app.infrastructure.db.models.plans import PlanNodeRecord
 from app.infrastructure.db.models.runs import AgentTurnRecord
@@ -36,41 +35,24 @@ logger = logging.getLogger("astra.agent_runtime.root_decision")
 PermissionRuntimeLoader = Callable[[], Awaitable[AgentIdentityRecord]]
 
 
-@dataclass(frozen=True)
-class RootDecisionResult:
-    action: Literal["continue", "stop", "ready"]
+@dataclass
+class RootDecisionStage:
+    """Own model decision, capability resolution, and turn creation."""
+
+    _repository: RunUnitOfWork
+    _model_client: ModelClient
+    _progress: ExecutionProgress
+    _progress_stage: ProgressEvaluationStage
+    _skills: SkillActionStage
+    _ensure_permissions: PermissionRuntimeLoader
+    _answer_mode: AnswerMode
+    _on_answer_delta: Callable[[str], Awaitable[None]] | None
     turn: AgentTurnRecord | None = None
     decision: AgentDecision | None = None
     candidate_answer: AgentFinalAnswer | None = None
     main_identity: AgentIdentityRecord | None = None
     is_approved_resume: bool = False
-    terminal_status: str | None = None
-    terminal_summary: str | None = None
-
-
-class RootDecisionStage:
-    """Own model decision, capability resolution, and turn creation."""
-
-    def __init__(
-        self,
-        *,
-        repository: RunUnitOfWork,
-        model_client: ModelClient,
-        progress: ExecutionProgress,
-        progress_stage: ProgressEvaluationStage,
-        skill_action_stage: SkillActionStage,
-        ensure_permission_runtime: PermissionRuntimeLoader,
-        answer_mode: AnswerMode,
-        on_answer_delta: Callable[[str], Awaitable[None]] | None,
-    ) -> None:
-        self._repository = repository
-        self._model_client = model_client
-        self._progress = progress
-        self._progress_stage = progress_stage
-        self._skills = skill_action_stage
-        self._ensure_permissions = ensure_permission_runtime
-        self._answer_mode = answer_mode
-        self._on_answer_delta = on_answer_delta
+    outcome: LoopOutcome | None = None
 
     async def execute(
         self,
@@ -83,7 +65,13 @@ class RootDecisionStage:
         active_node_execution_id: str | None,
         approved_tool_call: ToolCallRecord | None,
         approved_turn: AgentTurnRecord | None,
-    ) -> RootDecisionResult:
+    ) -> ModelDecision:
+        self.outcome = None
+        self.turn = None
+        self.decision = None
+        self.candidate_answer = None
+        self.main_identity = None
+        self.is_approved_resume = False
         await self._announce_selection(run_id, turn_index, model_context)
         decision_stage = ModelDecisionStage(
             self._repository,
@@ -91,19 +79,17 @@ class RootDecisionStage:
             self._on_answer_delta,
         )
         outcome = await decision_stage.execute(
-            DecisionStageInput(
-                run_id=run_id,
-                goal=goal,
-                turn_index=turn_index,
-                context=model_context,
-                answer_mode=self._answer_mode.value,
-                may_stream_answer=self._progress.active_plan is None or active_node is None,
-                active_plan_node_id=active_node.id if active_node is not None else None,
-                approved_tool_call=approved_tool_call,
-                approved_turn=approved_turn,
-            )
+            run_id=run_id,
+            goal=goal,
+            turn_index=turn_index,
+            context=model_context,
+            answer_mode=self._answer_mode.value,
+            may_stream_answer=self._progress.active_plan is None or active_node is None,
+            active_plan_node_id=active_node.id if active_node is not None else None,
+            approved_tool_call=approved_tool_call,
+            approved_turn=approved_turn,
         )
-        if isinstance(outcome, DecisionStageFailure):
+        if isinstance(outcome, AgentObservation):
             await self._persist_model_failure(
                 run_id,
                 turn_index,
@@ -112,14 +98,15 @@ class RootDecisionStage:
                 active_node,
                 active_node_execution_id,
             )
-            return RootDecisionResult("continue")
+            self.outcome = ContinueLoop()
+            return _handled_decision("model failure handled")
         identity = await self._ensure_permissions()
-        await decision_stage.complete_reasoning(outcome.decision)
+        await decision_stage.complete_reasoning(outcome)
         return await self._resolve_and_persist(
             run_id,
             turn_index,
-            outcome.decision,
-            outcome.candidate_answer,
+            outcome,
+            decision_stage.candidate_answer,
             identity,
             model_context,
             active_node,
@@ -140,22 +127,26 @@ class RootDecisionStage:
         active_execution_id: str | None,
         approved_call: ToolCallRecord | None,
         approved_turn: AgentTurnRecord | None,
-    ) -> RootDecisionResult:
+    ) -> ModelDecision:
         self._log_decision(run_id, turn_index, decision)
-        resolved = self._resolve_action(
-            run_id,
-            turn_index,
-            decision,
-            context,
-            active_node,
-            active_execution_id,
+        resolved = resolve_action(
+            run_id=run_id,
+            turn_index=turn_index,
+            decision=decision,
+            tool_selection=context.get("tool_selection", {}),
+            has_canonical_plan=self._progress.active_plan is not None,
+            active_plan_node_id=active_node.id if active_node is not None else None,
+            active_plan_node_key=active_node.node_key if active_node is not None else None,
+            active_node_execution_id=active_execution_id,
         )
-        terminal = self._terminal_resolution(resolved)
-        if terminal is not None:
-            return terminal
-        if resolved.rejected_observation is not None and resolved.invocation is None:
-            await self._reject_unresolved_action(run_id, resolved.rejected_observation)
-            return RootDecisionResult("continue")
+        if isinstance(resolved, LoopOutcome) and resolved.kind == "blocked":
+            self.outcome = resolved
+            return _handled_decision(resolved.reason)
+        if isinstance(resolved, AgentObservation) and not resolved.data.get("create_turn"):
+            await self._reject_unresolved_action(run_id, resolved)
+            self.outcome = ContinueLoop()
+            return _handled_decision("unresolved action rejected")
+        invocation = resolved if isinstance(resolved, InvocationIntent) else None
         is_resume = approved_call is not None and approved_turn is not None
         turn = (
             approved_turn
@@ -167,68 +158,40 @@ class RootDecisionStage:
                 context,
                 active_node,
                 active_execution_id,
-                resolved.invocation.idempotency_key if resolved.invocation else None,
+                invocation.idempotency_key
+                if invocation
+                else cast(str | None, resolved.data.get("idempotency_key"))
+                if isinstance(resolved, AgentObservation)
+                else None,
             )
         )
         assert turn is not None
-        if resolved.rejected_observation is not None:
-            await self._reject_tool(run_id, turn, resolved.rejected_observation)
-            return RootDecisionResult("continue")
+        if isinstance(resolved, AgentObservation):
+            await self._reject_tool(run_id, turn, resolved)
+            self.outcome = ContinueLoop()
+            return _handled_decision("tool selection rejected")
         await self._accept_tool_selection(run_id, turn_index, decision, context, active_node)
         if await self._skills.execute(run_id, turn, decision):
-            return RootDecisionResult("continue")
+            self.outcome = ContinueLoop()
+            return _handled_decision("Skill action completed")
         await self._record_validated_decision(run_id, turn_index, decision)
-        return RootDecisionResult(
-            "ready",
-            turn=turn,
-            decision=decision,
-            candidate_answer=candidate_answer,
-            main_identity=identity,
-            is_approved_resume=is_resume,
-        )
-
-    @staticmethod
-    def _terminal_resolution(resolved: ResolvedAgentAction) -> RootDecisionResult | None:
-        if resolved.terminal_outcome is None:
-            return None
-        return RootDecisionResult(
-            "stop",
-            terminal_status="blocked",
-            terminal_summary=resolved.terminal_outcome.reason,
-        )
-
-    def _resolve_action(
-        self,
-        run_id: str,
-        turn_index: int,
-        decision: AgentDecision,
-        context: dict[str, Any],
-        active_node: PlanNodeRecord | None,
-        active_execution_id: str | None,
-    ) -> ResolvedAgentAction:
-        return ActionResolutionStage().execute(
-            ActionResolutionInput(
-                run_id=run_id,
-                turn_index=turn_index,
-                decision=decision,
-                tool_selection=context.get("tool_selection", {}),
-                has_canonical_plan=self._progress.active_plan is not None,
-                active_plan_node_id=active_node.id if active_node is not None else None,
-                active_plan_node_key=active_node.node_key if active_node is not None else None,
-                active_node_execution_id=active_execution_id,
-            )
-        )
+        self.turn = turn
+        self.decision = decision
+        self.candidate_answer = candidate_answer
+        self.main_identity = identity
+        self.is_approved_resume = is_resume
+        return _canonical_decision(decision)
 
     async def _persist_model_failure(
         self,
         run_id: str,
         turn_index: int,
-        failure: DecisionStageFailure,
+        failure: AgentObservation,
         context: dict[str, Any],
         active_node: PlanNodeRecord | None,
         active_execution_id: str | None,
     ) -> None:
-        observation = failure.observation
+        observation = failure
         serialized = observation.model_dump(mode="json")
         self._progress.observations.append(serialized)
         reflection = await self._progress_stage.reflect(
@@ -373,3 +336,25 @@ class RootDecisionStage:
             decision.tool_name,
             decision.confidence,
         )
+
+
+def _canonical_decision(decision: AgentDecision) -> ModelDecision:
+    if decision.decision_type == "call_tool":
+        action = LoopAction(
+            kind="tool",
+            name=decision.tool_name,
+            input=decision.tool_input,
+            reason=decision.reasoning_summary,
+        )
+    elif decision.decision_type == "ask_user":
+        action = LoopAction(
+            kind="ask_user",
+            content=decision.expected_observation or decision.reasoning_summary,
+        )
+    else:
+        action = LoopAction(kind="stop", content=decision.reasoning_summary or decision.decision_type)
+    return ModelDecision(action=action, reasoning_summary=decision.reasoning_summary)
+
+
+def _handled_decision(reason: str) -> ModelDecision:
+    return ModelDecision(action=LoopAction(kind="stop", content=reason))

@@ -122,9 +122,7 @@ class InvocationAuthorizationMixin:
             )
         )
 
-    def _authorize_command(
-        self, command: InvocationAuthorizationCommand
-    ) -> InvocationAuthorizationResult:
+    def _authorize_command(self, command: InvocationAuthorizationCommand) -> InvocationAuthorizationResult:
         requests = self._requests_for_plan(
             command.subject,
             command.effect_plan,
@@ -157,13 +155,8 @@ class InvocationAuthorizationMixin:
             base_policies=command.policies,
             now=command.now,
         )
-        decisions = tuple(
-            self.evaluate(request, effective_policies, command.grants, now=command.now)
-            for request in requests
-        )
-        aggregate = self._aggregate_decision(
-            decisions, unattended=command.unattended, now=command.now
-        )
+        decisions = tuple(self.evaluate(request, effective_policies, command.grants, now=command.now) for request in requests)
+        aggregate = self._aggregate_decision(decisions, unattended=command.unattended, now=command.now)
         return InvocationAuthorizationResult(
             decision=aggregate,
             requests=requests,
@@ -215,8 +208,7 @@ class InvocationAuthorizationMixin:
             return self._decision(
                 PermissionDecisionKind.deny,
                 "tool_permission_violation",
-                "The invocation exceeds the tool specification permission ceiling: "
-                + ", ".join(sorted(undeclared)),
+                "The invocation exceeds the tool specification permission ceiling: " + ", ".join(sorted(undeclared)),
                 [],
                 now,
             )
@@ -262,14 +254,8 @@ class InvocationAuthorizationMixin:
                 schema_digest=schema_digest,
                 analyzer_version=effect_plan.analyzer_version,
                 working_directory=effect_plan.cwd,
-                network_destination=(
-                    effect.resource
-                    if effect.kind.value in {"network_write", "external_write"}
-                    else None
-                ),
-                data_labels=sorted(
-                    set(effect.data_labels) | set(getattr(data_flow, "data_labels", []) or [])
-                ),
+                network_destination=(effect.resource if effect.kind.value in {"network_write", "external_write"} else None),
+                data_labels=sorted(set(effect.data_labels) | set(getattr(data_flow, "data_labels", []) or [])),
             ),
             effect_plan_hash=effect_plan_hash,
             context={
@@ -297,9 +283,7 @@ class InvocationAuthorizationMixin:
         if effect_plan.network_scope.get("mode") == "blocked":
             rules.append(self._network_block_rule())
         side_effecting = is_side_effecting(effect_plan)
-        mode_rule = self._execution_mode_rule(
-            execution_mode, once_approved=once_approved, side_effecting=side_effecting
-        )
+        mode_rule = self._execution_mode_rule(execution_mode, once_approved=once_approved, side_effecting=side_effecting)
         if mode_rule is not None:
             rules.append(mode_rule)
         if data_flow is not None:
@@ -341,11 +325,7 @@ class InvocationAuthorizationMixin:
         if execution_mode != ExecutionMode.auto_approval and side_effecting:
             return None
         return PermissionRule(
-            id=(
-                "run.mode.auto-approval"
-                if execution_mode == ExecutionMode.auto_approval
-                else "platform.safe-action"
-            ),
+            id=("run.mode.auto-approval" if execution_mode == ExecutionMode.auto_approval else "platform.safe-action"),
             source="run.execution_mode",
             tier=PolicyTier.run,
             decision=PermissionDecisionKind.allow,
@@ -356,9 +336,7 @@ class InvocationAuthorizationMixin:
 
     @staticmethod
     def _data_flow_rules(requests, data_flow) -> list[PermissionRule]:
-        external = [
-            request for request in requests if request.action in {"network_write", "external_write"}
-        ]
+        external = [request for request in requests if request.action in {"network_write", "external_write"}]
         rules = []
         for index, request in enumerate(external):
             rule = _data_flow_rule(index, request, data_flow)
@@ -369,20 +347,12 @@ class InvocationAuthorizationMixin:
     def _aggregate_decision(self, decisions, *, unattended, now):
         aggregate = max(decisions, key=lambda item: DECISION_ORDER[item.decision])
         decisive_match = next(
-            (
-                match
-                for match in aggregate.explanation.matched_policies
-                if match.decision == aggregate.decision
-            ),
+            (match for match in aggregate.explanation.matched_policies if match.decision == aggregate.decision),
             None,
         )
         if decisive_match is not None:
             aggregate = aggregate.model_copy(
-                update={
-                    "explanation": aggregate.explanation.model_copy(
-                        update={"reason_code": decisive_match.reason_code}
-                    )
-                }
+                update={"explanation": aggregate.explanation.model_copy(update={"reason_code": decisive_match.reason_code})}
             )
         if unattended and aggregate.decision == PermissionDecisionKind.ask:
             return self._decision(
@@ -407,9 +377,7 @@ class InvocationAuthorizationMixin:
 
     @staticmethod
     def _invocation_result(decision, requests) -> InvocationAuthorizationResult:
-        return InvocationAuthorizationResult(
-            decision=decision, requests=requests, decisions=(decision,)
-        )
+        return InvocationAuthorizationResult(decision=decision, requests=requests, decisions=(decision,))
 
 
 def _data_flow_rule(index, request, data_flow) -> PermissionRule | None:

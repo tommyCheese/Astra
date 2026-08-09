@@ -43,18 +43,6 @@
       "imported": "app.interfaces.api"
     },
     {
-      "importer": "app.infrastructure.repositories",
-      "imported": "app.application.runner"
-    },
-    {
-      "importer": "app.application.runner",
-      "imported": "app.application.subagents"
-    },
-    {
-      "importer": "app.application.subagents",
-      "imported": "app.application.runner"
-    },
-    {
       "importer": "app.application.agent_runtime.services.shared",
       "imported": "app.application.agent_runtime.services.execution"
     },
@@ -73,6 +61,50 @@
     {
       "importer": "app.application.agent_runtime.services.completion",
       "imported": "app.application.agent_runtime.services.execution"
+    },
+    {
+      "importer": "app.application.agent_runtime.loop",
+      "imported": "app.application.planning"
+    },
+    {
+      "importer": "app.application.agent_runtime.loop",
+      "imported": "app.application.run_management"
+    },
+    {
+      "importer": "app.application.agent_runtime.loop",
+      "imported": "app.infrastructure"
+    },
+    {
+      "importer": "app.application.agent_runtime.loop",
+      "imported": "app.interfaces"
+    },
+    {
+      "importer": "app.application.agent_runtime.contracts",
+      "imported": "app.application.planning"
+    },
+    {
+      "importer": "app.application.agent_runtime.contracts",
+      "imported": "app.application.run_management"
+    },
+    {
+      "importer": "app.application.agent_runtime.contracts",
+      "imported": "app.infrastructure"
+    },
+    {
+      "importer": "app.application.agent_runtime.contracts",
+      "imported": "app.interfaces"
+    },
+    {
+      "importer": "app.application.planning",
+      "imported": "app.application.agent_runtime.loop"
+    },
+    {
+      "importer": "app.application.run_management",
+      "imported": "app.application.agent_runtime.loop"
+    },
+    {
+      "importer": "app.interfaces",
+      "imported": "app.application.agent_runtime.loop"
     }
   ],
   "typed_module_prefixes": [

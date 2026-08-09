@@ -53,16 +53,12 @@ class SubagentCancellationService:
         immutable_effects = _immutable_effects(tool_calls)
         active_calls = _active_tool_calls(tool_calls)
         unknown_ids = [
-            call.id
-            for call in active_calls
-            if call.status == "running" and not _is_read_only(call.side_effect_level)
+            call.id for call in active_calls if call.status == "running" and not _is_read_only(call.side_effect_level)
         ]
         cancelled_call_ids = [call.id for call in active_calls if call.id not in unknown_ids]
         await self._cancel_tool_calls(cancelled_call_ids, unknown_ids, reason, now)
         jobs = await self._cancel_sandbox_jobs(tool_calls, reason, now)
-        cancelled_execution_ids = await self._cancel_executions(
-            targets, reason, immutable_effects, unknown_ids, now
-        )
+        cancelled_execution_ids = await self._cancel_executions(targets, reason, immutable_effects, unknown_ids, now)
 
         await self.session.execute(
             update(AgentBudgetReservationRecord)
@@ -101,11 +97,7 @@ class SubagentCancellationService:
 
     async def _tool_calls(self, target_ids):
         return list(
-            (
-                await self.session.scalars(
-                    select(ToolCallRecord).where(ToolCallRecord.agent_execution_id.in_(target_ids))
-                )
-            ).all()
+            (await self.session.scalars(select(ToolCallRecord).where(ToolCallRecord.agent_execution_id.in_(target_ids)))).all()
         )
 
     async def _cancel_tool_calls(self, cancelled_ids, unknown_ids, reason, now) -> None:
@@ -139,9 +131,7 @@ class SubagentCancellationService:
                 await self.session.scalars(
                     select(SandboxJobRecord).where(
                         SandboxJobRecord.tool_call_id.in_(tool_ids),
-                        SandboxJobRecord.status.in_(
-                            ["queued", "preparing", "running", "collecting"]
-                        ),
+                        SandboxJobRecord.status.in_(["queued", "preparing", "running", "collecting"]),
                     )
                 )
             ).all()
@@ -201,11 +191,7 @@ def _is_read_only(side_effect_level: str) -> bool:
 
 
 def _active_tool_calls(tool_calls):
-    return [
-        call
-        for call in tool_calls
-        if call.status in {"created", "approved", "running", "awaiting_approval"}
-    ]
+    return [call for call in tool_calls if call.status in {"created", "approved", "running", "awaiting_approval"}]
 
 
 def _immutable_effects(tool_calls):

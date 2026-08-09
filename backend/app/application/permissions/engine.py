@@ -164,20 +164,12 @@ class PermissionEngine(InvocationAuthorizationMixin):
             key=lambda decision: DECISION_ORDER[decision],
             default=None,
         )
-        policy_decision = self._matching_policy_decision(
-            strongest, policy_matches, now
-        )
-        return policy_decision or self._lease_decision(
-            request, grants, policy_matches, now
-        )
+        policy_decision = self._matching_policy_decision(strongest, policy_matches, now)
+        return policy_decision or self._lease_decision(request, grants, policy_matches, now)
 
     def _protected_resource_decision(self, request, now):
         pattern = next(
-            (
-                candidate
-                for candidate in self.protected_resource_patterns
-                if fnmatchcase(request.resource, candidate)
-            ),
+            (candidate for candidate in self.protected_resource_patterns if fnmatchcase(request.resource, candidate)),
             None,
         )
         if pattern is None or not _is_mutating_action(request.action):
@@ -188,9 +180,7 @@ class PermissionEngine(InvocationAuthorizationMixin):
             enforced_scope={"resource_pattern": pattern},
             trace=["platform protected-resource guard denied the request"],
         )
-        return PermissionDecision(
-            decision=PermissionDecisionKind.deny, explanation=explanation, decided_at=now
-        )
+        return PermissionDecision(decision=PermissionDecisionKind.deny, explanation=explanation, decided_at=now)
 
     def _matching_policy_decision(self, strongest, matches, now):
         messages = {
@@ -232,9 +222,7 @@ class PermissionEngine(InvocationAuthorizationMixin):
             matched_policies=policy_matches,
             trace=reasons or ["no matching policy or permission lease"],
         )
-        return PermissionDecision(
-            decision=PermissionDecisionKind.ask, explanation=explanation, decided_at=now
-        )
+        return PermissionDecision(decision=PermissionDecisionKind.ask, explanation=explanation, decided_at=now)
 
     @staticmethod
     def _decision(
@@ -250,9 +238,7 @@ class PermissionEngine(InvocationAuthorizationMixin):
                 reason_code=reason_code,
                 summary=summary,
                 matched_policies=matches,
-                trace=[
-                    f"{match.tier}:{match.policy_id}:{match.decision.value}" for match in matches
-                ],
+                trace=[f"{match.tier}:{match.policy_id}:{match.decision.value}" for match in matches],
             ),
             decided_at=now,
         )
@@ -320,10 +306,7 @@ def _invocation_matches(constraints: dict[str, Any], request: PermissionRequest)
         if expected is not None and condition_values.get(key) != expected:
             return False
     expected_analyzer_digest = constraints.get("analyzer_digest")
-    if (
-        expected_analyzer_digest is not None
-        and request.context.get("analyzer_digest") != expected_analyzer_digest
-    ):
+    if expected_analyzer_digest is not None and request.context.get("analyzer_digest") != expected_analyzer_digest:
         return False
     kind = constraints.get("kind")
     tool_input = request.context.get("tool_input", {})
@@ -340,10 +323,7 @@ def _invocation_matches(constraints: dict[str, Any], request: PermissionRequest)
 
 
 def _is_mutating_action(action: str) -> bool:
-    return any(
-        marker in action
-        for marker in ("write", "delete", "modify", "create", "grant", "revoke", "execute")
-    )
+    return any(marker in action for marker in ("write", "delete", "modify", "create", "grant", "revoke", "execute"))
 
 
 def _as_utc(value: datetime) -> datetime:

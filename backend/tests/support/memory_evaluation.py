@@ -171,9 +171,7 @@ def _observe(
         task_success=fixture.required_ids.issubset(selected_set),
         stale_use_count=len(selected_set & fixture.stale_ids),
         harmful_feedback_count=len(selected_set & fixture.harmful_ids),
-        namespace_leakage_count=sum(
-            (item.namespace_type, item.namespace_id) not in allowed_namespaces for item in selected
-        ),
+        namespace_leakage_count=sum((item.namespace_type, item.namespace_id) not in allowed_namespaces for item in selected),
     )
 
 
@@ -190,23 +188,17 @@ def evaluate_memory_strategies(
         for fixture in fixtures
         for strategy in EVALUATION_STRATEGIES
     ]
-    return {
-        strategy: _strategy_metrics(strategy, observations) for strategy in EVALUATION_STRATEGIES
-    }
+    return {strategy: _strategy_metrics(strategy, observations) for strategy in EVALUATION_STRATEGIES}
 
 
 def _evaluate_strategy(fixture, strategy, policy, budget):
     started = time.perf_counter()
     selected: tuple[MemoryRetrievalCandidate, ...] = ()
     if strategy != "no_memory":
-        candidates = (
-            fixture.candidates if strategy == "cross_session" else fixture.consolidated_candidates
-        )
+        candidates = fixture.candidates if strategy == "cross_session" else fixture.consolidated_candidates
         result = retrieve_memories(
             candidates,
-            MemoryRetrievalQuery(
-                text=fixture.query, namespaces=fixture.namespaces, as_of=fixture.as_of
-            ),
+            MemoryRetrievalQuery(text=fixture.query, namespaces=fixture.namespaces, as_of=fixture.as_of),
             policy=policy,
             budget=budget,
         )

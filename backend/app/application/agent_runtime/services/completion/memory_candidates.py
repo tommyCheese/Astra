@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from typing import Any
 
 from sqlalchemy.exc import SQLAlchemyError
@@ -28,17 +29,14 @@ PROTECTED_MEMORY_FIELDS = frozenset(
 )
 
 
+@dataclass
 class MemoryCandidateWriter:
-    def __init__(self, settings, repository: RunUnitOfWork, model_client: ModelClient) -> None:
-        self._settings = settings
-        self._run_repository = repository
-        self._model_client = model_client
-        self._memory_repository = MemoryRepository(repository.session)
+    settings: Any
+    repository: RunUnitOfWork
+    model_client: ModelClient
 
-    async def write_candidates(
-        self, *, run_id: str, goal: str, context: dict[str, Any]
-    ) -> list[dict[str, Any]]:
-        if not self._settings.agent_memory_write_enabled:
+    async def write_candidates(self, *, run_id: str, goal: str, context: dict[str, Any]) -> list[dict[str, Any]]:
+        if not self.settings.agent_memory_write_enabled:
             return []
         candidates = await self._extract(run_id, goal, context)
         memory_views = []
@@ -57,26 +55,24 @@ class MemoryCandidateWriter:
         return memory_views
 
     async def _extract(self, run_id: str, goal: str, context: dict[str, Any]) -> list[Any]:
+        # Provider usage is persisted through an independent session. Flush the
+        # completed Runtime work first so SQLite does not retain its writer lock.
+        await self.repository.session.commit()
         try:
-            return await self._model_client.extract_memory_candidates(goal, context)
+            return await self.model_client.extract_memory_candidates(goal, context)
         except ModelOutputError as error:
             logger.warning("memory.extraction.skipped run_id=%s reason=%s", run_id, str(error))
-            await self._run_repository.add_event(
-                run_id, "memory.extraction_skipped", {"reason": "invalid_model_output"}
-            )
-            await self._run_repository.session.commit()
+            await self.repository.add_event(run_id, "memory.extraction_skipped", {"reason": "invalid_model_output"})
+            await self.repository.session.commit()
             return []
 
     async def _write_candidate(self, run_id: str, candidate: Any) -> Any:
         self._validate_candidate(candidate)
-        namespace, _ = await self._memory_repository.namespace_for_write(
-            run_id=run_id, scope=candidate.scope
-        )
+        memories = MemoryRepository(self.repository.session)
+        namespace, _ = await memories.namespace_for_write(run_id=run_id, scope=candidate.scope)
         provenance = {**dict(candidate.provenance), "run_id": run_id}
         memory_key = str(candidate.memory_key or "").strip()
-        existing = await self._memory_repository.latest_for_key(
-            namespace=namespace, memory_key=memory_key, include_sources=True
-        )
+        existing = await memories.latest_for_key(namespace=namespace, memory_key=memory_key, include_sources=True)
         if existing and existing.status in {
             MemoryStatus.candidate.value,
             MemoryStatus.active.value,
@@ -96,18 +92,16 @@ class MemoryCandidateWriter:
             raise MemoryValidationError("Memory candidate requires a stable key")
 
     async def _deduplicate(self, run_id: str, memory: Any) -> Any:
-        await self._run_repository.add_event(
+        await self.repository.add_event(
             run_id,
             "memory.write_deduplicated",
             {"memory_id": memory.id, "memory_key": memory.memory_key, "version": memory.version},
         )
-        await self._run_repository.session.commit()
+        await self.repository.session.commit()
         return memory
 
-    async def _create_version(
-        self, run_id: str, existing: Any, candidate: Any, provenance: dict[str, Any]
-    ) -> Any:
-        memory = await self._memory_repository.create_candidate_version(
+    async def _create_version(self, run_id: str, existing: Any, candidate: Any, provenance: dict[str, Any]) -> Any:
+        memory = await MemoryRepository(self.repository.session).create_candidate_version(
             existing.id,
             expected_state_version=existing.state_version,
             source_run_id=run_id,
@@ -120,7 +114,7 @@ class MemoryCandidateWriter:
             actor="memory-extractor",
             reason="new supported observation awaiting human activation",
         )
-        await self._run_repository.add_event(
+        await self.repository.add_event(
             run_id,
             "memory.candidate_created",
             {
@@ -130,13 +124,11 @@ class MemoryCandidateWriter:
                 "supersedes_id": memory.supersedes_id,
             },
         )
-        await self._run_repository.session.commit()
+        await self.repository.session.commit()
         return memory
 
-    async def _create_new(
-        self, run_id: str, candidate: Any, provenance: dict[str, Any], memory_key: str
-    ) -> Any:
-        memory = await self._memory_repository.create(
+    async def _create_new(self, run_id: str, candidate: Any, provenance: dict[str, Any], memory_key: str) -> Any:
+        memory = await MemoryRepository(self.repository.session).create(
             run_id=run_id,
             scope=candidate.scope,
             kind=candidate.kind,
@@ -155,7 +147,7 @@ class MemoryCandidateWriter:
             normalize_kind=True,
             commit=False,
         )
-        await self._run_repository.add_event(
+        await self.repository.add_event(
             run_id,
             "memory.candidate_created",
             {
@@ -165,23 +157,23 @@ class MemoryCandidateWriter:
                 "kind": memory.kind,
             },
         )
-        await self._run_repository.session.commit()
+        await self.repository.session.commit()
         return memory
 
     async def _reject(self, run_id: str, candidate: Any, error: Exception) -> None:
-        await self._run_repository.session.rollback()
+        await self.repository.session.rollback()
         logger.warning(
             "memory.candidate.rejected run_id=%s kind=%s reason=%s",
             run_id,
             candidate.kind,
             type(error).__name__,
         )
-        await self._run_repository.add_event(
+        await self.repository.add_event(
             run_id,
             "memory.write_rejected",
             {"scope": candidate.scope, "kind": candidate.kind, "reason": type(error).__name__},
         )
-        await self._run_repository.session.commit()
+        await self.repository.session.commit()
 
     @staticmethod
     def _memory_view(memory: Any) -> dict[str, Any]:

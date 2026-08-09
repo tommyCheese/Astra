@@ -9,9 +9,7 @@ from app.infrastructure.db.models.permissions import ApprovalGrantRecord
 
 
 class ApprovalGrantStore:
-    async def list_approval_grants(
-        self, run_id: str, tool_name: str, tool_version: str
-    ) -> list[ApprovalGrantRecord]:
+    async def list_approval_grants(self, run_id: str, tool_name: str, tool_version: str) -> list[ApprovalGrantRecord]:
         run = await self.require_run(run_id)
         now = utc_now()
         result = await self.session.execute(
@@ -23,23 +21,16 @@ class ApprovalGrantStore:
                 (ApprovalGrantRecord.expires_at.is_(None) | (ApprovalGrantRecord.expires_at > now)),
                 (
                     (ApprovalGrantRecord.scope == "run") & (ApprovalGrantRecord.run_id == run_id)
-                    | (ApprovalGrantRecord.scope == "task")
-                    & (ApprovalGrantRecord.task_id == run.task_id)
+                    | (ApprovalGrantRecord.scope == "task") & (ApprovalGrantRecord.task_id == run.task_id)
                 ),
             )
         )
-        return [
-            grant
-            for grant in result.scalars().all()
-            if grant.max_uses is None or grant.use_count < grant.max_uses
-        ]
+        return [grant for grant in result.scalars().all() if grant.max_uses is None or grant.use_count < grant.max_uses]
 
     async def consume_approval_grant(self, grant_id: str) -> ApprovalGrantRecord:
         return (await self.consume_approval_grants([grant_id]))[0]
 
-    async def consume_approval_grants(
-        self, grant_ids: list[str] | tuple[str, ...]
-    ) -> list[ApprovalGrantRecord]:
+    async def consume_approval_grants(self, grant_ids: list[str] | tuple[str, ...]) -> list[ApprovalGrantRecord]:
         ordered_ids = sorted(set(grant_ids))
         if not ordered_ids:
             return []
@@ -58,9 +49,7 @@ class ApprovalGrantStore:
         self,
         ordered_ids: list[str],
     ) -> list[ApprovalGrantRecord]:
-        result = await self.session.execute(
-            select(ApprovalGrantRecord).where(ApprovalGrantRecord.id.in_(ordered_ids))
-        )
+        result = await self.session.execute(select(ApprovalGrantRecord).where(ApprovalGrantRecord.id.in_(ordered_ids)))
         by_id = {grant.id: grant for grant in result.scalars().all()}
         missing = [grant_id for grant_id in ordered_ids if grant_id not in by_id]
         if missing:
@@ -120,8 +109,7 @@ class ApprovalGrantStore:
                 ApprovalGrantRecord.status == "active",
                 (
                     (ApprovalGrantRecord.scope == "run") & (ApprovalGrantRecord.run_id == run_id)
-                    | (ApprovalGrantRecord.scope == "task")
-                    & (ApprovalGrantRecord.task_id == run.task_id)
+                    | (ApprovalGrantRecord.scope == "task") & (ApprovalGrantRecord.task_id == run.task_id)
                 ),
             )
         )
@@ -130,11 +118,7 @@ class ApprovalGrantStore:
             "schema_digest": schema_digest,
             "analyzer_digest": analyzer_digest,
         }
-        invalidated = [
-            grant
-            for grant in result.scalars().all()
-            if self._identity_changed(grant, expected_identity)
-        ]
+        invalidated = [grant for grant in result.scalars().all() if self._identity_changed(grant, expected_identity)]
         for grant in invalidated:
             grant.status = "invalidated"
             grant.revoked_at = utc_now()
@@ -148,7 +132,4 @@ class ApprovalGrantStore:
         expected_identity: dict[str, str | None],
     ) -> bool:
         constraints = grant.invocation_constraints or {}
-        return any(
-            constraints.get(key) is not None and constraints[key] != value
-            for key, value in expected_identity.items()
-        )
+        return any(constraints.get(key) is not None and constraints[key] != value for key, value in expected_identity.items())

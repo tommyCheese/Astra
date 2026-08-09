@@ -51,15 +51,11 @@ class ToolOutputGovernanceService:
         error: dict[str, Any] | None = None,
         persist: PersistToolOutput,
     ) -> NormalizedToolObservation:
-        serialized = json.dumps(
-            output, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str
-        ).encode()
+        serialized = json.dumps(output, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str).encode()
         token_count, _, _ = self.accounting.count_text(serialized.decode(errors="replace"))
         child = role == ContextOwnerRole.child_execution
         byte_limit = (
-            self.settings.context_compaction_child_inline_bytes
-            if child
-            else self.settings.context_compaction_root_inline_bytes
+            self.settings.context_compaction_child_inline_bytes if child else self.settings.context_compaction_root_inline_bytes
         )
         token_limit = (
             self.settings.context_compaction_child_inline_tokens

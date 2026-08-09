@@ -12,8 +12,8 @@ from app.application.agent_runtime.policies.reasoning import (
 )
 from app.application.planning.scheduler import PlanScheduler
 from app.application.planning.service import PlanService, canonical_agent_state
-from app.application.runner import engine as engine_module
-from app.application.runner.engine import RunEngine
+from app.application.run_management.execution import service as engine_module
+from app.application.run_management.execution.service import RunExecution as RunEngine
 from app.common.core.config import AstraRuntimeSettings
 from app.common.schemas.agent.execution_state import AgentDecision
 from app.common.schemas.agent.planning import ExpectedObservation, PlanDraft, PlanNodeDraft
@@ -63,8 +63,8 @@ async def test_cancelled_answer_flush_reuses_active_repository_session():
     engine = RunEngine(AstraRuntimeSettings(model_provider="mock"), model_client=MockModelClient())
     repo = AsyncMock()
     repo.session = AsyncMock()
-    engine._answer_buffers["run-1"] = "停止前的部分回答"
-    engine._answer_start_pending.add("run-1")
+    engine.answers._answer_buffers["run-1"] = "停止前的部分回答"
+    engine.answers._answer_start_pending.add("run-1")
 
     await engine._flush_cancelled_answer(repo, "run-1")
 
@@ -80,7 +80,7 @@ async def test_cancelled_answer_flush_reuses_active_repository_session():
         {"delta": "停止前的部分回答"},
     )
     repo.session.commit.assert_awaited_once()
-    assert "run-1" not in engine._answer_buffers
+    assert "run-1" not in engine.answers._answer_buffers
 
 
 async def test_engine_rolls_back_failed_stage_before_persisting_terminal_error(monkeypatch):
@@ -208,15 +208,12 @@ class WeatherPlanClient(MockModelClient):
     async def decide_with_answer(self, goal, context, *, on_delta=None, on_reasoning_delta=None):
         active = context.get("active_node")
         if active is None:
-            return AgentDecision(
-                decision_type="finalize", reasoning_summary="计划已完成"
-            ), AgentFinalAnswer(
+            return AgentDecision(decision_type="finalize", reasoning_summary="计划已完成"), AgentFinalAnswer(
                 summary="明天上海有阵雨且最高约 34°C，不建议长距离户外跑步。",
                 findings=[{"text": "降雨概率较高，建议改为室内训练。"}],
             )
         if active["node_key"] == "step-2" and not any(
-            item.get("data", {}).get("tool_name") == "weather_lookup"
-            for item in context.get("observations", [])
+            item.get("data", {}).get("tool_name") == "weather_lookup" for item in context.get("observations", [])
         ):
             return AgentDecision(
                 decision_type="call_tool",
@@ -463,8 +460,7 @@ async def test_engine_completes_mock_web_query(session):
     selecting_index = next(
         index
         for index, event in enumerate(events)
-        if event.type == "reasoning.phase.started"
-        and event.payload.get("phase") == "selecting_action"
+        if event.type == "reasoning.phase.started" and event.payload.get("phase") == "selecting_action"
     )
     summary_index = event_types.index("reasoning.summary.completed")
     turn_index = event_types.index("agent_turn.created")
@@ -476,19 +472,14 @@ async def test_engine_completes_mock_web_query(session):
     resolutions = [
         event.payload
         for event in events
-        if event.type == "tool.resolution.candidates"
-        and event.payload.get("plan_node_id") == execution_node.id
+        if event.type == "tool.resolution.candidates" and event.payload.get("plan_node_id") == execution_node.id
     ]
-    assert any(
-        payload["unresolved_capabilities"] == ["information.read", "information.search"]
-        for payload in resolutions
-    )
-    assert any(
-        payload["unresolved_capabilities"] == ["information.read"] for payload in resolutions
-    )
-    assert {
-        event.payload["tool_name"] for event in events if event.type == "tool.selection.accepted"
-    } >= {"catalog_search", "catalog_read"}
+    assert any(payload["unresolved_capabilities"] == ["information.read", "information.search"] for payload in resolutions)
+    assert any(payload["unresolved_capabilities"] == ["information.read"] for payload in resolutions)
+    assert {event.payload["tool_name"] for event in events if event.type == "tool.selection.accepted"} >= {
+        "catalog_search",
+        "catalog_read",
+    }
 
 
 async def test_trusted_skill_checks_become_provenanced_completion_criteria():
@@ -514,9 +505,7 @@ async def test_trusted_skill_checks_become_provenanced_completion_criteria():
         profile.reasoning_policy.model_dump(mode="json"),
         profile.model_dump(mode="json"),
     )
-    criterion = next(
-        item for item in contract.success_criteria if item.id.startswith("skill-check-")
-    )
+    criterion = next(item for item in contract.success_criteria if item.id.startswith("skill-check-"))
     assert criterion.mandatory is True
     assert criterion.verification_method == "task_adapter"
     assert criterion.provenance["qualified_identity"] == "custom:verified-workflow"
@@ -541,9 +530,7 @@ async def test_weather_plan_executes_nodes_in_dependency_order(session):
     )
     registry = AstraToolRegistry()
     registry.register(FakeWeather())
-    await RunEngine(
-        settings, model_client=WeatherPlanClient(), tool_registry=registry
-    )._run_with_repo(repo, run.id)
+    await RunEngine(settings, model_client=WeatherPlanClient(), tool_registry=registry)._run_with_repo(repo, run.id)
 
     loaded = await repo.require_run(run.id)
     plan = await PlanRepository(session).active_for_run(run.id)
@@ -634,13 +621,13 @@ async def test_answer_delta_batching_flushes_first_and_final_content(session):
     commit = AsyncMock(wraps=session.commit)
     session.commit = commit
 
-    await engine._start_answer_stream(repo, run.id)
+    await engine.answers._start_answer_stream(repo, run.id)
     commit.assert_not_awaited()
-    await engine._handle_answer_delta(repo, run.id, "首")
+    await engine.answers._handle_answer_delta(repo, run.id, "首")
     commit.assert_awaited_once()
-    await engine._handle_answer_delta(repo, run.id, "尾")
-    await engine._handle_answer_delta(repo, run.id, "\1")
-    await engine._complete_answer_stream(repo, run.id, "首尾")
+    await engine.answers._handle_answer_delta(repo, run.id, "尾")
+    await engine.answers._handle_answer_delta(repo, run.id, "\1")
+    await engine.answers._complete_answer_stream(repo, run.id, "首尾")
 
     events = await repo.list_events(run.id)
     assert [event.type for event in events] == [
@@ -657,9 +644,7 @@ async def test_answer_delta_batching_flushes_first_and_final_content(session):
 
 
 @pytest.mark.parametrize("answer_mode", [AnswerMode.standard, AnswerMode.trusted])
-async def test_streamed_answer_is_not_replaced_after_late_model_validation_error(
-    session, answer_mode
-):
+async def test_streamed_answer_is_not_replaced_after_late_model_validation_error(session, answer_mode):
     settings = AstraRuntimeSettings(model_provider="mock")
     profile = resolve_run_profile(
         answer_mode,
@@ -677,9 +662,7 @@ async def test_streamed_answer_is_not_replaced_after_late_model_validation_error
     )
     client = StreamThenModelErrorClient()
 
-    await RunEngine(settings, model_client=client, tool_registry=AstraToolRegistry())._run_with_repo(
-        repo, run.id
-    )
+    await RunEngine(settings, model_client=client, tool_registry=AstraToolRegistry())._run_with_repo(repo, run.id)
 
     loaded = await repo.require_run(run.id)
     events = await repo.list_events(run.id)
@@ -690,12 +673,16 @@ async def test_streamed_answer_is_not_replaced_after_late_model_validation_error
     assert event_types.count("answer.started") == 1
     assert event_types.count("answer.completed") == 1
     assert event_types.count("answer.schema_degraded") == 1
+    terminal_status = next(
+        index
+        for index, event in enumerate(events)
+        if event.type == "run.status_changed" and event.payload.get("status") == "completed"
+    )
+    assert event_types.index("answer.completed") < terminal_status
 
 
 @pytest.mark.parametrize("answer_mode", [AnswerMode.standard, AnswerMode.trusted])
-async def test_streamed_answer_is_not_resynthesized_when_answer_object_is_missing(
-    session, answer_mode
-):
+async def test_streamed_answer_is_not_resynthesized_when_answer_object_is_missing(session, answer_mode):
     settings = AstraRuntimeSettings(model_provider="mock")
     profile = resolve_run_profile(
         answer_mode,
@@ -713,9 +700,7 @@ async def test_streamed_answer_is_not_resynthesized_when_answer_object_is_missin
     )
     client = StreamWithoutStructuredAnswerClient()
 
-    await RunEngine(settings, model_client=client, tool_registry=AstraToolRegistry())._run_with_repo(
-        repo, run.id
-    )
+    await RunEngine(settings, model_client=client, tool_registry=AstraToolRegistry())._run_with_repo(repo, run.id)
 
     loaded = await repo.require_run(run.id)
     events = await repo.list_events(run.id)
@@ -744,9 +729,7 @@ async def test_final_plan_node_answer_is_regenerated_as_canonical_stream(session
     )
     client = FinalizeActiveNodeClient()
 
-    await RunEngine(settings, model_client=client, tool_registry=AstraToolRegistry())._run_with_repo(
-        repo, run.id
-    )
+    await RunEngine(settings, model_client=client, tool_registry=AstraToolRegistry())._run_with_repo(repo, run.id)
 
     loaded = await repo.require_run(run.id)
     events = await repo.list_events(run.id)
@@ -766,9 +749,7 @@ async def test_final_plan_node_answer_is_regenerated_as_canonical_stream(session
 
 async def test_standard_fast_path_skips_plan_state_and_all_quality_gates(session):
     settings = AstraRuntimeSettings(model_provider="mock")
-    profile = resolve_run_profile(
-        AnswerMode.standard, RequestedReasoningPolicy(execution_mode="auto_approval")
-    )
+    profile = resolve_run_profile(AnswerMode.standard, RequestedReasoningPolicy(execution_mode="auto_approval"))
     repo = RunUnitOfWork(session)
     run = await repo.create_task_run(
         "快速回答",
@@ -798,9 +779,7 @@ async def test_standard_fast_path_skips_plan_state_and_all_quality_gates(session
 
     event.listen(session.bind.sync_engine, "before_cursor_execute", count_selects)
     try:
-        await RunEngine(settings, model_client=client, tool_registry=AstraToolRegistry())._run_with_repo(
-            repo, run.id
-        )
+        await RunEngine(settings, model_client=client, tool_registry=AstraToolRegistry())._run_with_repo(repo, run.id)
     finally:
         event.remove(session.bind.sync_engine, "before_cursor_execute", count_selects)
 
@@ -818,21 +797,9 @@ async def test_standard_fast_path_skips_plan_state_and_all_quality_gates(session
     assert client.selects_before_decide == 6
     # The original full-graph loading path issued 129 SELECTs here. Fast
     # finalization adds one bounded artifact-visibility read.
-    assert len(select_statements) <= 13, Counter(
-        statement.rsplit("FROM ", 1)[-1].split()[0] for statement in select_statements
-    )
-    assert (
-        await session.scalar(
-            select(TaskWorkspaceRecord).where(TaskWorkspaceRecord.task_id == task_id)
-        )
-        is None
-    )
-    assert (
-        await session.scalar(
-            select(WorkspaceCheckpointRecord).where(WorkspaceCheckpointRecord.run_id == run.id)
-        )
-        is None
-    )
+    assert len(select_statements) <= 13, Counter(statement.rsplit("FROM ", 1)[-1].split()[0] for statement in select_statements)
+    assert await session.scalar(select(TaskWorkspaceRecord).where(TaskWorkspaceRecord.task_id == task_id)) is None
+    assert await session.scalar(select(WorkspaceCheckpointRecord).where(WorkspaceCheckpointRecord.run_id == run.id)) is None
     assert await PlanRepository(session).active_for_run(run.id) is None
     assert loaded.result["summary"] == "立即流式回答"
     assert loaded.result["verification_report"] is None
@@ -842,25 +809,20 @@ async def test_standard_fast_path_skips_plan_state_and_all_quality_gates(session
         "流式回答",
     ]
     assert not [event for event in events if event.type.startswith("reasoning.")]
-    assert [event.payload["action"] for event in events if event.type == "fast.action.decided"] == [
-        "answer"
-    ]
+    assert [event.payload["action"] for event in events if event.type == "fast.action.decided"] == ["answer"]
     assert "verification.created" not in [event.type for event in events]
     assert "reasoning.completion_decided" not in [event.type for event in events]
     assert "reasoning.runtime_limits" not in [event.type for event in events]
     assert "reasoning.decision_validated" not in [event.type for event in events]
     assert not any(
-        event.type == "reasoning.phase.started"
-        and event.payload.get("phase") in {"planning", "selecting_action", "verifying"}
+        event.type == "reasoning.phase.started" and event.payload.get("phase") in {"planning", "selecting_action", "verifying"}
         for event in events
     )
 
 
 async def test_standard_ask_user_uses_a_user_facing_fallback_question(session):
     settings = AstraRuntimeSettings(model_provider="mock", tool_states={"swarm": False})
-    profile = resolve_run_profile(
-        AnswerMode.standard, RequestedReasoningPolicy(execution_mode="auto_approval")
-    )
+    profile = resolve_run_profile(AnswerMode.standard, RequestedReasoningPolicy(execution_mode="auto_approval"))
     repo = RunUnitOfWork(session)
     run = await repo.create_task_run(
         "！",
@@ -889,9 +851,7 @@ async def test_standard_ask_user_uses_a_user_facing_fallback_question(session):
 
 async def test_standard_fast_path_defers_permission_records_until_after_first_delta(session):
     settings = AstraRuntimeSettings(model_provider="mock")
-    profile = resolve_run_profile(
-        AnswerMode.standard, RequestedReasoningPolicy(execution_mode="auto_approval")
-    )
+    profile = resolve_run_profile(AnswerMode.standard, RequestedReasoningPolicy(execution_mode="auto_approval"))
     repo = RunUnitOfWork(session)
     run = await repo.create_task_run(
         "快速回答",
@@ -904,20 +864,10 @@ async def test_standard_fast_path_defers_permission_records_until_after_first_de
 
     async def capture_permission_state():
         observed["identities"] = len(
-            (
-                await session.scalars(
-                    select(AgentIdentityRecord).where(AgentIdentityRecord.run_id == run.id)
-                )
-            ).all()
+            (await session.scalars(select(AgentIdentityRecord).where(AgentIdentityRecord.run_id == run.id))).all()
         )
         observed["catalogs"] = len(
-            (
-                await session.scalars(
-                    select(ToolCatalogSnapshotRecord).where(
-                        ToolCatalogSnapshotRecord.run_id == run.id
-                    )
-                )
-            ).all()
+            (await session.scalars(select(ToolCatalogSnapshotRecord).where(ToolCatalogSnapshotRecord.run_id == run.id))).all()
         )
 
     await RunEngine(
@@ -927,25 +877,13 @@ async def test_standard_fast_path_defers_permission_records_until_after_first_de
     )._run_with_repo(repo, run.id)
 
     assert observed == {"identities": 0, "catalogs": 1}
-    assert (
-        await session.scalar(
-            select(AgentIdentityRecord).where(AgentIdentityRecord.run_id == run.id)
-        )
-        is not None
-    )
-    assert (
-        await session.scalar(
-            select(ToolCatalogSnapshotRecord).where(ToolCatalogSnapshotRecord.run_id == run.id)
-        )
-        is not None
-    )
+    assert await session.scalar(select(AgentIdentityRecord).where(AgentIdentityRecord.run_id == run.id)) is not None
+    assert await session.scalar(select(ToolCatalogSnapshotRecord).where(ToolCatalogSnapshotRecord.run_id == run.id)) is not None
 
 
 async def test_standard_fast_path_reuses_tool_router_without_creating_steps(session):
     settings = AstraRuntimeSettings(model_provider="mock")
-    profile = resolve_run_profile(
-        AnswerMode.standard, RequestedReasoningPolicy(execution_mode="auto_approval")
-    )
+    profile = resolve_run_profile(AnswerMode.standard, RequestedReasoningPolicy(execution_mode="auto_approval"))
     repo = RunUnitOfWork(session)
     run = await repo.create_task_run(
         "查询天气",
@@ -958,9 +896,7 @@ async def test_standard_fast_path_reuses_tool_router_without_creating_steps(sess
     registry.register(FakeWeather())
     client = QuickToolClient()
 
-    await RunEngine(settings, model_client=client, tool_registry=registry)._run_with_repo(
-        repo, run.id
-    )
+    await RunEngine(settings, model_client=client, tool_registry=registry)._run_with_repo(repo, run.id)
 
     loaded = await repo.require_run(run.id)
     assert client.decide_calls == 2
@@ -985,9 +921,7 @@ async def test_standard_fast_path_keeps_tool_router_security_boundary(session):
     )
     client = QuickForbiddenToolClient()
 
-    await RunEngine(settings, model_client=client, tool_registry=AstraToolRegistry())._run_with_repo(
-        repo, run.id
-    )
+    await RunEngine(settings, model_client=client, tool_registry=AstraToolRegistry())._run_with_repo(repo, run.id)
 
     loaded = await repo.require_run(run.id)
     assert client.decide_calls == 3
@@ -1000,9 +934,7 @@ async def test_standard_fast_path_keeps_tool_router_security_boundary(session):
 async def test_engine_resumes_with_current_frozen_profile(session):
     repo = RunUnitOfWork(session)
     frozen = load_agent_profile()
-    run = await repo.create_task_run(
-        "恢复 Profile", {"provider": "mock"}, agent_profile_snapshot=frozen.snapshot()
-    )
+    run = await repo.create_task_run("恢复 Profile", {"provider": "mock"}, agent_profile_snapshot=frozen.snapshot())
     selected = await RunEngine(AstraRuntimeSettings(model_provider="mock"))._profile_for_run(
         repo, run.id, run.agent_profile_snapshot
     )
@@ -1095,9 +1027,7 @@ async def test_engine_binds_effective_reasoning_effort_before_model_operations(s
     )
     client = EffortSpyClient()
 
-    await RunEngine(
-        settings, model_client=client, tool_registry=fake_information_registry()
-    )._run_with_repo(repo, run.id)
+    await RunEngine(settings, model_client=client, tool_registry=fake_information_registry())._run_with_repo(repo, run.id)
 
     assert client.bound_efforts == ["deep"]
     assert client.bound_thinking[0].effective.model_dump() == {
@@ -1135,9 +1065,9 @@ async def test_disabled_model_thinking_does_not_suppress_public_process_events(s
         execution_profile=profile.model_dump(mode="json"),
     )
 
-    await RunEngine(
-        settings, model_client=MockModelClient(), tool_registry=fake_information_registry()
-    )._run_with_repo(repo, run.id)
+    await RunEngine(settings, model_client=MockModelClient(), tool_registry=fake_information_registry())._run_with_repo(
+        repo, run.id
+    )
 
     events = await repo.list_events(run.id)
     summaries = [event for event in events if event.type == "fast.action.decided"]
@@ -1162,9 +1092,7 @@ async def test_standard_profile_skips_planning_and_quality_assurance_objects(ses
     )
     client = PlanningSpyClient()
 
-    await RunEngine(
-        settings, model_client=client, tool_registry=fake_information_registry()
-    )._run_with_repo(repo, run.id)
+    await RunEngine(settings, model_client=client, tool_registry=fake_information_registry())._run_with_repo(repo, run.id)
 
     loaded = await repo.require_run(run.id)
     assert client.contract_calls == 0
@@ -1195,9 +1123,7 @@ async def test_trusted_engine_always_builds_contract_and_complete_plan(session):
     )
     client = PlanningSpyClient()
 
-    await RunEngine(
-        settings, model_client=client, tool_registry=fake_information_registry()
-    )._run_with_repo(repo, run.id)
+    await RunEngine(settings, model_client=client, tool_registry=fake_information_registry())._run_with_repo(repo, run.id)
 
     assert client.contract_calls == 1
     assert client.plan_calls == 1
@@ -1230,9 +1156,7 @@ async def test_follow_up_contract_excludes_private_conversation_transcript(sessi
     )
     client = PlanningSpyClient()
 
-    await RunEngine(
-        settings, model_client=client, tool_registry=fake_information_registry()
-    )._run_with_repo(repo, current.id)
+    await RunEngine(settings, model_client=client, tool_registry=fake_information_registry())._run_with_repo(repo, current.id)
 
     loaded = await repo.require_run(current.id)
     assert client.contract_goals == ["当前问题"]
@@ -1257,9 +1181,9 @@ async def test_engine_falls_back_when_model_returns_empty_plan(session):
         execution_profile=profile.model_dump(mode="json"),
     )
 
-    await RunEngine(
-        settings, model_client=EmptyPlanClient(), tool_registry=fake_information_registry()
-    )._run_with_repo(repo, run.id)
+    await RunEngine(settings, model_client=EmptyPlanClient(), tool_registry=fake_information_registry())._run_with_repo(
+        repo, run.id
+    )
 
     loaded = await repo.require_run(run.id)
     assert loaded.status == "waiting_user"
@@ -1390,7 +1314,6 @@ async def test_engine_replays_recorded_checkpoint_without_duplicate_tool_call(se
     loaded = await repo.require_run(run.id)
     assert len(loaded.tool_calls) == 1
     assert any(
-        event.type == "reasoning.checkpoint_recovered"
-        and event.payload.get("action") == "replay_result"
+        event.type == "reasoning.checkpoint_recovered" and event.payload.get("action") == "replay_result"
         for event in loaded.events
     )

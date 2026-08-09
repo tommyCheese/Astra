@@ -14,9 +14,7 @@ from app.infrastructure.plugins.interfaces import (
 )
 from app.infrastructure.tools.base import AstraToolSpec
 
-_SECRET_VALUE = re.compile(
-    r"(?i)\b(api[_-]?key|token|authorization|password)\s*[:=]\s*(?:bearer\s+)?\S+"
-)
+_SECRET_VALUE = re.compile(r"(?i)\b(api[_-]?key|token|authorization|password)\s*[:=]\s*(?:bearer\s+)?\S+")
 _SHELL_META = re.compile(r"(?:&&|\|\||[|;&<>`]|\$\(|\$\{|\n|\r)")
 
 
@@ -24,10 +22,7 @@ class ChartResultProcessor(PluginResultProcessor):
     def process(self, spec, tool_input, result):
         artifacts = list(result.get("artifacts", []))
         if not artifacts or any(
-            not item.get("mime_type")
-            or not item.get("checksum")
-            or int(item.get("size_bytes", 0)) <= 0
-            for item in artifacts
+            not item.get("mime_type") or not item.get("checksum") or int(item.get("size_bytes", 0)) <= 0 for item in artifacts
         ):
             raise ValueError("chart result contains invalid artifacts")
         return PluginResultProcessingOutput(
@@ -46,12 +41,7 @@ class ChartResultProcessor(PluginResultProcessor):
 class ChartArtifactValidator(PluginResultValidator):
     def validate(self, result, evidence):
         fragments = evidence.get("fragments", [])
-        artifacts = [
-            artifact
-            for item in fragments
-            if item.get("domain") == "chart"
-            for artifact in item.get("artifacts", [])
-        ]
+        artifacts = [artifact for item in fragments if item.get("domain") == "chart" for artifact in item.get("artifacts", [])]
         if not any(item.get("domain") == "chart" for item in fragments):
             return AgentValidationOutcome(validator="chart_artifact", passed=True, blocking=True)
         if not artifacts:
@@ -59,11 +49,7 @@ class ChartArtifactValidator(PluginResultValidator):
                 validator="chart_artifact",
                 passed=False,
                 blocking=True,
-                issues=[
-                    AgentValidationIssue(
-                        code="chart_artifact_missing", message="图表没有产生有效 Artifact。"
-                    )
-                ],
+                issues=[AgentValidationIssue(code="chart_artifact_missing", message="图表没有产生有效 Artifact。")],
             )
         return AgentValidationOutcome(
             validator="chart_artifact",

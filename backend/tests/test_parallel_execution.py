@@ -7,16 +7,16 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.application.agent_runtime.policies.reasoning import build_default_contract
-from app.application.planning.scheduler import PlanScheduler
-from app.application.planning.service import PlanService
-from app.application.run_management.execution.recovery import RunExecutionRecovery
-from app.application.runner.concurrency import (
+from app.application.planning.concurrency import (
     ResourceClaim,
     acquire_resource_claims,
     resource_claims_conflict,
     resource_claims_from_effect_plan,
 )
-from app.application.runner.coordinator import NodeExecutionResult, RunCoordinator
+from app.application.planning.coordinator import NodeExecutionResult, RunCoordinator
+from app.application.planning.scheduler import PlanScheduler
+from app.application.planning.service import PlanService
+from app.application.run_management.execution.recovery import scan_run_recovery
 from app.common.schemas.agent.execution_state import AgentState
 from app.common.schemas.agent.planning import (
     ExpectedObservation,
@@ -36,7 +36,7 @@ from app.infrastructure.repositories.executions import (
 )
 from app.infrastructure.repositories.plans import PlanRepository
 from app.infrastructure.repositories.run_unit_of_work import RunUnitOfWork
-from app.infrastructure.repositories.run_view_projection import RunViewProjector
+from app.infrastructure.repositories.run_view_projection import run_payload
 
 
 def parallel_plan() -> PlanDraft:
@@ -66,9 +66,7 @@ def parallel_plan() -> PlanDraft:
 
 
 async def test_execution_lease_budget_round_trip_and_run_projection(session):
-    run = await RunUnitOfWork(session).create_task_run(
-        "parallel", {"provider": "mock"}, answer_mode="trusted"
-    )
+    run = await RunUnitOfWork(session).create_task_run("parallel", {"provider": "mock"}, answer_mode="trusted")
     plan = await PlanRepository(session).create(run.id, parallel_plan())
     repository = NodeExecutionRepository(session)
     execution = await repository.create_claim(
@@ -101,12 +99,9 @@ async def test_execution_lease_budget_round_trip_and_run_projection(session):
         "tool_calls",
     }
 
-    projected = RunViewProjector().payload(await RunUnitOfWork(session).require_run(run.id))
+    projected = run_payload(await RunUnitOfWork(session).require_run(run.id))
     assert projected["node_executions"][0]["execution_id"] == execution.id
-    assert (
-        projected["node_executions"][0]["resource_leases"][0]["resource_summary"]
-        == "workspace file"
-    )
+    assert projected["node_executions"][0]["resource_leases"][0]["resource_summary"] == "workspace file"
     assert projected["parallelism"]["active_count"] == 1
 
 
@@ -215,9 +210,7 @@ async def test_scheduler_claims_independent_nodes_as_one_batch(session):
 
 
 async def test_scheduler_holds_join_consumer_without_blocking_unrelated_nodes(session):
-    run = await RunUnitOfWork(session).create_task_run(
-        "join barrier", {"provider": "mock"}, answer_mode="trusted"
-    )
+    run = await RunUnitOfWork(session).create_task_run("join barrier", {"provider": "mock"}, answer_mode="trusted")
     plan = await PlanRepository(session).create(run.id, parallel_plan())
     root = await AgentExecutionRepository(session).get_or_create_root(run.id)
     session.add(
@@ -241,9 +234,7 @@ async def test_scheduler_holds_join_consumer_without_blocking_unrelated_nodes(se
 
 
 async def test_scheduler_releases_consumed_join_and_blocks_failed_join(session):
-    run = await RunUnitOfWork(session).create_task_run(
-        "join outcomes", {"provider": "mock"}, answer_mode="trusted"
-    )
+    run = await RunUnitOfWork(session).create_task_run("join outcomes", {"provider": "mock"}, answer_mode="trusted")
     plan = await PlanRepository(session).create(run.id, parallel_plan())
     root = await AgentExecutionRepository(session).get_or_create_root(run.id)
     session.add_all(
@@ -345,9 +336,7 @@ async def test_scheduler_respects_budget_and_capability_limits(session):
     )
     loaded_plan = await PlanRepository(session).active_for_run(run.id)
     assert loaded_plan is not None
-    next(
-        node for node in loaded_plan.nodes if node.id == second.executions[0].plan_node_id
-    ).status = "completed"
+    next(node for node in loaded_plan.nodes if node.id == second.executions[0].plan_node_id).status = "completed"
     await session.commit()
     assert await scheduler.claim_ready_batch(run.id) is None
 
@@ -429,9 +418,7 @@ async def test_coordinator_workers_overlap_and_keep_execution_ownership(tmp_path
         assert {node.status for plan in loaded.plans for node in plan.nodes} == {"completed"}
         assert len(loaded.node_executions) == 3
         assert all(item.status == "completed" for item in loaded.node_executions)
-        assert {turn.node_execution_id for turn in loaded.turns} == {
-            item.id for item in loaded.node_executions
-        }
+        assert {turn.node_execution_id for turn in loaded.turns} == {item.id for item in loaded.node_executions}
     await engine.dispose()
 
 
@@ -541,9 +528,7 @@ async def test_run_cancellation_terminates_executions_and_releases_reservations(
     assert loaded.resource_leases[0].release_reason == "user_cancelled"
     assert loaded.budget_reservations[0].status == "cancelled"
     cancelled_run = await RunUnitOfWork(session).require_run(run.id)
-    cancelled_event = next(
-        event for event in cancelled_run.events if event.type == "plan.node.execution_cancelled"
-    )
+    cancelled_event = next(event for event in cancelled_run.events if event.type == "plan.node.execution_cancelled")
     assert cancelled_event.payload["node_execution_id"] == execution.id
     assert cancelled_event.payload["attempt"] == 1
 
@@ -580,9 +565,7 @@ async def test_failure_blocks_all_descendants_but_not_unrelated_branch(tmp_path)
                 node_key="independent",
                 title="Independent",
                 intent="finish",
-                expected_outcome=ExpectedObservation(
-                    kind="result", success_condition="independent"
-                ),
+                expected_outcome=ExpectedObservation(kind="result", success_condition="independent"),
             ),
         ]
     )
@@ -634,9 +617,7 @@ async def test_safe_timeout_creates_one_new_attempt_and_reuses_dag_position(tmp_
                         node_key="read-only",
                         title="Read",
                         intent="retry safely",
-                        expected_outcome=ExpectedObservation(
-                            kind="result", success_condition="read"
-                        ),
+                        expected_outcome=ExpectedObservation(kind="result", success_condition="read"),
                     )
                 ]
             ),
@@ -713,7 +694,7 @@ async def test_recovery_classifies_resume_replay_and_unknown_outcomes(tmp_path):
         run_id = run.id
         await session.commit()
 
-    scan = await RunExecutionRecovery(session_factory, stale_seconds=1).scan(run_id)
+    scan = await scan_run_recovery(session_factory, run_id, stale_seconds=1)
     assert scan.resumable_execution_ids == (resume.id,)
     assert scan.replayable_execution_ids == (replay.id,)
     assert scan.unknown_execution_ids == (unknown.id,)
@@ -750,9 +731,7 @@ async def test_concurrent_schedulers_cannot_overclaim_run_slots(tmp_path):
             return batch
 
     batches = await asyncio.gather(claim(), claim())
-    claimed = [
-        execution.id for batch in batches if batch is not None for execution in batch.executions
-    ]
+    claimed = [execution.id for batch in batches if batch is not None for execution in batch.executions]
     assert len(claimed) == 1
     async with session_factory() as session:
         active = await NodeExecutionRepository(session).active_for_run(run_id)

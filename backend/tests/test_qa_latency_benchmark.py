@@ -18,7 +18,7 @@ async def test_sse_parser_handles_multiline_and_trailing_payloads():
             'data: {"type":"stream.ready",',
             'data: "payload":{}}',
             "",
-            'id: 3',
+            "id: 3",
             'data: {"type":"answer.delta","payload":{"delta":"ok"}}',
         ):
             yield line
@@ -87,9 +87,7 @@ async def test_benchmark_bounds_parallel_runs(monkeypatch):
         return LatencySample(1, 2, 3, 4, 5), {}
 
     monkeypatch.setattr(qa_latency, "measure_run", fake_measure)
-    args = qa_latency.build_parser().parse_args(
-        ["--runs", "5", "--warmup", "0", "--concurrency", "2"]
-    )
+    args = qa_latency.build_parser().parse_args(["--runs", "5", "--warmup", "0", "--concurrency", "2"])
 
     result = await run_benchmark(args)
 
@@ -115,9 +113,7 @@ async def test_benchmark_defers_cleanup_until_measurements_finish(monkeypatch):
 
     monkeypatch.setattr(qa_latency, "measure_run", fake_measure)
     monkeypatch.setattr(qa_latency, "cleanup_run", fake_cleanup)
-    args = qa_latency.build_parser().parse_args(
-        ["--runs", "3", "--warmup", "0", "--concurrency", "3"]
-    )
+    args = qa_latency.build_parser().parse_args(["--runs", "3", "--warmup", "0", "--concurrency", "3"])
 
     await run_benchmark(args)
 

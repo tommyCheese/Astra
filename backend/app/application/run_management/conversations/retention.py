@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -22,19 +22,13 @@ class ConversationRetentionSweep:
     failed: int = 0
 
 
+@dataclass
 class ConversationRetentionService:
-    def __init__(
-        self,
-        settings: AstraRuntimeSettings,
-        session_factory: async_sessionmaker[AsyncSession],
-        *,
-        lifecycle: ConversationLifecycleService | None = None,
-    ):
-        self.settings = settings
-        self.session_factory = session_factory
-        self.lifecycle = lifecycle or ConversationLifecycleService(settings)
-        self._stop = asyncio.Event()
-        self._task: asyncio.Task[None] | None = None
+    settings: AstraRuntimeSettings
+    session_factory: async_sessionmaker[AsyncSession]
+    lifecycle: ConversationLifecycleService | None = None
+    _stop: asyncio.Event = field(default_factory=asyncio.Event)
+    _task: asyncio.Task[None] | None = None
 
     async def startup(self) -> None:
         if not self.settings.conversation_retention_enabled:
@@ -44,9 +38,7 @@ class ConversationRetentionService:
             return
         self._stop.clear()
         await self._sweep_safely(trigger="startup")
-        self._task = asyncio.create_task(
-            self._run(), name="astra-conversation-retention"
-        )
+        self._task = asyncio.create_task(self._run(), name="astra-conversation-retention")
 
     async def shutdown(self) -> None:
         task = self._task
@@ -71,8 +63,7 @@ class ConversationRetentionService:
             logger.exception("conversation_retention.sweep_failed trigger=%s", trigger)
             return ConversationRetentionSweep(failed=1)
         logger.info(
-            "conversation_retention.sweep_complete "
-            "trigger=%s selected=%s deleted=%s skipped=%s failed=%s",
+            "conversation_retention.sweep_complete trigger=%s selected=%s deleted=%s skipped=%s failed=%s",
             trigger,
             result.selected,
             result.deleted,
@@ -81,17 +72,13 @@ class ConversationRetentionService:
         )
         return result
 
-    async def sweep(
-        self, *, now: datetime | None = None
-    ) -> ConversationRetentionSweep:
+    async def sweep(self, *, now: datetime | None = None) -> ConversationRetentionSweep:
         if not self.settings.conversation_retention_enabled:
             return ConversationRetentionSweep()
         reference = now or datetime.now(timezone.utc)
         cutoff = reference - timedelta(days=self.settings.conversation_retention_days)
         async with self.session_factory() as session:
-            candidate_ids = await ConversationRepository(
-                session
-            ).retention_candidate_ids(
+            candidate_ids = await ConversationRepository(session).retention_candidate_ids(
                 cutoff=cutoff,
                 limit=self.settings.conversation_retention_batch_size,
             )
@@ -101,16 +88,15 @@ class ConversationRetentionService:
             try:
                 async with self.session_factory() as session:
                     repo = ConversationRepository(session)
-                    if not await repo.is_retention_eligible(
-                        conversation_id, cutoff=cutoff
-                    ):
+                    if not await repo.is_retention_eligible(conversation_id, cutoff=cutoff):
                         skipped += 1
                         continue
                     task = await repo.get(conversation_id)
                     if task is None:
                         skipped += 1
                         continue
-                    await self.lifecycle.delete(repo, task)
+                    lifecycle = self.lifecycle or ConversationLifecycleService(self.settings)
+                    await lifecycle.delete(repo, task)
                     deleted += 1
             except Exception:
                 failed += 1

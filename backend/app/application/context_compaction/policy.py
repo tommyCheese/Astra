@@ -101,9 +101,7 @@ def build_compaction_policy(settings: AstraRuntimeSettings, role: ContextOwnerRo
         trigger_ratio=settings.context_auto_compact_ratio,
         recovery_ratio=settings.context_compaction_recovery_ratio,
         recent_tail_tokens=(
-            settings.context_compaction_child_recent_tail_tokens
-            if child
-            else settings.context_compaction_recent_tail_tokens
+            settings.context_compaction_child_recent_tail_tokens if child else settings.context_compaction_recent_tail_tokens
         ),
         recent_tail_max_ratio=settings.context_compaction_recent_tail_max_ratio,
         protected_sections=protected[role],
@@ -115,9 +113,7 @@ def build_compaction_policy(settings: AstraRuntimeSettings, role: ContextOwnerRo
             else "RootContextCheckpointV2"
         ),
         recent_tail_priority=("user_correction", "tool_error", "observation", "model_input"),
-        capacity_exit=(
-            CapacityExit.budget_limited if child else CapacityExit.context_capacity_error
-        ),
+        capacity_exit=(CapacityExit.budget_limited if child else CapacityExit.context_capacity_error),
         enabled=settings.context_compaction_v2_enabled and enabled_by_role[role],
         shadow_mode=settings.context_compaction_shadow_mode,
         deterministic_emergency=settings.context_compaction_deterministic_emergency_enabled,
@@ -184,8 +180,7 @@ def evaluate_compaction_trigger(
     if previous_context_window is not None and accounting.context_window < previous_context_window:
         reasons.append("model_downshift")
     switch_requires_compaction = bool(
-        {"provider_switch", "model_switch", "model_downshift"}.intersection(reasons)
-        and accounting.total_tokens >= soft
+        {"provider_switch", "model_switch", "model_downshift"}.intersection(reasons) and accounting.total_tokens >= soft
     )
     return CompactionTriggerDecision(
         should_compact=hard or measured >= soft or switch_requires_compaction,

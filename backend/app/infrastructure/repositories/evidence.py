@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+from dataclasses import dataclass
 
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -17,9 +18,9 @@ from app.domain.grounding.schemas import (
 from app.infrastructure.db.models.runs import EvidenceRecord
 
 
+@dataclass
 class EvidenceRepository:
-    def __init__(self, session: AsyncSession):
-        self.session = session
+    session: AsyncSession
 
     async def append(
         self,
@@ -29,14 +30,8 @@ class EvidenceRepository:
         agent_execution_id: str | None = None,
     ) -> EvidenceRecord:
         if fragment.lineage.run_id not in {None, run_id}:
-            raise GroundingEvidenceConflictError(
-                "evidence Run lineage does not match persistence scope"
-            )
-        normalized = fragment.model_copy(
-            update={
-                "lineage": fragment.lineage.model_copy(update={"run_id": run_id})
-            }
-        )
+            raise GroundingEvidenceConflictError("evidence Run lineage does not match persistence scope")
+        normalized = fragment.model_copy(update={"lineage": fragment.lineage.model_copy(update={"run_id": run_id})})
         existing = await self.session.scalar(
             select(EvidenceRecord).where(
                 EvidenceRecord.run_id == run_id,
@@ -45,16 +40,9 @@ class EvidenceRepository:
         )
         if existing is not None:
             if existing.payload_digest != normalized.payload_digest:
-                raise GroundingEvidenceConflictError(
-                    f"conflicting evidence replay for {normalized.evidence_key}"
-                )
-            if (
-                agent_execution_id is not None
-                and existing.agent_execution_id not in {None, agent_execution_id}
-            ):
-                raise GroundingEvidenceConflictError(
-                    "evidence replay crosses AgentExecution isolation"
-                )
+                raise GroundingEvidenceConflictError(f"conflicting evidence replay for {normalized.evidence_key}")
+            if agent_execution_id is not None and existing.agent_execution_id not in {None, agent_execution_id}:
+                raise GroundingEvidenceConflictError("evidence replay crosses AgentExecution isolation")
             return existing
         record = EvidenceRecord(
             run_id=run_id,
@@ -85,16 +73,9 @@ class EvidenceRepository:
             if existing is None:
                 raise
             if existing.payload_digest != normalized.payload_digest:
-                raise GroundingEvidenceConflictError(
-                    f"conflicting evidence replay for {normalized.evidence_key}"
-                ) from exc
-            if (
-                agent_execution_id is not None
-                and existing.agent_execution_id not in {None, agent_execution_id}
-            ):
-                raise GroundingEvidenceConflictError(
-                    "evidence replay crosses AgentExecution isolation"
-                ) from exc
+                raise GroundingEvidenceConflictError(f"conflicting evidence replay for {normalized.evidence_key}") from exc
+            if agent_execution_id is not None and existing.agent_execution_id not in {None, agent_execution_id}:
+                raise GroundingEvidenceConflictError("evidence replay crosses AgentExecution isolation") from exc
             return existing
 
     async def append_many(
@@ -120,8 +101,7 @@ class EvidenceRepository:
                     "lineage": GroundingEvidenceLineage(
                         run_id=run_id,
                         plan_node_id=plan_node_id or fragment.lineage.plan_node_id,
-                        node_execution_id=node_execution_id
-                        or fragment.lineage.node_execution_id,
+                        node_execution_id=node_execution_id or fragment.lineage.node_execution_id,
                         tool_call_id=tool_call_id or fragment.lineage.tool_call_id,
                         artifact_ids=list(
                             dict.fromkeys(
@@ -140,14 +120,10 @@ class EvidenceRepository:
 
     async def list_for_run(self, run_id: str) -> list[EvidenceRecord]:
         result = await self.session.execute(
-            select(EvidenceRecord)
-            .where(EvidenceRecord.run_id == run_id)
-            .order_by(EvidenceRecord.created_at, EvidenceRecord.id)
+            select(EvidenceRecord).where(EvidenceRecord.run_id == run_id).order_by(EvidenceRecord.created_at, EvidenceRecord.id)
         )
         return list(result.scalars().all())
 
     async def ledger_for_run(self, run_id: str) -> GroundingEvidenceLedger:
         records = await self.list_for_run(run_id)
-        return GroundingEvidenceLedger(
-            GroundingEvidenceFragment.model_validate(record.fragment) for record in records
-        )
+        return GroundingEvidenceLedger(GroundingEvidenceFragment.model_validate(record.fragment) for record in records)

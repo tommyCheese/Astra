@@ -29,15 +29,43 @@ async def test_usage_summary_persists_exact_provider_tokens(session):
     )
     session.add_all(
         [
-            ToolCallRecord(run_id=run.id, tool_name="catalog_search", tool_version="1", input={}, status="succeeded", permission="network", side_effect_level="read", completed_at=utc_now()),
-            ToolCallRecord(run_id=run.id, tool_name="catalog_search", tool_version="1", input={}, status="failed", permission="network", side_effect_level="read", completed_at=utc_now()),
-            ToolCallRecord(run_id=run.id, tool_name="catalog_search", tool_version="1", input={}, status="running", permission="network", side_effect_level="read"),
+            ToolCallRecord(
+                run_id=run.id,
+                tool_name="catalog_search",
+                tool_version="1",
+                input={},
+                status="succeeded",
+                permission="network",
+                side_effect_level="read",
+                completed_at=utc_now(),
+            ),
+            ToolCallRecord(
+                run_id=run.id,
+                tool_name="catalog_search",
+                tool_version="1",
+                input={},
+                status="failed",
+                permission="network",
+                side_effect_level="read",
+                completed_at=utc_now(),
+            ),
+            ToolCallRecord(
+                run_id=run.id,
+                tool_name="catalog_search",
+                tool_version="1",
+                input={},
+                status="running",
+                permission="network",
+                side_effect_level="read",
+            ),
             AgentTurnRecord(run_id=run.id, turn_index=1, decision_type="finalize", reasoning_summary="done"),
         ]
     )
     await session.commit()
 
-    summary = await usage.summary(scope="task", task_id=run.task_id, run_id=None, from_time=utc_now() - timedelta(days=1), to_time=None)
+    summary = await usage.summary(
+        scope="task", task_id=run.task_id, run_id=None, from_time=utc_now() - timedelta(days=1), to_time=None
+    )
 
     assert summary.overview.model_invocations == 1
     assert summary.tokens.total == 150

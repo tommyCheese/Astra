@@ -7,9 +7,7 @@ from typing import Any
 from app.infrastructure.db.models.runs import RunEventRecord, RunRecord
 
 
-def step_views(
-    run: RunRecord, canonical_steps: list[dict[str, Any]] | None
-) -> list[dict[str, Any]]:
+def step_views(run: RunRecord, canonical_steps: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
     if canonical_steps is not None:
         return canonical_steps
     return [

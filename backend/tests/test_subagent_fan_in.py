@@ -11,7 +11,6 @@ from app.application.agent_runtime.policies.reasoning import (
     resolve_run_profile,
 )
 from app.application.agent_runtime.services.completion.gate import (
-    CompletionGateInput,
     CompletionGateStage,
 )
 from app.application.agent_runtime.services.shared.progress import ExecutionProgress
@@ -83,9 +82,7 @@ def _contract(root, request_id: str) -> DelegationContract:
 
 
 async def _child(session, root, request_id: str):
-    child = await AgentExecutionRepository(session).create_child(
-        contract=_contract(root, request_id)
-    )
+    child = await AgentExecutionRepository(session).create_child(contract=_contract(root, request_id))
     await session.commit()
     return child
 
@@ -135,11 +132,7 @@ async def _complete(
         session.add(record)
         await session.flush()
         evidence_refs.append(SubagentEvidenceReference(id=record.id))
-    status = (
-        SubagentExecutionStatus.completed_with_warnings
-        if warnings
-        else SubagentExecutionStatus.completed
-    )
+    status = SubagentExecutionStatus.completed_with_warnings if warnings else SubagentExecutionStatus.completed
     result = SubagentResult(
         status=status,
         summary=finding,
@@ -186,9 +179,7 @@ async def test_result_validator_checks_schema_lineage_artifacts_evidence_and_com
     missing.result = SubagentResult(
         status="completed",
         outputs={"finding": "unsupported"},
-        artifacts=[
-            SubagentArtifactReference(id="missing", uri="artifact://missing")
-        ],
+        artifacts=[SubagentArtifactReference(id="missing", uri="artifact://missing")],
         completion={"state": "completed"},
     ).model_dump(mode="json")
     await session.commit()
@@ -226,14 +217,12 @@ async def test_required_optional_and_first_success_join_semantics(session):
     assert (await joins.evaluate(required.id)).status == "waiting"
     second.status = "failed"
     second.phase = "terminal"
-    second.result = SubagentResult(
-        status="failed", summary="failed", completion={"state": "failed"}
-    ).model_dump(mode="json")
+    second.result = SubagentResult(status="failed", summary="failed", completion={"state": "failed"}).model_dump(mode="json")
     optional.status = "failed"
     optional.phase = "terminal"
-    optional.result = SubagentResult(
-        status="failed", summary="optional failed", completion={"state": "failed"}
-    ).model_dump(mode="json")
+    optional.result = SubagentResult(status="failed", summary="optional failed", completion={"state": "failed"}).model_dump(
+        mode="json"
+    )
     await session.commit()
     required_result = await joins.evaluate(required.id)
     assert required_result.status == "blocked"
@@ -274,9 +263,7 @@ async def test_result_merger_deduplicates_and_preserves_conflicts_and_warnings(s
     await _complete(session, first, finding="A", warnings=["limited coverage"])
     await _complete(session, second, finding="B")
     validator = SubagentResultValidator(session)
-    merged = merge_subagent_results(
-        [await validator.validate(first.id), await validator.validate(second.id)]
-    )
+    merged = merge_subagent_results([await validator.validate(first.id), await validator.validate(second.id)])
     assert merged.conflicts[0]["kind"] == "fact_conflict"
     assert merged.facts[0]["value"] == "A"
     assert merged.warnings == ("limited coverage",)
@@ -309,10 +296,7 @@ async def _merged_payload(session, join, child) -> dict:
     validated = await SubagentResultValidator(session).validate(child.id)
     merged = merge_subagent_results([validated])
     return {
-        **{
-            key: list(value) if isinstance(value, tuple) else value
-            for key, value in merged.__dict__.items()
-        },
+        **{key: list(value) if isinstance(value, tuple) else value for key, value in merged.__dict__.items()},
         "group_id": join.group_id,
         "join_id": join.id,
         "unsafe_loser_execution_ids": [],
@@ -440,9 +424,7 @@ async def test_persisted_root_completion_barrier_waits_through_join_consumption(
         validation_outcomes=[AgentValidationOutcome(validator="task_adapter", passed=True)],
     )
 
-    while_child_runs = await stage.evaluate(
-        CompletionGateInput(run.id, profile, progress, None), verification
-    )
+    while_child_runs = await stage.evaluate(run.id, profile, progress, None, verification)
     assert while_child_runs.state == TerminalState.continue_run
     assert f"agent-execution:{child.id}" in while_child_runs.unmet_criteria
 
@@ -450,9 +432,7 @@ async def test_persisted_root_completion_barrier_waits_through_join_consumption(
     await joins.evaluate(join.id)
     await session.refresh(join)
     assert join.status == "ready"
-    while_merge_is_unconsumed = await stage.evaluate(
-        CompletionGateInput(run.id, profile, progress, None), verification
-    )
+    while_merge_is_unconsumed = await stage.evaluate(run.id, profile, progress, None, verification)
     assert while_merge_is_unconsumed.state == TerminalState.continue_run
     assert f"agent-join:{join.id}" in while_merge_is_unconsumed.unmet_criteria
 
@@ -465,9 +445,7 @@ async def test_persisted_root_completion_barrier_waits_through_join_consumption(
         result=await _merged_payload(session, join, child),
     )
     await session.commit()
-    after_consumption = await stage.evaluate(
-        CompletionGateInput(run.id, profile, progress, None), verification
-    )
+    after_consumption = await stage.evaluate(run.id, profile, progress, None, verification)
     assert after_consumption.state == TerminalState.completed
 
 

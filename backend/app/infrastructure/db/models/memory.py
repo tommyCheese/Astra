@@ -71,9 +71,7 @@ class PersistedMemoryRecord(AstraOrmRecordBase):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    last_accessed_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
+    last_accessed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     revoke_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
 
@@ -212,12 +210,8 @@ class MemoryConsolidationJobRecord(AstraOrmRecordBase):
     publish_result: Mapped[dict] = mapped_column(JsonType, default=dict)
     error: Mapped[dict | None] = mapped_column(JsonType, nullable=True)
     lease_owner: Mapped[str | None] = mapped_column(String(120), nullable=True)
-    lease_expires_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
-    rollback_of_id: Mapped[str | None] = mapped_column(
-        ForeignKey("memory_consolidation_jobs.id"), nullable=True
-    )
+    lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    rollback_of_id: Mapped[str | None] = mapped_column(ForeignKey("memory_consolidation_jobs.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

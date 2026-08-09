@@ -137,9 +137,7 @@ def test_workspace_control_paths_are_protected_at_root_and_descendants():
         "task://task-1/workspace/.git/config",
         "task://task-1/workspace/nested/.codex/settings.json",
     ):
-        decision = engine.evaluate(
-            permission_request(action="workspace_write", resource=resource), policies
-        )
+        decision = engine.evaluate(permission_request(action="workspace_write", resource=resource), policies)
         assert decision.decision == PermissionDecisionKind.deny
         assert decision.explanation.reason_code == "protected_resource"
 
@@ -348,9 +346,7 @@ async def test_permission_lease_consumption_revocation_and_integrity_invalidatio
 async def test_multiple_approval_grants_are_consumed_together(session):
     repository = RunUnitOfWork(session)
     run = await repository.create_task_run("Atomic lease consumption", {})
-    turn = await repository.create_agent_turn(
-        run.id, 1, "call_tool", "compound", selected_tool="compound", phase="prepared"
-    )
+    turn = await repository.create_agent_turn(run.id, 1, "call_tool", "compound", selected_tool="compound", phase="prepared")
     call = await repository.start_tool_call(
         run.id,
         None,

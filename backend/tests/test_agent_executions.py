@@ -57,14 +57,7 @@ async def test_new_run_has_one_backward_compatible_root_execution(session):
     assert root.root_slot == "root"
     assert root.depth == 0
     assert root.status == "queued"
-    assert (
-        await session.scalar(
-            select(func.count(AgentExecutionRecord.id)).where(
-                AgentExecutionRecord.run_id == run.id
-            )
-        )
-        == 1
-    )
+    assert await session.scalar(select(func.count(AgentExecutionRecord.id)).where(AgentExecutionRecord.run_id == run.id)) == 1
 
 
 async def test_reasoning_initialization_checkpoints_root_execution(session):
@@ -204,17 +197,13 @@ async def test_descendant_barrier_and_stale_scan_are_scoped_to_tree(session):
             depth=2,
         )
     )
-    claimed = await repository.claim(
-        child.id, worker_id="stale-worker", expected_state_version=child.state_version
-    )
+    claimed = await repository.claim(child.id, worker_id="stale-worker", expected_state_version=child.state_version)
     claimed.heartbeat_at = datetime.now(UTC) - timedelta(minutes=10)
     await session.flush()
 
     descendants = await repository.descendants(root.id)
     active = await repository.active_descendants(root.id)
-    stale = await repository.stale_active(
-        heartbeat_before=datetime.now(UTC) - timedelta(minutes=1)
-    )
+    stale = await repository.stale_active(heartbeat_before=datetime.now(UTC) - timedelta(minutes=1))
 
     assert [item.id for item in descendants] == [child.id, grandchild.id]
     assert {item.id for item in active} == {child.id, grandchild.id}

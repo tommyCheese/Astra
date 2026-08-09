@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any
 
 from sqlalchemy import select, update
@@ -14,9 +15,9 @@ from app.infrastructure.db.models.executions import (
 )
 
 
+@dataclass
 class ContextCompactionAttemptRepository:
-    def __init__(self, session: AsyncSession):
-        self.session = session
+    session: AsyncSession
 
     async def completed(self, metadata: CompactionMetadata) -> ContextCompactionAttemptRecord | None:
         result = await self.session.scalar(
@@ -63,10 +64,7 @@ class ContextCompactionAttemptRepository:
         if current is None:
             return False
         continuation = envelope.continuation
-        if (
-            current.state_version != continuation.state_version
-            or current.cancellation_epoch != continuation.cancellation_epoch
-        ):
+        if current.state_version != continuation.state_version or current.cancellation_epoch != continuation.cancellation_epoch:
             return False
         payload = {
             **(current.checkpoint or {}),
@@ -110,9 +108,7 @@ class ContextCompactionAttemptRepository:
         if int(prior.get("state_version", 0)) != envelope.continuation.state_version:
             return False
         retained = set(retained_tail_ids)
-        folded_source_ids = (
-            item for item in envelope.continuation.source_item_ids if item not in retained
-        )
+        folded_source_ids = (item for item in envelope.continuation.source_item_ids if item not in retained)
         next_state = {
             **prior,
             "version": 2,

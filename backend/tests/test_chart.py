@@ -1,8 +1,8 @@
 import pytest
 from pydantic import ValidationError
+from support import TrustedRuntimeHarness as AstraAgentLoop
 
 from app.application.agent_runtime.policies.reasoning import AgentReasoningPolicyCompiler
-from app.application.agent_runtime.services.execution.loop import AstraAgentLoop
 from app.common.core.config import AstraRuntimeSettings
 from app.common.schemas.agent.execution_state import AgentDecision
 from app.common.schemas.agent.run_policy import RequestedReasoningPolicy
@@ -121,13 +121,9 @@ def test_chart_tool_switch_overrides_available_sandbox():
 
 
 def test_chart_manifest_availability_does_not_fabricate_invalid_probe_input():
-    registry = build_application_tool_registry(
-        AstraRuntimeSettings(sandbox_enabled=True, sandbox_skip_availability_check=True)
-    )
+    registry = build_application_tool_registry(AstraRuntimeSettings(sandbox_enabled=True, sandbox_skip_availability_check=True))
 
-    status = ToolRouter(registry, available_backends={"sandbox.remote"}).availability(
-        "chart.render"
-    )
+    status = ToolRouter(registry, available_backends={"sandbox.remote"}).availability("chart.render")
 
     assert status.available is True
 
@@ -145,9 +141,7 @@ class ChartClient(MockModelClient):
                 tool_name="chart.render",
                 tool_input=request().model_dump(mode="json"),
             ), None
-        return AgentDecision(decision_type="finalize", reasoning_summary="完成"), AgentFinalAnswer(
-            summary="图表已生成"
-        )
+        return AgentDecision(decision_type="finalize", reasoning_summary="完成"), AgentFinalAnswer(summary="图表已生成")
 
 
 class ChartProvider(SandboxProvider):
@@ -182,9 +176,7 @@ class ChartProvider(SandboxProvider):
         return None
 
 
-async def test_chart_only_agent_run_creates_sandbox_artifact_without_web_evidence(
-    session, tmp_path
-):
+async def test_chart_only_agent_run_creates_sandbox_artifact_without_web_evidence(session, tmp_path):
     settings = AstraRuntimeSettings(
         model_provider="mock",
         sandbox_enabled=True,
@@ -192,9 +184,7 @@ async def test_chart_only_agent_run_creates_sandbox_artifact_without_web_evidenc
         artifact_store_path=str(tmp_path / "store"),
     )
     repo = RunUnitOfWork(session)
-    policy = AgentReasoningPolicyCompiler().compile(
-        RequestedReasoningPolicy(execution_mode="auto_approval")
-    )
+    policy = AgentReasoningPolicyCompiler().compile(RequestedReasoningPolicy(execution_mode="auto_approval"))
     run = await repo.create_task_run(
         "生成折线图",
         settings.model_policy,

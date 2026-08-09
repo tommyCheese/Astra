@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.infrastructure.repositories.approval_store import ApprovalStore
@@ -12,6 +14,7 @@ from app.infrastructure.repositories.run_query_store import RunQueryStore
 from app.infrastructure.repositories.run_step_turn_store import RunStepTurnStore
 
 
+@dataclass
 class RunUnitOfWork(
     RunCoreStore,
     RunPlanRevisionStore,
@@ -39,8 +42,7 @@ class RunUnitOfWork(
         }
     )
 
-    def __init__(self, session: AsyncSession):
-        self.session = session
+    session: AsyncSession
 
     async def commit(self) -> None:
         await self.session.commit()

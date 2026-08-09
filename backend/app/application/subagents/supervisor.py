@@ -82,9 +82,7 @@ class SubagentSupervisor:
     async def delegate_tasks(self, fanout: SubagentFanoutRequest) -> SubagentFanoutResult:
         if self._closed:
             raise ValueError("Subagent supervisor is closed")
-        live_tool_states = await ToolSettingsRepository(self.session).get_or_create(
-            default_tool_states(self.settings)
-        )
+        live_tool_states = await ToolSettingsRepository(self.session).get_or_create(default_tool_states(self.settings))
         eligibility = subagent_execution_eligibility(
             self.policy,
             live_swarm_enabled=bool(live_tool_states.get("swarm", False)),
@@ -105,9 +103,7 @@ class SubagentSupervisor:
             if self._closed:
                 return
             if self._dispatch_task is None or self._dispatch_task.done():
-                self._dispatch_task = asyncio.create_task(
-                    self._drain_queue(), name=f"subagent-supervisor:{self.run_id}"
-                )
+                self._dispatch_task = asyncio.create_task(self._drain_queue(), name=f"subagent-supervisor:{self.run_id}")
 
     async def _drain_queue(self) -> None:
         while not self._closed:
@@ -140,9 +136,7 @@ class SubagentSupervisor:
     ) -> None:
         model_client = self.model_client_factory()
         if hasattr(model_client, "usage_recorder"):
-            model_client.usage_recorder = DatabaseUsageRecorder(
-                execution.run_id, agent_execution_id=execution.id
-            )
+            model_client.usage_recorder = DatabaseUsageRecorder(execution.run_id, agent_execution_id=execution.id)
         executor = LocalAstraAgentExecutor(
             model_client=model_client,
             tool_registry=self.tool_registry,
@@ -195,19 +189,24 @@ class SubagentSupervisor:
         observations: list[dict[str, Any]] = []
         joins = SubagentJoinService(self.session)
         run = await RunUnitOfWork(self.session).require_run_core(self.run_id)
-        persisted_join_ids = {
-            str(item.get("data", {}).get("join_id"))
-            for item in (run.agent_state or {}).get("observations", [])
-            if item.get("kind") == "subagent_join" and item.get("data", {}).get("join_id")
-        }
+        persisted_join_ids = set(
+            filter(
+                None,
+                map(
+                    lambda item: (
+                        str(item.get("data", {}).get("join_id"))
+                        if item.get("kind") == "subagent_join" and item.get("data", {}).get("join_id")
+                        else None
+                    ),
+                    (run.agent_state or {}).get("observations", []),
+                ),
+            )
+        )
         # A process may stop after the Join/event commit but before the in-memory
         # observation is checkpointed into AgentState. Re-project the durable result
         # once on recovery; canonical AgentState and the live guard suppress repeats.
         for consumed in await joins.consumed_for_parent(self.parent_execution_id):
-            if (
-                consumed.id in persisted_join_ids
-                or consumed.id in self._reported_consumed_joins
-            ):
+            if any((consumed.id in persisted_join_ids, consumed.id in self._reported_consumed_joins)):
                 continue
             observations.append(self._consumed_observation(consumed.result))
             self._reported_consumed_joins.add(consumed.id)
@@ -234,17 +233,14 @@ class SubagentSupervisor:
                     }
                 )
                 continue
-            if evaluation.status != "ready" or join.status != "ready":
+            if any((evaluation.status != "ready", join.status != "ready")):
                 continue
             if evaluation.loser_ids:
                 _, unsafe = await joins.cancel_safe_first_success_losers(evaluation)
             else:
                 unsafe = ()
             join = await joins.begin_merge(join.id, expected_version=join.state_version)
-            validated = [
-                await joins.validator.validate(execution_id)
-                for execution_id in evaluation.successful_ids
-            ]
+            validated = await asyncio.gather(*map(joins.validator.validate, evaluation.successful_ids))
             merged = merge_subagent_results(validated)
             payload = {
                 **deepcopy(merged.__dict__),
@@ -252,10 +248,9 @@ class SubagentSupervisor:
                 "join_id": join.id,
                 "unsafe_loser_execution_ids": list(unsafe),
             }
-            payload = {
-                key: list(value) if isinstance(value, tuple) else value
-                for key, value in payload.items()
-            }
+            payload = dict(
+                map(lambda item: (item[0], list(item[1]) if isinstance(item[1], tuple) else item[1]), payload.items())
+            )
             await joins.mark_consumed(
                 join.id,
                 expected_version=join.state_version,

@@ -39,11 +39,7 @@ class RunPlanRevisionStore:
             raise ValueError("Invalid or stale plan confirmation")
         plan_repository = PlanRepository(self.session)
         plan = await plan_repository.require(plan_id)
-        if (
-            plan.run_id != run_id
-            or plan.version != expected_plan_version
-            or plan.status != "planned"
-        ):
+        if plan.run_id != run_id or plan.version != expected_plan_version or plan.status != "planned":
             raise ValueError("Invalid or stale plan confirmation")
         plan = await plan_repository.activate(plan_id, expected_version=expected_plan_version)
         state = AgentState.model_validate(run.agent_state)
@@ -143,9 +139,7 @@ class RunPlanRevisionStore:
         run_id: str,
         expected_version: int,
     ) -> bool:
-        return (
-            plan.run_id == run_id and plan.version == expected_version and plan.status == "planned"
-        )
+        return plan.run_id == run_id and plan.version == expected_version and plan.status == "planned"
 
     async def reject_plan_revision(
         self,

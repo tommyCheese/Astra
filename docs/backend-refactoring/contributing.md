@@ -42,6 +42,13 @@ HTTP mapper 生成稳定 envelope。不得在深层返回 HTTP 状态码。
 测试公共行为，不锁定私有辅助函数、文件布局或调用次数，除非调用次数本身是性能契约。
 共享数据使用 `tests/support` 中的 typed builders/fakes。
 
+## Runtime capability 规则
+
+- 新执行能力优先实现固定 slot：context、decision、action、observation、progress、completion 或 lifecycle；不得新增任意事件订阅器或第二个 turn loop。
+- Planning、Memory/Skill authoring、AutoDream、Evolution 与 Credential administration 是控制面，不能导入 canonical Loop。Runtime 只接收冻结、窄化、可审计的 serving contribution。
+- model/state/action/cancellation/event port 是强制边界。任何插件都不能覆盖 schema validation、effect analysis、authorization、approval integrity、persistence、cancellation 或 result-unknown recovery。
+- API schema、ORM、public projection 与 Runtime value 只有在各自拥有独立验证、事务、授权/脱敏或协议不变量时才能同时存在；字段一一复制的 dataclass/mapper 应删除。
+
 ## 质量门禁与例外
 
 在 `backend` 目录运行 `bash scripts/check_backend_quality.sh`。提交前还应运行全量 pytest、

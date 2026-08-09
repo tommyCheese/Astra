@@ -3,9 +3,14 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import dataclass
+from functools import partial
 from typing import Any
 
-from app.application.agent_runtime.models import AgentRuntimeLimits, RootRuntimeAssembly
+from app.application.agent_runtime.models import (
+    RootRuntimeAssembly,
+    RootRuntimeState,
+)
 from app.application.agent_runtime.policies.completion import AgentCompletionGate
 from app.application.agent_runtime.policies.reasoning import (
     AgentObservationEvaluator,
@@ -16,18 +21,12 @@ from app.application.agent_runtime.services.completion.memory_candidates import 
     MemoryCandidateWriter,
 )
 from app.application.agent_runtime.services.completion.node_completion import NodeCompletionStage
-from app.application.agent_runtime.services.completion.verification import (
-    CompletionVerificationStage,
-)
-from app.application.agent_runtime.services.context.assembler import AgentContextAssembler
+from app.application.agent_runtime.services.completion.verification import verify_completion
+from app.application.agent_runtime.services.context.assembler import assemble_agent_context
 from app.application.agent_runtime.services.context.turn_preparation import RootTurnPreparationStage
 from app.application.agent_runtime.services.decisions.control import ControlDecisionStage
 from app.application.agent_runtime.services.decisions.root import RootDecisionStage
 from app.application.agent_runtime.services.decisions.skills import SkillActionStage
-from app.application.agent_runtime.services.execution.root_iteration import (
-    RootAgentIterationStage,
-    RootRuntimeState,
-)
 from app.application.agent_runtime.services.execution.tool_action import InvocationPipeline
 from app.application.agent_runtime.services.shared.progress import (
     ExecutionProgress,
@@ -52,29 +51,17 @@ from app.infrastructure.tools.base import AstraToolRegistry
 from app.infrastructure.tools.router import ToolRouter
 
 
+@dataclass
 class RootRuntimeComposer:
-    def __init__(
-        self,
-        *,
-        settings: AstraRuntimeSettings,
-        model_client: ModelClient,
-        tool_registry: AstraToolRegistry,
-        tool_router: ToolRouter,
-        plugin_runtime: PluginRuntimeState,
-        evaluator: AgentObservationEvaluator,
-        reflection_gate: AgentReflectionGate,
-        completion_gate: AgentCompletionGate,
-        normalize_tool_output: Callable[[str, dict[str, Any]], dict[str, Any]],
-    ) -> None:
-        self._settings = settings
-        self._model_client = model_client
-        self._tool_registry = tool_registry
-        self._tool_router = tool_router
-        self._plugin_runtime = plugin_runtime
-        self._evaluator = evaluator
-        self._reflection_gate = reflection_gate
-        self._completion_gate = completion_gate
-        self._normalize_tool_output = normalize_tool_output
+    _settings: AstraRuntimeSettings
+    _model_client: ModelClient
+    _tool_registry: AstraToolRegistry
+    _tool_router: ToolRouter
+    _plugin_runtime: PluginRuntimeState
+    _evaluator: AgentObservationEvaluator
+    _reflection_gate: AgentReflectionGate
+    _completion_gate: AgentCompletionGate
+    _normalize_tool_output: Callable[[str, dict[str, Any]], dict[str, Any]]
 
     def compose(self, values: dict[str, Any]) -> RootRuntimeAssembly:
         repository: RunUnitOfWork = values["repository"]
@@ -116,18 +103,18 @@ class RootRuntimeComposer:
         repository: RunUnitOfWork = values["repository"]
         progress: ExecutionProgress = values["progress"]
         policy: EffectiveReasoningPolicy = values["policy"]
-        limits: AgentRuntimeLimits = values["limits"]
+        _, _, max_reflections, _ = values["limits"]
         progress_stage = ProgressEvaluationStage(
-            run_id=values["run_id"],
-            goal=values["goal"],
-            repository=repository,
-            plan_repository=plans,
-            model_client=self._model_client,
-            tool_registry=self._tool_registry,
-            policy=policy,
-            reflection_gate=self._reflection_gate,
-            evaluator=self._evaluator,
-            max_reflections=limits.max_reflections,
+            _run_id=values["run_id"],
+            _goal=values["goal"],
+            _repository=repository,
+            _plan_repository=plans,
+            _model_client=self._model_client,
+            _tool_registry=self._tool_registry,
+            _policy=policy,
+            _reflection_gate=self._reflection_gate,
+            _evaluator=self._evaluator,
+            _max_reflections=max_reflections,
             progress=progress,
         )
         memory_writer = MemoryCandidateWriter(
@@ -200,7 +187,7 @@ class RootRuntimeComposer:
     ) -> RootRuntimeAssembly:
         repository: RunUnitOfWork = values["repository"]
         progress: ExecutionProgress = values["progress"]
-        limits: AgentRuntimeLimits = values["limits"]
+        _, max_tool_calls, _, max_replans = values["limits"]
         progress_stage = collaborators["progress_stage"]
         control = ControlDecisionStage(
             repository,
@@ -208,8 +195,8 @@ class RootRuntimeComposer:
             scheduler,
             progress,
             progress_stage,
-            max_replans=limits.max_replans,
-            max_tool_calls=limits.max_tool_calls,
+            _max_replans=max_replans,
+            _max_tool_calls=max_tool_calls,
         )
         completion = NodeCompletionStage(repository, plans, progress, progress_stage)
         tool_stage = self._tool_stage(
@@ -237,18 +224,18 @@ class RootRuntimeComposer:
         collaborators: dict[str, Any],
     ) -> InvocationPipeline:
         return InvocationPipeline(
-            repository=repository,
-            tool_registry=self._tool_registry,
-            authorization_stage=collaborators["authorization"],
-            approval_stage=collaborators["approval"],
-            invocation_stage=collaborators["invocation"],
-            observation_stage=collaborators["observation"],
-            failure_stage=collaborators["failure"],
-            progress=progress,
-            progress_stage=progress_stage,
-            memory_writer=collaborators["memory_writer"],
-            evaluator=self._evaluator,
-            tool_outputs=collaborators["tool_outputs"],
+            _repository=repository,
+            _tool_registry=self._tool_registry,
+            _authorization=collaborators["authorization"],
+            _approval=collaborators["approval"],
+            _invocation=collaborators["invocation"],
+            _observation=collaborators["observation"],
+            _failure=collaborators["failure"],
+            _progress=progress,
+            _progress_stage=progress_stage,
+            _memory_writer=collaborators["memory_writer"],
+            _evaluator=self._evaluator,
+            _tool_outputs=collaborators["tool_outputs"],
         )
 
     def _compose_root(
@@ -265,28 +252,39 @@ class RootRuntimeComposer:
         repository: RunUnitOfWork = values["repository"]
         run = values["run"]
         progress: ExecutionProgress = values["progress"]
-        recovered = values["recovered"]
+        terminal_status, terminal_summary = values["terminal"]
+        max_turns, max_tool_calls, max_reflections, max_replans = values["limits"]
         state = RootRuntimeState(
             run=run,
             profile=values["profile"],
-            approved_tool_call=recovered.approved_tool_call,
-            approved_turn=recovered.approved_turn,
-            approved_request_snapshot=recovered.approved_request_snapshot,
-            terminal_status=recovered.terminal_status,
-            terminal_summary=recovered.terminal_summary,
+            approved_tool_call=values["approved_call"],
+            approved_turn=values["approved_turn"],
+            approved_request_snapshot=values["approved_snapshot"],
+            terminal_status=terminal_status,
+            terminal_summary=terminal_summary,
         )
         preparation = self._preparation(values, plans, scheduler, progress, state)
         decision = RootDecisionStage(
-            repository=repository,
-            model_client=self._model_client,
-            progress=progress,
-            progress_stage=collaborators["progress_stage"],
-            skill_action_stage=collaborators["skill"],
-            ensure_permission_runtime=values["permission_runtime"].ensure,
-            answer_mode=values["profile"].answer_mode,
-            on_answer_delta=values["on_answer_delta"],
+            _repository=repository,
+            _model_client=self._model_client,
+            _progress=progress,
+            _progress_stage=collaborators["progress_stage"],
+            _skills=collaborators["skill"],
+            _ensure_permissions=values["permission_runtime"].ensure,
+            _answer_mode=values["profile"].answer_mode,
+            _on_answer_delta=values["on_answer_delta"],
         )
-        iteration = RootAgentIterationStage(
+        finalization = self._finalization(values, plans, collaborators, infrastructure)
+        return RootRuntimeAssembly(
+            run=run,
+            initial_turn_count=values["initial_turn_count"],
+            profile=values["profile"],
+            policy=values["policy"],
+            max_turns=max_turns,
+            max_tool_calls=max_tool_calls,
+            max_reflections=max_reflections,
+            max_replans=max_replans,
+            progress=progress,
             state=state,
             preparation_stage=preparation,
             decision_stage=decision,
@@ -295,17 +293,6 @@ class RootRuntimeComposer:
             tool_stage=tool_stage,
             subagent_supervisor=values["supervisor"],
             execution_mode=values["policy"].execution_mode,
-        )
-        finalization = self._finalization(values, plans, collaborators, infrastructure)
-        return RootRuntimeAssembly(
-            run=run,
-            initial_turn_count=len(values["loaded"].turns),
-            profile=values["profile"],
-            policy=values["policy"],
-            limits=values["limits"],
-            progress=progress,
-            state=state,
-            iteration_stage=iteration,
             finalization_stage=finalization,
             tool_outputs=collaborators["tool_outputs"],
         )
@@ -320,20 +307,21 @@ class RootRuntimeComposer:
     ) -> RootTurnPreparationStage:
         repository: RunUnitOfWork = values["repository"]
         return RootTurnPreparationStage(
-            repository=repository,
-            plan_repository=plans,
-            scheduler=scheduler,
-            assembler=AgentContextAssembler(
+            _repository=repository,
+            _plans=plans,
+            _scheduler=scheduler,
+            _assembler=partial(
+                assemble_agent_context,
                 repository,
                 skills_enabled=self._settings.skills_enabled,
                 settings=self._settings,
             ),
-            settings=self._settings,
-            model_client=self._model_client,
-            tool_registry=self._tool_registry,
-            tool_router=self._tool_router,
-            progress=progress,
-            subagent_supervisor=values["supervisor"],
+            _settings=self._settings,
+            _model_client=self._model_client,
+            _tool_registry=self._tool_registry,
+            _tool_router=self._tool_router,
+            _progress=progress,
+            _subagents=values["supervisor"],
         )
 
     def _finalization(
@@ -344,14 +332,14 @@ class RootRuntimeComposer:
         infrastructure: dict[str, Any],
     ) -> AgentFinalizationStage:
         return AgentFinalizationStage(
-            repository=values["repository"],
-            plan_repository=plans,
-            model_client=self._model_client,
-            plugin_runtime=self._plugin_runtime,
-            memory_writer=collaborators["memory_writer"],
-            verifier=CompletionVerificationStage(),
-            completion_gate=self._completion_gate,
-            progress_stage=collaborators["progress_stage"],
-            workspace_service=infrastructure["workspace_service"],
-            on_answer_delta=values["on_answer_delta"],
+            _repository=values["repository"],
+            _plan_repository=plans,
+            _model_client=self._model_client,
+            _plugin_runtime=self._plugin_runtime,
+            _memory_writer=collaborators["memory_writer"],
+            _verifier=verify_completion,
+            _completion_gate=self._completion_gate,
+            _progress_stage=collaborators["progress_stage"],
+            _workspace_service=infrastructure["workspace_service"],
+            _on_answer_delta=values["on_answer_delta"],
         )

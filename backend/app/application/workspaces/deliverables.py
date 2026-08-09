@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import timezone
 from pathlib import Path
 
@@ -40,11 +41,7 @@ RECEIPT_SIDE_EFFECT_LEVELS = {
 def file_deliverable_kind(mime_type: str | None, path: str | None = None) -> str:
     normalized = (mime_type or "").split(";", 1)[0].strip().lower()
     data_suffixes = {".csv", ".json", ".parquet", ".tsv", ".xls", ".xlsx"}
-    return (
-        "data"
-        if normalized in DATA_MIME_TYPES or Path(path or "").suffix.lower() in data_suffixes
-        else "file"
-    )
+    return "data" if normalized in DATA_MIME_TYPES or Path(path or "").suffix.lower() in data_suffixes else "file"
 
 
 def _short_scalar(value, *, limit: int = 500) -> str | None:
@@ -56,12 +53,7 @@ def _short_scalar(value, *, limit: int = 500) -> str | None:
 
 def _first_scalar(sources, keys, *, limit=500):
     return next(
-        (
-            value
-            for source in sources
-            for key in keys
-            if (value := _short_scalar(source.get(key), limit=limit)) is not None
-        ),
+        (value for source in sources for key in keys if (value := _short_scalar(source.get(key), limit=limit)) is not None),
         None,
     )
 
@@ -72,8 +64,7 @@ def _first_external_url(sources):
             value
             for source in sources
             for key in ("url", "link", "resource_url")
-            if (value := _short_scalar(source.get(key), limit=2000)) is not None
-            and value.startswith(("https://", "http://"))
+            if (value := _short_scalar(source.get(key), limit=2000)) is not None and value.startswith(("https://", "http://"))
         ),
         None,
     )
@@ -97,14 +88,9 @@ def operation_receipt(call: ToolCallRecord) -> dict | None:
         "target",
         "url",
     }
-    if call.side_effect_level == "external_side_effect" and not receipt_keys.intersection(
-        {*output, *tool_input}
-    ):
+    if call.side_effect_level == "external_side_effect" and not receipt_keys.intersection({*output, *tool_input}):
         return None
-    summary = (
-        _first_scalar((output,), ("summary", "message", "result", "status_text"))
-        or f"{call.tool_name} 已成功完成"
-    )
+    summary = _first_scalar((output,), ("summary", "message", "result", "status_text")) or f"{call.tool_name} 已成功完成"
     return {
         "summary": summary,
         "status": _short_scalar(output.get("status"), limit=80) or call.status,
@@ -118,28 +104,22 @@ def operation_receipt(call: ToolCallRecord) -> dict | None:
     }
 
 
+@dataclass
 class DeliverableCatalog:
     """Canonical projection used by both Library and Scheduled Tasks."""
 
-    def __init__(self, session: AsyncSession):
-        self.session = session
+    session: AsyncSession
 
-    async def list(
-        self, *, job_id: str | None = None, limit: int = 500
-    ) -> list[ScheduledDeliverableView]:
+    async def list(self, *, job_id: str | None = None, limit: int = 500) -> list[ScheduledDeliverableView]:
         schedule_runs = await self._schedule_runs(job_id, limit)
         scheduled_by_run = {item.run_id: item for item in schedule_runs if item.run_id}
         artifacts = await self._artifacts(job_id, list(scheduled_by_run), limit)
-        runs = await self._records_by_id(
-            RunRecord, {*scheduled_by_run, *(item.run_id for item in artifacts)}
-        )
+        runs = await self._records_by_id(RunRecord, {*scheduled_by_run, *(item.run_id for item in artifacts)})
         file_rows, latest_changes = await self._library_files(job_id)
         task_ids = {item.task_id for item in runs.values()}
         task_ids.update(task.id for _file, _workspace, task in file_rows)
         tasks = await self._records_by_id(TaskRecord, task_ids)
-        jobs = await self._records_by_id(
-            ScheduledJobRecord, {item.job_id for item in schedule_runs}
-        )
+        jobs = await self._records_by_id(ScheduledJobRecord, {item.job_id for item in schedule_runs})
         changes, files_by_location, calls = await self._scheduled_sources(list(scheduled_by_run))
         deliverables, scheduled_locations = self._scheduled_deliverables(
             schedule_runs, runs, tasks, jobs, artifacts, changes, files_by_location, calls
@@ -159,17 +139,11 @@ class DeliverableCatalog:
         return deliverables[:limit]
 
     async def _schedule_runs(self, job_id, limit):
-        schedule_query = select(ScheduledJobRunRecord).where(
-            ScheduledJobRunRecord.run_id.is_not(None)
-        )
+        schedule_query = select(ScheduledJobRunRecord).where(ScheduledJobRunRecord.run_id.is_not(None))
         if job_id is not None:
             schedule_query = schedule_query.where(ScheduledJobRunRecord.job_id == job_id)
         return list(
-            (
-                await self.session.scalars(
-                    schedule_query.order_by(ScheduledJobRunRecord.created_at.desc()).limit(limit)
-                )
-            ).all()
+            (await self.session.scalars(schedule_query.order_by(ScheduledJobRunRecord.created_at.desc()).limit(limit))).all()
         )
 
     async def _artifacts(self, job_id, scheduled_run_ids, limit):
@@ -181,13 +155,7 @@ class DeliverableCatalog:
             if not scheduled_run_ids:
                 return []
             artifact_query = artifact_query.where(ArtifactRecord.run_id.in_(scheduled_run_ids))
-        return list(
-            (
-                await self.session.scalars(
-                    artifact_query.order_by(ArtifactRecord.created_at.desc()).limit(limit)
-                )
-            ).all()
-        )
+        return list((await self.session.scalars(artifact_query.order_by(ArtifactRecord.created_at.desc()).limit(limit))).all())
 
     async def _library_files(self, job_id):
         file_rows: list[tuple[WorkspaceFileRecord, TaskWorkspaceRecord, TaskRecord]] = []
@@ -227,19 +195,12 @@ class DeliverableCatalog:
                     ).all()
                 )
                 for change in library_changes:
-                    latest_change_by_location.setdefault(
-                        (change.workspace_id, change.relative_path), change
-                    )
+                    latest_change_by_location.setdefault((change.workspace_id, change.relative_path), change)
         return file_rows, latest_change_by_location
 
     async def _records_by_id(self, model, record_ids):
         return (
-            {
-                item.id: item
-                for item in (
-                    await self.session.scalars(select(model).where(model.id.in_(record_ids)))
-                ).all()
-            }
+            {item.id: item for item in (await self.session.scalars(select(model).where(model.id.in_(record_ids)))).all()}
             if record_ids
             else {}
         )
@@ -279,9 +240,7 @@ class DeliverableCatalog:
             if workspace_ids
             else []
         )
-        files_by_location = {
-            (item.workspace_id, item.relative_path): item for item in current_files
-        }
+        files_by_location = {(item.workspace_id, item.relative_path): item for item in current_files}
         tool_calls = (
             list(
                 (
@@ -301,9 +260,7 @@ class DeliverableCatalog:
         )
         return changes, files_by_location, tool_calls
 
-    def _scheduled_deliverables(
-        self, schedule_runs, runs, tasks, jobs, artifacts, changes, files_by_location, tool_calls
-    ):
+    def _scheduled_deliverables(self, schedule_runs, runs, tasks, jobs, artifacts, changes, files_by_location, tool_calls):
         artifacts_by_run: dict[str, list[ArtifactRecord]] = {}
         for artifact in artifacts:
             artifacts_by_run.setdefault(artifact.run_id, []).append(artifact)
@@ -344,20 +301,14 @@ class DeliverableCatalog:
         scheduled_by_run,
         scheduled_locations,
     ):
-        scheduled_artifact_ids = {
-            artifact.id for artifact in artifacts if artifact.run_id in scheduled_by_run
-        }
+        scheduled_artifact_ids = {artifact.id for artifact in artifacts if artifact.run_id in scheduled_by_run}
         snapshotted_task_paths = {
             (runs[artifact.run_id].task_id, artifact.path)
             for artifact in artifacts
             if artifact.type == "workspace_snapshot" and artifact.path and artifact.run_id in runs
         }
         deliverables.extend(_library_artifacts(artifacts, scheduled_artifact_ids, runs, tasks))
-        deliverables.extend(
-            _library_workspace_files(
-                file_rows, latest_changes, scheduled_locations, snapshotted_task_paths
-            )
-        )
+        deliverables.extend(_library_workspace_files(file_rows, latest_changes, scheduled_locations, snapshotted_task_paths))
 
 
 def _result_deliverable(schedule_run, run, common, summary):
@@ -372,9 +323,7 @@ def _result_deliverable(schedule_run, run, common, summary):
     )
 
 
-def _scheduled_run_deliverables(
-    schedule_run, run, task, job, artifacts, changes, files_by_location, calls
-):
+def _scheduled_run_deliverables(schedule_run, run, task, job, artifacts, changes, files_by_location, calls):
     common = {
         "job_id": schedule_run.job_id,
         "job_name": job.name if job else None,
@@ -395,18 +344,14 @@ def _scheduled_run_deliverables(
         if path:
             emitted_paths.add(path)
         deliverables.append(_artifact_deliverable(artifact, run, common, path))
-    locations = _append_changed_files(
-        deliverables, schedule_run, run, common, changes, files_by_location, emitted_paths
-    )
+    locations = _append_changed_files(deliverables, schedule_run, run, common, changes, files_by_location, emitted_paths)
     for call in calls:
         if receipt := operation_receipt(call):
             deliverables.append(_receipt_deliverable(call, common, receipt))
     return deliverables, locations
 
 
-def _append_changed_files(
-    deliverables, schedule_run, run, common, changes, files_by_location, emitted_paths
-):
+def _append_changed_files(deliverables, schedule_run, run, common, changes, files_by_location, emitted_paths):
     locations = set()
     for change in changes:
         locations.add((change.workspace_id, change.relative_path))

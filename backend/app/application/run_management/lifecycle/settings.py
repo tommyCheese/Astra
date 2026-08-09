@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.common.contracts.json_values import JsonObject
@@ -22,21 +24,18 @@ from app.infrastructure.repositories.tool_settings import (
 )
 
 
+@dataclass
 class RunSettingsResolver:
-    def __init__(self, session: AsyncSession, base_settings: AstraRuntimeSettings) -> None:
-        self._session = session
-        self._base_settings = base_settings
+    _session: AsyncSession
+    _base_settings: AstraRuntimeSettings
 
     async def for_new_run(self, model: RunModelConfig | None) -> AstraRuntimeSettings:
-        tool_states = await ToolSettingsRepository(self._session).get_or_create(
-            default_tool_states(self._base_settings)
+        tool_states = await ToolSettingsRepository(self._session).get_or_create(default_tool_states(self._base_settings))
+        provider_defaults = dict.fromkeys(
+            self._base_settings.trusted_tool_provider_map,
+            True,
         )
-        provider_defaults = {
-            provider_id: True for provider_id in self._base_settings.trusted_tool_provider_map
-        }
-        provider_states = await ToolProviderSettingsRepository(self._session).get_or_create(
-            provider_defaults
-        )
+        provider_states = await ToolProviderSettingsRepository(self._session).get_or_create(provider_defaults)
         return self.apply_model_config(
             apply_provider_states(
                 apply_tool_states(self._base_settings, tool_states),
@@ -60,9 +59,7 @@ class RunSettingsResolver:
     ) -> AstraRuntimeSettings:
         if not model:
             return settings
-        model_config = (
-            model if isinstance(model, RunModelConfig) else RunModelConfig.model_validate(model)
-        )
+        model_config = model if isinstance(model, RunModelConfig) else RunModelConfig.model_validate(model)
         if model_config.provider not in SUPPORTED_MODEL_PROVIDERS:
             raise AstraInputValidationError(
                 "MODEL_PROVIDER_UNSUPPORTED",
@@ -77,14 +74,9 @@ class RunSettingsResolver:
             }
         )
         missing_api_key = (
-            model_config.provider not in API_KEY_OPTIONAL_MODEL_PROVIDERS
-            and not configured_settings.model_api_key
+            model_config.provider not in API_KEY_OPTIONAL_MODEL_PROVIDERS and not configured_settings.model_api_key
         )
-        if (
-            not configured_settings.model_name
-            or not configured_settings.model_base_url
-            or missing_api_key
-        ):
+        if not configured_settings.model_name or not configured_settings.model_base_url or missing_api_key:
             raise AstraInputValidationError(
                 "MODEL_CONFIGURATION_REQUIRED",
                 "请先配置模型名称、API 地址和 API Key。",

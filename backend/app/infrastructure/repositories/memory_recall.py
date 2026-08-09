@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any
 
 from sqlalchemy import select
@@ -12,11 +13,11 @@ from app.infrastructure.db.models.memory import MemoryRecallEventRecord
 from app.infrastructure.db.models.runs import RunRecord
 
 
+@dataclass
 class MemoryRecallRepository:
     """Persists recall decisions and their later utility feedback."""
 
-    def __init__(self, session: AsyncSession):
-        self.session = session
+    session: AsyncSession
 
     async def record_event(
         self,
@@ -86,9 +87,7 @@ class MemoryRecallRepository:
 
     async def _require_run(self, run_id: str) -> None:
         exists = await self.session.scalar(
-            select(RunRecord.id)
-            .join(TaskRecord, TaskRecord.id == RunRecord.task_id)
-            .where(RunRecord.id == run_id)
+            select(RunRecord.id).join(TaskRecord, TaskRecord.id == RunRecord.task_id).where(RunRecord.id == run_id)
         )
         if exists is None:
             raise MemoryValidationError(f"Run not found: {run_id}")

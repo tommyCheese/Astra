@@ -59,9 +59,7 @@ class SwarmTool(AstraTool):
         context: ToolExecutionContext | None = None,
     ) -> dict[str, Any]:
         if context is None or context.delegation_context is None:
-            raise ToolExecutionError(
-                "subagent_unavailable", "Swarm requires an Astra supervisor context"
-            )
+            raise ToolExecutionError("subagent_unavailable", "Swarm requires an Astra supervisor context")
         fanout = SubagentFanoutRequest.model_validate(tool_input)
         dispatcher = context.delegation_context
         if not hasattr(dispatcher, "delegate_tasks"):
@@ -72,9 +70,9 @@ class SwarmTool(AstraTool):
             raise ToolExecutionError(exc.issue.code.value, exc.issue.message) from exc
         except ValueError as exc:
             raise ToolExecutionError("delegation_rejected", str(exc)) from exc
-        return ToolResultEnvelope(
-            data=SubagentFanoutResult.model_validate(result).model_dump(mode="json")
-        ).model_dump(mode="json")
+        return ToolResultEnvelope(data=SubagentFanoutResult.model_validate(result).model_dump(mode="json")).model_dump(
+            mode="json"
+        )
 
 
 def build_runtime_tool_registry(

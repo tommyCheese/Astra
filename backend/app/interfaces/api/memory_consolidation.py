@@ -45,9 +45,7 @@ def _safe_profile_snapshot(value: dict[str, Any] | None) -> dict[str, Any]:
                 if not isinstance(document, dict):
                     continue
                 safe_documents[str(name)] = {
-                    key: document.get(key)
-                    for key in ("filename", "sha256", "size_bytes", "status")
-                    if key in document
+                    key: document.get(key) for key in ("filename", "sha256", "size_bytes", "status") if key in document
                 }
         safe_profile = {
             key: profile.get(key)
@@ -60,11 +58,9 @@ def _safe_profile_snapshot(value: dict[str, Any] | None) -> dict[str, Any]:
             if key in profile
         }
         safe_profile["documents"] = safe_documents
-    return {
-        key: snapshot.get(key)
-        for key in ("operation", "snapshot_hash", "selected_documents")
-        if key in snapshot
-    } | ({"profile": safe_profile} if safe_profile else {})
+    return {key: snapshot.get(key) for key in ("operation", "snapshot_hash", "selected_documents") if key in snapshot} | (
+        {"profile": safe_profile} if safe_profile else {}
+    )
 
 
 def _view(job: MemoryConsolidationJobRecord) -> ConsolidationJobView:

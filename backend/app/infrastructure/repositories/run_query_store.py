@@ -26,12 +26,8 @@ def run_detail_options():
         selectinload(RunRecord.approval_grants),
         selectinload(RunRecord.agent_executions),
         selectinload(RunRecord.agent_joins),
-        selectinload(RunRecord.node_executions).selectinload(
-            NodeExecutionRecord.resource_leases
-        ),
-        selectinload(RunRecord.node_executions).selectinload(
-            NodeExecutionRecord.budget_reservations
-        ),
+        selectinload(RunRecord.node_executions).selectinload(NodeExecutionRecord.resource_leases),
+        selectinload(RunRecord.node_executions).selectinload(NodeExecutionRecord.budget_reservations),
         selectinload(RunRecord.plans).selectinload(PlanRecord.nodes),
         selectinload(RunRecord.plans).selectinload(PlanRecord.edges),
     )
@@ -54,9 +50,7 @@ class RunQueryStore:
     async def get_run_initial(self, run_id: str) -> tuple[RunRecord | None, bool]:
         """Load a one-query optimistic snapshot unless the Run is already terminal."""
         result = await self.session.execute(
-            select(RunRecord)
-            .where(RunRecord.id == run_id)
-            .execution_options(populate_existing=True)
+            select(RunRecord).where(RunRecord.id == run_id).execution_options(populate_existing=True)
         )
         run = result.scalar_one_or_none()
         if run is None or run.status not in self.TERMINAL_STATUSES:
@@ -69,10 +63,7 @@ class RunQueryStore:
 
     async def list_recent_runs(self, limit: int = 100) -> list[RunRecord]:
         result = await self.session.execute(
-            select(RunRecord)
-            .order_by(RunRecord.created_at.desc())
-            .limit(limit)
-            .options(*run_detail_options())
+            select(RunRecord).order_by(RunRecord.created_at.desc()).limit(limit).options(*run_detail_options())
         )
         return list(result.scalars().all())
 
@@ -85,9 +76,7 @@ class RunQueryStore:
     async def require_run_core(self, run_id: str) -> RunRecord:
         """Load only the Run row for latency-sensitive runtime decisions."""
         result = await self.session.execute(
-            select(RunRecord)
-            .where(RunRecord.id == run_id)
-            .execution_options(populate_existing=True)
+            select(RunRecord).where(RunRecord.id == run_id).execution_options(populate_existing=True)
         )
         run = result.scalar_one_or_none()
         if run is None:
@@ -135,9 +124,7 @@ class RunQueryStore:
         return run
 
     async def count_agent_turns(self, run_id: str) -> int:
-        count = await self.session.scalar(
-            select(func.count(AgentTurnRecord.id)).where(AgentTurnRecord.run_id == run_id)
-        )
+        count = await self.session.scalar(select(func.count(AgentTurnRecord.id)).where(AgentTurnRecord.run_id == run_id))
         return int(count or 0)
 
     async def list_task_runs(self, task_id: str) -> list[RunRecord]:
@@ -186,11 +173,7 @@ class RunQueryStore:
         if not was_loaded:
             run.task.updated_at = run.updated_at
         else:
-            await self.session.execute(
-                update(TaskRecord)
-                .where(TaskRecord.id == run.task_id)
-                .values(updated_at=run.updated_at)
-            )
+            await self.session.execute(update(TaskRecord).where(TaskRecord.id == run.task_id).values(updated_at=run.updated_at))
         if status == "planning" and run.started_at is None:
             run.started_at = utc_now()
         if status in {"completed", "completed_with_warnings", "failed", "blocked", "cancelled"}:

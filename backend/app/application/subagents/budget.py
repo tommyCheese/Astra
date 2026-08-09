@@ -37,9 +37,7 @@ def envelope_amounts(value: SubagentBudgetEnvelope | dict[str, Any]) -> dict[str
         "tokens": float(raw.get("max_tokens", 0)),
         "model_calls": float(raw.get("max_model_calls", 0)),
         "tool_calls": float(raw.get("max_tool_calls", 0)),
-        "wall_time_ms": float(
-            raw.get("max_wall_time_ms", float(raw.get("max_wall_time_seconds", 0)) * 1000)
-        ),
+        "wall_time_ms": float(raw.get("max_wall_time_ms", float(raw.get("max_wall_time_seconds", 0)) * 1000)),
         "cost_usd": float(raw.get("max_cost_usd", 0)),
         "children": float(max(1, int(raw.get("max_children", raw.get("max_children_total", 1))))),
     }
@@ -69,9 +67,7 @@ class HierarchicalBudgetManager:
         commit: bool = True,
     ) -> AgentBudgetReservationRecord:
         existing = await self.session.scalar(
-            select(AgentBudgetReservationRecord).where(
-                AgentBudgetReservationRecord.child_execution_id == child_execution_id
-            )
+            select(AgentBudgetReservationRecord).where(AgentBudgetReservationRecord.child_execution_id == child_execution_id)
         )
         requested = envelope_amounts(envelope)
         if existing is not None:
@@ -101,9 +97,7 @@ class HierarchicalBudgetManager:
                 )
             ).all()
         )
-        reserved = {
-            key: sum(float(item.envelope.get(key, 0)) for item in active) for key in BUDGET_FIELDS
-        }
+        reserved = {key: sum(float(item.envelope.get(key, 0)) for item in active) for key in BUDGET_FIELDS}
         limits = envelope_amounts(parent.budget_envelope or {})
         # A historical root may not carry subagent limits; fail closed rather
         # than treating absent limits as unlimited.
@@ -142,14 +136,10 @@ class HierarchicalBudgetManager:
                 await self.session.flush()
         except IntegrityError as exc:
             existing = await self.session.scalar(
-                select(AgentBudgetReservationRecord).where(
-                    AgentBudgetReservationRecord.child_execution_id == child.id
-                )
+                select(AgentBudgetReservationRecord).where(AgentBudgetReservationRecord.child_execution_id == child.id)
             )
             if existing is None or existing.envelope != requested:
-                raise HierarchicalBudgetError(
-                    "Concurrent child budget reservation conflict"
-                ) from exc
+                raise HierarchicalBudgetError("Concurrent child budget reservation conflict") from exc
             return existing
         if commit:
             await self.session.commit()
@@ -157,9 +147,7 @@ class HierarchicalBudgetManager:
 
     async def _child_counts(self, parent):
         async def count(*conditions):
-            value = await self.session.scalar(
-                select(func.count(AgentExecutionRecord.id)).where(*conditions)
-            )
+            value = await self.session.scalar(select(func.count(AgentExecutionRecord.id)).where(*conditions))
             return int(value or 0)
 
         return (
@@ -221,9 +209,7 @@ class HierarchicalBudgetManager:
         commit: bool = True,
     ) -> AgentBudgetReservationRecord:
         reservation = await self.session.scalar(
-            select(AgentBudgetReservationRecord).where(
-                AgentBudgetReservationRecord.child_execution_id == child_execution_id
-            )
+            select(AgentBudgetReservationRecord).where(AgentBudgetReservationRecord.child_execution_id == child_execution_id)
         )
         if reservation is None:
             raise HierarchicalBudgetError("Child budget reservation does not exist")
@@ -282,19 +268,14 @@ class HierarchicalBudgetManager:
 
     @staticmethod
     def _settled_parent_usage(parent, reservation, normalized):
-        returned = {
-            key: float(reservation.envelope.get(key, 0)) - normalized[key] for key in BUDGET_FIELDS
-        }
+        returned = {key: float(reservation.envelope.get(key, 0)) - normalized[key] for key in BUDGET_FIELDS}
         usage = deepcopy(parent.budget_usage or {})
         active = dict(usage.get("delegated_reserved") or {})
         usage["delegated_reserved"] = {
-            key: max(0.0, float(active.get(key, 0)) - float(reservation.envelope.get(key, 0)))
-            for key in BUDGET_FIELDS
+            key: max(0.0, float(active.get(key, 0)) - float(reservation.envelope.get(key, 0))) for key in BUDGET_FIELDS
         }
         descendant = dict(usage.get("descendant_usage") or {})
-        usage["descendant_usage"] = {
-            key: float(descendant.get(key, 0)) + normalized[key] for key in BUDGET_FIELDS
-        }
+        usage["descendant_usage"] = {key: float(descendant.get(key, 0)) + normalized[key] for key in BUDGET_FIELDS}
         return returned, usage
 
 

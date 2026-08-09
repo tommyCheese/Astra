@@ -19,64 +19,46 @@ from app.infrastructure.repositories.plans import PlanRepository, plan_to_view
 from app.infrastructure.repositories.run_unit_of_work import RunUnitOfWork
 
 
-@dataclass(frozen=True)
-class CompletionGateInput:
-    run_id: str
-    profile: RunExecutionProfile
-    progress: ExecutionProgress
-    terminal_status: str | None
-
-
+@dataclass
 class CompletionGateStage:
-    def __init__(
-        self,
-        repository: RunUnitOfWork,
-        plan_repository: PlanRepository,
-        completion_gate: AgentCompletionGate,
-    ) -> None:
-        self._repository = repository
-        self._plan_repository = plan_repository
-        self._completion_gate = completion_gate
+    _repository: RunUnitOfWork
+    _plan_repository: PlanRepository
+    _completion_gate: AgentCompletionGate
 
     async def evaluate(
         self,
-        stage_input: CompletionGateInput,
+        run_id: str,
+        profile: RunExecutionProfile,
+        progress: ExecutionProgress,
+        terminal_status: str | None,
         verification: AgentAnswerVerificationReport,
     ) -> CompletionDecision:
-        run = await self._repository.require_run(stage_input.run_id)
+        run = await self._repository.require_run(run_id)
         if not run.agent_state:
             return self._decision_without_agent_state(verification)
         state = AgentState.model_validate(run.agent_state)
-        state.observations = list(stage_input.progress.observations)
+        state.observations = list(progress.observations)
         state.budget_usage.update(
             turns=len(run.turns),
-            tool_calls=stage_input.progress.tool_calls_used,
-            reflections=stage_input.progress.reflections_used,
-            replans=stage_input.progress.replans_used,
+            tool_calls=progress.tool_calls_used,
+            reflections=progress.reflections_used,
+            replans=progress.replans_used,
         )
         state = apply_validation_outcomes(state, verification.validation_outcomes)
         state.version = run.state_version + 1
-        active_plan = (
-            await self._plan_repository.active_for_run(stage_input.run_id)
-            if stage_input.progress.active_plan is not None
-            else None
-        )
+        active_plan = await self._plan_repository.active_for_run(run_id) if progress.active_plan is not None else None
         run = await self._repository.update_reasoning_state(
-            stage_input.run_id,
+            run_id,
             expected_version=run.state_version,
             agent_state=state.model_dump(mode="json"),
-            plan_graph=plan_to_view(active_plan).model_dump(mode="json")
-            if active_plan
-            else run.plan_graph,
+            plan_graph=plan_to_view(active_plan).model_dump(mode="json") if active_plan else run.plan_graph,
             waiting_state=run.waiting_state,
         )
-        required_action = (
-            (run.waiting_state or {}).get("request")
-            if stage_input.terminal_status == "waiting_user"
-            else None
-        )
+        required_action = (run.waiting_state or {}).get("request") if terminal_status == "waiting_user" else None
         return await self._evaluate_full_or_basic(
-            stage_input,
+            run_id,
+            profile,
+            progress,
             run,
             state,
             verification,
@@ -85,40 +67,30 @@ class CompletionGateStage:
 
     async def _evaluate_full_or_basic(
         self,
-        stage_input: CompletionGateInput,
+        run_id: str,
+        profile: RunExecutionProfile,
+        progress: ExecutionProgress,
         run,
         state: AgentState,
         verification: AgentAnswerVerificationReport,
         required_action: str | None,
     ) -> CompletionDecision:
-        if stage_input.profile.assurance_level != AssuranceLevel.full:
+        if profile.assurance_level != AssuranceLevel.full:
             return self._completion_gate.evaluate_basic(
                 validation_outcomes=verification.validation_outcomes,
                 required_user_action=required_action,
             )
-        root = await AgentExecutionRepository(self._repository.session).root_for_run(
-            stage_input.run_id
-        )
-        descendants = (
-            await AgentExecutionRepository(self._repository.session).descendants(root.id)
-            if root
-            else []
-        )
+        root = await AgentExecutionRepository(self._repository.session).root_for_run(run_id)
+        descendants = await AgentExecutionRepository(self._repository.session).descendants(root.id) if root else []
         joins = await self._required_joins(root.id) if root else []
-        active_plan = (
-            await self._plan_repository.active_for_run(stage_input.run_id)
-            if stage_input.progress.active_plan is not None
-            else None
-        )
+        active_plan = await self._plan_repository.active_for_run(run_id) if progress.active_plan is not None else None
         return self._completion_gate.evaluate(
             state,
             validation_outcomes=verification.validation_outcomes,
             plan=plan_to_view(active_plan) if active_plan else None,
             required_user_action=required_action,
             active_executions=list(run.node_executions),
-            unresolved_approvals=sum(
-                approval.status == "pending" for approval in run.approval_requests
-            ),
+            unresolved_approvals=sum(approval.status == "pending" for approval in run.approval_requests),
             unmerged_budgets=sum(
                 reservation.status == "reserved"
                 for execution in run.node_executions
@@ -131,9 +103,7 @@ class CompletionGateStage:
     async def _required_joins(self, root_execution_id: str) -> list[AgentJoinRecord]:
         joins = (
             await self._repository.session.scalars(
-                select(AgentJoinRecord).where(
-                    AgentJoinRecord.parent_execution_id == root_execution_id
-                )
+                select(AgentJoinRecord).where(AgentJoinRecord.parent_execution_id == root_execution_id)
             )
         ).all()
         return [join for join in joins if join.required_execution_ids]
@@ -142,18 +112,8 @@ class CompletionGateStage:
     def _decision_without_agent_state(
         verification: AgentAnswerVerificationReport,
     ) -> CompletionDecision:
-        blocking = [
-            outcome
-            for outcome in verification.validation_outcomes
-            if not outcome.passed and outcome.blocking
-        ]
-        warnings = list(
-            dict.fromkeys(
-                warning
-                for outcome in verification.validation_outcomes
-                for warning in outcome.warnings
-            )
-        )
+        blocking = [outcome for outcome in verification.validation_outcomes if not outcome.passed and outcome.blocking]
+        warnings = list(dict.fromkeys(warning for outcome in verification.validation_outcomes for warning in outcome.warnings))
         return CompletionDecision(
             state=(
                 TerminalState.blocked

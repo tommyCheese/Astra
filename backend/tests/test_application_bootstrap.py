@@ -18,9 +18,7 @@ class RecordingService:
         self.events.append(f"{self.name}.shutdown")
 
 
-def build_coordinator(
-    events: list[str], services: tuple[RecordingService, ...]
-) -> LifecycleCoordinator:
+def build_coordinator(events: list[str], services: tuple[RecordingService, ...]) -> LifecycleCoordinator:
     def prepare_process_resources() -> None:
         events.append("process.prepare")
 

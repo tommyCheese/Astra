@@ -35,9 +35,7 @@ def _observation_id(observation: dict[str, Any], index: int) -> str:
     stable = key_fields.get("tool_call_id") if isinstance(key_fields, dict) else None
     if stable:
         return f"child-observation:{stable}"
-    digest = hashlib.sha256(
-        json.dumps(observation, ensure_ascii=False, sort_keys=True, default=str).encode()
-    ).hexdigest()[:20]
+    digest = hashlib.sha256(json.dumps(observation, ensure_ascii=False, sort_keys=True, default=str).encode()).hexdigest()[:20]
     return f"child-observation:{index}:{digest}"
 
 
@@ -54,6 +52,68 @@ def _references(observations: list[dict[str, Any]]) -> tuple[CompactionContextRe
             if ref:
                 result[str(ref)] = CompactionContextReference(kind="evidence", ref=str(ref))
     return tuple(result.values())
+
+
+def _compaction_envelope(
+    settings: AstraRuntimeSettings,
+    execution: AgentExecutionRecord,
+    contract: DelegationContract,
+    manifest: SubagentContextManifest,
+    usage: dict[str, Any],
+    observations: list[dict[str, Any]],
+    checkpoint: ChildCheckpoint,
+    prefix: tuple[CompactionContextItem, ...],
+    body: tuple[CompactionContextItem, ...],
+    accounting: TokenAccountingService,
+) -> CompactionContextEnvelope:
+    persisted = execution.checkpoint if isinstance(execution.checkpoint, dict) else {}
+    metadata = persisted.get("context_compaction") or {}
+    prior = checkpoint.model_dump(mode="json")
+    window = resolve_context_window(
+        settings.model_provider,
+        settings.model_name,
+        fallback_tokens=settings.context_window_fallback_tokens,
+    )
+    output_reserve = min(
+        settings.context_output_reserve_tokens,
+        window.max_output_tokens or settings.context_output_reserve_tokens,
+    )
+    return CompactionContextEnvelope(
+        owner_type=ContextOwnerRole.child_execution,
+        owner_id=execution.id,
+        purpose=contract.request.objective,
+        protected_prefix=prefix,
+        prior_checkpoint=prior,
+        compactable_body=body,
+        reference_manifest=_references(observations),
+        accounting=accounting.account(
+            context_window=window.tokens,
+            output_reserve=output_reserve,
+            compaction_output_reserve=settings.context_compaction_output_reserve_tokens,
+            protected_prefix=prefix,
+            checkpoint=(
+                CompactionContextItem(
+                    id=f"child-checkpoint:{execution.id}",
+                    kind="child_context_checkpoint",
+                    content=prior,
+                    token_count=accounting.count_value(prior)[0],
+                ),
+            ),
+            body=body,
+        ),
+        continuation=ContinuationManifest(
+            owner_type=ContextOwnerRole.child_execution,
+            owner_id=execution.id,
+            state_version=execution.state_version,
+            cancellation_epoch=execution.cancellation_epoch,
+            window_number=int(metadata.get("window_number", 0)),
+            source_item_ids=tuple(item.id for item in body),
+            remaining_budget=dict(execution.budget_envelope or usage),
+            contract_hash=contract.contract_hash,
+            manifest_hash=stable_digest(manifest.model_dump(mode="json")),
+            catalog_digests={"tool": manifest.tool_catalog_digest, "skill": manifest.skill_catalog_digest},
+        ),
+    )
 
 
 async def compact_child_context(
@@ -105,56 +165,8 @@ async def compact_child_context(
         )
         for index, observation in enumerate(observations)
     )
-    persisted = execution.checkpoint if isinstance(execution.checkpoint, dict) else {}
-    metadata = persisted.get("context_compaction") or {}
-    prior = checkpoint.model_dump(mode="json")
-    window = resolve_context_window(
-        settings.model_provider,
-        settings.model_name,
-        fallback_tokens=settings.context_window_fallback_tokens,
-    )
-    output_reserve = min(
-        settings.context_output_reserve_tokens,
-        window.max_output_tokens or settings.context_output_reserve_tokens,
-    )
-    envelope = CompactionContextEnvelope(
-        owner_type=ContextOwnerRole.child_execution,
-        owner_id=execution.id,
-        purpose=contract.request.objective,
-        protected_prefix=prefix,
-        prior_checkpoint=prior,
-        compactable_body=body,
-        reference_manifest=_references(observations),
-        accounting=accounting.account(
-            context_window=window.tokens,
-            output_reserve=output_reserve,
-            compaction_output_reserve=settings.context_compaction_output_reserve_tokens,
-            protected_prefix=prefix,
-            checkpoint=(
-                CompactionContextItem(
-                    id=f"child-checkpoint:{execution.id}",
-                    kind="child_context_checkpoint",
-                    content=prior,
-                    token_count=accounting.count_value(prior)[0],
-                ),
-            ),
-            body=body,
-        ),
-        continuation=ContinuationManifest(
-            owner_type=ContextOwnerRole.child_execution,
-            owner_id=execution.id,
-            state_version=execution.state_version,
-            cancellation_epoch=execution.cancellation_epoch,
-            window_number=int(metadata.get("window_number", 0)),
-            source_item_ids=tuple(item.id for item in body),
-            remaining_budget=dict(execution.budget_envelope or usage),
-            contract_hash=contract.contract_hash,
-            manifest_hash=stable_digest(manifest.model_dump(mode="json")),
-            catalog_digests={
-                "tool": manifest.tool_catalog_digest,
-                "skill": manifest.skill_catalog_digest,
-            },
-        ),
+    envelope = _compaction_envelope(
+        settings, execution, contract, manifest, usage, observations, checkpoint, prefix, body, accounting
     )
     if not evaluate_compaction_trigger(envelope.accounting, policy).should_compact:
         return execution, checkpoint, observations

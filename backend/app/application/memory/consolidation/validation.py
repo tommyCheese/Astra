@@ -249,9 +249,7 @@ def _validate_replacement_shape(
         )
 
 
-def _validate_action(
-    operation: ConsolidationOperation, issues: list[ConsolidationValidationIssue]
-) -> None:
+def _validate_action(operation: ConsolidationOperation, issues: list[ConsolidationValidationIssue]) -> None:
     if operation.action is ConsolidationAction.replace and not operation.replace_memory_ids:
         issues.append(
             _issue(
@@ -285,9 +283,7 @@ def _validate_namespace(
         )
 
 
-def _validate_authority(
-    operation: ConsolidationOperation, issues: list[ConsolidationValidationIssue]
-) -> None:
+def _validate_authority(operation: ConsolidationOperation, issues: list[ConsolidationValidationIssue]) -> None:
     inspection_text = operation.content + "\\n" + operation.structured_data_json
     if _contains_instruction_override(inspection_text):
         issues.append(

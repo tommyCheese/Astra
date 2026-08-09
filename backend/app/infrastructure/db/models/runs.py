@@ -57,9 +57,7 @@ class RunRecord(AstraOrmRecordBase):
     status: Mapped[str] = mapped_column(String(40), default="created")
     mode: Mapped[str] = mapped_column(String(80), default="web_data_query")
     answer_mode: Mapped[str] = mapped_column(String(40), nullable=False, default="standard")
-    runtime_kind: Mapped[str] = mapped_column(
-        String(40), nullable=False, default="fast-v1"
-    )
+    runtime_kind: Mapped[str] = mapped_column(String(40), nullable=False, default="fast-v1")
     runtime_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     fast_runtime_snapshot: Mapped[dict] = mapped_column(JsonType, default=dict)
     fast_state_version: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
@@ -85,17 +83,11 @@ class RunRecord(AstraOrmRecordBase):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
     task: Mapped[TaskRecord] = relationship(back_populates="runs")
-    steps: Mapped[list[StepRecord]] = relationship(
-        back_populates="run", order_by="StepRecord.index"
-    )
+    steps: Mapped[list[StepRecord]] = relationship(back_populates="run", order_by="StepRecord.index")
     tool_calls: Mapped[list[ToolCallRecord]] = relationship(back_populates="run")
     artifacts: Mapped[list[ArtifactRecord]] = relationship(back_populates="run")
-    events: Mapped[list[RunEventRecord]] = relationship(
-        back_populates="run", order_by="RunEventRecord.id"
-    )
-    turns: Mapped[list[AgentTurnRecord]] = relationship(
-        back_populates="run", order_by="AgentTurnRecord.turn_index"
-    )
+    events: Mapped[list[RunEventRecord]] = relationship(back_populates="run", order_by="RunEventRecord.id")
+    turns: Mapped[list[AgentTurnRecord]] = relationship(back_populates="run", order_by="AgentTurnRecord.turn_index")
     memories: Mapped[list[PersistedMemoryRecord]] = relationship(back_populates="run")
     sandbox_jobs: Mapped[list[SandboxJobRecord]] = relationship(back_populates="run")
     model_invocations: Mapped[list[ModelInvocationRecord]] = relationship(back_populates="run")
@@ -104,12 +96,8 @@ class RunRecord(AstraOrmRecordBase):
     )
     approval_grants: Mapped[list[ApprovalGrantRecord]] = relationship(back_populates="run")
     agent_identities: Mapped[list[AgentIdentityRecord]] = relationship(back_populates="run")
-    tool_catalog_snapshot: Mapped[ToolCatalogSnapshotRecord | None] = relationship(
-        back_populates="run", uselist=False
-    )
-    data_flow_state: Mapped[DataFlowStateRecord | None] = relationship(
-        back_populates="run", uselist=False
-    )
+    tool_catalog_snapshot: Mapped[ToolCatalogSnapshotRecord | None] = relationship(back_populates="run", uselist=False)
+    data_flow_state: Mapped[DataFlowStateRecord | None] = relationship(back_populates="run", uselist=False)
     plans: Mapped[list[PlanRecord]] = relationship(
         back_populates="run", foreign_keys="PlanRecord.run_id", order_by="PlanRecord.version"
     )
@@ -118,9 +106,7 @@ class RunRecord(AstraOrmRecordBase):
     )
     resource_leases: Mapped[list[ResourceLeaseRecord]] = relationship(back_populates="run")
     budget_reservations: Mapped[list[BudgetReservationRecord]] = relationship(back_populates="run")
-    skill_snapshot: Mapped[RunSkillSnapshotRecord | None] = relationship(
-        back_populates="run", uselist=False
-    )
+    skill_snapshot: Mapped[RunSkillSnapshotRecord | None] = relationship(back_populates="run", uselist=False)
     evidence_records: Mapped[list[EvidenceRecord]] = relationship(
         back_populates="run",
         order_by="EvidenceRecord.created_at",
@@ -149,9 +135,7 @@ class EvidenceRecord(AstraOrmRecordBase):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_str)
     run_id: Mapped[str] = mapped_column(ForeignKey("runs.id"))
-    agent_execution_id: Mapped[str | None] = mapped_column(
-        ForeignKey("agent_executions.id"), nullable=True
-    )
+    agent_execution_id: Mapped[str | None] = mapped_column(ForeignKey("agent_executions.id"), nullable=True)
     evidence_id: Mapped[str] = mapped_column(String(40))
     evidence_key: Mapped[str] = mapped_column(String(320))
     kind: Mapped[str] = mapped_column(String(40))
@@ -193,9 +177,7 @@ class RunEventRecord(AstraOrmRecordBase):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     run_id: Mapped[str] = mapped_column(ForeignKey("runs.id"))
-    agent_execution_id: Mapped[str | None] = mapped_column(
-        ForeignKey("agent_executions.id"), nullable=True
-    )
+    agent_execution_id: Mapped[str | None] = mapped_column(ForeignKey("agent_executions.id"), nullable=True)
     type: Mapped[str] = mapped_column(String(80))
     payload: Mapped[dict] = mapped_column(JsonType)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
@@ -209,13 +191,9 @@ class AgentTurnRecord(AstraOrmRecordBase):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_str)
     run_id: Mapped[str] = mapped_column(ForeignKey("runs.id"))
-    agent_execution_id: Mapped[str | None] = mapped_column(
-        ForeignKey("agent_executions.id"), nullable=True
-    )
+    agent_execution_id: Mapped[str | None] = mapped_column(ForeignKey("agent_executions.id"), nullable=True)
     plan_node_id: Mapped[str | None] = mapped_column(ForeignKey("plan_nodes.id"), nullable=True)
-    node_execution_id: Mapped[str | None] = mapped_column(
-        ForeignKey("node_executions.id"), nullable=True
-    )
+    node_execution_id: Mapped[str | None] = mapped_column(ForeignKey("node_executions.id"), nullable=True)
     turn_index: Mapped[int] = mapped_column(Integer)
     decision_type: Mapped[str] = mapped_column(String(40))
     reasoning_summary: Mapped[str] = mapped_column(Text)

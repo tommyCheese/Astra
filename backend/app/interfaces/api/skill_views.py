@@ -19,9 +19,7 @@ def skill_diagnostics(report: dict[str, Any] | None) -> list[dict[str, Any]]:
     return list((report or {}).get("diagnostics", []))
 
 
-async def skill_revision_view(
-    session: AsyncSession, revision_id: str | None
-) -> SkillRevisionView | None:
+async def skill_revision_view(session: AsyncSession, revision_id: str | None) -> SkillRevisionView | None:
     if not revision_id:
         return None
     revision = await session.get(SkillRevisionRecord, revision_id)
@@ -80,9 +78,7 @@ def skill_file_view(skill: SkillRecord, item: dict[str, Any]) -> SkillFileView:
     )
 
 
-def skill_revision_file_view(
-    skill: SkillRecord, revision: SkillRevisionRecord, item: dict[str, Any]
-) -> SkillFileView:
+def skill_revision_file_view(skill: SkillRecord, revision: SkillRevisionRecord, item: dict[str, Any]) -> SkillFileView:
     return SkillFileView(
         path=item["path"],
         uri=f"skill-revision://{skill.id}/{revision.id}/{item['path']}",
@@ -95,9 +91,7 @@ def skill_revision_file_view(
     )
 
 
-async def skill_detail_view(
-    session: AsyncSession, settings: AstraRuntimeSettings, skill: SkillRecord
-) -> SkillDetailView:
+async def skill_detail_view(session: AsyncSession, settings: AstraRuntimeSettings, skill: SkillRecord) -> SkillDetailView:
     service = SkillService(session, settings)
     summary = await skill_summary_view(session, skill)
     files = await service.draft_files(skill)

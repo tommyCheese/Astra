@@ -92,12 +92,10 @@ async def create_schedule(
 ):
     if await ConversationRepository(session).get(payload.target_task_id) is None:
         raise AstraResourceNotFoundError("CONVERSATION_NOT_FOUND", "找不到定时任务的目标对话。")
-    execution = payload.execution or await ScheduledExecutionResolver(
-        session, settings
-    ).from_task_or_workspace(payload.target_task_id)
-    resolved = ScheduledJobCreate.model_validate(
-        {**payload.model_dump(exclude={"execution"}), "execution": execution}
+    execution = payload.execution or await ScheduledExecutionResolver(session, settings).from_task_or_workspace(
+        payload.target_task_id
     )
+    resolved = ScheduledJobCreate.model_validate({**payload.model_dump(exclude={"execution"}), "execution": execution})
     return await ScheduleRepository(session).create(resolved, owner_principal="local-user")
 
 
@@ -122,9 +120,7 @@ async def update_schedule(
         if await ConversationRepository(session).get(payload.target_task_id) is None:
             raise AstraResourceNotFoundError("CONVERSATION_NOT_FOUND", "找不到定时任务的目标对话。")
         if payload.execution is None:
-            execution = await ScheduledExecutionResolver(session, settings).from_task_or_workspace(
-                payload.target_task_id
-            )
+            execution = await ScheduledExecutionResolver(session, settings).from_task_or_workspace(payload.target_task_id)
             payload = payload.model_copy(update={"execution": execution})
     try:
         return await ScheduleRepository(session).update(job_id, payload)
@@ -285,12 +281,8 @@ async def put_heartbeat(
             "heartbeat 周期低于系统允许的最小值。",
             {"minimum_seconds": settings.scheduler_heartbeat_min_interval_seconds},
         )
-    execution = payload.execution or await ScheduledExecutionResolver(session, settings).from_task(
-        payload.target_task_id
-    )
-    resolved = HeartbeatConfig.model_validate(
-        {**payload.model_dump(exclude={"execution"}), "execution": execution}
-    )
+    execution = payload.execution or await ScheduledExecutionResolver(session, settings).from_task(payload.target_task_id)
+    resolved = HeartbeatConfig.model_validate({**payload.model_dump(exclude={"execution"}), "execution": execution})
     return await HeartbeatRepository(session).upsert(
         resolved,
         owner_principal="local-user",

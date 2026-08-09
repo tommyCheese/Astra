@@ -64,9 +64,7 @@ def validate_transition(current_node: str, result: NodeResult) -> None:
     allowed = PATCH_AUTHORITIES.get(current_node, set())
     unauthorized = set(result.state_patch) - allowed
     if unauthorized:
-        raise RuntimeError(
-            f"Node {current_node} cannot patch: {', '.join(sorted(unauthorized))}"
-        )
+        raise RuntimeError(f"Node {current_node} cannot patch: {', '.join(sorted(unauthorized))}")
     if result.error:
         category = result.error.get("category", "runtime_internal")
         if result.next_node not in ERROR_EXITS.get(category, {"failed"}):

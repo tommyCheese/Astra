@@ -17,7 +17,7 @@ from app.infrastructure.repositories.agent_executions import (
 )
 from app.infrastructure.repositories.approval_contracts import ApprovalRequestCreate
 from app.infrastructure.repositories.run_unit_of_work import RunUnitOfWork
-from app.infrastructure.repositories.run_view_projection import RunViewProjector
+from app.infrastructure.repositories.run_view_projection import run_payload
 
 
 def _contract(run, root, request_id: str) -> DelegationContract:
@@ -314,9 +314,7 @@ async def test_run_projection_exposes_sanitized_nested_agent_tree(session):
             "hidden_reasoning": "must never be projected",
         }
     }
-    child.catalog_snapshot = {
-        "tools": [{"name": "catalog_search", "input_schema": {"secret": "hidden"}}]
-    }
+    child.catalog_snapshot = {"tools": [{"name": "catalog_search", "input_schema": {"secret": "hidden"}}]}
     child.result = {
         "summary": "bounded result",
         "artifacts": [{"id": "artifact-1"}],
@@ -329,7 +327,7 @@ async def test_run_projection_exposes_sanitized_nested_agent_tree(session):
 
     loaded = await RunUnitOfWork(session).get_run(run.id)
     assert loaded is not None
-    payload = RunViewProjector().payload(loaded)
+    payload = run_payload(loaded)
     projected_root = payload["agent_executions"][0]
     projected_child = projected_root["children"][0]
     assert projected_root["id"] == root.id

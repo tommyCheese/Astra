@@ -239,9 +239,6 @@ class ChildRunSessionBuilder:
             "skill_catalog": [deepcopy(item) for item in self._runtime.frozen_catalog.skills],
             "budget": self._contract.request.budget.model_dump(mode="json"),
             "budget_usage": deepcopy(state.usage),
-            "continuation_answers": [
-                item.model_dump(mode="json")
-                for item in state.context_checkpoint.continuation_answers
-            ],
+            "continuation_answers": [item.model_dump(mode="json") for item in state.context_checkpoint.continuation_answers],
             "context_checkpoint": state.context_checkpoint.model_dump(mode="json"),
         }

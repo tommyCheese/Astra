@@ -105,7 +105,5 @@ def validate_memory_transition(
     current_status = MemoryStatus(current)
     target_status = MemoryStatus(target)
     if target_status not in MEMORY_LIFECYCLE_TRANSITIONS[current_status]:
-        raise ValueError(
-            f"Invalid Memory lifecycle transition: {current_status.value} -> {target_status.value}"
-        )
+        raise ValueError(f"Invalid Memory lifecycle transition: {current_status.value} -> {target_status.value}")
     return current_status, target_status

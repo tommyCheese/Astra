@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import unicodedata
 from copy import deepcopy
+from dataclasses import dataclass
 from pathlib import PurePosixPath
 from typing import Any
 
@@ -34,10 +35,7 @@ def validate_workspace_path(relative_path: str) -> str:
         or len(relative_path.encode("utf-8")) > 4000
         or "\x00" in relative_path
         or "\\" in relative_path
-        or any(
-            unicodedata.category(character) in {"Cc", "Cf"}
-            for character in relative_path
-        )
+        or any(unicodedata.category(character) in {"Cc", "Cf"} for character in relative_path)
     ):
         raise ValueError("Invalid Workspace path")
     normalized_unicode = unicodedata.normalize("NFC", relative_path)
@@ -45,19 +43,16 @@ def validate_workspace_path(relative_path: str) -> str:
         raise ValueError("Workspace path must use normalized Unicode")
     path = PurePosixPath(relative_path)
     if path.is_absolute() or any(
-        part in {"", ".", ".."}
-        or part.startswith("-")
-        or part.endswith((" ", "."))
-        for part in path.parts
+        part in {"", ".", ".."} or part.startswith("-") or part.endswith((" ", ".")) for part in path.parts
     ):
         raise ValueError("Workspace path must be a normalized relative path")
     normalized = path.as_posix()
     return normalized
 
 
+@dataclass
 class WorkspaceRepository:
-    def __init__(self, session: AsyncSession):
-        self.session = session
+    session: AsyncSession
 
     async def get_or_create(
         self,
@@ -69,9 +64,7 @@ class WorkspaceRepository:
         task = await self.session.get(TaskRecord, task_id)
         if task is None:
             raise ValueError(f"Task not found: {task_id}")
-        existing = await self.session.scalar(
-            select(TaskWorkspaceRecord).where(TaskWorkspaceRecord.task_id == task_id)
-        )
+        existing = await self.session.scalar(select(TaskWorkspaceRecord).where(TaskWorkspaceRecord.task_id == task_id))
         if existing is not None:
             return existing
         workspace = TaskWorkspaceRecord(
@@ -237,9 +230,7 @@ class WorkspaceRepository:
         await self.session.commit()
         return artifact
 
-    async def list_changes_for_tool_call(
-        self, tool_call_id: str
-    ) -> list[WorkspaceChangeRecord]:
+    async def list_changes_for_tool_call(self, tool_call_id: str) -> list[WorkspaceChangeRecord]:
         result = await self.session.scalars(
             select(WorkspaceChangeRecord)
             .where(WorkspaceChangeRecord.tool_call_id == tool_call_id)

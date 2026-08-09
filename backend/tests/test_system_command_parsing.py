@@ -8,10 +8,7 @@ from app.application.scheduling.command_parsing import (
 
 
 def test_parse_schedule_create_interval_with_quoted_name():
-    command = parse_schedule_command(
-        'create --every 30m --tz Asia/Shanghai --name "晨间摘要" '
-        '"总结昨夜明确记录的更新"'
-    )
+    command = parse_schedule_command('create --every 30m --tz Asia/Shanghai --name "晨间摘要" "总结昨夜明确记录的更新"')
 
     assert command.action == "create"
     assert command.schedule is not None
@@ -23,9 +20,7 @@ def test_parse_schedule_create_interval_with_quoted_name():
 
 
 def test_parse_schedule_cron_requires_quoted_expression():
-    command = parse_schedule_command(
-        "create --cron '0 9 * * 1-5' --tz UTC 工作日报"
-    )
+    command = parse_schedule_command("create --cron '0 9 * * 1-5' --tz UTC 工作日报")
 
     assert command.schedule is not None
     assert command.schedule.expression == "0 9 * * 1-5"
@@ -41,10 +36,7 @@ def test_parse_schedule_lifecycle_requires_version():
 
 
 def test_parse_heartbeat_on_with_active_hours():
-    command = parse_heartbeat_command(
-        "on --every 30m --tz Asia/Shanghai --active 09:00-22:00 "
-        '"只检查明确待办"'
-    )
+    command = parse_heartbeat_command('on --every 30m --tz Asia/Shanghai --active 09:00-22:00 "只检查明确待办"')
 
     assert command.action == "on"
     assert command.interval_seconds == 1_800

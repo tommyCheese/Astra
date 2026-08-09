@@ -61,9 +61,7 @@ def record_memory_audit(
     )
 
 
-async def next_memory_version(
-    session: Any, manifest: ConsolidationInputManifest, memory_key: str
-) -> int:
+async def next_memory_version(session: Any, manifest: ConsolidationInputManifest, memory_key: str) -> int:
     current = await session.scalar(
         select(func.coalesce(func.max(PersistedMemoryRecord.version), 0)).where(
             PersistedMemoryRecord.namespace_type == manifest.namespace_type,
@@ -95,11 +93,7 @@ def copy_sources_and_create_links(
             MemoryLinkRecord(
                 source_memory_id=output_id,
                 target_memory_id=source_memory.id,
-                relation=(
-                    "supersedes"
-                    if source_memory.id in operation.replace_memory_ids
-                    else "derived_from"
-                ),
+                relation=("supersedes" if source_memory.id in operation.replace_memory_ids else "derived_from"),
                 link_data={
                     "consolidation_job_id": job_id,
                     "operation_id": operation.operation_id,
@@ -109,9 +103,7 @@ def copy_sources_and_create_links(
         )
 
 
-def _copy_source(
-    source: MemorySourceRecord, output_id: str, created_at: datetime
-) -> MemorySourceRecord:
+def _copy_source(source: MemorySourceRecord, output_id: str, created_at: datetime) -> MemorySourceRecord:
     return MemorySourceRecord(
         memory_id=output_id,
         source_kind=source.source_kind,
@@ -153,8 +145,7 @@ async def create_output_memory(
         provenance=_output_provenance(context, operation),
         confidence=operation.confidence,
         importance=operation.importance,
-        utility_score=sum(memory.utility_score for memory in source_memories)
-        / len(source_memories),
+        utility_score=sum(memory.utility_score for memory in source_memories) / len(source_memories),
         observed_at=max(memory.observed_at for memory in source_memories),
         valid_from=context.published_at,
         consolidation_generation=context.job.generation,
@@ -171,9 +162,7 @@ def _output_creator(context: MemoryPublicationContext, actor: str | None) -> str
     return actor
 
 
-def _output_provenance(
-    context: MemoryPublicationContext, operation: ConsolidationOperation
-) -> dict[str, Any]:
+def _output_provenance(context: MemoryPublicationContext, operation: ConsolidationOperation) -> dict[str, Any]:
     return {
         "consolidation_job_id": context.job.id,
         "input_hash": context.manifest.input_hash,
@@ -196,9 +185,7 @@ async def supersede_replacements(
         replacement = context.source_by_id[memory_id]
         expected = replacement.state_version
         await _supersede_memory(session, context, memory_id, expected)
-        _audit_superseded(
-            session, context, memory_id, output_id, expected, actor=actor, reason=reason
-        )
+        _audit_superseded(session, context, memory_id, output_id, expected, actor=actor, reason=reason)
         results.append(
             {
                 "memory_id": memory_id,

@@ -137,9 +137,7 @@ async def evolution_client():
     app = FastAPI()
     app.include_router(evolution_router)
     app.dependency_overrides[get_session] = override_session
-    app.dependency_overrides[get_available_evolution_tools] = lambda: frozenset(
-        {"catalog_search"}
-    )
+    app.dependency_overrides[get_available_evolution_tools] = lambda: frozenset({"catalog_search"})
 
     @app.exception_handler(AstraError)
     async def astra_error_handler(_: Request, exc: AstraError) -> JSONResponse:
@@ -329,9 +327,7 @@ async def test_stale_review_and_production_promotion_are_denied(
     assert promotion.status_code == 409
     assert promotion.json()["error"]["code"] == "EVOLUTION_PROMOTION_DISABLED"
 
-    unchanged = await evolution_client.get(
-        f"/api/agent-evolution/candidates/{created['id']}"
-    )
+    unchanged = await evolution_client.get(f"/api/agent-evolution/candidates/{created['id']}")
     assert unchanged.json()["status"] == "approved"
     assert unchanged.json()["state_version"] == 3
     assert unchanged.json()["executable"] is False
@@ -355,9 +351,7 @@ async def test_missing_baseline_is_rejected_before_persistence(evolution_client)
     )
     assert response.status_code == 422
 
-    unchanged = await evolution_client.get(
-        f"/api/agent-evolution/candidates/{created['id']}"
-    )
+    unchanged = await evolution_client.get(f"/api/agent-evolution/candidates/{created['id']}")
     assert unchanged.json()["status"] == "draft"
     assert unchanged.json()["state_version"] == 1
     assert unchanged.json()["evaluations"] == []
@@ -390,9 +384,7 @@ async def test_safety_regression_is_immutable_and_cannot_be_approved(
     assert attached.status_code == 200, attached.text
     assert attached.json()["current_evaluation_verdict"] == "failed"
     assert attached.json()["evaluations"][0]["verdict"] == "failed"
-    assert attached.json()["audit_events"][-1]["payload"]["issue_codes"] == [
-        "evaluation.safety_regression"
-    ]
+    assert attached.json()["audit_events"][-1]["payload"]["issue_codes"] == ["evaluation.safety_regression"]
 
     denied = await evolution_client.post(
         f"/api/agent-evolution/candidates/{created['id']}/approve",
@@ -405,9 +397,7 @@ async def test_safety_regression_is_immutable_and_cannot_be_approved(
     assert denied.status_code == 409
     assert denied.json()["error"]["code"] == "EVOLUTION_EVALUATION_FAILED"
 
-    unchanged = await evolution_client.get(
-        f"/api/agent-evolution/candidates/{created['id']}"
-    )
+    unchanged = await evolution_client.get(f"/api/agent-evolution/candidates/{created['id']}")
     assert unchanged.json()["status"] == "evaluating"
     assert unchanged.json()["state_version"] == 2
     assert unchanged.json()["evaluations"][0]["verdict"] == "failed"
@@ -429,9 +419,7 @@ async def test_disabled_tool_reference_cannot_enter_evaluation(evolution_client)
     assert error["code"] == "EVOLUTION_AUTHORITY_VIOLATION"
     assert error["details"]["issues"][0]["code"] == "evolution.tool_unavailable"
 
-    unchanged = await evolution_client.get(
-        f"/api/agent-evolution/candidates/{created['id']}"
-    )
+    unchanged = await evolution_client.get(f"/api/agent-evolution/candidates/{created['id']}")
     assert unchanged.json()["status"] == "draft"
     assert unchanged.json()["evaluations"] == []
 

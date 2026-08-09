@@ -36,11 +36,11 @@ class AnthropicResponse:
     emitted_fields: frozenset[str]
 
 
+@dataclass
 class AnthropicTransport:
     """Own the Anthropic Messages HTTP and SSE wire protocol."""
 
-    def __init__(self, client: httpx.AsyncClient):
-        self.client = client
+    client: httpx.AsyncClient
 
     async def send(
         self,
@@ -141,15 +141,11 @@ class AnthropicTransport:
 
     @staticmethod
     def _payload(request: AnthropicRequest) -> dict[str, Any]:
-        system_prompt = "\n\n".join(
-            message["content"] for message in request.messages if message["role"] == "system"
-        )
+        system_prompt = "\n\n".join(message["content"] for message in request.messages if message["role"] == "system")
         payload: dict[str, Any] = {
             "model": request.model,
             "max_tokens": 8192,
-            "messages": [
-                message for message in request.messages if message["role"] in {"user", "assistant"}
-            ],
+            "messages": [message for message in request.messages if message["role"] in {"user", "assistant"}],
             **request.reasoning.request_params,
         }
         if system_prompt:

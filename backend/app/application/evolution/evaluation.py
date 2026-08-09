@@ -30,9 +30,7 @@ def evaluate_manifest(
             )
         )
     cost_ratio = _increase_ratio(manifest.baseline.mean_cost, manifest.candidate.mean_cost)
-    latency_ratio = _increase_ratio(
-        manifest.baseline.mean_latency_ms, manifest.candidate.mean_latency_ms
-    )
+    latency_ratio = _increase_ratio(manifest.baseline.mean_latency_ms, manifest.candidate.mean_latency_ms)
     _append_efficiency_issues(manifest, issues, cost_ratio, latency_ratio)
     _append_safety_issues(manifest, issues)
     return EvaluationDecision(

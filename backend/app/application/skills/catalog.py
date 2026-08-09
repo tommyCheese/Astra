@@ -56,10 +56,10 @@ class SkillCatalog:
         raise ValueError("Skill is absent from the frozen Catalog")
 
 
+@dataclass
 class SkillCatalogBuilder:
-    def __init__(self, session: AsyncSession, *, metadata_chars: int = 24_000):
-        self.session = session
-        self.metadata_chars = metadata_chars
+    session: AsyncSession
+    metadata_chars: int = 24_000
 
     async def build(
         self,
@@ -89,9 +89,7 @@ class SkillCatalogBuilder:
         selected_payload = [entry.model_dump(mode="json") for entry in selected]
         return SkillCatalog(tuple(selected), _stable_digest(selected_payload), truncated=True)
 
-    async def _available_entries(
-        self, revision_overrides: list[SkillRevisionRecord]
-    ) -> list[SkillCatalogEntry]:
+    async def _available_entries(self, revision_overrides: list[SkillRevisionRecord]) -> list[SkillCatalogEntry]:
         rows = (
             await self.session.execute(
                 select(SkillRecord, SkillRevisionRecord)
@@ -111,11 +109,7 @@ class SkillCatalogBuilder:
         for revision in revision_overrides:
             skill = await self.session.get(SkillRecord, revision.skill_id)
             if skill is not None:
-                entries = [
-                    item
-                    for item in entries
-                    if item.qualified_identity != f"{skill.origin}:{skill.name}"
-                ]
+                entries = [item for item in entries if item.qualified_identity != f"{skill.origin}:{skill.name}"]
                 entries.append(self._entry(skill, revision))
         return entries
 
@@ -144,11 +138,7 @@ class SkillCatalogBuilder:
         used = 2
         for item in ranked:
             size = len(json.dumps(item.model_dump(mode="json"), ensure_ascii=False))
-            if (
-                selected
-                and used + size > self.metadata_chars
-                and item.qualified_identity not in explicit
-            ):
+            if selected and used + size > self.metadata_chars and item.qualified_identity not in explicit:
                 continue
             selected.append(item)
             used += size
@@ -162,9 +152,7 @@ class SkillCatalogBuilder:
         runtime_version: str,
     ) -> bool:
         if runtime_capabilities is not None and any(
-            pattern not in runtime_capabilities
-            for pattern in entry.requested_tool_patterns
-            if "*" not in pattern
+            pattern not in runtime_capabilities for pattern in entry.requested_tool_patterns if "*" not in pattern
         ):
             return False
         declaration = entry.compatibility or ""
@@ -182,9 +170,7 @@ class SkillCatalogBuilder:
     @staticmethod
     def _entry(skill: SkillRecord, revision: SkillRevisionRecord) -> SkillCatalogEntry:
         frontmatter = revision.frontmatter or {}
-        resources = [
-            SkillResource.model_validate(item) for item in revision.manifest.get("resources", [])
-        ]
+        resources = [SkillResource.model_validate(item) for item in revision.manifest.get("resources", [])]
         skill_file = next(item for item in resources if item.path == "SKILL.md")
         return SkillCatalogEntry(
             qualified_identity=f"{skill.origin}:{skill.name}",
@@ -194,14 +180,8 @@ class SkillCatalogBuilder:
             revision_id=revision.id,
             digest=revision.digest,
             compatibility=frontmatter.get("compatibility"),
-            metadata=(
-                frontmatter.get("metadata") if isinstance(frontmatter.get("metadata"), dict) else {}
-            ),
-            requested_tool_patterns=(
-                str(frontmatter.get("allowed-tools")).split()
-                if frontmatter.get("allowed-tools")
-                else []
-            ),
+            metadata=(frontmatter.get("metadata") if isinstance(frontmatter.get("metadata"), dict) else {}),
+            requested_tool_patterns=(str(frontmatter.get("allowed-tools")).split() if frontmatter.get("allowed-tools") else []),
             resources=resources,
             instructions_blob=skill_file.digest,
             revoked=revision.revoked_at is not None,
@@ -218,9 +198,7 @@ class SkillCatalogBuilder:
     ) -> RunSkillSnapshotRecord:
         existing = None
         if not new_run:
-            existing = await self.session.scalar(
-                select(RunSkillSnapshotRecord).where(RunSkillSnapshotRecord.run_id == run_id)
-            )
+            existing = await self.session.scalar(select(RunSkillSnapshotRecord).where(RunSkillSnapshotRecord.run_id == run_id))
         payload = [item.model_dump(mode="json") for item in catalog.entries]
         if existing is not None:
             if existing.catalog_digest != catalog.digest or existing.catalog != payload:

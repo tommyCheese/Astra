@@ -17,7 +17,7 @@ from app.infrastructure.tools.base import (
     materialize_skill_inputs,
 )
 
-RUNNER = r'''import json
+RUNNER = r"""import json
 import subprocess
 
 request = json.load(open("/input/request.json", encoding="utf-8"))
@@ -35,7 +35,7 @@ print(json.dumps({
     "stdout": completed.stdout.decode("utf-8", errors="replace")[:limit],
     "stderr": completed.stderr.decode("utf-8", errors="replace")[:limit],
 }))
-'''
+"""
 
 
 class BashExecuteRequest(BaseModel):
@@ -93,9 +93,7 @@ class BashExecuteTool(AstraTool):
         if context is None:
             raise ToolExecutionError("invalid_decision", "bash_execute requires execution context")
         if context.workspace_path is None:
-            raise ToolExecutionError(
-                "sandbox_policy_violation", "bash_execute requires a Task Workspace"
-            )
+            raise ToolExecutionError("sandbox_policy_violation", "bash_execute requires a Task Workspace")
         try:
             parsed = BashExecuteRequest.model_validate(tool_input)
         except Exception as exc:
@@ -127,9 +125,7 @@ class BashExecuteTool(AstraTool):
                 "sandbox_policy_violation",
                 "Skill sandbox inputs failed immutable binding validation",
             ) from exc
-        workspace_mode = (
-            context.workspace_mode if context.effect_plan is not None else "read_write"
-        )
+        workspace_mode = context.workspace_mode if context.effect_plan is not None else "read_write"
         request = SandboxRequest(
             template=self.settings.sandbox_runtime_image,
             command=["python", "/input/runner.py"],
@@ -178,14 +174,10 @@ class BashExecuteTool(AstraTool):
         except SandboxError as exc:
             raise ToolExecutionError(exc.category, exc.safe_message) from exc
         except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
-            raise ToolExecutionError(
-                "sandbox_policy_violation", "Sandbox returned an invalid Bash result"
-            ) from exc
+            raise ToolExecutionError("sandbox_policy_violation", "Sandbox returned an invalid Bash result") from exc
         finally:
             shutil.rmtree(root, ignore_errors=True)
-        return ToolResultEnvelope(data=normalized.model_dump()).model_dump(
-            mode="json", exclude_none=True
-        )
+        return ToolResultEnvelope(data=normalized.model_dump()).model_dump(mode="json", exclude_none=True)
 
 
 def _parse_bash_result(stdout: str, output_limit: int) -> BashExecuteResult:

@@ -9,7 +9,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.application.run_management.lifecycle.service import RunApplicationService
 from app.application.run_management.projections.events import run_event_broker
-from app.application.run_management.projections.query_service import RunQueryService
+from app.application.run_management.projections.query_service import (
+    initial_run,
+    recent_runs,
+    run_detail,
+)
 from app.application.subagents.lifecycle import SubagentCancellationService
 from app.application.subagents.observability import SubagentTelemetryRepository
 from app.application.workspaces.artifacts import LocalArtifactStore
@@ -32,7 +36,7 @@ from app.infrastructure.repositories.plans import (
     plan_to_view,
 )
 from app.infrastructure.repositories.run_unit_of_work import RunUnitOfWork
-from app.infrastructure.repositories.run_view_projection import RunViewProjector
+from app.infrastructure.repositories.run_view_projection import run_view
 from app.interfaces.platform.http.dependencies import (
     AstraApplicationServices,
     get_application_container,
@@ -91,11 +95,7 @@ async def _run_event_stream(
         if start_after_ready is not None:
             await asyncio.sleep(0)
         while True:
-            published = (
-                None
-                if database_refresh_required
-                else run_event_broker.events_after(run_id, last_id)
-            )
+            published = None if database_refresh_required else run_event_broker.events_after(run_id, last_id)
             if published is None:
                 payloads, status = await _database_event_payloads(run_id, last_id)
                 if payloads:
@@ -131,9 +131,7 @@ async def _run_event_stream(
 
 async def _database_event_payloads(run_id: str, after_id: int) -> tuple[list[dict], str | None]:
     async with SessionLocal() as stream_session:
-        events, status = await RunUnitOfWork(stream_session).list_events_with_status(
-            run_id, after_id
-        )
+        events, status = await RunUnitOfWork(stream_session).list_events_with_status(run_id, after_id)
         payloads = [
             {
                 "id": event.id,
@@ -162,9 +160,7 @@ def _published_event_payloads(events) -> list[dict]:
     ]
 
 
-def _assign_event_sequences(
-    payload: dict, run_sequence: int, agent_sequences: dict[str, int]
-) -> None:
+def _assign_event_sequences(payload: dict, run_sequence: int, agent_sequences: dict[str, int]) -> None:
     payload["run_sequence"] = run_sequence
     agent_execution_id = payload.get("agent_execution_id")
     if isinstance(agent_execution_id, str):
@@ -197,9 +193,7 @@ async def get_artifact_content(
     path = LocalArtifactStore(settings.artifact_store_path).resolve(artifact.storage_key)
     if not path.is_file():
         raise AstraResourceNotFoundError("ARTIFACT_NOT_FOUND", "工件内容已不可用。")
-    return FileResponse(
-        path, media_type=artifact.mime_type, filename=artifact.metadata_.get("filename")
-    )
+    return FileResponse(path, media_type=artifact.mime_type, filename=artifact.metadata_.get("filename"))
 
 
 @router.get("/runs", response_model=list[RunView])
@@ -207,7 +201,7 @@ async def list_runs(
     limit: int = Query(default=100, ge=1, le=200),
     session: AsyncSession = Depends(get_session),
 ) -> list[RunView]:
-    return await RunQueryService(RunUnitOfWork(session)).recent(limit)
+    return await recent_runs(RunUnitOfWork(session), limit)
 
 
 @router.post("/runs", response_model=CreateRunResponse)
@@ -249,8 +243,8 @@ async def get_run(
     detail: str = Query(default="full", pattern="^(full|initial)$"),
     session: AsyncSession = Depends(get_session),
 ) -> RunView:
-    queries = RunQueryService(RunUnitOfWork(session))
-    run_view = await (queries.initial(run_id) if detail == "initial" else queries.detail(run_id))
+    reader = RunUnitOfWork(session)
+    run_view = await (initial_run(reader, run_id) if detail == "initial" else run_detail(reader, run_id))
     if run_view is None:
         raise AstraResourceNotFoundError("RUN_NOT_FOUND", "找不到指定运行记录。")
     return run_view
@@ -305,7 +299,7 @@ async def cancel_run(
     service: RunApplicationService = Depends(get_run_application_service),
 ) -> RunView:
     run = await service.cancel(run_id)
-    return RunViewProjector().project(run)
+    return run_view(run)
 
 
 @router.post(
@@ -324,7 +318,7 @@ async def cancel_subagent(
         agent_execution_id,
         reason="user_cancelled_child",
     )
-    run_view = await RunQueryService(RunUnitOfWork(session)).detail(run_id)
+    run_view = await run_detail(RunUnitOfWork(session), run_id)
     if run_view is None:
         raise AstraResourceNotFoundError("RUN_NOT_FOUND", "找不到指定运行记录。")
     return run_view

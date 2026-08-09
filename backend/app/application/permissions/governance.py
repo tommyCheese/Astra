@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from fnmatch import fnmatchcase
 from typing import Any
@@ -10,9 +11,9 @@ from typing import Any
 from app.common.schemas.permissions import ActionEffectPlan, ExtensionDescriptor, PermissionBundle
 
 
+@dataclass
 class PermissionBundleEvaluator:
-    def __init__(self, signing_secret: str = ""):
-        self.signing_secret = signing_secret
+    signing_secret: str = ""
 
     def validate(
         self,
@@ -71,34 +72,19 @@ def _bundle_effect_denial(bundle, plan) -> str | None:
         return "action_not_in_bundle"
     if not {effect.kind for effect in plan.effects} <= set(bundle.allowed_effect_kinds):
         return "effect_not_in_bundle"
-    if any(
-        not any(fnmatchcase(effect.resource, item) for item in bundle.allowed_resources)
-        for effect in plan.effects
-    ):
+    if any(not any(fnmatchcase(effect.resource, item) for item in bundle.allowed_resources) for effect in plan.effects):
         return "resource_not_in_bundle"
     labels = {label for effect in plan.effects for label in effect.data_labels}
     if not labels <= set(bundle.allowed_data_labels):
         return "data_label_not_in_bundle"
-    scopes = {
-        str(scope)
-        for effect in plan.effects
-        for scope in effect.metadata.get("credential_scopes", [])
-    }
-    return (
-        None
-        if scopes <= set(bundle.allowed_credential_scopes)
-        else "credential_scope_not_in_bundle"
-    )
+    scopes = {str(scope) for effect in plan.effects for scope in effect.metadata.get("credential_scopes", [])}
+    return None if scopes <= set(bundle.allowed_credential_scopes) else "credential_scope_not_in_bundle"
 
 
 def _bundle_destination_denial(bundle, plan) -> str | None:
     if bundle is None:
         return None
-    outputs = [
-        effect.resource
-        for effect in plan.effects
-        if effect.kind.value in {"artifact_write", "external_write"}
-    ]
+    outputs = [effect.resource for effect in plan.effects if effect.kind.value in {"artifact_write", "external_write"}]
     if outputs and not _all_match(outputs, bundle.output_destinations):
         return "output_destination_not_in_bundle"
     destinations = plan.network_scope.get("destinations", [])
@@ -119,9 +105,7 @@ def permission_bundle_digest(bundle: PermissionBundle | dict[str, Any], signing_
         if isinstance(bundle, PermissionBundle)
         else {key: value for key, value in bundle.items() if key != "digest"}
     )
-    canonical = json.dumps(
-        payload, sort_keys=True, ensure_ascii=False, separators=(",", ":")
-    ).encode()
+    canonical = json.dumps(payload, sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode()
     signature = hmac.new(signing_secret.encode(), canonical, hashlib.sha256).hexdigest()
     return f"hmac-sha256:{signature}"
 

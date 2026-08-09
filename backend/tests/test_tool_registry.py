@@ -69,9 +69,7 @@ def test_disabled_sandbox_keeps_control_plane_and_structured_workspace_tools():
 
 
 def test_disabled_memory_writes_hide_remember_but_keep_forget_available():
-    registry = build_application_tool_registry(
-        AstraRuntimeSettings(sandbox_enabled=False, agent_memory_write_enabled=False)
-    )
+    registry = build_application_tool_registry(AstraRuntimeSettings(sandbox_enabled=False, agent_memory_write_enabled=False))
 
     assert "remember" not in registry.specs()
     assert "forget" in registry.specs()
@@ -79,9 +77,7 @@ def test_disabled_memory_writes_hide_remember_but_keep_forget_available():
 
 def test_tool_contract_serializes_artifact_envelope_and_legacy_permission_shape():
     spec = ExampleTool.spec
-    result = ToolResultEnvelope(
-        artifacts=[ToolArtifactReference(id="a1", type="chart", mime_type="image/png")]
-    )
+    result = ToolResultEnvelope(artifacts=[ToolArtifactReference(id="a1", type="chart", mime_type="image/png")])
 
     assert spec.capabilities == ["network_read"]
     assert result.model_dump()["artifacts"][0]["id"] == "a1"

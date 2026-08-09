@@ -38,9 +38,7 @@ class ConversationStrategyPreferences(BaseModel):
         return self
 
 
-@router.get(
-    "/conversation-strategy", response_model=ConversationStrategyPreferences
-)
+@router.get("/conversation-strategy", response_model=ConversationStrategyPreferences)
 async def get_conversation_strategy(
     session: AsyncSession = Depends(get_session),
 ) -> ConversationStrategyPreferences:
@@ -49,15 +47,11 @@ async def get_conversation_strategy(
     return ConversationStrategyPreferences.model_validate(strategy)
 
 
-@router.put(
-    "/conversation-strategy", response_model=ConversationStrategyPreferences
-)
+@router.put("/conversation-strategy", response_model=ConversationStrategyPreferences)
 async def update_conversation_strategy(
     update: ConversationStrategyPreferences,
     session: AsyncSession = Depends(get_session),
 ) -> ConversationStrategyPreferences:
-    strategy = await ConversationStrategyRepository(session).set(
-        update.model_dump(mode="json")
-    )
+    strategy = await ConversationStrategyRepository(session).set(update.model_dump(mode="json"))
     await session.commit()
     return ConversationStrategyPreferences.model_validate(strategy)

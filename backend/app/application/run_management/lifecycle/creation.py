@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -35,16 +36,11 @@ from app.infrastructure.repositories.run_unit_of_work import RunUnitOfWork
 logger = logging.getLogger("astra.run_creation")
 
 
+@dataclass
 class RunCreator:
-    def __init__(
-        self,
-        session: AsyncSession,
-        settings: AstraRuntimeSettings,
-        settings_resolver: RunSettingsResolver,
-    ) -> None:
-        self._session = session
-        self._settings = settings
-        self._settings_resolver = settings_resolver
+    _session: AsyncSession
+    _settings: AstraRuntimeSettings
+    _settings_resolver: RunSettingsResolver
 
     async def prepare(
         self,
@@ -70,9 +66,7 @@ class RunCreator:
             execution_profile = execution_profile.model_copy(
                 update={
                     "interactive": request.interactive,
-                    "permission_bundle": (
-                        permission_bundle.model_dump(mode="json") if permission_bundle else None
-                    ),
+                    "permission_bundle": (permission_bundle.model_dump(mode="json") if permission_bundle else None),
                 }
             )
             run = await self._create_run_record(
@@ -263,9 +257,7 @@ class RunCreator:
 
     @staticmethod
     def _configured_skill_capabilities(settings: AstraRuntimeSettings) -> set[str]:
-        capabilities = {
-            name for name, enabled in settings.tool_states.items() if enabled
-        }
+        capabilities = {name for name, enabled in settings.tool_states.items() if enabled}
         if settings.sandbox_enabled:
             capabilities.add("sandbox")
         return capabilities

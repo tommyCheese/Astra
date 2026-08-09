@@ -6,7 +6,7 @@ from sqlalchemy import event as sqlalchemy_event
 from sqlalchemy import func, select
 
 from app.application.agent_runtime.policies.reasoning import resolve_run_profile
-from app.application.runner.engine import RunEngine
+from app.application.run_management.execution.service import RunExecution as RunEngine
 from app.application.skills.activation import SkillActivationService
 from app.application.skills.builtin_catalog import ensure_builtin_skills
 from app.application.skills.catalog import SkillCatalogBuilder
@@ -222,10 +222,7 @@ async def test_catalog_snapshot_activation_and_resource_verification(session, tm
     )
     assert result["instructions"] == "Follow the workflow."
     assert "references/checklist.md" in {item["path"] for item in result["resources"]}
-    assert (
-        await activation.read_resource(run.id, "custom:research-notes", "references/checklist.md")
-        == b"# Checklist\n"
-    )
+    assert await activation.read_resource(run.id, "custom:research-notes", "references/checklist.md") == b"# Checklist\n"
     blocks = await activation.prompt_blocks(run.id)
     assert blocks[0]["digest"] == catalog.entries[0].digest
     assert snapshot.catalog_digest == catalog.digest
@@ -249,9 +246,7 @@ async def test_catalog_snapshot_activation_and_resource_verification(session, tm
     assert script.stat().st_mode & 0o222 == 0
     with pytest.raises(ValueError):
         await activation.read_resource(run.id, "custom:research-notes", "../outside.md")
-    script_resource = next(
-        item for item in catalog.entries[0].resources if item.path == "scripts/prepare.py"
-    )
+    script_resource = next(item for item in catalog.entries[0].resources if item.path == "scripts/prepare.py")
     script_blob = await session.get(SkillBlobRecord, script_resource.digest)
     assert script_blob is not None
     script_blob.content = b"tampered"
@@ -356,10 +351,7 @@ async def test_frozen_catalog_survives_republish_and_rejects_drift(session):
         initiator="model",
         reason="snapshot test",
     )
-    assert (
-        await activation.read_resource(run.id, "custom:snapshot-notes", "references/data.md")
-        == b"first"
-    )
+    assert await activation.read_resource(run.id, "custom:snapshot-notes", "references/data.md") == b"first"
 
     first_revision.digest = "sha256:" + "0" * 64
     with pytest.raises(ValueError, match="revision_unavailable"):
@@ -395,9 +387,7 @@ async def test_activation_quota_deactivation_and_revocation(session):
     revisions[1].revoked_at = revisions[1].published_at
     with pytest.raises(ValueError, match="revision_revoked"):
         await activation.activate(run.id, "custom:quota-two", initiator="model", reason="automatic")
-    snapshot = await session.scalar(
-        select(RunSkillSnapshotRecord).where(RunSkillSnapshotRecord.run_id == run.id)
-    )
+    snapshot = await session.scalar(select(RunSkillSnapshotRecord).where(RunSkillSnapshotRecord.run_id == run.id))
     assert snapshot is not None
     assert snapshot.activations == []
 
@@ -434,9 +424,7 @@ async def test_explicit_skill_is_bound_before_a_direct_finalize(session):
     )
     client = DirectFinalizeSkillClient()
 
-    await RunEngine(settings, model_client=client, tool_registry=AstraToolRegistry())._run_with_repo(
-        repo, run.id
-    )
+    await RunEngine(settings, model_client=client, tool_registry=AstraToolRegistry())._run_with_repo(repo, run.id)
 
     assert len(client.blocks_seen_at_first_decision) == 1
     bound = client.blocks_seen_at_first_decision[0]

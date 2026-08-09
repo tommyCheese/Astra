@@ -113,9 +113,7 @@ async def test_prepare_publish_and_audited_rollback_are_atomic(session):
     assert rollback.rollback_of_id == published_id
     session.expire_all()
     assert (await session.get(PersistedMemoryRecord, output_id)).status == "revoked"
-    assert {(await session.get(PersistedMemoryRecord, memory_id)).status for memory_id in input_ids} == {
-        "active"
-    }
+    assert {(await session.get(PersistedMemoryRecord, memory_id)).status for memory_id in input_ids} == {"active"}
     original = await session.get(MemoryConsolidationJobRecord, published_id)
     assert original.status == "rolled_back"
     audit_types = set((await session.scalars(select(MemoryAuditRecord.event_type))).all())
@@ -189,11 +187,7 @@ async def test_rollback_fails_atomically_when_source_support_is_revoked(session)
     published_id = published.id
     published_version = published.state_version
     output_id = published.publish_result["outputs"][0]["memory_id"]
-    sources = (
-        await session.scalars(
-            select(MemorySourceRecord).where(MemorySourceRecord.memory_id == input_ids[0])
-        )
-    ).all()
+    sources = (await session.scalars(select(MemorySourceRecord).where(MemorySourceRecord.memory_id == input_ids[0]))).all()
     for source in sources:
         source.accessible = False
         source.revoked_at = utc_now()
@@ -209,9 +203,7 @@ async def test_rollback_fails_atomically_when_source_support_is_revoked(session)
 
     session.expire_all()
     assert (await session.get(PersistedMemoryRecord, output_id)).status == "active"
-    assert {(await session.get(PersistedMemoryRecord, memory_id)).status for memory_id in input_ids} == {
-        "superseded"
-    }
+    assert {(await session.get(PersistedMemoryRecord, memory_id)).status for memory_id in input_ids} == {"superseded"}
 
 
 async def test_job_idempotency_bounded_input_and_duplicate_prevention(session):
@@ -229,9 +221,7 @@ async def test_job_idempotency_bounded_input_and_duplicate_prevention(session):
     )
     assert duplicate.id == first.id
 
-    proposed = await AutoDreamProcessor(
-        autodream_settings(agent_memory_autodream_max_records_per_job=2)
-    ).prepare_job(
+    proposed = await AutoDreamProcessor(autodream_settings(agent_memory_autodream_max_records_per_job=2)).prepare_job(
         session,
         first.id,
         owner="bounded-worker",
@@ -268,15 +258,11 @@ async def test_processor_marks_too_small_working_region_without_side_effects(
         namespace_id="session-1",
         idempotency_key="test:minimum",
     )
-    result = await AutoDreamProcessor(
-        autodream_settings(agent_memory_autodream_min_candidates=3)
-    ).prepare_job(
+    result = await AutoDreamProcessor(autodream_settings(agent_memory_autodream_min_candidates=3)).prepare_job(
         session,
         job.id,
         owner="test-worker",
     )
     assert result.status == "insufficient_input"
     assert result.input_manifest == {}
-    assert {memory.status for memory in (await session.scalars(select(PersistedMemoryRecord))).all()} == {
-        "active"
-    }
+    assert {memory.status for memory in (await session.scalars(select(PersistedMemoryRecord))).all()} == {"active"}

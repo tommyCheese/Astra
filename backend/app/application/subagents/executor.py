@@ -41,20 +41,11 @@ from app.infrastructure.tools.base import AstraToolRegistry, validate_json_schem
 def _evaluate_basic_completion(
     validation_outcomes: list[AgentValidationOutcome],
 ) -> CompletionDecision:
-    blocking = [
-        outcome.validator
-        for outcome in validation_outcomes
-        if not outcome.passed and outcome.blocking
-    ]
+    blocking = [outcome.validator for outcome in validation_outcomes if not outcome.passed and outcome.blocking]
     warnings = list(
         dict.fromkeys(
             [warning for outcome in validation_outcomes for warning in outcome.warnings]
-            + [
-                issue.message
-                for outcome in validation_outcomes
-                for issue in outcome.issues
-                if issue.severity == "warning"
-            ]
+            + [issue.message for outcome in validation_outcomes for issue in outcome.issues if issue.severity == "warning"]
         )
     )
     if blocking:
@@ -194,11 +185,7 @@ class LocalAstraAgentExecutor(AgentExecutor):
             )
         warnings = list(payload.get("warnings", []))
         return SubagentResult(
-            status=(
-                SubagentExecutionStatus.completed_with_warnings
-                if warnings
-                else SubagentExecutionStatus.completed
-            ),
+            status=(SubagentExecutionStatus.completed_with_warnings if warnings else SubagentExecutionStatus.completed),
             summary=str(payload.get("summary") or summary),
             outputs=outputs,
             artifacts=[
@@ -207,10 +194,7 @@ class LocalAstraAgentExecutor(AgentExecutor):
             ],
             evidence_refs=[
                 *evidence,
-                *[
-                    SubagentEvidenceReference.model_validate(item)
-                    for item in payload.get("evidence_refs", [])
-                ],
+                *[SubagentEvidenceReference.model_validate(item) for item in payload.get("evidence_refs", [])],
             ],
             claims=list(payload.get("claims", [])),
             open_issues=list(payload.get("open_issues", [])),
@@ -260,11 +244,7 @@ class LocalAstraAgentExecutor(AgentExecutor):
             phase=(NodeExecutionPhase.completed if success else NodeExecutionPhase.failed),
             status=(NodeExecutionStatus.completed if success else NodeExecutionStatus.failed),
             result=result.model_dump(mode="json") if success else None,
-            failure=(
-                None
-                if success
-                else {"category": (result.open_issues[0] if result.open_issues else "child_failed")}
-            ),
+            failure=(None if success else {"category": (result.open_issues[0] if result.open_issues else "child_failed")}),
         )
 
     @staticmethod
@@ -327,9 +307,7 @@ class LocalAstraAgentExecutor(AgentExecutor):
 
     @staticmethod
     def _next_node(plan):
-        completed = {
-            node.node_key for node in plan.nodes if node.status == PlanNodeStatus.completed.value
-        }
+        completed = {node.node_key for node in plan.nodes if node.status == PlanNodeStatus.completed.value}
         dependencies = {
             node.id: {
                 next(item.node_key for item in plan.nodes if item.id == edge.predecessor_id)
@@ -394,11 +372,7 @@ class LocalAstraAgentExecutor(AgentExecutor):
                 "tool_catalog_digest": runtime.frozen_catalog.tool_digest,
                 "skill_catalog_digest": runtime.frozen_catalog.skill_digest,
                 "context_checkpoint": context_checkpoint.model_dump(mode="json"),
-                **{
-                    key: deepcopy(existing[key])
-                    for key in ("context_compaction", "context_continuation")
-                    if key in existing
-                },
+                **{key: deepcopy(existing[key]) for key in ("context_compaction", "context_continuation") if key in existing},
             },
             budget_usage=usage,
             cancellation_epoch=execution.cancellation_epoch,

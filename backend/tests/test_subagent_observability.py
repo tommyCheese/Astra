@@ -22,9 +22,7 @@ async def test_telemetry_is_aggregate_and_does_not_expose_sensitive_content(sess
     run = await RunUnitOfWork(session).create_task_run(
         "secret user prompt",
         {"provider": "mock", "model": "test-model", "api_key": "secret"},
-        reasoning_policy={
-            "effective": {"subagents": {"rollout_cohort": "administrator_canary"}}
-        },
+        reasoning_policy={"effective": {"subagents": {"rollout_cohort": "administrator_canary"}}},
     )
     executions = AgentExecutionRepository(session)
     root = await executions.root_for_run(run.id)
@@ -93,10 +91,7 @@ async def test_telemetry_is_aggregate_and_does_not_expose_sensitive_content(sess
 
 
 def test_behavior_eval_covers_positive_and_negative_delegation_cases():
-    predictions = {
-        str(case["id"]): bool(case["should_delegate"])
-        for case in DELEGATION_BEHAVIOR_CASES
-    }
+    predictions = {str(case["id"]): bool(case["should_delegate"]) for case in DELEGATION_BEHAVIOR_CASES}
     assert evaluate_delegation_behavior(predictions)["passed"] is True
 
     predictions["simple_question"] = True

@@ -19,7 +19,6 @@ TOOL_CALL_LIMIT_RANGES: dict[ReasoningEffort, tuple[int, int]] = {
     ReasoningEffort.balanced: (6, 15),
 }
 
-
 TOOL_CALL_LIMIT_DEFAULTS: dict[ReasoningEffort, int | None] = {
     ReasoningEffort.fast: 5,
     ReasoningEffort.balanced: 8,
@@ -32,9 +31,7 @@ def validate_tool_call_limit(effort: ReasoningEffort, value: int) -> int:
         raise ValueError("max_tool_calls must be unlimited for deep reasoning")
     minimum, maximum = TOOL_CALL_LIMIT_RANGES[effort]
     if not minimum <= value <= maximum:
-        raise ValueError(
-            f"max_tool_calls must be between {minimum} and {maximum} for {effort.value} reasoning"
-        )
+        raise ValueError(f"max_tool_calls must be between {minimum} and {maximum} for {effort.value} reasoning")
     return value
 
 

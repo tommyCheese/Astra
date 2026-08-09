@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+from dataclasses import dataclass
 from typing import Any
 
 from sqlalchemy import func, select
@@ -47,9 +48,9 @@ class PlanStateError(ValueError):
     pass
 
 
+@dataclass
 class PlanRepository:
-    def __init__(self, session: AsyncSession):
-        self.session = session
+    session: AsyncSession
 
     async def create(
         self,
@@ -149,9 +150,7 @@ class PlanRepository:
             raise PlanStateError("Lineage must reference nodes from an earlier Plan in the Run")
 
     async def _next_version(self, run_id: str) -> int:
-        latest = await self.session.scalar(
-            select(func.max(PlanRecord.version)).where(PlanRecord.run_id == run_id)
-        )
+        latest = await self.session.scalar(select(func.max(PlanRecord.version)).where(PlanRecord.run_id == run_id))
         return int(latest or 0) + 1
 
     def _add_nodes(self, plan, draft, lineage, node_state, agent_execution_id):
@@ -320,9 +319,7 @@ class PlanRepository:
     async def activate(self, plan_id: str, *, expected_version: int | None = None) -> PlanRecord:
         plan = await self.require(plan_id)
         if expected_version is not None and plan.version != expected_version:
-            raise PlanStateError(
-                f"Plan version conflict: expected {expected_version}, got {plan.version}"
-            )
+            raise PlanStateError(f"Plan version conflict: expected {expected_version}, got {plan.version}")
         if plan.status != PlanStatus.planned.value:
             raise PlanStateError(f"Plan is not awaiting activation: {plan.status}")
         run = await self.session.get(RunRecord, plan.run_id)
@@ -392,9 +389,7 @@ def plan_to_view(plan: PlanRecord) -> PlanView:
                 required_capabilities=node.required_capabilities or [],
                 required_skill_ids=node.required_skill_ids or [],
                 success_criteria_refs=node.success_criteria_refs or [],
-                expected_outcome=ExpectedObservation.model_validate(node.expected_outcome)
-                if node.expected_outcome
-                else None,
+                expected_outcome=ExpectedObservation.model_validate(node.expected_outcome) if node.expected_outcome else None,
                 risk_level=node.risk_level,
                 optional=node.optional,
                 evidence_refs=node.evidence_refs or [],

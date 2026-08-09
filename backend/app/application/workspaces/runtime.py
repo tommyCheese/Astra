@@ -48,9 +48,7 @@ class WorkspaceRuntimeService:
         self.max_files = max_files
         self.max_bytes = max_bytes
         self.max_file_bytes = max_file_bytes
-        self.artifact_store = (
-            LocalArtifactStore(artifact_store_path) if artifact_store_path else None
-        )
+        self.artifact_store = LocalArtifactStore(artifact_store_path) if artifact_store_path else None
 
     async def prepare(self, task_id: str) -> Path:
         workspace = await self.repository.get_or_create(
@@ -74,53 +72,35 @@ class WorkspaceRuntimeService:
     def scan(self, workspace_dir: Path) -> dict[str, WorkspaceManifestEntry]:
         root = workspace_dir.resolve(strict=True)
         if not root.is_relative_to(self.root):
-            raise ToolExecutionError(
-                "sandbox_policy_violation", "Workspace is outside the managed root"
-            )
+            raise ToolExecutionError("sandbox_policy_violation", "Workspace is outside the managed root")
         manifest: dict[str, WorkspaceManifestEntry] = {}
         total_bytes = 0
         for current, directories, filenames in os.walk(root, followlinks=False):
             current_path = Path(current)
             depth = len(current_path.relative_to(root).parts)
             if depth > 32:
-                raise ToolExecutionError(
-                    "sandbox_policy_violation", "Workspace path depth exceeds policy"
-                )
+                raise ToolExecutionError("sandbox_policy_violation", "Workspace path depth exceeds policy")
             for directory in list(directories):
                 candidate = current_path / directory
                 mode = candidate.lstat().st_mode
                 if stat.S_ISLNK(mode) or not stat.S_ISDIR(mode):
-                    raise ToolExecutionError(
-                        "sandbox_policy_violation", "Workspace links are not allowed"
-                    )
+                    raise ToolExecutionError("sandbox_policy_violation", "Workspace links are not allowed")
             for filename in filenames:
                 path = current_path / filename
                 metadata = path.lstat()
-                if (
-                    stat.S_ISLNK(metadata.st_mode)
-                    or not stat.S_ISREG(metadata.st_mode)
-                    or metadata.st_nlink > 1
-                ):
-                    raise ToolExecutionError(
-                        "sandbox_policy_violation", "Unsupported Workspace file type"
-                    )
+                if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink > 1:
+                    raise ToolExecutionError("sandbox_policy_violation", "Unsupported Workspace file type")
                 relative = path.relative_to(root).as_posix()
                 try:
                     validate_workspace_path(relative)
                 except ValueError as exc:
-                    raise ToolExecutionError(
-                        "sandbox_policy_violation", "Workspace filename is unsafe"
-                    ) from exc
+                    raise ToolExecutionError("sandbox_policy_violation", "Workspace filename is unsafe") from exc
                 size = path.stat().st_size
                 if size > self.max_file_bytes:
-                    raise ToolExecutionError(
-                        "artifact_limit_exceeded", "Workspace file exceeds quota"
-                    )
+                    raise ToolExecutionError("artifact_limit_exceeded", "Workspace file exceeds quota")
                 total_bytes += size
                 if total_bytes > self.max_bytes or len(manifest) >= self.max_files:
-                    raise ToolExecutionError(
-                        "artifact_limit_exceeded", "Workspace exceeds quota"
-                    )
+                    raise ToolExecutionError("artifact_limit_exceeded", "Workspace exceeds quota")
                 manifest[relative] = WorkspaceManifestEntry(
                     checksum=self._checksum(path),
                     size_bytes=size,
@@ -131,9 +111,7 @@ class WorkspaceRuntimeService:
     def protected_paths(self, workspace_dir: Path) -> set[str]:
         root = workspace_dir.resolve(strict=True)
         if not root.is_relative_to(self.root):
-            raise ToolExecutionError(
-                "sandbox_policy_violation", "Workspace is outside the managed root"
-            )
+            raise ToolExecutionError("sandbox_policy_violation", "Workspace is outside the managed root")
         return {
             candidate.relative_to(root).as_posix()
             for candidate in root.rglob("*")
@@ -169,9 +147,7 @@ class WorkspaceRuntimeService:
             }
             for path, entry in sorted(manifest.items())
         }
-        digest = hashlib.sha256(
-            repr(sorted((path, value["checksum"]) for path, value in payload.items())).encode()
-        ).hexdigest()
+        digest = hashlib.sha256(repr(sorted((path, value["checksum"]) for path, value in payload.items())).encode()).hexdigest()
         workspace = await self.repository.for_run(run_id)
         checkpoint = await self.repository.create_checkpoint(
             workspace_id=workspace.id,
@@ -193,13 +169,9 @@ class WorkspaceRuntimeService:
     def validate_archive(self, archive_path: Path) -> list[str]:
         names, total_size = self._archive_entries(archive_path)
         if any(self._unsafe_archive_name(name) for name in names):
-            raise ToolExecutionError(
-                "sandbox_policy_violation", "Archive path traversal is not allowed"
-            )
+            raise ToolExecutionError("sandbox_policy_violation", "Archive path traversal is not allowed")
         if len(names) > self.max_files or total_size > self.max_bytes:
-            raise ToolExecutionError(
-                "artifact_limit_exceeded", "Archive expansion exceeds Workspace quota"
-            )
+            raise ToolExecutionError("artifact_limit_exceeded", "Archive expansion exceeds Workspace quota")
         return names
 
     @staticmethod
@@ -207,16 +179,12 @@ class WorkspaceRuntimeService:
         if zipfile.is_zipfile(archive_path):
             with zipfile.ZipFile(archive_path) as archive:
                 entries = archive.infolist()
-                return [entry.filename for entry in entries], sum(
-                    entry.file_size for entry in entries
-                )
+                return [entry.filename for entry in entries], sum(entry.file_size for entry in entries)
         if tarfile.is_tarfile(archive_path):
             with tarfile.open(archive_path) as archive:
                 members = archive.getmembers()
                 if any(WorkspaceRuntimeService._unsafe_tar_member(member) for member in members):
-                    raise ToolExecutionError(
-                        "sandbox_policy_violation", "Archive contains unsafe entries"
-                    )
+                    raise ToolExecutionError("sandbox_policy_violation", "Archive contains unsafe entries")
                 return [member.name for member in members], sum(member.size for member in members)
         raise ToolExecutionError("invalid_artifact", "Unsupported archive format")
 
@@ -241,9 +209,7 @@ class WorkspaceRuntimeService:
         before_protected_paths: set[str] | None = None,
     ) -> list[dict[str, Any]]:
         after = self.scan(workspace_dir)
-        self._reject_protected_changes(
-            workspace_dir, before, after, before_protected_paths
-        )
+        self._reject_protected_changes(workspace_dir, before, after, before_protected_paths)
         workspace = await self.repository.for_run(run_id)
         changes: list[dict[str, Any]] = []
         for relative_path in sorted(before.keys() | after.keys()):
@@ -269,22 +235,17 @@ class WorkspaceRuntimeService:
         content_changes = [
             path
             for path, entry in after.items()
-            if any(part in PROTECTED_WORKSPACE_PATHS for part in Path(path).parts)
-            and before.get(path) != entry
+            if any(part in PROTECTED_WORKSPACE_PATHS for part in Path(path).parts) and before.get(path) != entry
         ]
         if not content_changes and not path_changes:
             return
-        self._remove_new_protected_paths(
-            workspace_dir, before, [*content_changes, *path_changes]
-        )
+        self._remove_new_protected_paths(workspace_dir, before, [*content_changes, *path_changes])
         raise ToolExecutionError(
             "sandbox_policy_violation",
             "AstraTool execution attempted to modify a protected Workspace path",
         )
 
-    async def _record_workspace_change(
-        self, workspace_id, run_id, tool_call_id, workspace_dir, path, previous, current
-    ) -> str:
+    async def _record_workspace_change(self, workspace_id, run_id, tool_call_id, workspace_dir, path, previous, current) -> str:
         kind = self._change_kind(previous, current)
         entry = current or previous
         security = self._change_security(workspace_dir, path, current)
@@ -332,9 +293,7 @@ class WorkspaceRuntimeService:
             return False
         return self._deliverable_candidate(path)
 
-    async def _snapshot_workspace_file(
-        self, run_id, tool_call_id, workspace_dir, relative_path, current
-    ) -> None:
+    async def _snapshot_workspace_file(self, run_id, tool_call_id, workspace_dir, relative_path, current) -> None:
         if self.artifact_store is None:
             return
         existing = await self.repository.find_workspace_snapshot(
@@ -367,18 +326,11 @@ class WorkspaceRuntimeService:
         protected_roots: set[Path] = set()
         for relative_path in changed_paths:
             parts = Path(relative_path).parts
-            protected_index = next(
-                index
-                for index, part in enumerate(parts)
-                if part in PROTECTED_WORKSPACE_PATHS
-            )
+            protected_index = next(index for index, part in enumerate(parts) if part in PROTECTED_WORKSPACE_PATHS)
             protected_roots.add(Path(*parts[: protected_index + 1]))
         for relative_root in sorted(protected_roots, reverse=True):
             prefix = f"{relative_root.as_posix()}/"
-            existed_before = any(
-                path == relative_root.as_posix() or path.startswith(prefix)
-                for path in before
-            )
+            existed_before = any(path == relative_root.as_posix() or path.startswith(prefix) for path in before)
             if existed_before:
                 continue
             target = workspace_dir / relative_root
@@ -393,17 +345,13 @@ class WorkspaceRuntimeService:
         root = workspace_dir.resolve(strict=True)
         target = (root / relative_path).resolve(strict=True)
         if not target.is_relative_to(root) or target.is_symlink() or not target.is_file():
-            raise ToolExecutionError(
-                "sandbox_policy_violation", "Workspace file path is invalid"
-            )
+            raise ToolExecutionError("sandbox_policy_violation", "Workspace file path is invalid")
         return target
 
     def _resolve_storage_key(self, storage_key: str) -> Path:
         path = (self.root / storage_key).resolve()
         if not path.is_relative_to(self.root):
-            raise ToolExecutionError(
-                "sandbox_policy_violation", "Invalid Workspace storage key"
-            )
+            raise ToolExecutionError("sandbox_policy_violation", "Invalid Workspace storage key")
         return path
 
     @staticmethod
@@ -418,8 +366,12 @@ class WorkspaceRuntimeService:
     def _deliverable_candidate(relative_path: str) -> bool:
         hidden_parts = {".git", ".venv", "node_modules", "__pycache__"}
         dependency_files = {
-            "package-lock.json", "pnpm-lock.yaml", "yarn.lock", "uv.lock",
-            "poetry.lock", "Pipfile.lock",
+            "package-lock.json",
+            "pnpm-lock.yaml",
+            "yarn.lock",
+            "uv.lock",
+            "poetry.lock",
+            "Pipfile.lock",
         }
         path = Path(relative_path)
         return (

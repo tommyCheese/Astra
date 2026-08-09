@@ -12,11 +12,11 @@ from app.infrastructure.plugins.contracts import (
     PluginRuntimeBackendContribution,
     PluginToolContribution,
 )
+from app.infrastructure.plugins.diagnostics import plugin_diagnostics
 from app.infrastructure.plugins.discovery import (
     IsolatedDescriptorDiscoverySource,
     IsolatedProviderReference,
 )
-from app.infrastructure.plugins.diagnostics import plugin_diagnostics
 from app.infrastructure.plugins.isolated import (
     IsolatedProviderRuntimeBackend,
     IsolatedProviderTransport,
@@ -126,11 +126,7 @@ def runtime(transport, **policy_updates):
     )
     contribution = PluginContribution(
         descriptor=descriptor,
-        tools=(
-            PluginToolContribution(
-                tool=DescriptorOnlyTool(), executor_id="external.provider.transport"
-            ),
-        ),
+        tools=(PluginToolContribution(tool=DescriptorOnlyTool(), executor_id="external.provider.transport"),),
     )
     backend = IsolatedProviderRuntimeBackend(
         descriptor.provider_id,
@@ -148,11 +144,7 @@ def runtime(transport, **policy_updates):
         backend=backend,
     )
     catalog = PluginCatalogBuilder(
-        [
-            IsolatedDescriptorDiscoverySource(
-                [IsolatedProviderReference(descriptor, contribution)]
-            )
-        ],
+        [IsolatedDescriptorDiscoverySource([IsolatedProviderReference(descriptor, contribution)])],
         allowed_providers={descriptor.provider_id: {descriptor.digest}},
         host_runtime_backends=[backend_contribution],
     ).build_static()
@@ -254,11 +246,7 @@ def test_isolated_tool_requires_an_explicit_host_managed_backend():
     )
     with pytest.raises(PluginCatalogError) as rejected:
         PluginCatalogBuilder(
-            [
-                IsolatedDescriptorDiscoverySource(
-                    [IsolatedProviderReference(descriptor, contribution)]
-                )
-            ],
+            [IsolatedDescriptorDiscoverySource([IsolatedProviderReference(descriptor, contribution)])],
             allowed_providers={descriptor.provider_id: {descriptor.digest}},
         ).build_static()
     assert rejected.value.category == "runtime_backend_unavailable"

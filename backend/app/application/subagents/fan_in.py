@@ -45,11 +45,10 @@ def _validated_execution_result(execution):
     if result.provenance.get("contract_hash") not in {None, contract.contract_hash}:
         raise SubagentResultValidationError("Child result contract hash is invalid")
     if result.status not in {
-        SubagentExecutionStatus.completed, SubagentExecutionStatus.completed_with_warnings,
+        SubagentExecutionStatus.completed,
+        SubagentExecutionStatus.completed_with_warnings,
     }:
-        raise SubagentResultValidationError(
-            f"Child is not successfully complete: {result.status.value}"
-        )
+        raise SubagentResultValidationError(f"Child is not successfully complete: {result.status.value}")
     try:
         validate_json_schema(result.outputs, contract.request.output_schema, path="outputs")
     except ValueError as exc:
@@ -60,13 +59,9 @@ def _validated_execution_result(execution):
 def _validate_claims_and_completion(result, found_evidence) -> None:
     for claim in result.claims:
         if claim.get("material", True) and not claim.get("evidence_refs"):
-            raise SubagentResultValidationError(
-                "Material child claim is missing Evidence references"
-            )
+            raise SubagentResultValidationError("Material child claim is missing Evidence references")
         if any(ref not in found_evidence for ref in claim.get("evidence_refs", [])):
-            raise SubagentResultValidationError(
-                "Child claim references Evidence outside the validated result"
-            )
+            raise SubagentResultValidationError("Child claim references Evidence outside the validated result")
     if result.completion.get("state") not in {"completed", "completed_with_warnings"}:
         raise SubagentResultValidationError("Child Completion Gate did not approve success")
 
@@ -109,9 +104,9 @@ class ValidatedSubagentResult:
     warnings: tuple[str, ...] = ()
 
 
+@dataclass
 class SubagentResultValidator:
-    def __init__(self, session: AsyncSession):
-        self.session = session
+    session: AsyncSession
 
     async def validate(self, execution_id: str) -> ValidatedSubagentResult:
         execution = await self.session.get(AgentExecutionRecord, execution_id)
@@ -128,39 +123,44 @@ class SubagentResultValidator:
             result=result,
             artifact_ids=tuple(artifact_ids),
             evidence_ids=tuple(evidence_ids),
-            warnings=tuple(result.open_issues)
-            if result.status == SubagentExecutionStatus.completed_with_warnings
-            else (),
+            warnings=tuple(result.open_issues) if result.status == SubagentExecutionStatus.completed_with_warnings else (),
         )
 
     async def _validate_artifacts(self, execution, artifact_ids) -> None:
-        artifacts = list((await self.session.scalars(
-            select(ArtifactRecord).where(ArtifactRecord.id.in_(artifact_ids))
-        )).all()) if artifact_ids else []
+        artifacts = (
+            list((await self.session.scalars(select(ArtifactRecord).where(ArtifactRecord.id.in_(artifact_ids)))).all())
+            if artifact_ids
+            else []
+        )
         if {item.id for item in artifacts} != set(artifact_ids):
             raise SubagentResultValidationError("Child result references a missing Artifact")
         if any(
-            item.run_id != execution.run_id
-            or item.agent_execution_id != execution.id
-            or item.security_status != "verified" for item in artifacts
+            item.run_id != execution.run_id or item.agent_execution_id != execution.id or item.security_status != "verified"
+            for item in artifacts
         ):
-            raise SubagentResultValidationError(
-                "Child Artifact is unverified or outside execution lineage"
-            )
+            raise SubagentResultValidationError("Child Artifact is unverified or outside execution lineage")
 
     async def _validated_evidence(self, execution, evidence_ids):
-        evidence = list((await self.session.scalars(
-            select(EvidenceRecord).where(or_(
-                EvidenceRecord.id.in_(evidence_ids), EvidenceRecord.evidence_id.in_(evidence_ids),
-            ))
-        )).all()) if evidence_ids else []
+        evidence = (
+            list(
+                (
+                    await self.session.scalars(
+                        select(EvidenceRecord).where(
+                            or_(
+                                EvidenceRecord.id.in_(evidence_ids),
+                                EvidenceRecord.evidence_id.in_(evidence_ids),
+                            )
+                        )
+                    )
+                ).all()
+            )
+            if evidence_ids
+            else []
+        )
         found = {value for item in evidence for value in (item.id, item.evidence_id)}
         if any(item not in found for item in evidence_ids):
             raise SubagentResultValidationError("Child result references missing Evidence")
-        if any(
-            item.run_id != execution.run_id or item.agent_execution_id != execution.id
-            for item in evidence
-        ):
+        if any(item.run_id != execution.run_id or item.agent_execution_id != execution.id for item in evidence):
             raise SubagentResultValidationError("Child Evidence crosses execution lineage")
         return evidence
 
@@ -206,21 +206,13 @@ class SubagentJoinService:
             return existing
         parent = await self.session.get(AgentExecutionRecord, parent_execution_id)
         children = list(
-            (
-                await self.session.scalars(
-                    select(AgentExecutionRecord).where(
-                        AgentExecutionRecord.id.in_(child_ids)
-                    )
-                )
-            ).all()
+            (await self.session.scalars(select(AgentExecutionRecord).where(AgentExecutionRecord.id.in_(child_ids)))).all()
         )
         if parent is None or {item.id for item in children} != set(child_ids):
             raise ValueError("Join parent or child is unavailable")
         if any(item.parent_execution_id != parent.id for item in children):
             raise ValueError("Join cannot cross direct parent lineage")
-        required, optional = _join_partitions(
-            child_ids, policy, required_execution_ids, optional_execution_ids
-        )
+        required, optional = _join_partitions(child_ids, policy, required_execution_ids, optional_execution_ids)
         join = AgentJoinRecord(
             run_id=parent.run_id,
             parent_execution_id=parent.id,
@@ -241,9 +233,7 @@ class SubagentJoinService:
             await self.session.flush()
         return join
 
-    async def for_group(
-        self, parent_execution_id: str, group_id: str
-    ) -> AgentJoinRecord | None:
+    async def for_group(self, parent_execution_id: str, group_id: str) -> AgentJoinRecord | None:
         return await self.session.scalar(
             select(AgentJoinRecord).where(
                 AgentJoinRecord.parent_execution_id == parent_execution_id,
@@ -340,18 +330,12 @@ class SubagentJoinService:
         children = list(
             (
                 await self.session.scalars(
-                    select(AgentExecutionRecord).where(
-                        AgentExecutionRecord.id.in_(join.child_execution_ids)
-                    )
+                    select(AgentExecutionRecord).where(AgentExecutionRecord.id.in_(join.child_execution_ids))
                 )
             ).all()
         )
         by_id = {item.id: item for item in children}
-        waiting = [
-            child_id
-            for child_id in join.child_execution_ids
-            if by_id[child_id].status not in TERMINAL_AGENT_STATUSES
-        ]
+        waiting = [child_id for child_id in join.child_execution_ids if by_id[child_id].status not in TERMINAL_AGENT_STATUSES]
         successful: list[str] = []
         failed: list[str] = []
         validation_errors: dict[str, str] = {}
@@ -394,11 +378,7 @@ class SubagentJoinService:
         evaluation: JoinEvaluation,
     ) -> tuple[tuple[str, ...], tuple[str, ...]]:
         join = await self.session.get(AgentJoinRecord, evaluation.join_id)
-        if (
-            join is None
-            or join.policy != SubagentJoinPolicy.first_success.value
-            or evaluation.status != "ready"
-        ):
+        if join is None or join.policy != SubagentJoinPolicy.first_success.value or evaluation.status != "ready":
             raise ValueError("Loser cancellation requires a ready first-success join")
         cancelled: list[str] = []
         unsafe: list[str] = []
@@ -417,10 +397,7 @@ class SubagentJoinService:
                     )
                 ).all()
             )
-            if any(
-                item.side_effect_level not in {"none", "read", "read_only"}
-                for item in active_calls
-            ):
+            if any(item.side_effect_level not in {"none", "read", "read_only"} for item in active_calls):
                 unsafe.append(execution.id)
                 continue
             await repository.transition(
@@ -479,7 +456,9 @@ def merge_subagent_results(results: list[ValidatedSubagentResult]) -> SubagentMe
 
 def _merge_fact(facts, conflicts, key, value, item) -> None:
     fact = {
-        "key": key, "value": deepcopy(value), "verified": bool(item.evidence_ids),
+        "key": key,
+        "value": deepcopy(value),
+        "verified": bool(item.evidence_ids),
         "source_agent_execution_id": item.execution_id,
         "evidence_refs": list(item.evidence_ids),
     }
@@ -497,13 +476,22 @@ def _merge_claim(claims, conflicts, claim, source) -> None:
     previous_value = (previous or {}).get("value", (previous or {}).get("text"))
     value = normalized.get("value", normalized.get("text"))
     if previous is not None and previous_value != value:
-        conflicts.append({
-            "kind": "claim_conflict", "key": key, "values": [previous, normalized],
-        })
+        conflicts.append(
+            {
+                "kind": "claim_conflict",
+                "key": key,
+                "values": [previous, normalized],
+            }
+        )
     elif previous is not None:
-        previous["evidence_refs"] = list(dict.fromkeys([
-            *previous.get("evidence_refs", []), *normalized.get("evidence_refs", []),
-        ]))
+        previous["evidence_refs"] = list(
+            dict.fromkeys(
+                [
+                    *previous.get("evidence_refs", []),
+                    *normalized.get("evidence_refs", []),
+                ]
+            )
+        )
         previous["source_agent_execution_ids"].append(source)
     else:
         claims[key] = normalized

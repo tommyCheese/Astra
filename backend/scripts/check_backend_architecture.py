@@ -18,12 +18,8 @@ from analyze_backend_architecture import ArchitectureInventory, build_inventory
 DECLARED_DYNAMIC_MODULES = {
     "app.infrastructure.plugins.isolated",
 }
-DECLARED_DYNAMIC_MODULE_PREFIXES = (
-    "app.infrastructure.builtin_skills.",
-)
-RETIRED_MODULE_PREFIXES = (
-    "app.infrastructure.tools.web",
-)
+DECLARED_DYNAMIC_MODULE_PREFIXES = ("app.infrastructure.builtin_skills.",)
+RETIRED_MODULE_PREFIXES = ("app.infrastructure.tools.web",)
 COHESIVE_PACKAGE_ROOTS = (
     Path("app/application/agent_runtime/services"),
     Path("app/application/run_management"),
@@ -82,17 +78,12 @@ def load_rules(path: Path) -> ArchitectureRules:
     return ArchitectureRules(
         default_budget=QualityBudget(**raw_rules["default_budget"]),
         hard_limit=QualityBudget(**raw_rules["hard_limit"]),
-        forbidden_dependencies=tuple(
-            ForbiddenDependency(**dependency)
-            for dependency in raw_rules["forbidden_dependencies"]
-        ),
+        forbidden_dependencies=tuple(ForbiddenDependency(**dependency) for dependency in raw_rules["forbidden_dependencies"]),
         typed_module_prefixes=tuple(raw_rules["typed_module_prefixes"]),
         forbidden_generic_module_names=tuple(raw_rules["forbidden_generic_module_names"]),
         forbidden_generic_class_names=tuple(raw_rules["forbidden_generic_class_names"]),
         forbidden_top_level_packages=tuple(raw_rules["forbidden_top_level_packages"]),
-        forbidden_compatibility_symbol_terms=tuple(
-            raw_rules["forbidden_compatibility_symbol_terms"]
-        ),
+        forbidden_compatibility_symbol_terms=tuple(raw_rules["forbidden_compatibility_symbol_terms"]),
         complexity_budget=ComplexityBudget(**raw_rules["complexity_budget"]),
     )
 
@@ -135,23 +126,18 @@ def matches_prefix(module: str, prefix: str) -> bool:
     return module == prefix or module.startswith(f"{prefix}.")
 
 
-def forbidden_edges(
-    edges: set[tuple[str, str]], rules: ArchitectureRules
-) -> set[tuple[str, str]]:
+def forbidden_edges(edges: set[tuple[str, str]], rules: ArchitectureRules) -> set[tuple[str, str]]:
     return {
         (importer, imported)
         for importer, imported in edges
         if any(
-            matches_prefix(importer, dependency.importer)
-            and matches_prefix(imported, dependency.imported)
+            matches_prefix(importer, dependency.importer) and matches_prefix(imported, dependency.imported)
             for dependency in rules.forbidden_dependencies
         )
     }
 
 
-def transitive_reachability(
-    nodes: set[str], edges: set[tuple[str, str]]
-) -> dict[str, set[str]]:
+def transitive_reachability(nodes: set[str], edges: set[tuple[str, str]]) -> dict[str, set[str]]:
     adjacency: dict[str, set[str]] = defaultdict(set)
     for importer, imported in edges:
         adjacency[importer].add(imported)
@@ -173,10 +159,7 @@ def cyclic_pairs(inventory: ArchitectureInventory) -> set[tuple[str, str]]:
     nodes = {module.module for module in inventory.modules}
     reachable = transitive_reachability(nodes, dependency_edges(inventory))
     return {
-        (left, right)
-        for left in nodes
-        for right in reachable[left]
-        if left < right and left in reachable.get(right, set())
+        (left, right) for left in nodes for right in reachable[left] if left < right and left in reachable.get(right, set())
     }
 
 
@@ -198,19 +181,14 @@ def quality_baseline(
     source_root: Path,
 ) -> dict[str, Any]:
     default = rules.default_budget
-    baseline_module_lines = {
-        module.module: module.lines
-        for module in inventory.modules
-        if module.lines > default.module_lines
-    }
+    baseline_module_lines = {module.module: module.lines for module in inventory.modules if module.lines > default.module_lines}
     baseline_functions = {
         f"{function.module}:{function.qualified_name}": {
             "lines": function.lines,
             "complexity": function.complexity,
         }
         for function in inventory.functions
-        if function.lines > default.function_lines
-        or function.complexity > default.function_complexity
+        if function.lines > default.function_lines or function.complexity > default.function_complexity
     }
     edges = forbidden_edges(dependency_edges(inventory), rules)
     return {
@@ -243,8 +221,7 @@ def one_operation_classes(source_root: Path) -> list[str]:
             operations = [
                 item
                 for item in statement.body
-                if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))
-                and not item.name.startswith("_")
+                if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)) and not item.name.startswith("_")
             ]
             if len(operations) == 1:
                 findings.append(f"{module}:{statement.name}")
@@ -259,20 +236,15 @@ def compatibility_symbols(source_root: Path, rules: ArchitectureRules) -> list[s
         tree = ast.parse(source_file.read_text(encoding="utf-8"), filename=str(source_file))
         module = ".".join(source_file.relative_to(resolved_root.parent).with_suffix("").parts)
         for statement in tree.body:
-            if isinstance(
-                statement, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)
-            ) and any(term in statement.name.lower() for term in terms):
+            if isinstance(statement, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)) and any(
+                term in statement.name.lower() for term in terms
+            ):
                 findings.append(f"{module}:{statement.name}")
     return sorted(findings)
 
 
 def exception_is_valid(exception: QualityException | None) -> bool:
-    return bool(
-        exception
-        and exception.owner.strip()
-        and exception.reason.strip()
-        and exception.expires >= date.today()
-    )
+    return bool(exception and exception.owner.strip() and exception.reason.strip() and exception.expires >= date.today())
 
 
 def check_module_budgets(
@@ -314,26 +286,17 @@ def check_function_budgets(
             continue
         symbol = f"{function.module}:{function.qualified_name}"
         if function.lines > rules.hard_limit.function_lines:
-            yield (
-                f"{symbol} has {function.lines} lines; "
-                f"hard limit is {rules.hard_limit.function_lines}"
-            )
+            yield (f"{symbol} has {function.lines} lines; hard limit is {rules.hard_limit.function_lines}")
             continue
         if function.complexity > rules.hard_limit.function_complexity:
-            yield (
-                f"{symbol} has complexity {function.complexity}; "
-                f"hard limit is {rules.hard_limit.function_complexity}"
-            )
+            yield (f"{symbol} has complexity {function.complexity}; hard limit is {rules.hard_limit.function_complexity}")
             continue
         baseline_metric = baseline_functions.get(symbol)
         if baseline_metric is not None:
             if function.lines > baseline_metric["lines"]:
                 yield f"{symbol} grew from {baseline_metric['lines']} to {function.lines} lines"
             if function.complexity > baseline_metric["complexity"]:
-                yield (
-                    f"{symbol} complexity grew from {baseline_metric['complexity']} "
-                    f"to {function.complexity}"
-                )
+                yield (f"{symbol} complexity grew from {baseline_metric['complexity']} to {function.complexity}")
             continue
         if not exception_is_valid(exceptions.get(symbol)):
             yield f"{symbol} exceeds the default function budget without a valid exception"
@@ -346,10 +309,7 @@ def iter_public_callables(module_tree: ast.Module) -> Iterable[ast.FunctionDef |
                 yield statement
         elif isinstance(statement, ast.ClassDef) and not statement.name.startswith("_"):
             for member in statement.body:
-                if (
-                    isinstance(member, (ast.FunctionDef, ast.AsyncFunctionDef))
-                    and not member.name.startswith("_")
-                ):
+                if isinstance(member, (ast.FunctionDef, ast.AsyncFunctionDef)) and not member.name.startswith("_"):
                     yield member
 
 
@@ -407,6 +367,40 @@ def check_global_class_names(source_root: Path, rules: ArchitectureRules) -> Ite
             yield f"class name {name} is too generic at {locations[0]}"
 
 
+def check_runtime_representations(source_root: Path) -> Iterable[str]:
+    """Keep canonical Loop values and mapping ownership from fragmenting again."""
+    canonical_runtime_names = {
+        "CapabilityIdentity",
+        "LoopAction",
+        "LoopObservation",
+        "LoopOutcome",
+        "LoopState",
+        "ModelDecision",
+        "PortIdentity",
+    }
+    mirror_suffixes = ("Input", "Outcome", "Projection", "Result")
+    resolved_root = source_root.resolve()
+    for source_file in resolved_root.rglob("*.py"):
+        module = ".".join(source_file.relative_to(resolved_root.parent).with_suffix("").parts)
+        tree = ast.parse(source_file.read_text(encoding="utf-8"), filename=str(source_file))
+        classes = [node for node in ast.walk(tree) if isinstance(node, ast.ClassDef)]
+        for node in classes:
+            if node.name.endswith(("Mapper", "Projector")):
+                yield f"generic mapper/projector wrapper is forbidden: {module}:{node.name}"
+            if module.startswith("app.common.schemas") and node.name in canonical_runtime_names:
+                yield f"canonical Runtime type must not live in common.schemas: {module}:{node.name}"
+        if not module.startswith("app.application.agent_runtime"):
+            continue
+        stems: dict[str, set[str]] = defaultdict(set)
+        for node in classes:
+            for suffix in mirror_suffixes:
+                if node.name.endswith(suffix):
+                    stems[node.name.removesuffix(suffix)].add(suffix)
+        for stem, suffixes in stems.items():
+            if len(suffixes) > 1:
+                yield f"runtime mirror suffix chain is forbidden: {module}:{stem} ({', '.join(sorted(suffixes))})"
+
+
 def check_structural_budget(
     inventory: ArchitectureInventory,
     rules: ArchitectureRules,
@@ -439,15 +433,11 @@ def check_runtime_surface(inventory: ArchitectureInventory) -> Iterable[str]:
         if any(matches_prefix(module, prefix) for prefix in RETIRED_MODULE_PREFIXES):
             yield f"retired production module remains: {module}"
 
-    reachable = transitive_reachability(
-        set(modules), dependency_edges(inventory)
-    ).get("app.main", set()) | {"app.main"}
+    reachable = transitive_reachability(set(modules), dependency_edges(inventory)).get("app.main", set()) | {"app.main"}
     for module, metric in sorted(modules.items()):
         if module in reachable or metric.path.endswith("/__init__.py"):
             continue
-        if module in DECLARED_DYNAMIC_MODULES or module.startswith(
-            DECLARED_DYNAMIC_MODULE_PREFIXES
-        ):
+        if module in DECLARED_DYNAMIC_MODULES or module.startswith(DECLARED_DYNAMIC_MODULE_PREFIXES):
             continue
         yield f"production module is unreachable from app.main: {module}"
 
@@ -455,8 +445,7 @@ def check_runtime_surface(inventory: ArchitectureInventory) -> Iterable[str]:
         root_modules = sorted(
             metric.path
             for metric in inventory.modules
-            if Path(metric.path).parent == package_root
-            and not metric.path.endswith("/__init__.py")
+            if Path(metric.path).parent == package_root and not metric.path.endswith("/__init__.py")
         )
         for module_path in root_modules:
             yield f"implementation module must move into a capability package: {module_path}"
@@ -475,6 +464,7 @@ def check_architecture(
         *check_typed_boundaries(source_root, rules),
         *check_role_package_names(inventory, rules),
         *check_global_class_names(source_root, rules),
+        *check_runtime_representations(source_root),
         *check_structural_budget(inventory, rules, baseline, source_root),
         *check_runtime_surface(inventory),
     ]

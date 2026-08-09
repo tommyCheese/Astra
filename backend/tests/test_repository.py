@@ -11,7 +11,7 @@ from app.domain.agent_profile import load_agent_profile
 from app.infrastructure.db.models.executions import ModelInvocationRecord
 from app.infrastructure.repositories.conversation_strategy import ConversationStrategyRepository
 from app.infrastructure.repositories.run_unit_of_work import RunUnitOfWork
-from app.infrastructure.repositories.run_view_projection import RunViewProjector
+from app.infrastructure.repositories.run_view_projection import initial_run_payload, run_payload
 from app.infrastructure.repositories.tool_settings import ToolSettingsRepository
 from app.infrastructure.repositories.usage import UsageRepository
 
@@ -109,7 +109,7 @@ async def test_run_lifecycle_persistence(session):
     loaded.created_at = datetime(2026, 8, 5, 1, 0, tzinfo=UTC)
     loaded.started_at = loaded.created_at
     loaded.completed_at = loaded.created_at + timedelta(minutes=1, seconds=24)
-    view = RunViewProjector().payload(loaded)
+    view = run_payload(loaded)
 
     assert view["status"] == "completed_with_warnings"
     assert view["processing_duration_ms"] == 84_000
@@ -120,10 +120,7 @@ async def test_run_lifecycle_persistence(session):
     assert len(view["tool_calls"]) == 1
     assert view["tool_calls"][0]["status"] == "succeeded"
     assert len(view["events"]) >= 5
-    assert any(
-        message["role"] == "assistant" and message["content"] == "done"
-        for message in view["chat_messages"]
-    )
+    assert any(message["role"] == "assistant" and message["content"] == "done" for message in view["chat_messages"])
 
 
 async def test_cancel_run_is_idempotent_and_preserves_partial_answer(session):
@@ -145,7 +142,7 @@ async def test_cancel_run_is_idempotent_and_preserves_partial_answer(session):
 
     cancelled = await repo.cancel_run(run.id)
     cancelled_again = await repo.cancel_run(run.id)
-    view = RunViewProjector().payload(cancelled_again)
+    view = run_payload(cancelled_again)
 
     assert cancelled.status == cancelled_again.status == "cancelled"
     assert cancelled.summary == "已经生成一部分回答。"
@@ -165,9 +162,7 @@ async def test_cancel_run_is_idempotent_and_preserves_partial_answer(session):
 async def test_cancel_run_does_not_overwrite_a_natural_completion(session):
     repo = RunUnitOfWork(session)
     run = await repo.create_task_run("快速完成", {"provider": "mock"})
-    await repo.update_run_status(
-        run.id, "completed", summary="自然完成", result={"summary": "自然完成"}
-    )
+    await repo.update_run_status(run.id, "completed", summary="自然完成", result={"summary": "自然完成"})
 
     unchanged = await repo.cancel_run(run.id)
 
@@ -196,7 +191,7 @@ async def test_run_view_rejects_obsolete_persisted_result_contract(session):
 
     loaded = await repo.require_run(run.id)
     with pytest.raises(ValidationError):
-        RunViewProjector().payload(loaded)
+        run_payload(loaded)
 
 
 async def test_follow_up_run_reuses_task(session):
@@ -212,12 +207,10 @@ async def test_follow_up_run_reuses_task(session):
 async def test_agent_profile_snapshot_is_immutable_and_public_view_is_redacted(session):
     repo = RunUnitOfWork(session)
     snapshot = load_agent_profile().snapshot()
-    run = await repo.create_task_run(
-        "Profile 测试", {"provider": "mock"}, agent_profile_snapshot=snapshot
-    )
+    run = await repo.create_task_run("Profile 测试", {"provider": "mock"}, agent_profile_snapshot=snapshot)
 
     loaded = await repo.require_run(run.id)
-    view = RunViewProjector().payload(loaded)
+    view = run_payload(loaded)
 
     assert loaded.agent_profile_snapshot["documents"]["identity"]["content"]
     assert view["agent_profile"]["version"] == snapshot["version"]
@@ -299,7 +292,7 @@ async def test_initial_run_view_uses_one_query_and_terminal_falls_back_to_full(s
     try:
         loaded, loaded_full = await repo.get_run_initial(run_id)
         assert loaded is not None
-        view = RunView.model_validate(RunViewProjector().initial_payload(loaded))
+        view = RunView.model_validate(initial_run_payload(loaded))
         assert loaded_full is False
         assert view.chat_messages[0].content == "首屏快照测试"
         assert view.events == []
@@ -318,7 +311,7 @@ async def test_initial_run_view_uses_one_query_and_terminal_falls_back_to_full(s
 
     terminal, loaded_full = await repo.get_run_initial(run_id)
     assert terminal is not None
-    terminal_view = RunView.model_validate(RunViewProjector().payload(terminal))
+    terminal_view = RunView.model_validate(run_payload(terminal))
     assert loaded_full is True
     assert terminal_view.result is not None
     assert terminal_view.result.summary == "完整终态"
@@ -389,7 +382,7 @@ async def test_agent_turn_and_memory_persistence(session):
     )
 
     loaded = await repo.require_run(run.id)
-    view = RunViewProjector().payload(loaded)
+    view = run_payload(loaded)
 
     assert view["turns"][0]["selected_tool"] == "catalog_search"
     assert view["memories"][0]["content"] == "本次任务找到一个来源。"
@@ -439,11 +432,8 @@ async def test_reasoning_state_is_versioned_and_waiting_run_resumes(session):
     await repo.update_agent_turn(turn.id, status="ask_user")
     await repo.set_waiting_state(run.id, {"paused_node": "build_contract", "request": "请选择"})
     waiting = await repo.require_run(run.id)
-    waiting_view = RunViewProjector().payload(waiting)
-    assert any(
-        message["role"] == "assistant" and message["content"] == "请选择"
-        for message in waiting_view["chat_messages"]
-    )
+    waiting_view = run_payload(waiting)
+    assert any(message["role"] == "assistant" and message["content"] == "请选择" for message in waiting_view["chat_messages"])
     token = waiting.waiting_state["continuation_token"]
     resumed = await repo.resume_waiting_run(
         run.id,
@@ -453,7 +443,7 @@ async def test_reasoning_state_is_versioned_and_waiting_run_resumes(session):
     assert resumed.status == "executing"
     assert resumed.state_version == 2
     assert resumed.agent_state["observations"][-1]["summary"] == "选 A"
-    resumed_view = RunViewProjector().payload(await repo.require_run(run.id))
+    resumed_view = run_payload(await repo.require_run(run.id))
     dialogue = [
         (message["role"], message["content"])
         for message in resumed_view["chat_messages"]

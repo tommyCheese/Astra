@@ -6,7 +6,6 @@ from dataclasses import dataclass
 from typing import Any
 
 from app.application.agent_runtime.services.context.assembler import (
-    AgentContextAssembler,
     active_node_execution_id,
     active_plan_node_id,
 )
@@ -33,33 +32,20 @@ class PreparedRootTurn:
     terminal_summary: str | None = None
 
 
+@dataclass
 class RootTurnPreparationStage:
     """Refresh shared state and build the read-only input seen by the model."""
 
-    def __init__(
-        self,
-        *,
-        repository: RunUnitOfWork,
-        plan_repository: PlanRepository,
-        scheduler: PlanScheduler,
-        assembler: AgentContextAssembler,
-        settings: AstraRuntimeSettings,
-        model_client: ModelClient,
-        tool_registry: AstraToolRegistry,
-        tool_router: ToolRouter,
-        progress: ExecutionProgress,
-        subagent_supervisor: SubagentSupervisorPort | None,
-    ) -> None:
-        self._repository = repository
-        self._plans = plan_repository
-        self._scheduler = scheduler
-        self._assembler = assembler
-        self._settings = settings
-        self._model_client = model_client
-        self._tool_registry = tool_registry
-        self._tool_router = tool_router
-        self._progress = progress
-        self._subagents = subagent_supervisor
+    _repository: RunUnitOfWork
+    _plans: PlanRepository
+    _scheduler: PlanScheduler
+    _assembler: Any
+    _settings: AstraRuntimeSettings
+    _model_client: ModelClient
+    _tool_registry: AstraToolRegistry
+    _tool_router: ToolRouter
+    _progress: ExecutionProgress
+    _subagents: SubagentSupervisorPort | None
 
     async def execute(self, *, run_id: str, goal: str) -> PreparedRootTurn:
         await self._reconcile_subagents(run_id)
@@ -80,9 +66,7 @@ class RootTurnPreparationStage:
         if self._subagents is None:
             return
         current = await self._repository.require_run_core(run_id)
-        self._progress.observations.extend(
-            await self._subagents.reconcile(parent_state_version=current.state_version)
-        )
+        self._progress.observations.extend(await self._subagents.reconcile(parent_state_version=current.state_version))
 
     async def _select_active_node(
         self,
@@ -120,21 +104,18 @@ class RootTurnPreparationStage:
 
     def _has_pending_node(self) -> bool:
         assert self._progress.active_plan is not None
-        return any(
-            node.status == PlanNodeStatus.pending.value for node in self._progress.active_plan.nodes
-        )
+        return any(node.status == PlanNodeStatus.pending.value for node in self._progress.active_plan.nodes)
 
     def _required_plan_node_failed(self) -> bool:
         if self._progress.active_plan is None:
             return False
         return any(
-            node.status in {PlanNodeStatus.failed.value, PlanNodeStatus.blocked.value}
-            and not node.optional
+            node.status in {PlanNodeStatus.failed.value, PlanNodeStatus.blocked.value} and not node.optional
             for node in self._progress.active_plan.nodes
         )
 
     async def _assemble_context(self, run_id: str, goal: str) -> dict[str, Any]:
-        context = await self._assembler.assemble(
+        context = await self._assembler(
             run_id=run_id,
             goal=goal,
             tool_registry=self._tool_registry,

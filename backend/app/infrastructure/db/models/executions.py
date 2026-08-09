@@ -58,9 +58,7 @@ class NodeExecutionRecord(AstraOrmRecordBase):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_str)
     run_id: Mapped[str] = mapped_column(ForeignKey("runs.id"))
-    agent_execution_id: Mapped[str | None] = mapped_column(
-        ForeignKey("agent_executions.id"), nullable=True
-    )
+    agent_execution_id: Mapped[str | None] = mapped_column(ForeignKey("agent_executions.id"), nullable=True)
     plan_id: Mapped[str] = mapped_column(ForeignKey("plans.id"))
     plan_version: Mapped[int] = mapped_column(Integer)
     plan_node_id: Mapped[str] = mapped_column(ForeignKey("plan_nodes.id"))
@@ -87,9 +85,7 @@ class NodeExecutionRecord(AstraOrmRecordBase):
     plan_node: Mapped[PlanNodeRecord] = relationship(back_populates="executions")
     tool_calls: Mapped[list[ToolCallRecord]] = relationship(back_populates="node_execution")
     turns: Mapped[list[AgentTurnRecord]] = relationship(back_populates="node_execution")
-    approval_requests: Mapped[list[ApprovalRequestRecord]] = relationship(
-        back_populates="node_execution"
-    )
+    approval_requests: Mapped[list[ApprovalRequestRecord]] = relationship(back_populates="node_execution")
     resource_leases: Mapped[list[ResourceLeaseRecord]] = relationship(
         back_populates="node_execution", cascade="all, delete-orphan"
     )
@@ -163,9 +159,7 @@ class ModelInvocationRecord(AstraOrmRecordBase):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_str)
     run_id: Mapped[str] = mapped_column(ForeignKey("runs.id"))
-    agent_execution_id: Mapped[str | None] = mapped_column(
-        ForeignKey("agent_executions.id"), nullable=True
-    )
+    agent_execution_id: Mapped[str | None] = mapped_column(ForeignKey("agent_executions.id"), nullable=True)
     turn_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     provider: Mapped[str] = mapped_column(String(80))
     model: Mapped[str] = mapped_column(String(160))
@@ -207,18 +201,10 @@ class AgentExecutionRecord(AstraOrmRecordBase):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_str)
     run_id: Mapped[str] = mapped_column(ForeignKey("runs.id"))
     task_id: Mapped[str] = mapped_column(ForeignKey("tasks.id"))
-    parent_execution_id: Mapped[str | None] = mapped_column(
-        ForeignKey("agent_executions.id"), nullable=True
-    )
-    parent_node_execution_id: Mapped[str | None] = mapped_column(
-        ForeignKey("node_executions.id"), nullable=True
-    )
-    identity_id: Mapped[str | None] = mapped_column(
-        ForeignKey("agent_identities.id"), nullable=True
-    )
-    delegation_id: Mapped[str | None] = mapped_column(
-        ForeignKey("agent_delegations.id"), nullable=True
-    )
+    parent_execution_id: Mapped[str | None] = mapped_column(ForeignKey("agent_executions.id"), nullable=True)
+    parent_node_execution_id: Mapped[str | None] = mapped_column(ForeignKey("node_executions.id"), nullable=True)
+    identity_id: Mapped[str | None] = mapped_column(ForeignKey("agent_identities.id"), nullable=True)
+    delegation_id: Mapped[str | None] = mapped_column(ForeignKey("agent_delegations.id"), nullable=True)
     execution_type: Mapped[str] = mapped_column(String(40), default="child")
     root_slot: Mapped[str | None] = mapped_column(String(16), nullable=True)
     request_id: Mapped[str] = mapped_column(String(160))
@@ -302,9 +288,7 @@ class RuntimeProfileRecord(AstraOrmRecordBase):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
-    builds: Mapped[list[RuntimeBuildRecord]] = relationship(
-        back_populates="profile", order_by="RuntimeBuildRecord.created_at"
-    )
+    builds: Mapped[list[RuntimeBuildRecord]] = relationship(back_populates="profile", order_by="RuntimeBuildRecord.created_at")
 
 
 class RuntimeBuildRecord(AstraOrmRecordBase):
@@ -382,9 +366,7 @@ class AgentJoinRecord(AstraOrmRecordBase):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_str)
     run_id: Mapped[str] = mapped_column(ForeignKey("runs.id"))
     parent_execution_id: Mapped[str] = mapped_column(ForeignKey("agent_executions.id"))
-    consumer_plan_node_id: Mapped[str | None] = mapped_column(
-        ForeignKey("plan_nodes.id"), nullable=True
-    )
+    consumer_plan_node_id: Mapped[str | None] = mapped_column(ForeignKey("plan_nodes.id"), nullable=True)
     join_key: Mapped[str] = mapped_column(String(160))
     group_id: Mapped[str | None] = mapped_column(String(160), nullable=True)
     policy: Mapped[str] = mapped_column(String(40))

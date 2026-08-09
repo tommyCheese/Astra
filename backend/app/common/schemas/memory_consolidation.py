@@ -57,4 +57,3 @@ class ConsolidationJobView(BaseModel):
 
 class ConsolidationJobList(BaseModel):
     jobs: list[ConsolidationJobView]
-

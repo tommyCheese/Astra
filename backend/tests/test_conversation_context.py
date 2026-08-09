@@ -237,9 +237,7 @@ async def test_manual_compact_forces_checkpoint_for_any_completed_history(sessio
 
 
 @pytest.mark.asyncio
-async def test_v2_compaction_discloses_classified_failure_without_changing_projection(
-    session, monkeypatch
-):
+async def test_v2_compaction_discloses_classified_failure_without_changing_projection(session, monkeypatch):
     task = await _conversation_with_runs(session)
     manager = ConversationContextManager(
         session,
@@ -289,7 +287,4 @@ async def test_status_reports_adaptive_context_breakdown(session):
     assert breakdown["conversation"]["tokens"] > 0
     assert breakdown["draft"]["tokens"] > 0
     assert breakdown["output_reserve"]["tokens"] == settings.context_output_reserve_tokens
-    assert (
-        sum(item["tokens"] for item in status["breakdown"] if item["kind"] != "output_reserve")
-        == status["used_tokens"]
-    )
+    assert sum(item["tokens"] for item in status["breakdown"] if item["kind"] != "output_reserve") == status["used_tokens"]

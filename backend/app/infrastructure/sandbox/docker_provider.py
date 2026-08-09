@@ -21,9 +21,7 @@ class DockerSandboxProvider(SandboxProvider):
 
     name = "docker"
 
-    def __init__(
-        self, binary: str = "docker", *, memory_mb: int = 1024, cpus: float = 1.0, pids: int = 128
-    ):
+    def __init__(self, binary: str = "docker", *, memory_mb: int = 1024, cpus: float = 1.0, pids: int = 128):
         self.binary, self.memory_mb, self.cpus, self.pids = binary, memory_mb, cpus, pids
 
     @staticmethod
@@ -37,14 +35,10 @@ class DockerSandboxProvider(SandboxProvider):
             process.kill()
             await process.wait()
 
-    async def _run(
-        self, *args: str, timeout: int = 30, check: bool = True, input_data: bytes | None = None
-    ):
+    async def _run(self, *args: str, timeout: int = 30, check: bool = True, input_data: bytes | None = None):
         process = None
         try:
-            stdin = (
-                asyncio.subprocess.PIPE if input_data is not None else asyncio.subprocess.DEVNULL
-            )
+            stdin = asyncio.subprocess.PIPE if input_data is not None else asyncio.subprocess.DEVNULL
             process = await asyncio.create_subprocess_exec(
                 self.binary,
                 *args,
@@ -53,9 +47,7 @@ class DockerSandboxProvider(SandboxProvider):
                 stderr=asyncio.subprocess.PIPE,
                 env={"PATH": os.environ.get("PATH", "")},
             )
-            stdout, stderr = await asyncio.wait_for(
-                process.communicate(input_data), timeout=timeout
-            )
+            stdout, stderr = await asyncio.wait_for(process.communicate(input_data), timeout=timeout)
         except FileNotFoundError as exc:
             raise SandboxError("sandbox_unavailable", "Docker Engine is unavailable") from exc
         except (asyncio.CancelledError, asyncio.TimeoutError):
@@ -73,9 +65,7 @@ class DockerSandboxProvider(SandboxProvider):
         if shutil.which(self.binary) is None:
             return False
         try:
-            code, _, _ = await self._run(
-                "info", "--format", "{{json .ServerVersion}}", timeout=3, check=False
-            )
+            code, _, _ = await self._run("info", "--format", "{{json .ServerVersion}}", timeout=3, check=False)
             return code == 0
         except (SandboxError, asyncio.TimeoutError):
             return False
@@ -177,23 +167,15 @@ class DockerSandboxProvider(SandboxProvider):
 
     @staticmethod
     def _protected_mount_args(workspace_dir: Path) -> list[str]:
-        discovered = {
-            candidate
-            for candidate in workspace_dir.rglob("*")
-            if candidate.name in PROTECTED_WORKSPACE_PATHS
-        }
+        discovered = {candidate for candidate in workspace_dir.rglob("*") if candidate.name in PROTECTED_WORKSPACE_PATHS}
         entries = discovered | {workspace_dir / path for path in PROTECTED_WORKSPACE_PATHS}
         mounts = []
         for candidate in sorted(entries):
             protected = candidate.resolve(strict=True)
             if not protected.is_relative_to(workspace_dir):
-                raise SandboxError(
-                    "sandbox_policy_violation", "Protected Workspace path escaped its root"
-                )
+                raise SandboxError("sandbox_policy_violation", "Protected Workspace path escaped its root")
             relative = protected.relative_to(workspace_dir).as_posix()
-            mounts.extend(
-                ["--mount", f"type=bind,src={protected},dst=/workspace/{relative},readonly"]
-            )
+            mounts.extend(["--mount", f"type=bind,src={protected},dst=/workspace/{relative},readonly"])
         return mounts
 
     async def upload(self, handle: SandboxHandle, local_path: Path, remote_path: str) -> None:
@@ -257,20 +239,14 @@ class DockerSandboxProvider(SandboxProvider):
         code, stdout, stderr = await self._run(*args, timeout=timeout, check=False)
         return SandboxResult(code, stdout.decode(errors="replace"), stderr.decode(errors="replace"))
 
-    async def download_dir(
-        self, handle: SandboxHandle, remote_dir: str, local_dir: Path
-    ) -> list[Path]:
+    async def download_dir(self, handle: SandboxHandle, remote_dir: str, local_dir: Path) -> list[Path]:
         local_dir.mkdir(parents=True, exist_ok=True)
-        _, stdout, _ = await self._run(
-            "exec", handle.id, "find", remote_dir, "-type", "f", "-print"
-        )
+        _, stdout, _ = await self._run("exec", handle.id, "find", remote_dir, "-type", "f", "-print")
         downloaded = []
         for remote_path in stdout.decode().splitlines():
             relative = Path(remote_path).relative_to(remote_dir)
             if ".." in relative.parts:
-                raise SandboxError(
-                    "sandbox_policy_violation", "Sandbox output path escaped its directory"
-                )
+                raise SandboxError("sandbox_policy_violation", "Sandbox output path escaped its directory")
             destination = local_dir / relative
             destination.parent.mkdir(parents=True, exist_ok=True)
             _, content, _ = await self._run("exec", handle.id, "cat", remote_path)
@@ -279,9 +255,7 @@ class DockerSandboxProvider(SandboxProvider):
         return downloaded
 
     async def metrics(self, handle: SandboxHandle) -> dict[str, Any]:
-        code, stdout, _ = await self._run(
-            "stats", "--no-stream", "--format", "{{json .}}", handle.id, check=False
-        )
+        code, stdout, _ = await self._run("stats", "--no-stream", "--format", "{{json .}}", handle.id, check=False)
         if code != 0:
             return {}
         try:
@@ -295,9 +269,7 @@ class DockerSandboxProvider(SandboxProvider):
 
 def build_sandbox_provider(settings):
     if settings.sandbox_provider != "docker":
-        raise SandboxError(
-            "sandbox_unavailable", f"Unsupported sandbox provider: {settings.sandbox_provider}"
-        )
+        raise SandboxError("sandbox_unavailable", f"Unsupported sandbox provider: {settings.sandbox_provider}")
     return DockerSandboxProvider(
         settings.docker_binary,
         memory_mb=settings.sandbox_memory_mb,

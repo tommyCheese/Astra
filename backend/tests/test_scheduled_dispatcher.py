@@ -5,8 +5,8 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from app.application.run_management.lifecycle.contracts import PreparedRunExecution
 from app.application.run_management.execution.dispatcher import InProcessRunDispatcher
+from app.application.run_management.lifecycle.contracts import PreparedRunExecution
 from app.application.scheduling.dispatcher import ScheduledRunDispatcher
 from app.common.core.config import AstraRuntimeSettings
 from app.common.core.errors import AstraInputValidationError
@@ -93,9 +93,9 @@ async def test_dispatcher_reuses_target_conversation_workspace(tmp_path, monkeyp
 
     monkeypatch.setattr("app.application.scheduling.dispatcher.RunApplicationService.prepare", fake_prepare)
 
-    dispatched = await ScheduledRunDispatcher(
-        AstraRuntimeSettings(), session_factory, _run_dispatcher()
-    ).dispatch(schedule_run.id)
+    dispatched = await ScheduledRunDispatcher(AstraRuntimeSettings(), session_factory, _run_dispatcher()).dispatch(
+        schedule_run.id
+    )
     await asyncio.sleep(0.05)
 
     async with session_factory() as session:
@@ -147,9 +147,7 @@ async def test_heartbeat_defers_while_target_conversation_is_busy(tmp_path):
         await session.commit()
         schedule_run = await ScheduleRepository(session).manual_trigger(job)
 
-    result = await ScheduledRunDispatcher(AstraRuntimeSettings(), session_factory, _run_dispatcher()).dispatch(
-        schedule_run.id
-    )
+    result = await ScheduledRunDispatcher(AstraRuntimeSettings(), session_factory, _run_dispatcher()).dispatch(schedule_run.id)
     assert result.status == "deferred_busy"
     assert result.run_id is None
     assert result.outcome == {"reason": "target_conversation_busy"}
@@ -203,9 +201,7 @@ async def test_heartbeat_ok_is_recorded_silently_and_hidden_from_chat(tmp_path):
         await session.commit()
         schedule_run_id, run_id = schedule_run.id, run.id
 
-    await ScheduledRunDispatcher(AstraRuntimeSettings(), session_factory, _run_dispatcher())._finalize(
-        schedule_run_id, run_id
-    )
+    await ScheduledRunDispatcher(AstraRuntimeSettings(), session_factory, _run_dispatcher())._finalize(schedule_run_id, run_id)
     async with session_factory() as session:
         stored = await session.get(ScheduledJobRunRecord, schedule_run_id)
         stored_run = await session.get(RunRecord, run_id)
@@ -290,9 +286,7 @@ async def test_dispatcher_rolls_back_partial_run_when_creation_is_blocked(tmp_pa
         raise AstraInputValidationError("TEST_BLOCKED", "blocked")
 
     monkeypatch.setattr("app.application.scheduling.dispatcher.RunApplicationService.prepare", fail_after_flush)
-    result = await ScheduledRunDispatcher(AstraRuntimeSettings(), session_factory, _run_dispatcher()).dispatch(
-        schedule_run.id
-    )
+    result = await ScheduledRunDispatcher(AstraRuntimeSettings(), session_factory, _run_dispatcher()).dispatch(schedule_run.id)
 
     async with session_factory() as session:
         assert list((await session.scalars(select(RunRecord))).all()) == []

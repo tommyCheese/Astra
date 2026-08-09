@@ -47,9 +47,7 @@ def test_modern_openai_gpt_uses_standard_effort_levels():
         ("deep", {"enable_thinking": True, "thinking_budget": 2048}, False),
     ],
 )
-def test_qwen_hybrid_thinking_uses_model_default_independently_of_agent_effort(
-    effort, expected_params, json_mode
-):
+def test_qwen_hybrid_thinking_uses_model_default_independently_of_agent_effort(effort, expected_params, json_mode):
     config = resolve_model_reasoning(
         provider="qwen",
         model="qwen3.7-plus",

@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import hashlib
 import json
+from dataclasses import dataclass
+from itertools import chain
+from operator import attrgetter
 from typing import Any
 
 from app.application.permissions.effects import DefaultEffectAnalyzer
@@ -14,16 +16,16 @@ from app.domain.grounding.ledger import GroundingEvidenceLedger
 from app.domain.grounding.schemas import GroundingEvidenceFragment
 from app.infrastructure.plugins.catalog import PluginCatalog
 from app.infrastructure.plugins.contracts import PluginComponentContribution
+from app.infrastructure.plugins.diagnostics import plugin_diagnostics
 from app.infrastructure.plugins.interfaces import (
     PluginApprovalPresenter,
     PluginResultAdapter,
     PluginResultProcessingOutput,
     PluginResultProcessor,
     PluginResultValidator,
-    ToolEffectAnalyzer,
     RuntimeBackend,
+    ToolEffectAnalyzer,
 )
-from app.infrastructure.plugins.diagnostics import plugin_diagnostics
 from app.infrastructure.tools.base import (
     AstraTool,
     AstraToolSpec,
@@ -47,16 +49,17 @@ class PluginRuntimeState:
 
     def __init__(self, catalog: PluginCatalog | None) -> None:
         self.catalog = catalog
-        entries = () if catalog is None else (
-            *catalog.effect_analyzers,
-            *catalog.result_processors,
-            *catalog.validators,
-            *catalog.approval_presenters,
+        entries = (
+            ()
+            if catalog is None
+            else (
+                *catalog.effect_analyzers,
+                *catalog.result_processors,
+                *catalog.validators,
+                *catalog.approval_presenters,
+            )
         )
-        self._components = {
-            entry.identity.component_id: entry.factory()
-            for entry in entries
-        }
+        self._components = {entry.identity.component_id: entry.factory() for entry in entries}
         self._used_specs: dict[str, AstraToolSpec] = {}
         self._evidence: list[dict[str, Any]] = []
         self._validation_inputs: list[dict[str, Any]] = []
@@ -71,9 +74,7 @@ class PluginRuntimeState:
         context: ToolExecutionContext | None,
     ) -> dict[str, Any]:
         started = plugin_diagnostics.timer()
-        plugin_diagnostics.record(
-            "invocation_started", provider_id=tool.spec.provider_id, tool_name=tool.spec.name
-        )
+        plugin_diagnostics.record("invocation_started", provider_id=tool.spec.provider_id, tool_name=tool.spec.name)
         try:
             binding = self.catalog.tool_bindings.get(tool.spec.name) if self.catalog else None
             if binding is None or binding.executor_id == "in_process":
@@ -105,7 +106,7 @@ class PluginRuntimeState:
         return result
 
     @classmethod
-    def from_registry(cls, registry) -> "PluginRuntimeState":
+    def from_registry(cls, registry) -> PluginRuntimeState:
         catalog = getattr(registry, "plugin_catalog", None)
         return cls(catalog)
 
@@ -185,22 +186,9 @@ class PluginRuntimeState:
     ) -> ProcessedPluginResult:
         self._used_specs[spec.name] = spec
         outputs: list[PluginResultProcessingOutput] = []
-        envelope = ToolResultEnvelope.model_validate(
-            {
-                key: result[key]
-                for key in (
-                    "protocol_version",
-                    "status",
-                    "data",
-                    "warnings",
-                    "metrics",
-                    "artifacts",
-                    "error",
-                )
-                if key in result
-            }
-        )
-        media_types = {artifact.mime_type for artifact in envelope.artifacts}
+        envelope_fields = {"protocol_version", "status", "data", "warnings", "metrics", "artifacts", "error"}
+        envelope = ToolResultEnvelope.model_validate(dict(filter(lambda item: item[0] in envelope_fields, result.items())))
+        media_types = set(map(attrgetter("mime_type"), envelope.artifacts))
         result_kind = str(envelope.data.get("kind")) if envelope.data.get("kind") else None
         for entry in self.catalog.result_processors if self.catalog else ():
             if not entry.applicability.matches(
@@ -241,21 +229,15 @@ class PluginRuntimeState:
                 update={
                     "data": {
                         **primary.data,
-                        "processor_observations": [
-                            item.observation.model_dump(mode="json") for item in outputs[1:]
-                        ],
+                        "processor_observations": list(map(lambda item: item.observation.model_dump(mode="json"), outputs[1:])),
                     }
                 }
             )
         return ProcessedPluginResult(
             observation=primary,
-            evidence=tuple(item.evidence for item in outputs if item.evidence),
-            validation_inputs=tuple(
-                item.validation_input for item in outputs if item.validation_input
-            ),
-            completion_signals=tuple(
-                signal for item in outputs for signal in item.completion_signals
-            ),
+            evidence=tuple(filter(None, map(attrgetter("evidence"), outputs))),
+            validation_inputs=tuple(filter(None, map(attrgetter("validation_input"), outputs))),
+            completion_signals=tuple(chain.from_iterable(map(attrgetter("completion_signals"), outputs))),
         )
 
     def record_failure(
@@ -305,15 +287,14 @@ class PluginRuntimeState:
             "failed_sources": failed,
             "dedupe": {
                 "candidate_count": sum(
-                    len(item.get("candidates", [])) for item in self._evidence
+                    len(item.get("candidates", []))
+                    for item in self._evidence
                     if item.get("domain") == "web" and item.get("kind") == "search"
                 ),
                 "deduped_count": len(candidates),
             },
             "warnings": list(dict.fromkeys(warnings)),
-            "external_evidence_attempted": any(
-                item.get("domain") == "web" for item in self._evidence
-            ),
+            "external_evidence_attempted": any(item.get("domain") == "web" for item in self._evidence),
             "grounding": self.grounding.model_dump(),
             "grounding_context": self.grounding.context_projection(),
         }
@@ -405,12 +386,9 @@ class PluginRuntimeState:
                     ),
                     "executor": {
                         "id": binding.executor_id if binding else spec.execution_backend,
-                        "result_adapter_id": (
-                            binding.result_adapter_id if binding else "envelope.v1"
-                        ),
+                        "result_adapter_id": (binding.result_adapter_id if binding else "envelope.v1"),
                         "backend_identity": (
-                            self.catalog.runtime_backends[binding.executor_id]
-                            .identity.model_dump(mode="json")
+                            self.catalog.runtime_backends[binding.executor_id].identity.model_dump(mode="json")
                             if self.catalog is not None
                             and binding is not None
                             and binding.executor_id in self.catalog.runtime_backends
@@ -443,9 +421,7 @@ class PluginRuntimeState:
 
     @staticmethod
     def _digest(payload: Any) -> str:
-        return hashlib.sha256(
-            json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
-        ).hexdigest()
+        return hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
     def _record_outputs(self, outputs: list[PluginResultProcessingOutput]) -> None:
         for output in outputs:

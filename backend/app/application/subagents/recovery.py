@@ -41,9 +41,7 @@ class SubagentExecutionRecovery:
 
     async def scan(self, run_id: str | None = None) -> SubagentRecoveryResult:
         repository = AgentExecutionRepository(self.session)
-        stale = await repository.stale_active(
-            heartbeat_before=utc_now() - timedelta(seconds=self.stale_seconds)
-        )
+        stale = await repository.stale_active(heartbeat_before=utc_now() - timedelta(seconds=self.stale_seconds))
         resumable: list[str] = []
         replayable: list[str] = []
         unknown: list[str] = []
@@ -104,13 +102,9 @@ class SubagentExecutionRecovery:
         if checkpoint.get("runtime_version", self.runtime_version) != self.runtime_version:
             return "runtime_code_version_drift"
         snapshot = execution.catalog_snapshot or {}
-        if checkpoint.get("tool_catalog_digest", snapshot.get("tool_digest")) != snapshot.get(
-            "tool_digest"
-        ):
+        if checkpoint.get("tool_catalog_digest", snapshot.get("tool_digest")) != snapshot.get("tool_digest"):
             return "tool_catalog_version_drift"
-        if checkpoint.get("skill_catalog_digest", snapshot.get("skill_digest")) != snapshot.get(
-            "skill_digest"
-        ):
+        if checkpoint.get("skill_catalog_digest", snapshot.get("skill_digest")) != snapshot.get("skill_digest"):
             return "skill_catalog_version_drift"
         raw_context = checkpoint.get("context_checkpoint")
         if raw_context is not None:
@@ -166,9 +160,7 @@ class SubagentExecutionRecovery:
             )
         )
 
-    async def _wait_unknown(
-        self, execution: AgentExecutionRecord, tool_call_ids: list[str]
-    ) -> None:
+    async def _wait_unknown(self, execution: AgentExecutionRecord, tool_call_ids: list[str]) -> None:
         await self.session.execute(
             update(AgentExecutionRecord)
             .where(

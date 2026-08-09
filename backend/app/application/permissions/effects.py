@@ -51,9 +51,7 @@ REDIRECTION = re.compile(r"(?<!<)(?:>>?|[0-9]+>>?)\s*([^\s;&|]+)")
 
 def effect_plan_hash(plan: ActionEffectPlan) -> str:
     payload = plan.model_dump(mode="json")
-    return hashlib.sha256(
-        json.dumps(payload, sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode()
-    ).hexdigest()
+    return hashlib.sha256(json.dumps(payload, sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode()).hexdigest()
 
 
 class ChartEffectAnalyzer(ToolEffectAnalyzer):
@@ -154,12 +152,7 @@ def _declared_effects(spec, tool_input, task_id, declared) -> list[EffectItem]:
 
 
 def _declared_workspace_effect(tool_input, task_id, declared) -> EffectItem | None:
-    path = str(
-        tool_input.get("path")
-        or tool_input.get("relative_path")
-        or tool_input.get("output_path")
-        or "**"
-    )
+    path = str(tool_input.get("path") or tool_input.get("relative_path") or tool_input.get("output_path") or "**")
     if "workspace_delete" in declared:
         return EffectItem(
             kind=EffectKind.workspace_delete,
@@ -278,9 +271,7 @@ class BashEffectAnalyzer(ToolEffectAnalyzer):
         executable = PurePosixPath(executable_token).name if tokens else ""
         trusted_executable = bool(executable) and executable_token == executable
         for match in REDIRECTION.finditer(command):
-            effects.append(
-                _path_mutation_effect(task_id, _clean_shell_path(match.group(1)), delete=False)
-            )
+            effects.append(_path_mutation_effect(task_id, _clean_shell_path(match.group(1)), delete=False))
         classified = _classify_mutating_command(
             task_id, tokens, executable, trusted_executable, complex_shell
         ) or _classify_nonmutating_command(task_id, tokens, executable, trusted_executable)
@@ -296,10 +287,7 @@ def _classify_mutating_command(task_id, tokens, executable, trusted, complex_she
         return None
     if executable in DELETE_COMMANDS:
         targets = _simple_operands(tokens) or ["**"]
-        effects = [
-            _path_mutation_effect(task_id, _clean_shell_path(target), delete=True)
-            for target in targets
-        ]
+        effects = [_path_mutation_effect(task_id, _clean_shell_path(target), delete=True) for target in targets]
         return effects, "删除任务工作区文件"
     if executable in WRITE_COMMANDS:
         return _write_command_effects(task_id, executable, tokens)
@@ -332,9 +320,7 @@ def _classify_nonmutating_command(task_id, tokens, executable, trusted):
         return [effect], "通过 Bash 访问外部网络"
     if executable == "git" and _safe_git_invocation(tokens):
         return [_workspace_read_effect(task_id)], "读取 Git 工作区状态"
-    is_safe_read = executable in READ_ONLY_COMMANDS and _safe_read_only_invocation(
-        executable, tokens
-    )
+    is_safe_read = executable in READ_ONLY_COMMANDS and _safe_read_only_invocation(executable, tokens)
     if is_safe_read:
         return [_workspace_read_effect(task_id)], "读取任务工作区"
     if executable in SAFE_SHELL_BUILTINS:
@@ -385,10 +371,7 @@ def _write_command_effects(task_id: str, executable: str, tokens: list[str]):
     if executable in {"cp", "install"}:
         return _copy_command_effects(task_id, operands)
     if executable in {"mkdir", "tee", "touch", "truncate"} and operands:
-        effects = [
-            _path_mutation_effect(task_id, _clean_shell_path(target), delete=False)
-            for target in operands
-        ]
+        effects = [_path_mutation_effect(task_id, _clean_shell_path(target), delete=False) for target in operands]
         return effects, "创建或修改任务工作区文件"
     return [_unknown_process_effect(task_id)], "执行目标范围不明确的文件修改命令"
 
@@ -397,9 +380,7 @@ def _move_command_effects(task_id: str, operands: list[str]):
     if len(operands) < 2:
         return [_unknown_process_effect(task_id)], "执行目标范围不明确的文件修改命令"
     sources, destination = operands[:-1], operands[-1]
-    effects = [
-        _path_mutation_effect(task_id, _clean_shell_path(source), delete=True) for source in sources
-    ]
+    effects = [_path_mutation_effect(task_id, _clean_shell_path(source), delete=True) for source in sources]
     destination = f"{destination.rstrip('/')}/**" if len(sources) > 1 else destination
     effects.append(_path_mutation_effect(task_id, _clean_shell_path(destination), delete=False))
     return effects, "移动任务工作区文件"
@@ -562,9 +543,7 @@ def _safe_read_only_invocation(executable: str, tokens: list[str]) -> bool:
         }
         if any(token in unsafe for token in tokens[1:]):
             return False
-    if executable == "sort" and any(
-        token == "-o" or token.startswith("--output=") for token in tokens[1:]
-    ):
+    if executable == "sort" and any(token == "-o" or token.startswith("--output=") for token in tokens[1:]):
         return False
     return not (executable == "diff" and any(token.startswith("--output=") for token in tokens[1:]))
 

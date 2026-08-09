@@ -31,9 +31,11 @@ PYTHON=.venv/bin/python bash scripts/check_backend_quality.sh
 当前门禁冻结全部模块级循环，并重点禁止增加以下反向依赖：
 
 - `app.application.scheduling -> app.interfaces.api`
-- `app.infrastructure.repositories -> app.application.runner`
-- `app.application.runner -> app.application.subagents`
-- `app.application.subagents -> app.application.runner`
+- canonical `agent_runtime.loop/contracts -> planning/run_management/infrastructure/interfaces`
+- `planning -> agent_runtime.loop`（ready node 只能作为 capability input）
+- `run_management/interfaces -> agent_runtime.loop`（只能通过 composition/bootstrap 进入）
+
+`app.application.runner` 已删除，禁止以 facade 或 re-export 重新创建。
 
 检查器保存的是实际模块边和互相可达的循环模块对。删除依赖永远允许；新增 forbidden edge 或让此前独立的模块进入同一循环会失败，并输出完整模块名称。
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Iterable
+from dataclasses import dataclass
 from datetime import timedelta
 from typing import Any
 
@@ -31,9 +32,9 @@ class NodeExecutionStateError(ValueError):
     pass
 
 
+@dataclass
 class NodeExecutionRepository:
-    def __init__(self, session: AsyncSession):
-        self.session = session
+    session: AsyncSession
 
     async def require(self, execution_id: str) -> NodeExecutionRecord:
         result = await self.session.execute(
@@ -67,9 +68,7 @@ class NodeExecutionRepository:
             select(NodeExecutionRecord)
             .where(
                 NodeExecutionRecord.run_id == run_id,
-                NodeExecutionRecord.status.in_(
-                    [NodeExecutionStatus.active.value, NodeExecutionStatus.waiting.value]
-                ),
+                NodeExecutionRecord.status.in_([NodeExecutionStatus.active.value, NodeExecutionStatus.waiting.value]),
             )
             .order_by(NodeExecutionRecord.started_at, NodeExecutionRecord.id)
         )
@@ -87,14 +86,15 @@ class NodeExecutionRepository:
         slot_index: int | None = None,
         agent_execution_id: str | None = None,
     ) -> NodeExecutionRecord:
-        attempt = int(
-            await self.session.scalar(
-                select(func.max(NodeExecutionRecord.attempt)).where(
-                    NodeExecutionRecord.plan_node_id == plan_node_id
+        attempt = (
+            int(
+                await self.session.scalar(
+                    select(func.max(NodeExecutionRecord.attempt)).where(NodeExecutionRecord.plan_node_id == plan_node_id)
                 )
+                or 0
             )
-            or 0
-        ) + 1
+            + 1
+        )
         execution = NodeExecutionRecord(
             run_id=run_id,
             agent_execution_id=agent_execution_id,
@@ -171,9 +171,7 @@ class NodeExecutionRepository:
             .where(
                 NodeExecutionRecord.id == execution_id,
                 NodeExecutionRecord.state_version == expected_version,
-                NodeExecutionRecord.status.in_(
-                    [NodeExecutionStatus.active.value, NodeExecutionStatus.waiting.value]
-                ),
+                NodeExecutionRecord.status.in_([NodeExecutionStatus.active.value, NodeExecutionStatus.waiting.value]),
             )
             .values(heartbeat_at=utc_now(), updated_at=utc_now())
         )
@@ -198,9 +196,7 @@ class NodeExecutionRepository:
                 NodeExecutionRecord.id != execution_id,
             )
         )
-        occupied = {
-            int(value) for value in result.scalars().all() if value is not None
-        }
+        occupied = {int(value) for value in result.scalars().all() if value is not None}
         slot_index = next(
             (index for index in range(max(1, total_slots)) if index not in occupied),
             None,
@@ -241,14 +237,15 @@ class NodeExecutionRepository:
         if mode not in {"read", "write", "exclusive"}:
             raise ValueError(f"Unsupported resource lease mode: {mode}")
         now = utc_now()
-        fencing_token = int(
-            await self.session.scalar(
-                select(func.max(ResourceLeaseRecord.fencing_token)).where(
-                    ResourceLeaseRecord.resource_key == resource_key
+        fencing_token = (
+            int(
+                await self.session.scalar(
+                    select(func.max(ResourceLeaseRecord.fencing_token)).where(ResourceLeaseRecord.resource_key == resource_key)
                 )
+                or 0
             )
-            or 0
-        ) + 1
+            + 1
+        )
         lease = ResourceLeaseRecord(
             run_id=run_id,
             node_execution_id=execution_id,
@@ -334,9 +331,7 @@ class NodeExecutionRepository:
         for record in records:
             used = max(0, consumed.get(record.budget_kind, 0))
             if used > record.reserved:
-                raise NodeExecutionStateError(
-                    f"Budget consumption exceeds reservation: {record.budget_kind}"
-                )
+                raise NodeExecutionStateError(f"Budget consumption exceeds reservation: {record.budget_kind}")
             record.consumed = used
             record.status = status
             record.settled_at = now
@@ -350,23 +345,15 @@ class NodeExecutionRepository:
         phases: Iterable[NodeExecutionPhase] | None = None,
     ) -> list[NodeExecutionRecord]:
         query = select(NodeExecutionRecord).where(
-            NodeExecutionRecord.status.in_(
-                [NodeExecutionStatus.active.value, NodeExecutionStatus.waiting.value]
-            ),
+            NodeExecutionRecord.status.in_([NodeExecutionStatus.active.value, NodeExecutionStatus.waiting.value]),
             NodeExecutionRecord.heartbeat_at < heartbeat_before,
         )
         if phases:
-            query = query.where(
-                NodeExecutionRecord.phase.in_([phase.value for phase in phases])
-            )
-        result = await self.session.execute(
-            query.order_by(NodeExecutionRecord.heartbeat_at, NodeExecutionRecord.id)
-        )
+            query = query.where(NodeExecutionRecord.phase.in_([phase.value for phase in phases]))
+        result = await self.session.execute(query.order_by(NodeExecutionRecord.heartbeat_at, NodeExecutionRecord.id))
         return list(result.scalars().all())
 
-    async def _budget_reservations(
-        self, execution_id: str
-    ) -> list[BudgetReservationRecord]:
+    async def _budget_reservations(self, execution_id: str) -> list[BudgetReservationRecord]:
         result = await self.session.execute(
             select(BudgetReservationRecord)
             .where(BudgetReservationRecord.node_execution_id == execution_id)

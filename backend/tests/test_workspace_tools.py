@@ -39,9 +39,7 @@ async def test_workspace_list_read_and_search_are_bounded_and_hide_control_paths
     listed = await WorkspaceListTool().run({"path": ".", "glob": "*.py"}, context=execution)
     assert listed["data"]["entries"] == [{"path": "src/app.py", "type": "file", "size_bytes": 23}]
 
-    read = await WorkspaceReadTool().run(
-        {"path": "src/app.py", "line_start": 2, "line_end": 2}, context=execution
-    )
+    read = await WorkspaceReadTool().run({"path": "src/app.py", "line_start": 2, "line_end": 2}, context=execution)
     assert read["data"] == {
         "path": "src/app.py",
         "content": "needle here\n",
@@ -51,20 +49,14 @@ async def test_workspace_list_read_and_search_are_bounded_and_hide_control_paths
         "truncated": True,
     }
 
-    searched = await WorkspaceSearchTool().run(
-        {"query": "NEEDLE", "glob": "*.py"}, context=execution
-    )
-    assert searched["data"]["matches"] == [
-        {"path": "src/app.py", "line": 2, "column": 1, "text": "needle here"}
-    ]
+    searched = await WorkspaceSearchTool().run({"query": "NEEDLE", "glob": "*.py"}, context=execution)
+    assert searched["data"]["matches"] == [{"path": "src/app.py", "line": 2, "column": 1, "text": "needle here"}]
     assert searched["data"]["scanned_files"] == 1
 
 
 async def test_workspace_write_and_edit_are_atomic_and_conflict_aware(tmp_path):
     execution = context(tmp_path, mode="read_write")
-    written = await WorkspaceWriteTool().run(
-        {"path": "notes/result.md", "content": "alpha\nbeta\n"}, context=execution
-    )
+    written = await WorkspaceWriteTool().run({"path": "notes/result.md", "content": "alpha\nbeta\n"}, context=execution)
     assert written["data"] == {
         "path": "notes/result.md",
         "size_bytes": 11,
@@ -101,9 +93,7 @@ async def test_workspace_tools_reject_traversal_links_protected_paths_and_unappr
             await WorkspaceReadTool().run({"path": path}, context=context(tmp_path))
 
     with pytest.raises(ToolExecutionError) as error:
-        await WorkspaceWriteTool().run(
-            {"path": "result.txt", "content": "blocked"}, context=context(tmp_path)
-        )
+        await WorkspaceWriteTool().run({"path": "result.txt", "content": "blocked"}, context=context(tmp_path))
     assert error.value.category == "permission_denied"
 
 

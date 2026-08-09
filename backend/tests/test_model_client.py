@@ -29,8 +29,7 @@ async def test_mock_model_client_returns_structured_outputs():
 
     assert plan.nodes
     assert all(
-        "catalog_search" not in node.required_capabilities
-        and "catalog_read" not in node.required_capabilities
+        "catalog_search" not in node.required_capabilities and "catalog_read" not in node.required_capabilities
         for node in plan.nodes
     )
     assert plan.nodes[1].required_capabilities == [
@@ -47,9 +46,7 @@ async def test_mock_model_client_agent_decisions():
         "catalog_search": {"task_capabilities": ["information.search"]},
         "catalog_read": {"task_capabilities": ["information.read"]},
     }
-    first = await client.decide(
-        "查询 Astra", {"observations": [], "tool_manifests": manifests}
-    )
+    first = await client.decide("查询 Astra", {"observations": [], "tool_manifests": manifests})
     second = await client.decide(
         "查询 Astra",
         {
@@ -185,10 +182,7 @@ async def test_anthropic_client_translates_messages_and_stream_callbacks(monkeyp
             return None
 
         async def aiter_lines(self):
-            yield (
-                'data: {"type":"content_block_delta",'
-                '"delta":{"type":"text_delta","text":"{\\"summary\\":\\"完成\\"}"}}'
-            )
+            yield ('data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"{\\"summary\\":\\"完成\\"}"}}')
 
     class FakeStreamContext:
         async def __aenter__(self):
@@ -311,11 +305,7 @@ async def test_invalid_json_does_not_retry_after_streaming_visible_summary(monke
         model_name="test-model",
         model_base_url=f"https://{provider}.test/v1",
     )
-    client = (
-        AnthropicModelClient(settings)
-        if provider == "anthropic"
-        else OpenAICompatibleModelClient(settings)
-    )
+    client = AnthropicModelClient(settings) if provider == "anthropic" else OpenAICompatibleModelClient(settings)
     deltas = []
 
     async def on_delta(delta):

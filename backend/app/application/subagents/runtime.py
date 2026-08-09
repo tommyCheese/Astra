@@ -127,9 +127,7 @@ class SubagentRuntimeOperations:
             )
         gate = evaluate_delegation(self._gate_input(request))
         if not gate.allowed:
-            await self._record_gate_decision(
-                parent_id, request, gate, "subagent.delegation_rejected", commit
-            )
+            await self._record_gate_decision(parent_id, request, gate, "subagent.delegation_rejected", commit)
             raise DelegationAuthorizationError(
                 DelegationRejectionCode.not_beneficial,
                 "Delegation did not pass the deterministic benefit gate.",
@@ -140,9 +138,7 @@ class SubagentRuntimeOperations:
                 },
             )
         if self.policy.rollout_cohort == "shadow":
-            await self._record_gate_decision(
-                parent_id, request, gate, "subagent.shadow_decision", commit
-            )
+            await self._record_gate_decision(parent_id, request, gate, "subagent.shadow_decision", commit)
             raise DelegationAuthorizationError(
                 DelegationRejectionCode.feature_disabled,
                 "Shadow cohort records delegation decisions without execution.",
@@ -158,17 +154,11 @@ class SubagentRuntimeOperations:
         }
         if event_type == "subagent.shadow_decision":
             payload["would_delegate"] = True
-        await RunUnitOfWork(self.session).add_event(
-            parent.run_id, event_type, payload, agent_execution_id=parent.id
-        )
+        await RunUnitOfWork(self.session).add_event(parent.run_id, event_type, payload, agent_execution_id=parent.id)
         await self._persist(commit)
 
     async def _enforce_parallel_limit(self, parent_id) -> None:
-        active = [
-            item
-            for item in await self.executions.active_descendants(parent_id)
-            if item.parent_execution_id == parent_id
-        ]
+        active = [item for item in await self.executions.active_descendants(parent_id) if item.parent_execution_id == parent_id]
         maximum = self.policy.budgets.max_parallel_children
         if len(active) >= maximum:
             raise DelegationAuthorizationError(
@@ -218,9 +208,7 @@ class SubagentRuntimeOperations:
         )
         await self._persist(commit)
 
-    async def _compose_child_context(
-        self, child, parent_identity_id, profile_layers, selected_facts, permission_check
-    ):
+    async def _compose_child_context(self, child, parent_identity_id, profile_layers, selected_facts, permission_check):
         contract = DelegationContract.model_validate(child.contract)
         identity = await self.session.get(AgentIdentityRecord, child.identity_id)
         if identity is None:
@@ -247,9 +235,7 @@ class SubagentRuntimeOperations:
             "delegation_gate": {"allowed": True, "reason_code": "delegation_beneficial"},
         }
 
-    async def _execution_context(
-        self, child, identity, parent_identity_id, contract, scope, catalog, composed
-    ):
+    async def _execution_context(self, child, identity, parent_identity_id, contract, scope, catalog, composed):
         data_flow = await self.permissions.get_data_flow_state(child.run_id)
         data_flow_state = {}
         if data_flow is not None:
@@ -310,9 +296,7 @@ class SubagentRuntimeOperations:
             children = list(
                 (
                     await self.session.scalars(
-                        select(AgentExecutionRecord).where(
-                            AgentExecutionRecord.id.in_(existing.child_execution_ids)
-                        )
+                        select(AgentExecutionRecord).where(AgentExecutionRecord.id.in_(existing.child_execution_ids))
                     )
                 ).all()
             )
@@ -428,9 +412,7 @@ class SubagentRuntimeOperations:
         rows = list(
             (
                 await self.session.scalars(
-                    select(AgentExecutionRecord)
-                    .where(*conditions)
-                    .order_by(AgentExecutionRecord.ordinal)
+                    select(AgentExecutionRecord).where(*conditions).order_by(AgentExecutionRecord.ordinal)
                 )
             ).all()
         )
@@ -456,10 +438,7 @@ class SubagentRuntimeOperations:
             raise ValueError("Child is not waiting for a parent answer")
         raw_result = execution.result or {}
         question = SubagentQuestion.model_validate(raw_result.get("question") or {})
-        if (
-            answer.continuation_token != question.continuation_token
-            or answer.round_trip != question.round_trip
-        ):
+        if answer.continuation_token != question.continuation_token or answer.round_trip != question.round_trip:
             raise ValueError("Parent answer does not match the pending continuation")
         raw_checkpoint = (execution.checkpoint or {}).get("context_checkpoint")
         if raw_checkpoint is None:
@@ -524,12 +503,7 @@ class SubagentRuntimeOperations:
                 *request.resource_scope.get("effect_kinds", []),
             ]
         ).lower()
-        size = (
-            len(request.success_criteria)
-            + len(request.scope.included)
-            + len(request.inputs)
-            + len(request.requested_tools)
-        )
+        size = len(request.success_criteria) + len(request.scope.included) + len(request.inputs) + len(request.requested_tools)
         simple_atomic = bool(
             configured.get(
                 "simple_atomic",
@@ -544,9 +518,7 @@ class SubagentRuntimeOperations:
                     0.95 if request.relationship == "independent_review" else 0.8,
                 )
             ),
-            context_pressure=float(
-                configured.get("context_pressure", min(1.0, len(request.inputs) / 8))
-            ),
+            context_pressure=float(configured.get("context_pressure", min(1.0, len(request.inputs) / 8))),
             estimated_benefit=float(configured.get("estimated_benefit", 0.65)),
             write_conflict_risk=float(
                 configured.get(

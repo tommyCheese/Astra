@@ -28,8 +28,7 @@ def build_application_tool_registry(
         return runtime_registry
     application_registry = catalog.tool_registry()
     if any(
-        catalog.tool_bindings[name].executor_id == "in_process"
-        and spec.execution_backend != "sandbox.remote"
+        catalog.tool_bindings[name].executor_id == "in_process" and spec.execution_backend != "sandbox.remote"
         for name, spec in application_registry.specs().items()
     ):
         raise RuntimeError("Application tools must use the sandbox.remote execution backend")
@@ -44,17 +43,11 @@ def build_plugin_catalog(
 ) -> PluginCatalog | None:
     if not settings.sandbox_enabled or not sandbox_available(settings):
         return None
-    configured_sources = (
-        tuple(extra_sources) if settings.tool_plugin_rollout_mode == "configured" else ()
-    )
+    configured_sources = tuple(extra_sources) if settings.tool_plugin_rollout_mode == "configured" else ()
     catalog = PluginCatalogBuilder(
         [BuiltinDiscoverySource(builtin_contributions(settings)), *configured_sources],
         allowed_providers=settings.trusted_tool_provider_map,
-        host_runtime_backends=(
-            tuple(host_runtime_backends)
-            if settings.tool_plugin_rollout_mode == "configured"
-            else ()
-        ),
+        host_runtime_backends=(tuple(host_runtime_backends) if settings.tool_plugin_rollout_mode == "configured" else ()),
     ).build_static()
     plugin_diagnostics.record("catalog_assembled", state=settings.tool_plugin_rollout_mode)
     return catalog
@@ -73,8 +66,7 @@ def build_plugin_inventory(settings: AstraRuntimeSettings) -> PluginCatalog:
     return PluginCatalogBuilder(
         [BuiltinDiscoverySource(contributions)],
         allowed_providers={
-            contribution.descriptor.provider_id: {contribution.descriptor.digest}
-            for contribution in contributions
+            contribution.descriptor.provider_id: {contribution.descriptor.digest} for contribution in contributions
         },
     ).build_static()
 

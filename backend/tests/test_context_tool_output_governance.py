@@ -20,9 +20,7 @@ async def test_large_child_output_is_externalized_with_bounded_preview():
 
     async def persist(content: bytes, checksum: str):
         persisted[checksum] = content
-        return CompactionContextReference(
-            kind="artifact", ref="artifact:large-report", content_hash=checksum
-        )
+        return CompactionContextReference(kind="artifact", ref="artifact:large-report", content_hash=checksum)
 
     result = await service.normalize(
         role=ContextOwnerRole.child_execution,

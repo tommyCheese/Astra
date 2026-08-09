@@ -98,9 +98,7 @@ class ReadTool(AstraTool):
             if self.artifact
             else []
         )
-        return ToolResultEnvelope(
-            data={"value": "evidence"}, artifacts=artifacts
-        ).model_dump(mode="json")
+        return ToolResultEnvelope(data={"value": "evidence"}, artifacts=artifacts).model_dump(mode="json")
 
 
 class CredentialTool(AstraTool):
@@ -135,17 +133,13 @@ class ScriptedChildClient(MockModelClient):
                     node_key="child-step",
                     title="Child work",
                     intent=goal,
-                    expected_outcome=ExpectedObservation(
-                        kind="child_result", success_condition="typed result returned"
-                    ),
+                    expected_outcome=ExpectedObservation(kind="child_result", success_condition="typed result returned"),
                     success_criteria_refs=[item.id for item in contract.success_criteria],
                 )
             ]
         )
 
-    async def decide_with_answer(
-        self, goal, context, *, on_delta=None, on_reasoning_delta=None
-    ):
+    async def decide_with_answer(self, goal, context, *, on_delta=None, on_reasoning_delta=None):
         self.contexts.append(context)
         return self.decisions.pop(0), None
 
@@ -166,9 +160,7 @@ class BlockingDecisionClient(ScriptedChildClient):
         self.release = release
         self.transaction_states = []
 
-    async def decide_with_answer(
-        self, goal, context, *, on_delta=None, on_reasoning_delta=None
-    ):
+    async def decide_with_answer(self, goal, context, *, on_delta=None, on_reasoning_delta=None):
         self.transaction_states.append(self.session.in_transaction())
         self.entered.set()
         await self.release.wait()
@@ -383,32 +375,12 @@ async def test_local_child_executes_tool_with_full_lineage_and_completes(session
         ),
     ).execute(contract=contract, context_manifest=manifest, runtime=runtime)
 
-    plans = list(
-        (await session.scalars(select(PlanRecord).where(PlanRecord.run_id == child.run_id))).all()
-    )
+    plans = list((await session.scalars(select(PlanRecord).where(PlanRecord.run_id == child.run_id))).all())
     node_executions = list(
-        (
-            await session.scalars(
-                select(NodeExecutionRecord).where(
-                    NodeExecutionRecord.agent_execution_id == child.id
-                )
-            )
-        ).all()
+        (await session.scalars(select(NodeExecutionRecord).where(NodeExecutionRecord.agent_execution_id == child.id))).all()
     )
-    calls = list(
-        (
-            await session.scalars(
-                select(ToolCallRecord).where(ToolCallRecord.agent_execution_id == child.id)
-            )
-        ).all()
-    )
-    turns = list(
-        (
-            await session.scalars(
-                select(AgentTurnRecord).where(AgentTurnRecord.agent_execution_id == child.id)
-            )
-        ).all()
-    )
+    calls = list((await session.scalars(select(ToolCallRecord).where(ToolCallRecord.agent_execution_id == child.id))).all())
+    turns = list((await session.scalars(select(AgentTurnRecord).where(AgentTurnRecord.agent_execution_id == child.id))).all())
     await session.refresh(child)
 
     assert result.status == SubagentExecutionStatus.completed
@@ -444,10 +416,7 @@ async def test_child_context_compaction_uses_an_independent_automatic_window(ses
         context_compaction_child_enabled=True,
         context_compaction_shadow_mode=False,
     )
-    observations = [
-        {"kind": "tool_result", "summary": f"result-{index}", "data": {"text": "界" * 2_000}}
-        for index in range(6)
-    ]
+    observations = [{"kind": "tool_result", "summary": f"result-{index}", "data": {"text": "界" * 2_000}} for index in range(6)]
     initial = parse_child_checkpoint(
         {
             "agent_execution_id": child.id,
@@ -506,9 +475,7 @@ async def test_child_model_wait_releases_transaction_for_competing_writer(tmp_pa
     release = asyncio.Event()
     async with sessions() as child_session:
         tool = ReadTool()
-        child, contract, manifest, runtime, registry = await _child_runtime(
-            child_session, tool
-        )
+        child, contract, manifest, runtime, registry = await _child_runtime(child_session, tool)
         client = BlockingDecisionClient(
             AgentDecision(
                 decision_type="finalize",
@@ -551,9 +518,7 @@ async def test_child_tool_wait_releases_transaction_for_competing_writer(tmp_pat
     release = asyncio.Event()
     async with sessions() as child_session:
         tool = BlockingReadTool(child_session, entered, release)
-        child, contract, manifest, runtime, registry = await _child_runtime(
-            child_session, tool
-        )
+        child, contract, manifest, runtime, registry = await _child_runtime(child_session, tool)
         client = ScriptedChildClient(
             [
                 AgentDecision(
@@ -603,9 +568,7 @@ async def test_child_tool_wait_releases_transaction_for_competing_writer(tmp_pat
         ),
     ],
 )
-async def test_local_child_validates_schema_warning_and_success_outcomes(
-    session, payload, expected_status
-):
+async def test_local_child_validates_schema_warning_and_success_outcomes(session, payload, expected_status):
     tool = ReadTool()
     _, contract, manifest, runtime, registry = await _child_runtime(session, tool)
     client = ScriptedChildClient(
@@ -617,9 +580,9 @@ async def test_local_child_validates_schema_warning_and_success_outcomes(
             )
         ]
     )
-    result = await LocalAstraAgentExecutor(
-        model_client=client, tool_registry=registry
-    ).execute(contract=contract, context_manifest=manifest, runtime=runtime)
+    result = await LocalAstraAgentExecutor(model_client=client, tool_registry=registry).execute(
+        contract=contract, context_manifest=manifest, runtime=runtime
+    )
     assert result.status == expected_status
 
 
@@ -642,9 +605,9 @@ async def test_local_child_waits_for_parent_with_structured_question(session):
             )
         ]
     )
-    result = await LocalAstraAgentExecutor(
-        model_client=client, tool_registry=registry
-    ).execute(contract=contract, context_manifest=manifest, runtime=runtime)
+    result = await LocalAstraAgentExecutor(model_client=client, tool_registry=registry).execute(
+        contract=contract, context_manifest=manifest, runtime=runtime
+    )
     await session.refresh(child)
     assert result.status == SubagentExecutionStatus.waiting_parent
     assert result.question.required_fields == ["region"]
@@ -664,9 +627,9 @@ async def test_local_child_waits_for_approval_without_invoking_credential_tool(s
             )
         ]
     )
-    result = await LocalAstraAgentExecutor(
-        model_client=client, tool_registry=registry
-    ).execute(contract=contract, context_manifest=manifest, runtime=runtime)
+    result = await LocalAstraAgentExecutor(model_client=client, tool_registry=registry).execute(
+        contract=contract, context_manifest=manifest, runtime=runtime
+    )
     await session.refresh(child)
     assert result.status == SubagentExecutionStatus.waiting_approval
     assert child.status == "waiting_approval"
@@ -675,9 +638,7 @@ async def test_local_child_waits_for_approval_without_invoking_credential_tool(s
 
 async def test_local_child_reflects_on_invalid_tool_result_then_fails_safely(session):
     tool = ReadTool(invalid=True)
-    child, contract, manifest, runtime, registry = await _child_runtime(
-        session, tool, max_model_calls=4
-    )
+    child, contract, manifest, runtime, registry = await _child_runtime(session, tool, max_model_calls=4)
     client = ScriptedChildClient(
         [
             AgentDecision(
@@ -693,9 +654,9 @@ async def test_local_child_reflects_on_invalid_tool_result_then_fails_safely(ses
             ),
         ]
     )
-    result = await LocalAstraAgentExecutor(
-        model_client=client, tool_registry=registry
-    ).execute(contract=contract, context_manifest=manifest, runtime=runtime)
+    result = await LocalAstraAgentExecutor(model_client=client, tool_registry=registry).execute(
+        contract=contract, context_manifest=manifest, runtime=runtime
+    )
     await session.refresh(child)
     assert result.status == SubagentExecutionStatus.failed
     assert client.reflect_calls == 1
@@ -709,9 +670,7 @@ async def test_local_child_reflects_on_invalid_tool_result_then_fails_safely(ses
         ("waiting_resource", SubagentExecutionStatus.waiting_resource),
     ],
 )
-async def test_local_child_persists_blocked_and_waiting_resource_states(
-    session, decision_type, expected_status
-):
+async def test_local_child_persists_blocked_and_waiting_resource_states(session, decision_type, expected_status):
     tool = ReadTool()
     child, contract, manifest, runtime, registry = await _child_runtime(session, tool)
     client = ScriptedChildClient(
@@ -726,9 +685,9 @@ async def test_local_child_persists_blocked_and_waiting_resource_states(
             )
         ]
     )
-    result = await LocalAstraAgentExecutor(
-        model_client=client, tool_registry=registry
-    ).execute(contract=contract, context_manifest=manifest, runtime=runtime)
+    result = await LocalAstraAgentExecutor(model_client=client, tool_registry=registry).execute(
+        contract=contract, context_manifest=manifest, runtime=runtime
+    )
     await session.refresh(child)
     assert result.status == expected_status
     assert child.status == expected_status.value
@@ -844,9 +803,7 @@ async def test_runtime_fanout_creates_two_children_and_one_idempotent_join(sessi
     policy = operations.policy.model_copy(
         update={
             "rollout_cohort": "trusted_read_only",
-            "budgets": operations.policy.budgets.model_copy(
-                update={"max_parallel_children": 2}
-            ),
+            "budgets": operations.policy.budgets.model_copy(update={"max_parallel_children": 2}),
         }
     )
     operations = SubagentRuntimeOperations(
@@ -910,25 +867,17 @@ async def test_rollout_drill_shadow_canary_kill_switch_drain_and_immutable_effec
             request=request,
         )
     assert await AgentExecutionRepository(session).descendants(root.id) == []
-    assert "subagent.shadow_decision" in {
-        event.type for event in await RunUnitOfWork(session).list_events(run.id)
-    }
+    assert "subagent.shadow_decision" in {event.type for event in await RunUnitOfWork(session).list_events(run.id)}
 
-    canary_policy = operations.policy.model_copy(
-        update={"rollout_cohort": "trusted_read_only", "read_only": True}
-    )
-    canary = SubagentRuntimeOperations(
-        session, policy=canary_policy, **runtime_kwargs
-    )
+    canary_policy = operations.policy.model_copy(update={"rollout_cohort": "trusted_read_only", "read_only": True})
+    canary = SubagentRuntimeOperations(session, policy=canary_policy, **runtime_kwargs)
     child = await canary.delegate_task(
         parent_execution_id=root.id,
         parent_identity_id=parent.id,
         request=request,
     )
     assert child.status == "queued"
-    assert child.context_manifest["execution_context"]["effective_scope"]["actions"] == [
-        "network_read"
-    ]
+    assert child.context_manifest["execution_context"]["effective_scope"]["actions"] == ["network_read"]
 
     killed = SubagentRuntimeOperations(
         session,
@@ -939,9 +888,7 @@ async def test_rollout_drill_shadow_canary_kill_switch_drain_and_immutable_effec
         await killed.delegate_task(
             parent_execution_id=root.id,
             parent_identity_id=parent.id,
-            request=request.model_copy(
-                update={"request_id": "after-kill", "dedupe_key": "after-kill"}
-            ),
+            request=request.model_copy(update={"request_id": "after-kill", "dedupe_key": "after-kill"}),
         )
     assert len(await AgentExecutionRepository(session).descendants(root.id)) == 1
 
@@ -959,13 +906,9 @@ async def test_rollout_drill_shadow_canary_kill_switch_drain_and_immutable_effec
     await runs.finish_tool_call(effect.id, output={"remote_id": "immutable-result"})
     await session.commit()
 
-    drain = await SubagentCancellationService(session).cancel_tree(
-        child.id, reason="kill_switch_drain"
-    )
+    drain = await SubagentCancellationService(session).cancel_tree(child.id, reason="kill_switch_drain")
     assert drain.cancelled_execution_ids == (child.id,)
-    assert drain.immutable_effects[0]["output"] == {
-        "remote_id": "immutable-result"
-    }
+    assert drain.immutable_effects[0]["output"] == {"remote_id": "immutable-result"}
     drained = await AgentExecutionRepository(session).require(child.id)
     assert drained.status == "cancelled"
     assert drained.error["immutable_effects"] == list(drain.immutable_effects)
@@ -992,9 +935,7 @@ async def test_live_swarm_switch_blocks_new_children_for_running_supervisor(sess
         run_id=run.id,
         parent_execution_id=root.id,
         parent_identity_id=parent.id,
-        policy=operations.policy.model_copy(
-            update={"rollout_cohort": "trusted_read_only"}
-        ),
+        policy=operations.policy.model_copy(update={"rollout_cohort": "trusted_read_only"}),
         tool_registry=registry,
         model_client_factory=MockModelClient,
     )
@@ -1026,9 +967,7 @@ async def test_runtime_operations_delegate_inspect_continue_collect_and_cancel(s
         await operations.delegate_task(
             parent_execution_id=root.id,
             parent_identity_id=parent.id,
-            request=request.model_copy(
-                update={"request_id": "second", "dedupe_key": "ops:second"}
-            ),
+            request=request.model_copy(update={"request_id": "second", "dedupe_key": "ops:second"}),
         )
 
     stored = child.context_manifest
@@ -1047,9 +986,7 @@ async def test_runtime_operations_delegate_inspect_continue_collect_and_cancel(s
             )
         ]
     )
-    waiting = await LocalAstraAgentExecutor(
-        model_client=waiting_client, tool_registry=registry
-    ).execute(
+    waiting = await LocalAstraAgentExecutor(model_client=waiting_client, tool_registry=registry).execute(
         contract=DelegationContract.model_validate(child.contract),
         context_manifest=manifest,
         runtime=await operations.executor_runtime(child.id, worker_id="ops-worker"),
@@ -1074,9 +1011,7 @@ async def test_runtime_operations_delegate_inspect_continue_collect_and_cancel(s
             )
         ]
     )
-    completed = await LocalAstraAgentExecutor(
-        model_client=final_client, tool_registry=registry
-    ).execute(
+    completed = await LocalAstraAgentExecutor(model_client=final_client, tool_registry=registry).execute(
         contract=DelegationContract.model_validate(child.contract),
         context_manifest=manifest,
         runtime=await operations.executor_runtime(child.id, worker_id="ops-worker-2"),
@@ -1086,14 +1021,10 @@ async def test_runtime_operations_delegate_inspect_continue_collect_and_cancel(s
         execution_ids=[child.id],
     )
     assert completed.status == SubagentExecutionStatus.completed
-    assert final_client.contexts[0]["continuation_answers"][0]["values"] == {
-        "region": "EU"
-    }
+    assert final_client.contexts[0]["continuation_answers"][0]["values"] == {"region": "EU"}
     assert collected[0]["terminal"] is True
 
-    second_request = request.model_copy(
-        update={"request_id": "cancel-child", "dedupe_key": "ops:cancel"}
-    )
+    second_request = request.model_copy(update={"request_id": "cancel-child", "dedupe_key": "ops:cancel"})
     second = await operations.delegate_task(
         parent_execution_id=root.id,
         parent_identity_id=parent.id,
@@ -1105,9 +1036,7 @@ async def test_runtime_operations_delegate_inspect_continue_collect_and_cancel(s
 
 
 async def test_disabled_delegation_leaves_root_only_run_unchanged(session):
-    run, root, parent, operations, request, _ = await _operations_runtime(
-        session, enabled=False
-    )
+    run, root, parent, operations, request, _ = await _operations_runtime(session, enabled=False)
     original_status = run.status
     original_root_version = root.state_version
     with pytest.raises(Exception, match="disabled"):

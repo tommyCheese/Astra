@@ -11,14 +11,14 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.application.memory.consolidation.service import AutoDreamService
 from app.application.run_management.conversations.retention import ConversationRetentionService
 from app.application.run_management.execution.dispatcher import InProcessRunDispatcher
-from app.application.runner.engine import (
+from app.application.scheduling.service import SchedulerService
+from app.common.core.config import AstraRuntimeSettings
+from app.domain.agent_profile import configure_agent_profile_resolver
+from app.infrastructure.bootstrap.runtime_dependencies import (
     close_shared_model_http_clients,
     shared_model_http_client,
     shared_tool_registry,
 )
-from app.application.scheduling.service import SchedulerService
-from app.common.core.config import AstraRuntimeSettings
-from app.domain.agent_profile import configure_agent_profile_resolver
 from app.infrastructure.sandbox.profiles import RuntimeProfileService
 from app.infrastructure.tools.base import AstraToolRegistry
 

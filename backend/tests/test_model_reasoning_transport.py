@@ -3,13 +3,13 @@ from typing import ClassVar
 
 import pytest
 
-from app.application.runner.engine import (
+from app.common.core.config import AstraRuntimeSettings
+from app.domain.agent_profile import ModelOperation
+from app.infrastructure.bootstrap.runtime_dependencies import (
     close_shared_model_http_clients,
     shared_model_http_client,
     shared_tool_registry,
 )
-from app.common.core.config import AstraRuntimeSettings
-from app.domain.agent_profile import ModelOperation
 from app.infrastructure.model_clients.anthropic import AnthropicModelClient
 from app.infrastructure.model_clients.openai_compatible import OpenAICompatibleModelClient
 from app.infrastructure.tools.base import AstraToolRegistry
@@ -207,19 +207,13 @@ async def test_openai_prompt_cache_key_tracks_only_the_static_system_prefix(
             operation=ModelOperation.SYNTHESIS,
         )
 
-    keys = [
-        request[2]["json"]["prompt_cache_key"]
-        for request in FakeOpenAIAsyncClient.requests
-    ]
+    keys = [request[2]["json"]["prompt_cache_key"] for request in FakeOpenAIAsyncClient.requests]
     assert keys[0] == keys[1]
     assert keys[2] != keys[0]
 
 
 async def test_openai_stream_decodes_multiple_fields_across_chunk_boundaries():
-    content = (
-        '{"decision_type":"finalize","reasoning_summary":"先检查",'
-        '"final_answer":{"summary":"流式\\n回答"}}'
-    )
+    content = '{"decision_type":"finalize","reasoning_summary":"先检查","final_answer":{"summary":"流式\\n回答"}}'
 
     class StreamingResponse:
         headers: ClassVar[dict[str, str]] = {"content-type": "text/event-stream"}
@@ -503,9 +497,7 @@ async def test_disabled_model_thinking_does_not_forward_provider_reasoning_conte
         observed.append(event)
 
     client.bind_model_thinking_observer(observe)
-    await client._chat_json(
-        [{"role": "user", "content": "返回 JSON"}], operation=ModelOperation.SYNTHESIS
-    )
+    await client._chat_json([{"role": "user", "content": "返回 JSON"}], operation=ModelOperation.SYNTHESIS)
     assert observed == []
 
 
@@ -513,14 +505,15 @@ async def test_disabled_model_thinking_does_not_forward_provider_reasoning_conte
     ("provider", "model"),
     [("openai", "gpt-5"), ("anthropic", "claude-sonnet-4-6")],
 )
-async def test_server_reuses_model_connections_across_runs(
-    monkeypatch, provider, model
-):
+async def test_server_reuses_model_connections_across_runs(monkeypatch, provider, model):
     await close_shared_model_http_clients()
     FakeOpenAIAsyncClient.instances = 0
     FakeOpenAIAsyncClient.closes = 0
     FakeOpenAIAsyncClient.options = []
-    monkeypatch.setattr("app.application.runner.engine.httpx.AsyncClient", FakeOpenAIAsyncClient)
+    monkeypatch.setattr(
+        "app.infrastructure.bootstrap.runtime_dependencies.httpx.AsyncClient",
+        FakeOpenAIAsyncClient,
+    )
     settings = AstraRuntimeSettings(
         model_provider=provider,
         model_name=model,
@@ -552,7 +545,10 @@ async def test_server_reuses_tool_registry_across_model_overrides(monkeypatch):
         builds += 1
         return AstraToolRegistry()
 
-    monkeypatch.setattr("app.application.runner.engine.build_application_tool_registry", build_registry)
+    monkeypatch.setattr(
+        "app.infrastructure.bootstrap.runtime_dependencies.build_application_tool_registry",
+        build_registry,
+    )
     settings = AstraRuntimeSettings(
         model_provider="openai",
         model_name="first-model",
@@ -561,14 +557,8 @@ async def test_server_reuses_tool_registry_across_model_overrides(monkeypatch):
     )
 
     first = shared_tool_registry(settings)
-    second = shared_tool_registry(
-        settings.model_copy(
-            update={"model_name": "second-model", "model_api_key": "other-secret"}
-        )
-    )
-    changed_tools = shared_tool_registry(
-        settings.model_copy(update={"tool_states": {"bash_execute": True}})
-    )
+    second = shared_tool_registry(settings.model_copy(update={"model_name": "second-model", "model_api_key": "other-secret"}))
+    changed_tools = shared_tool_registry(settings.model_copy(update={"tool_states": {"bash_execute": True}}))
 
     assert first is second
     assert changed_tools is not first
@@ -646,10 +636,7 @@ async def test_anthropic_transport_applies_adaptive_thinking_and_effort(monkeypa
 
     assert requests[0]["thinking"] == {"type": "adaptive", "display": "summarized"}
     assert requests[0]["output_config"] == {"effort": "high"}
-    assert (
-        usage.finished[0][1]["usage"]["astra_reasoning"]["adapter"]
-        == "anthropic-adaptive-thinking"
-    )
+    assert usage.finished[0][1]["usage"]["astra_reasoning"]["adapter"] == "anthropic-adaptive-thinking"
     assert FakeAnthropicAsyncClient.instances == 1
     assert len(requests) == 2
     assert FakeAnthropicAsyncClient.closes == 1

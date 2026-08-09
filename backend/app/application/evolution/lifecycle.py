@@ -16,21 +16,11 @@ from app.domain.evolution import (
 
 LIFECYCLE_TRANSITIONS = MappingProxyType(
     {
-        EvolutionCandidateStatus.draft: frozenset(
-            {EvolutionCandidateStatus.evaluating, EvolutionCandidateStatus.rejected}
-        ),
-        EvolutionCandidateStatus.evaluating: frozenset(
-            {EvolutionCandidateStatus.approved, EvolutionCandidateStatus.rejected}
-        ),
-        EvolutionCandidateStatus.approved: frozenset(
-            {EvolutionCandidateStatus.shadow, EvolutionCandidateStatus.rejected}
-        ),
-        EvolutionCandidateStatus.shadow: frozenset(
-            {EvolutionCandidateStatus.canary, EvolutionCandidateStatus.rolled_back}
-        ),
-        EvolutionCandidateStatus.canary: frozenset(
-            {EvolutionCandidateStatus.promoted, EvolutionCandidateStatus.rolled_back}
-        ),
+        EvolutionCandidateStatus.draft: frozenset({EvolutionCandidateStatus.evaluating, EvolutionCandidateStatus.rejected}),
+        EvolutionCandidateStatus.evaluating: frozenset({EvolutionCandidateStatus.approved, EvolutionCandidateStatus.rejected}),
+        EvolutionCandidateStatus.approved: frozenset({EvolutionCandidateStatus.shadow, EvolutionCandidateStatus.rejected}),
+        EvolutionCandidateStatus.shadow: frozenset({EvolutionCandidateStatus.canary, EvolutionCandidateStatus.rolled_back}),
+        EvolutionCandidateStatus.canary: frozenset({EvolutionCandidateStatus.promoted, EvolutionCandidateStatus.rolled_back}),
         EvolutionCandidateStatus.promoted: frozenset({EvolutionCandidateStatus.rolled_back}),
         EvolutionCandidateStatus.rejected: frozenset(),
         EvolutionCandidateStatus.rolled_back: frozenset(),

@@ -48,15 +48,10 @@ def test_current_baseline_creates_the_complete_orm_schema(tmp_path: Path):
 
     connection = sqlite3.connect(database_path)
     try:
-        tables = {
-            row[0]
-            for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
-        }
+        tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
         revision = connection.execute("SELECT version_num FROM alembic_version").fetchone()
         memory_columns = {row[1] for row in connection.execute("PRAGMA table_info(memories)")}
-        recall_columns = {
-            row[1] for row in connection.execute("PRAGMA table_info(memory_recall_events)")
-        }
+        recall_columns = {row[1] for row in connection.execute("PRAGMA table_info(memory_recall_events)")}
     finally:
         connection.close()
 
@@ -74,9 +69,7 @@ def test_obsolete_revision_has_no_upgrade_path(tmp_path: Path):
     connection = sqlite3.connect(database_path)
     try:
         connection.execute("CREATE TABLE alembic_version (version_num VARCHAR(32))")
-        connection.execute(
-            "INSERT INTO alembic_version(version_num) VALUES ('0028_memory_session_scope')"
-        )
+        connection.execute("INSERT INTO alembic_version(version_num) VALUES ('0028_memory_session_scope')")
         connection.commit()
     finally:
         connection.close()
@@ -109,9 +102,7 @@ def test_legacy_chart_tool_state_is_migrated_to_canonical_identity(tmp_path: Pat
 
     connection = sqlite3.connect(database_path)
     try:
-        rows = connection.execute(
-            "SELECT tool_name, enabled FROM tool_settings ORDER BY tool_name"
-        ).fetchall()
+        rows = connection.execute("SELECT tool_name, enabled FROM tool_settings ORDER BY tool_name").fetchall()
     finally:
         connection.close()
 
@@ -150,12 +141,8 @@ def test_retired_web_settings_are_removed_without_touching_other_settings(tmp_pa
 
     connection = sqlite3.connect(database_path)
     try:
-        tools = connection.execute(
-            "SELECT tool_name FROM tool_settings ORDER BY tool_name"
-        ).fetchall()
-        providers = connection.execute(
-            "SELECT provider_id FROM tool_provider_settings ORDER BY provider_id"
-        ).fetchall()
+        tools = connection.execute("SELECT tool_name FROM tool_settings ORDER BY tool_name").fetchall()
+        providers = connection.execute("SELECT provider_id FROM tool_provider_settings ORDER BY provider_id").fetchall()
     finally:
         connection.close()
 
@@ -253,16 +240,9 @@ def test_subagent_migration_backfills_root_execution_and_lineage(tmp_path: Path)
     assert downgraded.returncode == 0, downgraded.stderr
     connection = sqlite3.connect(database_path)
     try:
-        tables = {
-            row[0]
-            for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
-        }
-        run_row = connection.execute(
-            "SELECT id, status FROM runs WHERE id = ?", ("run-existing",)
-        ).fetchone()
-        event_columns = {
-            row[1] for row in connection.execute("PRAGMA table_info(run_events)")
-        }
+        tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+        run_row = connection.execute("SELECT id, status FROM runs WHERE id = ?", ("run-existing",)).fetchone()
+        event_columns = {row[1] for row in connection.execute("PRAGMA table_info(run_events)")}
     finally:
         connection.close()
 

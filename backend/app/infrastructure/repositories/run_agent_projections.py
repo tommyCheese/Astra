@@ -29,9 +29,7 @@ def _children_by_parent(
     executions: Iterable[AgentExecutionRecord],
 ) -> dict[str | None, list[AgentExecutionRecord]]:
     children: dict[str | None, list[AgentExecutionRecord]] = {}
-    ordered = sorted(
-        executions, key=lambda execution: (execution.depth, execution.ordinal, execution.id)
-    )
+    ordered = sorted(executions, key=lambda execution: (execution.depth, execution.ordinal, execution.id))
     for execution in ordered:
         children.setdefault(execution.parent_execution_id, []).append(execution)
     return children
@@ -89,17 +87,11 @@ def _capability_names(catalog_snapshot: object) -> list[str]:
 
 
 def _artifact_ids(result: dict[str, Any]) -> list[str]:
-    return [
-        artifact["id"]
-        for artifact in result.get("artifacts", [])
-        if isinstance(artifact, dict) and artifact.get("id")
-    ]
+    return [artifact["id"] for artifact in result.get("artifacts", []) if isinstance(artifact, dict) and artifact.get("id")]
 
 
 def _public_error(error: dict[str, Any]) -> dict[str, Any] | None:
-    public_error = {
-        key: error[key] for key in ("category", "reason", "message") if error.get(key) is not None
-    }
+    public_error = {key: error[key] for key in ("category", "reason", "message") if error.get(key) is not None}
     return public_error or None
 
 
@@ -161,9 +153,7 @@ def node_execution_view(execution: NodeExecutionRecord) -> dict[str, Any]:
         "heartbeat_at": execution.heartbeat_at,
         "finished_at": execution.finished_at,
         "resource_leases": [_resource_lease_view(lease) for lease in execution.resource_leases],
-        "budget_reservations": [
-            _budget_reservation_view(reservation) for reservation in execution.budget_reservations
-        ],
+        "budget_reservations": [_budget_reservation_view(reservation) for reservation in execution.budget_reservations],
     }
 
 
@@ -214,9 +204,7 @@ def parallelism_summary(run: RunRecord) -> dict[str, int]:
 
 def approval_risk_reason(effect_plan: dict[str, Any]) -> str | None:
     risky_effects = [
-        effect
-        for effect in effect_plan.get("effects", [])
-        if isinstance(effect, dict) and _is_risky_effect(effect)
+        effect for effect in effect_plan.get("effects", []) if isinstance(effect, dict) and _is_risky_effect(effect)
     ]
     if not risky_effects:
         return None
@@ -226,7 +214,5 @@ def approval_risk_reason(effect_plan: dict[str, Any]) -> str | None:
 
 def _is_risky_effect(effect: dict[str, Any]) -> bool:
     return bool(
-        effect.get("persistent")
-        or effect.get("reversible") is False
-        or effect.get("risk") in {"moderate", "high", "critical"}
+        effect.get("persistent") or effect.get("reversible") is False or effect.get("risk") in {"moderate", "high", "critical"}
     )

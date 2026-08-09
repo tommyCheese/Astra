@@ -24,4 +24,19 @@
 | OpenAPI canonical shape | `test_refactoring_contracts.py::test_openapi_contract_matches_refactoring_baseline` | HTTP contract |
 | Alembic fresh/history/no-diff | `test_persistence_baseline.py` | Migration integration |
 
+## Single-Loop paired coverage
+
+下列行为在 standard 与 trusted composition 上共同受保护；mode-specific 事件名称仍作为持久化兼容边界保留，不再代表两套控制器。
+
+| 成对行为 | 覆盖 |
+| --- | --- |
+| 直接回答、流式回答与迟到的结构化失败 | `test_engine.py::test_streamed_answer_is_not_replaced_after_late_model_validation_error`、`test_streamed_answer_is_not_resynthesized_when_answer_object_is_missing` |
+| Tool 成功、拒绝与强制安全边界 | `test_fast_agent_runtime.py`、`test_agent_loop.py`、`test_effect_aware_security.py` |
+| Approval wait/resume、拒绝、篡改与 exactly-once | `test_approvals.py`、`test_fast_runtime_foundations.py` |
+| cancellation、幂等恢复与 result-unknown | `test_engine.py`、`test_fast_runtime_foundations.py`、`test_parallel_execution.py` |
+| Skill 显式/自动激活与不兼容能力隔离 | `test_skills.py`、`test_fast_agent_runtime.py`、`test_engine.py` |
+| bounded Memory、Workspace 与 Artifact | `test_memory_runtime.py`、`test_memory_tools.py`、`test_workspace_tools.py`、`test_agent_loop.py` |
+| Subagent eligibility、required barrier 与安全衰减 | `test_subagent_governance.py`、`test_subagent_fan_in.py`、`test_agent_loop.py` |
+| canonical lifecycle 与公开事件顺序 | `test_runtime_core_loop.py`、`test_runtime_events.py`、`test_engine.py` |
+
 共享的 typed test doubles 位于 `backend/tests/support/`。Application service 使用 builders 和 fake ports；Agent 阶段使用 scripted model client；真实 Repository 继续使用内存 SQLite 或显式 PostgreSQL integration marker。

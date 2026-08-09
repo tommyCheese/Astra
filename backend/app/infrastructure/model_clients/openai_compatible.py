@@ -93,9 +93,7 @@ class _ModelThinkingNotifier:
             return
         self._finished = True
         if self._started:
-            await self._observer(
-                {**self._metadata, "phase": "completed", "status": "failed" if failed else "completed"}
-            )
+            await self._observer({**self._metadata, "phase": "completed", "status": "failed" if failed else "completed"})
             return
         await self._observer(
             {
@@ -149,10 +147,7 @@ class OpenAICompatibleModelClient(ModelClient):
         *,
         http_client: httpx.AsyncClient | None = None,
     ):
-        if (
-            not settings.model_api_key
-            and settings.model_provider not in API_KEY_OPTIONAL_MODEL_PROVIDERS
-        ):
+        if not settings.model_api_key and settings.model_provider not in API_KEY_OPTIONAL_MODEL_PROVIDERS:
             raise ModelConfigurationError("MODEL_API_KEY is required for real model providers")
         self.settings = settings
         self.usage_recorder = None
@@ -311,9 +306,7 @@ class OpenAICompatibleModelClient(ModelClient):
                 },
                 {
                     "role": "user",
-                    "content": self.prompt_composer.runtime_context(
-                        goal, tool_outputs=tool_outputs
-                    ),
+                    "content": self.prompt_composer.runtime_context(goal, tool_outputs=tool_outputs),
                 },
             ],
             operation=operation,
@@ -362,7 +355,7 @@ class OpenAICompatibleModelClient(ModelClient):
         except Exception as exc:
             raise ModelOutputError(f"Invalid agent decision output: {exc}") from exc
 
-    async def fast_decide(
+    async def standard_decide(
         self,
         goal: str,
         context: dict[str, Any],
@@ -484,9 +477,7 @@ class OpenAICompatibleModelClient(ModelClient):
     async def finalize(
         self, goal: str, context: dict[str, Any], *, on_delta: AnswerDeltaCallback | None = None
     ) -> AgentFinalAnswer:
-        return await self.synthesize(
-            goal, [{"evidence_pack": context.get("evidence_pack", {})}], on_delta=on_delta
-        )
+        return await self.synthesize(goal, [{"evidence_pack": context.get("evidence_pack", {})}], on_delta=on_delta)
 
     async def extract_memory_candidates(
         self,
@@ -522,8 +513,7 @@ class OpenAICompatibleModelClient(ModelClient):
             return [
                 AgentRunMemoryCandidate.model_validate(normalized)
                 for item in payload.get("memories", [])
-                if isinstance(item, dict)
-                and (normalized := normalize_memory_payload(item)) is not None
+                if isinstance(item, dict) and (normalized := normalize_memory_payload(item)) is not None
             ]
         except Exception as exc:
             raise ModelOutputError(f"Invalid memory extraction output: {exc}") from exc

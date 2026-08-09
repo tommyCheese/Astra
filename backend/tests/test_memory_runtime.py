@@ -3,7 +3,7 @@ from sqlalchemy import select
 from app.application.agent_runtime.services.completion.memory_candidates import (
     MemoryCandidateWriter,
 )
-from app.application.agent_runtime.services.context.assembler import AgentContextAssembler
+from app.application.agent_runtime.services.context.assembler import assemble_agent_context
 from app.common.core.config import AstraRuntimeSettings
 from app.common.schemas.agent.run_result import AgentRunMemoryCandidate
 from app.infrastructure.db.models.memory import MemoryRecallEventRecord
@@ -49,11 +49,10 @@ async def test_cross_session_retrieval_injects_task_memory_and_persists_safe_aud
         agent_memory_retrieval_min_score=0,
     )
 
-    context = await AgentContextAssembler(
+    context = await assemble_agent_context(
         run_repo,
         settings=settings,
         skills_enabled=False,
-    ).assemble(
         run_id=target_run.id,
         goal="项目使用什么数据库？",
         tool_registry=AstraToolRegistry(),
@@ -69,9 +68,7 @@ async def test_cross_session_retrieval_injects_task_memory_and_persists_safe_aud
     assert context["memory_context"][0]["authority"] == "none"
     assert context["memory_recall"]["mode"] == "active"
 
-    recall = await session.scalar(
-        select(MemoryRecallEventRecord).where(MemoryRecallEventRecord.run_id == target_run.id)
-    )
+    recall = await session.scalar(select(MemoryRecallEventRecord).where(MemoryRecallEventRecord.run_id == target_run.id))
     assert recall is not None
     assert recall.query_hash != "项目使用什么数据库？"
     assert len(recall.query_hash) == 64
@@ -101,14 +98,13 @@ async def test_session_retrieval_crosses_tasks_with_matching_identity(session):
         confidence=0.9,
     )
 
-    context = await AgentContextAssembler(
+    context = await assemble_agent_context(
         run_repo,
         settings=AstraRuntimeSettings(
             agent_memory_cross_session_enabled=True,
             agent_memory_retrieval_min_score=0,
         ),
         skills_enabled=False,
-    ).assemble(
         run_id=target_run.id,
         goal="用户有什么偏好？",
         tool_registry=AstraToolRegistry(),
@@ -117,9 +113,7 @@ async def test_session_retrieval_crosses_tasks_with_matching_identity(session):
 
     assert context["memory_context"][0]["content"] == memory.content
     assert context["memory_recall"]["mode"] == "active"
-    recall = await session.scalar(
-        select(MemoryRecallEventRecord).where(MemoryRecallEventRecord.run_id == target_run.id)
-    )
+    recall = await session.scalar(select(MemoryRecallEventRecord).where(MemoryRecallEventRecord.run_id == target_run.id))
     assert recall is not None
     assert recall.selected[0]["id"] == memory.id
 
@@ -128,14 +122,13 @@ async def test_session_retrieval_crosses_tasks_with_matching_identity(session):
         {"provider": "mock", "model": "mock"},
         session_id="browser-session-b",
     )
-    isolated_context = await AgentContextAssembler(
+    isolated_context = await assemble_agent_context(
         run_repo,
         settings=AstraRuntimeSettings(
             agent_memory_cross_session_enabled=True,
             agent_memory_retrieval_min_score=0,
         ),
         skills_enabled=False,
-    ).assemble(
         run_id=isolated_run.id,
         goal="用户有什么偏好？",
         tool_registry=AstraToolRegistry(),
@@ -184,11 +177,7 @@ async def test_memory_manager_leaves_safe_candidate_pending_and_isolates_rejecti
     assert first[0]["state_version"] == 1
     assert second[0]["id"] == first[0]["id"]
     assert "content" not in first[0]
-    events = list(
-        (await session.execute(select(RunEventRecord).where(RunEventRecord.run_id == run.id)))
-        .scalars()
-        .all()
-    )
+    events = list((await session.execute(select(RunEventRecord).where(RunEventRecord.run_id == run.id))).scalars().all())
     assert sum(event.type == "memory.write_rejected" for event in events) == 2
     assert any(event.type == "memory.write_deduplicated" for event in events)
 

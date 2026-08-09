@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import asynccontextmanager
+from dataclasses import dataclass, field
 from typing import Protocol
 
 from fastapi import FastAPI
@@ -29,29 +30,22 @@ class ManagedLifecycle(Protocol):
     async def shutdown(self) -> None: ...
 
 
+@dataclass
 class LifecycleCoordinator:
-    def __init__(
-        self,
-        *,
-        prepare_process_resources: Callable[[], None],
-        initialize_persistence: Callable[[], Awaitable[None]],
-        services: Sequence[ManagedLifecycle],
-        close_process_resources: Callable[[], Awaitable[None]],
-    ) -> None:
-        self._prepare_process_resources = prepare_process_resources
-        self._initialize_persistence = initialize_persistence
-        self._services = tuple(services)
-        self._close_process_resources = close_process_resources
-        self._started_services: list[ManagedLifecycle] = []
-        self._process_resources_prepared = False
+    prepare_process_resources: Callable[[], None]
+    initialize_persistence: Callable[[], Awaitable[None]]
+    services: Sequence[ManagedLifecycle]
+    close_process_resources: Callable[[], Awaitable[None]]
+    _started_services: list[ManagedLifecycle] = field(default_factory=list, init=False)
+    _process_resources_prepared: bool = field(default=False, init=False)
 
     async def startup(self) -> None:
-        self._prepare_process_resources()
+        self.prepare_process_resources()
         self._process_resources_prepared = True
         try:
-            first_service, *remaining_services = self._services
+            first_service, *remaining_services = self.services
             await self._start_service(first_service)
-            await self._initialize_persistence()
+            await self.initialize_persistence()
             for service in remaining_services:
                 await self._start_service(service)
         except Exception:
@@ -64,12 +58,10 @@ class LifecycleCoordinator:
             try:
                 await service.shutdown()
             except Exception:
-                logger.exception(
-                    "application.service_shutdown_failed service=%s", type(service).__name__
-                )
+                logger.exception("application.service_shutdown_failed service=%s", type(service).__name__)
         if self._process_resources_prepared:
             self._process_resources_prepared = False
-            await self._close_process_resources()
+            await self.close_process_resources()
 
     async def _start_service(self, service: ManagedLifecycle) -> None:
         await service.startup()
@@ -79,14 +71,9 @@ class LifecycleCoordinator:
 async def initialize_persistence(container: ApplicationContainer) -> None:
     async with container.session_factory() as session:
         await ensure_builtin_skills(session, container.settings)
-        tool_states = await ToolSettingsRepository(session).get_or_create(
-            default_tool_states(container.settings)
-        )
+        tool_states = await ToolSettingsRepository(session).get_or_create(default_tool_states(container.settings))
         provider_states = await ToolProviderSettingsRepository(session).get_or_create(
-            {
-                provider_id: True
-                for provider_id in container.settings.trusted_tool_provider_map
-            }
+            dict.fromkeys(container.settings.trusted_tool_provider_map, True)
         )
         container.tool_registry_for_settings(
             apply_provider_states(
@@ -102,9 +89,7 @@ async def initialize_persistence(container: ApplicationContainer) -> None:
 
 def build_lifecycle_coordinator(container: ApplicationContainer) -> LifecycleCoordinator:
     return LifecycleCoordinator(
-        prepare_process_resources=lambda: container.model_http_client_for_settings(
-            container.settings
-        ),
+        prepare_process_resources=lambda: container.model_http_client_for_settings(container.settings),
         initialize_persistence=lambda: initialize_persistence(container),
         services=(
             container.runtime_profile_service,

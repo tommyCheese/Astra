@@ -91,11 +91,7 @@ def _validate_references(checkpoint: CheckpointV2, envelope: CompactionContextEn
     elif isinstance(checkpoint, ChildContextCheckpointV2):
         referenced.update(checkpoint.evidence_refs)
         referenced.update(checkpoint.artifact_refs)
-        referenced.update(
-            fact.provenance_ref for fact in checkpoint.local_facts if fact.provenance_ref
-        )
+        referenced.update(fact.provenance_ref for fact in checkpoint.local_facts if fact.provenance_ref)
     missing = sorted(ref for ref in referenced if ref not in allowed)
     if missing:
-        raise CheckpointValidationError(
-            "checkpoint_reference_inaccessible:" + json.dumps(missing, ensure_ascii=False)
-        )
+        raise CheckpointValidationError("checkpoint_reference_inaccessible:" + json.dumps(missing, ensure_ascii=False))

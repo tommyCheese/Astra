@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
@@ -46,15 +47,13 @@ ALLOWED_STATUS_TRANSITIONS: dict[str, frozenset[str]] = {
     "waiting_parent": frozenset({"queued", "running", "blocked", "failed", "cancelled"}),
     "waiting_approval": frozenset({"queued", "running", "blocked", "failed", "cancelled"}),
     "waiting_resource": frozenset({"queued", "running", "blocked", "failed", "cancelled"}),
-    "completing": frozenset(
-        {"completed", "completed_with_warnings", "blocked", "failed", "cancelled"}
-    ),
+    "completing": frozenset({"completed", "completed_with_warnings", "blocked", "failed", "cancelled"}),
 }
 
 
+@dataclass
 class AgentExecutionRepository:
-    def __init__(self, session: AsyncSession):
-        self.session = session
+    session: AsyncSession
 
     async def require(self, execution_id: str) -> AgentExecutionRecord:
         execution = await self.session.get(AgentExecutionRecord, execution_id)
@@ -96,12 +95,7 @@ class AgentExecutionRepository:
 
     @staticmethod
     def root_from_run(run: RunRecord) -> AgentExecutionRecord:
-        subagent_budgets = (
-            (((run.reasoning_policy or {}).get("effective") or {}).get("subagents") or {}).get(
-                "budgets"
-            )
-            or {}
-        )
+        subagent_budgets = (((run.reasoning_policy or {}).get("effective") or {}).get("subagents") or {}).get("budgets") or {}
         return AgentExecutionRecord(
             run_id=run.id,
             task_id=run.task_id,
@@ -161,9 +155,7 @@ class AgentExecutionRepository:
         )
         if existing is not None:
             if existing.contract != contract.model_dump(mode="json"):
-                raise AgentExecutionStateError(
-                    "Delegation request id already exists with a different contract"
-                )
+                raise AgentExecutionStateError("Delegation request id already exists with a different contract")
             return existing
         parent = await self.require(contract.parent_execution_id)
         if parent.run_id != contract.run_id or parent.task_id != contract.task_id:
@@ -172,14 +164,15 @@ class AgentExecutionRepository:
             raise AgentExecutionStateError("Cannot delegate from a terminal AgentExecution")
         if contract.depth != parent.depth + 1:
             raise AgentExecutionStateError("Delegation depth does not follow the parent")
-        ordinal = int(
-            await self.session.scalar(
-                select(func.count(AgentExecutionRecord.id)).where(
-                    AgentExecutionRecord.parent_execution_id == parent.id
+        ordinal = (
+            int(
+                await self.session.scalar(
+                    select(func.count(AgentExecutionRecord.id)).where(AgentExecutionRecord.parent_execution_id == parent.id)
                 )
+                or 0
             )
-            or 0
-        ) + 1
+            + 1
+        )
         child = AgentExecutionRecord(
             run_id=contract.run_id,
             task_id=contract.task_id,
@@ -218,9 +211,7 @@ class AgentExecutionRepository:
             if existing is None:
                 raise
             if existing.contract != contract.model_dump(mode="json"):
-                raise AgentExecutionStateError(
-                    "Delegation request id already exists with a different contract"
-                ) from exc
+                raise AgentExecutionStateError("Delegation request id already exists with a different contract") from exc
             return existing
         return child
 
@@ -238,15 +229,11 @@ class AgentExecutionRepository:
         expected_cancellation_epoch: int | None = None,
     ) -> AgentExecutionRecord:
         current = await self.require(execution_id)
-        target_status = (
-            status.value if isinstance(status, SubagentExecutionStatus) else str(status)
-        )
+        target_status = status.value if isinstance(status, SubagentExecutionStatus) else str(status)
         if current.status == target_status:
             raise AgentExecutionStateError("AgentExecution transition must change status")
         if target_status not in ALLOWED_STATUS_TRANSITIONS.get(current.status, frozenset()):
-            raise AgentExecutionStateError(
-                f"Illegal AgentExecution transition: {current.status} -> {target_status}"
-            )
+            raise AgentExecutionStateError(f"Illegal AgentExecution transition: {current.status} -> {target_status}")
         conditions = [
             AgentExecutionRecord.id == execution_id,
             AgentExecutionRecord.state_version == expected_state_version,
@@ -254,9 +241,7 @@ class AgentExecutionRepository:
         if expected_fencing_token is not None:
             conditions.append(AgentExecutionRecord.fencing_token == expected_fencing_token)
         if expected_cancellation_epoch is not None:
-            conditions.append(
-                AgentExecutionRecord.cancellation_epoch == expected_cancellation_epoch
-            )
+            conditions.append(AgentExecutionRecord.cancellation_epoch == expected_cancellation_epoch)
         values: dict[str, Any] = {
             "status": target_status,
             "phase": phase,
@@ -299,10 +284,7 @@ class AgentExecutionRepository:
             raise AgentExecutionStateError("AgentExecution belongs to a cancelled Run")
         if current.cancellation_epoch != run.cancellation_epoch:
             raise AgentExecutionStateError("AgentExecution cancellation epoch is stale")
-        if (
-            expected_cancellation_epoch is not None
-            and current.cancellation_epoch != expected_cancellation_epoch
-        ):
+        if expected_cancellation_epoch is not None and current.cancellation_epoch != expected_cancellation_epoch:
             raise AgentExecutionStateError("AgentExecution cancellation epoch is stale")
         now = utc_now()
         statement = (
@@ -347,11 +329,7 @@ class AgentExecutionRepository:
                 AgentExecutionRecord.worker_id == worker_id,
                 AgentExecutionRecord.fencing_token == fencing_token,
                 AgentExecutionRecord.status.not_in(TERMINAL_AGENT_STATUSES),
-                *(
-                    [AgentExecutionRecord.cancellation_epoch == cancellation_epoch]
-                    if cancellation_epoch is not None
-                    else []
-                ),
+                *([AgentExecutionRecord.cancellation_epoch == cancellation_epoch] if cancellation_epoch is not None else []),
             )
             .values(heartbeat_at=now, updated_at=now)
         )
@@ -387,11 +365,7 @@ class AgentExecutionRepository:
                 AgentExecutionRecord.fencing_token == fencing_token,
                 AgentExecutionRecord.state_version == expected_state_version,
                 AgentExecutionRecord.status.not_in(TERMINAL_AGENT_STATUSES),
-                *(
-                    [AgentExecutionRecord.cancellation_epoch == cancellation_epoch]
-                    if cancellation_epoch is not None
-                    else []
-                ),
+                *([AgentExecutionRecord.cancellation_epoch == cancellation_epoch] if cancellation_epoch is not None else []),
             )
             .values(**values)
         )
@@ -421,9 +395,7 @@ class AgentExecutionRepository:
 
     async def active_descendants(self, execution_id: str) -> list[AgentExecutionRecord]:
         return [
-            execution
-            for execution in await self.descendants(execution_id)
-            if execution.status not in TERMINAL_AGENT_STATUSES
+            execution for execution in await self.descendants(execution_id) if execution.status not in TERMINAL_AGENT_STATUSES
         ]
 
     async def stale_active(

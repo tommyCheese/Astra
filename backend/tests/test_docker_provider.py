@@ -110,20 +110,10 @@ async def test_docker_provider_overlays_protected_workspace_paths_read_only(tmp_
     )
 
     create = next(call for call in provider.calls if call[0] == "create")
-    mounts = [
-        create[index + 1]
-        for index, value in enumerate(create)
-        if value == "--mount"
-    ]
+    mounts = [create[index + 1] for index, value in enumerate(create) if value == "--mount"]
     for relative in (".astra", ".git", ".codex"):
-        assert any(
-            f"dst=/workspace/{relative}" in mount and mount.endswith(",readonly")
-            for mount in mounts
-        )
-    assert any(
-        "dst=/workspace/nested/.git" in mount and mount.endswith(",readonly")
-        for mount in mounts
-    )
+        assert any(f"dst=/workspace/{relative}" in mount and mount.endswith(",readonly") for mount in mounts)
+    assert any("dst=/workspace/nested/.git" in mount and mount.endswith(",readonly") for mount in mounts)
 
 
 async def test_docker_provider_sanitizes_startup_hooks_and_language_autoloading():

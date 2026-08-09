@@ -6,6 +6,7 @@ import logging
 from dataclasses import dataclass
 from typing import Any, Literal
 
+from app.application.agent_runtime.models import ToolActionInput
 from app.application.agent_runtime.policies.loop import (
     record_progress_signature,
     validate_transition,
@@ -23,29 +24,20 @@ from app.application.agent_runtime.services.tooling.approval import (
     ApprovalStageInput,
 )
 from app.application.agent_runtime.services.tooling.authorization import (
-    AuthorizationStageInput,
     AuthorizedInvocation,
     PermissionAuthorizationStage,
 )
-from app.application.agent_runtime.services.tooling.failure import (
-    ToolFailureInput,
-    ToolFailureStage,
-)
-from app.application.agent_runtime.services.tooling.invocation import (
-    InvocationStageInput,
-    ToolInvocationStage,
-)
+from app.application.agent_runtime.services.tooling.failure import ToolFailureStage
+from app.application.agent_runtime.services.tooling.invocation import ToolInvocationStage
 from app.application.agent_runtime.services.tooling.observation import (
     NormalizedObservation,
     ObservationNormalizationStage,
-    ObservationStageInput,
 )
-from app.common.schemas.agent.execution_state import AgentDecision, NodeResult
+from app.common.schemas.agent.execution_state import NodeResult
 from app.common.schemas.agent.planning import ExpectedObservation
-from app.domain.execution.contracts import SubagentSupervisorPort
-from app.infrastructure.db.models.permissions import AgentIdentityRecord, ToolCallRecord
+from app.infrastructure.db.models.permissions import ToolCallRecord
 from app.infrastructure.db.models.plans import PlanNodeRecord
-from app.infrastructure.db.models.runs import AgentTurnRecord, RunRecord, StepRecord
+from app.infrastructure.db.models.runs import StepRecord
 from app.infrastructure.repositories.run_unit_of_work import RunUnitOfWork
 from app.infrastructure.tools.base import AstraToolRegistry, ToolExecutionError
 
@@ -61,57 +53,22 @@ ToolActionOutcome = tuple[
 ]
 
 
-@dataclass(frozen=True)
-class ToolActionInput:
-    run: RunRecord
-    run_id: str
-    goal: str
-    turn_index: int
-    turn: AgentTurnRecord
-    decision: AgentDecision
-    main_identity: AgentIdentityRecord
-    active_node: PlanNodeRecord | None
-    active_node_execution_id: str | None
-    model_context: dict[str, Any]
-    execution_mode: str
-    is_approved_resume: bool
-    approved_request_snapshot: dict[str, Any] | None
-    approved_tool_call: ToolCallRecord | None
-    workspace_path: str | None
-    subagent_supervisor: SubagentSupervisorPort | None
-
-
+@dataclass
 class InvocationPipeline:
     """Own the generic authorization-to-observation lifecycle for one invocation."""
 
-    def __init__(
-        self,
-        *,
-        repository: RunUnitOfWork,
-        tool_registry: AstraToolRegistry,
-        authorization_stage: PermissionAuthorizationStage,
-        approval_stage: ApprovalRoutingStage,
-        invocation_stage: ToolInvocationStage,
-        observation_stage: ObservationNormalizationStage,
-        failure_stage: ToolFailureStage,
-        progress: ExecutionProgress,
-        progress_stage: ProgressEvaluationStage,
-        memory_writer: MemoryCandidateWriter,
-        evaluator: AgentObservationEvaluator,
-        tool_outputs: list[dict[str, Any]],
-    ) -> None:
-        self._repository = repository
-        self._tool_registry = tool_registry
-        self._authorization = authorization_stage
-        self._approval = approval_stage
-        self._invocation = invocation_stage
-        self._observation = observation_stage
-        self._failure = failure_stage
-        self._progress = progress
-        self._progress_stage = progress_stage
-        self._memory_writer = memory_writer
-        self._evaluator = evaluator
-        self._tool_outputs = tool_outputs
+    _repository: RunUnitOfWork
+    _tool_registry: AstraToolRegistry
+    _authorization: PermissionAuthorizationStage
+    _approval: ApprovalRoutingStage
+    _invocation: ToolInvocationStage
+    _observation: ObservationNormalizationStage
+    _failure: ToolFailureStage
+    _progress: ExecutionProgress
+    _progress_stage: ProgressEvaluationStage
+    _memory_writer: MemoryCandidateWriter
+    _evaluator: AgentObservationEvaluator
+    _tool_outputs: list[dict[str, Any]]
 
     async def execute(self, action: ToolActionInput) -> ToolActionOutcome:
         try:
@@ -125,13 +82,11 @@ class InvocationPipeline:
                 error.category,
             )
             await self._failure.execute(
-                ToolFailureInput(
-                    run_id=action.run_id,
-                    turn_index=action.turn_index,
-                    turn=action.turn,
-                    decision=action.decision,
-                    error=error,
-                )
+                run_id=action.run_id,
+                turn_index=action.turn_index,
+                turn=action.turn,
+                decision=action.decision,
+                error=error,
             )
             return "continue", action.workspace_path, False, False, None, None
 
@@ -178,18 +133,8 @@ class InvocationPipeline:
         str | None,
     ]:
         invocation = await self._authorization.execute(
-            AuthorizationStageInput(
-                run=action.run,
-                decision=action.decision,
-                main_identity=action.main_identity,
-                execution_mode=action.execution_mode,
-                tool_call_count=self._progress.tool_calls_used,
-                is_approved_resume=action.is_approved_resume,
-                approved_request_snapshot=action.approved_request_snapshot,
-                approved_tool_call_id=(
-                    action.approved_tool_call.id if action.approved_tool_call else None
-                ),
-            )
+            action,
+            tool_call_count=self._progress.tool_calls_used,
         )
         tool, _, runtime_identity, effect_plan, effect_hash, authorization = invocation
         step = await self._resolve_step(action, tool.spec.name)
@@ -219,8 +164,8 @@ class InvocationPipeline:
         step: PlanNodeRecord | StepRecord | None,
     ) -> tuple[Literal["continue", "stop"], str | None, bool]:
         tool, _, _, _, _, _ = authorized
-        invocation = await self._invoke(action, authorized, tool_call, step)
-        normalized = await self._normalize(action, authorized, tool_call, invocation.tool_output)
+        tool_output, workspace_path, workspace_changed = await self._invoke(action, authorized, tool_call, step)
+        normalized = await self._normalize(action, authorized, tool_call, tool_output)
         self._tool_outputs.append(normalized.tool_output)
         self._progress.observations.append(normalized.context_observation.model_dump())
         if self._progress.active_plan is None and step is not None:
@@ -237,7 +182,7 @@ class InvocationPipeline:
             tool.spec.name,
             tool_call.id,
         )
-        return result_action, invocation.workspace_path, invocation.workspace_changed
+        return result_action, workspace_path, workspace_changed
 
     async def _invoke(
         self,
@@ -248,21 +193,12 @@ class InvocationPipeline:
     ):
         tool, _, runtime_identity, effect_plan, _, _ = authorized
         invocation = await self._invocation.execute(
-            InvocationStageInput(
-                run_id=action.run_id,
-                task_id=action.run.task_id,
-                tool_call=tool_call,
-                step_id=step.id if step is not None else None,
-                plan_node_id=action.active_node.id if action.active_node is not None else None,
-                tool=tool,
-                tool_input=action.decision.tool_input,
-                effect_plan=effect_plan,
-                runtime_identity_id=runtime_identity.id,
-                active_skills=tuple(action.model_context.get("active_skills", [])),
-                is_skill_draft_test=bool(action.model_context.get("skill_draft_test")),
-                workspace_path=action.workspace_path,
-                subagent_supervisor=action.subagent_supervisor,
-            )
+            action,
+            tool_call=tool_call,
+            step_id=step.id if step is not None else None,
+            tool=tool,
+            effect_plan=effect_plan,
+            runtime_identity_id=runtime_identity.id,
         )
         await self._repository.update_agent_turn(
             action.turn.id,
@@ -280,18 +216,14 @@ class InvocationPipeline:
     ) -> NormalizedObservation:
         tool, _, runtime_identity, effect_plan, _, _ = authorized
         return await self._observation.execute(
-            ObservationStageInput(
-                tool_spec=tool.spec,
-                tool_call=tool_call,
-                tool_output=tool_output,
-                effect_plan=effect_plan,
-                runtime_identity_id=runtime_identity.id,
-                active_plan_node_id=(
-                    action.active_node.id
-                    if self._progress.active_plan is not None and action.active_node is not None
-                    else None
-                ),
-            )
+            tool_spec=tool.spec,
+            tool_call=tool_call,
+            tool_output=tool_output,
+            effect_plan=effect_plan,
+            runtime_identity_id=runtime_identity.id,
+            active_plan_node_id=(
+                action.active_node.id if self._progress.active_plan is not None and action.active_node is not None else None
+            ),
         )
 
     async def _persist_result(
@@ -348,9 +280,7 @@ class InvocationPipeline:
             evidence_refs=evidence_refs,
             criterion_changes=evaluation.criterion_updates,
             completed_steps=[],
-            plan_version=self._progress.active_plan.version
-            if self._progress.active_plan is not None
-            else 1,
+            plan_version=self._progress.active_plan.version if self._progress.active_plan is not None else 1,
         ):
             await self._progress_stage.reflect(
                 "no_progress",
@@ -432,9 +362,7 @@ class InvocationPipeline:
             else expected
         )
         criterion_refs = action.active_node.success_criteria_refs or criterion_refs
-        action.active_node.evidence_refs = list(
-            dict.fromkeys([*(action.active_node.evidence_refs or []), tool_call_id])
-        )
+        action.active_node.evidence_refs = list(dict.fromkeys([*(action.active_node.evidence_refs or []), tool_call_id]))
         return expected, criterion_refs
 
     def _validate_execution_transition(self) -> None:

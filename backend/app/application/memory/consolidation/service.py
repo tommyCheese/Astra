@@ -38,9 +38,7 @@ def autodream_profile_snapshot(profile: AgentProfile) -> dict[str, Any]:
     selected = profile.documents_for(ModelOperation.AUTODREAM)
     selected_names = tuple(document.name for document in selected)
     if selected_names != ("identity", "memory", "autodream"):
-        raise ConsolidationValidationError(
-            "AutoDream Profile selection must be identity, memory, and autodream"
-        )
+        raise ConsolidationValidationError("AutoDream Profile selection must be identity, memory, and autodream")
     payload = {
         "operation": ModelOperation.AUTODREAM.value,
         "profile": profile.snapshot(),
@@ -122,9 +120,7 @@ class AutoDreamProcessor:
             namespace_id=claimed.namespace_id,
             items=(FrozenMemoryInput.from_record(record) for record in records),
         )
-        return await self._complete_generated_proposal(
-            repository, claimed, manifest, profile_snapshot, usage
-        )
+        return await self._complete_generated_proposal(repository, claimed, manifest, profile_snapshot, usage)
 
     async def _complete_generated_proposal(
         self,

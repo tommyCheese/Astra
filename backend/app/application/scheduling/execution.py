@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from sqlalchemy import select
@@ -13,25 +14,20 @@ from app.common.schemas.schedules import ScheduledExecutionConfig
 from app.infrastructure.db.models.runs import RunRecord
 
 
+@dataclass
 class ScheduledExecutionResolver:
     """Resolve the same reusable unattended execution context for every entry point."""
 
-    def __init__(self, session: AsyncSession, settings: AstraRuntimeSettings):
-        self.session = session
-        self.settings = settings
+    session: AsyncSession
+    settings: AstraRuntimeSettings
 
     async def from_task(self, task_id: str) -> ScheduledExecutionConfig:
         return await self._from_query(
-            select(RunRecord)
-            .where(RunRecord.task_id == task_id)
-            .order_by(RunRecord.created_at.desc())
-            .limit(20)
+            select(RunRecord).where(RunRecord.task_id == task_id).order_by(RunRecord.created_at.desc()).limit(20)
         )
 
     async def from_workspace(self) -> ScheduledExecutionConfig:
-        return await self._from_query(
-            select(RunRecord).order_by(RunRecord.created_at.desc()).limit(100)
-        )
+        return await self._from_query(select(RunRecord).order_by(RunRecord.created_at.desc()).limit(100))
 
     async def from_task_or_workspace(self, task_id: str) -> ScheduledExecutionConfig:
         try:

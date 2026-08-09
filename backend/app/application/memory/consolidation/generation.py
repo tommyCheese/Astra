@@ -49,9 +49,7 @@ def normalize_model_output(
         operations.append(operation)
     output_keys = [operation.memory_key for operation in operations]
     if len(output_keys) != len(set(output_keys)):
-        raise ConsolidationValidationError(
-            "Proposal cannot create multiple outputs for one normalized Memory key"
-        )
+        raise ConsolidationValidationError("Proposal cannot create multiple outputs for one normalized Memory key")
     return ConsolidationProposal.build(producer=producer, operations=operations)
 
 
@@ -62,9 +60,7 @@ def _decode_output(raw_output: str | Mapping[str, Any]) -> Mapping[str, Any]:
         try:
             decoded = json.loads(raw_output)
         except json.JSONDecodeError as exc:
-            raise ConsolidationValidationError(
-                "Model consolidation output must be valid JSON"
-            ) from exc
+            raise ConsolidationValidationError("Model consolidation output must be valid JSON") from exc
     elif isinstance(raw_output, Mapping):
         decoded = dict(raw_output)
     else:
@@ -89,9 +85,7 @@ def _raw_operations(decoded: Mapping[str, Any]) -> list[Any]:
     if not isinstance(operations, list):
         raise ConsolidationValidationError("Proposal operations must be a list")
     if len(operations) > MAX_PROPOSAL_OPERATIONS:
-        raise ConsolidationValidationError(
-            f"Proposal exceeds the {MAX_PROPOSAL_OPERATIONS} operation limit"
-        )
+        raise ConsolidationValidationError(f"Proposal exceeds the {MAX_PROPOSAL_OPERATIONS} operation limit")
     return operations
 
 
@@ -114,9 +108,7 @@ def _normalize_operation(
     _reserve_replacements(index, action, replacement_ids, replaced_ids)
     operation = ConsolidationOperation.build(
         action=action,
-        memory_key=_bounded_string(
-            raw_operation["memory_key"], label=f"Proposal operation {index} Memory key", maximum=240
-        ),
+        memory_key=_bounded_string(raw_operation["memory_key"], label=f"Proposal operation {index} Memory key", maximum=240),
         kind=kind,
         scope=scope,
         content=_bounded_string(
@@ -146,9 +138,7 @@ def _normalize_operation(
     )
     supplied_id = raw_operation.get("operation_id")
     if supplied_id is not None and normalize_text(str(supplied_id)) != operation.operation_id:
-        raise ConsolidationValidationError(
-            f"Proposal operation {index} operation_id does not match its content"
-        )
+        raise ConsolidationValidationError(f"Proposal operation {index} operation_id does not match its content")
     return operation
 
 
@@ -177,35 +167,27 @@ def _action(index: int, value: Any) -> ConsolidationAction:
     try:
         return ConsolidationAction(str(value))
     except ValueError as exc:
-        raise ConsolidationValidationError(
-            f"Proposal operation {index} has an unsupported action"
-        ) from exc
+        raise ConsolidationValidationError(f"Proposal operation {index} has an unsupported action") from exc
 
 
 def _kind(index: int, value: Any) -> str:
     raw_kind = _bounded_string(value, label=f"Proposal operation {index} kind", maximum=80)
     kind = normalize_memory_kind(raw_kind)
     if not isinstance(kind, MemoryKind):
-        raise ConsolidationValidationError(
-            f"Proposal operation {index} has an unsupported Memory kind"
-        )
+        raise ConsolidationValidationError(f"Proposal operation {index} has an unsupported Memory kind")
     return kind.value
 
 
 def _scope(index: int, value: Any) -> str:
     scope = _bounded_string(value, label=f"Proposal operation {index} scope", maximum=40)
     if scope not in {"run", "task", "session", "user"}:
-        raise ConsolidationValidationError(
-            f"Proposal operation {index} has an unsupported Memory scope"
-        )
+        raise ConsolidationValidationError(f"Proposal operation {index} has an unsupported Memory scope")
     return scope
 
 
 def _structured_data(index: int, value: Any) -> dict[str, Any]:
     if not isinstance(value, Mapping):
-        raise ConsolidationValidationError(
-            f"Proposal operation {index} structured_data must be an object"
-        )
+        raise ConsolidationValidationError(f"Proposal operation {index} structured_data must be an object")
     return _json_object(value)
 
 
@@ -216,13 +198,9 @@ def _reserve_replacements(
     replaced_ids: set[str],
 ) -> None:
     if action is ConsolidationAction.add and replacement_ids:
-        raise ConsolidationValidationError(
-            f"Proposal operation {index} add action cannot replace Memory"
-        )
+        raise ConsolidationValidationError(f"Proposal operation {index} add action cannot replace Memory")
     if replaced_ids.intersection(replacement_ids):
-        raise ConsolidationValidationError(
-            "Proposal cannot replace the same Memory in multiple operations"
-        )
+        raise ConsolidationValidationError("Proposal cannot replace the same Memory in multiple operations")
     replaced_ids.update(replacement_ids)
 
 

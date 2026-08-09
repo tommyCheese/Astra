@@ -47,11 +47,11 @@ class OpenAIChatResponse:
     chunk_count: int
 
 
+@dataclass
 class OpenAIChatTransport:
     """Own the OpenAI-compatible HTTP and SSE protocol, not model semantics."""
 
-    def __init__(self, client: httpx.AsyncClient):
-        self.client = client
+    client: httpx.AsyncClient
 
     async def send(
         self,
@@ -77,12 +77,8 @@ class OpenAIChatTransport:
             try:
                 response.raise_for_status()
             except httpx.HTTPStatusError as exc:
-                await self._finish_failed_request(
-                    usage_invocation, request, started, request_id, exc
-                )
-                raise ModelOutputError(
-                    f"Model endpoint returned HTTP {response.status_code}"
-                ) from exc
+                await self._finish_failed_request(usage_invocation, request, started, request_id, exc)
+                raise ModelOutputError(f"Model endpoint returned HTTP {response.status_code}") from exc
             parsed = await self._read_response(
                 response,
                 request.callbacks,
@@ -125,9 +121,7 @@ class OpenAIChatTransport:
             **request.reasoning.request_params,
         }
         if request.provider == "openai":
-            system_prompt = "\n\n".join(
-                message["content"] for message in request.messages if message["role"] == "system"
-            )
+            system_prompt = "\n\n".join(message["content"] for message in request.messages if message["role"] == "system")
             if system_prompt:
                 digest = hashlib.sha256(system_prompt.encode()).hexdigest()[:32]
                 payload["prompt_cache_key"] = f"astra:{digest}"
@@ -143,12 +137,8 @@ class OpenAIChatTransport:
         thinking_callback: AnswerDeltaCallback | None,
     ) -> OpenAIChatResponse:
         if "text/event-stream" in response.headers.get("content-type", ""):
-            return await self._read_event_stream(
-                response, callbacks, usage_invocation, thinking_callback
-            )
-        return await self._read_json_response(
-            response, thinking_callback, usage_invocation
-        )
+            return await self._read_event_stream(response, callbacks, usage_invocation, thinking_callback)
+        return await self._read_json_response(response, thinking_callback, usage_invocation)
 
     async def _read_event_stream(
         self,
@@ -176,9 +166,7 @@ class OpenAIChatTransport:
                 continue
             chunks.append(content_delta)
             if extractor is not None:
-                await self._publish_field_deltas(
-                    extractor, content_delta, callbacks, emitted_fields, usage_invocation
-                )
+                await self._publish_field_deltas(extractor, content_delta, callbacks, emitted_fields, usage_invocation)
         return OpenAIChatResponse(
             content="".join(chunks),
             request_id=None,

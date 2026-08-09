@@ -56,15 +56,11 @@ def test_profile_version_changes_with_document_content():
     [
         (lambda values: values.pop("identity"), "missing"),
         (
-            lambda values: values.__setitem__(
-                "identity", values["identity"].replace("## Mission", "## Missing Mission")
-            ),
+            lambda values: values.__setitem__("identity", values["identity"].replace("## Mission", "## Missing Mission")),
             "required section",
         ),
         (
-            lambda values: values.__setitem__(
-                "memory", values["memory"].replace("schema_version: 1", "schema_version: 2")
-            ),
+            lambda values: values.__setitem__("memory", values["memory"].replace("schema_version: 1", "schema_version: 2")),
             "metadata",
         ),
     ],
@@ -243,9 +239,7 @@ def test_skill_prompt_blocks_are_ordered_bounded_and_operation_filtered():
     assert "sha256:a" in prompt
     assert "custom:zeta" not in prompt
     assert prompt.index("## Trusted role protocol") < prompt.index("## Active Skill instructions")
-    assert prompt.index("## Active Skill instructions") < prompt.index(
-        "## Trust and capability boundary"
-    )
+    assert prompt.index("## Active Skill instructions") < prompt.index("## Trust and capability boundary")
     assert "mandatory execution and output requirement" in prompt
     assert "preserve exact phrases, ordering, formatting" in prompt
     assert "silently verify that the response satisfies every active Skill" in prompt

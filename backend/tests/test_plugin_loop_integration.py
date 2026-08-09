@@ -1,7 +1,8 @@
+from support import TrustedRuntimeHarness as AstraAgentLoop
+
 from app.application.agent_runtime.policies.reasoning import (
     AgentReasoningPolicyCompiler,
 )
-from app.application.agent_runtime.services.execution.loop import AstraAgentLoop
 from app.application.permissions.effects import DefaultEffectAnalyzer
 from app.common.core.config import AstraRuntimeSettings
 from app.common.schemas.agent.execution_state import AgentDecision, AgentObservation
@@ -100,9 +101,9 @@ class ToolSequenceClient(MockModelClient):
 
 
 def _policy():
-    return AgentReasoningPolicyCompiler().compile(
-        RequestedReasoningPolicy(execution_mode="auto_approval")
-    ).model_dump(mode="json")
+    return (
+        AgentReasoningPolicyCompiler().compile(RequestedReasoningPolicy(execution_mode="auto_approval")).model_dump(mode="json")
+    )
 
 
 def _spec(name, provider, permission="network_read"):
@@ -148,10 +149,7 @@ def _component(provider, component_id, tool_names, factory):
 def _catalog(*contributions):
     return PluginCatalogBuilder(
         [BuiltinDiscoverySource(contributions)],
-        allowed_providers={
-            item.descriptor.provider_id: {item.descriptor.digest}
-            for item in contributions
-        },
+        allowed_providers={item.descriptor.provider_id: {item.descriptor.digest} for item in contributions},
     ).build_static()
 
 
@@ -164,15 +162,9 @@ async def test_synthetic_provider_executes_processes_validates_and_completes_wit
     contribution = PluginContribution(
         descriptor=_descriptor(provider),
         tools=(PluginToolContribution(tool=tool, executor_id="in_process"),),
-        effect_analyzers=(
-            _component(provider, "effect", (spec.name,), DefaultEffectAnalyzer),
-        ),
-        result_processors=(
-            _component(provider, "processor", (spec.name,), SyntheticProcessor),
-        ),
-        validators=(
-            _component(provider, "validator", (spec.name,), SyntheticValidator),
-        ),
+        effect_analyzers=(_component(provider, "effect", (spec.name,), DefaultEffectAnalyzer),),
+        result_processors=(_component(provider, "processor", (spec.name,), SyntheticProcessor),),
+        validators=(_component(provider, "validator", (spec.name,), SyntheticValidator),),
     )
     settings = AstraRuntimeSettings(
         model_provider="mock",
@@ -194,10 +186,7 @@ async def test_synthetic_provider_executes_processes_validates_and_completes_wit
         tool_registry=_catalog(contribution).tool_registry(),
     ).run(repository, run.id, run.task.description)
 
-    validators = {
-        item["validator"]
-        for item in output["result"]["verification_report"]["validation_outcomes"]
-    }
+    validators = {item["validator"] for item in output["result"]["verification_report"]["validation_outcomes"]}
     loaded = await repository.require_run(run.id)
     assert output["status"] == "completed"
     assert "synthetic_validation" in validators
@@ -212,15 +201,11 @@ async def test_mixed_source_and_chart_run_aggregates_both_plugin_validators(sess
     chart_spec = _spec("chart.render", chart_provider, "artifact_write")
     search = StaticTool(
         search_spec,
-        ToolResultEnvelope(
-            data={"value": "candidate"}
-        ).model_dump(mode="json"),
+        ToolResultEnvelope(data={"value": "candidate"}).model_dump(mode="json"),
     )
     fetch = StaticTool(
         fetch_spec,
-        ToolResultEnvelope(
-            data={"value": "document"}
-        ).model_dump(mode="json"),
+        ToolResultEnvelope(data={"value": "document"}).model_dump(mode="json"),
     )
     chart = StaticTool(
         chart_spec,
@@ -239,32 +224,17 @@ async def test_mixed_source_and_chart_run_aggregates_both_plugin_validators(sess
     )
     source_contribution = PluginContribution(
         descriptor=_descriptor(source_provider),
-        tools=tuple(
-            PluginToolContribution(tool=tool, executor_id="in_process")
-            for tool in (search, fetch)
-        ),
-        effect_analyzers=(
-            _component(source_provider, "effect", (search_spec.name, fetch_spec.name), DefaultEffectAnalyzer),
-        ),
-        result_processors=(
-            _component(source_provider, "processor", (search_spec.name, fetch_spec.name), SyntheticProcessor),
-        ),
-        validators=(
-            _component(source_provider, "validator", (search_spec.name, fetch_spec.name), SyntheticValidator),
-        ),
+        tools=tuple(PluginToolContribution(tool=tool, executor_id="in_process") for tool in (search, fetch)),
+        effect_analyzers=(_component(source_provider, "effect", (search_spec.name, fetch_spec.name), DefaultEffectAnalyzer),),
+        result_processors=(_component(source_provider, "processor", (search_spec.name, fetch_spec.name), SyntheticProcessor),),
+        validators=(_component(source_provider, "validator", (search_spec.name, fetch_spec.name), SyntheticValidator),),
     )
     chart_contribution = PluginContribution(
         descriptor=_descriptor(chart_provider),
         tools=(PluginToolContribution(tool=chart, executor_id="in_process"),),
-        effect_analyzers=(
-            _component(chart_provider, "effect", (chart_spec.name,), DefaultEffectAnalyzer),
-        ),
-        result_processors=(
-            _component(chart_provider, "processor", (chart_spec.name,), ChartResultProcessor),
-        ),
-        validators=(
-            _component(chart_provider, "validator", (chart_spec.name,), ChartArtifactValidator),
-        ),
+        effect_analyzers=(_component(chart_provider, "effect", (chart_spec.name,), DefaultEffectAnalyzer),),
+        result_processors=(_component(chart_provider, "processor", (chart_spec.name,), ChartResultProcessor),),
+        validators=(_component(chart_provider, "validator", (chart_spec.name,), ChartArtifactValidator),),
     )
     settings = AstraRuntimeSettings(
         model_provider="mock",

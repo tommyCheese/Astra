@@ -24,21 +24,15 @@ class GroundingEvidenceLedger:
         existing = self._records.get(fragment.evidence_key)
         if existing is not None:
             if existing.payload_digest != fragment.payload_digest:
-                raise GroundingEvidenceConflictError(
-                    f"conflicting evidence replay for {fragment.evidence_key}"
-                )
+                raise GroundingEvidenceConflictError(f"conflicting evidence replay for {fragment.evidence_key}")
             return existing
         self._records[fragment.evidence_key] = fragment
         return fragment
 
-    def extend(
-        self, fragments: Iterable[GroundingEvidenceFragment]
-    ) -> list[GroundingEvidenceFragment]:
+    def extend(self, fragments: Iterable[GroundingEvidenceFragment]) -> list[GroundingEvidenceFragment]:
         return [self.append(fragment) for fragment in fragments]
 
-    def records(
-        self, kind: GroundingEvidenceKind | None = None
-    ) -> list[GroundingEvidenceFragment]:
+    def records(self, kind: GroundingEvidenceKind | None = None) -> list[GroundingEvidenceFragment]:
         values = list(self._records.values())
         if kind is not None:
             values = [item for item in values if item.kind == kind]
@@ -51,10 +45,7 @@ class GroundingEvidenceLedger:
         return next((item for item in self._records.values() if item.id == evidence_id), None)
 
     def passages(self, source_id: str | None = None) -> list[GroundingSourcePassage]:
-        passages = [
-            GroundingSourcePassage.model_validate(item.payload)
-            for item in self.records(GroundingEvidenceKind.passage)
-        ]
+        passages = [GroundingSourcePassage.model_validate(item.payload) for item in self.records(GroundingEvidenceKind.passage)]
         if source_id is not None:
             passages = [item for item in passages if item.source_id == source_id]
         return sorted(passages, key=lambda item: (item.source_id, item.ordinal))
@@ -106,11 +97,7 @@ class GroundingEvidenceLedger:
         for passage in self.passages():
             if len(selected) >= max_passages or used_chars + len(passage.text) > max_chars:
                 break
-            record = next(
-                item
-                for item in self.records(GroundingEvidenceKind.passage)
-                if item.payload.get("id") == passage.id
-            )
+            record = next(item for item in self.records(GroundingEvidenceKind.passage) if item.payload.get("id") == passage.id)
             selected.append(
                 {
                     "evidence_id": record.id,
@@ -130,8 +117,5 @@ class GroundingEvidenceLedger:
     def model_dump(self) -> dict:
         return {
             "schema_version": 1,
-            "records": [
-                item.model_dump(mode="json", exclude_none=True)
-                for item in self._records.values()
-            ],
+            "records": [item.model_dump(mode="json", exclude_none=True) for item in self._records.values()],
         }

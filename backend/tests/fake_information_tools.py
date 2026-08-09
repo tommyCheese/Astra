@@ -41,21 +41,23 @@ class FakeSearch(AstraTool):
 
     async def run(self, tool_input, *, context=None):
         self.last_context = context
-        return ToolResultEnvelope(data={
-            "query": tool_input["query"],
-            "provider": "test",
-            "candidate_count": 1,
-            "warnings": [],
-            "candidates": [
-                {
-                    "url": "https://test.invalid/source",
-                    "title": "Test",
-                    "snippet": "Evidence",
-                    "provider": "test",
-                    "retrieved_at": "now",
-                }
-            ],
-        }).model_dump(mode="json")
+        return ToolResultEnvelope(
+            data={
+                "query": tool_input["query"],
+                "provider": "test",
+                "candidate_count": 1,
+                "warnings": [],
+                "candidates": [
+                    {
+                        "url": "https://test.invalid/source",
+                        "title": "Test",
+                        "snippet": "Evidence",
+                        "provider": "test",
+                        "retrieved_at": "now",
+                    }
+                ],
+            }
+        ).model_dump(mode="json")
 
 
 class FakeFetch(AstraTool):
@@ -72,16 +74,18 @@ class FakeFetch(AstraTool):
     )
 
     async def run(self, tool_input, *, context=None):
-        return ToolResultEnvelope(data={
-            "url": tool_input["url"],
-            "status_code": 200,
-            "title": "Test",
-            "content": "Deterministic test evidence",
-            "quality_score": 0.9,
-            "extraction_strategy": "test",
-            "warnings": [],
-            "retrieved_at": "now",
-        }).model_dump(mode="json")
+        return ToolResultEnvelope(
+            data={
+                "url": tool_input["url"],
+                "status_code": 200,
+                "title": "Test",
+                "content": "Deterministic test evidence",
+                "quality_score": 0.9,
+                "extraction_strategy": "test",
+                "warnings": [],
+                "retrieved_at": "now",
+            }
+        ).model_dump(mode="json")
 
 
 def fake_information_registry():
@@ -103,9 +107,7 @@ def fake_information_registry():
                 version="1",
                 digest="builtin",
             ),
-            applicability=PluginApplicabilityBinding(
-                tool_names=("catalog_search", "catalog_read")
-            ),
+            applicability=PluginApplicabilityBinding(tool_names=("catalog_search", "catalog_read")),
             factory=factory,
         )
 
@@ -151,9 +153,7 @@ class SourceEvidenceValidator(PluginResultValidator):
         fragments = list(evidence.get("fragments", []))
         attempted = any(item.get("domain") == "source" for item in fragments)
         documents = [
-            item.get("source", {})
-            for item in fragments
-            if item.get("domain") == "source" and item.get("kind") == "document"
+            item.get("source", {}) for item in fragments if item.get("domain") == "source" and item.get("kind") == "document"
         ]
         issues = []
         if attempted and not documents:

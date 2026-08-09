@@ -56,8 +56,4 @@ def _item_text(item) -> str:
 
 
 def _accessible_refs(envelope: CompactionContextEnvelope, kind: str) -> tuple[str, ...]:
-    return tuple(
-        reference.ref
-        for reference in envelope.reference_manifest
-        if reference.accessible and reference.kind == kind
-    )
+    return tuple(reference.ref for reference in envelope.reference_manifest if reference.accessible and reference.kind == kind)

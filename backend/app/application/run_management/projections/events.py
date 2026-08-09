@@ -37,11 +37,11 @@ class _RunEventState:
     dropped_through_id: int = 0
 
 
+@dataclass
 class RunEventBroker:
     """Wake in-process SSE readers after committed RunEvent writes."""
 
-    def __init__(self) -> None:
-        self._states: dict[str, _RunEventState] = {}
+    _states: dict[str, _RunEventState] = field(default_factory=dict)
 
     def subscribe(self, run_id: str) -> int:
         state = self._states.setdefault(run_id, _RunEventState())
@@ -80,8 +80,7 @@ class RunEventBroker:
                         index
                         for index in range(len(state.published_events) - 1, -1, -1)
                         if state.published_events[index].type == published.type
-                        and state.published_events[index].agent_execution_id
-                        == published.agent_execution_id
+                        and state.published_events[index].agent_execution_id == published.agent_execution_id
                     ),
                     None,
                 )
@@ -101,11 +100,7 @@ class RunEventBroker:
     def events_after(self, run_id: str, after_id: int) -> list[PublishedRunEvent] | None:
         """Return committed in-process events, or None when a DB refresh is required."""
         state = self._states.get(run_id)
-        if (
-            state is None
-            or not state.cache_complete
-            or after_id < state.dropped_through_id
-        ):
+        if state is None or not state.cache_complete or after_id < state.dropped_through_id:
             return None
         return [event for event in state.published_events if event.id > after_id]
 
@@ -113,9 +108,7 @@ class RunEventBroker:
         state = self._states.get(run_id)
         if state is None:
             return
-        state.published_events = [
-            event for event in state.published_events if event.id > through_id
-        ]
+        state.published_events = [event for event in state.published_events if event.id > through_id]
         state.dropped_through_id = max(state.dropped_through_id, through_id)
         state.cache_complete = True
 

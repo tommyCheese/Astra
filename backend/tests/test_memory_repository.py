@@ -203,11 +203,7 @@ async def test_human_activation_atomically_supersedes_candidate_base(session):
     assert (await repository.require(original.id)).status == "superseded"
     audit_types = list(
         (
-            await session.execute(
-                select(MemoryAuditRecord.event_type).where(
-                    MemoryAuditRecord.memory_id == activated.id
-                )
-            )
+            await session.execute(select(MemoryAuditRecord.event_type).where(MemoryAuditRecord.memory_id == activated.id))
         ).scalars()
     )
     assert audit_types[-1] == "human_activated"
@@ -234,9 +230,7 @@ async def test_human_activation_rejects_candidate_without_accessible_source(sess
         status=MemoryStatus.candidate,
     )
     await session.execute(
-        update(MemorySourceRecord)
-        .where(MemorySourceRecord.memory_id == candidate.id)
-        .values(accessible=False)
+        update(MemorySourceRecord).where(MemorySourceRecord.memory_id == candidate.id).values(accessible=False)
     )
     await session.commit()
 

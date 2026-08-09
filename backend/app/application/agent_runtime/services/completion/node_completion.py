@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any
 
 from sqlalchemy import select
 
+from app.application.agent_runtime.contracts import CompleteLoop, ContinueLoop, LoopOutcome
 from app.application.agent_runtime.services.shared.progress import (
     ExecutionProgress,
     ProgressEvaluationStage,
@@ -22,27 +23,12 @@ from app.infrastructure.repositories.plans import PlanRepository
 from app.infrastructure.repositories.run_unit_of_work import RunUnitOfWork
 
 
-@dataclass(frozen=True)
-class CompletionRoutingResult:
-    action: Literal["not_handled", "continue", "finish"]
-    final_turn_id: str | None = None
-    streamed_answer: AgentFinalAnswer | None = None
-    required_subagent_missing: bool = False
-    active_node_completed: bool = False
-
-
+@dataclass
 class NodeCompletionStage:
-    def __init__(
-        self,
-        repository: RunUnitOfWork,
-        plan_repository: PlanRepository,
-        progress: ExecutionProgress,
-        progress_stage: ProgressEvaluationStage,
-    ) -> None:
-        self._repository = repository
-        self._plan_repository = plan_repository
-        self._progress = progress
-        self._progress_stage = progress_stage
+    _repository: RunUnitOfWork
+    _plan_repository: PlanRepository
+    _progress: ExecutionProgress
+    _progress_stage: ProgressEvaluationStage
 
     async def execute(
         self,
@@ -55,9 +41,9 @@ class NodeCompletionStage:
         model_context: dict[str, Any],
         subagent_supervisor: SubagentSupervisorPort | None,
         subagent_mode: str,
-    ) -> CompletionRoutingResult:
+    ) -> LoopOutcome | None:
         if decision.decision_type not in {"finalize", "complete_node"}:
-            return CompletionRoutingResult("not_handled")
+            return None
         if await self._reject_unresolved_capabilities(
             run_id,
             turn,
@@ -65,7 +51,7 @@ class NodeCompletionStage:
             active_node,
             model_context,
         ):
-            return CompletionRoutingResult("continue")
+            return ContinueLoop()
         if decision.decision_type == "complete_node":
             return await self._complete_node(run_id, turn, decision, active_node, model_context)
         return await self._finalize(
@@ -89,7 +75,7 @@ class NodeCompletionStage:
         model_context: dict[str, Any],
         supervisor: SubagentSupervisorPort | None,
         subagent_mode: str,
-    ) -> CompletionRoutingResult:
+    ) -> LoopOutcome:
         subagent_result = await self._reconcile_subagents(
             run_id,
             turn,
@@ -111,7 +97,7 @@ class NodeCompletionStage:
                     evaluation,
                     model_context,
                 )
-                return CompletionRoutingResult("continue")
+                return ContinueLoop()
             if observation:
                 self._progress.observations.append(observation.model_dump(mode="json"))
             if evaluation:
@@ -129,12 +115,14 @@ class NodeCompletionStage:
             )
             await self._repository.session.commit()
             self._progress.active_plan = await self._plan_repository.active_for_run(run_id)
-            return CompletionRoutingResult("continue", active_node_completed=True)
+            return ContinueLoop(data={"active_node_completed": True})
         await self._repository.update_agent_turn(turn.id, status="completed")
-        return CompletionRoutingResult(
-            "finish",
-            final_turn_id=turn.id,
-            streamed_answer=candidate_answer,
+        return CompleteLoop(
+            answer=(candidate_answer.summary if candidate_answer else ""),
+            data={
+                "final_turn_id": turn.id,
+                "streamed_answer": candidate_answer.model_dump(mode="json") if candidate_answer else None,
+            },
         )
 
     async def _complete_node(
@@ -144,7 +132,7 @@ class NodeCompletionStage:
         decision: AgentDecision,
         active_node: PlanNodeRecord | None,
         model_context: dict[str, Any],
-    ) -> CompletionRoutingResult:
+    ) -> LoopOutcome:
         if self._progress.active_plan is None or active_node is None:
             await self._repository.update_agent_turn(turn.id, status="failed", phase="failed")
             await self._repository.add_event(
@@ -153,7 +141,7 @@ class NodeCompletionStage:
                 {"reason": "complete_node requires an active canonical plan node"},
             )
             await self._repository.session.commit()
-            return CompletionRoutingResult("continue")
+            return ContinueLoop()
         observation, evaluation, matched = await self._progress_stage.evaluate_node_completion(
             active_node,
             decision,
@@ -165,7 +153,7 @@ class NodeCompletionStage:
                 evaluation,
                 model_context,
             )
-            return CompletionRoutingResult("continue")
+            return ContinueLoop()
         if observation:
             self._progress.observations.append(observation.model_dump(mode="json"))
         if evaluation:
@@ -178,7 +166,7 @@ class NodeCompletionStage:
         )
         await self._repository.update_agent_turn(turn.id, status="completed", phase="committed")
         await self._repository.session.commit()
-        return CompletionRoutingResult("continue", active_node_completed=True)
+        return ContinueLoop(data={"active_node_completed": True})
 
     async def _reject_unresolved_capabilities(
         self,
@@ -188,9 +176,7 @@ class NodeCompletionStage:
         active_node: PlanNodeRecord | None,
         model_context: dict[str, Any],
     ) -> bool:
-        unresolved = list(
-            model_context.get("tool_selection", {}).get("unresolved_capabilities", [])
-        )
+        unresolved = list(model_context.get("tool_selection", {}).get("unresolved_capabilities", []))
         if active_node is None or not unresolved:
             return False
         observation = AgentObservation(
@@ -225,15 +211,13 @@ class NodeCompletionStage:
         turn: AgentTurnRecord,
         supervisor: SubagentSupervisorPort | None,
         subagent_mode: str,
-    ) -> CompletionRoutingResult | None:
+    ) -> LoopOutcome | None:
         if supervisor is None:
             return None
         joins = list(
             (
                 await self._repository.session.scalars(
-                    select(AgentJoinRecord).where(
-                        AgentJoinRecord.parent_execution_id == supervisor.parent_execution_id
-                    )
+                    select(AgentJoinRecord).where(AgentJoinRecord.parent_execution_id == supervisor.parent_execution_id)
                 )
             ).all()
         )
@@ -252,7 +236,7 @@ class NodeCompletionStage:
                 phase="failed",
             )
             await self._repository.session.commit()
-            return CompletionRoutingResult("continue", required_subagent_missing=True)
+            return ContinueLoop(data={"required_subagent_missing": True})
         if not await supervisor.has_pending():
             return None
         await self._repository.update_agent_turn(
@@ -263,9 +247,7 @@ class NodeCompletionStage:
         await self._repository.session.commit()
         await supervisor.wait()
         current = await self._repository.require_run_core(run_id)
-        self._progress.observations.extend(
-            await supervisor.reconcile(parent_state_version=current.state_version)
-        )
+        self._progress.observations.extend(await supervisor.reconcile(parent_state_version=current.state_version))
         if await supervisor.has_pending():
             self._progress.observations.append(
                 AgentObservation(
@@ -274,7 +256,7 @@ class NodeCompletionStage:
                     summary="Subagent work or Join reconciliation is still pending.",
                 ).model_dump(mode="json")
             )
-        return CompletionRoutingResult("continue")
+        return ContinueLoop()
 
     def _observation_tool_call_ids(self) -> list[str]:
         return [

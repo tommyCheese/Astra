@@ -12,11 +12,7 @@ def build_public_process(run: RunRecord) -> list[dict]:
         for turn in sorted(run.turns, key=lambda item: item.turn_index)
         for item in _turn_process_items(turn, calls_by_id, included_call_ids)
     ]
-    items.extend(
-        _tool_process_item(call)
-        for call in run.tool_calls
-        if call.id not in included_call_ids
-    )
+    items.extend(_tool_process_item(call) for call in run.tool_calls if call.id not in included_call_ids)
     items.extend(_verification_process_items(run))
     return items
 
@@ -57,14 +53,8 @@ def _tool_process_item(call: ToolCallRecord) -> dict:
 def _verification_process_items(run: RunRecord) -> list[dict]:
     run_result = run.result or {}
     report = run_result.get("verification_report") or {}
-    notes = dict.fromkeys(
-        [*(run_result.get("verification_notes") or []), *(report.get("notes") or [])]
-    )
-    return [
-        {"kind": "verification", "title": "验证", "detail": str(note)[:4000]}
-        for note in notes
-        if note
-    ]
+    notes = dict.fromkeys([*(run_result.get("verification_notes") or []), *(report.get("notes") or [])])
+    return [{"kind": "verification", "title": "验证", "detail": str(note)[:4000]} for note in notes if note]
 
 
 def _public_status(status: str) -> str:

@@ -2,17 +2,18 @@
 
 from __future__ import annotations
 
+from contextlib import nullcontext
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from app.application.agent_runtime.models import ToolActionInput
 from app.application.agent_runtime.services.tooling.plugin_runtime import PluginRuntimeState
 from app.application.permissions.effects import workspace_mount_mode
 from app.application.skills.activation import SkillActivationService
 from app.application.workspaces.artifacts import ArtifactService
 from app.application.workspaces.runtime import WorkspaceRuntimeService
 from app.common.schemas.permissions import ActionEffectPlan
-from app.domain.execution.contracts import SubagentSupervisorPort
 from app.infrastructure.db.models.permissions import ToolCallRecord
 from app.infrastructure.repositories.permissions import PermissionRepository
 from app.infrastructure.repositories.run_unit_of_work import RunUnitOfWork
@@ -25,144 +26,118 @@ from app.infrastructure.tools.base import (
 )
 
 
-@dataclass(frozen=True)
-class InvocationStageInput:
-    run_id: str
-    task_id: str
-    tool_call: ToolCallRecord
-    step_id: str | None
-    plan_node_id: str | None
-    tool: AstraTool
-    tool_input: dict[str, Any]
-    effect_plan: ActionEffectPlan
-    runtime_identity_id: str
-    active_skills: tuple[dict[str, Any], ...]
-    is_skill_draft_test: bool
-    workspace_path: Path | None
-    subagent_supervisor: SubagentSupervisorPort | None
-
-
-@dataclass(frozen=True)
-class InvocationStageResult:
-    tool_output: dict[str, Any]
-    workspace_path: Path | None
-    workspace_changed: bool
-
-
+@dataclass
 class ToolInvocationStage:
     """Own the full side-effect boundary from execution context to committed result."""
 
-    def __init__(
-        self,
-        run_repository: RunUnitOfWork,
-        permission_repository: PermissionRepository,
-        workspace_repository: WorkspaceRepository,
-        workspace_service: WorkspaceRuntimeService,
-        artifact_service: ArtifactService,
-        sandbox_service: SandboxJobService,
-        skill_activation_service: SkillActivationService,
-        plugin_runtime: PluginRuntimeState,
-        memory_service: Any,
-    ) -> None:
-        self._run_repository = run_repository
-        self._permission_repository = permission_repository
-        self._workspace_repository = workspace_repository
-        self._workspace_service = workspace_service
-        self._artifact_service = artifact_service
-        self._sandbox_service = sandbox_service
-        self._skill_activation_service = skill_activation_service
-        self._plugin_runtime = plugin_runtime
-        self._memory_service = memory_service
+    _run_repository: RunUnitOfWork
+    _permission_repository: PermissionRepository
+    _workspace_repository: WorkspaceRepository
+    _workspace_service: WorkspaceRuntimeService
+    _artifact_service: ArtifactService
+    _sandbox_service: SandboxJobService
+    _skill_activation_service: SkillActivationService
+    _plugin_runtime: PluginRuntimeState
+    _memory_service: Any
 
-    async def execute(self, stage_input: InvocationStageInput) -> InvocationStageResult:
+    async def execute(
+        self,
+        action: ToolActionInput,
+        *,
+        tool_call: ToolCallRecord,
+        step_id: str | None,
+        tool: AstraTool,
+        effect_plan: ActionEffectPlan,
+        runtime_identity_id: str,
+    ) -> tuple[dict[str, Any], Path | None, bool]:
         # Authorization and the prepared tool-call record form the durable
         # boundary before any filesystem or external tool work begins.
         await self._run_repository.commit()
-        mount_mode = workspace_mount_mode(stage_input.effect_plan)
-        workspace_path = stage_input.workspace_path
+        mount_mode = workspace_mount_mode(effect_plan)
+        workspace_path = Path(action.workspace_path) if action.workspace_path else None
         if mount_mode != "none" and workspace_path is None:
-            workspace_path = await self._workspace_service.prepare(stage_input.task_id)
-        execution_context = self._execution_context(stage_input, workspace_path, mount_mode)
-        await self._record_skill_attribution(stage_input, execution_context)
+            workspace_path = await self._workspace_service.prepare(action.run.task_id)
+        execution_context = self._execution_context(
+            action,
+            tool_call,
+            step_id,
+            effect_plan,
+            runtime_identity_id,
+            workspace_path,
+            mount_mode,
+        )
+        await self._record_skill_attribution(action, tool_call, execution_context)
         await self._run_repository.commit()
         capture_in_process_write = (
-            stage_input.tool.spec.execution_backend == "in_process"
-            and mount_mode == "read_write"
-            and workspace_path is not None
+            tool.spec.execution_backend == "in_process" and mount_mode == "read_write" and workspace_path is not None
         )
-        before_manifest = (
-            self._workspace_service.scan(workspace_path) if capture_in_process_write else None
-        )
-        before_protected_paths = (
-            self._workspace_service.protected_paths(workspace_path)
-            if capture_in_process_write
-            else None
-        )
-        guard = (
-            self._workspace_service.access_guard(workspace_path, mount_mode)
-            if capture_in_process_write
-            else _empty_workspace_guard()
-        )
+        before_manifest = self._workspace_service.scan(workspace_path) if capture_in_process_write else None
+        before_protected_paths = self._workspace_service.protected_paths(workspace_path) if capture_in_process_write else None
+        guard = self._workspace_service.access_guard(workspace_path, mount_mode) if capture_in_process_write else nullcontext()
         try:
             async with guard:
                 raw_output = await self._plugin_runtime.execute(
-                    stage_input.tool,
-                    stage_input.tool_input,
+                    tool,
+                    action.decision.tool_input,
                     context=execution_context,
                 )
                 if before_manifest is not None and workspace_path is not None:
                     await self._workspace_service.capture_changes(
-                        run_id=stage_input.run_id,
-                        tool_call_id=stage_input.tool_call.id,
+                        run_id=action.run_id,
+                        tool_call_id=tool_call.id,
                         workspace_dir=workspace_path,
                         before=before_manifest,
                         before_protected_paths=before_protected_paths,
                     )
             tool_output = self._plugin_runtime.adapt_and_validate(
-                stage_input.tool.spec,
+                tool.spec,
                 raw_output,
             ).model_dump(mode="json", exclude_none=True)
         except ToolExecutionError as error:
             await self._run_repository.finish_tool_call(
-                stage_input.tool_call.id,
+                tool_call.id,
                 error=error.to_payload(),
             )
             raise
         tool_output, workspace_changed = await self._attach_workspace_changes(
-            stage_input.tool_call.id,
+            tool_call.id,
             tool_output,
         )
         await self._run_repository.finish_tool_call(
-            stage_input.tool_call.id,
+            tool_call.id,
             output=self._plugin_runtime.persistence_payload(
-                stage_input.tool.spec,
+                tool.spec,
                 tool_output,
             ),
         )
-        await self._record_data_flow(stage_input)
-        return InvocationStageResult(tool_output, workspace_path, workspace_changed)
+        await self._record_data_flow(action, effect_plan)
+        return tool_output, workspace_path, workspace_changed
 
     def _execution_context(
         self,
-        stage_input: InvocationStageInput,
+        action: ToolActionInput,
+        tool_call: ToolCallRecord,
+        step_id: str | None,
+        effect_plan: ActionEffectPlan,
+        runtime_identity_id: str,
         workspace_path: Path | None,
         mount_mode: str,
     ) -> ToolExecutionContext:
-        supervisor = stage_input.subagent_supervisor
+        supervisor = action.subagent_supervisor
         return ToolExecutionContext(
-            run_id=stage_input.run_id,
-            tool_call_id=stage_input.tool_call.id,
-            step_id=stage_input.step_id,
-            trace_id=f"{stage_input.run_id}:{stage_input.tool_call.id}",
+            run_id=action.run_id,
+            tool_call_id=tool_call.id,
+            step_id=step_id,
+            trace_id=f"{action.run_id}:{tool_call.id}",
             artifact_service=self._artifact_service,
             sandbox_service=self._sandbox_service,
-            task_id=stage_input.task_id,
+            task_id=action.run.task_id,
             workspace_path=workspace_path,
             workspace_mode=mount_mode,
-            effect_plan=stage_input.effect_plan.model_dump(mode="json"),
-            runtime_identity_id=stage_input.runtime_identity_id,
-            skill_bindings=stage_input.active_skills,
-            skill_draft_test=stage_input.is_skill_draft_test,
+            effect_plan=effect_plan.model_dump(mode="json"),
+            runtime_identity_id=runtime_identity_id,
+            skill_bindings=tuple(action.model_context.get("active_skills", [])),
+            skill_draft_test=bool(action.model_context.get("skill_draft_test")),
             skill_input_provider=self._skill_activation_service,
             agent_execution_id=supervisor.parent_execution_id if supervisor else None,
             delegation_context=supervisor,
@@ -171,17 +146,18 @@ class ToolInvocationStage:
 
     async def _record_skill_attribution(
         self,
-        stage_input: InvocationStageInput,
+        action: ToolActionInput,
+        tool_call: ToolCallRecord,
         execution_context: ToolExecutionContext,
     ) -> None:
         if not execution_context.skill_bindings:
             return
         await self._run_repository.add_event(
-            stage_input.run_id,
+            action.run_id,
             "skill.attributed_action",
             {
-                "tool_call_id": stage_input.tool_call.id,
-                "plan_node_id": stage_input.plan_node_id,
+                "tool_call_id": tool_call.id,
+                "plan_node_id": action.active_node.id if action.active_node else None,
                 "skills": list(execution_context.skill_bindings),
                 "effect_plan": execution_context.effect_plan,
             },
@@ -211,23 +187,24 @@ class ToolInvocationStage:
             },
         }, True
 
-    async def _record_data_flow(self, stage_input: InvocationStageInput) -> None:
-        observed_effects = {effect.kind.value for effect in stage_input.effect_plan.effects}
+    async def _record_data_flow(self, action: ToolActionInput, effect_plan: ActionEffectPlan) -> None:
+        observed_effects = {effect.kind.value for effect in effect_plan.effects}
         if not observed_effects & {
             "workspace_read",
             "network_read",
             "sensitive_data_read",
         }:
             return
-        current = await self._permission_repository.get_data_flow_state(stage_input.run_id)
+        current = await self._permission_repository.get_data_flow_state(action.run_id)
         trust_sources, data_labels = self._updated_data_flow(
-            stage_input,
+            action,
+            effect_plan,
             observed_effects,
             list(current.trust_sources if current else []),
             list(current.data_labels if current else []),
         )
         await self._permission_repository.update_data_flow_state(
-            stage_input.run_id,
+            action.run_id,
             expected_version=current.state_version if current else 0,
             trust_sources=trust_sources,
             data_labels=data_labels,
@@ -237,18 +214,19 @@ class ToolInvocationStage:
 
     @staticmethod
     def _updated_data_flow(
-        stage_input: InvocationStageInput,
+        action: ToolActionInput,
+        effect_plan: ActionEffectPlan,
         observed_effects: set[str],
         trust_sources: list[str],
         data_labels: list[str],
     ) -> tuple[list[str], list[str]]:
         if "workspace_read" in observed_effects:
-            trust_sources.append(f"workspace:{stage_input.task_id}")
+            trust_sources.append(f"workspace:{action.run.task_id}")
             data_labels.append("untrusted")
         if "network_read" in observed_effects:
             trust_sources.append("web:public")
             data_labels.append("untrusted")
-        for effect in stage_input.effect_plan.effects:
+        for effect in effect_plan.effects:
             data_labels.extend(effect.data_labels)
         if "sensitive_data_read" in observed_effects:
             data_labels.append("sensitive")
@@ -256,11 +234,3 @@ class ToolInvocationStage:
             list(dict.fromkeys(trust_sources)),
             list(dict.fromkeys(data_labels)),
         )
-
-
-class _empty_workspace_guard:
-    async def __aenter__(self):
-        return None
-
-    async def __aexit__(self, exc_type, exc, traceback):
-        return False

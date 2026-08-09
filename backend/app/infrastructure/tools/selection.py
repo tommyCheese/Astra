@@ -12,9 +12,7 @@ _SUCCESS_STATUSES = frozenset({"completed", "succeeded", "success"})
 
 def task_capability_catalog(specs: Mapping[str, AstraToolSpec]) -> set[str]:
     """Return the provider-neutral abilities that planning is allowed to reference."""
-    return {
-        capability for spec in specs.values() for capability in spec.task_capabilities if capability
-    }
+    return {capability for spec in specs.values() for capability in spec.task_capabilities if capability}
 
 
 def forbidden_plan_bindings(specs: Mapping[str, AstraToolSpec]) -> set[str]:
@@ -51,9 +49,7 @@ def _as_mapping(value: Any) -> Mapping[str, Any] | None:
     return None
 
 
-def _candidate_rejection(
-    tool_name, spec, required, matched, excluded, require_read_only, require_idempotent
-):
+def _candidate_rejection(tool_name, spec, required, matched, excluded, require_read_only, require_idempotent):
     if required and not matched:
         return "not_matched"
     if tool_name in excluded:
@@ -135,6 +131,7 @@ class CapabilityToolResolution:
         }
 
 
+@dataclass
 class CapabilityToolResolver:
     """Resolve provider-neutral task capabilities to currently eligible tools.
 
@@ -143,8 +140,7 @@ class CapabilityToolResolver:
     and execution safety constraints.
     """
 
-    def __init__(self, router: ToolRouter):
-        self.router = router
+    router: ToolRouter
 
     def resolve(
         self,
@@ -177,13 +173,9 @@ class CapabilityToolResolver:
             require_read_only,
             require_idempotent,
         )
-        rejections.extend(
-            self._unavailable_rejections(unavailable, all_specs, required, unresolved_set)
-        )
+        rejections.extend(self._unavailable_rejections(unavailable, all_specs, required, unresolved_set))
         self._sort_resolution(candidates, rejections, bool(required))
-        covered = {
-            capability for candidate in candidates for capability in candidate.matched_capabilities
-        }
+        covered = {capability for candidate in candidates for capability in candidate.matched_capabilities}
         gaps = tuple(sorted(unresolved_set - covered))
         return CapabilityToolResolution(
             candidates=tuple(candidates),
@@ -198,14 +190,10 @@ class CapabilityToolResolver:
             rejections=tuple(rejections),
         )
 
-    def _eligible_candidates(
-        self, specs, required, unresolved, excluded, require_read_only, require_idempotent
-    ):
+    def _eligible_candidates(self, specs, required, unresolved, excluded, require_read_only, require_idempotent):
         candidates, rejections = [], []
         for tool_name, spec in specs.items():
-            matched = self._matched_capabilities(
-                tool_name, spec, required=required, unresolved=unresolved
-            )
+            matched = self._matched_capabilities(tool_name, spec, required=required, unresolved=unresolved)
             reason = _candidate_rejection(
                 tool_name,
                 spec,
@@ -239,9 +227,7 @@ class CapabilityToolResolver:
             spec = specs.get(tool_name)
             if spec is None:
                 continue
-            matched = self._matched_capabilities(
-                tool_name, spec, required=required, unresolved=unresolved
-            )
+            matched = self._matched_capabilities(tool_name, spec, required=required, unresolved=unresolved)
             if required and not matched:
                 continue
             reason = str(availability.get("reason") or "unavailable")
@@ -313,10 +299,7 @@ class CapabilityToolResolver:
             if plan_node_id is not None and str(observation_node_id or "") != plan_node_id:
                 continue
             tool_name = str(
-                observation.get("tool_name")
-                or observation.get("selected_tool")
-                or data.get("tool_name")
-                or ""
+                observation.get("tool_name") or observation.get("selected_tool") or data.get("tool_name") or ""
             ).strip()
             spec = specs.get(tool_name)
             if spec is None:

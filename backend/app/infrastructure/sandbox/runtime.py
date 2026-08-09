@@ -100,18 +100,16 @@ class SandboxProvider(ABC):
         self, handle: SandboxHandle, command: list[str], timeout: int, environment: dict[str, str]
     ) -> SandboxResult: ...
     @abstractmethod
-    async def download_dir(
-        self, handle: SandboxHandle, remote_dir: str, local_dir: Path
-    ) -> list[Path]: ...
+    async def download_dir(self, handle: SandboxHandle, remote_dir: str, local_dir: Path) -> list[Path]: ...
     @abstractmethod
     async def metrics(self, handle: SandboxHandle) -> dict[str, Any]: ...
     @abstractmethod
     async def terminate(self, handle: SandboxHandle) -> None: ...
 
 
+@dataclass
 class SandboxSupervisor:
-    def __init__(self, provider: SandboxProvider):
-        self.provider = provider
+    provider: SandboxProvider
 
     async def run(self, request: SandboxRequest) -> SandboxResult:
         if not await self.provider.available():
@@ -121,13 +119,9 @@ class SandboxSupervisor:
             handle = await self.provider.create(request)
             for path in request.input_dir.rglob("*"):
                 if path.is_file():
-                    await self.provider.upload(
-                        handle, path, f"/input/{path.relative_to(request.input_dir).as_posix()}"
-                    )
+                    await self.provider.upload(handle, path, f"/input/{path.relative_to(request.input_dir).as_posix()}")
             result = await asyncio.wait_for(
-                self.provider.execute(
-                    handle, request.command, request.wall_time_seconds, request.environment
-                ),
+                self.provider.execute(handle, request.command, request.wall_time_seconds, request.environment),
                 timeout=request.wall_time_seconds + 2,
             )
             if result.exit_code != 0:
@@ -224,19 +218,30 @@ class SandboxJobService:
         except SandboxError as exc:
             status = "timed_out" if exc.category == "sandbox_timeout" else "failed"
             await self._record_terminal_state(
-                job, run_id=run_id, started=started, status=status,
-                category=exc.category, message=exc.safe_message,
+                job,
+                run_id=run_id,
+                started=started,
+                status=status,
+                category=exc.category,
+                message=exc.safe_message,
             )
             raise
         except asyncio.CancelledError:
             await self._record_terminal_state(
-                job, run_id=run_id, started=started, status="cancelled",
-                category="cancelled", message="Sandbox job was cancelled",
+                job,
+                run_id=run_id,
+                started=started,
+                status="cancelled",
+                category="cancelled",
+                message="Sandbox job was cancelled",
             )
             raise
         except Exception as exc:
             await self._record_terminal_state(
-                job, run_id=run_id, started=started, status="failed",
+                job,
+                run_id=run_id,
+                started=started,
+                status="failed",
                 category=getattr(exc, "category", "render_failed"),
                 message=getattr(exc, "message", "Sandbox job failed"),
             )
@@ -258,9 +263,7 @@ class SandboxJobService:
             before_protected_paths = None
             if request.workspace_dir is not None and self.workspace_service is not None:
                 before_manifest = self.workspace_service.scan(request.workspace_dir)
-                before_protected_paths = self.workspace_service.protected_paths(
-                    request.workspace_dir
-                )
+                before_protected_paths = self.workspace_service.protected_paths(request.workspace_dir)
             await self.repo.transition_sandbox_job(job.id, "preparing")
             await self.repo.transition_sandbox_job(job.id, "running")
             result = await self.supervisor.run(request)
@@ -285,11 +288,7 @@ class SandboxJobService:
                 else []
             )
             workspace_changes = []
-            if (
-                request.workspace_dir is not None
-                and self.workspace_service is not None
-                and before_manifest is not None
-            ):
+            if request.workspace_dir is not None and self.workspace_service is not None and before_manifest is not None:
                 workspace_changes = await self.workspace_service.capture_changes(
                     run_id=run_id,
                     tool_call_id=tool_call_id,

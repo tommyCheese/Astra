@@ -30,9 +30,7 @@ async def test_local_docker_runtime_renders_offline(tmp_path, backend, chart_typ
     )
     image = os.getenv("SANDBOX_RUNTIME_IMAGE", "astra-data-viz:0.1.0")
     result = await SandboxSupervisor(DockerSandboxProvider()).run(
-        SandboxRequest(
-            image, ["/opt/astra/bin/render"], input_dir, output_dir, wall_time_seconds=60
-        )
+        SandboxRequest(image, ["/opt/astra/bin/render"], input_dir, output_dir, wall_time_seconds=60)
     )
     assert result.exit_code == 0
     assert (output_dir / "chart.png").read_bytes().startswith(b"\x89PNG")

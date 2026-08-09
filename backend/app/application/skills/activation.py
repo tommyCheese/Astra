@@ -35,15 +35,9 @@ def _binding_matches(
     )
 
 
-def _catalog_entry(
-    snapshot: RunSkillSnapshotRecord, identity: str
-) -> SkillCatalogEntry | None:
+def _catalog_entry(snapshot: RunSkillSnapshotRecord, identity: str) -> SkillCatalogEntry | None:
     return next(
-        (
-            SkillCatalogEntry.model_validate(item)
-            for item in snapshot.catalog
-            if item["qualified_identity"] == identity
-        ),
+        (SkillCatalogEntry.model_validate(item) for item in snapshot.catalog if item["qualified_identity"] == identity),
         None,
     )
 
@@ -94,15 +88,11 @@ class SkillActivationService:
             "entry": entry.model_dump(mode="json"),
             "instructions": body,
             "resource_root": f"skill://{snapshot.id}/{identity}/",
-            "resources": [
-                item.model_dump(mode="json") for item in entry.resources if item.path != "SKILL.md"
-            ],
+            "resources": [item.model_dump(mode="json") for item in entry.resources if item.path != "SKILL.md"],
             "mode_recommendation": mode_recommendation,
         }
 
-    async def _activatable_entry(
-        self, run_id: str, snapshot: RunSkillSnapshotRecord, identity: str
-    ) -> SkillCatalogEntry:
+    async def _activatable_entry(self, run_id: str, snapshot: RunSkillSnapshotRecord, identity: str) -> SkillCatalogEntry:
         entries = [SkillCatalogEntry.model_validate(item) for item in snapshot.catalog]
         entry = next((item for item in entries if item.qualified_identity == identity), None)
         if entry is None:
@@ -134,9 +124,7 @@ class SkillActivationService:
             reason=reason,
             activated_at=datetime.now(timezone.utc).isoformat(),
         ).model_dump(mode="json")
-        snapshot.activations = sorted(
-            [*activations, activation], key=lambda item: item["qualified_identity"]
-        )
+        snapshot.activations = sorted([*activations, activation], key=lambda item: item["qualified_identity"])
         snapshot.updated_at = utc_now()
         self.session.add(RunEventRecord(run_id=run_id, type="skill.activated", payload=activation))
         return activation
@@ -186,9 +174,7 @@ class SkillActivationService:
         return content
 
     @staticmethod
-    def _readable_resource(
-        snapshot: RunSkillSnapshotRecord, identity: str, path: str
-    ) -> SkillResource:
+    def _readable_resource(snapshot: RunSkillSnapshotRecord, identity: str, path: str) -> SkillResource:
         if not any(item["qualified_identity"] == identity for item in snapshot.activations or []):
             raise ValueError("Skill is not active")
         entry = _catalog_entry(snapshot, identity)
@@ -282,10 +268,7 @@ class SkillActivationService:
         """Materialize immutable executable inputs under a sandbox's read-only /input mount."""
         snapshot = await self._snapshot(run_id)
         active = {item["qualified_identity"]: item for item in snapshot.activations or []}
-        catalog = {
-            item["qualified_identity"]: SkillCatalogEntry.model_validate(item)
-            for item in snapshot.catalog
-        }
+        catalog = {item["qualified_identity"]: SkillCatalogEntry.model_validate(item) for item in snapshot.catalog}
         mounted: list[dict[str, str]] = []
         for binding in sorted(bindings, key=lambda item: item.get("qualified_identity", "")):
             identity = binding.get("qualified_identity", "")
@@ -314,9 +297,7 @@ class SkillActivationService:
             raise ValueError("Skill sandbox input is unavailable or revoked")
         return entry
 
-    async def _mount_resource(
-        self, identity: str, root: Path, resource: SkillResource
-    ) -> dict[str, str]:
+    async def _mount_resource(self, identity: str, root: Path, resource: SkillResource) -> dict[str, str]:
         try:
             content = await self._resource_content(resource)
         except ValueError as exc:
@@ -345,9 +326,7 @@ class SkillActivationService:
         skills_root.chmod(0o555)
 
     async def _snapshot(self, run_id: str) -> RunSkillSnapshotRecord:
-        snapshot = await self.session.scalar(
-            select(RunSkillSnapshotRecord).where(RunSkillSnapshotRecord.run_id == run_id)
-        )
+        snapshot = await self.session.scalar(select(RunSkillSnapshotRecord).where(RunSkillSnapshotRecord.run_id == run_id))
         if snapshot is None:
             raise ValueError("Run Skill Catalog snapshot is unavailable")
         return snapshot

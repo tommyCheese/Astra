@@ -74,13 +74,8 @@ def catalog(*, description="display A", version="1", component_digest="sha256:ef
 
 
 def legacy_catalog(registry):
-    payload = [
-        spec.model_dump(mode="json")
-        for _, spec in sorted(registry.specs().items())
-    ]
-    digest = hashlib.sha256(
-        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
-    ).hexdigest()
+    payload = [spec.model_dump(mode="json") for _, spec in sorted(registry.specs().items())]
+    digest = hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
     return payload, digest
 
 
@@ -115,9 +110,7 @@ async def test_snapshot_freezes_resolved_plugin_component_and_configuration_iden
     assert entry["provider"]["configuration_revision"] == "config-7"
     assert entry["executor"]["id"] == "in_process"
     assert entry["components"]["analyzers"][0]["identity"]["digest"] == "sha256:effect"
-    assert entry["components"]["analyzers"][0]["applicability"]["tool_names"] == [
-        "snapshot.read"
-    ]
+    assert entry["components"]["analyzers"][0]["applicability"]["tool_names"] == ["snapshot.read"]
 
 
 async def test_snapshot_allows_display_only_change_but_rejects_behavioral_drift(session):

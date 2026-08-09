@@ -36,9 +36,7 @@ class ChartRequest(BaseModel):
     y: list[str] = Field(min_length=1, max_length=16)
     title: str = Field(default="", max_length=240)
     backend: Literal["auto", "matplotlib", "seaborn", "echarts"] = "auto"
-    outputs: list[Literal["png", "svg", "html"]] = Field(
-        default_factory=lambda: ["png"], min_length=1, max_length=3
-    )
+    outputs: list[Literal["png", "svg", "html"]] = Field(default_factory=lambda: ["png"], min_length=1, max_length=3)
     width: int = Field(default=1200, ge=320, le=4096)
     height: int = Field(default=720, ge=240, le=4096)
 
@@ -60,18 +58,13 @@ class ChartRequest(BaseModel):
 
     @model_validator(mode="after")
     def validate_request(self):
-        sources = sum(
-            source is not None
-            for source in (self.data, self.input_artifact_id, self.input_workspace_path)
-        )
+        sources = sum(source is not None for source in (self.data, self.input_artifact_id, self.input_workspace_path))
         if sources != 1:
             raise ValueError("Provide exactly one data source")
         if self.data:
             if any(len(row) != len(self.data.columns) for row in self.data.rows):
                 raise ValueError("Every row must match columns")
-            if self.x not in self.data.columns or any(
-                item not in self.data.columns for item in self.y
-            ):
+            if self.x not in self.data.columns or any(item not in self.data.columns for item in self.y):
                 raise ValueError("Chart encoding references an unknown column")
             if any(len(str(value)) > 10000 for row in self.data.rows for value in row):
                 raise ValueError("Chart value is too long")
@@ -125,9 +118,7 @@ class ChartRenderTool(AstraTool):
                 "input_artifact_id": {"anyOf": [{"type": "string"}, {"type": "null"}]},
                 "input_workspace_path": {
                     "anyOf": [{"type": "string"}, {"type": "null"}],
-                    "description": (
-                        "Relative CSV path in the current Task Workspace, such as test.csv"
-                    ),
+                    "description": ("Relative CSV path in the current Task Workspace, such as test.csv"),
                 },
                 "version": {"type": "string", "enum": ["1"]},
                 "chart_type": {
@@ -194,9 +185,7 @@ class ChartRenderTool(AstraTool):
             try:
                 request = ChartRequest.model_validate(request.model_dump(mode="json"))
             except Exception as exc:
-                raise ToolExecutionError(
-                    "invalid_input", "Workspace CSV does not match the chart encoding"
-                ) from exc
+                raise ToolExecutionError("invalid_input", "Workspace CSV does not match the chart encoding") from exc
         backend, reason = select_backend(request)
         workspace_mode = (
             context.workspace_mode
@@ -248,9 +237,7 @@ class ChartRenderTool(AstraTool):
                 runtime_profile={
                     "backend": backend,
                     "image": template,
-                    "lock_digest": profile.get(
-                        "dependency_digest", self.settings.sandbox_runtime_lock_digest
-                    ),
+                    "lock_digest": profile.get("dependency_digest", self.settings.sandbox_runtime_lock_digest),
                     "trace_id": context.trace_id,
                     "workspace": workspace_mode,
                     "workspace_path": "/workspace",
@@ -278,9 +265,7 @@ class ChartRenderTool(AstraTool):
         workspace_path: Path | None,
     ) -> ChartData:
         if workspace_path is None:
-            raise ToolExecutionError(
-                "sandbox_policy_violation", "chart.render requires a Task Workspace"
-            )
+            raise ToolExecutionError("sandbox_policy_violation", "chart.render requires a Task Workspace")
         path = _validated_workspace_csv_path(relative_path, workspace_path)
         if path.stat().st_size > 5 * 1024 * 1024:
             raise ToolExecutionError("invalid_input", "Workspace CSV is too large")
@@ -341,12 +326,7 @@ def _validated_workspace_csv_path(relative_path: str, workspace_path: Path) -> P
         path = (root / normalized).resolve(strict=True)
     except FileNotFoundError as error:
         raise ToolExecutionError("invalid_input", "Workspace CSV was not found") from error
-    invalid_path = (
-        not path.is_relative_to(root)
-        or path.is_symlink()
-        or not path.is_file()
-        or path.suffix.lower() != ".csv"
-    )
+    invalid_path = not path.is_relative_to(root) or path.is_symlink() or not path.is_file() or path.suffix.lower() != ".csv"
     if invalid_path:
         raise ToolExecutionError("sandbox_policy_violation", "Invalid Workspace CSV path")
     return path

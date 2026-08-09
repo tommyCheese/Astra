@@ -8,7 +8,6 @@ from sqlalchemy import and_, func, select
 from app.application.agent_runtime.policies.reasoning import resolve_run_profile
 from app.common.contracts.json_values import JsonObject
 from app.common.schemas.agent.run_policy import (
-    FastRuntimeSnapshot,
     ReasoningPolicySnapshot,
     RequestedReasoningPolicy,
     RunExecutionProfile,
@@ -21,6 +20,18 @@ from app.infrastructure.db.models.executions import AgentExecutionRecord
 from app.infrastructure.db.models.runs import RunEventRecord, RunRecord
 from app.infrastructure.model_clients.reasoning import normalize_model_thinking
 from app.infrastructure.repositories.run_query_store import safe_agent_profile_manifest
+
+
+def _empty_runtime_checkpoint() -> dict[str, Any]:
+    return {
+        "protocol_version": 1,
+        "snapshot_version": 0,
+        "turn_index": 0,
+        "messages": [],
+        "recent_observations": [],
+        "pending_action": None,
+        "terminal_intent": None,
+    }
 
 
 @dataclass(frozen=True)
@@ -44,9 +55,7 @@ def prepare_run_configuration(
 ) -> PreparedRunConfiguration:
     profile = _execution_profile(reasoning_policy, answer_mode, execution_profile)
     frozen_reasoning = (
-        ReasoningPolicySnapshot.model_validate(reasoning_policy)
-        if reasoning_policy is not None
-        else profile.reasoning_policy
+        ReasoningPolicySnapshot.model_validate(reasoning_policy) if reasoning_policy is not None else profile.reasoning_policy
     )
     snapshot = agent_profile_snapshot or load_agent_profile().snapshot()
     AgentProfile.from_snapshot(snapshot)
@@ -76,9 +85,7 @@ def _execution_profile(
     )
     if reasoning_policy is None:
         return profile
-    return profile.model_copy(
-        update={"reasoning_policy": ReasoningPolicySnapshot.model_validate(reasoning_policy)}
-    )
+    return profile.model_copy(update={"reasoning_policy": ReasoningPolicySnapshot.model_validate(reasoning_policy)})
 
 
 def _model_policy(model_policy: JsonObject) -> JsonObject:
@@ -168,11 +175,7 @@ class RunCoreStore:
             answer_mode=prepared.answer_mode,
             runtime_kind=prepared.runtime_kind,
             runtime_version=prepared.runtime_version,
-            fast_runtime_snapshot=(
-                FastRuntimeSnapshot().model_dump(mode="json")
-                if prepared.runtime_kind == "fast-v1"
-                else {}
-            ),
+            fast_runtime_snapshot=(_empty_runtime_checkpoint() if prepared.runtime_kind == "fast-v1" else {}),
             fast_state_version=0,
             execution_profile=deepcopy(prepared.execution_profile),
             model_policy=policy,
@@ -183,38 +186,33 @@ class RunCoreStore:
             updated_at=now,
         )
 
-    async def update_fast_runtime_snapshot(
+    async def update_runtime_checkpoint(
         self,
         run_id: str,
         *,
         expected_version: int,
-        snapshot: FastRuntimeSnapshot | dict[str, Any],
+        checkpoint: dict[str, Any],
     ) -> RunRecord:
         run = await self.require_run_core(run_id)
         if run.runtime_kind != "fast-v1":
             raise ValueError("Fast Runtime snapshot is only valid for fast-v1 runs")
         if run.fast_state_version != expected_version:
-            raise ValueError(
-                f"Fast state version conflict: expected {expected_version}, "
-                f"got {run.fast_state_version}"
-            )
-        validated = FastRuntimeSnapshot.model_validate(snapshot)
-        if validated.snapshot_version != expected_version + 1:
-            raise ValueError("Fast snapshot version must increase by one")
-        run.fast_runtime_snapshot = validated.model_dump(mode="json")
-        run.fast_state_version = validated.snapshot_version
+            raise ValueError(f"Fast state version conflict: expected {expected_version}, got {run.fast_state_version}")
+        snapshot_version = int(checkpoint.get("snapshot_version", -1))
+        if snapshot_version != expected_version + 1:
+            raise ValueError("Runtime checkpoint version must increase by one")
+        run.fast_runtime_snapshot = deepcopy(checkpoint)
+        run.fast_state_version = snapshot_version
         run.updated_at = utc_now()
         await self.add_event(
             run_id,
             "fast.snapshot.updated",
             {
                 "previous_version": expected_version,
-                "snapshot_version": validated.snapshot_version,
-                "turn_index": validated.turn_index,
-                "pending_action_kind": (
-                    validated.pending_action.kind if validated.pending_action else None
-                ),
-                "terminal_intent": validated.terminal_intent,
+                "snapshot_version": snapshot_version,
+                "turn_index": int(checkpoint.get("turn_index", 0)),
+                "pending_action_kind": ((checkpoint.get("pending_action") or {}).get("kind")),
+                "terminal_intent": checkpoint.get("terminal_intent"),
             },
         )
         await self.session.flush()
@@ -227,9 +225,7 @@ class RunCoreStore:
         prepared: PreparedRunConfiguration,
         now,
     ) -> AgentExecutionRecord:
-        budgets = ((prepared.reasoning_policy.get("effective") or {}).get("subagents") or {}).get(
-            "budgets"
-        ) or {}
+        budgets = ((prepared.reasoning_policy.get("effective") or {}).get("subagents") or {}).get("budgets") or {}
         return AgentExecutionRecord(
             run_id=run.id,
             task_id=task.id,
@@ -338,9 +334,7 @@ class RunCoreStore:
     ) -> RunRecord:
         run = await self.require_run(run_id)
         if run.state_version != expected_version:
-            raise ValueError(
-                f"State version conflict: expected {expected_version}, got {run.state_version}"
-            )
+            raise ValueError(f"State version conflict: expected {expected_version}, got {run.state_version}")
         next_version = int(agent_state.get("version", expected_version + 1))
         if next_version <= expected_version:
             raise ValueError("State version must increase")
@@ -398,9 +392,7 @@ class RunCoreStore:
         run.status = "executing"
         run.completed_at = None
         run.updated_at = utc_now()
-        await self.add_event(
-            run_id, "run.resumed", {"observation": observation, "state_version": run.state_version}
-        )
+        await self.add_event(run_id, "run.resumed", {"observation": observation, "state_version": run.state_version})
         await self.session.flush()
         return run
 
@@ -458,18 +450,11 @@ class RunCoreStore:
         )
         return list(result.scalars().all())
 
-    async def event_cursor_counts(
-        self, run_id: str, through_id: int = 0
-    ) -> tuple[int, dict[str, int]]:
+    async def event_cursor_counts(self, run_id: str, through_id: int = 0) -> tuple[int, dict[str, int]]:
         conditions = [RunEventRecord.run_id == run_id]
         if through_id > 0:
             conditions.append(RunEventRecord.id <= through_id)
-        run_sequence = int(
-            await self.session.scalar(
-                select(func.count(RunEventRecord.id)).where(*conditions)
-            )
-            or 0
-        )
+        run_sequence = int(await self.session.scalar(select(func.count(RunEventRecord.id)).where(*conditions)) or 0)
         rows = (
             await self.session.execute(
                 select(RunEventRecord.agent_execution_id, func.count(RunEventRecord.id))
@@ -479,9 +464,7 @@ class RunCoreStore:
         ).all()
         return run_sequence, {str(agent_id): int(count) for agent_id, count in rows}
 
-    async def list_events_with_status(
-        self, run_id: str, after_id: int = 0
-    ) -> tuple[list[RunEventRecord], str | None]:
+    async def list_events_with_status(self, run_id: str, after_id: int = 0) -> tuple[list[RunEventRecord], str | None]:
         result = await self.session.execute(
             select(RunRecord.status, RunEventRecord)
             .outerjoin(

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import delete, or_, select, update
@@ -50,11 +51,11 @@ def _schedule_skip_outcome(job, lateness, skipped_misfire, skipped_overlap):
     return {}
 
 
+@dataclass
 class ScheduleRepository:
     ACTIVE_RUN_STATUSES = frozenset({"claimed", "running"})
 
-    def __init__(self, session: AsyncSession):
-        self.session = session
+    session: AsyncSession
 
     async def create(
         self,
@@ -276,15 +277,9 @@ class ScheduleRepository:
         now: datetime | None = None,
     ) -> ScheduledJobRunRecord:
         reference = (now or utc_now()).astimezone(timezone.utc)
-        key = (
-            f"manual:{job.id}:{idempotency_key}"
-            if idempotency_key
-            else f"manual:{job.id}:{uuid.uuid4()}"
-        )
+        key = f"manual:{job.id}:{idempotency_key}" if idempotency_key else f"manual:{job.id}:{uuid.uuid4()}"
         existing = (
-            await self.session.execute(
-                select(ScheduledJobRunRecord).where(ScheduledJobRunRecord.idempotency_key == key)
-            )
+            await self.session.execute(select(ScheduledJobRunRecord).where(ScheduledJobRunRecord.idempotency_key == key))
         ).scalar_one_or_none()
         if existing is not None:
             return existing
@@ -298,9 +293,7 @@ class ScheduleRepository:
             claimed_by=claimed_by,
             claimed_at=reference,
             completed_at=reference if overlapping else None,
-            outcome=(
-                {"reason": "overlap_policy", "policy": job.overlap_policy} if overlapping else {}
-            ),
+            outcome=({"reason": "overlap_policy", "policy": job.overlap_policy} if overlapping else {}),
             created_at=reference,
             updated_at=reference,
         )
@@ -310,11 +303,7 @@ class ScheduleRepository:
         except IntegrityError:
             await self.session.rollback()
             existing = (
-                await self.session.execute(
-                    select(ScheduledJobRunRecord).where(
-                        ScheduledJobRunRecord.idempotency_key == key
-                    )
-                )
+                await self.session.execute(select(ScheduledJobRunRecord).where(ScheduledJobRunRecord.idempotency_key == key))
             ).scalar_one_or_none()
             if existing is None:
                 raise
@@ -351,9 +340,7 @@ class ScheduleRepository:
         )
         claimed: list[ScheduledJobRunRecord] = []
         for job in candidates:
-            if schedule_run := await self._claim_candidate(
-                job, claimed_by, lease_seconds, reference
-            ):
+            if schedule_run := await self._claim_candidate(job, claimed_by, lease_seconds, reference):
                 claimed.append(schedule_run)
         await self.session.commit()
         return claimed
@@ -373,9 +360,7 @@ class ScheduleRepository:
             reference=reference,
         )
         key = f"scheduled:{job.id}:{scheduled_for.isoformat()}"
-        existing = await self.session.scalar(
-            select(ScheduledJobRunRecord).where(ScheduledJobRunRecord.idempotency_key == key)
-        )
+        existing = await self.session.scalar(select(ScheduledJobRunRecord).where(ScheduledJobRunRecord.idempotency_key == key))
         await self._advance_job(job.id, scheduled_for, next_fire, reference)
         if existing is not None:
             return _refresh_existing_claim(existing, claimed_by, reference)
@@ -420,18 +405,8 @@ class ScheduleRepository:
     async def _new_schedule_run(self, job, key, scheduled_for, claimed_by, reference):
         lateness = max(0.0, (reference - scheduled_for).total_seconds())
         skipped_misfire = lateness > job.misfire_grace_seconds and job.misfire_policy == "skip"
-        skipped_overlap = (
-            not skipped_misfire
-            and job.overlap_policy == "skip"
-            and await self._has_active_run(job.id)
-        )
-        status = (
-            "skipped_misfire"
-            if skipped_misfire
-            else "skipped_overlap"
-            if skipped_overlap
-            else "claimed"
-        )
+        skipped_overlap = not skipped_misfire and job.overlap_policy == "skip" and await self._has_active_run(job.id)
+        status = "skipped_misfire" if skipped_misfire else "skipped_overlap" if skipped_overlap else "claimed"
         outcome = _schedule_skip_outcome(job, lateness, skipped_misfire, skipped_overlap)
         return ScheduledJobRunRecord(
             job_id=job.id,

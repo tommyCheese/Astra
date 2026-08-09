@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from sqlalchemy import select
@@ -12,13 +13,13 @@ from app.infrastructure.db.models.scheduling import ScheduledJobRecord
 from app.infrastructure.repositories.schedules import ScheduleNotFoundError
 
 
+@dataclass
 class HeartbeatRepository:
     """Persistence owner for the system-managed global heartbeat."""
 
     GLOBAL_KEY = "heartbeat:global"
 
-    def __init__(self, session: AsyncSession):
-        self.session = session
+    session: AsyncSession
 
     async def get(self) -> ScheduledJobRecord | None:
         return await self.session.scalar(
@@ -40,9 +41,7 @@ class HeartbeatRepository:
         schedule = {"type": "interval", "interval_seconds": payload.interval_seconds}
         next_fire_at = self._next_fire_at(payload, schedule, reference)
         heartbeat = {
-            "active_hours": (
-                payload.active_hours.model_dump(mode="json") if payload.active_hours else None
-            ),
+            "active_hours": (payload.active_hours.model_dump(mode="json") if payload.active_hours else None),
             "prompt": payload.prompt,
         }
         if job is None:
@@ -65,14 +64,10 @@ class HeartbeatRepository:
     def _next_fire_at(payload, schedule, reference):
         if not payload.enabled:
             return None
-        return initial_fire_time(
-            ScheduleSpec.model_validate(schedule), payload.timezone, now=reference
-        )
+        return initial_fire_time(ScheduleSpec.model_validate(schedule), payload.timezone, now=reference)
 
     @classmethod
-    def _new_job(
-        cls, payload, schedule, heartbeat, next_fire_at, owner_principal, reference
-    ) -> ScheduledJobRecord:
+    def _new_job(cls, payload, schedule, heartbeat, next_fire_at, owner_principal, reference) -> ScheduledJobRecord:
         return ScheduledJobRecord(
             name="Heartbeat",
             kind=ScheduledJobKind.heartbeat.value,

@@ -31,53 +31,53 @@ from app.infrastructure.repositories.run_record_projections import (
 )
 
 
-class RunViewProjector:
-    """Own all mapping from persistence records to the public Run schema."""
+def run_view(run: RunRecord) -> RunView:
+    return RunView.model_validate(run_payload(run))
 
-    def project(self, run: RunRecord) -> RunView:
-        return RunView.model_validate(self.payload(run))
 
-    def project_initial(self, run: RunRecord) -> RunView:
-        return RunView.model_validate(self.initial_payload(run))
+def initial_run_view(run: RunRecord) -> RunView:
+    return RunView.model_validate(initial_run_payload(run))
 
-    def payload(self, run: RunRecord) -> dict[str, Any]:
-        canonical_steps, plan_payload, plan_versions = _plan_projection(run)
-        execution_views = [node_execution_view(execution) for execution in run.node_executions]
-        parallelism = parallelism_summary(run)
-        agent_tree = _agent_tree(run)
-        pending_approval = next(
-            (request for request in reversed(run.approval_requests) if request.status == "pending"),
-            None,
-        )
-        return {
-            **_run_identity(run),
-            **_run_content(run, canonical_steps),
-            **_run_policies(run, plan_payload, plan_versions),
-            "pending_approval": _pending_approval_view(pending_approval),
-            "node_executions": execution_views,
-            "parallelism": parallelism,
-            "agent_executions": agent_tree,
-            "agent_joins": join_views(run),
-            "subagent_summary": subagent_summary(agent_tree),
-            "task_adapter": run.task_adapter or "web",
-            "agent_profile": safe_agent_profile_manifest(run.agent_profile_snapshot or {}),
-        }
 
-    def initial_payload(self, run: RunRecord) -> dict[str, Any]:
-        trusted = _is_trusted(run)
-        return {
-            **_run_identity(run),
-            **_empty_run_content(run),
-            **_run_policies(run, (run.plan_graph or {}) if trusted else {}, []),
-            "pending_approval": None,
-            "node_executions": [],
-            "parallelism": None,
-            "agent_executions": [],
-            "agent_joins": [],
-            "subagent_summary": _empty_subagent_summary(),
-            "task_adapter": run.task_adapter or "web",
-            "agent_profile": safe_agent_profile_manifest(run.agent_profile_snapshot or {}),
-        }
+def run_payload(run: RunRecord) -> dict[str, Any]:
+    canonical_steps, plan_payload, plan_versions = _plan_projection(run)
+    execution_views = [node_execution_view(execution) for execution in run.node_executions]
+    parallelism = parallelism_summary(run)
+    agent_tree = _agent_tree(run)
+    pending_approval = next(
+        (request for request in reversed(run.approval_requests) if request.status == "pending"),
+        None,
+    )
+    return {
+        **_run_identity(run),
+        **_run_content(run, canonical_steps),
+        **_run_policies(run, plan_payload, plan_versions),
+        "pending_approval": _pending_approval_view(pending_approval),
+        "node_executions": execution_views,
+        "parallelism": parallelism,
+        "agent_executions": agent_tree,
+        "agent_joins": join_views(run),
+        "subagent_summary": subagent_summary(agent_tree),
+        "task_adapter": run.task_adapter or "web",
+        "agent_profile": safe_agent_profile_manifest(run.agent_profile_snapshot or {}),
+    }
+
+
+def initial_run_payload(run: RunRecord) -> dict[str, Any]:
+    trusted = _is_trusted(run)
+    return {
+        **_run_identity(run),
+        **_empty_run_content(run),
+        **_run_policies(run, (run.plan_graph or {}) if trusted else {}, []),
+        "pending_approval": None,
+        "node_executions": [],
+        "parallelism": None,
+        "agent_executions": [],
+        "agent_joins": [],
+        "subagent_summary": _empty_subagent_summary(),
+        "task_adapter": run.task_adapter or "web",
+        "agent_profile": safe_agent_profile_manifest(run.agent_profile_snapshot or {}),
+    }
 
 
 def _plan_projection(
@@ -108,11 +108,7 @@ def _plan_payload(run: RunRecord, plan_view: object) -> dict[str, Any]:
     execution_views = [node_execution_view(execution) for execution in run.node_executions]
     return {
         **payload,
-        "active_executions": [
-            execution
-            for execution in execution_views
-            if execution["status"] in {"active", "waiting"}
-        ],
+        "active_executions": [execution for execution in execution_views if execution["status"] in {"active", "waiting"}],
         "parallelism": parallelism_summary(run),
     }
 
@@ -219,9 +215,7 @@ def _run_content(
 
 def _empty_run_content(run: RunRecord) -> dict[str, Any]:
     goal = str((run.model_policy or {}).get("conversation_goal") or "")
-    command = (
-        "/subagent" if (run.execution_profile or {}).get("subagent_mode") == "required" else ""
-    )
+    command = "/subagent" if (run.execution_profile or {}).get("subagent_mode") == "required" else ""
     visible_goal = f"{command} {goal}" if command else goal
     return {
         "steps": [],
@@ -263,11 +257,7 @@ def _run_policies(
 
 def _public_model_policy(model_policy: dict[str, Any] | None) -> dict[str, Any]:
     policy = model_policy or {}
-    return {
-        key: deepcopy(policy[key])
-        for key in ("provider", "model", "thinking", "context")
-        if key in policy
-    }
+    return {key: deepcopy(policy[key]) for key in ("provider", "model", "thinking", "context") if key in policy}
 
 
 def _pending_approval_view(request: ApprovalRequestRecord | None) -> dict[str, Any] | None:
@@ -299,11 +289,7 @@ def _pending_approval_view(request: ApprovalRequestRecord | None) -> dict[str, A
 
 
 def _effect_values(effect_plan: dict[str, Any], key: str) -> list[Any]:
-    return [
-        effect[key]
-        for effect in effect_plan.get("effects", [])
-        if isinstance(effect, dict) and effect.get(key)
-    ]
+    return [effect[key] for effect in effect_plan.get("effects", []) if isinstance(effect, dict) and effect.get(key)]
 
 
 def _grant_proposals(matcher: dict[str, Any] | None) -> list[dict[str, Any]]:

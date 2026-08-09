@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
@@ -82,9 +83,7 @@ def _memory_source_from_spec(spec, memory_id: str, now: datetime) -> MemorySourc
     )
 
 
-def _validate_new_memory(
-    content, confidence, importance, utility_score, status, scope, provenance
-) -> MemoryStatus:
+def _validate_new_memory(content, confidence, importance, utility_score, status, scope, provenance) -> MemoryStatus:
     if not content:
         raise MemoryValidationError("Memory content must be non-empty")
     if len(content) > 50_000:
@@ -96,9 +95,7 @@ def _validate_new_memory(
     )
     for value, minimum, maximum, label in score_ranges:
         if not minimum <= value <= maximum:
-            raise MemoryValidationError(
-                f"Memory {label} must be between {minimum:g} and {maximum:g}"
-            )
+            raise MemoryValidationError(f"Memory {label} must be between {minimum:g} and {maximum:g}")
     try:
         initial_status = MemoryStatus(status)
     except ValueError as exc:
@@ -115,16 +112,14 @@ def _require_persistent_sources(scope: str, source_specs: list[dict[str, Any]]) 
         raise MemoryValidationError("Persistent Memory requires a valid source reference")
 
 
+@dataclass
 class MemoryRepository:
-    def __init__(self, session: AsyncSession):
-        self.session = session
+    session: AsyncSession
 
     async def _run_identity(self, run_id: str) -> tuple[RunRecord, TaskRecord]:
         row = (
             await self.session.execute(
-                select(RunRecord, TaskRecord)
-                .join(TaskRecord, TaskRecord.id == RunRecord.task_id)
-                .where(RunRecord.id == run_id)
+                select(RunRecord, TaskRecord).join(TaskRecord, TaskRecord.id == RunRecord.task_id).where(RunRecord.id == run_id)
             )
         ).one_or_none()
         if row is None:
@@ -156,18 +151,14 @@ class MemoryRepository:
             return MemoryNamespace(MemoryNamespaceType.task, task.id), task
         if scope == "session":
             if not run.memory_session_id or not run.memory_session_id.strip():
-                raise MemoryValidationError(
-                    "Session Memory requires a non-empty Run session identity"
-                )
+                raise MemoryValidationError("Session Memory requires a non-empty Run session identity")
             return (
                 MemoryNamespace(MemoryNamespaceType.session, run.memory_session_id),
                 task,
             )
         if scope == "user":
             if not task.created_by or not task.created_by.strip():
-                raise MemoryValidationError(
-                    "User Memory requires a non-empty Task creator identity"
-                )
+                raise MemoryValidationError("User Memory requires a non-empty Task creator identity")
             return MemoryNamespace(MemoryNamespaceType.user, task.created_by), task
         raise MemoryValidationError(f"Unsupported Memory scope: {scope}")
 
@@ -179,9 +170,7 @@ class MemoryRepository:
         run_id: str,
         label: str,
     ) -> None:
-        owner_run_id = await self.session.scalar(
-            select(model.run_id).where(model.id == reference_id)
-        )
+        owner_run_id = await self.session.scalar(select(model.run_id).where(model.id == reference_id))
         if owner_run_id is None:
             raise MemoryValidationError(f"Memory provenance {label} not found: {reference_id}")
         if owner_run_id != run_id:
@@ -343,9 +332,7 @@ class MemoryRepository:
     async def _resolve_write_namespace(self, run_id, scope, namespace):
         if run_id is None:
             if namespace is None:
-                raise MemoryValidationError(
-                    "Memory without a source Run requires an explicit isolated namespace"
-                )
+                raise MemoryValidationError("Memory without a source Run requires an explicit isolated namespace")
             return namespace, None
         derived_namespace, task = await self.namespace_for_write(run_id=run_id, scope=scope)
         if namespace is not None and namespace != derived_namespace:
@@ -665,9 +652,7 @@ class MemoryRepository:
         candidate = await self.require(memory_id, include_sources=True)
         normalized_reason = str(reason or "").strip()
         normalized_actor = str(actor or "").strip()
-        self._validate_candidate_activation(
-            candidate, expected_state_version, normalized_actor, normalized_reason
-        )
+        self._validate_candidate_activation(candidate, expected_state_version, normalized_actor, normalized_reason)
 
         now = utc_now()
         base = await self._supersede_candidate_base(candidate, now)
@@ -717,9 +702,7 @@ class MemoryRepository:
         await self.session.commit()
         return await self.require(candidate.id, include_sources=True)
 
-    def _validate_candidate_activation(
-        self, candidate, expected_state_version, actor, reason
-    ) -> None:
+    def _validate_candidate_activation(self, candidate, expected_state_version, actor, reason) -> None:
         if candidate.state_version != expected_state_version:
             raise MemoryConflictError("Memory state version changed")
         if candidate.status != MemoryStatus.candidate.value:

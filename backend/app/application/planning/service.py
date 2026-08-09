@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from typing import Any
 
 from sqlalchemy import select
@@ -32,6 +33,7 @@ from app.infrastructure.repositories.plans import PlanRepository, PlanStateError
 class PlanValidationError(ValueError):
     """Raised when a Plan violates graph or runtime constraints."""
 
+
 __all__ = [
     "PlanService",
     "PlanValidator",
@@ -61,9 +63,7 @@ class PlanValidator:
         known = set(keys)
         criteria = {item.id for item in task_contract.success_criteria}
         contract_skills = {
-            item.get("qualified_identity")
-            for item in task_contract.skill_revisions
-            if item.get("qualified_identity")
+            item.get("qualified_identity") for item in task_contract.skill_revisions if item.get("qualified_identity")
         }
         forbidden_capabilities = forbidden_capabilities or set()
         for node in draft.nodes:
@@ -80,49 +80,32 @@ class PlanValidator:
         return draft
 
     @staticmethod
-    def _validate_node(
-        node, known, criteria, contract_skills, available_capabilities, forbidden_capabilities
-    ) -> None:
+    def _validate_node(node, known, criteria, contract_skills, available_capabilities, forbidden_capabilities) -> None:
         unknown_dependencies = set(node.depends_on) - known
         if unknown_dependencies:
-            raise PlanValidationError(
-                f"Unknown dependencies for {node.node_key}: {sorted(unknown_dependencies)}"
-            )
+            raise PlanValidationError(f"Unknown dependencies for {node.node_key}: {sorted(unknown_dependencies)}")
         if node.node_key in node.depends_on:
             raise PlanValidationError(f"Plan node {node.node_key} depends on itself")
         unknown_criteria = set(node.success_criteria_refs) - criteria
         if unknown_criteria:
-            raise PlanValidationError(
-                f"Unknown success criteria for {node.node_key}: {sorted(unknown_criteria)}"
-            )
+            raise PlanValidationError(f"Unknown success criteria for {node.node_key}: {sorted(unknown_criteria)}")
         PlanValidator._validate_bindings(node, available_capabilities, forbidden_capabilities)
         unknown_skills = set(node.required_skill_ids) - contract_skills
         if unknown_skills:
-            raise PlanValidationError(
-                f"Unbound Skills for {node.node_key}: {sorted(unknown_skills)}"
-            )
+            raise PlanValidationError(f"Unbound Skills for {node.node_key}: {sorted(unknown_skills)}")
 
     @staticmethod
     def _validate_bindings(node, available_capabilities, forbidden_capabilities) -> None:
         concrete_prefixes = ("provider:", "permission:", "backend:", "executor:", "tool:")
         forbidden = set(node.required_capabilities) & forbidden_capabilities
-        concrete = {
-            item for item in node.required_capabilities if item.startswith(concrete_prefixes)
-        }
+        concrete = {item for item in node.required_capabilities if item.startswith(concrete_prefixes)}
         if forbidden or concrete:
             raise PlanValidationError(
-                f"Concrete runtime bindings are not allowed for {node.node_key}: "
-                f"{sorted(forbidden | concrete)}"
+                f"Concrete runtime bindings are not allowed for {node.node_key}: {sorted(forbidden | concrete)}"
             )
-        unknown = (
-            set(node.required_capabilities) - available_capabilities
-            if available_capabilities is not None
-            else set()
-        )
+        unknown = set(node.required_capabilities) - available_capabilities if available_capabilities is not None else set()
         if unknown:
-            raise PlanValidationError(
-                f"Unavailable capabilities for {node.node_key}: {sorted(unknown)}"
-            )
+            raise PlanValidationError(f"Unavailable capabilities for {node.node_key}: {sorted(unknown)}")
 
     @staticmethod
     def _validate_budgets(draft, depth, budgets) -> None:
@@ -139,11 +122,7 @@ class PlanValidator:
         resolved: set[str] = set()
         depth: dict[str, int] = {}
         while len(resolved) < len(dependencies):
-            ready = sorted(
-                key
-                for key, values in dependencies.items()
-                if key not in resolved and values <= resolved
-            )
+            ready = sorted(key for key, values in dependencies.items() if key not in resolved and values <= resolved)
             if not ready:
                 raise PlanValidationError("Plan contains a dependency cycle")
             for key in ready:
@@ -152,10 +131,10 @@ class PlanValidator:
         return max(depth.values(), default=0)
 
 
+@dataclass
 class PlanService:
-    def __init__(self, repository: PlanRepository):
-        self.repository = repository
-        self.validator = PlanValidator()
+    repository: PlanRepository
+    validator: PlanValidator = field(default_factory=PlanValidator)
 
     async def create(
         self,
@@ -193,21 +172,14 @@ class PlanService:
     ) -> PlanRecord:
         current = _require_active_plan(await self.repository.active_for_run(run_id))
         if current.version != patch.expected_plan_version:
-            error = PlanStateError(
-                f"Plan version conflict: expected {patch.expected_plan_version}, "
-                f"got {current.version}"
-            )
+            error = PlanStateError(f"Plan version conflict: expected {patch.expected_plan_version}, got {current.version}")
             await self._record_patch_rejection(run_id, patch, error)
             raise error
         view = plan_to_view(current)
-        running_node_ids = {
-            node.id for node in view.nodes if node.status.value == PlanNodeStatus.running.value
-        }
+        running_node_ids = {node.id for node in view.nodes if node.status.value == PlanNodeStatus.running.value}
         if running_node_ids:
             active = await NodeExecutionRepository(self.repository.session).active_for_run(run_id)
-            owned_running_node_ids = {
-                execution.plan_node_id for execution in active if execution.plan_id == current.id
-            }
+            owned_running_node_ids = {execution.plan_node_id for execution in active if execution.plan_id == current.id}
             if not running_node_ids <= owned_running_node_ids:
                 error = PlanStateError("Cannot replan while an unowned plan node is running")
                 await self._record_patch_rejection(run_id, patch, error)
@@ -220,9 +192,7 @@ class PlanService:
                 self._apply_operation(nodes, operation.model_dump(exclude_none=True))
             draft = PlanDraft(
                 nodes=[
-                    PlanNodeDraft.model_validate(
-                        {key: value for key, value in node.items() if key not in {"status", "id"}}
-                    )
+                    PlanNodeDraft.model_validate({key: value for key, value in node.items() if key not in {"status", "id"}})
                     for node in sorted(nodes.values(), key=lambda item: item["node_key"])
                 ],
             )
@@ -358,9 +328,7 @@ class PlanService:
         run.current_step_id = None
         await self.repository.session.flush()
 
-    async def _record_patch_rejection(
-        self, run_id: str, patch: PlanPatch, error: Exception
-    ) -> None:
+    async def _record_patch_rejection(self, run_id: str, patch: PlanPatch, error: Exception) -> None:
         await self.repository._event(
             run_id,
             "plan.patch_rejected",
@@ -418,9 +386,7 @@ class PlanService:
                 status=NodeExecutionStatus.completed,
                 result={"evidence_refs": list(evidence_refs)},
             )
-        state.active_executions = [
-            item for item in state.active_executions if item.plan_node_id != node_id
-        ]
+        state.active_executions = [item for item in state.active_executions if item.plan_node_id != node_id]
         state.active_plan_id = plan.id
         state.active_plan_version = plan.version
         state.version = run.state_version + 1
@@ -475,9 +441,7 @@ class PlanService:
             "risk_level",
             "optional",
         }
-        node.update(
-            {key: value for key, value in operation.get("updates", {}).items() if key in allowed}
-        )
+        node.update({key: value for key, value in operation.get("updates", {}).items() if key in allowed})
 
     @staticmethod
     def _add_dependency(nodes, node, _node_key, operation) -> None:

@@ -19,11 +19,11 @@ from app.infrastructure.db.models.permissions import ToolCallRecord
 from app.infrastructure.db.models.runs import RunEventRecord, RunRecord
 
 
+@dataclass
 class SubagentTelemetryRepository:
     """Builds content-free aggregate telemetry from durable execution records."""
 
-    def __init__(self, session: AsyncSession):
-        self.session = session
+    session: AsyncSession
 
     async def summary(self, run_id: str) -> dict[str, Any]:
         run = await self.session.get(RunRecord, run_id)
@@ -83,9 +83,7 @@ def _model_identity(run):
 def _delegation_metrics(children, events):
     siblings = Counter(item.parent_execution_id for item in children)
     rejections = Counter(
-        str(event.payload.get("reason_code") or "unknown")
-        for event in events
-        if event.type == "subagent.delegation_rejected"
+        str(event.payload.get("reason_code") or "unknown") for event in events if event.type == "subagent.delegation_rejected"
     )
     scopes = [_scope_digest(item) for item in children]
     return {
@@ -112,9 +110,7 @@ def _usage_metrics(invocations, tools):
         "model_calls": len(invocations),
         "tool_calls": len(tools),
         "tokens": sum(item.total_tokens or 0 for item in invocations),
-        "cost_usd": round(
-            sum(float((item.raw_usage or {}).get("cost_usd") or 0) for item in invocations), 6
-        ),
+        "cost_usd": round(sum(float((item.raw_usage or {}).get("cost_usd") or 0) for item in invocations), 6),
     }
 
 
@@ -130,9 +126,7 @@ def _terminal_event_metrics(children, events):
     return {
         "cancellation_count": sum(item.status == "cancelled" for item in children),
         "recovery_count": sum(event.type.startswith("subagent.recover") for event in events),
-        "permission_denial_count": sum(
-            event.type == "subagent.permission_denied" for event in events
-        ),
+        "permission_denial_count": sum(event.type == "subagent.permission_denied" for event in events),
     }
 
 

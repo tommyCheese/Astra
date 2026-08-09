@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import secrets
+from dataclasses import dataclass
 from datetime import datetime
 
 from sqlalchemy import delete, or_, select, update
@@ -60,7 +61,7 @@ from app.infrastructure.db.models.workspaces import (
 from app.infrastructure.repositories.conversation_process_projection import build_public_process
 from app.infrastructure.repositories.run_chat_projection import build_chat_messages
 from app.infrastructure.repositories.run_query_store import run_detail_options
-from app.infrastructure.repositories.run_view_projection import RunViewProjector
+from app.infrastructure.repositories.run_view_projection import run_payload
 
 TERMINAL_STATUSES = {"completed", "completed_with_warnings", "blocked", "failed", "cancelled"}
 
@@ -69,9 +70,9 @@ def _belongs_to_deleted_run(memory, run_ids) -> bool:
     return memory.namespace_type == "run" and memory.namespace_id in run_ids
 
 
+@dataclass
 class ConversationRepository:
-    def __init__(self, session: AsyncSession):
-        self.session = session
+    session: AsyncSession
 
     async def list(self, limit: int = 100) -> list[TaskRecord]:
         result = await self.session.execute(
@@ -84,18 +85,14 @@ class ConversationRepository:
 
     async def get(self, conversation_id: str, *, detailed: bool = False) -> TaskRecord | None:
         options = [selectinload(TaskRecord.runs), selectinload(TaskRecord.share)]
-        result = await self.session.execute(
-            select(TaskRecord).where(TaskRecord.id == conversation_id).options(*options)
-        )
+        result = await self.session.execute(select(TaskRecord).where(TaskRecord.id == conversation_id).options(*options))
         task = result.scalar_one_or_none()
         if task and detailed:
             runs = []
             for run in sorted(task.runs, key=lambda item: item.created_at):
                 loaded = await self._load_run(run.id)
                 trigger = (loaded.execution_profile or {}).get("trigger") if loaded else None
-                if loaded and not (
-                    isinstance(trigger, dict) and trigger.get("delivery") == "silent"
-                ):
+                if loaded and not (isinstance(trigger, dict) and trigger.get("delivery") == "silent"):
                     runs.append(loaded)
             task.runs = runs
         return task
@@ -124,9 +121,7 @@ class ConversationRepository:
         return created
 
     async def _load_run(self, run_id: str) -> RunRecord | None:
-        result = await self.session.execute(
-            select(RunRecord).where(RunRecord.id == run_id).options(*run_detail_options())
-        )
+        result = await self.session.execute(select(RunRecord).where(RunRecord.id == run_id).options(*run_detail_options()))
         return result.scalar_one_or_none()
 
     @staticmethod
@@ -194,9 +189,7 @@ class ConversationRepository:
         await self.session.refresh(task)
         return task
 
-    async def create_or_get_share(
-        self, task: TaskRecord, *, refresh: bool = False
-    ) -> ConversationShareRecord:
+    async def create_or_get_share(self, task: TaskRecord, *, refresh: bool = False) -> ConversationShareRecord:
         share = task.share
         snapshot = self.build_snapshot(task)
         now = utc_now()
@@ -286,18 +279,14 @@ class ConversationRepository:
                     )
                 ).all()
             )
-            workspace = await self.session.scalar(
-                select(TaskWorkspaceRecord).where(TaskWorkspaceRecord.task_id == task.id)
-            )
+            workspace = await self.session.scalar(select(TaskWorkspaceRecord).where(TaskWorkspaceRecord.task_id == task.id))
             if workspace is not None:
                 for model in (
                     WorkspaceChangeRecord,
                     WorkspaceCheckpointRecord,
                     WorkspaceFileRecord,
                 ):
-                    await self.session.execute(
-                        delete(model).where(model.workspace_id == workspace.id)
-                    )
+                    await self.session.execute(delete(model).where(model.workspace_id == workspace.id))
                 await self.session.delete(workspace)
             identity_ids = await self._identity_ids(run_ids)
             for model in (
@@ -307,9 +296,7 @@ class ConversationRepository:
                 RunSkillSnapshotRecord,
             ):
                 await self.session.execute(delete(model).where(model.run_id.in_(run_ids)))
-            await self.session.execute(
-                delete(MemoryRecallEventRecord).where(MemoryRecallEventRecord.run_id.in_(run_ids))
-            )
+            await self.session.execute(delete(MemoryRecallEventRecord).where(MemoryRecallEventRecord.run_id.in_(run_ids)))
             for model in (
                 ApprovalGrantRecord,
                 ApprovalRequestRecord,
@@ -323,42 +310,26 @@ class ConversationRepository:
                 ModelInvocationRecord,
             ):
                 await self.session.execute(delete(model).where(model.run_id.in_(run_ids)))
-            await self.session.execute(
-                delete(ResourceLeaseRecord).where(ResourceLeaseRecord.run_id.in_(run_ids))
-            )
-            await self.session.execute(
-                delete(BudgetReservationRecord).where(BudgetReservationRecord.run_id.in_(run_ids))
-            )
+            await self.session.execute(delete(ResourceLeaseRecord).where(ResourceLeaseRecord.run_id.in_(run_ids)))
+            await self.session.execute(delete(BudgetReservationRecord).where(BudgetReservationRecord.run_id.in_(run_ids)))
             await self._delete_execution_graph(run_ids, identity_ids)
             await self.session.execute(delete(RunRecord).where(RunRecord.id.in_(run_ids)))
-        await self.session.execute(
-            delete(ConversationShareRecord).where(
-                ConversationShareRecord.conversation_id == task.id
-            )
-        )
+        await self.session.execute(delete(ConversationShareRecord).where(ConversationShareRecord.conversation_id == task.id))
         await self.session.execute(delete(TaskRecord).where(TaskRecord.id == task.id))
         await self.session.commit()
         return storage_keys
 
     async def _identity_ids(self, run_ids):
         return list(
-            (
-                await self.session.scalars(
-                    select(AgentIdentityRecord.id).where(AgentIdentityRecord.run_id.in_(run_ids))
-                )
-            ).all()
+            (await self.session.scalars(select(AgentIdentityRecord.id).where(AgentIdentityRecord.run_id.in_(run_ids)))).all()
         )
 
     async def _delete_execution_graph(self, run_ids, identity_ids) -> None:
         await self.session.execute(
-            update(NodeExecutionRecord)
-            .where(NodeExecutionRecord.run_id.in_(run_ids))
-            .values(agent_execution_id=None)
+            update(NodeExecutionRecord).where(NodeExecutionRecord.run_id.in_(run_ids)).values(agent_execution_id=None)
         )
         await self.session.execute(
-            update(AgentExecutionRecord)
-            .where(AgentExecutionRecord.run_id.in_(run_ids))
-            .values(parent_node_execution_id=None)
+            update(AgentExecutionRecord).where(AgentExecutionRecord.run_id.in_(run_ids)).values(parent_node_execution_id=None)
         )
         for model in (
             AgentJoinRecord,
@@ -378,9 +349,7 @@ class ConversationRepository:
                     | AgentDelegationRecord.child_identity_id.in_(identity_ids)
                 )
             )
-            await self.session.execute(
-                delete(AgentIdentityRecord).where(AgentIdentityRecord.id.in_(identity_ids))
-            )
+            await self.session.execute(delete(AgentIdentityRecord).where(AgentIdentityRecord.id.in_(identity_ids)))
 
     async def _propagate_derived_source_deletion(self, run_ids: list[str]) -> None:
         now = utc_now()
@@ -393,26 +362,18 @@ class ConversationRepository:
         await self._propagate_evolution_source_deletion(run_ids, invalid_memory_ids, now)
         removed_source_ids = {source.id for source in affected_sources}
         if affected_sources:
-            await self.session.execute(
-                delete(MemorySourceRecord).where(MemorySourceRecord.id.in_(removed_source_ids))
-            )
+            await self.session.execute(delete(MemorySourceRecord).where(MemorySourceRecord.id.in_(removed_source_ids)))
         if run_memory_ids:
             await self._delete_run_memories(run_memory_ids)
 
     async def _propagate_memory_source_deletion(self, run_ids, now):
         affected_sources = list(
-            (
-                await self.session.scalars(
-                    select(MemorySourceRecord).where(MemorySourceRecord.run_id.in_(run_ids))
-                )
-            ).all()
+            (await self.session.scalars(select(MemorySourceRecord).where(MemorySourceRecord.run_id.in_(run_ids)))).all()
         )
         affected_memory_ids = {source.memory_id for source in affected_sources}
         affected_memory_ids.update(
             (
-                await self.session.scalars(
-                    select(PersistedMemoryRecord.id).where(PersistedMemoryRecord.run_id.in_(run_ids))
-                )
+                await self.session.scalars(select(PersistedMemoryRecord.id).where(PersistedMemoryRecord.run_id.in_(run_ids)))
             ).all()
         )
         memories = (
@@ -430,9 +391,7 @@ class ConversationRepository:
             list(
                 (
                     await self.session.scalars(
-                        select(MemorySourceRecord).where(
-                            MemorySourceRecord.memory_id.in_(affected_memory_ids)
-                        )
+                        select(MemorySourceRecord).where(MemorySourceRecord.memory_id.in_(affected_memory_ids))
                     )
                 ).all()
             )
@@ -442,11 +401,7 @@ class ConversationRepository:
         removed_source_ids = {source.id for source in affected_sources}
         remaining_by_memory: dict[str, list[MemorySourceRecord]] = {}
         for source in all_memory_sources:
-            if (
-                source.id not in removed_source_ids
-                and source.accessible
-                and source.revoked_at is None
-            ):
+            if source.id not in removed_source_ids and source.accessible and source.revoked_at is None:
                 remaining_by_memory.setdefault(source.memory_id, []).append(source)
 
         run_memory_ids: set[str] = set()
@@ -479,9 +434,7 @@ class ConversationRepository:
                     actor="conversation-lifecycle",
                     reason="source_conversation_deleted",
                     payload={
-                        "deleted_source_count": sum(
-                            source.memory_id == memory.id for source in affected_sources
-                        ),
+                        "deleted_source_count": sum(source.memory_id == memory.id for source in affected_sources),
                         "remaining_source_count": len(remaining_sources),
                     },
                     created_at=now,
@@ -518,9 +471,7 @@ class ConversationRepository:
             remaining_by_candidate: dict[str, int] = {}
             for source in all_evolution_sources:
                 if source.id not in removed_evolution_source_ids and source.accessible:
-                    remaining_by_candidate[source.candidate_id] = (
-                        remaining_by_candidate.get(source.candidate_id, 0) + 1
-                    )
+                    remaining_by_candidate[source.candidate_id] = remaining_by_candidate.get(source.candidate_id, 0) + 1
             candidates = list(
                 (
                     await self.session.scalars(
@@ -534,11 +485,7 @@ class ConversationRepository:
                 remaining_count = remaining_by_candidate.get(candidate.id, 0)
                 previous_status = candidate.status
                 if remaining_count == 0:
-                    candidate.status = (
-                        "rolled_back"
-                        if candidate.status in {"shadow", "canary", "promoted"}
-                        else "rejected"
-                    )
+                    candidate.status = "rolled_back" if candidate.status in {"shadow", "canary", "promoted"} else "rejected"
                     if candidate.status != previous_status:
                         candidate.state_version += 1
                     candidate.reviewed_by = "conversation-lifecycle"
@@ -563,16 +510,13 @@ class ConversationRepository:
                     )
                 )
             await self.session.execute(
-                delete(AgentEvolutionSourceRecord).where(
-                    AgentEvolutionSourceRecord.id.in_(removed_evolution_source_ids)
-                )
+                delete(AgentEvolutionSourceRecord).where(AgentEvolutionSourceRecord.id.in_(removed_evolution_source_ids))
             )
 
     async def _delete_run_memories(self, run_memory_ids) -> None:
         await self.session.execute(
             delete(MemoryLinkRecord).where(
-                MemoryLinkRecord.source_memory_id.in_(run_memory_ids)
-                | MemoryLinkRecord.target_memory_id.in_(run_memory_ids)
+                MemoryLinkRecord.source_memory_id.in_(run_memory_ids) | MemoryLinkRecord.target_memory_id.in_(run_memory_ids)
             )
         )
         for model in (MemoryAuditRecord, MemorySourceRecord):
@@ -592,9 +536,7 @@ def conversation_summary(task: TaskRecord) -> dict:
         "created_at": task.created_at,
         "updated_at": task.updated_at,
         "last_run_status": latest.status if latest else None,
-        "last_message_preview": (latest.summary or latest.model_policy.get("conversation_goal", ""))
-        if latest
-        else "",
+        "last_message_preview": (latest.summary or latest.model_policy.get("conversation_goal", "")) if latest else "",
         "has_active_share": bool(task.share and task.share.active),
     }
 
@@ -604,16 +546,10 @@ def conversation_view(task: TaskRecord) -> dict:
     command_messages = [
         item
         for item in state.get("command_history", [])
-        if isinstance(item, dict)
-        and item.get("id")
-        and item.get("command")
-        and item.get("created_at")
+        if isinstance(item, dict) and item.get("id") and item.get("command") and item.get("created_at")
     ]
     return {
         **conversation_summary(task),
-        "runs": [
-            RunViewProjector().payload(run)
-            for run in sorted(task.runs, key=lambda item: item.created_at)
-        ],
+        "runs": [run_payload(run) for run in sorted(task.runs, key=lambda item: item.created_at)],
         "command_messages": command_messages,
     }

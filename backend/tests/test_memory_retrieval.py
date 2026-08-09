@@ -151,10 +151,7 @@ def test_eligibility_filters_namespace_lifecycle_time_kind_and_sources():
         ),
     }
 
-    decisions = {
-        memory_id: evaluate_memory_eligibility(memory, query(), policy)
-        for memory_id, memory in cases.items()
-    }
+    decisions = {memory_id: evaluate_memory_eligibility(memory, query(), policy) for memory_id, memory in cases.items()}
 
     assert "namespace_not_allowed" in decisions["wrong-namespace"].reasons
     assert "lifecycle_ineligible" in decisions["candidate"].reasons
@@ -352,9 +349,7 @@ def test_ranking_is_reproducible_with_updated_at_then_id_tie_breaks():
     first_ids = [item.candidate.id for item in first.selected]
     second_ids = [item.candidate.id for item in second.selected]
     assert first_ids == second_ids == ["z-newer", "a-older", "b-older"]
-    assert [item.score.as_dict() for item in first.selected] == [
-        item.score.as_dict() for item in second.selected
-    ]
+    assert [item.score.as_dict() for item in first.selected] == [item.score.as_dict() for item in second.selected]
 
 
 def test_budget_selection_skips_oversized_item_and_keeps_complete_fitting_items():

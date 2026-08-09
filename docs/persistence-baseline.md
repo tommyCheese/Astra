@@ -16,6 +16,13 @@ records, and browser-local state must use their current schemas. Historical
 field aliases, synthesized defaults, schema-v1 readers, and old local-storage
 keys have been removed.
 
+`runs.runtime_kind` currently persists `fast-v1` for standard Runs and
+`trusted-v1` for trusted Runs. `fast-v1` is translated once to internal
+`standard-v1` composition identity; it no longer selects an independent Fast
+controller. The historical `fast_runtime_snapshot` column is a standard state
+adapter boundary and must not leak into Loop contracts. No database version
+persisted `legacy-standard-v1`, so that speculative alias is unsupported.
+
 The reset does not remove current interoperability or rollout features.
 OpenAI-compatible provider protocols, Skill environment compatibility
 declarations, model-output normalization, permission-policy simulation, and

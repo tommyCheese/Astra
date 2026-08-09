@@ -24,37 +24,32 @@ from app.infrastructure.repositories.run_unit_of_work import RunUnitOfWork
 
 
 @dataclass(frozen=True)
-class AgentMemoryContextProjection:
+class AgentMemoryContext:
     audit_reads: list[dict[str, Any]]
     context_reads: list[dict[str, Any]]
     recall_event_id: str | None
 
 
-class MemoryContextProjector:
-    def __init__(self, repository: RunUnitOfWork, settings: AstraRuntimeSettings | None) -> None:
-        self._run_repository = repository
-        self._settings = settings
+@dataclass
+class MemoryContextReader:
+    _run_repository: RunUnitOfWork
+    _settings: AstraRuntimeSettings | None
 
     async def project(
         self,
         run_id: str,
         goal: str,
         memories: list[Any],
-    ) -> AgentMemoryContextProjection:
+    ) -> AgentMemoryContext:
         scored_by_id: dict[str, dict[str, float | None]] = {}
         recall_event_id = None
         if self._settings and self._settings.agent_memory_cross_session_enabled:
             selected, recall_event_id = await self._retrieve(run_id, goal)
             memories = [scored.candidate for scored in selected]
             scored_by_id = {scored.candidate.id: scored.score.as_dict() for scored in selected}
-        return AgentMemoryContextProjection(
-            audit_reads=[
-                self._audit_view(memory, scored_by_id.get(memory.id), recall_event_id)
-                for memory in memories
-            ],
-            context_reads=[
-                self._context_view(memory, scored_by_id.get(memory.id)) for memory in memories
-            ],
+        return AgentMemoryContext(
+            audit_reads=[self._audit_view(memory, scored_by_id.get(memory.id), recall_event_id) for memory in memories],
+            context_reads=[self._context_view(memory, scored_by_id.get(memory.id)) for memory in memories],
             recall_event_id=recall_event_id,
         )
 
@@ -118,9 +113,7 @@ class MemoryContextProjector:
             expires_at=memory.expires_at,
             revoked_at=memory.revoked_at,
             updated_at=memory.updated_at,
-            accessible_source_count=sum(
-                source.accessible and source.revoked_at is None for source in memory.sources
-            ),
+            accessible_source_count=sum(source.accessible and source.revoked_at is None for source in memory.sources),
         )
 
     async def _record_recall(
@@ -133,10 +126,7 @@ class MemoryContextProjector:
         retrieval: Any,
     ) -> Any:
         assert self._settings is not None
-        manifest = [
-            namespace.as_dict()
-            for namespace in sorted(namespaces, key=lambda value: (value.type.value, value.id))
-        ]
+        manifest = [namespace.as_dict() for namespace in sorted(namespaces, key=lambda value: (value.type.value, value.id))]
         query_hash = self._query_hash(goal, manifest)
         ranked = {item.candidate.id: item for item in retrieval.ranked}
         return await repository.record_event(
@@ -164,8 +154,7 @@ class MemoryContextProjector:
                 for item in retrieval.selected
             ],
             excluded=[
-                {"id": item.memory_id, "stage": item.stage, "reasons": list(item.reasons)}
-                for item in retrieval.excluded
+                {"id": item.memory_id, "stage": item.stage, "reasons": list(item.reasons)} for item in retrieval.excluded
             ],
         )
 

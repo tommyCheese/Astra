@@ -151,7 +151,5 @@ def _entry_point_digest(entry_point: Any) -> str:
         "version": distribution.version,
         "files": sorted(files, key=lambda item: item["path"]),
     }
-    digest = hashlib.sha256(
-        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
-    ).hexdigest()
+    digest = hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
     return f"sha256:{digest}"

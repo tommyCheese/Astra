@@ -300,9 +300,7 @@ def _unsupported_thinking_snapshot(capability, requested, source):
 
 def _normalize_effective_thinking(capability, requested, adjustments):
     if requested is None:
-        return capability.default_enabled, (
-            capability.default_depth if capability.default_enabled else None
-        )
+        return capability.default_enabled, (capability.default_depth if capability.default_enabled else None)
     enabled = requested.enabled
     depth = requested.depth if enabled else None
     if requested.capability_version != capability.capability_version:
@@ -390,9 +388,7 @@ def resolve_model_reasoning(
 
 def _openai_reasoning_config(common, effective, reason):
     effort = effective.depth if effective.enabled else "none"
-    return ModelReasoningConfig(
-        **common, request_params={"reasoning_effort": effort}, reason=reason
-    )
+    return ModelReasoningConfig(**common, request_params={"reasoning_effort": effort}, reason=reason)
 
 
 def _anthropic_reasoning_config(common, effective, reason, adapter):
@@ -437,8 +433,7 @@ def _qwen_reasoning_config(common, effective, reason, adapter):
             **common,
             request_params=params,
             include_json_mode=not effective.enabled,
-            reason=reason
-            or ("thinking_mode_uses_prompt_enforced_json" if effective.enabled else None),
+            reason=reason or ("thinking_mode_uses_prompt_enforced_json" if effective.enabled else None),
         )
     if adapter == "qwen-thinking-only-budget":
         return ModelReasoningConfig(
@@ -455,9 +450,7 @@ def _qwen_reasoning_config(common, effective, reason, adapter):
     )
 
 
-def attach_reasoning_usage(
-    usage: dict[str, Any] | None, config: ModelReasoningConfig
-) -> dict[str, Any]:
+def attach_reasoning_usage(usage: dict[str, Any] | None, config: ModelReasoningConfig) -> dict[str, Any]:
     return {**(usage or {}), "astra_reasoning": config.usage_metadata()}
 
 
@@ -509,9 +502,7 @@ def _unavailable_capability(
 
 def _is_openai_family(model: str, bases: tuple[str, ...]) -> bool:
     return any(
-        model == base
-        or re.fullmatch(rf"{re.escape(base)}-\d{{4}}-\d{{2}}-\d{{2}}", model) is not None
-        for base in bases
+        model == base or re.fullmatch(rf"{re.escape(base)}-\d{{4}}-\d{{2}}-\d{{2}}", model) is not None for base in bases
     )
 
 

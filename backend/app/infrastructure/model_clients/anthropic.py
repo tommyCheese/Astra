@@ -150,11 +150,7 @@ class AnthropicModelClient(OpenAICompatibleModelClient):
                 usage=attach_reasoning_usage(None, reasoning_config),
                 error=exc,
             )
-        if (
-            attempt == 0
-            and "summary" not in emitted_stream_fields
-            and not isinstance(exc, httpx.HTTPError)
-        ):
+        if attempt == 0 and "summary" not in emitted_stream_fields and not isinstance(exc, httpx.HTTPError):
             retry_messages = [
                 *messages,
                 {
@@ -172,9 +168,7 @@ class AnthropicModelClient(OpenAICompatibleModelClient):
                 usage_operation=usage_operation,
             )
         if isinstance(exc, httpx.HTTPStatusError):
-            raise ModelOutputError(
-                f"Model endpoint returned HTTP {exc.response.status_code}"
-            ) from exc
+            raise ModelOutputError(f"Model endpoint returned HTTP {exc.response.status_code}") from exc
         if isinstance(exc, ModelOutputError):
             raise exc
         raise ModelOutputError("Anthropic returned non-JSON content") from exc

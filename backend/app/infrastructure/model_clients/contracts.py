@@ -153,14 +153,14 @@ class ModelClient(ABC):
             await on_reasoning_delta("\1")
         return decision, None
 
-    async def fast_decide(
+    async def standard_decide(
         self,
         goal: str,
         context: dict[str, Any],
         *,
         on_delta: AnswerDeltaCallback | None = None,
     ) -> dict[str, Any]:
-        """Compatibility adapter for the independent fast-v1 action protocol."""
+        """Return the compact transport vocabulary used by standard composition."""
         streamed_parts: list[str] = []
 
         async def capture(delta: str) -> None:
@@ -198,7 +198,7 @@ class ModelClient(ABC):
             "blocked": "stop",
         }
         action = mapping.get(decision.decision_type, "stop")
-        adopted_stream = answer is None and bool("".join(streamed_parts).strip())
+        adopted_stream = all((answer is None, bool("".join(streamed_parts).strip())))
         content = answer.summary if answer is not None else "".join(streamed_parts).strip() or None
         if action == "answer" and content is None:
             synthesized = await self.synthesize(

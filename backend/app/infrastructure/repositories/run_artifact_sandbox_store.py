@@ -68,9 +68,7 @@ class RunArtifactSandboxStore:
         query = select(ArtifactRecord)
         if run_id is not None:
             query = query.where(ArtifactRecord.run_id == run_id)
-        result = await self.session.execute(
-            query.order_by(ArtifactRecord.created_at, ArtifactRecord.id)
-        )
+        result = await self.session.execute(query.order_by(ArtifactRecord.created_at, ArtifactRecord.id))
         return list(result.scalars().all())
 
     async def create_sandbox_job(

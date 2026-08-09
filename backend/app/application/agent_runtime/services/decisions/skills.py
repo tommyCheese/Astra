@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from app.application.agent_runtime.services.shared.progress import ExecutionProgress
 from app.application.skills.activation import SkillActivationService
 from app.common.schemas.agent.execution_state import AgentDecision, AgentObservation
@@ -10,18 +12,12 @@ from app.infrastructure.model_clients.contracts import ModelClient
 from app.infrastructure.repositories.run_unit_of_work import RunUnitOfWork
 
 
+@dataclass
 class SkillActionStage:
-    def __init__(
-        self,
-        repository: RunUnitOfWork,
-        activation_service: SkillActivationService,
-        model_client: ModelClient,
-        progress: ExecutionProgress,
-    ) -> None:
-        self._repository = repository
-        self._activation_service = activation_service
-        self._model_client = model_client
-        self._progress = progress
+    repository: RunUnitOfWork
+    activation_service: SkillActivationService
+    model_client: ModelClient
+    progress: ExecutionProgress
 
     async def execute(
         self,
@@ -35,13 +31,13 @@ class SkillActionStage:
             observation = await self._read_resource(run_id, decision)
         else:
             return False
-        self._progress.observations.append(observation.model_dump(mode="json"))
-        await self._repository.update_agent_turn(
+        self.progress.observations.append(observation.model_dump(mode="json"))
+        await self.repository.update_agent_turn(
             turn.id,
             status="completed" if observation.status == "completed" else "failed",
             observation=observation.model_dump(mode="json"),
         )
-        await self._repository.session.commit()
+        await self.repository.session.commit()
         return True
 
     async def _activate(
@@ -50,7 +46,7 @@ class SkillActionStage:
         decision: AgentDecision,
     ) -> AgentObservation:
         identity = decision.skill_identity or ""
-        run = await self._repository.require_run_core(run_id)
+        run = await self.repository.require_run_core(run_id)
         contract_skills = {
             item.get("qualified_identity")
             for item in (run.task_contract or {}).get("skill_revisions", [])
@@ -63,20 +59,20 @@ class SkillActionStage:
                 summary="可信模式需要通过 PlanPatch 绑定此前未选择的 Skill。",
                 data={"qualified_identity": identity},
             )
-            await self._repository.add_event(
+            await self.repository.add_event(
                 run_id,
                 "skill.replan_required",
                 observation.model_dump(mode="json"),
             )
             return observation
         try:
-            activated = await self._activation_service.activate(
+            activated = await self.activation_service.activate(
                 run_id,
                 identity,
                 initiator="model",
                 reason=decision.reasoning_summary,
             )
-            self._model_client.bind_skills(await self._activation_service.prompt_blocks(run_id))
+            self.model_client.bind_skills(await self.activation_service.prompt_blocks(run_id))
             return AgentObservation(
                 kind="skill_activation",
                 status="completed",
@@ -104,7 +100,7 @@ class SkillActionStage:
         identity = decision.skill_identity or ""
         path = decision.skill_resource_path or ""
         try:
-            content = await self._activation_service.read_resource(run_id, identity, path)
+            content = await self.activation_service.read_resource(run_id, identity, path)
             return AgentObservation(
                 kind="skill_resource",
                 status="completed",

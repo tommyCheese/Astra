@@ -111,9 +111,7 @@ class AgentReasoningPolicyCompiler:
             budgets=budgets,
             subagents=subagent_policy or EffectiveSubagentPolicy(),
         )
-        return ReasoningPolicySnapshot(
-            requested=requested, effective=effective, adjustments=adjustments
-        )
+        return ReasoningPolicySnapshot(requested=requested, effective=effective, adjustments=adjustments)
 
     def _raise(
         self,
@@ -128,11 +126,7 @@ class AgentReasoningPolicyCompiler:
         if requested == value:
             return
         data[field] = value
-        adjustments.append(
-            PolicyAdjustment(
-                field=field, requested=requested, effective=value, rule=rule, reason=reason
-            )
-        )
+        adjustments.append(PolicyAdjustment(field=field, requested=requested, effective=value, rule=rule, reason=reason))
 
 
 def compile_subagent_policy(settings: Any) -> EffectiveSubagentPolicy:
@@ -146,9 +140,7 @@ def compile_subagent_policy(settings: Any) -> EffectiveSubagentPolicy:
         allowed_join_policies=("required", "optional", "first_success"),
         budgets=SubagentBudgetPolicy(
             max_children_total=settings.agent_subagent_max_children_total if enabled else 0,
-            max_children_per_parent=(
-                settings.agent_subagent_max_children_per_parent if enabled else 0
-            ),
+            max_children_per_parent=(settings.agent_subagent_max_children_per_parent if enabled else 0),
             max_parallel_children=(settings.agent_subagent_max_parallel_children if enabled else 0),
             max_depth=settings.agent_subagent_max_depth,
             max_parent_round_trips=settings.agent_subagent_max_parent_round_trips,
@@ -205,9 +197,7 @@ def resolve_run_profile(
         runtime_kind = RuntimeKind.fast_v1
         fast_runtime_policy = FastRuntimePolicy()
     else:
-        effective_request = requested.model_copy(
-            update={"verification_level": VerificationLevel.strict}
-        )
+        effective_request = requested.model_copy(update={"verification_level": VerificationLevel.strict})
         contract_mode = ContractMode.model
         assurance_level = AssuranceLevel.full
         validators = TRUSTED_VALIDATORS
@@ -222,12 +212,8 @@ def resolve_run_profile(
         subagent_policy=effective_subagent_policy,
     )
     if answer_mode == AnswerMode.standard:
-        budgets = policy.effective.budgets.model_copy(
-            update={"max_turns": None, "max_tool_calls": None}
-        )
-        policy = policy.model_copy(
-            update={"effective": policy.effective.model_copy(update={"budgets": budgets})}
-        )
+        budgets = policy.effective.budgets.model_copy(update={"max_turns": None, "max_tool_calls": None})
+        policy = policy.model_copy(update={"effective": policy.effective.model_copy(update={"budgets": budgets})})
     return RunExecutionProfile(
         answer_mode=answer_mode,
         runtime_kind=runtime_kind,
@@ -254,9 +240,7 @@ def build_default_contract(goal: str, *, risk_level: str = "low") -> TaskContrac
                 verification_method="task_adapter",
             )
         ],
-        verification_requirements=[
-            VerificationRequirement(id="verify-result", validator="task_adapter")
-        ],
+        verification_requirements=[VerificationRequirement(id="verify-result", validator="task_adapter")],
         prohibited_actions=["执行未注册或未授权的工具"],
         risk_level=risk_level,
     )
@@ -293,9 +277,7 @@ def normalize_contract(contract: TaskContract, goal: str) -> TaskContract:
         ]
     updates["success_criteria"] = criteria
     if not contract.verification_requirements:
-        updates["verification_requirements"] = [
-            VerificationRequirement(id="verify-result", validator="task_adapter")
-        ]
+        updates["verification_requirements"] = [VerificationRequirement(id="verify-result", validator="task_adapter")]
     if contract.ambiguity_status != "clear" and not contract.clarification_question:
         updates["ambiguity_status"] = "clear"
     return contract.model_copy(update=updates)
@@ -309,9 +291,7 @@ def validate_contract(contract: TaskContract) -> None:
     if not contract.success_criteria:
         raise ValueError("TaskContract requires success criteria")
     ids = [item.id for item in contract.success_criteria]
-    if len(ids) != len(set(ids)) or any(
-        not item.verification_method for item in contract.success_criteria
-    ):
+    if len(ids) != len(set(ids)) or any(not item.verification_method for item in contract.success_criteria):
         raise ValueError("TaskContract criterion IDs must be unique and verifiable")
     if contract.ambiguity_status != "clear" and not contract.clarification_question:
         raise ValueError("Ambiguous contract requires a clarification question")
@@ -333,9 +313,7 @@ class AgentObservationEvaluator:
             missing = [field for field in expected.required_fields if field not in observation.data]
             outcome = EvaluationOutcome.partial if missing else EvaluationOutcome.matched
         criterion_updates = (
-            dict.fromkeys(criterion_refs, CriterionStatus.satisfied)
-            if outcome == EvaluationOutcome.matched
-            else {}
+            dict.fromkeys(criterion_refs, CriterionStatus.satisfied) if outcome == EvaluationOutcome.matched else {}
         )
         return AgentObservationEvaluation(
             plan_node_id=observation.plan_node_id,
@@ -371,13 +349,9 @@ class AgentReflectionGate:
         return signal in self.ADAPTIVE_SIGNALS
 
 
-def apply_reflection_patch(
-    state: AgentState, patch: ReflectionPatch, *, expected_version: int
-) -> AgentState:
+def apply_reflection_patch(state: AgentState, patch: ReflectionPatch, *, expected_version: int) -> AgentState:
     if state.version != expected_version:
-        raise StateVersionConflict(
-            f"Expected state version {expected_version}, got {state.version}"
-        )
+        raise StateVersionConflict(f"Expected state version {expected_version}, got {state.version}")
     if not patch.actionable():
         raise ValueError("Reflection patch is not actionable")
     updated = state.model_copy(deep=True)
@@ -409,9 +383,7 @@ def apply_validation_outcomes(state: AgentState, outcomes: list[AgentValidationO
     return updated
 
 
-def failure_fingerprint(
-    tool_name: str | None, tool_input: dict[str, Any], error_category: str, intent: str = ""
-) -> str:
+def failure_fingerprint(tool_name: str | None, tool_input: dict[str, Any], error_category: str, intent: str = "") -> str:
     payload = json.dumps(
         {"tool": tool_name, "input": tool_input, "error": error_category, "intent": intent},
         sort_keys=True,

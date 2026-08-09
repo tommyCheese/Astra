@@ -108,19 +108,13 @@ async def _memory_detail(
     recall_candidates = list(
         (
             await session.execute(
-                select(MemoryRecallEventRecord)
-                .order_by(MemoryRecallEventRecord.created_at.desc())
-                .limit(1_000)
+                select(MemoryRecallEventRecord).order_by(MemoryRecallEventRecord.created_at.desc()).limit(1_000)
             )
         )
         .scalars()
         .all()
     )
-    recalls = [
-        recall
-        for event in recall_candidates
-        if (recall := _recall_view(event, memory.id)) is not None
-    ]
+    recalls = [recall for event in recall_candidates if (recall := _recall_view(event, memory.id)) is not None]
     return MemoryDetailView(
         **_memory_view(memory).model_dump(),
         sources=memory.sources,
@@ -177,8 +171,7 @@ async def list_memories(
         records = [
             memory
             for memory in records
-            if normalized_query in memory.content.casefold()
-            or normalized_query in memory.memory_key.casefold()
+            if normalized_query in memory.content.casefold() or normalized_query in memory.memory_key.casefold()
         ]
     records = records[:limit]
     return MemoryListView(

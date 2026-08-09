@@ -1,9 +1,7 @@
 """Public projections for permission-center persistence records."""
 
 
-def permission_center_view(
-    *, grants, identities, delegations, credentials, data_flow, catalog, explanations
-) -> dict:
+def permission_center_view(*, grants, identities, delegations, credentials, data_flow, catalog, explanations) -> dict:
     return {
         "grants": [_grant_view(item) for item in grants],
         "identities": [_identity_view(item) for item in identities],

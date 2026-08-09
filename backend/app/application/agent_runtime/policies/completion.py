@@ -25,11 +25,7 @@ class AgentCompletionGate:
                 reason="需要用户输入后才能继续。",
                 required_user_action=required_user_action,
             )
-        blocking = [
-            outcome.validator
-            for outcome in validation_outcomes
-            if not outcome.passed and outcome.blocking
-        ]
+        blocking = [outcome.validator for outcome in validation_outcomes if not outcome.passed and outcome.blocking]
         warnings = _completion_warnings([], validation_outcomes)
         if blocking:
             return CompletionDecision(
@@ -97,9 +93,7 @@ def _record_id(item: Any, fallback: str = "id") -> str | None:
     return getattr(item, "id", None)
 
 
-def _waiting_user_decision(
-    state: AgentState, required_user_action: str | None
-) -> CompletionDecision | None:
+def _waiting_user_decision(state: AgentState, required_user_action: str | None) -> CompletionDecision | None:
     if not required_user_action and state.task_contract.ambiguity_status == "clear":
         return None
     return CompletionDecision(
@@ -138,9 +132,7 @@ def _completion_precondition_decision(
     )
 
 
-def _descendant_barrier_decision(
-    descendants: list[Any], joins: list[Any]
-) -> CompletionDecision | None:
+def _descendant_barrier_decision(descendants: list[Any], joins: list[Any]) -> CompletionDecision | None:
     terminal = {"completed", "completed_with_warnings", "blocked", "failed", "cancelled"}
     unfinished = _with_status(descendants, terminal, invert=True)
     blocked_joins = _with_status(joins, {"blocked"})
@@ -205,9 +197,7 @@ def _node_keys_with_status(nodes: list[Any], statuses: set[str]) -> list[str]:
     return [node.node_key for node in nodes if node.status.value in statuses]
 
 
-def _completion_warnings(
-    warnings: list[str], validation_outcomes: list[AgentValidationOutcome]
-) -> list[str]:
+def _completion_warnings(warnings: list[str], validation_outcomes: list[AgentValidationOutcome]) -> list[str]:
     collected = list(warnings)
     for outcome in validation_outcomes:
         collected.extend(outcome.warnings)
@@ -215,9 +205,7 @@ def _completion_warnings(
     return list(dict.fromkeys(collected))
 
 
-def _unmet_contract_requirements(
-    state: AgentState, validation_outcomes: list[AgentValidationOutcome]
-) -> list[str]:
+def _unmet_contract_requirements(state: AgentState, validation_outcomes: list[AgentValidationOutcome]) -> list[str]:
     unmet = _unmet_success_criteria(state)
     unmet.extend(_unmet_verification_requirements(state, validation_outcomes))
     unmet.extend(_blocking_validator_requirements(validation_outcomes))
@@ -232,9 +220,7 @@ def _unmet_success_criteria(state: AgentState) -> list[str]:
     ]
 
 
-def _unmet_verification_requirements(
-    state: AgentState, validation_outcomes: list[AgentValidationOutcome]
-) -> list[str]:
+def _unmet_verification_requirements(state: AgentState, validation_outcomes: list[AgentValidationOutcome]) -> list[str]:
     unmet: list[str] = []
     for requirement in state.task_contract.verification_requirements:
         if not requirement.mandatory:
@@ -252,8 +238,4 @@ def _unmet_verification_requirements(
 def _blocking_validator_requirements(
     validation_outcomes: list[AgentValidationOutcome],
 ) -> list[str]:
-    return [
-        f"validator:{outcome.validator}"
-        for outcome in validation_outcomes
-        if not outcome.passed and outcome.blocking
-    ]
+    return [f"validator:{outcome.validator}" for outcome in validation_outcomes if not outcome.passed and outcome.blocking]

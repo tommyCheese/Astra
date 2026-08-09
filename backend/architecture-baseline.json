@@ -1,158 +1,110 @@
 {
   "baseline_module_lines": {
-    "app.interfaces.api.skills": 782,
-    "app.application.workspaces.deliverables": 529,
-    "app.domain.evolution": 571,
-    "app.application.memory.consolidation.models": 800,
-    "app.application.memory.retrieval": 681,
-    "app.infrastructure.model_clients.openai_compatible": 534,
-    "app.infrastructure.model_clients.reasoning": 658,
-    "app.application.permissions.effects": 601,
-    "app.application.planning.scheduler": 549,
-    "app.application.planning.service": 516,
-    "app.infrastructure.repositories.conversations": 619,
-    "app.infrastructure.repositories.evolution": 753,
-    "app.infrastructure.repositories.memories": 792,
-    "app.infrastructure.repositories.memory_consolidation": 638,
-    "app.infrastructure.repositories.plans": 534,
-    "app.infrastructure.repositories.schedules": 566,
-    "app.application.runner.coordinator": 729,
-    "app.application.runner.engine": 663,
-    "app.application.runner.node_worker": 604,
-    "app.application.skills.storage": 546,
-    "app.application.subagents.context": 587,
-    "app.application.subagents.executor": 511,
-    "app.application.subagents.fan_in": 525,
-    "app.application.subagents.governance": 597,
-    "app.application.subagents.runtime": 566
+    "app.application.memory.consolidation.models": 770,
+    "app.application.memory.retrieval": 664,
+    "app.application.permissions.effects": 566,
+    "app.application.planning.coordinator": 691,
+    "app.application.planning.scheduler": 537,
+    "app.application.run_management.execution.service": 584,
+    "app.application.skills.storage": 533,
+    "app.application.subagents.context": 571,
+    "app.application.subagents.fan_in": 530,
+    "app.application.subagents.governance": 571,
+    "app.application.subagents.runtime": 538,
+    "app.domain.evolution": 555,
+    "app.infrastructure.model_clients.openai_compatible": 642,
+    "app.infrastructure.model_clients.reasoning": 660,
+    "app.infrastructure.repositories.conversations": 555,
+    "app.infrastructure.repositories.evolution": 733,
+    "app.infrastructure.repositories.memories": 775,
+    "app.infrastructure.repositories.memory_consolidation": 613,
+    "app.infrastructure.repositories.plans": 529,
+    "app.infrastructure.repositories.schedules": 541,
+    "app.interfaces.api.skills": 758
   },
   "baseline_functions": {
-    "app.application.agent_runtime.policies.reasoning:normalize_contract": {
-      "lines": 37,
-      "complexity": 11
-    },
-    "app.application.agent_runtime.services.context:AgentContextAssembler.assemble": {
-      "lines": 79,
-      "complexity": 4
-    },
-    "app.application.agent_runtime.services.loop:AstraAgentLoop.run": {
-      "lines": 62,
-      "complexity": 4
-    },
-    "app.interfaces.api.memories:list_memories": {
-      "lines": 55,
-      "complexity": 14
-    },
-    "app.interfaces.api.memory_consolidation:_safe_profile_snapshot": {
-      "lines": 32,
-      "complexity": 13
-    },
-    "app.interfaces.api.models:probe_model_connection": {
-      "lines": 67,
-      "complexity": 9
-    },
-    "app.interfaces.api.permissions:permission_center": {
-      "lines": 66,
-      "complexity": 4
-    },
-    "app.interfaces.api.permissions:task_workspace_view": {
-      "lines": 75,
-      "complexity": 6
-    },
-    "app.interfaces.api.runs:_run_event_stream": {
-      "lines": 71,
-      "complexity": 15
-    },
-    "app.interfaces.api.skills:create_skill_test_run": {
-      "lines": 80,
-      "complexity": 5
-    },
-    "app.interfaces.api.skills:diff_skill": {
-      "lines": 52,
-      "complexity": 11
-    },
-    "app.interfaces.api.tools:_tool_settings": {
-      "lines": 61,
-      "complexity": 7
-    },
-    "app.application.workspaces.artifacts:ArtifactCollector._validate_office_archive": {
+    "app.application.agent_runtime.loop:_select_outcome": {
       "lines": 31,
-      "complexity": 14
-    },
-    "app.application.context_compaction.policy:evaluate_compaction_trigger": {
-      "lines": 46,
       "complexity": 12
     },
+    "app.application.agent_runtime.policies.reasoning:normalize_contract": {
+      "lines": 35,
+      "complexity": 11
+    },
+    "app.application.agent_runtime.services.context.assembler:assemble_agent_context": {
+      "lines": 62,
+      "complexity": 13
+    },
+    "app.application.agent_runtime.services.decisions.action_resolution:resolve_action": {
+      "lines": 65,
+      "complexity": 9
+    },
+    "app.application.agent_runtime.services.decisions.root:RootDecisionStage._resolve_and_persist": {
+      "lines": 66,
+      "complexity": 14
+    },
+    "app.application.agent_runtime.services.tooling.authorization:PermissionAuthorizationStage._validate_approved_effect": {
+      "lines": 26,
+      "complexity": 11
+    },
+    "app.application.agent_runtime.services.tooling.invocation:ToolInvocationStage.execute": {
+      "lines": 72,
+      "complexity": 12
+    },
+    "app.application.agent_runtime.services.tooling.plugin_runtime:PluginRuntimeState.evidence_pack": {
+      "lines": 38,
+      "complexity": 12
+    },
+    "app.application.agent_runtime.services.tooling.plugin_runtime:PluginRuntimeState.process": {
+      "lines": 61,
+      "complexity": 9
+    },
+    "app.application.context_compaction.child:compact_child_context": {
+      "lines": 83,
+      "complexity": 15
+    },
+    "app.application.context_compaction.policy:evaluate_compaction_trigger": {
+      "lines": 45,
+      "complexity": 12
+    },
+    "app.application.context_compaction.root:_prepare_compaction_state": {
+      "lines": 68,
+      "complexity": 10
+    },
+    "app.application.context_compaction.root:_protected_prefix": {
+      "lines": 95,
+      "complexity": 7
+    },
+    "app.application.context_compaction.root:_reference_manifest": {
+      "lines": 24,
+      "complexity": 14
+    },
     "app.application.context_compaction.service:AgentContextCompactionService.compact": {
-      "lines": 81,
+      "lines": 73,
       "complexity": 15
     },
     "app.application.context_compaction.validation:_validate_references": {
-      "lines": 19,
-      "complexity": 13
-    },
-    "app.application.run_management.conversation_context:ConversationContextManager.status": {
-      "lines": 80,
-      "complexity": 12
-    },
-    "app.common.core.config:AstraRuntimeSettings.validate_runtime_bounds": {
-      "lines": 26,
-      "complexity": 11
-    },
-    "app.application.workspaces.deliverables:_scheduled_run_deliverables": {
-      "lines": 30,
-      "complexity": 13
-    },
-    "app.domain.evolution:_parameter_violation": {
-      "lines": 18,
-      "complexity": 11
-    },
-    "app.domain.grounding.fragments:_build_search_candidate": {
-      "lines": 28,
-      "complexity": 13
-    },
-    "app.domain.grounding.fragments:_snapshot_model": {
-      "lines": 32,
-      "complexity": 11
-    },
-    "app.domain.grounding.identity:canonical_url": {
-      "lines": 26,
-      "complexity": 11
-    },
-    "app.infrastructure.repositories.evidence:EvidenceRepository.append": {
-      "lines": 73,
-      "complexity": 11
-    },
-    "app.domain.grounding.validators:grounding_validation_outcomes": {
-      "lines": 34,
+      "lines": 15,
       "complexity": 13
     },
     "app.application.memory.consolidation.models:_normalize_json": {
-      "lines": 26,
+      "lines": 24,
       "complexity": 13
     },
     "app.application.memory.retrieval:retrieve_memories": {
-      "lines": 69,
+      "lines": 65,
       "complexity": 15
     },
     "app.application.memory.retrieval:score_memory_candidate": {
       "lines": 77,
       "complexity": 11
     },
-    "app.application.memory.retrieval:tokenize_text": {
-      "lines": 33,
-      "complexity": 11
-    },
-    "app.infrastructure.model_clients.reasoning:_anthropic_thinking_profile": {
-      "lines": 61,
-      "complexity": 8
-    },
-    "app.infrastructure.model_clients.reasoning:_normalize_effective_thinking": {
-      "lines": 38,
-      "complexity": 11
+    "app.application.memory.tool_service:MemoryToolService.remember": {
+      "lines": 71,
+      "complexity": 15
     },
     "app.application.permissions.engine:_lease_matches": {
-      "lines": 23,
+      "lines": 22,
       "complexity": 12
     },
     "app.application.permissions.engine:_rule_matches": {
@@ -160,19 +112,51 @@
       "complexity": 14
     },
     "app.application.permissions.governance:_bundle_effect_denial": {
-      "lines": 25,
+      "lines": 14,
       "complexity": 14
     },
+    "app.application.planning.concurrency:resource_claims_from_effect_plan": {
+      "lines": 26,
+      "complexity": 11
+    },
+    "app.application.planning.coordinator:PlanNodeWorker.run": {
+      "lines": 83,
+      "complexity": 6
+    },
+    "app.application.planning.coordinator:RunCoordinator._claim_contexts": {
+      "lines": 69,
+      "complexity": 8
+    },
+    "app.application.planning.coordinator:RunCoordinator._merge_result": {
+      "lines": 90,
+      "complexity": 7
+    },
+    "app.application.planning.coordinator:RunCoordinator.run": {
+      "lines": 63,
+      "complexity": 11
+    },
+    "app.application.planning.coordinator:_build_context": {
+      "lines": 37,
+      "complexity": 12
+    },
+    "app.application.planning.coordinator:_merge_run_state": {
+      "lines": 35,
+      "complexity": 11
+    },
+    "app.application.planning.coordinator:_validate_merge_context": {
+      "lines": 15,
+      "complexity": 11
+    },
     "app.application.planning.revision:revise_waiting_plan": {
-      "lines": 70,
+      "lines": 65,
       "complexity": 11
     },
     "app.application.planning.scheduler:PlanScheduler._capability_eligible_candidates": {
-      "lines": 47,
+      "lines": 42,
       "complexity": 13
     },
     "app.application.planning.scheduler:PlanScheduler._filter_join_consumers": {
-      "lines": 35,
+      "lines": 33,
       "complexity": 11
     },
     "app.application.planning.scheduler:PlanScheduler._finalize_batch": {
@@ -184,52 +168,196 @@
       "complexity": 11
     },
     "app.application.planning.scheduler:PlanScheduler.ready_candidates": {
-      "lines": 30,
+      "lines": 27,
       "complexity": 13
     },
     "app.application.planning.service:PlanService.apply_patch": {
-      "lines": 80,
+      "lines": 71,
       "complexity": 15
     },
     "app.application.planning.service:PlanService.complete_node": {
-      "lines": 57,
+      "lines": 55,
       "complexity": 12
     },
-    "app.infrastructure.plugins.catalog:PluginCatalogBuilder._assemble": {
-      "lines": 71,
+    "app.application.run_management.conversations.context:ConversationContextManager.status": {
+      "lines": 72,
+      "complexity": 10
+    },
+    "app.application.run_management.execution.recovery:scan_run_recovery": {
+      "lines": 83,
+      "complexity": 10
+    },
+    "app.application.run_management.execution.service:RunExecution._bind_skills": {
+      "lines": 54,
+      "complexity": 13
+    },
+    "app.application.run_management.execution.service:RunExecution._prepare_trusted_run": {
+      "lines": 98,
+      "complexity": 12
+    },
+    "app.application.run_management.projections.events:RunEventBroker.publish_events": {
+      "lines": 33,
+      "complexity": 11
+    },
+    "app.application.scheduling.command_parsing:parse_heartbeat_command": {
+      "lines": 64,
+      "complexity": 11
+    },
+    "app.application.scheduling.dispatcher:ScheduledRunDispatcher._finalize": {
+      "lines": 25,
+      "complexity": 13
+    },
+    "app.application.scheduling.dispatcher:ScheduledRunDispatcher.dispatch": {
+      "lines": 92,
+      "complexity": 12
+    },
+    "app.application.scheduling.execution:ScheduledExecutionResolver._from_query": {
+      "lines": 36,
+      "complexity": 12
+    },
+    "app.application.subagents.budget:HierarchicalBudgetManager.reserve": {
+      "lines": 89,
+      "complexity": 14
+    },
+    "app.application.subagents.context:SubagentContextComposer.compose": {
+      "lines": 93,
+      "complexity": 12
+    },
+    "app.application.subagents.context:SubagentExchangeService.promote_verified_facts": {
+      "lines": 37,
+      "complexity": 11
+    },
+    "app.application.subagents.coordinator:AgentCoordinator.run_available": {
+      "lines": 81,
+      "complexity": 10
+    },
+    "app.application.subagents.executor:LocalAstraAgentExecutor._next_node": {
+      "lines": 19,
+      "complexity": 11
+    },
+    "app.application.subagents.executor:LocalAstraAgentExecutor._result_from_decision": {
+      "lines": 61,
+      "complexity": 7
+    },
+    "app.application.subagents.executor:_evaluate_basic_completion": {
+      "lines": 22,
+      "complexity": 12
+    },
+    "app.application.subagents.fan_in:SubagentJoinService.evaluate": {
+      "lines": 49,
+      "complexity": 11
+    },
+    "app.application.subagents.governance:DelegationContractService.authorize_and_create": {
+      "lines": 86,
+      "complexity": 9
+    },
+    "app.application.subagents.runtime:SubagentRuntimeOperations.delegate_tasks": {
+      "lines": 86,
+      "complexity": 12
+    },
+    "app.application.subagents.supervisor:SubagentSupervisor.reconcile": {
+      "lines": 88,
+      "complexity": 10
+    },
+    "app.application.workspaces.artifacts:ArtifactCollector._validate_office_archive": {
+      "lines": 21,
+      "complexity": 14
+    },
+    "app.application.workspaces.deliverables:_scheduled_run_deliverables": {
+      "lines": 26,
+      "complexity": 13
+    },
+    "app.application.workspaces.runtime:WorkspaceRuntimeService._remove_new_protected_paths": {
+      "lines": 22,
+      "complexity": 11
+    },
+    "app.application.workspaces.runtime:WorkspaceRuntimeService.scan": {
+      "lines": 38,
+      "complexity": 15
+    },
+    "app.common.core.config:AstraRuntimeSettings.validate_runtime_bounds": {
+      "lines": 22,
+      "complexity": 12
+    },
+    "app.common.schemas.agent.run_policy:RunExecutionProfile.validate_mode_shape": {
+      "lines": 14,
+      "complexity": 13
+    },
+    "app.domain.evolution:_parameter_violation": {
+      "lines": 18,
+      "complexity": 11
+    },
+    "app.domain.grounding.validators:grounding_validation_outcomes": {
+      "lines": 18,
+      "complexity": 13
+    },
+    "app.infrastructure.bootstrap.standard_recovery:_recover_action": {
+      "lines": 22,
+      "complexity": 12
+    },
+    "app.infrastructure.bootstrap.trusted_runtime:run_trusted_runtime": {
+      "lines": 70,
+      "complexity": 4
+    },
+    "app.infrastructure.model_clients.contracts:ModelClient.standard_decide": {
+      "lines": 68,
+      "complexity": 15
+    },
+    "app.infrastructure.model_clients.openai_compatible:OpenAICompatibleModelClient._chat_json": {
+      "lines": 62,
       "complexity": 6
     },
+    "app.infrastructure.model_clients.reasoning:_anthropic_thinking_profile": {
+      "lines": 61,
+      "complexity": 8
+    },
+    "app.infrastructure.model_clients.reasoning:_normalize_effective_thinking": {
+      "lines": 36,
+      "complexity": 11
+    },
+    "app.infrastructure.plugins.builtin:_provider": {
+      "lines": 65,
+      "complexity": 3
+    },
+    "app.infrastructure.plugins.catalog:PluginCatalogBuilder._assemble": {
+      "lines": 76,
+      "complexity": 11
+    },
+    "app.infrastructure.plugins.contracts:PluginContribution.validate": {
+      "lines": 28,
+      "complexity": 13
+    },
+    "app.infrastructure.plugins.isolated:IsolatedProviderRuntimeBackend.execute": {
+      "lines": 58,
+      "complexity": 12
+    },
     "app.infrastructure.repositories.agent_executions:AgentExecutionRepository.create_child": {
-      "lines": 81,
+      "lines": 78,
       "complexity": 13
     },
     "app.infrastructure.repositories.agent_executions:AgentExecutionRepository.transition": {
-      "lines": 60,
+      "lines": 54,
       "complexity": 11
     },
     "app.infrastructure.repositories.conversations:ConversationRepository._propagate_evolution_source_deletion": {
-      "lines": 77,
+      "lines": 69,
       "complexity": 11
     },
     "app.infrastructure.repositories.conversations:ConversationRepository._propagate_memory_source_deletion": {
-      "lines": 90,
+      "lines": 76,
       "complexity": 15
     },
-    "app.infrastructure.repositories.conversations:ConversationRepository.delete": {
-      "lines": 70,
-      "complexity": 9
+    "app.infrastructure.repositories.evidence:EvidenceRepository.append": {
+      "lines": 55,
+      "complexity": 11
     },
     "app.infrastructure.repositories.evolution:EvolutionRepository._source_record_values": {
       "lines": 48,
       "complexity": 11
     },
     "app.infrastructure.repositories.evolution:EvolutionRepository.attach_evaluation": {
-      "lines": 98,
+      "lines": 96,
       "complexity": 8
-    },
-    "app.infrastructure.repositories.evolution:EvolutionRepository.create": {
-      "lines": 65,
-      "complexity": 6
     },
     "app.infrastructure.repositories.evolution:EvolutionRepository.review": {
       "lines": 78,
@@ -238,10 +366,6 @@
     "app.infrastructure.repositories.evolution:EvolutionRepository.rollback": {
       "lines": 91,
       "complexity": 6
-    },
-    "app.infrastructure.repositories.memories:MemoryRepository.activate_candidate": {
-      "lines": 62,
-      "complexity": 5
     },
     "app.infrastructure.repositories.memories:MemoryRepository.create": {
       "lines": 96,
@@ -260,19 +384,23 @@
       "complexity": 10
     },
     "app.infrastructure.repositories.memory_consolidation:MemoryConsolidationRepository.claim": {
-      "lines": 56,
+      "lines": 54,
       "complexity": 12
     },
     "app.infrastructure.repositories.memory_consolidation:MemoryConsolidationRepository.create_job": {
-      "lines": 80,
+      "lines": 72,
       "complexity": 7
     },
+    "app.infrastructure.repositories.permissions:PermissionRepository.freeze_tool_catalog": {
+      "lines": 44,
+      "complexity": 14
+    },
     "app.infrastructure.repositories.permissions:_scope_is_subset": {
-      "lines": 36,
+      "lines": 32,
       "complexity": 13
     },
     "app.infrastructure.repositories.plans:PlanRepository.activate": {
-      "lines": 30,
+      "lines": 28,
       "complexity": 11
     },
     "app.infrastructure.repositories.plans:PlanRepository.create": {
@@ -288,7 +416,7 @@
       "complexity": 14
     },
     "app.infrastructure.repositories.plans:plan_to_view": {
-      "lines": 57,
+      "lines": 55,
       "complexity": 13
     },
     "app.infrastructure.repositories.run_memory_store:RunMemoryStore.create_memory": {
@@ -312,252 +440,136 @@
       "complexity": 11
     },
     "app.infrastructure.repositories.workspaces:validate_workspace_path": {
-      "lines": 25,
+      "lines": 19,
       "complexity": 13
     },
-    "app.application.run_management.recovery:RunExecutionRecovery.scan": {
-      "lines": 77,
-      "complexity": 10
-    },
-    "app.application.runner.concurrency:resource_claims_from_effect_plan": {
-      "lines": 29,
-      "complexity": 11
-    },
-    "app.application.runner.coordinator:PlanNodeWorker.run": {
-      "lines": 83,
-      "complexity": 6
-    },
-    "app.application.runner.coordinator:RunCoordinator._claim_contexts": {
-      "lines": 69,
-      "complexity": 8
-    },
-    "app.application.runner.coordinator:RunCoordinator._merge_result": {
-      "lines": 94,
-      "complexity": 7
-    },
-    "app.application.runner.coordinator:RunCoordinator.run": {
-      "lines": 63,
-      "complexity": 11
-    },
-    "app.application.runner.coordinator:_build_context": {
-      "lines": 48,
-      "complexity": 12
-    },
-    "app.application.runner.coordinator:_merge_run_state": {
-      "lines": 37,
-      "complexity": 11
-    },
-    "app.application.runner.coordinator:_validate_merge_context": {
-      "lines": 15,
-      "complexity": 11
-    },
-    "app.application.runner.engine:RunEngine._execute_agent_loop": {
-      "lines": 70,
-      "complexity": 9
-    },
-    "app.application.runner.engine:RunEngine._finalize_agent_loop": {
-      "lines": 82,
-      "complexity": 6
-    },
-    "app.application.runner.engine:RunEngine._prepare_trusted_run": {
-      "lines": 98,
-      "complexity": 12
-    },
-    "app.application.runner.node_worker:ReadOnlyAgentNodeExecutor.__call__": {
-      "lines": 83,
-      "complexity": 9
-    },
-    "app.application.run_management.events:RunEventBroker.publish_events": {
-      "lines": 34,
-      "complexity": 11
-    },
     "app.infrastructure.sandbox.profiles:RuntimeProfileService._execute_build": {
-      "lines": 99,
+      "lines": 84,
       "complexity": 14
     },
     "app.infrastructure.sandbox.profiles:RuntimeProfileService._prune_images": {
-      "lines": 33,
-      "complexity": 13
-    },
-    "app.infrastructure.sandbox.profiles:RuntimeProfileService._run_with_progress": {
-      "lines": 58,
-      "complexity": 11
+      "lines": 29,
+      "complexity": 12
     },
     "app.infrastructure.sandbox.runtime:SandboxJobService._execute_locked": {
-      "lines": 80,
+      "lines": 74,
       "complexity": 11
     },
-    "app.application.scheduling.dispatcher:ScheduledRunDispatcher._finalize": {
-      "lines": 31,
-      "complexity": 13
-    },
-    "app.application.scheduling.dispatcher:ScheduledRunDispatcher.dispatch": {
-      "lines": 92,
-      "complexity": 12
-    },
-    "app.application.scheduling.execution:ScheduledExecutionResolver._from_query": {
-      "lines": 36,
-      "complexity": 12
-    },
-    "app.application.subagents.budget:HierarchicalBudgetManager.reserve": {
-      "lines": 97,
-      "complexity": 14
-    },
-    "app.application.subagents.context:SubagentContextComposer.compose": {
-      "lines": 95,
-      "complexity": 12
-    },
-    "app.application.subagents.context:SubagentExchangeService.promote_verified_facts": {
-      "lines": 41,
-      "complexity": 11
-    },
-    "app.application.subagents.coordinator:AgentCoordinator.run_available": {
-      "lines": 81,
-      "complexity": 10
-    },
-    "app.application.subagents.executor:LocalAstraAgentExecutor._next_node": {
-      "lines": 21,
-      "complexity": 11
-    },
-    "app.application.subagents.executor:LocalAstraAgentExecutor._result_from_decision": {
-      "lines": 68,
+    "app.infrastructure.sandbox.runtime:SandboxJobService.execute": {
+      "lines": 65,
       "complexity": 7
     },
-    "app.application.subagents.executor:_evaluate_basic_completion": {
-      "lines": 31,
-      "complexity": 12
-    },
-    "app.application.subagents.fan_in:SubagentJoinService.evaluate": {
-      "lines": 55,
-      "complexity": 11
-    },
-    "app.application.subagents.governance:DelegationContractService.authorize_and_create": {
-      "lines": 86,
-      "complexity": 9
-    },
-    "app.application.subagents.lifecycle:SubagentCancellationService.cancel_tree": {
-      "lines": 61,
-      "complexity": 9
-    },
-    "app.application.subagents.runtime:SubagentRuntimeOperations.delegate_tasks": {
-      "lines": 88,
-      "complexity": 12
-    },
-    "app.application.subagents.supervisor:SubagentSupervisor.reconcile": {
-      "lines": 76,
-      "complexity": 11
-    },
-    "app.application.scheduling.command_parsing:parse_heartbeat_command": {
-      "lines": 64,
-      "complexity": 11
-    },
     "app.infrastructure.tools.bash:BashExecuteTool.run": {
-      "lines": 97,
+      "lines": 89,
       "complexity": 13
     },
     "app.infrastructure.tools.chart:ChartRenderTool.run": {
-      "lines": 99,
+      "lines": 95,
       "complexity": 11
     },
     "app.infrastructure.tools.chart:ChartRequest.validate_request": {
-      "lines": 19,
+      "lines": 14,
       "complexity": 14
     },
     "app.infrastructure.tools.selection:CapabilityToolResolver._satisfied_capabilities": {
-      "lines": 32,
+      "lines": 29,
       "complexity": 15
     },
-    "app.application.workspaces.runtime:WorkspaceRuntimeService._remove_new_protected_paths": {
-      "lines": 29,
+    "app.infrastructure.tools.workspace:WorkspaceListTool.run": {
+      "lines": 31,
+      "complexity": 14
+    },
+    "app.infrastructure.tools.workspace:WorkspaceSearchTool.run": {
+      "lines": 52,
+      "complexity": 15
+    },
+    "app.interfaces.api.memories:list_memories": {
+      "lines": 54,
+      "complexity": 14
+    },
+    "app.interfaces.api.memory_consolidation:_safe_profile_snapshot": {
+      "lines": 28,
+      "complexity": 13
+    },
+    "app.interfaces.api.models:probe_model_connection": {
+      "lines": 67,
+      "complexity": 9
+    },
+    "app.interfaces.api.permissions:permission_center": {
+      "lines": 63,
+      "complexity": 4
+    },
+    "app.interfaces.api.permissions:task_workspace_view": {
+      "lines": 75,
+      "complexity": 6
+    },
+    "app.interfaces.api.runs:_run_event_stream": {
+      "lines": 67,
+      "complexity": 15
+    },
+    "app.interfaces.api.skills:create_skill_test_run": {
+      "lines": 71,
+      "complexity": 6
+    },
+    "app.interfaces.api.skills:diff_skill": {
+      "lines": 42,
       "complexity": 11
     },
-    "app.application.workspaces.runtime:WorkspaceRuntimeService.scan": {
-      "lines": 56,
-      "complexity": 15
+    "app.interfaces.api.tools:_provider_view": {
+      "lines": 36,
+      "complexity": 13
     }
   },
   "forbidden_edges": [],
   "cyclic_pairs": [],
   "type_ignore_counts": {},
   "one_operation_classes": [
-    "app.domain.agent_profile.profile:AgentProfileLoader",
     "app.application.agent_runtime.policies.reasoning:AgentObservationEvaluator",
     "app.application.agent_runtime.policies.reasoning:AgentReasoningPolicyCompiler",
     "app.application.agent_runtime.policies.reasoning:AgentReflectionGate",
-    "app.application.agent_runtime.services.action_resolution:ActionResolutionStage",
-    "app.application.agent_runtime.services.approval:ApprovalRoutingStage",
-    "app.application.agent_runtime.services.authorization:PermissionAuthorizationStage",
-    "app.application.agent_runtime.services.completion:CompletionVerificationStage",
-    "app.application.agent_runtime.services.completion_gate:CompletionGateStage",
-    "app.application.agent_runtime.services.context:AgentContextAssembler",
-    "app.application.agent_runtime.services.context_memory:MemoryContextProjector",
-    "app.application.agent_runtime.services.control_decisions:ControlDecisionStage",
-    "app.application.agent_runtime.services.failure:ToolFailureStage",
-    "app.application.agent_runtime.services.finalization:AgentFinalizationStage",
-    "app.application.agent_runtime.services.invocation:ToolInvocationStage",
-    "app.application.agent_runtime.services.loop:AstraAgentLoop",
-    "app.application.agent_runtime.services.loop:AgentRunOrchestrator",
-    "app.application.agent_runtime.services.memory_candidates:MemoryCandidateWriter",
-    "app.application.agent_runtime.services.node_completion:NodeCompletionStage",
-    "app.application.agent_runtime.services.observation:ObservationNormalizationStage",
-    "app.application.agent_runtime.services.root_decision:RootDecisionStage",
-    "app.application.agent_runtime.services.root_iteration:RootAgentIterationStage",
-    "app.application.agent_runtime.services.runtime_builder:AgentRuntimeBuilder",
-    "app.application.agent_runtime.services.runtime_builder:RootPermissionRuntime",
-    "app.application.agent_runtime.services.runtime_composition:RootRuntimeComposer",
-    "app.application.agent_runtime.services.skill_actions:SkillActionStage",
-    "app.application.agent_runtime.services.tool_action:RootToolActionStage",
-    "app.application.agent_runtime.services.turn_preparation:RootTurnPreparationStage",
-    "app.application.workspaces.artifacts:ArtifactService",
+    "app.application.context_compaction.conversation:SemanticConversationCompactor",
     "app.application.context_compaction.service:AgentContextCompactionService",
     "app.application.context_compaction.tool_outputs:ToolOutputGovernanceService",
-    "app.application.context_compaction.conversation:SemanticConversationCompactor",
-    "app.application.run_management.conversation_lifecycle:ConversationLifecycleService",
-    "app.application.workspaces.deliverables:DeliverableCatalog",
-    "app.domain.evolution:SafetyMetricResult",
     "app.application.memory.consolidation.service:AutoDreamProcessor",
-    "app.infrastructure.model_clients.normalization.streaming:StreamingJsonFieldExtractor",
-    "app.infrastructure.model_clients.transports.anthropic:AnthropicTransport",
-    "app.infrastructure.model_clients.transports.openai:OpenAIChatTransport",
     "app.application.permissions.effects:BashEffectAnalyzer",
     "app.application.permissions.effects:ChartEffectAnalyzer",
     "app.application.permissions.effects:DefaultEffectAnalyzer",
-    "app.application.permissions.effects:WebEffectAnalyzer",
-    "app.application.permissions.governance:PermissionBundleEvaluator",
     "app.application.permissions.invocation:InvocationAuthorizationMixin",
+    "app.application.planning.coordinator:PlanNodeWorker",
+    "app.application.planning.node_worker:ReadOnlyAgentNodeExecutor",
     "app.application.planning.service:PlanValidator",
-    "app.infrastructure.plugins.builtin_components:BashResultProcessor",
-    "app.infrastructure.plugins.builtin_components:ChartArtifactValidator",
-    "app.infrastructure.plugins.builtin_components:ChartResultProcessor",
-    "app.infrastructure.plugins.builtin_components:WebEvidenceValidator",
-    "app.infrastructure.plugins.builtin_components:WebResultProcessor",
-    "app.infrastructure.plugins.discovery:BuiltinDiscoverySource",
-    "app.infrastructure.plugins.discovery:IsolatedDescriptorDiscoverySource",
-    "app.infrastructure.plugins.discovery:ManagedPackageDiscoverySource",
-    "app.infrastructure.repositories.run_cancellation_store:RunCancellationStore",
-    "app.application.run_management.creation:RunCreator",
-    "app.application.run_management.recovery:RunExecutionRecovery",
-    "app.application.runner.coordinator:PlanNodeWorker",
-    "app.application.runner.engine:RunEngine",
-    "app.application.runner.model_thinking_stream:ModelThinkingEventWriter",
-    "app.application.runner.node_worker:ReadOnlyAgentNodeExecutor",
-    "app.infrastructure.sandbox.runtime:SandboxJobService",
-    "app.infrastructure.sandbox.runtime:SandboxSupervisor",
+    "app.application.run_management.execution.service:RunExecution",
     "app.application.scheduling.dispatcher:ScheduledRunDispatcher",
     "app.application.subagents.context:SubagentContextComposer",
     "app.application.subagents.coordinator:HierarchicalSemaphoreRegistry",
     "app.application.subagents.executor:LocalAstraAgentExecutor",
-    "app.application.subagents.fan_in:SubagentResultValidator",
     "app.application.subagents.invocation:ChildToolInvocationStage",
     "app.application.subagents.lifecycle:SubagentCancellationService",
-    "app.application.subagents.observability:SubagentTelemetryRepository",
     "app.application.subagents.recovery:SubagentExecutionRecovery",
     "app.application.subagents.run_loop:ChildAgentRun",
     "app.application.subagents.scope:DelegationScopeAttenuator",
+    "app.application.workspaces.artifacts:ArtifactService",
+    "app.domain.agent_profile.profile:AgentProfileLoader",
+    "app.domain.evolution:SafetyMetricResult",
+    "app.infrastructure.model_clients.normalization.streaming:StreamingJsonFieldExtractor",
+    "app.infrastructure.plugins.builtin_components:BashResultProcessor",
+    "app.infrastructure.plugins.builtin_components:ChartArtifactValidator",
+    "app.infrastructure.plugins.builtin_components:ChartResultProcessor",
+    "app.infrastructure.plugins.discovery:BuiltinDiscoverySource",
+    "app.infrastructure.plugins.discovery:IsolatedDescriptorDiscoverySource",
+    "app.infrastructure.plugins.discovery:ManagedPackageDiscoverySource",
+    "app.infrastructure.repositories.run_cancellation_store:RunCancellationStore",
+    "app.infrastructure.sandbox.runtime:SandboxJobService",
     "app.infrastructure.tools.bash:BashExecuteTool",
     "app.infrastructure.tools.chart:ChartRenderTool",
+    "app.infrastructure.tools.memory:ForgetTool",
+    "app.infrastructure.tools.memory:RememberTool",
     "app.infrastructure.tools.runtime:SwarmTool",
-    "app.infrastructure.tools.selection:CapabilityToolResolver"
+    "app.infrastructure.tools.workspace:WorkspaceEditTool",
+    "app.infrastructure.tools.workspace:WorkspaceListTool",
+    "app.infrastructure.tools.workspace:WorkspaceReadTool",
+    "app.infrastructure.tools.workspace:WorkspaceSearchTool",
+    "app.infrastructure.tools.workspace:WorkspaceWriteTool"
   ],
   "compatibility_symbols": []
 }

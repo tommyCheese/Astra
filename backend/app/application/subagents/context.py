@@ -5,7 +5,7 @@ import hmac
 import json
 from collections.abc import Callable
 from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import PurePosixPath
 from typing import Any
@@ -57,10 +57,10 @@ class ComposedSubagentContext:
     gaps: tuple[SubagentContextGap, ...] = ()
 
 
+@dataclass
 class _ContextCollector:
-    def __init__(self):
-        self.items: list[SubagentContextItem] = []
-        self.gaps: list[SubagentContextGap] = []
+    items: list[SubagentContextItem] = field(default_factory=list)
+    gaps: list[SubagentContextGap] = field(default_factory=list)
 
     def add(
         self,
@@ -81,9 +81,7 @@ class _ContextCollector:
                 else json.dumps(content, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
             )
         payload = rendered if rendered is not None else ref or ""
-        item_hash = stable_digest(
-            {"kind": kind, "ref": ref, "content": rendered, "summary": summary}
-        )
+        item_hash = stable_digest({"kind": kind, "ref": ref, "content": rendered, "summary": summary})
         self.items.append(
             SubagentContextItem(
                 id=f"ctx_{item_hash.removeprefix('sha256:')[:24]}",
@@ -195,9 +193,7 @@ class SubagentContextComposer:
                 content=layer,
                 provenance={"source": "effective_profile", "ordinal": index},
             )
-        self._add_delegated_inputs(
-            collector, contract, effective_scope, selected_facts, purpose, permission_check
-        )
+        self._add_delegated_inputs(collector, contract, effective_scope, selected_facts, purpose, permission_check)
         add(
             kind="catalog",
             summary="Attenuated immutable AstraTool and Skill Catalog references.",
@@ -246,15 +242,11 @@ class SubagentContextComposer:
             gaps=tuple(collector.gaps),
         )
 
-    def _add_delegated_inputs(
-        self, collector, contract, effective_scope, selected_facts, purpose, permission_check
-    ) -> None:
+    def _add_delegated_inputs(self, collector, contract, effective_scope, selected_facts, purpose, permission_check) -> None:
         for delegated_input in contract.request.inputs:
             labels = tuple(delegated_input.data_labels)
             purposes = tuple(delegated_input.allowed_purposes)
-            denial = _input_denial(
-                delegated_input, labels, purposes, purpose, effective_scope, permission_check
-            )
+            denial = _input_denial(delegated_input, labels, purposes, purpose, effective_scope, permission_check)
             if denial:
                 collector.gaps.append(denial)
                 continue
@@ -517,11 +509,7 @@ class SubagentExchangeService:
         child = await self._child(child_execution_id)
         if parent is None or child.parent_execution_id != parent.id:
             raise ValueError("Fact promotion must follow direct Agent lineage")
-        verified = [
-            deepcopy(item)
-            for item in facts
-            if item.get("verified") is True and item.get("evidence_refs")
-        ]
+        verified = [deepcopy(item) for item in facts if item.get("verified") is True and item.get("evidence_refs")]
         if len(verified) != len(facts):
             raise ValueError("Only verified child facts with Evidence can be promoted")
         checkpoint = deepcopy(parent.checkpoint or {})
@@ -556,10 +544,7 @@ class SubagentExchangeService:
 
 def _contains_forbidden(value: Any) -> bool:
     if isinstance(value, dict):
-        return any(
-            str(key).lower() in FORBIDDEN_CONTEXT_KEYS or _contains_forbidden(item)
-            for key, item in value.items()
-        )
+        return any(str(key).lower() in FORBIDDEN_CONTEXT_KEYS or _contains_forbidden(item) for key, item in value.items())
     if isinstance(value, (list, tuple)):
         return any(_contains_forbidden(item) for item in value)
     return False
@@ -568,9 +553,7 @@ def _contains_forbidden(value: Any) -> bool:
 def _patterns_cover(children: tuple[str, ...], parents: tuple[str, ...]) -> bool:
     from fnmatch import fnmatchcase
 
-    return bool(parents) and all(
-        any(parent == "*" or fnmatchcase(child, parent) for parent in parents) for child in children
-    )
+    return bool(parents) and all(any(parent == "*" or fnmatchcase(child, parent) for parent in parents) for child in children)
 
 
 def _safe_relative_path(value: str) -> str:

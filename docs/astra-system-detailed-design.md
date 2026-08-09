@@ -170,7 +170,7 @@ TaskRecord（产品上的 Conversation）
 4. 对无人值守请求强制校验签名 Permission Bundle；
 5. 冻结 Agent Profile 快照；
 6. 创建 Task/Run 及初始事件；
-7. 提交事务后使用进程内异步任务调度 `RunEngine`。
+7. 提交事务后由 `run_management` dispatcher 启动 `RunExecution`。
 
 精简后的真实代码形态：
 
@@ -189,9 +189,10 @@ _schedule_run(run.id, run_settings)
 
 这里的后台任务是单进程实现，适合当前本地产品形态；它不是分布式队列。
 
-### 6.2 RunEngine 选择执行路径
+### 6.2 一个 Runtime 组装两套策略
 
-`RunEngine._run_with_repo()` 根据不可变 Profile 选择两条固定路径：
+`RunExecution` 根据不可变 Profile 冻结 standard 或 trusted composition；两者随后进入同一个
+`agent_runtime.loop.run_loop`，不再选择两套 controller：
 
 - `standard`：直接进入 AgentLoop 快速路径，不创建 TaskContract、AgentState 或 Plan；
 - `trusted`：在首次外部行动前构建、验证并持久化完整 DAG；
@@ -224,7 +225,8 @@ effect analysis + permission decision
              completion gate + verification
 ```
 
-模型输出只是 `Decision`。`LoopOrchestrator`、`ObservationEvaluator`、`ReflectionGate` 和 `CompletionGate` 确保节点顺序与预算约束由 Runtime 掌握。
+模型输出先转换一次为 canonical `ModelDecision`。固定 Loop、typed capability、progress policy 和
+completion policy 确保节点顺序与预算约束由 Runtime 掌握。
 
 ### 6.4 终态
 

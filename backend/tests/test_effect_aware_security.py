@@ -44,9 +44,7 @@ from app.infrastructure.tools.chart import ChartRenderTool
 
 
 def bash_plan(command: str):
-    return BashEffectAnalyzer().analyze(
-        BashExecuteTool.spec, {"command": command}, task_id="task-1"
-    )
+    return BashEffectAnalyzer().analyze(BashExecuteTool.spec, {"command": command}, task_id="task-1")
 
 
 def test_effect_matrix_classifies_safe_mutating_forbidden_and_artifact_actions():
@@ -331,21 +329,18 @@ def test_unattended_permission_bundle_fails_closed_and_enforces_identity_budget(
         False,
         "permission_bundle_required",
     )
-    assert (
-        evaluator.validate(bundle, plan, tool_identity=allowed_identity, unattended=True)[0] is True
+    assert evaluator.validate(bundle, plan, tool_identity=allowed_identity, unattended=True)[0] is True
+    assert evaluator.validate(bundle, plan, tool_identity=allowed_identity, unattended=True, tool_call_count=1) == (
+        False,
+        "permission_bundle_budget_exhausted",
     )
-    assert evaluator.validate(
-        bundle, plan, tool_identity=allowed_identity, unattended=True, tool_call_count=1
-    ) == (False, "permission_bundle_budget_exhausted")
     tampered = bundle.model_copy(update={"allowed_resources": ["*"]})
     assert evaluator.validate(tampered, plan, tool_identity=allowed_identity, unattended=True) == (
         False,
         "permission_bundle_signature_invalid",
     )
     runtime_limited = bundle.model_copy(update={"max_runtime_seconds": 1, "digest": "pending"})
-    runtime_limited = runtime_limited.model_copy(
-        update={"digest": permission_bundle_digest(runtime_limited, secret)}
-    )
+    runtime_limited = runtime_limited.model_copy(update={"digest": permission_bundle_digest(runtime_limited, secret)})
     assert evaluator.validate(
         runtime_limited,
         plan,
@@ -370,9 +365,7 @@ async def test_delegation_attenuation_and_self_approval_are_rejected(session):
             }
         },
     )
-    child = await permissions.create_identity(
-        identity_type="subagent", principal="child", run_id=run.id
-    )
+    child = await permissions.create_identity(identity_type="subagent", principal="child", run_id=run.id)
     with pytest.raises(ValueError, match="amplify"):
         await permissions.create_delegation(
             parent_identity_id=parent.id,
@@ -384,9 +377,7 @@ async def test_delegation_attenuation_and_self_approval_are_rejected(session):
             },
         )
     repository = RunUnitOfWork(session)
-    turn = await repository.create_agent_turn(
-        run.id, 1, "call_tool", "write", selected_tool="file_write", phase="prepared"
-    )
+    turn = await repository.create_agent_turn(run.id, 1, "call_tool", "write", selected_tool="file_write", phase="prepared")
     call = await repository.start_tool_call(
         run.id,
         None,
@@ -412,9 +403,7 @@ async def test_delegation_attenuation_and_self_approval_are_rejected(session):
             similar_matcher=None,
         )
     )
-    waiting = await repository.set_waiting_state(
-        run.id, {"approval_id": approval.id, "tool_call_id": call.id}
-    )
+    waiting = await repository.set_waiting_state(run.id, {"approval_id": approval.id, "tool_call_id": call.id})
     with pytest.raises(ValueError, match="cannot approve"):
         await repository.decide_approval(
             run.id,
@@ -430,9 +419,7 @@ async def test_task_grant_crosses_runs_but_never_crosses_tasks(session):
     first = await repository.create_task_run("Task grant", {})
     second = await repository.create_task_run("Same task", {}, task_id=first.task_id)
     other = await repository.create_task_run("Other task", {})
-    turn = await repository.create_agent_turn(
-        first.id, 1, "call_tool", "write", selected_tool="file_write", phase="prepared"
-    )
+    turn = await repository.create_agent_turn(first.id, 1, "call_tool", "write", selected_tool="file_write", phase="prepared")
     call = await repository.start_tool_call(
         first.id,
         None,
@@ -470,9 +457,7 @@ async def test_task_grant_crosses_runs_but_never_crosses_tasks(session):
             },
         )
     )
-    waiting = await repository.set_waiting_state(
-        first.id, {"approval_id": approval.id, "tool_call_id": call.id}
-    )
+    waiting = await repository.set_waiting_state(first.id, {"approval_id": approval.id, "tool_call_id": call.id})
     await repository.decide_approval(
         first.id,
         approval.id,
@@ -497,12 +482,7 @@ def test_extension_allowlist_detects_provider_and_supply_chain_drift():
         provider_digest="sha256:one",
         trust_level="managed",
     ).model_dump(mode="json")
-    assert (
-        policy.validate_catalog_entry(entry, allowed_providers={"plugin.example": {"sha256:one"}})[
-            0
-        ]
-        is True
-    )
+    assert policy.validate_catalog_entry(entry, allowed_providers={"plugin.example": {"sha256:one"}})[0] is True
     assert policy.validate_catalog_entry(
         {**entry, "provider_digest": "sha256:changed"},
         allowed_providers={"plugin.example": {"sha256:one"}},
@@ -525,9 +505,7 @@ def test_extension_allowlist_detects_provider_and_supply_chain_drift():
     assert "permissions" not in inventory[0]
 
 
-async def test_workspace_security_rejects_links_archives_and_enforces_checkpoints(
-    session, tmp_path
-):
+async def test_workspace_security_rejects_links_archives_and_enforces_checkpoints(session, tmp_path):
     run = await RunUnitOfWork(session).create_task_run("Workspace security", {})
     runtime = WorkspaceRuntimeService(
         WorkspaceRepository(session),

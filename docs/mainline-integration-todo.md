@@ -65,17 +65,17 @@
 
 - 新 standard Run 使用 `fast-v1`，trusted Run 使用 `trusted-v1`。
 - 旧 standard runtime、兼容读取与回滚开关已删除。
-- `application/fast_agent_runtime`、`application/agent_runtime`、`application/runner` 和 `application/run_management` 共同承担运行编排。
-- standard 与 trusted 仅分别进入 `fast-v1` 和 `trusted-v1`。
-- 主规格仍要求 standard/trusted 使用同一个 Agent Loop，并明确不得维护第二套 Agent runtime；这与当前独立 Fast Runtime 的实现和运维文档不一致。
+- standard 与 trusted 已进入同一个 canonical `run_loop`；差异由冻结的 typed composition/capability 表达。
+- `application/fast_agent_runtime` 与 `application/runner` 已删除；DAG 归 `planning`，Run 生命周期归 `run_management`。
+- `fast-v1` 只作为既有持久化/API 身份映射到内部 `standard-v1`，不再选择独立控制器。
 
 **TODO**
 
-- [ ] 以真实调用图列出新建、续跑、审批恢复、调度恢复和历史 Run 分别进入哪个 Runtime。
-- [ ] 决定规范事实：共享一个执行内核，还是正式承认两套 Runtime；不得继续让规格和代码各自正确。
-- [ ] 若保留双 Runtime，抽取唯一的 Tool/permission/sandbox/artifact/cancellation 执行管线，并用契约测试证明语义一致。
+- [x] 以真实调用图列出新建、续跑、审批恢复、调度恢复和历史 Run 分别进入哪个 Runtime。
+- [x] 采用“一个 Runtime + standard/trusted 两套 composition policy”，规范与生产调用链一致。
+- [x] Tool/permission/sandbox/artifact/cancellation 通过同一个 mandatory action port 与 canonical observation contract。
 - [x] 清空历史对话后删除旧 standard 分支、配置和投影，结束三轨运行。
-- [ ] 为 mode × approval × recovery × cancellation × memory × skill 建立配对行为矩阵。
+- [x] 为 mode × approval × recovery × cancellation × memory × skill 建立配对行为矩阵。
 
 **完成条件**
 
@@ -394,7 +394,7 @@
 - [`docs/agent-graph-evolution-roadmap.md`](agent-graph-evolution-roadmap.md)
 - [`docs/deep-memory-autodream-evolution.md`](deep-memory-autodream-evolution.md)
 - [`docs/tool-provider-plugins.md`](tool-provider-plugins.md)
-- [`docs/fast-agent-runtime.md`](fast-agent-runtime.md)
+- [`docs/agent-runtime.md`](agent-runtime.md)
 - [`openspec/changes/align-agent-context-compaction/tasks.md`](../openspec/changes/align-agent-context-compaction/tasks.md)
 - [`openspec/changes/add-parallel-dag-execution/tasks.md`](../openspec/changes/add-parallel-dag-execution/tasks.md)
 - [`openspec/changes/add-trusted-execution-graph-workbench/tasks.md`](../openspec/changes/add-trusted-execution-graph-workbench/tasks.md)

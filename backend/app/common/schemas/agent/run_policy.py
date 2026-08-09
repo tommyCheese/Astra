@@ -124,32 +124,6 @@ class FastRuntimePolicy(BaseModel):
     memory_recall_enabled: bool = False
 
 
-class FastPendingAction(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    action_id: str = Field(min_length=1, max_length=120)
-    kind: Literal["model", "tool", "approval"]
-    idempotency_key: str | None = Field(default=None, max_length=240)
-    phase: Literal["decided", "prepared", "executing", "waiting"] = "decided"
-    tool_name: str | None = Field(default=None, max_length=120)
-    tool_input: dict[str, Any] = Field(default_factory=dict)
-    idempotent: bool | None = None
-
-
-class FastRuntimeSnapshot(BaseModel):
-    """Durable state for Fast Runtime; deliberately excludes trusted lifecycle state."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    protocol_version: Literal[1] = 1
-    snapshot_version: int = Field(default=0, ge=0)
-    turn_index: int = Field(default=0, ge=0)
-    messages: list[dict[str, Any]] = Field(default_factory=list, max_length=400)
-    recent_observations: list[dict[str, Any]] = Field(default_factory=list, max_length=100)
-    pending_action: FastPendingAction | None = None
-    terminal_intent: Literal["answer", "ask_user", "stop"] | None = None
-
-
 class RunExecutionProfile(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

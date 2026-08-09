@@ -1,4 +1,5 @@
 from collections import defaultdict
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
@@ -79,9 +80,9 @@ def _usage_trend(invocations, tools):
     return days
 
 
+@dataclass
 class UsageRepository:
-    def __init__(self, session: AsyncSession):
-        self.session = session
+    session: AsyncSession
 
     async def create_invocation(
         self,
@@ -206,9 +207,7 @@ class UsageRepository:
 def normalize_usage(usage: dict[str, Any] | None) -> dict[str, int | None]:
     usage = usage or {}
     prompt_details = usage.get("prompt_tokens_details") or usage.get("input_tokens_details") or {}
-    completion_details = (
-        usage.get("completion_tokens_details") or usage.get("output_tokens_details") or {}
-    )
+    completion_details = usage.get("completion_tokens_details") or usage.get("output_tokens_details") or {}
     input_tokens = usage.get("prompt_tokens", usage.get("input_tokens"))
     output_tokens = usage.get("completion_tokens", usage.get("output_tokens"))
     cached = prompt_details.get("cached_tokens")

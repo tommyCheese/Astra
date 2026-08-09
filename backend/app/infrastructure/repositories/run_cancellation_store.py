@@ -25,11 +25,7 @@ class RunCancellationStore:
             return run
         now = utc_now()
         summary, terminal_reason = self._cancellation_summary(run)
-        cancelled_executions = [
-            execution
-            for execution in run.node_executions
-            if execution.status in {"active", "waiting"}
-        ]
+        cancelled_executions = [execution for execution in run.node_executions if execution.status in {"active", "waiting"}]
         await self._cancel_turns_and_tools(run_id, now)
         await self._cancel_execution_resources(run_id, now)
         self._mark_run_cancelled(run, summary, terminal_reason, now)
@@ -177,9 +173,7 @@ class RunCancellationStore:
             update(AgentExecutionRecord)
             .where(
                 AgentExecutionRecord.run_id == run_id,
-                AgentExecutionRecord.status.not_in(
-                    ["completed", "completed_with_warnings", "blocked", "failed", "cancelled"]
-                ),
+                AgentExecutionRecord.status.not_in(["completed", "completed_with_warnings", "blocked", "failed", "cancelled"]),
             )
             .values(
                 status="cancelled",

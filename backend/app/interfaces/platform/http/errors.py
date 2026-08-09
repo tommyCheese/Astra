@@ -57,11 +57,7 @@ async def database_error_handler(_: Request, error: SQLAlchemyError) -> JSONResp
 async def unknown_error_handler(_: Request, error: Exception) -> JSONResponse:
     logger.exception("request.unhandled cause=%s", type(error).__name__)
     error_payload = run_error_from_exception(error)
-    status_code = (
-        503
-        if error_payload["type"].startswith(("infrastructure.", "configuration.", "dependency."))
-        else 500
-    )
+    status_code = 503 if error_payload["type"].startswith(("infrastructure.", "configuration.", "dependency.")) else 500
     return JSONResponse(
         status_code=status_code,
         content=AstraApiErrorEnvelope(error=error_payload).model_dump(mode="json"),

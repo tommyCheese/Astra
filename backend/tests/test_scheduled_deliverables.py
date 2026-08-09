@@ -102,9 +102,7 @@ async def test_generated_workspace_file_becomes_a_file_deliverable(session):
 
     assert generated.title == "daily.txt"
     assert generated.summary == "reports/daily.txt"
-    assert generated.content_url == (
-        f"/api/tasks/{task.id}/workspace/files/{file.id}/content"
-    )
+    assert generated.content_url == (f"/api/tasks/{task.id}/workspace/files/{file.id}/content")
 
 
 @pytest.mark.asyncio
@@ -249,9 +247,10 @@ async def test_library_and_schedule_share_immutable_workspace_deliverables(sessi
         )
     )
     assert first_snapshot is not None
-    assert LocalArtifactStore(str(artifact_root)).resolve(
-        first_snapshot.storage_key
-    ).read_text(encoding="utf-8") == "first version"
+    assert (
+        LocalArtifactStore(str(artifact_root)).resolve(first_snapshot.storage_key).read_text(encoding="utf-8")
+        == "first version"
+    )
 
     scheduled = await list_schedule_deliverables(job.id, 100, session)
     library = await library_deliverables(500, session)
@@ -261,6 +260,4 @@ async def test_library_and_schedule_share_immutable_workspace_deliverables(sessi
     assert all(library_by_id[item_id] == item for item_id, item in scheduled_by_id.items())
     snapshot_item = scheduled_by_id[f"artifact:{first_snapshot.id}"]
     assert snapshot_item["metadata"]["source"] == "workspace"
-    assert snapshot_item["content_url"] == (
-        f"/api/deliverables/artifacts/{first_snapshot.id}/content"
-    )
+    assert snapshot_item["content_url"] == (f"/api/deliverables/artifacts/{first_snapshot.id}/content")

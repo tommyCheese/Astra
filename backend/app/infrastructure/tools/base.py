@@ -97,9 +97,7 @@ def validate_tool_result(output: dict[str, Any], spec: AstraToolSpec) -> ToolRes
         if envelope.status == "succeeded":
             validate_json_schema(envelope.data, spec.output_schema, path="data")
     except (TypeError, ValueError, ValidationError) as exc:
-        raise ToolExecutionError(
-            "invalid_result", f"AstraTool returned an invalid result for {spec.name}"
-        ) from exc
+        raise ToolExecutionError("invalid_result", f"AstraTool returned an invalid result for {spec.name}") from exc
     return envelope
 
 
@@ -235,11 +233,7 @@ async def materialize_skill_inputs(
     context: ToolExecutionContext | None,
     input_dir: Path,
 ) -> list[dict[str, str]]:
-    if (
-        context is None
-        or not context.skill_bindings
-        or context.skill_input_provider is None
-    ):
+    if context is None or not context.skill_bindings or context.skill_input_provider is None:
         return []
     return await context.skill_input_provider.materialize_inputs(
         context.run_id,
@@ -252,9 +246,7 @@ class AstraTool(ABC):
     spec: AstraToolSpec
 
     @abstractmethod
-    async def run(
-        self, tool_input: dict[str, Any], *, context: ToolExecutionContext | None = None
-    ) -> dict[str, Any]:
+    async def run(self, tool_input: dict[str, Any], *, context: ToolExecutionContext | None = None) -> dict[str, Any]:
         raise NotImplementedError
 
 

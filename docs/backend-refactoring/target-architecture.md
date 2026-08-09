@@ -23,12 +23,12 @@
 | --- | --- | --- | --- |
 | 应用启动 | `app.infrastructure.bootstrap.application:create_application` | 组合依赖、路由、middleware、生命周期 | 业务规则、持久化查询 |
 | HTTP 平台 | `app.interfaces.platform.http` | trace、本机访问、错误映射、请求日志 | 用例编排 |
-| Run 管理 | `app.application.run_management.application:RunApplicationService` | 创建、派发、恢复、审批决定、取消 | Agent 阶段实现、HTTP 映射 |
-| Agent runtime | `app.application.agent_runtime.services.loop:AgentLoop` | `models` 共享对象、`policies` 纯决策、`services` 阶段与用例编排 | provider 细节、跨用例提交 |
-| Planning | `app.application.planning.service:PlanService` | Plan 校验、变更、revision 与 ready-node 调度 | Agent iteration、HTTP 映射 |
+| Run 管理 | `app.application.run_management.lifecycle.service:RunApplicationService` | 创建、派发、恢复入口、审批决定、取消、公开终态与事件 | Agent 决策、HTTP 映射 |
+| Agent runtime | `app.application.agent_runtime.loop:run_loop` | 固定 Loop、canonical contracts、typed capability composition、mandatory action boundary | provider、ORM、Planning、控制面管理 |
+| Planning | `app.application.planning` | Plan 校验/变更、ready-node 调度、租约、心跳、fan-in 与节点生命周期 | 第二套 Agent loop、HTTP 映射 |
 | Model clients | `app.infrastructure.model_clients` | provider transport、thinking 能力、请求映射与响应归一化 | Run 生命周期、权限决策 |
 | Run 持久化 | `app.infrastructure.repositories.run_unit_of_work:RunUnitOfWork` | 组合窄 store、显式 commit/rollback | 自动提交、公共 read-model 拼装 |
-| Run 查询 | `app.infrastructure.repositories.run_view_projection:RunViewProjector` | ORM 到 typed public projection | 修改 ORM、触发事务提交 |
+| Run 查询 | `app.infrastructure.repositories.run_view_projection:run_view` | ORM 直接到 typed public projection | 修改 ORM、触发事务提交、引入 projector wrapper |
 | 权限 | `app.application.permissions` | effect analysis、allow/ask/deny、grant 与 credential scope | 工具执行 |
 | Subagent | `app.application.subagents.supervisor:SubagentSupervisor` | 委派、谱系、预算、权限衰减、join/cancel | facade 转发层、反向依赖 root runner 实现 |
 | Workspace / Artifact | `app.application.workspaces` / `app.application.workspaces.artifacts` | 受控可变工作区 / 不可变交付物 | 互相替代概念 |
@@ -41,10 +41,11 @@ flowchart LR
     HTTP["HTTP / command / schedule"] --> Service["RunApplicationService"]
     Service --> UoW["RunUnitOfWork + narrow stores"]
     Service --> Dispatcher["RunDispatcher"]
-    Dispatcher --> Engine["RunEngine"]
-    Engine --> Runtime["AgentRunOrchestrator"]
-    Runtime --> Stages["typed stages"]
-    Stages --> Ports["model / tool / permission / workspace ports"]
+    Dispatcher --> RuntimeEntry["run_management.execution"]
+    RuntimeEntry --> Composition["standard / trusted composition"]
+    Composition --> Loop["one canonical run_loop"]
+    Loop --> Ports["model / state / action / cancellation / event ports"]
+    Loop --> Capabilities["typed context / policy / lifecycle capabilities"]
     UoW --> DB[(Database)]
 ```
 
@@ -54,10 +55,10 @@ flowchart LR
 
 ## Agent 阶段与 outcome
 
-一次迭代依次经过：恢复与加载、上下文组装、模型决策、action resolution、effect
-analysis、authorization、invocation、observation/evidence、progress/reflection、完成
-校验与终态收敛。阶段只返回 `continue`、`wait`、`complete`、`blocked` 或 `failed`
-之一；orchestrator 是 outcome 路由的唯一所有者。阶段不得自行启动后台 Run，也不得
+一次迭代固定经过：加载/恢复、上下文 contribution、模型决策、decision policy、mandatory
+action、observation processor、progress/completion policy 与终态收敛。Loop 只返回
+`continue`、`waiting`、`completed`、`blocked`、`failed` 或 `cancelled`；`run_loop` 是
+outcome 路由的唯一所有者。capability 不得自行启动后台 Run，也不得
 将 HTTP response、provider payload 或裸 ORM 字典作为相邻阶段契约。
 
 ## 事务与副作用边界
@@ -74,7 +75,8 @@ analysis、authorization、invocation、observation/evidence、progress/reflecti
 
 ## 组合根
 
-`ApplicationContainer` 是运行期依赖的类型化来源。application factory 构造 container、
+`ApplicationContainer` 是进程级依赖的类型化来源；`runtime_dependencies` 独立拥有模型 HTTP
+client 与 immutable Tool registry 生命周期。application factory 构造 container、
 注册 router/middleware，lifecycle coordinator 按依赖顺序启动并逆序关闭资源。业务模块
 不得读取任意 `app.state` 字段；HTTP dependency 只暴露所需的类型化 service。测试通过
 同一 factory 覆盖 container 端口，不复制生产组装逻辑。
@@ -96,3 +98,7 @@ analysis、authorization、invocation、observation/evidence、progress/reflecti
 结构迁移基线；当前上限为 61,478 行、302 个
 模块、764 个类、2,470 个函数/方法和 1,205 个公共 symbol。后续重构或新增能力不得通过
 修改预算掩盖净增长。
+
+最终收敛结果为 61,167 行、302 个模块、764 个类、2,461 个函数/方法和 1,190 个公共 symbol；
+五项指标均低于重构前基线。架构检查还禁止 Runtime mirror suffix chain、通用 `Mapper`/`Projector`
+包装类，以及 canonical Loop 类型回流到 `common.schemas`。

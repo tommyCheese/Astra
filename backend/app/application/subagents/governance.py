@@ -235,9 +235,7 @@ class DelegationContractService:
         skill_snapshot = None
         if resolved_run_id is not None:
             skill_snapshot = await self.session.scalar(
-                select(RunSkillSnapshotRecord).where(
-                    RunSkillSnapshotRecord.run_id == resolved_run_id
-                )
+                select(RunSkillSnapshotRecord).where(RunSkillSnapshotRecord.run_id == resolved_run_id)
             )
         skills = self._attenuated_skills(request, scope, allowed_tools, skill_snapshot)
         tools.sort(key=lambda item: (str(item.get("name")), str(item.get("version"))))
@@ -294,15 +292,12 @@ class DelegationContractService:
         return await self._catalog_from_snapshots(request, scope, tool_snapshot, run_id=run_id)
 
     @staticmethod
-    def require_skill_activation(
-        catalog: FrozenChildCatalog, identity: str, revision_id: str
-    ) -> dict[str, Any]:
+    def require_skill_activation(catalog: FrozenChildCatalog, identity: str, revision_id: str) -> dict[str, Any]:
         entry = next(
             (
                 item
                 for item in catalog.skills
-                if item.get("qualified_identity") == identity
-                and item.get("revision_id") == revision_id
+                if item.get("qualified_identity") == identity and item.get("revision_id") == revision_id
             ),
             None,
         )
@@ -341,9 +336,7 @@ class DelegationContractService:
             "max_children": (requested.max_children, limits.max_children_per_parent),
         }
         exceeded = {
-            key: {"requested": value, "maximum": maximum}
-            for key, (value, maximum) in comparisons.items()
-            if value > maximum
+            key: {"requested": value, "maximum": maximum} for key, (value, maximum) in comparisons.items() if value > maximum
         }
         if exceeded:
             raise DelegationAuthorizationError(
@@ -401,17 +394,12 @@ class DelegationContractService:
     def _tool_is_side_effecting(item: dict[str, Any]) -> bool:
         if str(item.get("side_effect_level", "none")).lower() not in {"none", "read", "read_only"}:
             return True
-        return any(
-            DelegationScopeAttenuator._is_write(str(permission))
-            for permission in item.get("permissions", [])
-        )
+        return any(DelegationScopeAttenuator._is_write(str(permission)) for permission in item.get("permissions", []))
 
     @staticmethod
     def _skill_tools_are_attenuated(item: dict[str, Any], tools: set[str]) -> bool:
         return all(
-            any(fnmatchcase(tool, pattern) for tool in tools)
-            for pattern in item.get("requested_tool_patterns", [])
-            if pattern
+            any(fnmatchcase(tool, pattern) for tool in tools) for pattern in item.get("requested_tool_patterns", []) if pattern
         )
 
 
@@ -473,9 +461,7 @@ class ChildInvocationAuthorizer:
         )
 
     @staticmethod
-    def validate_reviewer(
-        *, reviewer_identity_id: str, executor_context: DelegatedExecutionContext
-    ) -> None:
+    def validate_reviewer(*, reviewer_identity_id: str, executor_context: DelegatedExecutionContext) -> None:
         if reviewer_identity_id in executor_context.delegation_chain:
             raise DelegationAuthorizationError(
                 DelegationRejectionCode.identity_overlap,
@@ -487,8 +473,7 @@ def _require_catalog_entries(missing, *, field: str, catalog_name: str) -> None:
     if missing:
         raise DelegationAuthorizationError(
             DelegationRejectionCode.capability_not_delegated,
-            f"Requested {field.removeprefix('requested_')} are absent from the attenuated "
-            f"{catalog_name} Catalog.",
+            f"Requested {field.removeprefix('requested_')} are absent from the attenuated {catalog_name} Catalog.",
             field=field,
             details={"missing": sorted(missing)},
         )
@@ -496,18 +481,14 @@ def _require_catalog_entries(missing, *, field: str, catalog_name: str) -> None:
 
 def _validate_catalog_binding(context, catalog, tool_name, tool_version) -> None:
     digests_differ = context.tool_catalog_digest != catalog.tool_digest or (
-        context.skill_catalog_digest is not None
-        and context.skill_catalog_digest != catalog.skill_digest
+        context.skill_catalog_digest is not None and context.skill_catalog_digest != catalog.skill_digest
     )
     if digests_differ:
         raise DelegationAuthorizationError(
             DelegationRejectionCode.catalog_drift,
             "Invocation Catalog digests do not match the frozen child context.",
         )
-    if not any(
-        item.get("name") == tool_name and item.get("version") == tool_version
-        for item in catalog.tools
-    ):
+    if not any(item.get("name") == tool_name and item.get("version") == tool_version for item in catalog.tools):
         raise DelegationAuthorizationError(
             DelegationRejectionCode.capability_not_delegated,
             "AstraTool invocation is outside the frozen child Catalog.",
@@ -529,9 +510,7 @@ def _validate_effect_scope(context, effect_plan, declared_permissions) -> None:
 
 def _require_effect_values(effect_plan, attribute, allowed, label) -> None:
     values = [
-        getattr(effect, attribute).value
-        if hasattr(getattr(effect, attribute), "value")
-        else getattr(effect, attribute)
+        getattr(effect, attribute).value if hasattr(getattr(effect, attribute), "value") else getattr(effect, attribute)
         for effect in effect_plan.effects
     ]
     if values and not _values_are_subset(values, allowed):
@@ -557,9 +536,7 @@ def _validate_effect_data_scope(effect, scope) -> None:
             "AstraTool network destination exceeds the delegated child scope.",
         )
     workspace_roots = _workspace_roots(effect.kind.value, scope)
-    if effect.kind.value.startswith("workspace_") and not _values_are_subset(
-        [effect.resource], workspace_roots
-    ):
+    if effect.kind.value.startswith("workspace_") and not _values_are_subset([effect.resource], workspace_roots):
         raise DelegationAuthorizationError(
             DelegationRejectionCode.resource_not_delegated,
             "AstraTool Workspace path exceeds the delegated child roots.",
@@ -581,10 +558,7 @@ def _unique_strings(values: Iterable[Any]) -> list[str]:
 def _values_are_subset(children: Iterable[str], parents: Iterable[str]) -> bool:
     parent_patterns = tuple(str(item) for item in parents)
     return bool(parent_patterns) and all(
-        any(
-            pattern == "*" or child == pattern or fnmatchcase(child, pattern)
-            for pattern in parent_patterns
-        )
+        any(pattern == "*" or child == pattern or fnmatchcase(child, pattern) for pattern in parent_patterns)
         for child in children
     )
 

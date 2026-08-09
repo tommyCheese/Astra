@@ -38,9 +38,7 @@ class AgentEvolutionCandidateRecord(AstraOrmRecordBase):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_str)
     candidate_key: Mapped[str] = mapped_column(String(240))
     revision: Mapped[int] = mapped_column(Integer, default=1)
-    supersedes_id: Mapped[str | None] = mapped_column(
-        ForeignKey("agent_evolution_candidates.id"), nullable=True
-    )
+    supersedes_id: Mapped[str | None] = mapped_column(ForeignKey("agent_evolution_candidates.id"), nullable=True)
     candidate_type: Mapped[str] = mapped_column(String(40))
     target_component: Mapped[str] = mapped_column(String(80))
     namespace_type: Mapped[str] = mapped_column(String(40))
@@ -126,9 +124,7 @@ class AgentEvolutionEvaluationRecord(AstraOrmRecordBase):
 
 class AgentEvolutionAuditRecord(AstraOrmRecordBase):
     __tablename__ = "agent_evolution_audit_events"
-    __table_args__ = (
-        Index("ix_agent_evolution_audit_candidate_created", "candidate_id", "created_at"),
-    )
+    __table_args__ = (Index("ix_agent_evolution_audit_candidate_created", "candidate_id", "created_at"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     candidate_id: Mapped[str] = mapped_column(ForeignKey("agent_evolution_candidates.id"))

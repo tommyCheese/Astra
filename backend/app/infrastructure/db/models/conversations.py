@@ -60,9 +60,7 @@ class ConversationStrategyPreferenceRecord(AstraOrmRecordBase):
     __tablename__ = "conversation_strategy_preferences"
 
     id: Mapped[str] = mapped_column(String(40), primary_key=True, default="default")
-    preferred_answer_mode: Mapped[str] = mapped_column(
-        String(40), nullable=False, default="standard"
-    )
+    preferred_answer_mode: Mapped[str] = mapped_column(String(40), nullable=False, default="standard")
     reasoning_effort: Mapped[str] = mapped_column(String(40), nullable=False)
     max_tool_calls: Mapped[int | None] = mapped_column(Integer, nullable=True, default=8)
     reflection_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False)
@@ -83,9 +81,7 @@ class TaskRecord(AstraOrmRecordBase):
     status: Mapped[str] = mapped_column(String(40), default="created")
     priority: Mapped[str | None] = mapped_column(String(40), nullable=True)
     risk_level: Mapped[str | None] = mapped_column(String(40), nullable=True)
-    preferred_answer_mode: Mapped[str] = mapped_column(
-        String(40), nullable=False, default="standard"
-    )
+    preferred_answer_mode: Mapped[str] = mapped_column(String(40), nullable=False, default="standard")
     title_source: Mapped[str] = mapped_column(String(20), default="auto")
     context_state: Mapped[dict] = mapped_column(JsonType, default=dict)
     pinned_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -93,12 +89,8 @@ class TaskRecord(AstraOrmRecordBase):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
     runs: Mapped[list[RunRecord]] = relationship(back_populates="task")
-    share: Mapped[ConversationShareRecord | None] = relationship(
-        back_populates="conversation", uselist=False
-    )
-    task_workspace: Mapped[TaskWorkspaceRecord | None] = relationship(
-        back_populates="task", uselist=False
-    )
+    share: Mapped[ConversationShareRecord | None] = relationship(back_populates="conversation", uselist=False)
+    task_workspace: Mapped[TaskWorkspaceRecord | None] = relationship(back_populates="task", uselist=False)
 
 
 class ConversationShareRecord(AstraOrmRecordBase):

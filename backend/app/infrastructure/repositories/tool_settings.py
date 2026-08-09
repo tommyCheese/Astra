@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from weakref import WeakKeyDictionary
 
 from sqlalchemy import event, select
@@ -40,14 +41,8 @@ def apply_provider_states(
     records: dict[str, ToolProviderSettingRecord],
 ) -> AstraRuntimeSettings:
     states = {provider_id: bool(record.enabled) for provider_id, record in records.items()}
-    configurations = {
-        provider_id: dict(record.configuration or {})
-        for provider_id, record in records.items()
-    }
-    configuration_revisions = {
-        provider_id: str(record.configuration_revision)
-        for provider_id, record in records.items()
-    }
+    configurations = {provider_id: dict(record.configuration or {}) for provider_id, record in records.items()}
+    configuration_revisions = {provider_id: str(record.configuration_revision) for provider_id, record in records.items()}
     result = settings.model_copy(
         update={
             "tool_provider_states": states,
@@ -79,17 +74,13 @@ def apply_tool_states(
     return settings.model_copy(update={"tool_states": dict(states)}, deep=True)
 
 
+@dataclass
 class ToolSettingsRepository:
-    def __init__(self, session: AsyncSession):
-        self.session = session
+    session: AsyncSession
 
     async def get_or_create(self, defaults: dict[str, bool]) -> dict[str, bool]:
         pending = self.session.sync_session.info.get(PENDING_TOOL_SETTINGS_CACHE)
-        cached = (
-            pending[1]
-            if pending is not None
-            else _TOOL_SETTINGS_CACHE.get(_session_engine(self.session.sync_session))
-        )
+        cached = pending[1] if pending is not None else _TOOL_SETTINGS_CACHE.get(_session_engine(self.session.sync_session))
         if cached is not None and defaults.keys() <= cached.keys():
             return {name: cached[name] for name in defaults}
         records = list((await self.session.scalars(select(ToolSettingRecord))).all())
@@ -107,9 +98,7 @@ class ToolSettingsRepository:
     async def set_all(self, states: dict[str, bool], defaults: dict[str, bool]) -> dict[str, bool]:
         current = await self.get_or_create(defaults)
         records = list(
-            (await self.session.scalars(
-                select(ToolSettingRecord).where(ToolSettingRecord.tool_name.in_(states))
-            )).all()
+            (await self.session.scalars(select(ToolSettingRecord).where(ToolSettingRecord.tool_name.in_(states)))).all()
         )
         now = utc_now()
         for record in records:
@@ -144,9 +133,9 @@ class ToolSettingsRepository:
         )
 
 
+@dataclass
 class ToolProviderSettingsRepository:
-    def __init__(self, session: AsyncSession):
-        self.session = session
+    session: AsyncSession
 
     async def get_or_create(
         self,
@@ -155,9 +144,7 @@ class ToolProviderSettingsRepository:
         records = list(
             (
                 await self.session.scalars(
-                    select(ToolProviderSettingRecord).where(
-                        ToolProviderSettingRecord.provider_id.in_(defaults)
-                    )
+                    select(ToolProviderSettingRecord).where(ToolProviderSettingRecord.provider_id.in_(defaults))
                 )
             ).all()
         )

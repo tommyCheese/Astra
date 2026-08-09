@@ -7,8 +7,7 @@ from typing import Any
 from sqlalchemy import select
 
 from app.application.agent_runtime.services.context.memory import (
-    AgentMemoryContextProjection,
-    MemoryContextProjector,
+    MemoryContextReader,
 )
 from app.application.subagents.eligibility import subagent_execution_eligibility
 from app.common.core.config import AstraRuntimeSettings
@@ -100,8 +99,7 @@ def _load_tools(
 ]:
     router = router or ToolRouter(
         registry,
-        available_backends={spec.execution_backend for spec in registry.specs().values()}
-        or {"in_process"},
+        available_backends={spec.execution_backend for spec in registry.specs().values()} or {"in_process"},
     )
     resolution = CapabilityToolResolver(router).resolve(
         active_node.get("required_capabilities", []) if active_node else [],
@@ -121,17 +119,13 @@ async def _load_skills(
     enabled: bool,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], bool]:
     snapshot = (
-        await repository.session.scalar(
-            select(RunSkillSnapshotRecord).where(RunSkillSnapshotRecord.run_id == run_id)
-        )
+        await repository.session.scalar(select(RunSkillSnapshotRecord).where(RunSkillSnapshotRecord.run_id == run_id))
         if enabled
         else None
     )
     if snapshot is None:
         return [], [], False
-    active_identities = {
-        activation["qualified_identity"] for activation in snapshot.activations or []
-    }
+    active_identities = {activation["qualified_identity"] for activation in snapshot.activations or []}
     catalog = [
         {
             "qualified_identity": item["qualified_identity"],
@@ -156,9 +150,7 @@ async def _subagents_executable(
     raw_policy: dict[str, Any],
 ) -> bool:
     live_states = (
-        await ToolSettingsRepository(repository.session).get_or_create(
-            default_tool_states(settings)
-        )
+        await ToolSettingsRepository(repository.session).get_or_create(default_tool_states(settings))
         if settings is not None
         else {}
     )
@@ -203,9 +195,7 @@ def _subagent_projection(
             ),
             "max_parallel_children": int(budgets.get("max_parallel_children", 0)),
         },
-        "subagent_eligible_capabilities": list(swarm_spec.task_capabilities)
-        if swarm_spec
-        else [],
+        "subagent_eligible_capabilities": list(swarm_spec.task_capabilities) if swarm_spec else [],
         "subagent_active_groups": [
             {
                 "group_id": join.group_id,
@@ -238,114 +228,65 @@ async def _load_subagents(
     return _subagent_projection(raw_policy, selected_specs.get("swarm"), descendants, joins), True
 
 
-class AgentContextAssembler:
-    def __init__(
-        self,
-        repository: RunUnitOfWork,
-        *,
-        skills_enabled: bool = True,
-        settings: AstraRuntimeSettings | None = None,
-    ) -> None:
-        self._repository = repository
-        self._skills_enabled = skills_enabled
-        self._settings = settings
-        self._memory = MemoryContextProjector(repository, settings)
-
-    async def assemble(
-        self,
-        *,
-        run_id: str,
-        goal: str,
-        tool_registry: AstraToolRegistry,
-        sandbox_provider: Any = None,
-        tool_router: ToolRouter | None = None,
-        observations: list[dict[str, Any]],
-        evidence_pack: dict[str, Any] | None = None,
-    ) -> dict[str, Any]:
-        del sandbox_provider
-        run, memories = await _load_conversation(self._repository, run_id)
-        memory = await self._memory.project(run_id, goal, memories)
-        plan_graph, active_node_id, active_node = await _load_plan(
-            self._repository, run_id, run
-        )
-        tool_manifests, tool_selection, unavailable, selected_specs = _load_tools(
-            run,
-            active_node_id,
-            active_node,
-            observations,
-            tool_registry,
-            tool_router,
-        )
-        subagents, subagent_enabled = await _load_subagents(
-            self._repository,
-            self._settings,
-            run_id,
-            run,
-            selected_specs,
-        )
-        if not subagent_enabled:
-            tool_manifests.pop("swarm", None)
-        skill_catalog, active_skills, is_draft_test = await _load_skills(
-            self._repository,
-            run_id,
-            enabled=self._skills_enabled,
-        )
-        context = {
-            "run_id": run_id,
-            "goal": goal,
-            "tool_manifests": tool_manifests,
-            "observations": observations,
-            "memory_reads": memory.audit_reads,
-            "memory_context": memory.context_reads,
-            "answer_mode": run.answer_mode,
-            "task_contract": run.task_contract or {},
-            "plan_graph": plan_graph,
-            "active_node": active_node,
-            "tool_selection": tool_selection,
-            "state_version": run.state_version,
-            "plan_version": plan_graph.get("version", 1),
-            "skill_catalog": skill_catalog,
-            "active_skills": active_skills,
-            "subagent_mode": (run.execution_profile or {}).get("subagent_mode", "auto"),
-            **subagents,
+async def assemble_agent_context(
+    repository: RunUnitOfWork,
+    *,
+    run_id: str,
+    goal: str,
+    tool_registry: AstraToolRegistry,
+    sandbox_provider: Any = None,
+    tool_router: ToolRouter | None = None,
+    observations: list[dict[str, Any]],
+    evidence_pack: dict[str, Any] | None = None,
+    skills_enabled: bool = True,
+    settings: AstraRuntimeSettings | None = None,
+) -> dict[str, Any]:
+    """Build model context at the single ORM-to-Runtime boundary."""
+    del sandbox_provider
+    run, memories = await _load_conversation(repository, run_id)
+    memory = await MemoryContextReader(repository, settings).project(run_id, goal, memories)
+    plan_graph, active_node_id, active_node = await _load_plan(repository, run_id, run)
+    tool_manifests, tool_selection, unavailable, selected_specs = _load_tools(
+        run, active_node_id, active_node, observations, tool_registry, tool_router
+    )
+    subagents, subagent_enabled = await _load_subagents(repository, settings, run_id, run, selected_specs)
+    if not subagent_enabled:
+        tool_manifests.pop("swarm", None)
+    skill_catalog, active_skills, is_draft_test = await _load_skills(repository, run_id, enabled=skills_enabled)
+    context = {
+        "run_id": run_id,
+        "goal": goal,
+        "tool_manifests": tool_manifests,
+        "observations": observations,
+        "memory_reads": memory.audit_reads,
+        "memory_context": memory.context_reads,
+        "answer_mode": run.answer_mode,
+        "task_contract": run.task_contract or {},
+        "plan_graph": plan_graph,
+        "active_node": active_node,
+        "tool_selection": tool_selection,
+        "state_version": run.state_version,
+        "plan_version": plan_graph.get("version", 1),
+        "skill_catalog": skill_catalog,
+        "active_skills": active_skills,
+        "subagent_mode": (run.execution_profile or {}).get("subagent_mode", "auto"),
+        **subagents,
+    }
+    if unavailable:
+        context["unavailable_capabilities"] = unavailable
+    if memory.recall_event_id:
+        context["memory_recall"] = {
+            "event_id": memory.recall_event_id,
+            "mode": "active",
+            "policy_version": (settings.agent_memory_retrieval_policy_version if settings else None),
         }
-        self._add_optional_context(
-            context,
-            run,
-            memory,
-            unavailable,
-            is_draft_test,
-            evidence_pack,
-        )
-        return context
-
-    def _add_optional_context(
-        self,
-        context: dict[str, Any],
-        run: RunRecord,
-        memory: AgentMemoryContextProjection,
-        unavailable_capabilities: list[Any],
-        is_draft_test: bool,
-        evidence_pack: dict[str, Any] | None,
-    ) -> None:
-        if unavailable_capabilities:
-            context["unavailable_capabilities"] = unavailable_capabilities
-        if memory.recall_event_id:
-            context["memory_recall"] = {
-                "event_id": memory.recall_event_id,
-                "mode": "active",
-                "policy_version": (
-                    self._settings.agent_memory_retrieval_policy_version
-                    if self._settings
-                    else None
-                ),
-            }
-        if is_draft_test:
-            context["skill_draft_test"] = True
-        context.update(
-            agent_profile_snapshot=run.agent_profile_snapshot or {},
-            evidence_pack=evidence_pack or {},
-            reasoning_policy=run.reasoning_policy or {},
-            execution_profile=run.execution_profile or {},
-            agent_state=run.agent_state or {},
-        )
+    if is_draft_test:
+        context["skill_draft_test"] = True
+    context.update(
+        agent_profile_snapshot=run.agent_profile_snapshot or {},
+        evidence_pack=evidence_pack or {},
+        reasoning_policy=run.reasoning_policy or {},
+        execution_profile=run.execution_profile or {},
+        agent_state=run.agent_state or {},
+    )
+    return context

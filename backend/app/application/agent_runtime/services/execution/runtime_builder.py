@@ -6,6 +6,7 @@ import asyncio
 import hashlib
 import json
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass, field
 from typing import Any
 
 from sqlalchemy.ext.asyncio import async_sessionmaker
@@ -52,32 +53,20 @@ from app.infrastructure.tools.base import AstraToolRegistry, ToolExecutionError
 from app.infrastructure.tools.router import ToolRouter
 
 
+@dataclass
 class RootPermissionRuntime:
     """Lazily create the root identity and freeze the immutable tool catalog."""
 
-    def __init__(
-        self,
-        *,
-        repository: RunUnitOfWork,
-        permission_repository: PermissionRepository,
-        run: RunRecord,
-        run_id: str,
-        catalog: list[dict[str, Any]],
-        catalog_digest: str,
-        behavioral_catalog: list[dict[str, Any]],
-        behavioral_digest: str,
-        display_digest: str,
-    ) -> None:
-        self._repository = repository
-        self._permissions = permission_repository
-        self._run = run
-        self._run_id = run_id
-        self._catalog = catalog
-        self._catalog_digest = catalog_digest
-        self._behavioral_catalog = behavioral_catalog
-        self._behavioral_digest = behavioral_digest
-        self._display_digest = display_digest
-        self._identity: AgentIdentityRecord | None = None
+    _repository: RunUnitOfWork
+    _permissions: PermissionRepository
+    _run: RunRecord
+    _run_id: str
+    _catalog: list[dict[str, Any]]
+    _catalog_digest: str
+    _behavioral_catalog: list[dict[str, Any]]
+    _behavioral_digest: str
+    _display_digest: str
+    _identity: AgentIdentityRecord | None = field(default=None, init=False)
 
     async def ensure(self) -> AgentIdentityRecord:
         if self._identity is not None:
@@ -120,35 +109,21 @@ class RootPermissionRuntime:
         }
 
 
+@dataclass
 class AgentRuntimeBuilder:
     """Build named runtime collaborators without embedding execution policy."""
 
-    def __init__(
-        self,
-        *,
-        settings: AstraRuntimeSettings,
-        model_client: ModelClient,
-        tool_registry: AstraToolRegistry,
-        tool_router: ToolRouter,
-        plugin_runtime: PluginRuntimeState,
-        evaluator: AgentObservationEvaluator,
-        reflection_gate: AgentReflectionGate,
-        completion_gate: AgentCompletionGate,
-        sandbox_provider: Any,
-        supervisor_close_tasks: set[asyncio.Task[Any]],
-        normalize_tool_output: Callable[[str, dict[str, Any]], dict[str, Any]],
-    ) -> None:
-        self._settings = settings
-        self._model_client = model_client
-        self._tool_registry = tool_registry
-        self._tool_router = tool_router
-        self._plugin_runtime = plugin_runtime
-        self._evaluator = evaluator
-        self._reflection_gate = reflection_gate
-        self._completion_gate = completion_gate
-        self._sandbox_provider = sandbox_provider
-        self._supervisor_close_tasks = supervisor_close_tasks
-        self._normalize_tool_output = normalize_tool_output
+    _settings: AstraRuntimeSettings
+    _model_client: ModelClient
+    _tool_registry: AstraToolRegistry
+    _tool_router: ToolRouter
+    _plugin_runtime: PluginRuntimeState
+    _evaluator: AgentObservationEvaluator
+    _reflection_gate: AgentReflectionGate
+    _completion_gate: AgentCompletionGate
+    _sandbox_provider: Any
+    _supervisor_close_tasks: set[asyncio.Task[Any]]
+    _normalize_tool_output: Callable[[str, dict[str, Any]], dict[str, Any]]
 
     async def build(
         self,
@@ -158,8 +133,7 @@ class AgentRuntimeBuilder:
         goal: str,
         on_answer_delta: Callable[[str], Awaitable[None]] | None,
     ) -> RootRuntimeAssembly:
-        loaded, recovery = await self._load_run(repository, run_id)
-        run = loaded.run
+        (run, active_plan), recovery = await self._load_run(repository, run_id)
         profile = RunExecutionProfile.model_validate(run.execution_profile)
         policy = ReasoningPolicySnapshot.model_validate(run.reasoning_policy or {}).effective
         permissions, permission_runtime = self._permission_runtime(repository, run, run_id)
@@ -174,8 +148,8 @@ class AgentRuntimeBuilder:
             permission_runtime,
         )
         limits = self._limits(profile, policy)
-        progress = self._progress(loaded.active_plan, run, loaded.tool_calls)
-        recovered = await recovery.recover(run_id, loaded, progress.observations)
+        progress = self._progress(active_plan, run, list(run.tool_calls))
+        approved_call, approved_turn, approved_snapshot, terminal = await recovery.recover(run_id, run, progress.observations)
         return self._composer().compose(
             {
                 "repository": repository,
@@ -183,12 +157,15 @@ class AgentRuntimeBuilder:
                 "goal": goal,
                 "on_answer_delta": on_answer_delta,
                 "run": run,
-                "loaded": loaded,
+                "initial_turn_count": len(run.turns),
                 "profile": profile,
                 "policy": policy,
                 "limits": limits,
                 "progress": progress,
-                "recovered": recovered,
+                "approved_call": approved_call,
+                "approved_turn": approved_turn,
+                "approved_snapshot": approved_snapshot,
+                "terminal": terminal,
                 "permission_runtime": permission_runtime,
                 "infrastructure": infrastructure,
                 "supervisor": supervisor,
@@ -197,15 +174,15 @@ class AgentRuntimeBuilder:
 
     def _composer(self) -> RootRuntimeComposer:
         return RootRuntimeComposer(
-            settings=self._settings,
-            model_client=self._model_client,
-            tool_registry=self._tool_registry,
-            tool_router=self._tool_router,
-            plugin_runtime=self._plugin_runtime,
-            evaluator=self._evaluator,
-            reflection_gate=self._reflection_gate,
-            completion_gate=self._completion_gate,
-            normalize_tool_output=self._normalize_tool_output,
+            self._settings,
+            self._model_client,
+            self._tool_registry,
+            self._tool_router,
+            self._plugin_runtime,
+            self._evaluator,
+            self._reflection_gate,
+            self._completion_gate,
+            self._normalize_tool_output,
         )
 
     async def _load_run(
@@ -228,25 +205,21 @@ class AgentRuntimeBuilder:
         run: RunRecord,
         run_id: str,
     ) -> tuple[PermissionRepository, RootPermissionRuntime]:
-        catalog = [
-            spec.model_dump(mode="json") for _, spec in sorted(self._tool_registry.specs().items())
-        ]
+        catalog = [spec.model_dump(mode="json") for _, spec in sorted(self._tool_registry.specs().items())]
         self._validate_catalog(catalog)
-        digest = hashlib.sha256(
-            json.dumps(catalog, sort_keys=True, separators=(",", ":")).encode()
-        ).hexdigest()
+        digest = hashlib.sha256(json.dumps(catalog, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
         permissions = PermissionRepository(repository.session)
         behavioral_catalog = self._plugin_runtime.snapshot_catalog(self._tool_registry)
         return permissions, RootPermissionRuntime(
-            repository=repository,
-            permission_repository=permissions,
-            run=run,
-            run_id=run_id,
-            catalog=catalog,
-            catalog_digest=digest,
-            behavioral_catalog=behavioral_catalog,
-            behavioral_digest=self._plugin_runtime.behavioral_digest(self._tool_registry),
-            display_digest=self._plugin_runtime.display_digest(self._tool_registry),
+            repository,
+            permissions,
+            run,
+            run_id,
+            catalog,
+            digest,
+            behavioral_catalog,
+            self._plugin_runtime.behavioral_digest(self._tool_registry),
+            self._plugin_runtime.display_digest(self._tool_registry),
         )
 
     def _validate_catalog(self, catalog: list[dict[str, Any]]) -> None:
@@ -325,9 +298,7 @@ class AgentRuntimeBuilder:
         policy: EffectiveReasoningPolicy,
         permission_runtime: RootPermissionRuntime,
     ) -> SubagentSupervisor | None:
-        live_states = await ToolSettingsRepository(repository.session).get_or_create(
-            default_tool_states(self._settings)
-        )
+        live_states = await ToolSettingsRepository(repository.session).get_or_create(default_tool_states(self._settings))
         eligibility = subagent_execution_eligibility(
             policy.subagents,
             live_swarm_enabled=bool(live_states.get("swarm", False)),
@@ -335,9 +306,7 @@ class AgentRuntimeBuilder:
         if not eligibility.executable:
             return None
         identity = await permission_runtime.ensure()
-        root_execution = await AgentExecutionRepository(repository.session).get_or_create_root(
-            run_id
-        )
+        root_execution = await AgentExecutionRepository(repository.session).get_or_create_root(run_id)
         await self._bind_root_identity(repository, root_execution, identity)
         supervisor = self._create_supervisor(
             repository,
@@ -420,9 +389,7 @@ class AgentRuntimeBuilder:
 
         owner_task.add_done_callback(close)
 
-    def _limits(
-        self, profile: RunExecutionProfile, policy: EffectiveReasoningPolicy
-    ) -> AgentRuntimeLimits:
+    def _limits(self, profile: RunExecutionProfile, policy: EffectiveReasoningPolicy) -> AgentRuntimeLimits:
         max_turns = self._bounded(policy.budgets.max_turns, self._settings.agent_max_turns)
         unlimited_tools = (
             profile.answer_mode == AnswerMode.trusted
@@ -437,14 +404,14 @@ class AgentRuntimeBuilder:
                 self._settings.agent_max_tool_calls,
             )
         )
-        return AgentRuntimeLimits(
-            max_turns=max_turns,
-            max_tool_calls=max_tool_calls,
-            max_reflections=min(
+        return (
+            max_turns,
+            max_tool_calls,
+            min(
                 policy.budgets.max_reflections,
                 self._settings.agent_max_reflections,
             ),
-            max_replans=min(policy.budgets.max_replans, self._settings.agent_max_replans),
+            min(policy.budgets.max_replans, self._settings.agent_max_replans),
         )
 
     @staticmethod
@@ -456,7 +423,5 @@ class AgentRuntimeBuilder:
         return ExecutionProgress(
             active_plan=active_plan,
             observations=list((run.agent_state or {}).get("observations", [])),
-            tool_calls_used=sum(
-                1 for call in tool_calls if call.status in {"running", "succeeded", "failed"}
-            ),
+            tool_calls_used=sum(1 for call in tool_calls if call.status in {"running", "succeeded", "failed"}),
         )

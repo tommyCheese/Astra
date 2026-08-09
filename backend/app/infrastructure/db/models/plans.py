@@ -33,9 +33,7 @@ class PlanRecord(AstraOrmRecordBase):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_str)
     run_id: Mapped[str] = mapped_column(ForeignKey("runs.id"))
-    agent_execution_id: Mapped[str | None] = mapped_column(
-        ForeignKey("agent_executions.id"), nullable=True
-    )
+    agent_execution_id: Mapped[str | None] = mapped_column(ForeignKey("agent_executions.id"), nullable=True)
     version: Mapped[int] = mapped_column(Integer)
     status: Mapped[str] = mapped_column(String(40), default="planned")
     supersedes_plan_id: Mapped[str | None] = mapped_column(ForeignKey("plans.id"), nullable=True)
@@ -47,9 +45,7 @@ class PlanRecord(AstraOrmRecordBase):
     nodes: Mapped[list[PlanNodeRecord]] = relationship(
         back_populates="plan", order_by="PlanNodeRecord.index", cascade="all, delete-orphan"
     )
-    edges: Mapped[list[PlanEdgeRecord]] = relationship(
-        back_populates="plan", cascade="all, delete-orphan"
-    )
+    edges: Mapped[list[PlanEdgeRecord]] = relationship(back_populates="plan", cascade="all, delete-orphan")
     executions: Mapped[list[NodeExecutionRecord]] = relationship(back_populates="plan")
 
 
@@ -63,9 +59,7 @@ class PlanNodeRecord(AstraOrmRecordBase):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_str)
     plan_id: Mapped[str] = mapped_column(ForeignKey("plans.id"))
-    agent_execution_id: Mapped[str | None] = mapped_column(
-        ForeignKey("agent_executions.id"), nullable=True
-    )
+    agent_execution_id: Mapped[str | None] = mapped_column(ForeignKey("agent_executions.id"), nullable=True)
     node_key: Mapped[str] = mapped_column(String(120))
     index: Mapped[int] = mapped_column(Integer)
     title: Mapped[str] = mapped_column(String(240))
@@ -108,9 +102,5 @@ class PlanEdgeRecord(AstraOrmRecordBase):
     dependency_type: Mapped[str] = mapped_column(String(40), default="hard")
 
     plan: Mapped[PlanRecord] = relationship(back_populates="edges")
-    predecessor: Mapped[PlanNodeRecord] = relationship(
-        back_populates="outgoing_edges", foreign_keys=[predecessor_id]
-    )
-    successor: Mapped[PlanNodeRecord] = relationship(
-        back_populates="incoming_edges", foreign_keys=[successor_id]
-    )
+    predecessor: Mapped[PlanNodeRecord] = relationship(back_populates="outgoing_edges", foreign_keys=[predecessor_id])
+    successor: Mapped[PlanNodeRecord] = relationship(back_populates="incoming_edges", foreign_keys=[successor_id])

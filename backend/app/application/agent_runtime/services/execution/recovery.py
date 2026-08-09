@@ -20,74 +20,52 @@ from app.infrastructure.tools.base import ToolExecutionError
 ToolOutputNormalizer = Callable[[str, dict[str, Any]], dict[str, Any]]
 
 
-@dataclass(frozen=True)
-class LoadedAgentRunState:
-    run: RunRecord
-    tool_calls: list[ToolCallRecord]
-    turns: list[AgentTurnRecord]
-    active_plan: PlanRecord | None
-
-
-@dataclass(frozen=True)
-class RecoveredAgentRunState:
-    approved_tool_call: ToolCallRecord | None
-    approved_turn: AgentTurnRecord | None
-    approved_request_snapshot: dict[str, Any] | None
-    terminal_status: str | None = None
-    terminal_summary: str | None = None
-
-
+@dataclass
 class RunRecoveryStage:
     """Own loading and deterministic recovery of persisted execution checkpoints."""
 
-    def __init__(
-        self,
-        repository: RunUnitOfWork,
-        plugin_runtime: PluginRuntimeState,
-        tool_registry,
-        normalize_tool_output: ToolOutputNormalizer,
-    ) -> None:
-        self._repository = repository
-        self._plugin_runtime = plugin_runtime
-        self._tool_registry = tool_registry
-        self._normalize_tool_output = normalize_tool_output
+    _repository: RunUnitOfWork
+    _plugin_runtime: PluginRuntimeState
+    _tool_registry: Any
+    _normalize_tool_output: ToolOutputNormalizer
 
     async def load(
         self,
         run_id: str,
-    ) -> LoadedAgentRunState:
+    ) -> tuple[RunRecord, PlanRecord | None]:
         current_task = asyncio.current_task()
         if current_task is not None and current_task.cancelling():
             raise asyncio.CancelledError
         run = await self._repository.require_run_runtime(run_id)
         active_plan = await PlanRepository(self._repository.session).active_for_run(run_id)
-        return LoadedAgentRunState(
-            run=run,
-            tool_calls=list(run.tool_calls),
-            turns=list(run.turns),
-            active_plan=active_plan,
-        )
+        return run, active_plan
 
     async def recover(
         self,
         run_id: str,
-        loaded_state: LoadedAgentRunState,
+        run: RunRecord,
         observations: list[dict[str, Any]],
-    ) -> RecoveredAgentRunState:
-        approved_call = await self._approved_call(run_id, loaded_state.tool_calls)
+    ) -> tuple[
+        ToolCallRecord | None,
+        AgentTurnRecord | None,
+        dict[str, Any] | None,
+        tuple[str | None, str | None],
+    ]:
+        tool_calls = list(run.tool_calls)
+        turns = list(run.turns)
+        approved_call = await self._approved_call(run_id, tool_calls)
         await self._validate_approved_call(approved_call)
-        approved_turn = self._approved_turn(approved_call, loaded_state.turns)
+        approved_turn = self._approved_turn(approved_call, turns)
         terminal_status, terminal_summary = await self._recover_latest_turn(
             run_id,
-            loaded_state,
+            run,
             observations,
         )
-        return RecoveredAgentRunState(
-            approved_tool_call=approved_call,
-            approved_turn=approved_turn,
-            approved_request_snapshot=self._approval_snapshot(approved_call),
-            terminal_status=terminal_status,
-            terminal_summary=terminal_summary,
+        return (
+            approved_call,
+            approved_turn,
+            self._approval_snapshot(approved_call),
+            (terminal_status, terminal_summary),
         )
 
     async def _approved_call(
@@ -148,22 +126,22 @@ class RunRecoveryStage:
     async def _recover_latest_turn(
         self,
         run_id: str,
-        loaded_state: LoadedAgentRunState,
+        run: RunRecord,
         observations: list[dict[str, Any]],
     ) -> tuple[str | None, str | None]:
-        if not loaded_state.turns:
+        turns = list(run.turns)
+        tool_calls = list(run.tool_calls)
+        if not turns:
             return None, None
-        latest_turn = max(loaded_state.turns, key=lambda turn: turn.turn_index)
+        latest_turn = max(turns, key=lambda turn: turn.turn_index)
         tool_call = next(
-            (call for call in loaded_state.tool_calls if call.id == latest_turn.tool_call_id),
+            (call for call in tool_calls if call.id == latest_turn.tool_call_id),
             None,
         )
         if latest_turn.phase == "result_recorded" and tool_call and tool_call.output is not None:
             await self._replay_recorded_result(run_id, latest_turn, tool_call, observations)
         elif latest_turn.phase == "executing" and tool_call and tool_call.status == "running":
-            return await self._recover_interrupted_call(
-                run_id, loaded_state.run, latest_turn, tool_call
-            )
+            return await self._recover_interrupted_call(run_id, run, latest_turn, tool_call)
         return None, None
 
     async def _replay_recorded_result(

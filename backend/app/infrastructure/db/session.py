@@ -20,9 +20,7 @@ PENDING_RUN_EVENTS = "astra_pending_run_events"
 
 @event.listens_for(Session, "before_flush")
 def collect_pending_run_events(session: Session, _flush_context, _instances) -> None:
-    records = [
-        record for record in session.new if isinstance(record, RunEventRecord)
-    ]
+    records = [record for record in session.new if isinstance(record, RunEventRecord)]
     if records:
         session.info.setdefault(PENDING_RUN_EVENTS, []).extend(records)
 
@@ -70,10 +68,7 @@ def configure_sqlite_engine(async_engine: AsyncEngine) -> None:
 
 def engine_options_for_settings(settings: AstraRuntimeSettings) -> dict[str, int]:
     database_url = make_url(settings.database_url)
-    if (
-        database_url.get_backend_name() != "sqlite"
-        or database_url.database in {None, "", ":memory:"}
-    ):
+    if database_url.get_backend_name() != "sqlite" or database_url.database in {None, "", ":memory:"}:
         return {}
     return {
         "pool_size": settings.sqlite_pool_size,

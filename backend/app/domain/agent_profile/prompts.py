@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass, field
 from typing import Any
 
 from app.domain.agent_profile.profile import (
@@ -24,15 +25,13 @@ perform actions, modify source evidence, edit Agent Profile documents or Skills,
 permissions, credentials, policy changes, or additional authority."""
 
 
+@dataclass
 class PromptComposer:
-    def __init__(self, profile: AgentProfile):
-        self.profile = profile
-        self.skill_blocks: tuple[dict[str, Any], ...] = ()
+    profile: AgentProfile
+    skill_blocks: tuple[dict[str, Any], ...] = field(default=(), init=False)
 
     def bind_skills(self, skills: list[dict[str, Any]]) -> None:
-        self.skill_blocks = tuple(
-            sorted(skills, key=lambda item: item["qualified_identity"])
-        )
+        self.skill_blocks = tuple(sorted(skills, key=lambda item: item["qualified_identity"]))
 
     def compose(
         self,
@@ -42,9 +41,7 @@ class PromptComposer:
         skill_identities: set[str] | None = None,
     ) -> str:
         if operation == ModelOperation.AUTODREAM:
-            raise AgentProfileConfigurationError(
-                "AutoDream composition requires a bound consolidation job"
-            )
+            raise AgentProfileConfigurationError("AutoDream composition requires a bound consolidation job")
         return self._compose(
             operation,
             role_protocol,
@@ -59,18 +56,10 @@ class PromptComposer:
     ) -> str:
         normalized_protocol = role_protocol.strip()
         if not normalized_protocol:
-            raise AgentProfileConfigurationError(
-                "AutoDream composition requires a bounded output protocol"
-            )
+            raise AgentProfileConfigurationError("AutoDream composition requires a bounded output protocol")
         job_id = consolidation_job_id.strip()
-        if (
-            not job_id
-            or len(job_id) > 120
-            or any(ord(character) < 32 for character in job_id)
-        ):
-            raise AgentProfileConfigurationError(
-                "AutoDream composition requires a valid consolidation job ID"
-            )
+        if not job_id or len(job_id) > 120 or any(ord(character) < 32 for character in job_id):
+            raise AgentProfileConfigurationError("AutoDream composition requires a valid consolidation job ID")
         binding = json.dumps(
             {
                 "operation": ModelOperation.AUTODREAM.value,
@@ -102,15 +91,10 @@ class PromptComposer:
         profile_sections = []
         for document in self.profile.documents_for(operation):
             body = document.content.split("---", 2)[-1].strip()
-            profile_sections.append(
-                f"## Trusted Agent Profile: {document.filename}\n{body}"
-            )
+            profile_sections.append(f"## Trusted Agent Profile: {document.filename}\n{body}")
         skill_sections = []
         applicable_skills = [
-            skill
-            for skill in self.skill_blocks
-            if skill_identities is None
-            or skill["qualified_identity"] in skill_identities
+            skill for skill in self.skill_blocks if skill_identities is None or skill["qualified_identity"] in skill_identities
         ]
         if applicable_skills:
             skill_sections.append(
@@ -131,8 +115,7 @@ class PromptComposer:
                 digest = skill["digest"]
                 body = skill["instructions"].replace("</astra_skill>", "&lt;/astra_skill&gt;")
                 skill_sections.append(
-                    f'<astra_skill identity="{identity}" revision="{revision}" '
-                    f'digest="{digest}">\n{body}\n</astra_skill>'
+                    f'<astra_skill identity="{identity}" revision="{revision}" digest="{digest}">\n{body}\n</astra_skill>'
                 )
         return "\n\n".join(
             [
@@ -145,9 +128,7 @@ class PromptComposer:
 
     @staticmethod
     def user_request(goal: str) -> str:
-        return "## Current user request\n" + json.dumps(
-            {"goal": goal}, ensure_ascii=False, separators=(",", ":")
-        )
+        return "## Current user request\n" + json.dumps({"goal": goal}, ensure_ascii=False, separators=(",", ":"))
 
     @staticmethod
     def runtime_context(goal: str, **context: Any) -> str:

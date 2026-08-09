@@ -91,10 +91,7 @@ class PlanScheduler:
                 key=lambda item: (ranks[item.id], item.index, item.id),
             )
             if node.status == PlanNodeStatus.pending.value
-            and all(
-                nodes[dependency].status == PlanNodeStatus.completed.value
-                for dependency in dependencies[node.id]
-            )
+            and all(nodes[dependency].status == PlanNodeStatus.completed.value for dependency in dependencies[node.id])
         ]
 
     @staticmethod
@@ -213,9 +210,7 @@ class PlanScheduler:
                 NodeExecutionRecord.status == "active",
             )
         )
-        occupied_indices = {
-            int(item) for item in occupied_result.scalars().all() if item is not None
-        }
+        occupied_indices = {int(item) for item in occupied_result.scalars().all() if item is not None}
         reservation_amounts = self._reservation_amounts(run, total_slots)
         available = min(
             max(0, total_slots - len(occupied_indices)),
@@ -333,9 +328,7 @@ class PlanScheduler:
             used_slots=occupied + len(executions),
         )
 
-    async def _filter_join_consumers(
-        self, candidates: list[ReadyNodeCandidate]
-    ) -> list[ReadyNodeCandidate]:
+    async def _filter_join_consumers(self, candidates: list[ReadyNodeCandidate]) -> list[ReadyNodeCandidate]:
         if not candidates:
             return candidates
         candidate_ids = [item.node.id for item in candidates]
@@ -525,17 +518,12 @@ class PlanScheduler:
         eligible: list[ReadyNodeCandidate] = []
         for candidate in candidates:
             capabilities = list(candidate.node.required_capabilities or [])
-            if (
-                self.parallel_safe_capabilities is not None
-                and not set(capabilities) <= self.parallel_safe_capabilities
-            ):
+            if self.parallel_safe_capabilities is not None and not set(capabilities) <= self.parallel_safe_capabilities:
                 continue
             blocked = any(
                 counts.get(capability, 0)
                 >= (
-                    self.provider_concurrency_limit
-                    if capability.startswith("provider:")
-                    else self.capability_concurrency_limit
+                    self.provider_concurrency_limit if capability.startswith("provider:") else self.capability_concurrency_limit
                 )
                 for capability in capabilities
             )

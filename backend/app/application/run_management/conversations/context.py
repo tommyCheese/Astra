@@ -21,9 +21,7 @@ from app.infrastructure.db.models.runs import RunRecord
 from app.infrastructure.model_clients.context_windows import resolve_context_window
 
 CONTEXT_STATE_VERSION = 2
-CONTEXT_TERMINAL_STATUSES = frozenset(
-    {"completed", "completed_with_warnings", "failed", "blocked", "cancelled"}
-)
+CONTEXT_TERMINAL_STATUSES = frozenset({"completed", "completed_with_warnings", "failed", "blocked", "cancelled"})
 _CJK_RE = re.compile(
     r"[\u2e80-\u2eff\u3000-\u303f\u3040-\u30ff\u3400-\u4dbf"
     r"\u4e00-\u9fff\uac00-\ud7af\uff00-\uffef]"
@@ -50,10 +48,10 @@ def estimate_messages_tokens(messages: list[str]) -> int:
     return sum(estimate_tokens(message) + 6 for message in messages)
 
 
+@dataclass
 class ConversationContextManager:
-    def __init__(self, session: AsyncSession, settings: AstraRuntimeSettings):
-        self.session = session
-        self.settings = settings
+    session: AsyncSession
+    settings: AstraRuntimeSettings
 
     async def require_task(self, task_id: str) -> TaskRecord:
         task = await self.session.get(TaskRecord, task_id)
@@ -63,9 +61,7 @@ class ConversationContextManager:
 
     async def list_runs(self, task_id: str) -> list[RunRecord]:
         result = await self.session.scalars(
-            select(RunRecord)
-            .where(RunRecord.task_id == task_id)
-            .order_by(RunRecord.created_at, RunRecord.id)
+            select(RunRecord).where(RunRecord.task_id == task_id).order_by(RunRecord.created_at, RunRecord.id)
         )
         return list(result.all())
 
@@ -74,9 +70,7 @@ class ConversationContextManager:
         raw = task.context_state if isinstance(task.context_state, dict) else {}
         return {
             "version": int(raw.get("version", CONTEXT_STATE_VERSION)),
-            "checkpoint": raw.get("checkpoint")
-            if isinstance(raw.get("checkpoint"), dict)
-            else None,
+            "checkpoint": raw.get("checkpoint") if isinstance(raw.get("checkpoint"), dict) else None,
             "state_version": int(raw.get("state_version", 0)),
             "window_number": int(raw.get("window_number", 0)),
             "retained_tail_ids": list(raw.get("retained_tail_ids", [])),
@@ -84,9 +78,7 @@ class ConversationContextManager:
             "token_after": raw.get("token_after"),
             "compaction_implementation": raw.get("compaction_implementation"),
             "compaction_failure_code": raw.get("compaction_failure_code"),
-            "folded_run_ids": list(
-                dict.fromkeys(str(item) for item in raw.get("folded_run_ids", []) if item)
-            ),
+            "folded_run_ids": list(dict.fromkeys(str(item) for item in raw.get("folded_run_ids", []) if item)),
             "last_action": raw.get("last_action"),
             "last_action_at": raw.get("last_action_at"),
             "command_history": list(raw.get("command_history", [])),
@@ -102,11 +94,7 @@ class ConversationContextManager:
         state = self._state(task)
         folded = frozenset(state["folded_run_ids"])
         all_runs = runs if runs is not None else await self.list_runs(task.id)
-        visible = tuple(
-            run
-            for run in all_runs
-            if run.id not in folded and run.status in CONTEXT_TERMINAL_STATUSES
-        )
+        visible = tuple(run for run in all_runs if run.id not in folded and run.status in CONTEXT_TERMINAL_STATUSES)
         return ConversationContextProjection(
             summary=self._checkpoint_text(state["checkpoint"]),
             runs=visible,
@@ -148,11 +136,7 @@ class ConversationContextManager:
             context_lines.extend((f"User: {goal}", f"Assistant: {answer}"))
         if not context_lines:
             return current_goal
-        return (
-            "Conversation context:\n"
-            + "\n".join(context_lines)
-            + f"\nCurrent user request: {current_goal}"
-        )
+        return "Conversation context:\n" + "\n".join(context_lines) + f"\nCurrent user request: {current_goal}"
 
     async def status(
         self,
@@ -205,9 +189,7 @@ class ConversationContextManager:
             "estimated": True,
             "summary_active": bool(projection.summary),
             "compaction_implementation": (
-                state["compaction_implementation"] or "astra_semantic"
-                if state["checkpoint"]
-                else None
+                state["compaction_implementation"] or "astra_semantic" if state["checkpoint"] else None
             ),
             "compaction_failure_code": state["compaction_failure_code"],
             "checkpoint_status": "active" if state["checkpoint"] else "none",

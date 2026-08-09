@@ -67,17 +67,14 @@ class MemoryToolService:
             memory_key=key,
             include_sources=True,
         )
-        if existing and existing.status in TERMINAL_MEMORY_STATUSES:
-            raise MemoryConflictError("Memory key belongs to a terminal Memory version")
-        if existing and existing.content == normalized_content:
-            await self._record_event(run_id, existing, "memory.remember_deduplicated")
-            return self._view(existing, deduplicated=True)
+        if existing:
+            if existing.status in TERMINAL_MEMORY_STATUSES:
+                raise MemoryConflictError("Memory key belongs to a terminal Memory version")
+            if existing.content == normalized_content:
+                await self._record_event(run_id, existing, "memory.remember_deduplicated")
+                return self._view(existing, deduplicated=True)
         provenance = {"run_id": run_id, "tool_call_id": tool_call_id, "source": "remember"}
-        expires_at = (
-            datetime.now(timezone.utc) + timedelta(days=expires_in_days)
-            if expires_in_days is not None
-            else None
-        )
+        expires_at = datetime.now(timezone.utc) + timedelta(days=expires_in_days) if expires_in_days is not None else None
         if existing is not None:
             if existing.status != MemoryStatus.active.value:
                 raise MemoryConflictError("Memory key already has a pending candidate")

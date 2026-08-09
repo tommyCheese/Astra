@@ -75,9 +75,7 @@ ROLE_DOCUMENTS = MappingProxyType(
         ModelOperation.AUTODREAM: ("identity", "memory", "autodream"),
     }
 )
-SYNCHRONOUS_MODEL_OPERATIONS = frozenset(
-    operation for operation in ModelOperation if operation != ModelOperation.AUTODREAM
-)
+SYNCHRONOUS_MODEL_OPERATIONS = frozenset(operation for operation in ModelOperation if operation != ModelOperation.AUTODREAM)
 
 
 @dataclass(frozen=True, slots=True)
@@ -139,9 +137,7 @@ class AgentProfile:
             None,
         )
         if names is None:
-            raise AgentProfileConfigurationError(
-                f"Unsupported Agent Profile operation: {operation}"
-            )
+            raise AgentProfileConfigurationError(f"Unsupported Agent Profile operation: {operation}")
         return tuple(self.document(name) for name in names)
 
     def snapshot(self) -> dict[str, object]:
@@ -160,9 +156,7 @@ class AgentProfile:
         for name in DOCUMENT_FILES:
             value = raw_documents.get(name)
             if not isinstance(value, Mapping) or not isinstance(value.get("content"), str):
-                raise AgentProfileConfigurationError(
-                    f"Agent Profile snapshot document is invalid: {name}"
-                )
+                raise AgentProfileConfigurationError(f"Agent Profile snapshot document is invalid: {name}")
             contents[name] = value["content"]
         composition_version = snapshot.get("composition_schema_version")
         role_documents = snapshot.get("role_documents")
@@ -197,16 +191,13 @@ class AgentProfileLoader:
     ) -> AgentProfile:
         if composition_schema_version != COMPOSITION_SCHEMA_VERSION:
             raise AgentProfileConfigurationError(
-                "Agent Profile composition schema version is unsupported: "
-                f"{composition_schema_version}"
+                f"Agent Profile composition schema version is unsupported: {composition_schema_version}"
             )
         documents = []
         for name, filename in DOCUMENT_FILES.items():
             content = contents.get(name) if contents is not None else self._read(filename)
             if not isinstance(content, str):
-                raise AgentProfileConfigurationError(
-                    f"Agent Profile document is missing: {filename}"
-                )
+                raise AgentProfileConfigurationError(f"Agent Profile document is missing: {filename}")
             documents.append(
                 self._document(
                     name,
@@ -234,9 +225,7 @@ class AgentProfileLoader:
         try:
             return resources.files(self.package).joinpath(filename).read_text(encoding="utf-8")
         except (FileNotFoundError, ModuleNotFoundError, UnicodeDecodeError) as exc:
-            raise AgentProfileConfigurationError(
-                f"Unable to load Agent Profile document: {filename}"
-            ) from exc
+            raise AgentProfileConfigurationError(f"Unable to load Agent Profile document: {filename}") from exc
 
     def _document(
         self,
@@ -249,22 +238,16 @@ class AgentProfileLoader:
         normalized = normalize_document(content)
         encoded = normalized.encode("utf-8")
         if len(encoded) > self.max_document_bytes:
-            raise AgentProfileConfigurationError(
-                f"Agent Profile document exceeds {self.max_document_bytes} bytes: {filename}"
-            )
+            raise AgentProfileConfigurationError(f"Agent Profile document exceeds {self.max_document_bytes} bytes: {filename}")
         metadata = parse_frontmatter(normalized, filename)
         if metadata.get("schema_version") != "1" or metadata.get("document") != name:
             raise AgentProfileConfigurationError(f"Agent Profile metadata is invalid: {filename}")
         expected_status = "active"
         if metadata.get("status") != expected_status:
-            raise AgentProfileConfigurationError(
-                f"Agent Profile status must be {expected_status}: {filename}"
-            )
+            raise AgentProfileConfigurationError(f"Agent Profile status must be {expected_status}: {filename}")
         for heading in REQUIRED_HEADINGS[name]:
             if heading not in normalized.splitlines():
-                raise AgentProfileConfigurationError(
-                    f"Agent Profile required section is missing in {filename}: {heading}"
-                )
+                raise AgentProfileConfigurationError(f"Agent Profile required section is missing in {filename}: {heading}")
         return AgentProfileDocument(
             name=name,
             filename=filename,
@@ -289,16 +272,12 @@ def parse_frontmatter(content: str, filename: str) -> dict[str, str]:
     try:
         end = lines.index("---", 1)
     except ValueError as exc:
-        raise AgentProfileConfigurationError(
-            f"Agent Profile metadata is unterminated: {filename}"
-        ) from exc
+        raise AgentProfileConfigurationError(f"Agent Profile metadata is unterminated: {filename}") from exc
     metadata: dict[str, str] = {}
     for line in lines[1:end]:
         key, separator, value = line.partition(":")
         if not separator or not key.strip() or not value.strip():
-            raise AgentProfileConfigurationError(
-                f"Agent Profile metadata entry is invalid: {filename}"
-            )
+            raise AgentProfileConfigurationError(f"Agent Profile metadata entry is invalid: {filename}")
         metadata[key.strip()] = value.strip()
     return metadata
 
@@ -311,17 +290,11 @@ def _normalize_role_documents(
     expected_operations = {operation.value for operation in ROLE_DOCUMENTS}
     normalized = []
     for raw_operation, raw_names in role_documents.items():
-        operation = (
-            raw_operation.value if isinstance(raw_operation, ModelOperation) else str(raw_operation)
-        )
+        operation = raw_operation.value if isinstance(raw_operation, ModelOperation) else str(raw_operation)
         if operation not in expected_operations:
-            raise AgentProfileConfigurationError(
-                f"Agent Profile role operation is invalid: {operation}"
-            )
+            raise AgentProfileConfigurationError(f"Agent Profile role operation is invalid: {operation}")
         if not isinstance(raw_names, (list, tuple)):
-            raise AgentProfileConfigurationError(
-                f"Agent Profile role document selection is invalid: {operation}"
-            )
+            raise AgentProfileConfigurationError(f"Agent Profile role document selection is invalid: {operation}")
         names = tuple(str(name) for name in raw_names)
         _validate_role_names(operation, names)
         normalized.append((operation, names))
@@ -331,24 +304,14 @@ def _normalize_role_documents(
 
 
 def _validate_role_names(operation: str, names: tuple[str, ...]) -> None:
-    names_are_unsafe = (
-        not names
-        or len(names) != len(set(names))
-        or any(name not in DOCUMENT_FILES for name in names)
-    )
+    names_are_unsafe = not names or len(names) != len(set(names)) or any(name not in DOCUMENT_FILES for name in names)
     if names_are_unsafe:
-        raise AgentProfileConfigurationError(
-            f"Agent Profile role document selection is unsafe: {operation}"
-        )
+        raise AgentProfileConfigurationError(f"Agent Profile role document selection is unsafe: {operation}")
     if operation == ModelOperation.AUTODREAM.value:
         if names != ROLE_DOCUMENTS[ModelOperation.AUTODREAM]:
-            raise AgentProfileConfigurationError(
-                "Agent Profile AutoDream document selection is unsafe"
-            )
+            raise AgentProfileConfigurationError("Agent Profile AutoDream document selection is unsafe")
     elif "autodream" in names:
-        raise AgentProfileConfigurationError(
-            f"Agent Profile role document selection is unsafe: {operation}"
-        )
+        raise AgentProfileConfigurationError(f"Agent Profile role document selection is unsafe: {operation}")
 
 
 def _profile_version(

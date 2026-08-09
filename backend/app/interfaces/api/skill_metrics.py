@@ -18,13 +18,8 @@ from app.infrastructure.db.models.skills import (
 async def build_skill_metrics(session: AsyncSession) -> dict[str, Any]:
     counts = await _entity_counts(session)
     snapshot_rows = list((await session.scalars(select(RunSkillSnapshotRecord))).all())
-    catalog_chars = [
-        len(json.dumps(item.catalog, ensure_ascii=False, sort_keys=True)) for item in snapshot_rows
-    ]
-    mode_counts = {
-        mode: sum(item.answer_mode == mode for item in snapshot_rows)
-        for mode in ("standard", "trusted")
-    }
+    catalog_chars = [len(json.dumps(item.catalog, ensure_ascii=False, sort_keys=True)) for item in snapshot_rows]
+    mode_counts = {mode: sum(item.answer_mode == mode for item in snapshot_rows) for mode in ("standard", "trusted")}
     startup_ms = await _startup_latencies(session, snapshot_rows)
     event_counts = await _event_counts(session)
     return (
@@ -46,17 +41,13 @@ async def _entity_counts(session: AsyncSession) -> dict[str, int]:
 
     return {
         "skills": await count(SkillRecord),
-        "published_revisions": await count(
-            SkillRevisionRecord, SkillRevisionRecord.test_only.is_(False)
-        ),
+        "published_revisions": await count(SkillRevisionRecord, SkillRevisionRecord.test_only.is_(False)),
         "draft_tests": await count(SkillRevisionRecord, SkillRevisionRecord.test_only.is_(True)),
         "run_snapshots": await count(RunSkillSnapshotRecord),
     }
 
 
-async def _startup_latencies(
-    session: AsyncSession, snapshot_rows: list[RunSkillSnapshotRecord]
-) -> dict[str, list[int]]:
+async def _startup_latencies(session: AsyncSession, snapshot_rows: list[RunSkillSnapshotRecord]) -> dict[str, list[int]]:
     first_invocations = dict(
         (
             await session.execute(
@@ -71,9 +62,7 @@ async def _startup_latencies(
     for item in snapshot_rows:
         first = first_invocations.get(item.run_id)
         if first is not None:
-            startup_ms.setdefault(item.answer_mode, []).append(
-                max(0, int((first - item.created_at).total_seconds() * 1000))
-            )
+            startup_ms.setdefault(item.answer_mode, []).append(max(0, int((first - item.created_at).total_seconds() * 1000)))
     return startup_ms
 
 
@@ -96,12 +85,8 @@ def _snapshot_metrics(
     startup_ms: dict[str, list[int]],
 ) -> dict[str, Any]:
     return {
-        "catalog_entries": int(
-            sum(len(items) for items in (item.catalog for item in snapshot_rows))
-        ),
-        "activations": int(
-            sum(len(items) for items in (item.activations for item in snapshot_rows))
-        ),
+        "catalog_entries": int(sum(len(items) for items in (item.catalog for item in snapshot_rows))),
+        "activations": int(sum(len(items) for items in (item.activations for item in snapshot_rows))),
         "resource_bytes": int(
             sum(
                 sum(int(item.get("size_bytes", 0)) for item in items)

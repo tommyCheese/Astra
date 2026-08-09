@@ -44,14 +44,10 @@ def _item_id(observation: dict[str, Any], index: int) -> str:
     data = observation.get("data") if isinstance(observation.get("data"), dict) else {}
     normalized = data.get("normalized_output") if isinstance(data, dict) else {}
     key_fields = normalized.get("key_fields") if isinstance(normalized, dict) else {}
-    stable = (
-        key_fields.get("tool_call_id") if isinstance(key_fields, dict) else None
-    ) or observation.get("id")
+    stable = (key_fields.get("tool_call_id") if isinstance(key_fields, dict) else None) or observation.get("id")
     if stable:
         return f"observation:{stable}"
-    digest = hashlib.sha256(
-        json.dumps(observation, ensure_ascii=False, sort_keys=True, default=str).encode()
-    ).hexdigest()[:20]
+    digest = hashlib.sha256(json.dumps(observation, ensure_ascii=False, sort_keys=True, default=str).encode()).hexdigest()[:20]
     return f"observation:{index}:{digest}"
 
 
@@ -81,13 +77,10 @@ def _reference_manifest(observations: list[dict[str, Any]]) -> tuple[CompactionC
     return tuple(references.values())
 
 
-def _protected_prefix(
-    *,
-    goal: str,
-    context: dict[str, Any],
-    trusted: bool,
-    accounting: TokenAccountingService,
-) -> tuple[CompactionContextItem, ...]:
+_ContextItems = tuple[CompactionContextItem, ...]
+
+
+def _protected_prefix(goal: str, context: dict[str, Any], trusted: bool, accounting: TokenAccountingService) -> _ContextItems:
     sections: list[tuple[str, Any]] = [
         ("current_request", goal),
         (
@@ -100,7 +93,7 @@ def _protected_prefix(
         ("skills", context.get("active_skills", [])),
         (
             "budget",
-            ((context.get("reasoning_policy") or {}).get("effective") or {}).get("budgets", {}),
+            context.get("reasoning_policy", {}).get("effective", {}).get("budgets", {}),
         ),
         (
             "canonical_runtime_state",
@@ -138,15 +131,11 @@ def _protected_prefix(
                                 )
                                 if manifest.get(key) is not None
                             }
-                            for name, manifest in sorted(
-                                (context.get("tool_manifests") or {}).items()
-                            )
+                            for name, manifest in sorted(context.get("tool_manifests", {}).items())
                             if isinstance(manifest, dict)
                         },
                         "selection": context.get("tool_selection", {}),
-                        "execution_profile_permissions": (
-                            (context.get("execution_profile") or {}).get("permission_bundle")
-                        ),
+                        "execution_profile_permissions": context.get("execution_profile", {}).get("permission_bundle"),
                     },
                 ),
                 ("plan_graph", context.get("plan_graph", {})),
@@ -155,36 +144,20 @@ def _protected_prefix(
                     {
                         "run_state_version": context.get("state_version"),
                         "plan_version": context.get("plan_version"),
-                        "agent_state_version": (context.get("agent_state") or {}).get(
-                            "version"
-                        ),
-                        "active_plan_version": (context.get("agent_state") or {}).get(
-                            "active_plan_version"
-                        ),
-                        "active_executions": (context.get("agent_state") or {}).get(
-                            "active_executions", []
-                        ),
+                        "agent_state_version": context.get("agent_state", {}).get("version"),
+                        "active_plan_version": context.get("agent_state", {}).get("active_plan_version"),
+                        "active_executions": context.get("agent_state", {}).get("active_executions", []),
                     },
                 ),
                 (
                     "completion_gate",
                     {
-                        "success_criteria": (context.get("task_contract") or {}).get(
-                            "success_criteria", []
-                        ),
-                        "verification_requirements": (
-                            (context.get("task_contract") or {}).get(
-                                "verification_requirements", []
-                            )
-                        ),
+                        "success_criteria": context.get("task_contract", {}).get("success_criteria", []),
+                        "verification_requirements": context.get("task_contract", {}).get("verification_requirements", []),
                         "evidence_pack": context.get("evidence_pack", {}),
                         "subagent_active_groups": context.get("subagent_active_groups", []),
-                        "waiting_state": (context.get("agent_state") or {}).get(
-                            "waiting_state"
-                        ),
-                        "terminal_intent": (context.get("agent_state") or {}).get(
-                            "terminal_intent"
-                        ),
+                        "waiting_state": context.get("agent_state", {}).get("waiting_state"),
+                        "terminal_intent": context.get("agent_state", {}).get("terminal_intent"),
                     },
                 ),
             ]
@@ -226,16 +199,12 @@ async def compact_root_context(
     root = await AgentExecutionRepository(repo.session).root_for_run(run_id)
     if root is None:
         return context
-    state = await _prepare_compaction_state(
-        repo, settings, root, run_id, goal, context, observations
-    )
+    state = await _prepare_compaction_state(repo, settings, root, run_id, goal, context, observations)
     await _perform_compaction(repo, model_client, run_id, context, policy, state)
     return _project_compacted_context(context, state)
 
 
-async def _prepare_compaction_state(
-    repo, settings, root, run_id, goal, context, observations
-) -> RootCompactionState:
+async def _prepare_compaction_state(repo, settings, root, run_id, goal, context, observations) -> RootCompactionState:
     accounting = TokenAccountingService()
     prefix = _protected_prefix(
         goal=goal,
@@ -302,9 +271,7 @@ async def _prepare_compaction_state(
         accounting=token_accounting,
         continuation=continuation,
     )
-    return RootCompactionState(
-        envelope, accounting, body, observations_by_id, prior_checkpoint, metadata
-    )
+    return RootCompactionState(envelope, accounting, body, observations_by_id, prior_checkpoint, metadata)
 
 
 def _observation_items(observations, accounting):
@@ -349,9 +316,7 @@ async def _perform_compaction(repo, model_client, run_id, context, policy, state
         projection = project_shadow_compaction(
             state.envelope.accounting,
             policy,
-            expected_checkpoint_tokens=max(
-                256, state.envelope.accounting.protected_prefix_tokens // 4
-            ),
+            expected_checkpoint_tokens=max(256, state.envelope.accounting.protected_prefix_tokens // 4),
         )
         context["context_compaction"] = projection.model_dump(mode="json")
         return
@@ -390,9 +355,7 @@ def _project_compacted_context(context, state: RootCompactionState):
     source_ids = set(state.metadata.get("source_item_ids", []))
     retained_ids = set(state.metadata.get("retained_tail_ids", []))
     visible_ids = retained_ids | (set(state.observations_by_id) - source_ids)
-    visible = [
-        state.observations_by_id[item.id] for item in state.body if item.id in visible_ids
-    ]
+    visible = [state.observations_by_id[item.id] for item in state.body if item.id in visible_ids]
     context["context_checkpoint"] = state.prior_checkpoint
     context["observations"] = visible
     if isinstance(context.get("agent_state"), dict):

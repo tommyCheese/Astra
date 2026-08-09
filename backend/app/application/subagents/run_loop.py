@@ -194,9 +194,7 @@ class ChildAgentRun:
         prepared: PreparedChildTurn,
     ) -> SubagentResult:
         status = (
-            SubagentExecutionStatus.blocked
-            if prepared.decision.decision_type == "blocked"
-            else SubagentExecutionStatus.failed
+            SubagentExecutionStatus.blocked if prepared.decision.decision_type == "blocked" else SubagentExecutionStatus.failed
         )
         result = SubagentResult(
             status=status,
@@ -245,8 +243,7 @@ class ChildAgentRun:
             except ValueError:
                 continue
         state.evidence_refs.extend(
-            SubagentEvidenceReference(id=str(ref), summary="Child tool evidence")
-            for ref in outcome.get("evidence_refs", [])
+            SubagentEvidenceReference(id=str(ref), summary="Child tool evidence") for ref in outcome.get("evidence_refs", [])
         )
         succeeded = outcome["status"] == "succeeded"
         await state.repository.update_agent_turn(

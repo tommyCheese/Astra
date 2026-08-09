@@ -58,22 +58,15 @@ class DelegationScopeAttenuator:
         execution_id: str,
     ) -> EffectiveDelegationScope:
         ceilings = [parent, *([task_policy] if task_policy else [])]
-        normalized = {
-            key: cls._attenuate_list(key, requested, ceilings, server_policy)
-            for key in cls.LIST_KEYS
-        }
-        normalized.update(
-            {key: cls._attenuate_budget(key, requested, ceilings) for key in cls.BUDGET_KEYS}
-        )
+        normalized = {key: cls._attenuate_list(key, requested, ceilings, server_policy) for key in cls.LIST_KEYS}
+        normalized.update({key: cls._attenuate_budget(key, requested, ceilings) for key in cls.BUDGET_KEYS})
         normalized["private_staging_root"] = f".astra/subagents/{execution_id}/staging"
         return EffectiveDelegationScope(**normalized)
 
     @classmethod
     def _attenuate_list(cls, key, requested, ceilings, server_policy):
         values = _unique_strings(requested.get(key, []))
-        if values and any(
-            not _values_are_subset(values, ceiling.get(key, [])) for ceiling in ceilings
-        ):
+        if values and any(not _values_are_subset(values, ceiling.get(key, [])) for ceiling in ceilings):
             raise DelegationAuthorizationError(
                 DelegationRejectionCode.resource_not_delegated,
                 f"Requested {key} exceeds an authority ceiling.",

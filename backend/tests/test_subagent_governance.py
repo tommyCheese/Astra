@@ -305,9 +305,7 @@ async def test_catalog_drift_skill_escape_and_sibling_overlap_fail_closed(sessio
 
 async def test_skill_requiring_an_undelegated_tool_is_removed(session):
     run, root, parent, parent_scope = await _runtime(session, skills=True)
-    snapshot = await session.scalar(
-        select(RunSkillSnapshotRecord).where(RunSkillSnapshotRecord.run_id == run.id)
-    )
+    snapshot = await session.scalar(select(RunSkillSnapshotRecord).where(RunSkillSnapshotRecord.run_id == run.id))
     snapshot.catalog[0]["requested_tool_patterns"] = ["file_write"]
     await session.commit()
     service = DelegationContractService(
@@ -424,13 +422,7 @@ def test_child_invocation_binds_context_and_rejects_context_drop_or_escape():
         )
     assert drift.value.issue.code == DelegationRejectionCode.catalog_drift
 
-    escaped = plan.model_copy(
-        update={
-            "effects": [
-                EffectItem(kind="network_read", resource="https://evil.example/page")
-            ]
-        }
-    )
+    escaped = plan.model_copy(update={"effects": [EffectItem(kind="network_read", resource="https://evil.example/page")]})
     with pytest.raises(DelegationAuthorizationError):
         ChildInvocationAuthorizer().authorize(
             context=context,
@@ -445,9 +437,7 @@ def test_child_invocation_binds_context_and_rejects_context_drop_or_escape():
         )
 
     with pytest.raises(DelegationAuthorizationError) as self_approval:
-        ChildInvocationAuthorizer.validate_reviewer(
-            reviewer_identity_id="child-1", executor_context=context
-        )
+        ChildInvocationAuthorizer.validate_reviewer(reviewer_identity_id="child-1", executor_context=context)
     assert self_approval.value.issue.code == DelegationRejectionCode.identity_overlap
 
 

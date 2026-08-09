@@ -31,8 +31,10 @@ class TokenAccountingService:
         return math.ceil(estimated * self.estimate_margin), "astra_conservative_estimate", True
 
     def count_value(self, value: Any) -> tuple[int, str, bool]:
-        text = value if isinstance(value, str) else json.dumps(
-            value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str
+        text = (
+            value
+            if isinstance(value, str)
+            else json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str)
         )
         return self.count_text(text)
 
@@ -85,10 +87,7 @@ class TokenAccountingService:
         source = (
             "provider_reported_usage"
             if reported is not None
-            else "+".join(
-                sorted({prefix_source, checkpoint_source, body_source, tail_source} - {"empty"})
-            )
-            or "empty"
+            else "+".join(sorted({prefix_source, checkpoint_source, body_source, tail_source} - {"empty"})) or "empty"
         )
         return ContextTokenAccounting(
             context_window=context_window,
@@ -103,11 +102,6 @@ class TokenAccountingService:
             prefill_tokens=max(0, prefill_tokens),
             source=source,
             estimated=(
-                False
-                if reported is not None
-                else prefix_estimated
-                or checkpoint_estimated
-                or body_estimated
-                or tail_estimated
+                False if reported is not None else prefix_estimated or checkpoint_estimated or body_estimated or tail_estimated
             ),
         )

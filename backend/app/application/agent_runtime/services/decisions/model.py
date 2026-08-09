@@ -21,19 +21,6 @@ REASONING_FLUSH_INTERVAL_SECONDS = 0.05
 REASONING_FLUSH_MAX_CHARS = 128
 
 
-@dataclass(frozen=True)
-class DecisionStageInput:
-    run_id: str
-    goal: str
-    turn_index: int
-    context: dict[str, Any]
-    answer_mode: str
-    may_stream_answer: bool
-    active_plan_node_id: str | None
-    approved_tool_call: ToolCallRecord | None = None
-    approved_turn: AgentTurnRecord | None = None
-
-
 @dataclass
 class StreamedAgentAnswer:
     parts: list[str] = field(default_factory=list)
@@ -44,29 +31,15 @@ class StreamedAgentAnswer:
         return "".join(self.parts).strip()
 
 
-@dataclass(frozen=True)
-class DecisionStageResult:
-    decision: AgentDecision
-    candidate_answer: AgentFinalAnswer | None
-    reasoning_summary: str
-    reasoning_completed: bool
-
-
-@dataclass(frozen=True)
-class DecisionStageFailure:
-    observation: AgentObservation
-    reasoning_summary: str
-
-
+@dataclass
 class ReasoningEventWriter:
-    def __init__(self, repository: RunUnitOfWork, run_id: str, turn_index: int) -> None:
-        self._repository = repository
-        self._run_id = run_id
-        self._turn_index = turn_index
-        self._buffer = ""
-        self.summary = ""
-        self._last_flush = 0.0
-        self.completed = False
+    _repository: RunUnitOfWork
+    _run_id: str
+    _turn_index: int
+    _buffer: str = ""
+    summary: str = ""
+    _last_flush: float = 0.0
+    completed: bool = False
 
     async def accept(self, delta: str) -> None:
         if delta == "\1":
@@ -124,83 +97,99 @@ class ReasoningEventWriter:
         await self._repository.session.commit()
 
 
+@dataclass
 class ModelDecisionStage:
     """Invoke the model without leaking provider streaming details into orchestration."""
 
-    def __init__(
-        self,
-        repository: RunUnitOfWork,
-        model_client: ModelClient,
-        on_answer_delta: AnswerDeltaHandler | None,
-    ) -> None:
-        self._repository = repository
-        self._model_client = model_client
-        self._on_answer_delta = on_answer_delta
-        self._reasoning_writer: ReasoningEventWriter | None = None
+    _repository: RunUnitOfWork
+    _model_client: ModelClient
+    _on_answer_delta: AnswerDeltaHandler | None
+    _reasoning_writer: ReasoningEventWriter | None = None
+    candidate_answer: AgentFinalAnswer | None = None
+    run_id: str = ""
+    goal: str = ""
+    turn_index: int = 0
+    context: dict[str, Any] = field(default_factory=dict)
+    answer_mode: str = "trusted"
+    may_stream_answer: bool = False
+    active_plan_node_id: str | None = None
+    approved_tool_call: ToolCallRecord | None = None
+    approved_turn: AgentTurnRecord | None = None
 
     async def execute(
         self,
-        stage_input: DecisionStageInput,
-    ) -> DecisionStageResult | DecisionStageFailure:
+        *,
+        run_id: str,
+        goal: str,
+        turn_index: int,
+        context: dict[str, Any],
+        answer_mode: str,
+        may_stream_answer: bool,
+        active_plan_node_id: str | None,
+        approved_tool_call: ToolCallRecord | None = None,
+        approved_turn: AgentTurnRecord | None = None,
+    ) -> AgentDecision | AgentObservation:
+        self.run_id = run_id
+        self.goal = goal
+        self.turn_index = turn_index
+        self.context = context
+        self.answer_mode = answer_mode
+        self.may_stream_answer = may_stream_answer
+        self.active_plan_node_id = active_plan_node_id
+        self.approved_tool_call = approved_tool_call
+        self.approved_turn = approved_turn
         self._reasoning_writer = ReasoningEventWriter(
             self._repository,
-            stage_input.run_id,
-            stage_input.turn_index,
+            run_id,
+            turn_index,
         )
-        if stage_input.approved_tool_call and stage_input.approved_turn:
-            return self._forced_decision(stage_input)
-        await self._record_skill_binding(stage_input)
+        if approved_tool_call and approved_turn:
+            return self._forced_decision()
+        await self._record_skill_binding()
         streamed_answer = StreamedAgentAnswer()
         try:
             decision, candidate_answer = await self._model_client.decide_with_answer(
-                stage_input.goal,
-                stage_input.context,
-                on_delta=(lambda delta: self._accept_answer_delta(streamed_answer, delta))
-                if stage_input.may_stream_answer
-                else None,
+                goal,
+                context,
+                on_delta=(lambda delta: self._accept_answer_delta(streamed_answer, delta)) if may_stream_answer else None,
                 on_reasoning_delta=self._reasoning_writer.accept,
             )
         except ModelOutputError as error:
-            return await self._recover_invalid_output(stage_input, streamed_answer, error)
-        candidate_answer = await self._adopt_streamed_answer(
-            stage_input,
+            return await self._recover_invalid_output(streamed_answer, error)
+        self.candidate_answer = await self._adopt_streamed_answer(
             streamed_answer,
             decision,
             candidate_answer,
         )
-        return DecisionStageResult(
-            decision,
-            candidate_answer,
-            self._reasoning_writer.summary,
-            self._reasoning_writer.completed,
-        )
+        return decision
 
     async def complete_reasoning(self, decision: AgentDecision) -> None:
         assert self._reasoning_writer is not None
         await self._reasoning_writer.ensure_completed(decision.reasoning_summary)
 
-    def _forced_decision(self, stage_input: DecisionStageInput) -> DecisionStageResult:
-        assert stage_input.approved_tool_call is not None
-        assert stage_input.approved_turn is not None
-        decision = AgentDecision.model_validate(stage_input.approved_turn.decision).model_copy(
+    def _forced_decision(self) -> AgentDecision:
+        assert self.approved_tool_call is not None
+        assert self.approved_turn is not None
+        decision = AgentDecision.model_validate(self.approved_turn.decision).model_copy(
             update={
-                "tool_name": stage_input.approved_tool_call.tool_name,
-                "tool_input": dict(stage_input.approved_tool_call.input),
+                "tool_name": self.approved_tool_call.tool_name,
+                "tool_input": dict(self.approved_tool_call.input),
             }
         )
-        return DecisionStageResult(decision, None, "", False)
+        self.candidate_answer = None
+        return decision
 
-    async def _record_skill_binding(self, stage_input: DecisionStageInput) -> None:
-        if not stage_input.context.get("active_skills"):
+    async def _record_skill_binding(self) -> None:
+        if not self.context.get("active_skills"):
             return
         await self._repository.add_event(
-            stage_input.run_id,
+            self.run_id,
             "skill.operation_bound",
             {
                 "operation": "decision_with_answer",
-                "turn_index": stage_input.turn_index,
-                "plan_node_id": stage_input.active_plan_node_id,
-                "skills": list(stage_input.context["active_skills"]),
+                "turn_index": self.turn_index,
+                "plan_node_id": self.active_plan_node_id,
+                "skills": list(self.context["active_skills"]),
             },
         )
 
@@ -218,7 +207,6 @@ class ModelDecisionStage:
 
     async def _adopt_streamed_answer(
         self,
-        stage_input: DecisionStageInput,
         streamed_answer: StreamedAgentAnswer,
         decision: AgentDecision,
         candidate_answer: AgentFinalAnswer | None,
@@ -227,14 +215,14 @@ class ModelDecisionStage:
             return candidate_answer
         logger.warning(
             "agent.decision.streamed_answer_adopted run_id=%s turn=%s mode=%s",
-            stage_input.run_id,
-            stage_input.turn_index,
-            stage_input.answer_mode,
+            self.run_id,
+            self.turn_index,
+            self.answer_mode,
         )
         await self._repository.add_event(
-            stage_input.run_id,
+            self.run_id,
             "answer.structure_adopted",
-            {"turn_index": stage_input.turn_index, "answer_mode": stage_input.answer_mode},
+            {"turn_index": self.turn_index, "answer_mode": self.answer_mode},
         )
         return AgentFinalAnswer(
             summary=streamed_answer.text,
@@ -243,50 +231,41 @@ class ModelDecisionStage:
 
     async def _recover_invalid_output(
         self,
-        stage_input: DecisionStageInput,
         streamed_answer: StreamedAgentAnswer,
         error: ModelOutputError,
-    ) -> DecisionStageResult | DecisionStageFailure:
+    ) -> AgentDecision | AgentObservation:
         assert self._reasoning_writer is not None
         if not streamed_answer.text:
             logger.exception(
                 "agent.decision.invalid run_id=%s turn=%s",
-                stage_input.run_id,
-                stage_input.turn_index,
+                self.run_id,
+                self.turn_index,
             )
             if self._on_answer_delta:
                 await self._on_answer_delta("\0")
-            return DecisionStageFailure(
-                AgentObservation(
-                    kind="model_error",
-                    status="failed",
-                    summary="模型决策输出无法解析。",
-                    error={"category": "model_output_error", "message": str(error)},
-                ),
-                self._reasoning_writer.summary,
+            return AgentObservation(
+                kind="model_error",
+                status="failed",
+                summary="模型决策输出无法解析。",
+                error={"category": "model_output_error", "message": str(error)},
             )
         if not streamed_answer.completed and self._on_answer_delta:
             await self._on_answer_delta("\1")
         await self._repository.add_event(
-            stage_input.run_id,
+            self.run_id,
             "answer.schema_degraded",
             {
-                "turn_index": stage_input.turn_index,
-                "answer_mode": stage_input.answer_mode,
+                "turn_index": self.turn_index,
+                "answer_mode": self.answer_mode,
                 "reason": str(error),
             },
         )
         await self._repository.session.commit()
-        return DecisionStageResult(
-            AgentDecision(
-                decision_type="finalize",
-                reasoning_summary=self._reasoning_writer.summary
-                or "已保留完成生成的回答；辅助结构未通过校验。",
-            ),
-            AgentFinalAnswer(
-                summary=streamed_answer.text,
-                verification_notes=["辅助结构未通过模型输出协议校验。"],
-            ),
-            self._reasoning_writer.summary,
-            self._reasoning_writer.completed,
+        self.candidate_answer = AgentFinalAnswer(
+            summary=streamed_answer.text,
+            verification_notes=["辅助结构未通过模型输出协议校验。"],
+        )
+        return AgentDecision(
+            decision_type="finalize",
+            reasoning_summary=self._reasoning_writer.summary or "已保留完成生成的回答；辅助结构未通过校验。",
         )

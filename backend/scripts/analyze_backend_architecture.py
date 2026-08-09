@@ -50,6 +50,15 @@ class ComplexityVisitor(ast.NodeVisitor):
     def __init__(self) -> None:
         self.complexity = 1
 
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+        """Nested callable decisions belong to that callable's own metric."""
+
+    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+        """Nested callable decisions belong to that callable's own metric."""
+
+    def visit_Lambda(self, node: ast.Lambda) -> None:
+        """Lambda decisions belong to the lambda, not its enclosing function."""
+
     def visit_If(self, node: ast.If) -> None:
         self.complexity += 1
         self.generic_visit(node)
@@ -121,8 +130,7 @@ def public_symbols(module_tree: ast.Module) -> tuple[str, ...]:
     names = [
         statement.name
         for statement in module_tree.body
-        if isinstance(statement, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef))
-        and not statement.name.startswith("_")
+        if isinstance(statement, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)) and not statement.name.startswith("_")
     ]
     return tuple(sorted(names))
 
@@ -152,11 +160,7 @@ class RuntimeImportCollector(ast.NodeVisitor):
         self.generic_visit(node)
 
     def visit_Import(self, node: ast.Import) -> None:
-        self.imports.update(
-            alias.name
-            for alias in node.names
-            if alias.name == "app" or alias.name.startswith("app.")
-        )
+        self.imports.update(alias.name for alias in node.names if alias.name == "app" or alias.name.startswith("app."))
 
     def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
         imported_module = resolve_relative_import(
@@ -285,8 +289,7 @@ def render_markdown(inventory: ArchitectureInventory, *, limit: int) -> str:
         ]
     )
     output.extend(
-        f"| {function.lines} | {function.complexity} | `{function.qualified_name}` | "
-        f"`{function.module}:{function.line}` |"
+        f"| {function.lines} | {function.complexity} | `{function.qualified_name}` | `{function.module}:{function.line}` |"
         for function in largest_functions
     )
     output.extend(
@@ -299,8 +302,7 @@ def render_markdown(inventory: ArchitectureInventory, *, limit: int) -> str:
         ]
     )
     output.extend(
-        f"| {function.complexity} | {function.lines} | `{function.qualified_name}` | "
-        f"`{function.module}:{function.line}` |"
+        f"| {function.complexity} | {function.lines} | `{function.qualified_name}` | `{function.module}:{function.line}` |"
         for function in most_complex
     )
     return "\n".join(output)

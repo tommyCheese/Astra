@@ -25,9 +25,7 @@ class AstraRuntimeSettings(BaseSettings):
     tool_provider_states: dict[str, bool] = Field(default_factory=dict)
     tool_provider_configurations: dict[str, dict] = Field(default_factory=dict)
     tool_provider_configuration_revisions: dict[str, str] = Field(default_factory=dict)
-    trusted_tool_providers: str = (
-        "astra.builtin=builtin,astra.chart=builtin,astra.shell=builtin"
-    )
+    trusted_tool_providers: str = "astra.builtin=builtin,astra.chart=builtin,astra.shell=builtin"
     tool_managed_plugin_discovery_enabled: bool = False
     tool_external_plugin_discovery_enabled: bool = False
     tool_plugin_rollout_mode: str = "builtin_only"
@@ -163,10 +161,7 @@ class AstraRuntimeSettings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_runtime_bounds(self) -> "AstraRuntimeSettings":
-        if (
-            self.agent_memory_autodream_min_candidates
-            > self.agent_memory_autodream_max_records_per_job
-        ):
+        if self.agent_memory_autodream_min_candidates > self.agent_memory_autodream_max_records_per_job:
             raise ValueError("AutoDream minimum candidates cannot exceed records per job")
         if self.agent_subagent_max_children_per_parent > self.agent_subagent_max_children_total:
             raise ValueError("Subagent children per parent cannot exceed total children")
@@ -182,10 +177,7 @@ class AstraRuntimeSettings(BaseSettings):
             raise ValueError("Subagent parent cost reserve cannot exceed max cost")
         if self.context_compaction_threshold_scope not in {"total", "body_after_prefix"}:
             raise ValueError("Compaction threshold scope must be total or body_after_prefix")
-        if (
-            self.context_compaction_v2_enabled
-            and self.context_compaction_recovery_ratio >= self.context_auto_compact_ratio
-        ):
+        if self.context_compaction_v2_enabled and self.context_compaction_recovery_ratio >= self.context_auto_compact_ratio:
             raise ValueError("Compaction recovery ratio must be below the trigger ratio")
         if self.tool_plugin_rollout_mode not in {"builtin_only", "configured"}:
             raise ValueError("Tool plugin rollout mode must be builtin_only or configured")

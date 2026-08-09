@@ -154,9 +154,7 @@ async def _execute_command(
     *, manager, task, definition, command, arguments, session, settings
 ) -> tuple[str, dict[str, object], str]:
     if definition.argument_mode == "required":
-        return await _execute_parameterized_command(
-            task, definition, command, arguments, session, settings
-        )
+        return await _execute_parameterized_command(task, definition, command, arguments, session, settings)
     if definition.argument_mode == "none" and arguments:
         raise AstraInputValidationError(
             "SYSTEM_COMMAND_USAGE_INVALID",
@@ -168,7 +166,11 @@ async def _execute_command(
         details["direction"] = arguments
         message = _compaction_message(details, customized=bool(arguments))
         return message, details, arguments
-    return "已清空模型上下文；后续请求将从零开始，完整记录仍保留。", await manager.clear(task), arguments
+    return (
+        "已清空模型上下文；后续请求将从零开始，完整记录仍保留。",
+        await manager.clear(task),
+        arguments,
+    )
 
 
 async def _execute_parameterized_command(

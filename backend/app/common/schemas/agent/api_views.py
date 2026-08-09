@@ -16,12 +16,15 @@ from app.common.schemas.agent.planning import (
 from app.common.schemas.agent.run_policy import RequestedReasoningPolicy
 from app.common.schemas.agent.run_result import AgentRunResult
 from app.common.schemas.agent.tool_invocation import PendingApprovalView
-from app.common.schemas.agent.types import AnswerMode, ContinuationAction, PlanExecution, RuntimeKind
+from app.common.schemas.agent.types import (
+    AnswerMode,
+    ContinuationAction,
+    PlanExecution,
+    RuntimeKind,
+)
 from app.common.schemas.models import RunModelConfig
 
-SKILL_QUALIFIED_IDENTITY_RE = re.compile(
-    r"^(?:builtin|custom):[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$"
-)
+SKILL_QUALIFIED_IDENTITY_RE = re.compile(r"^(?:builtin|custom):[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$")
 
 
 class CreateRunRequest(BaseModel):
@@ -44,10 +47,7 @@ class CreateRunRequest(BaseModel):
     def validate_skill_ids(cls, identities: list[str]) -> list[str]:
         if len(identities) != len(set(identities)):
             raise ValueError("skill_ids must contain unique qualified identities")
-        if any(
-            not SKILL_QUALIFIED_IDENTITY_RE.fullmatch(identity) or "--" in identity
-            for identity in identities
-        ):
+        if any(not SKILL_QUALIFIED_IDENTITY_RE.fullmatch(identity) or "--" in identity for identity in identities):
             raise ValueError("skill_ids must contain valid qualified identities")
         return identities
 
@@ -91,9 +91,7 @@ class ContinueRunRequest(BaseModel):
             )
             if any(value is None for value in required):
                 raise ValueError("plan continuation requires bound continuation fields")
-            if self.action == ContinuationAction.revise_plan and (
-                not self.content or not self.content.strip()
-            ):
+            if self.action == ContinuationAction.revise_plan and (not self.content or not self.content.strip()):
                 raise ValueError("content is required for plan revision")
             return self
         if not self.content or not self.content.strip():

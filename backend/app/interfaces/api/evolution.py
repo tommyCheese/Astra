@@ -52,9 +52,7 @@ async def get_available_evolution_tools(
     settings: AstraRuntimeSettings = Depends(get_settings),
     session: AsyncSession = Depends(get_session),
 ) -> frozenset[str]:
-    states = await ToolSettingsRepository(session).get_or_create(
-        default_tool_states(settings)
-    )
+    states = await ToolSettingsRepository(session).get_or_create(default_tool_states(settings))
     if not settings.sandbox_enabled or not sandbox_available(settings):
         return frozenset()
     return frozenset(name for name, enabled in states.items() if enabled)
@@ -87,11 +85,7 @@ def _current_evaluation(record: AgentEvolutionCandidateRecord):
     if record.current_evaluation_id is None:
         return None
     return next(
-        (
-            evaluation
-            for evaluation in record.evaluations
-            if evaluation.id == record.current_evaluation_id
-        ),
+        (evaluation for evaluation in record.evaluations if evaluation.id == record.current_evaluation_id),
         None,
     )
 
@@ -108,9 +102,7 @@ def _candidate_view(record: AgentEvolutionCandidateRecord) -> EvolutionCandidate
         status=EvolutionCandidateStatus(record.status),
         state_version=record.state_version,
         current_evaluation_id=record.current_evaluation_id,
-        current_evaluation_verdict=(
-            current_evaluation.verdict if current_evaluation is not None else None
-        ),
+        current_evaluation_verdict=(current_evaluation.verdict if current_evaluation is not None else None),
         created_by=record.created_by,
         reviewed_by=record.reviewed_by,
         review_reason=record.review_reason,
@@ -127,11 +119,7 @@ def _candidate_detail(
     summary = _candidate_view(record)
     audits = sorted(record.audit_events, key=lambda item: (item.created_at, item.id))
     rollback = next(
-        (
-            item.payload
-            for item in reversed(audits)
-            if item.event_type == "candidate_rolled_back"
-        ),
+        (item.payload for item in reversed(audits) if item.event_type == "candidate_rolled_back"),
         None,
     )
     return EvolutionCandidateDetailView(
@@ -239,9 +227,7 @@ async def attach_evaluation(
     candidate_id: str,
     payload: EvolutionEvaluationAttachRequest,
     available_tools: Set[str] = Depends(get_available_evolution_tools),
-    required_thresholds: EvaluationThresholds = Depends(
-        get_required_evolution_thresholds
-    ),
+    required_thresholds: EvaluationThresholds = Depends(get_required_evolution_thresholds),
     session: AsyncSession = Depends(get_session),
 ) -> EvolutionCandidateDetailView:
     try:
@@ -290,9 +276,7 @@ async def approve_candidate(
     candidate_id: str,
     payload: EvolutionReviewRequest,
     available_tools: Set[str] = Depends(get_available_evolution_tools),
-    required_thresholds: EvaluationThresholds = Depends(
-        get_required_evolution_thresholds
-    ),
+    required_thresholds: EvaluationThresholds = Depends(get_required_evolution_thresholds),
     session: AsyncSession = Depends(get_session),
 ) -> EvolutionCandidateDetailView:
     return await _review_candidate(
@@ -310,9 +294,7 @@ async def reject_candidate(
     candidate_id: str,
     payload: EvolutionReviewRequest,
     available_tools: Set[str] = Depends(get_available_evolution_tools),
-    required_thresholds: EvaluationThresholds = Depends(
-        get_required_evolution_thresholds
-    ),
+    required_thresholds: EvaluationThresholds = Depends(get_required_evolution_thresholds),
     session: AsyncSession = Depends(get_session),
 ) -> EvolutionCandidateDetailView:
     return await _review_candidate(

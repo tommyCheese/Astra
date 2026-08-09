@@ -35,12 +35,8 @@ def test_file_sqlite_uses_bounded_connection_pool():
 
 
 def test_non_file_databases_keep_driver_pool_defaults():
-    assert engine_options_for_settings(
-        AstraRuntimeSettings(database_url="sqlite+aiosqlite:///:memory:")
-    ) == {}
-    assert engine_options_for_settings(
-        AstraRuntimeSettings(database_url="postgresql+asyncpg://astra@db/astra")
-    ) == {}
+    assert engine_options_for_settings(AstraRuntimeSettings(database_url="sqlite+aiosqlite:///:memory:")) == {}
+    assert engine_options_for_settings(AstraRuntimeSettings(database_url="postgresql+asyncpg://astra@db/astra")) == {}
 
 
 @pytest.mark.asyncio

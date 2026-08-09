@@ -141,9 +141,7 @@ def test_context_composer_is_minimal_reference_first_and_records_gaps():
         "purpose_mismatch",
     }
     assert composed.manifest.tool_catalog_digest == "sha256:tools"
-    assert composed.manifest.total_estimated_tokens == sum(
-        item.estimated_tokens for item in composed.manifest.items
-    )
+    assert composed.manifest.total_estimated_tokens == sum(item.estimated_tokens for item in composed.manifest.items)
 
     denied = SubagentContextComposer().compose(
         agent_execution_id="child-1",
@@ -242,9 +240,7 @@ async def test_child_artifact_evidence_staging_and_explicit_parent_promotion(ses
         update={
             "contract_id": "dc-sibling",
             "contract_hash": "sha256:sibling",
-            "request": contract.request.model_copy(
-                update={"request_id": "context-sibling", "dedupe_key": "context:sibling"}
-            ),
+            "request": contract.request.model_copy(update={"request_id": "context-sibling", "dedupe_key": "context:sibling"}),
         }
     )
     sibling = await executions.create_child(contract=sibling_contract)
@@ -270,9 +266,7 @@ async def test_child_artifact_evidence_staging_and_explicit_parent_promotion(ses
             payload={"claim": "Verified"},
         ),
     )
-    with pytest.raises(
-        GroundingEvidenceConflictError, match="AgentExecution isolation"
-    ):
+    with pytest.raises(GroundingEvidenceConflictError, match="AgentExecution isolation"):
         await exchange.stage_evidence(
             agent_execution_id=sibling.id,
             fragment=GroundingEvidenceFragment(
@@ -319,9 +313,7 @@ async def test_child_artifact_evidence_staging_and_explicit_parent_promotion(ses
     assert promoted.path == "reports/final.md"
     assert promoted.provenance["source_agent_execution_id"] == child.id
     assert evidence.agent_execution_id == child.id
-    assert parent.checkpoint["promoted_child_facts"][0][
-        "source_agent_execution_id"
-    ] == child.id
+    assert parent.checkpoint["promoted_child_facts"][0]["source_agent_execution_id"] == child.id
     with pytest.raises(ValueError, match="verified"):
         await exchange.promote_verified_facts(
             parent_execution_id=root.id,

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any
 
 from sqlalchemy import select
@@ -8,11 +9,11 @@ from app.infrastructure.db.model_base import utc_now
 from app.infrastructure.db.models.executions import RuntimeBuildRecord, RuntimeProfileRecord
 
 
+@dataclass
 class RuntimeProfilePersistence:
     """Maps runtime profile state between the application view and ORM records."""
 
-    def __init__(self, session_factory: Any):
-        self.session_factory = session_factory
+    session_factory: Any
 
     async def load(self, state: dict[str, Any]) -> tuple[dict[str, Any], list[tuple[str, str]]]:
         if self.session_factory is None:
@@ -34,9 +35,7 @@ class RuntimeProfilePersistence:
             if build is not None:
                 if build.status in {"queued", "building"}:
                     self._cancel_interrupted(build)
-                    recovered.append(
-                        (build.id, build.staging_image or f"astra-data-viz:build-{build.id}")
-                    )
+                    recovered.append((build.id, build.staging_image or f"astra-data-viz:build-{build.id}"))
                 state["build"] = self.build_view(build)
             await session.commit()
         return state, recovered

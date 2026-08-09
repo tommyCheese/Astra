@@ -73,18 +73,11 @@ def test_semantic_resolution_uses_router_eligibility_and_stable_ordering():
             execution_backend="sandbox.remote",
         ),
     )
-    resolution = CapabilityToolResolver(
-        ToolRouter(tools, available_backends={"in_process"})
-    ).resolve(["information.search"])
+    resolution = CapabilityToolResolver(ToolRouter(tools, available_backends={"in_process"})).resolve(["information.search"])
 
     assert resolution.candidate_names == ("alpha.search", "zeta.search")
-    assert all(
-        candidate.matched_capabilities == ("information.search",)
-        for candidate in resolution.candidates
-    )
-    assert [(item.tool_name, item.reason) for item in resolution.rejections] == [
-        ("offline.search", "sandbox_unavailable")
-    ]
+    assert all(candidate.matched_capabilities == ("information.search",) for candidate in resolution.candidates)
+    assert [(item.tool_name, item.reason) for item in resolution.rejections] == [("offline.search", "sandbox_unavailable")]
     assert resolution.capability_gaps == ()
 
 

@@ -43,9 +43,7 @@ def test_runtime_profile_exposes_locked_core_dependency_versions(tmp_path):
         "scipy",
         "seaborn",
     }
-    runtime_project = (
-        Path(__file__).parents[2] / "runtimes" / "data-viz" / "pyproject.toml"
-    ).read_text()
+    runtime_project = (Path(__file__).parents[2] / "runtimes" / "data-viz" / "pyproject.toml").read_text()
     for item in CORE_DEPENDENCIES:
         assert f"{item['name']}=={item['version']}" in runtime_project
 

@@ -48,35 +48,21 @@ class ExecutionProgress:
     no_progress_signatures: list[str] = field(default_factory=list)
 
 
+@dataclass
 class ProgressEvaluationStage:
     """Own progress persistence, reflection policy, and plan revision."""
 
-    def __init__(
-        self,
-        *,
-        run_id: str,
-        goal: str,
-        repository: RunUnitOfWork,
-        plan_repository: PlanRepository,
-        model_client: ModelClient,
-        tool_registry: AstraToolRegistry,
-        policy: EffectiveReasoningPolicy,
-        reflection_gate: AgentReflectionGate,
-        evaluator: AgentObservationEvaluator,
-        max_reflections: int,
-        progress: ExecutionProgress,
-    ) -> None:
-        self._run_id = run_id
-        self._goal = goal
-        self._repository = repository
-        self._plan_repository = plan_repository
-        self._model_client = model_client
-        self._tool_registry = tool_registry
-        self._policy = policy
-        self._reflection_gate = reflection_gate
-        self._evaluator = evaluator
-        self._max_reflections = max_reflections
-        self.progress = progress
+    _run_id: str
+    _goal: str
+    _repository: RunUnitOfWork
+    _plan_repository: PlanRepository
+    _model_client: ModelClient
+    _tool_registry: AstraToolRegistry
+    _policy: EffectiveReasoningPolicy
+    _reflection_gate: AgentReflectionGate
+    _evaluator: AgentObservationEvaluator
+    _max_reflections: int
+    progress: ExecutionProgress
 
     async def reflect(
         self,
@@ -108,9 +94,7 @@ class ProgressEvaluationStage:
         await self._repository.session.commit()
         return reflection
 
-    async def persist(
-        self, evaluation: AgentObservationEvaluation | None = None
-    ) -> None:
+    async def persist(self, evaluation: AgentObservationEvaluation | None = None) -> None:
         current = await self._repository.require_run_core(self._run_id)
         if not current.agent_state:
             return
@@ -129,11 +113,7 @@ class ProgressEvaluationStage:
             self._run_id,
             expected_version=current.state_version,
             agent_state=state.model_dump(mode="json"),
-            plan_graph=(
-                plan_to_view(active_plan).model_dump(mode="json")
-                if active_plan
-                else current.plan_graph
-            ),
+            plan_graph=(plan_to_view(active_plan).model_dump(mode="json") if active_plan else current.plan_graph),
             waiting_state=current.waiting_state,
         )
 
@@ -337,9 +317,7 @@ class ProgressEvaluationStage:
                 known.add(fingerprint)
 
     @staticmethod
-    def _apply_evaluation(
-        state: AgentState, evaluation: AgentObservationEvaluation
-    ) -> None:
+    def _apply_evaluation(state: AgentState, evaluation: AgentObservationEvaluation) -> None:
         state.evaluations.append(evaluation.model_dump(mode="json"))
         for criterion in state.task_contract.success_criteria:
             if criterion.id in evaluation.criterion_updates:

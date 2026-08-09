@@ -67,17 +67,12 @@ async def revise_waiting_plan(
         _configure_revision_client(client, run, environment.policy, run_id)
         draft = await _request_validated_draft(client, environment)
         current_by_key = {node.node_key: node for node in current.nodes}
-        lineage = {
-            node.node_key: current_by_key[node.node_key].id
-            for node in draft.nodes
-            if node.node_key in current_by_key
-        }
+        lineage = {node.node_key: current_by_key[node.node_key].id for node in draft.nodes if node.node_key in current_by_key}
         node_state = {
             node.node_key: _preserved_state(current_by_key[node.node_key])
             for node in draft.nodes
             if node.node_key in current_by_key
-            and current_by_key[node.node_key].status
-            in {PlanNodeStatus.completed.value, PlanNodeStatus.skipped.value}
+            and current_by_key[node.node_key].status in {PlanNodeStatus.completed.value, PlanNodeStatus.skipped.value}
         }
         revised = await PlanRepository(repository.session).create(
             run_id,
@@ -168,8 +163,7 @@ async def _request_validated_draft(client, environment: RevisionEnvironment) -> 
         attempt_context = dict(environment.prompt_context)
         if validation_error:
             attempt_context["validation_feedback"] = (
-                f"The previous replacement plan was rejected: {validation_error}. "
-                "Return a corrected complete PlanDraft."
+                f"The previous replacement plan was rejected: {validation_error}. Return a corrected complete PlanDraft."
             )
         try:
             candidate = await client.plan(
@@ -211,9 +205,7 @@ def _normalize_revision_metadata(
     valid_criteria = set(criterion_ids)
     nodes = []
     for node in draft.nodes:
-        criteria = [
-            criterion for criterion in node.success_criteria_refs if criterion in valid_criteria
-        ] or list(criterion_ids)
+        criteria = [criterion for criterion in node.success_criteria_refs if criterion in valid_criteria] or list(criterion_ids)
         nodes.append(
             node.model_copy(
                 update={

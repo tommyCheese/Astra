@@ -44,9 +44,7 @@ async def _sync_builtin_skill(
         max_instruction_chars=settings.skills_max_instruction_chars,
         reject_reserved_custom_identity=False,
     )
-    existing = await session.scalar(
-        select(SkillRecord).where(SkillRecord.name == package.frontmatter.name)
-    )
+    existing = await session.scalar(select(SkillRecord).where(SkillRecord.name == package.frontmatter.name))
     if existing is not None:
         if existing.origin != SkillOrigin.builtin.value:
             raise RuntimeError("Custom Skill conflicts with reserved built-in identity")
@@ -66,9 +64,7 @@ async def _sync_builtin_skill(
     service = SkillService(session, settings)
     stored = await service._store_files(normalized, package)
     maximum = await session.scalar(
-        select(func.max(SkillRevisionRecord.version)).where(
-            SkillRevisionRecord.skill_id == skill.id
-        )
+        select(func.max(SkillRevisionRecord.version)).where(SkillRevisionRecord.skill_id == skill.id)
     )
     revision = SkillRevisionRecord(
         skill_id=skill.id,

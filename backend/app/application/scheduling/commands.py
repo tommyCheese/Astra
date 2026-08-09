@@ -146,8 +146,7 @@ class AutomationCommandService:
         if not jobs:
             return "工作区还没有定时任务。", {"jobs": []}
         summary = "\n".join(
-            f"- {job.name} · {'启用' if job.enabled else '暂停'} · "
-            f"{job.id} · 下次 {self._display_time(job.next_fire_at)}"
+            f"- {job.name} · {'启用' if job.enabled else '暂停'} · {job.id} · 下次 {self._display_time(job.next_fire_at)}"
             for job in jobs
         )
         return (
@@ -155,9 +154,7 @@ class AutomationCommandService:
             {"jobs": [self._job_view(job) for job in jobs]},
         )
 
-    async def _create_schedule(
-        self, task: TaskRecord, command: ScheduleCommand
-    ) -> tuple[str, dict[str, object]]:
+    async def _create_schedule(self, task: TaskRecord, command: ScheduleCommand) -> tuple[str, dict[str, object]]:
         assert command.schedule is not None and command.prompt is not None
         try:
             payload = ScheduledJobCreate(
@@ -201,15 +198,11 @@ class AutomationCommandService:
             idempotency_key=command.idempotency_key,
             claimed_by="system-command",
         )
-        return "已排队 heartbeat 手动检查。", {
-            "schedule_run": self._schedule_run_view(schedule_run)
-        }
+        return "已排队 heartbeat 手动检查。", {"schedule_run": self._schedule_run_view(schedule_run)}
 
     def _heartbeat_status(self, heartbeat) -> tuple[str, dict[str, object]]:
         if heartbeat is None:
-            return "工作区尚未配置 heartbeat。", {
-                "heartbeat": {"configured": False, "enabled": False}
-            }
+            return "工作区尚未配置 heartbeat。", {"heartbeat": {"configured": False, "enabled": False}}
         message = (
             f"Heartbeat {'已启用' if heartbeat.enabled else '已关闭'} · "
             f"周期 {heartbeat.schedule.get('interval_seconds')} 秒 · 时区 {heartbeat.timezone} · "
@@ -234,15 +227,11 @@ class AutomationCommandService:
                 "HEARTBEAT_COMMAND_INVALID", "heartbeat 参数无效。", {"reason": str(error)[:600]}
             ) from error
         updated = await self.heartbeats.upsert(payload, owner_principal="system-command")
-        return "已启用 heartbeat。", {
-            "heartbeat": {"configured": True, **self._job_view(updated)}
-        }
+        return "已启用 heartbeat。", {"heartbeat": {"configured": True, **self._job_view(updated)}}
 
     async def _heartbeat_payload(self, task, command, heartbeat) -> dict:
         existing_active = (heartbeat.heartbeat or {}).get("active_hours") if heartbeat else None
-        active_hours = command.active_hours or (
-            ActiveHours.model_validate(existing_active) if existing_active else None
-        )
+        active_hours = command.active_hours or (ActiveHours.model_validate(existing_active) if existing_active else None)
         values = {
             "target_task_id": task.id,
             "enabled": True,

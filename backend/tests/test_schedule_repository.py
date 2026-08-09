@@ -142,12 +142,15 @@ async def test_recover_claimed_run_after_scheduler_restart(session):
     )
     schedule_run = await repo.manual_trigger(job, now=claimed_at)
 
-    assert await repo.recover_claimed(
-        claimed_by="new-scheduler",
-        stale_after_seconds=30,
-        batch_size=10,
-        now=claimed_at + timedelta(seconds=29),
-    ) == []
+    assert (
+        await repo.recover_claimed(
+            claimed_by="new-scheduler",
+            stale_after_seconds=30,
+            batch_size=10,
+            now=claimed_at + timedelta(seconds=29),
+        )
+        == []
+    )
 
     recovered = await repo.recover_claimed(
         claimed_by="new-scheduler",

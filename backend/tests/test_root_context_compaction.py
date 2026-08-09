@@ -71,9 +71,7 @@ def test_trusted_root_prefix_rebuilds_canonical_governance_inputs():
         "active_plan_version": 4,
         "active_executions": [{"execution_id": "node-1"}],
     }
-    assert sections["completion_gate"]["success_criteria"] == [
-        {"id": "done", "description": "verify"}
-    ]
+    assert sections["completion_gate"]["success_criteria"] == [{"id": "done", "description": "verify"}]
 
 
 def test_standard_root_prefix_does_not_create_trusted_governance_sections():
@@ -84,9 +82,7 @@ def test_standard_root_prefix_does_not_create_trusted_governance_sections():
         context={"task_contract": {"secret": "not for standard"}},
     )
 
-    assert {item.kind for item in prefix}.isdisjoint(
-        {"task_contract", "profile_snapshot", "permissions", "completion_gate"}
-    )
+    assert {item.kind for item in prefix}.isdisjoint({"task_contract", "profile_snapshot", "permissions", "completion_gate"})
 
 
 def test_root_reference_manifest_includes_only_consumed_child_results():
@@ -136,10 +132,7 @@ async def test_disabled_root_compaction_does_not_change_model_context(session):
 async def test_root_compaction_installs_checkpoint_and_bounds_model_projection(session):
     repo = RunUnitOfWork(session)
     run = await repo.create_task_run("compact root", {})
-    observations = [
-        {"kind": "note", "summary": f"old-{index}", "data": {"text": "界" * 2_000}}
-        for index in range(6)
-    ]
+    observations = [{"kind": "note", "summary": f"old-{index}", "data": {"text": "界" * 2_000}} for index in range(6)]
     context = root_context(observations)
     settings = AstraRuntimeSettings(
         model_provider="unknown",
@@ -185,10 +178,7 @@ async def test_root_compaction_persists_recovery_continuation_manifest(session):
         idempotency_key="tool-call-key",
     )
     await repo.set_waiting_state(run.id, {"request": "approve the next action"})
-    observations = [
-        {"kind": "note", "summary": f"old-{index}", "data": {"text": "界" * 2_000}}
-        for index in range(6)
-    ]
+    observations = [{"kind": "note", "summary": f"old-{index}", "data": {"text": "界" * 2_000}} for index in range(6)]
     context = root_context(observations)
     settings = AstraRuntimeSettings(
         model_provider="unknown",
@@ -220,6 +210,4 @@ async def test_root_compaction_persists_recovery_continuation_manifest(session):
     assert continuation["action_idempotency_keys"] == ["tool-call-key"]
     assert continuation["waiting_state"]["request"] == "approve the next action"
     assert continuation["cancellation_epoch"] == root.cancellation_epoch
-    assert continuation["retained_tail_ids"] == root.checkpoint["context_compaction"][
-        "retained_tail_ids"
-    ]
+    assert continuation["retained_tail_ids"] == root.checkpoint["context_compaction"]["retained_tail_ids"]

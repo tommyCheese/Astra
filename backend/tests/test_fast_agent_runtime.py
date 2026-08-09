@@ -2,15 +2,16 @@ import ast
 from pathlib import Path
 
 import pytest
-from pydantic import ValidationError
 
-from app.application.runner.engine import RunEngine
-from app.application.fast_agent_runtime.context import fast_compatible_skills
-from app.common.core.config import AstraRuntimeSettings
-from app.common.schemas.agent.types import AnswerMode
-from app.common.schemas.agent.fast_runtime import FastAgentAction
 from app.application.agent_runtime.policies.reasoning import resolve_run_profile
+from app.application.run_management.execution.service import RunExecution as RunEngine
+from app.common.core.config import AstraRuntimeSettings
 from app.common.schemas.agent.run_policy import RequestedReasoningPolicy
+from app.common.schemas.agent.types import AnswerMode
+from app.infrastructure.bootstrap.standard_runtime import (
+    _canonical_model_action,
+    standard_compatible_skills,
+)
 from app.infrastructure.model_clients.mock import MockModelClient
 from app.infrastructure.repositories.run_unit_of_work import RunUnitOfWork
 from app.infrastructure.tools.base import (
@@ -27,7 +28,7 @@ class ScriptedFastClient(MockModelClient):
         self.actions = list(actions)
         self.contexts = []
 
-    async def fast_decide(self, goal, context, *, on_delta=None):
+    async def standard_decide(self, goal, context, *, on_delta=None):
         self.contexts.append(context)
         action = self.actions.pop(0)
         if action["action"] == "answer" and on_delta:
@@ -76,9 +77,7 @@ class FailingTool(AstraTool):
     )
 
     async def run(self, tool_input, *, context=None):
-        raise ToolExecutionError(
-            "sandbox_execution_failed", "password=must-not-be-persisted"
-        )
+        raise ToolExecutionError("sandbox_execution_failed", "password=must-not-be-persisted")
 
 
 async def create_fast_run(repo, settings, goal="fast goal", execution_mode="auto_approval"):
@@ -103,13 +102,9 @@ async def test_fast_runtime_direct_answer_has_no_trusted_state(session, tmp_path
     )
     repo = RunUnitOfWork(session)
     run = await create_fast_run(repo, settings)
-    client = ScriptedFastClient(
-        [{"protocol_version": 1, "action": "answer", "content": "fast answer"}]
-    )
+    client = ScriptedFastClient([{"protocol_version": 1, "action": "answer", "content": "fast answer"}])
 
-    await RunEngine(settings, model_client=client, tool_registry=AstraToolRegistry())._run_with_repo(
-        repo, run.id
-    )
+    await RunEngine(settings, model_client=client, tool_registry=AstraToolRegistry())._run_with_repo(repo, run.id)
 
     loaded = await repo.require_run(run.id)
     assert loaded.runtime_kind == "fast-v1"
@@ -179,9 +174,7 @@ async def test_fast_runtime_pauses_at_shared_approval_boundary(session, tmp_path
     assert loaded.tool_calls[0].status == "awaiting_approval"
 
 
-async def test_fast_runtime_multi_tool_failure_recovery_and_terminal_convergence(
-    session, tmp_path
-):
+async def test_fast_runtime_multi_tool_failure_recovery_and_terminal_convergence(session, tmp_path):
     settings = AstraRuntimeSettings(
         model_provider="mock",
         artifact_store_path=str(tmp_path / "artifacts"),
@@ -214,9 +207,7 @@ async def test_fast_runtime_multi_tool_failure_recovery_and_terminal_convergence
     )
     registry = AstraToolRegistry().extend([ReadTool(), FailingTool()])
 
-    await RunEngine(settings, model_client=client, tool_registry=registry)._run_with_repo(
-        repo, run.id
-    )
+    await RunEngine(settings, model_client=client, tool_registry=registry)._run_with_repo(repo, run.id)
 
     loaded = await repo.require_run(run.id)
     assert loaded.status == "completed"
@@ -236,9 +227,7 @@ async def test_fast_runtime_asks_user_and_cleans_forged_artifact_reference(sessi
     question = await create_fast_run(repo, settings, "ambiguous")
     await RunEngine(
         settings,
-        model_client=ScriptedFastClient(
-            [{"protocol_version": 1, "action": "ask_user", "content": "Which one?"}]
-        ),
+        model_client=ScriptedFastClient([{"protocol_version": 1, "action": "ask_user", "content": "Which one?"}]),
         tool_registry=AstraToolRegistry(),
     )._run_with_repo(repo, question.id)
     loaded_question = await repo.require_run(question.id)
@@ -285,14 +274,12 @@ def test_fast_skill_compatibility_excludes_trusted_capabilities():
         {"qualified_identity": "custom:memory", "metadata": {"required_capabilities": ["memory_write"]}},
     ]
 
-    assert [item["qualified_identity"] for item in fast_compatible_skills(skills)] == [
-        "custom:plain"
-    ]
+    assert [item["qualified_identity"] for item in standard_compatible_skills(skills)] == ["custom:plain"]
 
 
 def test_fast_model_action_cannot_add_runtime_authority():
-    with pytest.raises(ValidationError):
-        FastAgentAction.model_validate(
+    with pytest.raises(ValueError):
+        _canonical_model_action(
             {
                 "protocol_version": 1,
                 "action": "call_tool",

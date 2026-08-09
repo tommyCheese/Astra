@@ -18,12 +18,8 @@ async def test_run_event_broker_wakes_all_subscribers_without_lost_wakeup():
     broker = RunEventBroker()
     first_version = broker.subscribe("run-1")
     second_version = broker.subscribe("run-1")
-    first = asyncio.create_task(
-        broker.wait_for_change("run-1", first_version, timeout=1)
-    )
-    second = asyncio.create_task(
-        broker.wait_for_change("run-1", second_version, timeout=1)
-    )
+    first = asyncio.create_task(broker.wait_for_change("run-1", first_version, timeout=1))
+    second = asyncio.create_task(broker.wait_for_change("run-1", second_version, timeout=1))
     await asyncio.sleep(0)
 
     broker.publish("run-1")

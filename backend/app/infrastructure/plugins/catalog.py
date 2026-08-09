@@ -16,12 +16,12 @@ from app.infrastructure.plugins.contracts import (
     PluginRuntimeBackendContribution,
     PluginToolContribution,
 )
+from app.infrastructure.plugins.diagnostics import plugin_diagnostics
 from app.infrastructure.plugins.discovery import (
     PluginCandidate,
     PluginDiscoverySource,
     discover_candidates,
 )
-from app.infrastructure.plugins.diagnostics import plugin_diagnostics
 from app.infrastructure.plugins.interfaces import (
     PluginHealthProbe,
     RuntimeBackend,
@@ -55,9 +55,7 @@ class CatalogTool(AstraTool):
 
     async def run(self, tool_input, *, context=None):
         if self._tool.spec.model_dump(mode="json") != self._spec.model_dump(mode="json"):
-            raise ToolExecutionError(
-                "provider_identity_changed", "AstraTool manifest changed after catalog assembly"
-            )
+            raise ToolExecutionError("provider_identity_changed", "AstraTool manifest changed after catalog assembly")
         return await self._tool.run(tool_input, context=context)
 
 
@@ -103,29 +101,21 @@ class PluginCatalogBuilder:
             descriptor = candidate.descriptor
             plugin_diagnostics.record("discovered", provider_id=descriptor.provider_id)
             self._reject_duplicate_provider(providers, descriptor)
-            providers[descriptor.provider_id] = ProviderStatus(
-                descriptor, PluginLifecycleState.discovered
-            )
+            providers[descriptor.provider_id] = ProviderStatus(descriptor, PluginLifecycleState.discovered)
             try:
                 self._verify(candidate)
             except Exception:
-                plugin_diagnostics.record(
-                    "verification_failed", provider_id=descriptor.provider_id
-                )
+                plugin_diagnostics.record("verification_failed", provider_id=descriptor.provider_id)
                 raise
             plugin_diagnostics.record("verified", provider_id=descriptor.provider_id)
-            providers[descriptor.provider_id] = ProviderStatus(
-                descriptor, PluginLifecycleState.verified
-            )
+            providers[descriptor.provider_id] = ProviderStatus(descriptor, PluginLifecycleState.verified)
             try:
                 contribution, health_target = self._load(candidate)
             except Exception:
                 plugin_diagnostics.record("load_failed", provider_id=descriptor.provider_id)
                 raise
             plugin_diagnostics.record("loaded", provider_id=descriptor.provider_id)
-            providers[descriptor.provider_id] = ProviderStatus(
-                descriptor, PluginLifecycleState.loaded
-            )
+            providers[descriptor.provider_id] = ProviderStatus(descriptor, PluginLifecycleState.loaded)
             yield descriptor, contribution, health_target
 
     async def build(self) -> PluginCatalog:
@@ -134,27 +124,15 @@ class PluginCatalogBuilder:
         for descriptor, contribution, health_target in self._load_candidates(providers):
             healthy, reason = await self._health(health_target)
             if not healthy:
-                plugin_diagnostics.record(
-                    "health", provider_id=descriptor.provider_id, state="unhealthy"
-                )
-                providers[descriptor.provider_id] = ProviderStatus(
-                    descriptor, PluginLifecycleState.unhealthy, reason
-                )
+                plugin_diagnostics.record("health", provider_id=descriptor.provider_id, state="unhealthy")
+                providers[descriptor.provider_id] = ProviderStatus(descriptor, PluginLifecycleState.unhealthy, reason)
                 continue
-            plugin_diagnostics.record(
-                "health", provider_id=descriptor.provider_id, state="healthy"
-            )
-            providers[descriptor.provider_id] = ProviderStatus(
-                descriptor, PluginLifecycleState.healthy
-            )
+            plugin_diagnostics.record("health", provider_id=descriptor.provider_id, state="healthy")
+            providers[descriptor.provider_id] = ProviderStatus(descriptor, PluginLifecycleState.healthy)
             if not descriptor.enabled:
-                providers[descriptor.provider_id] = ProviderStatus(
-                    descriptor, PluginLifecycleState.disabled
-                )
+                providers[descriptor.provider_id] = ProviderStatus(descriptor, PluginLifecycleState.disabled)
                 continue
-            providers[descriptor.provider_id] = ProviderStatus(
-                descriptor, PluginLifecycleState.enabled
-            )
+            providers[descriptor.provider_id] = ProviderStatus(descriptor, PluginLifecycleState.enabled)
             contributions.append(contribution)
         return self._assemble(providers, contributions)
 
@@ -164,17 +142,11 @@ class PluginCatalogBuilder:
         contributions: list[PluginContribution] = []
         for descriptor, contribution, health_target in self._load_candidates(providers):
             if isinstance(health_target, PluginHealthProbe):
-                raise PluginCatalogError(
-                    "health_check_required", "Provider requires asynchronous health verification"
-                )
+                raise PluginCatalogError("health_check_required", "Provider requires asynchronous health verification")
             if not descriptor.enabled:
-                providers[descriptor.provider_id] = ProviderStatus(
-                    descriptor, PluginLifecycleState.disabled
-                )
+                providers[descriptor.provider_id] = ProviderStatus(descriptor, PluginLifecycleState.disabled)
                 continue
-            providers[descriptor.provider_id] = ProviderStatus(
-                descriptor, PluginLifecycleState.enabled
-            )
+            providers[descriptor.provider_id] = ProviderStatus(descriptor, PluginLifecycleState.enabled)
             contributions.append(contribution)
         return self._assemble(providers, contributions)
 
@@ -186,17 +158,13 @@ class PluginCatalogBuilder:
         if descriptor.digest not in allowed:
             raise PluginCatalogError("provider_digest_changed", "Plugin provider digest changed")
         if candidate.observed_digest != descriptor.digest:
-            raise PluginCatalogError(
-                "provider_digest_changed", "Observed plugin provider digest does not match"
-            )
+            raise PluginCatalogError("provider_digest_changed", "Observed plugin provider digest does not match")
         if descriptor.source != "isolated_descriptor" and descriptor.trust_level not in {
             "platform",
             "managed",
             "trusted",
         }:
-            raise PluginCatalogError(
-                "provider_trust_too_low", "In-process plugin provider is not trusted"
-            )
+            raise PluginCatalogError("provider_trust_too_low", "In-process plugin provider is not trusted")
 
     @staticmethod
     def _load(candidate: PluginCandidate) -> tuple[PluginContribution, Any]:
@@ -213,9 +181,7 @@ class PluginCatalogBuilder:
         except PluginContractError as exc:
             raise PluginCatalogError("invalid_plugin", str(exc)) from exc
         except Exception as exc:
-            raise PluginCatalogError(
-                "plugin_load_failed", "Plugin provider failed to load"
-            ) from exc
+            raise PluginCatalogError("plugin_load_failed", "Plugin provider failed to load") from exc
 
     @staticmethod
     def _validate_isolated_contribution(contribution: PluginContribution) -> None:
@@ -227,13 +193,9 @@ class PluginCatalogBuilder:
             *contribution.runtime_backends,
         )
         if host_components:
-            raise PluginContractError(
-                "isolated providers cannot contribute executable host components"
-            )
+            raise PluginContractError("isolated providers cannot contribute executable host components")
         if any(entry.executor_id == "in_process" for entry in contribution.tools):
-            raise PluginContractError(
-                "isolated provider tools require a host-managed transport binding"
-            )
+            raise PluginContractError("isolated provider tools require a host-managed transport binding")
 
     @staticmethod
     async def _health(target: Any) -> tuple[bool, str | None]:
@@ -246,18 +208,14 @@ class PluginCatalogBuilder:
         return report.healthy, report.reason
 
     @staticmethod
-    def _reject_duplicate_provider(
-        providers: dict[str, ProviderStatus], descriptor: PluginDescriptor
-    ) -> None:
+    def _reject_duplicate_provider(providers: dict[str, ProviderStatus], descriptor: PluginDescriptor) -> None:
         if descriptor.provider_id in providers:
             plugin_diagnostics.record(
                 "catalog_conflict",
                 provider_id=descriptor.provider_id,
                 category="duplicate_provider",
             )
-            raise PluginCatalogError(
-                "plugin_conflict", "Multiple plugins use the same provider identity"
-            )
+            raise PluginCatalogError("plugin_conflict", "Multiple plugins use the same provider identity")
 
     def _assemble(
         self,
@@ -274,22 +232,7 @@ class PluginCatalogBuilder:
         validators: list[PluginComponentContribution] = []
         presenters: list[PluginComponentContribution] = []
         for entry in self.host_runtime_backends:
-            provider = providers.get(entry.identity.provider_id)
-            if provider is None or provider.descriptor.source != "isolated_descriptor":
-                raise PluginCatalogError(
-                    "invalid_runtime_backend",
-                    "Host runtime backend must bind a discovered isolated provider",
-                )
-            if not isinstance(entry.backend, RuntimeBackend):
-                raise PluginCatalogError(
-                    "invalid_runtime_backend", "Host runtime backend has an invalid contract"
-                )
-            self._claim_component(component_ids, entry.identity.component_id)
-            if entry.backend_id in backend_ids:
-                raise PluginCatalogError(
-                    "plugin_conflict", f"Duplicate runtime backend: {entry.backend_id}"
-                )
-            backend_ids[entry.backend_id] = entry
+            self._add_backend(entry, providers, backend_ids, component_ids, require_isolated=True)
         for contribution in sorted(
             contributions,
             key=lambda item: (
@@ -301,19 +244,12 @@ class PluginCatalogBuilder:
             for entry in contribution.tools:
                 name = entry.tool.spec.name
                 if name in tools:
-                    raise PluginCatalogError(
-                        "plugin_conflict", f"Duplicate model-visible tool name: {name}"
-                    )
+                    raise PluginCatalogError("plugin_conflict", f"Duplicate model-visible tool name: {name}")
                 catalog_tool = CatalogTool(entry.tool)
                 tools[name] = catalog_tool
                 tool_bindings[name] = replace(entry, tool=catalog_tool)
             for entry in contribution.runtime_backends:
-                self._claim_component(component_ids, entry.identity.component_id)
-                if entry.backend_id in backend_ids:
-                    raise PluginCatalogError(
-                        "plugin_conflict", f"Duplicate runtime backend: {entry.backend_id}"
-                    )
-                backend_ids[entry.backend_id] = entry
+                self._add_backend(entry, providers, backend_ids, component_ids)
             self._append_components(
                 contribution.effect_analyzers,
                 analyzers,
@@ -327,9 +263,7 @@ class PluginCatalogBuilder:
             provider = providers[tools[name].spec.provider_id]
             if binding.executor_id == "in_process":
                 if provider.descriptor.source == "isolated_descriptor":
-                    raise PluginCatalogError(
-                        "invalid_plugin", "Isolated tools cannot execute in process"
-                    )
+                    raise PluginCatalogError("invalid_plugin", "Isolated tools cannot execute in process")
                 continue
             backend = backend_ids.get(binding.executor_id)
             if backend is None or backend.identity.provider_id != tools[name].spec.provider_id:
@@ -347,9 +281,7 @@ class PluginCatalogBuilder:
             presenters,
             backend_ids,
         )
-        digest = hashlib.sha256(
-            json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
-        ).hexdigest()
+        digest = hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
         return PluginCatalog(
             digest=digest,
             providers=MappingProxyType(dict(sorted(providers.items()))),
@@ -363,11 +295,28 @@ class PluginCatalogBuilder:
         )
 
     @staticmethod
+    def _add_backend(
+        entry: PluginRuntimeBackendContribution,
+        providers: dict[str, ProviderStatus],
+        backends: dict[str, PluginRuntimeBackendContribution],
+        component_ids: set[str],
+        *,
+        require_isolated: bool = False,
+    ) -> None:
+        provider = providers.get(entry.identity.provider_id)
+        if require_isolated and (provider is None or provider.descriptor.source != "isolated_descriptor"):
+            raise PluginCatalogError("invalid_runtime_backend", "Host runtime backend must bind a discovered isolated provider")
+        if not isinstance(entry.backend, RuntimeBackend):
+            raise PluginCatalogError("invalid_runtime_backend", "Host runtime backend has an invalid contract")
+        PluginCatalogBuilder._claim_component(component_ids, entry.identity.component_id)
+        if entry.backend_id in backends:
+            raise PluginCatalogError("plugin_conflict", f"Duplicate runtime backend: {entry.backend_id}")
+        backends[entry.backend_id] = entry
+
+    @staticmethod
     def _claim_component(component_ids: set[str], component_id: str) -> None:
         if component_id in component_ids:
-            raise PluginCatalogError(
-                "plugin_conflict", f"Duplicate component identity: {component_id}"
-            )
+            raise PluginCatalogError("plugin_conflict", f"Duplicate component identity: {component_id}")
         component_ids.add(component_id)
 
     def _append_components(
@@ -383,9 +332,7 @@ class PluginCatalogBuilder:
             if effect_bindings is not None:
                 binding = entry.applicability.model_dump_json()
                 if binding in effect_bindings:
-                    raise PluginCatalogError(
-                        "plugin_conflict", "Ambiguous effect analyzer applicability binding"
-                    )
+                    raise PluginCatalogError("plugin_conflict", "Ambiguous effect analyzer applicability binding")
                 effect_bindings.add(binding)
             target.append(entry)
 

@@ -224,9 +224,7 @@ class ChildToolInvocationStage:
             )
             output = validate_tool_result(raw_output, tool.spec).model_dump(mode="json")
             await action.repository.finish_tool_call(call.id, output=output)
-            governed = await self._govern_output(
-                action, tool.spec.name, call.id, output, effect_plan
-            )
+            governed = await self._govern_output(action, tool.spec.name, call.id, output, effect_plan)
             action.usage["tool_calls"] += 1
             return self._success_result(tool.spec.name, call.id, output, governed)
         except (ToolExecutionError, ValueError) as exc:
@@ -289,9 +287,7 @@ class ChildToolInvocationStage:
         output: dict[str, Any],
         effect_plan: Any,
     ):
-        labels = tuple(
-            dict.fromkeys(label for effect in effect_plan.effects for label in effect.data_labels)
-        )
+        labels = tuple(dict.fromkeys(label for effect in effect_plan.effects for label in effect.data_labels))
 
         async def reference(_serialized: bytes, checksum: str) -> CompactionContextReference:
             return CompactionContextReference(

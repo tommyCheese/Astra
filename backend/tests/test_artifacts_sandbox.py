@@ -81,8 +81,7 @@ def test_artifact_collector_rejects_active_svg_and_html_without_csp(tmp_path, na
         ("invalid.json", b"{not-json}"),
         (
             "late-csp.html",
-            b"<script>doSomething()</script><meta http-equiv='content-security-policy' "
-            b"content=\"default-src 'none'\">",
+            b"<script>doSomething()</script><meta http-equiv='content-security-policy' content=\"default-src 'none'\">",
         ),
     ],
 )
@@ -106,8 +105,7 @@ def test_sandbox_state_machine_rejects_illegal_transition():
 
 def test_sandbox_log_is_redacted_and_truncated():
     output = sanitize_log(
-        "\x1b[91mapi_key=secret Authorization: Bearer another-secret "
-        "/Users/example/private/file\x1b[0m",
+        "\x1b[91mapi_key=secret Authorization: Bearer another-secret /Users/example/private/file\x1b[0m",
         limit=80,
     )
     assert "secret" not in output

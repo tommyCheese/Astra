@@ -37,9 +37,7 @@ class SemanticConversationCompactor:
         direction: str,
         force: bool = False,
     ) -> dict[str, int | str | bool]:
-        projection, eligible = await self._eligible_runs(
-            task, retain_runs=retain_runs, require_idle=require_idle, force=force
-        )
+        projection, eligible = await self._eligible_runs(task, retain_runs=retain_runs, require_idle=require_idle, force=force)
         if not eligible:
             return {"folded": 0, "retained": len(projection.runs), "model_used": False}
         state = self.manager._state(task)
@@ -173,9 +171,7 @@ class SemanticConversationCompactor:
             # The current user request is absent while the conversation is idle,
             # so no raw tail needs to be retained for this forced operation.
             if force:
-                policy = policy.model_copy(
-                    update={"recent_tail_tokens": 0, "recent_tail_max_ratio": 0}
-                )
+                policy = policy.model_copy(update={"recent_tail_tokens": 0, "recent_tail_max_ratio": 0})
             return await service.compact(
                 envelope,
                 policy,
@@ -199,18 +195,14 @@ class SemanticConversationCompactor:
             "failure_code": failure_code,
         }
 
-    async def _record_success(
-        self, task, projection, eligible, result, *, action, direction, commit
-    ):
+    async def _record_success(self, task, projection, eligible, result, *, action, direction, commit):
         await self.session.refresh(task)
         raw = task.context_state if isinstance(task.context_state, dict) else {}
         task.context_state = {
             **raw,
             "token_before": result.token_before,
             "token_after": result.token_after,
-            "compaction_implementation": (
-                result.implementation.value if result.implementation else "astra_semantic"
-            ),
+            "compaction_implementation": (result.implementation.value if result.implementation else "astra_semantic"),
             "compaction_failure_code": None,
             "last_action": action,
             "last_action_at": utc_now().isoformat(),
