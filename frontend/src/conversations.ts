@@ -84,8 +84,8 @@ export function buildPresentation(run: RunView | null): ChatMessage[] {
         ? { ...message.metadata, presentation: 'user' }
         : { ...message.metadata },
     }));
-  const hasProcessEvents = snapshot.events.some((event) => event.type.startsWith('reasoning.') || ['agent_turn.created', 'tool_call.started', 'tool_call.completed', 'reflection.created', 'verification.created'].includes(event.type));
-  const isActive = !['completed', 'completed_with_warnings', 'failed', 'blocked', 'waiting_user'].includes(snapshot.status);
+  const hasProcessEvents = snapshot.events.some((event) => event.type.startsWith('fast.') || event.type.startsWith('reasoning.') || ['agent_turn.created', 'tool_call.started', 'tool_call.completed', 'reflection.created', 'verification.created'].includes(event.type));
+  const isActive = !['completed', 'completed_with_warnings', 'failed', 'blocked', 'waiting_user', 'cancelled'].includes(snapshot.status);
   if (isActive || hasProcessEvents || (snapshot.turns?.length ?? 0) > 0 || snapshot.tool_calls.length > 0) {
     presented.push({
       id: `${run.id}-process`,

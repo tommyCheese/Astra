@@ -176,14 +176,6 @@ export function reduceProcessEvent(state: ProcessStreamState, event: RunStreamEv
       status: 'running',
       turnIndex,
     });
-  } else if (event.type === 'fast.started') {
-    items = upsert(items, {
-      id: 'fast-runtime',
-      kind: 'phase',
-      title: '快速 Agent 已启动',
-      detail: '模型驱动执行',
-      status: 'running',
-    });
   } else if (event.type === 'fast.action.decided') {
     items = items.filter((item) => item.id !== 'reasoning-0');
     const action = safeString(payload.action);

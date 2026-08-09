@@ -70,4 +70,50 @@ describe('conversation presentation', () => {
       expect.objectContaining({ role: 'assistant', content: '上下文压缩完成。', metadata: expect.objectContaining({ presentation: 'command-result' }) }),
     ]);
   });
+
+  it('keeps the completed thinking entry for a fast run', () => {
+    const messages = buildPresentation(waitingRun({
+      status: 'completed',
+      runtime_kind: 'fast-v1',
+      result: {
+        summary: '快速回答',
+        findings: [],
+        claims: [],
+        citations: [],
+        sources: [],
+        failed_sources: [],
+        source_quality: [],
+        conflicts: [],
+        caveats: [],
+        verification_notes: [],
+        memory_references: [],
+        audit_refs: {
+          evidence_record_count: 0,
+          agent_turn_count: 0,
+          referenced_artifact_ids: [],
+        },
+        verification_report: null,
+        completion_decision: null,
+        error: null,
+      },
+      waiting_state: null,
+      events: [
+        { id: 1, type: 'fast.started', payload: { runtime: 'fast-v1' }, created_at: 'now' },
+        { id: 2, type: 'fast.action.decided', payload: { action: 'answer', turn_index: 1 }, created_at: 'now' },
+        { id: 3, type: 'fast.completed', payload: { status: 'completed' }, created_at: 'now' },
+      ],
+    }));
+
+    expect(messages.some((message) => message.metadata.presentation === 'process')).toBe(true);
+    expect(messages.some((message) => message.metadata.presentation === 'answer')).toBe(true);
+  });
+
+  it('does not invent an active process entry for a cancelled run without process events', () => {
+    const messages = buildPresentation(waitingRun({
+      status: 'cancelled',
+      waiting_state: null,
+    }));
+
+    expect(messages.some((message) => message.metadata.presentation === 'process')).toBe(false);
+  });
 });

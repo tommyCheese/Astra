@@ -188,6 +188,9 @@ describe('process stream reducer', () => {
   it('projects fast actions and approval waits without trusted decision groups', () => {
     let state = createOptimisticProcessState('run-fast', 'standard');
     state = reduceProcessEvent(state, { id: 1, type: 'fast.started', payload: { runtime: 'fast-v1' } });
+    expect(state.items).toEqual([
+      expect.objectContaining({ id: 'reasoning-0', title: '思考', status: 'running' }),
+    ]);
     state = reduceProcessEvent(state, { id: 2, type: 'fast.action.decided', payload: { turn_index: 1, action: 'call_tool', tool_name: 'write_value' } });
     state = reduceProcessEvent(state, { id: 3, type: 'fast.approval.waiting', payload: { tool_call_id: 'call-fast', tool_name: 'write_value' } });
 
@@ -231,6 +234,7 @@ describe('process stream reducer', () => {
     expect(state.answerMode).toBe('standard');
     expect(state.active).toBe(false);
     expect(state.items.find((item) => item.id === 'fast-action-1')?.title).toBe('生成回答');
+    expect(state.items.some((item) => item.detail === '模型驱动执行')).toBe(false);
     expect(state.items.some((item) => item.kind === 'verification' || item.kind === 'reflection')).toBe(false);
   });
 
