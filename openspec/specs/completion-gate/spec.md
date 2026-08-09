@@ -4,26 +4,22 @@
 TBD - created by archiving change add-general-reasoning-reflection-core. Update Purpose after archive.
 ## Requirements
 ### Requirement: 完成状态由独立的完成门（Completion Gate）决定
-
-系统 SHALL 让 trusted 模式在进入 `completed` 或 `completed_with_warnings` 前执行完整 CompletionGate 评估；standard 模式 SHALL 跳过 CompletionGate 和 VerificationEngine，并 SHALL NOT 声明已经通过任何可信校验。
+系统 SHALL 只让 Trusted Agent Runtime 在进入 `completed` 或 `completed_with_warnings` 前执行完整 CompletionGate。Fast Agent Runtime MUST NOT 装配 CompletionGate 或 VerificationEngine，并 SHALL 在模型给出最终答案后直接持久化快速结果。
 
 #### Scenario: 可信模式控制器提出结束运行
-
-* **WHEN** trusted 模式控制器发出终止意图
-* **THEN** 完成门评估当前任务契约、证据、验证结果、审批状态、失败情况以及预算
-* **THEN** 最终响应根据完整完成门的评估结果生成
+- **WHEN** Trusted Runtime 控制器发出终止意图
+- **THEN** 完成门评估当前任务契约、证据、验证结果、审批状态、失败情况以及预算
+- **THEN** 最终响应根据完整完成门的评估结果生成
 
 #### Scenario: 快速回答完成
-
-* **WHEN** standard 模式生成最终回答
-* **THEN** 运行直接持久化回答和终态，不创建 VerificationReport 或 CompletionDecision
-* **THEN** 结果不得标记为任何可信校验通过
+- **WHEN** Fast Runtime 模型生成最终回答
+- **THEN** 系统直接清洗引用、持久化回答和终态
+- **THEN** 系统不创建 VerificationReport、CompletionDecision 或可信完成事件
 
 #### Scenario: 可信模式循环预算耗尽
-
-* **WHEN** trusted 模式在满足所有强制成功条件之前达到轮次、工具、反思或重规划预算上限
-* **THEN** 运行不会仅因为执行停止而进入 `completed`
-* **THEN** CompletionGate 根据已有部分结果和生效策略选择严格终态
+- **WHEN** Trusted Runtime 在满足所有强制成功条件之前达到轮次、工具、反思或重规划预算上限
+- **THEN** 运行不会仅因为执行停止而进入 `completed`
+- **THEN** CompletionGate 根据已有部分结果和生效策略选择严格终态
 
 ### Requirement: 强制成功条件与验证共同决定成功
 系统 SHALL 仅在所有强制成功准则均由匹配其 verification method 的统一 ValidationOutcome 满足、所有 mandatory verification requirements 均存在通过结果、且所有必需审批均已完成时，允许进入 `completed`。
@@ -127,17 +123,17 @@ TBD - created by archiving change add-general-reasoning-reflection-core. Update 
 - **THEN** CompletionGate 可以返回 completed 或符合策略的 completed_with_warnings
 
 ### Requirement: 基础保障不受回答模式影响
-系统 SHALL 在 standard 和 trusted 两种模式中执行权限与工具硬限制、工具输入 Schema 校验、运行错误处理、取消处理、Artifact 引用清洗和敏感信息边界，并 MUST NOT 允许运行 profile 移除这些保障。
+系统 SHALL 在 Fast 与 Trusted Agent Runtime 中通过共享基础设施执行权限与工具硬限制、工具输入 Schema、运行错误处理、取消处理、Artifact 引用清洗和敏感信息边界，并 MUST NOT 通过 runtime profile 关闭这些保障。
 
 #### Scenario: 快速回答产生无效 Artifact 引用
-- **WHEN** standard 模式最终回答引用不存在或不属于该 Run 的 Artifact
+- **WHEN** Fast Runtime 最终回答引用不存在或不属于该 Run 的 Artifact
 - **THEN** 系统在持久化前静默清洗该引用
 - **THEN** 系统不为此创建 VerificationReport 或启动完成门
 
 #### Scenario: 快速回答请求禁止工具
-- **WHEN** standard 模式模型请求被策略禁止的工具或操作
-- **THEN** 共享权限门拒绝执行
-- **THEN** 快速模式不会降低工具或系统限制
+- **WHEN** Fast Runtime 模型请求被平台策略禁止的工具或操作
+- **THEN** 共享权限门拒绝执行并把拒绝返回模型
+- **THEN** 快速运行时不会降低工具或系统限制
 
 ### Requirement: Grounding outcomes participate through verification requirements
 The Completion Gate SHALL enforce mandatory grounding ValidationOutcome failures when selected by the TaskContract and MUST NOT globally require research-specific validators merely because the capability is installed.
@@ -149,4 +145,43 @@ The Completion Gate SHALL enforce mandatory grounding ValidationOutcome failures
 #### Scenario: Required grounding validator fails
 - **WHEN** the TaskContract requires a grounding validator and its blocking outcome fails
 - **THEN** the Completion Gate reports the corresponding unmet verification requirement
+
+### Requirement: 根完成门验证并发子 Agent 汇合已消费
+系统 SHALL 在 trusted 根 Run 成功完成前确认所有强制 descendant 已进入允许终态、required 和 first-success Join 已成功消费、child 预算已结算、必要审批已解决且不存在未处理的阻塞合并冲突。
+
+#### Scenario: Child 已完成但 Join 尚未消费
+- **WHEN** 所有 required child 已完成但其 Join 仍处于 ready 或 merging
+- **THEN** CompletionGate 返回 continue_run
+- **THEN** 根 Agent 不得发布最终成功答案
+
+#### Scenario: Optional child 失败
+- **WHEN** optional child 失败且不影响任何强制成功准则或 required Join
+- **THEN** CompletionGate 可在记录 warning 后继续评估成功
+
+#### Scenario: 合并结果存在阻塞冲突
+- **WHEN** required child 的已验证结果产生尚未处理且会影响强制成功准则的 conflict
+- **THEN** CompletionGate 不返回 completed
+- **THEN** 根 Agent 必须解决冲突、补充验证、重新委派或进入 blocked
+
+### Requirement: Root Completion Gate 等待所有必需子 Agent
+系统 SHALL 在 Run 进入成功终态前确认所有 required child joins 已达到允许终态，且不存在仍可能改变强制成功准则的活动 descendant。
+
+#### Scenario: required child 仍在运行
+- **WHEN** 父 Agent 提出终止意图但任一 required child 仍为 queued、running 或 waiting
+- **THEN** Root Completion Gate 拒绝 completed 或 completed_with_warnings，并返回等待的 execution 引用
+
+#### Scenario: 只有 optional child 未完成
+- **WHEN** 所有强制准则和 required joins 已满足且仅有允许忽略的 optional child 未完成
+- **THEN** Completion Gate 可按 policy 取消或分离该 child，并在结果中记录处理方式
+
+### Requirement: Root Completion Gate 验证子结果谱系和汇合
+系统 SHALL 验证被最终结果使用的 SubagentResult 已通过 child Completion Gate、output schema、Artifact/Evidence lineage、权限合规及父级冲突合并。
+
+#### Scenario: 父级引用未验证 child 输出
+- **WHEN** 顶层声明引用 failed、blocked 或 schema 无效的 child result
+- **THEN** 该声明不满足对应成功准则，且 Root Completion Gate 不把自然语言摘要视为替代证据
+
+#### Scenario: child 结果含未解决关键冲突
+- **WHEN** 多个 child 对强制声明存在未解决冲突
+- **THEN** Root Completion Gate 要求追加验证，或根据任务策略返回 blocked/completed_with_warnings 并明确披露冲突
 

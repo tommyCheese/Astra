@@ -17,11 +17,11 @@ from app.application.agent_runtime.services.decisions.model import (
     DecisionStageInput,
     ModelDecisionStage,
 )
+from app.application.agent_runtime.services.decisions.skills import SkillActionStage
 from app.application.agent_runtime.services.shared.progress import (
     ExecutionProgress,
     ProgressEvaluationStage,
 )
-from app.application.agent_runtime.services.decisions.skills import SkillActionStage
 from app.common.schemas.agent.execution_state import AgentDecision
 from app.common.schemas.agent.run_result import AgentFinalAnswer
 from app.common.schemas.agent.types import AnswerMode
@@ -61,7 +61,6 @@ class RootDecisionStage:
         skill_action_stage: SkillActionStage,
         ensure_permission_runtime: PermissionRuntimeLoader,
         answer_mode: AnswerMode,
-        legacy_standard_mode: bool,
         on_answer_delta: Callable[[str], Awaitable[None]] | None,
     ) -> None:
         self._repository = repository
@@ -71,7 +70,6 @@ class RootDecisionStage:
         self._skills = skill_action_stage
         self._ensure_permissions = ensure_permission_runtime
         self._answer_mode = answer_mode
-        self._quick_mode = legacy_standard_mode
         self._on_answer_delta = on_answer_delta
 
     async def execute(
@@ -99,7 +97,6 @@ class RootDecisionStage:
                 turn_index=turn_index,
                 context=model_context,
                 answer_mode=self._answer_mode.value,
-                legacy_standard_mode=self._quick_mode,
                 may_stream_answer=self._progress.active_plan is None or active_node is None,
                 active_plan_node_id=active_node.id if active_node is not None else None,
                 approved_tool_call=approved_tool_call,
@@ -178,7 +175,7 @@ class RootDecisionStage:
             await self._reject_tool(run_id, turn, resolved.rejected_observation)
             return RootDecisionResult("continue")
         await self._accept_tool_selection(run_id, turn_index, decision, context, active_node)
-        if await self._skills.execute(run_id, turn, decision, legacy_standard_mode=self._quick_mode):
+        if await self._skills.execute(run_id, turn, decision):
             return RootDecisionResult("continue")
         await self._record_validated_decision(run_id, turn_index, decision)
         return RootDecisionResult(
@@ -288,8 +285,6 @@ class RootDecisionStage:
         turn_index: int,
         context: dict[str, Any],
     ) -> None:
-        if self._quick_mode:
-            return
         await self._repository.add_event(
             run_id,
             "tool.resolution.candidates",
@@ -357,8 +352,6 @@ class RootDecisionStage:
         turn_index: int,
         decision: AgentDecision,
     ) -> None:
-        if self._quick_mode:
-            return
         await self._repository.add_event(
             run_id,
             "reasoning.decision_validated",

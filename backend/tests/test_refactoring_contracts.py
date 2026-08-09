@@ -19,7 +19,7 @@ from app.infrastructure.repositories.run_unit_of_work import RunUnitOfWork
 from app.infrastructure.tools.base import AstraToolRegistry
 from app.main import create_app
 
-EXPECTED_OPENAPI_SHA256 = "11068a9f5d8d0fb453ae69787b631659fa4b06a0c7299a062e3c67f5593c5460"
+EXPECTED_OPENAPI_SHA256 = "3be25e7c97ef29695ce295a615e59d6ac9d668cc9dd6bcbcbc0dd2ab7e80ebf2"
 EXPECTED_ORM_TABLES = {
     "agent_budget_reservations",
     "agent_delegations",

@@ -23,7 +23,7 @@ def upgrade() -> None:
             "runtime_kind",
             sa.String(length=40),
             nullable=False,
-            server_default="legacy-standard-v1",
+            server_default="fast-v1",
         ),
     )
     op.add_column(
@@ -41,7 +41,7 @@ def upgrade() -> None:
     op.execute(
         "UPDATE runs SET runtime_kind = CASE "
         "WHEN answer_mode = 'trusted' THEN 'trusted-v1' "
-        "ELSE 'legacy-standard-v1' END"
+        "ELSE 'fast-v1' END"
     )
 
 

@@ -472,7 +472,7 @@ export type RunView = {
   task_id: string;
   status: string;
   mode: string;
-  runtime_kind?: 'fast-v1' | 'trusted-v1' | 'legacy-standard-v1';
+  runtime_kind: 'fast-v1' | 'trusted-v1';
   runtime_version?: number;
   fast_runtime_snapshot?: {
     protocol_version: 1;
@@ -489,7 +489,7 @@ export type RunView = {
   execution_profile?: {
     version: 2;
     answer_mode: 'standard' | 'trusted';
-    runtime_kind?: 'fast-v1' | 'trusted-v1' | 'legacy-standard-v1';
+    runtime_kind: 'fast-v1' | 'trusted-v1';
     runtime_version?: number;
     plan_execution: 'auto' | 'confirm' | null;
     contract_mode: 'system_minimal' | 'model';

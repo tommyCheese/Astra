@@ -55,7 +55,6 @@ class NodeCompletionStage:
         model_context: dict[str, Any],
         subagent_supervisor: SubagentSupervisorPort | None,
         subagent_mode: str,
-        legacy_standard_mode: bool,
     ) -> CompletionRoutingResult:
         if decision.decision_type not in {"finalize", "complete_node"}:
             return CompletionRoutingResult("not_handled")
@@ -78,7 +77,6 @@ class NodeCompletionStage:
             model_context,
             subagent_supervisor,
             subagent_mode,
-            legacy_standard_mode,
         )
 
     async def _finalize(
@@ -91,7 +89,6 @@ class NodeCompletionStage:
         model_context: dict[str, Any],
         supervisor: SubagentSupervisorPort | None,
         subagent_mode: str,
-        legacy_standard_mode: bool,
     ) -> CompletionRoutingResult:
         subagent_result = await self._reconcile_subagents(
             run_id,

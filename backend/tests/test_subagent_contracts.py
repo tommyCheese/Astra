@@ -202,7 +202,7 @@ def test_swarm_tool_switch_is_the_product_enablement_gate():
     assert user_disabled.budgets.max_parallel_children == 0
 
 
-def test_fast_profile_disables_subagents_and_legacy_profile_keeps_clamped_policy():
+def test_fast_profile_disables_subagents_and_trusted_profile_keeps_policy():
     policy = compile_subagent_policy(AstraRuntimeSettings(tool_states={"swarm": True}))
 
     standard = resolve_run_profile(
@@ -216,25 +216,10 @@ def test_fast_profile_disables_subagents_and_legacy_profile_keeps_clamped_policy
         plan_execution=PlanExecution.auto,
         subagent_policy=policy,
     )
-    legacy = resolve_run_profile(
-        AnswerMode.standard,
-        RequestedReasoningPolicy(),
-        subagent_policy=policy,
-        fast_runtime_enabled=False,
-    )
-
     fast_policy = standard.reasoning_policy.effective.subagents
-    quick_policy = legacy.reasoning_policy.effective.subagents
     trusted_policy = trusted.reasoning_policy.effective.subagents
 
     assert fast_policy.enabled is False
-    assert quick_policy.enabled is True
-    assert quick_policy.read_only is True
-    assert quick_policy.budgets.max_depth == 1
-    assert quick_policy.budgets.max_children_total == 2
-    assert quick_policy.budgets.max_tokens == 8_000
-    assert quick_policy.budgets.max_wall_time_seconds == 120
-    assert quick_policy.model_routing.max_reasoning_effort.value == "fast"
     assert trusted.reasoning_policy.effective.subagents.enabled is True
     assert trusted_policy.budgets.max_children_total == 4
     assert trusted_policy.budgets.max_tokens == 16_000

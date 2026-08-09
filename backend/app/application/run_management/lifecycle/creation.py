@@ -11,8 +11,8 @@ from app.application.agent_runtime.policies.reasoning import (
     resolve_run_profile,
 )
 from app.application.permissions.governance import verify_permission_bundle
-from app.application.run_management.lifecycle.contracts import PreparedRunExecution
 from app.application.run_management.conversations.context import ConversationContextManager
+from app.application.run_management.lifecycle.contracts import PreparedRunExecution
 from app.application.run_management.lifecycle.settings import RunSettingsResolver
 from app.application.skills.activation import SkillActivationService
 from app.application.skills.catalog import SkillCatalogBuilder
@@ -131,7 +131,6 @@ class RunCreator:
             plan_execution=request.plan_execution,
             subagent_policy=compile_subagent_policy(run_settings),
             subagent_mode=request.subagent_mode,
-            fast_runtime_enabled=run_settings.agent_fast_runtime_enabled,
         )
         if request.subagent_mode == "required":
             eligibility = subagent_execution_eligibility(

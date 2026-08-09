@@ -58,7 +58,7 @@ class RunRecord(AstraOrmRecordBase):
     mode: Mapped[str] = mapped_column(String(80), default="web_data_query")
     answer_mode: Mapped[str] = mapped_column(String(40), nullable=False, default="standard")
     runtime_kind: Mapped[str] = mapped_column(
-        String(40), nullable=False, default="legacy-standard-v1"
+        String(40), nullable=False, default="fast-v1"
     )
     runtime_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     fast_runtime_snapshot: Mapped[dict] = mapped_column(JsonType, default=dict)

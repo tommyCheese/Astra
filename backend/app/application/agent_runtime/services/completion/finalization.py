@@ -9,20 +9,22 @@ from pathlib import Path
 from typing import Any
 
 from app.application.agent_runtime.policies.completion import AgentCompletionGate
-from app.application.agent_runtime.services.tooling.plugin_runtime import PluginRuntimeState
-from app.application.agent_runtime.services.completion.verification import (
-    CompletionVerificationStage,
-    normalize_final_answer_artifact_references,
-)
 from app.application.agent_runtime.services.completion.gate import (
     CompletionGateInput,
     CompletionGateStage,
 )
-from app.application.agent_runtime.services.completion.memory_candidates import MemoryCandidateWriter
+from app.application.agent_runtime.services.completion.memory_candidates import (
+    MemoryCandidateWriter,
+)
+from app.application.agent_runtime.services.completion.verification import (
+    CompletionVerificationStage,
+    normalize_final_answer_artifact_references,
+)
 from app.application.agent_runtime.services.shared.progress import (
     ExecutionProgress,
     ProgressEvaluationStage,
 )
+from app.application.agent_runtime.services.tooling.plugin_runtime import PluginRuntimeState
 from app.application.workspaces.runtime import WorkspaceRuntimeService
 from app.common.schemas.agent.execution_state import CompletionDecision
 from app.common.schemas.agent.run_policy import RunExecutionProfile
@@ -51,7 +53,6 @@ class FinalizationInput:
     terminal_status: str | None
     terminal_summary: str | None
     required_subagent_missing: bool
-    legacy_standard_mode: bool
     workspace_changed: bool
     workspace_path: Path | None
 
@@ -100,8 +101,6 @@ class AgentFinalizationStage:
 
     async def execute(self, stage_input: FinalizationInput) -> dict[str, Any]:
         prepared = await self._prepare_answer(stage_input)
-        if stage_input.legacy_standard_mode:
-            return await self._finalize_quick(stage_input, prepared)
         final_context = self._final_context(stage_input, prepared.evidence_pack)
         memory_writes = await self._memory_writer.write_candidates(
             run_id=stage_input.run_id,
@@ -168,8 +167,6 @@ class AgentFinalizationStage:
         stage_input: FinalizationInput,
     ) -> tuple[dict[str, Any], ArtifactRecord | None]:
         evidence_pack = self._plugin_runtime.evidence_pack(stage_input.goal)
-        if stage_input.legacy_standard_mode:
-            return evidence_pack, None
         records = self._plugin_runtime.grounding.records()
         artifact = await self._repository.create_artifact(
             stage_input.run_id,
@@ -211,34 +208,6 @@ class AgentFinalizationStage:
             final_context,
             on_delta=self._on_answer_delta,
         )
-
-    async def _finalize_quick(
-        self,
-        stage_input: FinalizationInput,
-        prepared: PreparedFinalAnswer,
-    ) -> dict[str, Any]:
-        final_status = prepared.terminal_status or TerminalState.completed.value
-        result = prepared.answer.model_dump()
-        result.update(
-            answer_mode=stage_input.profile.answer_mode.value,
-            assurance_level=stage_input.profile.assurance_level.value,
-            verification_report=None,
-            completion_decision=None,
-            audit_refs={
-                "evidence_record_count": len(self._plugin_runtime.grounding.records()),
-                "agent_turn_count": await self._repository.count_agent_turns(stage_input.run_id),
-                "referenced_artifact_ids": prepared.referenced_artifact_ids,
-            },
-        )
-        if stage_input.final_turn_id:
-            await self._repository.update_agent_turn(
-                stage_input.final_turn_id,
-                status="completed",
-                observation=self._final_observation(prepared.answer, final_status),
-            )
-        await self._checkpoint_workspace(stage_input, final_status)
-        await self._repository.session.commit()
-        return {"answer": prepared.answer, "result": result, "status": final_status}
 
     def _verification(
         self,

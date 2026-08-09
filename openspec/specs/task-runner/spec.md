@@ -115,3 +115,50 @@ TBD - created by archiving change implement-web-data-query-task-runner. Update P
 - **THEN** 迁移将该 Run 标记为 cancelled
 - **THEN** 终止原因标识模式升级
 
+### Requirement: Runner 管理 SubagentSupervisor 的完整生命周期
+系统 SHALL 在 eligible trusted Run 执行期间启动一个 Run-scoped SubagentSupervisor，并 SHALL 在正常完成、等待、取消、失败和进程恢复路径中协调 worker、heartbeat、fencing、Join reconciliation 和结构化关闭。
+
+#### Scenario: Run 正常完成
+- **WHEN** 根 Agent 满足完成门且所有 mandatory child 工作已消费
+- **THEN** Runner 停止接受新的委派、等待 Supervisor 完成持久化协调并关闭进程内 worker
+- **THEN** Run 终态与 child、Join、预算和事件状态一致
+
+#### Scenario: 用户取消整个 Run
+- **WHEN** 多个 child 正在 queued、running 或 waiting
+- **THEN** Runner 先持久化 Run/child cancellation epochs 和 fencing
+- **THEN** Supervisor descendant-first 取消可中断工作并保留 immutable-effect 与 result-unknown 报告
+
+#### Scenario: Kill switch 在运行中开启
+- **WHEN** kill switch 阻止新的 fan-out 且已有 child 尚未终态
+- **THEN** Runner 不创建新 child
+- **THEN** 已有 child 根据 drain/cancel 策略进入受控终态而不丢失 lineage
+
+### Requirement: Runner 记录可信自动化触发来源
+系统 SHALL 允许可信的内部调度服务幂等创建 Run，并在 execution profile 和 timeline 中持久化不可由 prompt 伪造的触发元数据。
+
+#### Scenario: 定时任务创建 Run
+- **WHEN** 调度服务使用已领取的 schedule run 创建 Run
+- **THEN** Run 记录触发类型、job id、schedule run id、逻辑计划时间和内部 principal
+
+#### Scenario: 重复派发同一 schedule run
+- **WHEN** 调度服务因恢复而重复派发同一个 schedule run id
+- **THEN** Runner 返回原有关联 Run 而不创建第二个 Run
+
+### Requirement: Run 持久化独立 Agent execution 树
+系统 SHALL 为每个 Run 持久化一个 root AgentExecution 及零个或多个 descendant executions，并将相关 Plan、NodeExecution、Turn、ToolCall、Approval、Artifact 和 usage 关联到实际执行 Agent。
+
+#### Scenario: 兼容现有单 Agent Run
+- **WHEN** 一个 Run 未启用或未选择子 Agent
+- **THEN** 所有执行记录归属 root execution，现有 API 行为和终态保持兼容
+
+#### Scenario: 重新加载多 Agent Run
+- **WHEN** 客户端或恢复器按标识读取含 children 的 Run
+- **THEN** 系统返回持久化的 Agent 树、各自状态/checkpoint、Plan/Node 状态、结果和 lineage
+
+### Requirement: Runner 分层协调 Agent 和节点并发
+系统 SHALL 先在 Run 与部署限制内调度 AgentExecution 槽，再在每个 execution 的 allowance 内调度 Plan nodes，并统一应用 provider、工具、资源租约和预算背压。
+
+#### Scenario: Agent 与节点槽竞争
+- **WHEN** 多个 children 及其内部节点同时 ready
+- **THEN** Runner 不超过任何 Run、provider、Agent 或 node 并发上限，并持久化等待原因
+

@@ -4,27 +4,22 @@
 TBD - created by archiving change add-general-reasoning-reflection-core. Update Purpose after archive.
 ## Requirements
 ### Requirement: 运行保存请求策略与生效推理策略
-
-系统 SHALL 在创建运行时接受回答模式、可信计划执行选择、推理资源偏好、反思偏好和审批行为，并 SHALL 持久化该次运行严格版本化且不可变的生效 Profile。系统 MUST NOT 接受或持久化用户可选的规划策略。
+系统 SHALL 为 Trusted Run 接受并持久化可信计划执行选择、推理资源、反思、验证和审批策略。系统 SHALL 为 Fast Run 持久化独立且最小的 Fast Runtime Policy，并 MUST NOT 编译、复制或提交可信推理策略字段。
 
 #### Scenario: 编译快速响应 Profile
-
-* **WHEN** 用户以 `standard` 模式启动一次运行
-* **THEN** 系统记录快速推理、无 TaskContract、无 Plan DAG、关闭模型反思和基础保障作为生效 Profile
-* **THEN** 系统不读取或持久化规划策略
+- **WHEN** 用户以 `standard` 模式启动 Run
+- **THEN** 系统记录 Fast Runtime 版本、模型配置、轻量恢复和部署保护参数
+- **THEN** 系统不记录 TaskContract、DAG、Reflection、Verification 或 CompletionGate 策略
 
 #### Scenario: 编译可信执行 Profile
-
-* **WHEN** 用户以 `trusted` 模式启动一次运行
-* **THEN** 系统记录执行前完整规划、规范 DAG 调度、允许的有界反思与重规划以及完整验证作为生效 Profile
-* **THEN** 系统记录计划生成后自动执行或等待版本绑定确认的选择
-* **THEN** 系统不提供自适应初始规划选项
+- **WHEN** 用户以 `trusted` 模式启动 Run
+- **THEN** 系统记录完整规划、规范 DAG 调度、有界反思与重规划以及完整验证策略
+- **THEN** 系统记录计划生成后自动执行或等待版本绑定确认的选择
 
 #### Scenario: 运行期间设置发生变化
-
-* **WHEN** 用户在运行开始后修改回答模式或允许的可信策略
-* **THEN** 当前运行继续使用其已持久化的生效 Profile
-* **THEN** 后续新建运行可以使用新的模式或策略
+- **WHEN** 用户在 Run 开始后修改任一模式设置
+- **THEN** 当前 Run 继续使用其冻结 runtime 与对应策略
+- **THEN** 后续新建 Run 使用更新后的模式设置
 
 ### Requirement: 策略编译器应用正确性与安全下限
 
@@ -43,20 +38,17 @@ TBD - created by archiving change add-general-reasoning-reflection-core. Update 
 * **THEN** DAG 校验、权限门控、重复操作防护、节点评估以及完成验证仍保持启用
 
 ### Requirement: 推理强度控制有界思考资源
+系统 SHALL 仅在 Trusted Runtime 中将快速、平衡和深度推理映射为模型思考、工具、反思、重规划和验证预算。Fast Runtime SHALL 直接使用所选模型能力和独立部署保护，不把可信推理强度映射为 Fast Agent 行为。
 
-系统 SHALL 在 trusted 模式中将快速、平衡和深度推理映射为明确的模型思考、工具、反思、重规划和验证预算；standard 模式 SHALL 使用固定快速 Profile，而不把可信推理强度表现为可选规划行为。
-
-#### Scenario: 快速响应执行简单任务
-
-* **WHEN** 一个任务采用 `standard` 模式
-* **THEN** 生效 Profile 使用低思考预算并跳过规范计划
-* **THEN** 强制安全检查保持不变
+#### Scenario: 快速响应执行任务
+- **WHEN** 一个任务采用 `standard` 模式
+- **THEN** Fast Runtime 不读取可信推理强度、反思或验证预算
+- **THEN** 平台权限与执行硬边界保持不变
 
 #### Scenario: 可信深度推理执行复杂任务
-
-* **WHEN** 一个 trusted Run 采用深度推理
-* **THEN** 生效 Profile允许更高但仍受限的工具、反思和 DAG 修订预算
-* **THEN** 完整初始 DAG 仍在首次外部行动前持久化
+- **WHEN** 一个 Trusted Run 采用深度推理
+- **THEN** 生效 Profile 允许更高但仍受限的工具、反思和 DAG 修订预算
+- **THEN** 完整初始 DAG 仍在首次外部行动前持久化
 
 ### Requirement: 规划策略控制规划时机与细粒度程度
 

@@ -6,14 +6,12 @@ from fake_information_tools import fake_information_registry
 from app.application.agent_runtime.policies.reasoning import (
     AgentReasoningPolicyCompiler,
     build_default_contract,
-    compile_subagent_policy,
     resolve_run_profile,
 )
 from app.application.agent_runtime.services.completion.verification import (
     INVALID_ARTIFACT_REFERENCE_WARNING,
     CompletionVerificationStage,
     normalize_final_answer_artifact_references,
-    quick_workspace_change_completes_goal,
 )
 from app.application.agent_runtime.services.execution.loop import AstraAgentLoop, ToolRouter
 from app.application.planning.service import PlanService, canonical_agent_state
@@ -32,11 +30,9 @@ from app.domain.agent_profile import ModelOperation, load_agent_profile
 from app.domain.agent_profile.prompts import PromptComposer
 from app.infrastructure.model_clients.contracts import ModelOutputError
 from app.infrastructure.model_clients.mock import MockModelClient
-from app.infrastructure.repositories.agent_executions import AgentExecutionRepository
 from app.infrastructure.repositories.plans import PlanRepository, plan_to_view
 from app.infrastructure.repositories.run_unit_of_work import RunUnitOfWork
 from app.infrastructure.tools.base import ToolExecutionError
-from app.infrastructure.tools.runtime import SwarmTool
 
 
 async def initialize_canonical_plan(repo, run, contract):
@@ -79,14 +75,6 @@ def artifact_stub(
         security_status=security_status,
         storage_key=storage_key,
     )
-
-
-def test_quick_file_completion_requires_the_requested_file_and_skips_visual_workflows():
-    change = [{"kind": "created", "path": "test2.csv"}]
-
-    assert quick_workspace_change_completes_goal("把相同数据保存到 test2.csv", change)
-    assert not quick_workspace_change_completes_goal("把 test2.csv 渲染成图表", change)
-    assert not quick_workspace_change_completes_goal("创建另一个数据文件", change)
 
 
 def test_artifact_reference_normalization_keeps_valid_ids_and_deduplicates():
@@ -638,76 +626,6 @@ async def test_root_loop_externalizes_oversized_model_observation_but_keeps_tool
     assert normalized["externalized"] is True
     assert normalized["reference"]["ref"] == f"tool_call:{loaded.tool_calls[0].id}"
     assert "output" not in normalized
-
-
-async def test_legacy_standard_mode_reuses_swarm_supervisor_without_creating_a_dag(session):
-    settings = AstraRuntimeSettings(model_provider="mock", tool_states={"swarm": True})
-    profile = resolve_run_profile(
-        AnswerMode.standard,
-        RequestedReasoningPolicy(execution_mode="auto_approval"),
-        subagent_policy=compile_subagent_policy(settings),
-        fast_runtime_enabled=False,
-    )
-    repo = RunUnitOfWork(session)
-    run = await repo.create_task_run(
-        "快速并发能力检查",
-        settings.model_policy,
-        reasoning_policy=profile.reasoning_policy.model_dump(mode="json"),
-        answer_mode=profile.answer_mode.value,
-        execution_profile=profile.model_dump(mode="json"),
-    )
-    registry = fake_information_registry()
-    registry.register(SwarmTool())
-    client = ContextRecordingFinalizeClient()
-
-    result = await AstraAgentLoop(settings, model_client=client, tool_registry=registry).run(
-        repo, run.id, run.task.description
-    )
-
-    root = await AgentExecutionRepository(session).root_for_run(run.id)
-    loaded = await repo.require_run(run.id)
-    assert result["status"] == "completed"
-    assert "swarm" in client.contexts[0]["tool_manifests"]
-    assert root is not None and root.identity_id is not None
-    assert loaded.task_contract == {}
-    assert loaded.plan_graph == {}
-    assert loaded.agent_state == {}
-    assert loaded.state_version == 0
-
-
-async def test_required_legacy_standard_mode_cannot_finalize_without_a_swarm_group(session):
-    settings = AstraRuntimeSettings(
-        model_provider="mock",
-        tool_states={"swarm": True},
-        agent_max_turns=2,
-    )
-    profile = resolve_run_profile(
-        AnswerMode.standard,
-        RequestedReasoningPolicy(execution_mode="auto_approval"),
-        subagent_policy=compile_subagent_policy(settings),
-        subagent_mode="required",
-        fast_runtime_enabled=False,
-    )
-    repo = RunUnitOfWork(session)
-    run = await repo.create_task_run(
-        "必须快速并发",
-        settings.model_policy,
-        reasoning_policy=profile.reasoning_policy.model_dump(mode="json"),
-        answer_mode=profile.answer_mode.value,
-        execution_profile=profile.model_dump(mode="json"),
-    )
-    registry = fake_information_registry()
-    registry.register(SwarmTool())
-
-    result = await AstraAgentLoop(
-        settings,
-        model_client=DirectFinalizeClient(),
-        tool_registry=registry,
-    ).run(repo, run.id, run.task.description)
-
-    loaded = await repo.require_run(run.id)
-    assert result["status"] == "blocked"
-    assert any((turn.observation or {}).get("kind") == "subagent_required" for turn in loaded.turns)
 
 
 async def test_standard_mode_uses_deployment_tool_limit(session):

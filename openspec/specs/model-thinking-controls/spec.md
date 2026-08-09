@@ -61,17 +61,22 @@ TBD - created by archiving change add-model-thinking-controls. Update Purpose af
 
 ### Requirement: 实际模型思考配置可审计
 
-系统 SHALL 在 Run 模型策略快照中记录模型思考配置的请求值、有效值、来源、适配器和调整原因，并 SHALL 在模型调用 usage metadata 中记录实际应用结果。系统 MUST NOT 保存隐藏思考正文、凭据或完整提示。
+系统 SHALL 在 Run 模型策略快照中记录模型思考配置的请求值、有效值、来源、适配器和调整原因，并 SHALL 在模型调用 usage metadata 中记录实际应用结果与正文可见性。系统 MUST NOT 保存凭据、完整提示、签名、加密思考或供应商未公开的隐藏思维链；当用户显式开启思考时，系统 MAY 在独立 Run 事件中保存供应商明确公开返回的思考正文或摘要。
 
 #### Scenario: 新客户端显式配置思考
 - **WHEN** Run 携带显式模型思考配置
 - **THEN** Run 快照将来源记录为显式模型控制
-- **THEN** 每次模型调用记录最终应用的非敏感参数摘要
+- **THEN** 每次模型调用记录最终应用的非敏感参数摘要和正文可见性
 
 #### Scenario: 模型能力导致降级
 - **WHEN** 请求的思考配置不能被当前 Provider 或模型应用
 - **THEN** Run 快照和调用 metadata 记录降级原因
 - **THEN** 基础模型请求在安全省略不支持字段后继续执行
+
+#### Scenario: 用户开启模型思考正文展示
+- **WHEN** Run 的有效模型思考配置为开启且供应商返回可见思考文本
+- **THEN** 系统在受限的专用事件中保存文本、模型操作、内容层级和完整性状态
+- **THEN** 系统不把正文复制进 usage metadata 或模型策略快照
 
 ### Requirement: 未携带模型思考配置的客户端保持兼容
 

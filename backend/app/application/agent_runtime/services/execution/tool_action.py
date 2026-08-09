@@ -11,27 +11,34 @@ from app.application.agent_runtime.policies.loop import (
     validate_transition,
 )
 from app.application.agent_runtime.policies.reasoning import AgentObservationEvaluator
-from app.application.agent_runtime.services.tooling.approval import ApprovalRoutingStage, ApprovalStageInput
+from app.application.agent_runtime.services.completion.memory_candidates import (
+    MemoryCandidateWriter,
+)
+from app.application.agent_runtime.services.shared.progress import (
+    ExecutionProgress,
+    ProgressEvaluationStage,
+)
+from app.application.agent_runtime.services.tooling.approval import (
+    ApprovalRoutingStage,
+    ApprovalStageInput,
+)
 from app.application.agent_runtime.services.tooling.authorization import (
     AuthorizationStageInput,
     AuthorizedInvocation,
     PermissionAuthorizationStage,
 )
-from app.application.agent_runtime.services.completion.verification import quick_workspace_change_completes_goal
-from app.application.agent_runtime.services.tooling.failure import ToolFailureInput, ToolFailureStage
+from app.application.agent_runtime.services.tooling.failure import (
+    ToolFailureInput,
+    ToolFailureStage,
+)
 from app.application.agent_runtime.services.tooling.invocation import (
     InvocationStageInput,
     ToolInvocationStage,
 )
-from app.application.agent_runtime.services.completion.memory_candidates import MemoryCandidateWriter
 from app.application.agent_runtime.services.tooling.observation import (
     NormalizedObservation,
     ObservationNormalizationStage,
     ObservationStageInput,
-)
-from app.application.agent_runtime.services.shared.progress import (
-    ExecutionProgress,
-    ProgressEvaluationStage,
 )
 from app.common.schemas.agent.execution_state import AgentDecision, NodeResult
 from app.common.schemas.agent.planning import ExpectedObservation
@@ -67,7 +74,6 @@ class ToolActionInput:
     active_node_execution_id: str | None
     model_context: dict[str, Any]
     execution_mode: str
-    legacy_standard_mode: bool
     is_approved_resume: bool
     approved_request_snapshot: dict[str, Any] | None
     approved_tool_call: ToolCallRecord | None
@@ -125,13 +131,12 @@ class InvocationPipeline:
                     turn=action.turn,
                     decision=action.decision,
                     error=error,
-                    legacy_standard_mode=action.legacy_standard_mode,
                 )
             )
             return "continue", action.workspace_path, False, False, None, None
 
     async def _execute_authorized(self, action: ToolActionInput) -> ToolActionOutcome:
-        self._validate_execution_transition(action.legacy_standard_mode)
+        self._validate_execution_transition()
         invocation, step, tool_call, waiting_summary = await self._prepare_tool_call(action)
         if waiting_summary is not None:
             return (
@@ -297,49 +302,8 @@ class InvocationPipeline:
         normalized: NormalizedObservation,
     ) -> Literal["continue", "stop"]:
         tool, _, _, _, _, _ = authorized
-        if action.legacy_standard_mode:
-            return await self._persist_quick_result(
-                action,
-                tool.spec.name,
-                tool_call,
-                normalized,
-            )
         await self._evaluate_and_persist(action, tool_call, normalized)
         return "continue"
-
-    async def _persist_quick_result(
-        self,
-        action: ToolActionInput,
-        tool_name: str,
-        tool_call: ToolCallRecord,
-        normalized: NormalizedObservation,
-    ) -> Literal["continue", "stop"]:
-        workspace_changes = list(
-            normalized.tool_output.get("data", {}).get("workspace_changes", [])
-        )
-        completed = (
-            "workspace_changed" in normalized.completion_signals
-            and quick_workspace_change_completes_goal(action.goal, workspace_changes)
-        )
-        await self._repository.update_agent_turn(
-            action.turn.id,
-            status="completed",
-            observation=normalized.context_observation.model_dump(),
-            tool_call_id=tool_call.id,
-            phase="committed",
-        )
-        if completed:
-            await self._repository.add_event(
-                action.run_id,
-                "reasoning.quick_completion_detected",
-                {
-                    "tool_call_id": tool_call.id,
-                    "reason": "requested_workspace_target_changed",
-                    "workspace_changes": workspace_changes,
-                },
-            )
-        await self._repository.session.commit()
-        return "stop" if completed else "continue"
 
     async def _evaluate_and_persist(
         self,
@@ -434,8 +398,6 @@ class InvocationPipeline:
     ) -> PlanNodeRecord | StepRecord | None:
         if self._progress.active_plan is not None:
             return action.active_node
-        if action.legacy_standard_mode:
-            return None
         run = await self._repository.require_run(action.run_id)
         spec = self._tool_registry.get(tool_name).spec
         keywords = [tool_name, *spec.capabilities]
@@ -475,9 +437,7 @@ class InvocationPipeline:
         )
         return expected, criterion_refs
 
-    def _validate_execution_transition(self, legacy_standard_mode: bool) -> None:
-        if legacy_standard_mode:
-            return
+    def _validate_execution_transition(self) -> None:
         validate_transition(
             "select_action",
             NodeResult(next_node="policy_gate"),
@@ -493,9 +453,3 @@ class InvocationPipeline:
             "normalize_observation",
             NodeResult(next_node="evaluate"),
         )
-
-
-# One-version names retained for callers compiled against the pre-pipeline service split.
-InvocationRequest = ToolActionInput
-InvocationOutcome = ToolActionOutcome
-RootToolActionStage = InvocationPipeline

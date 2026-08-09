@@ -4,72 +4,89 @@
 TBD - created by archiving change decouple-tool-runtime-and-add-sandboxed-chart-rendering. Update Purpose after archive.
 ## Requirements
 ### Requirement: Composable tool registration
-系统 SHALL 支持从独立工具提供者组合 Tool Registry，且 Agent Runtime 不得依赖 Web 专用 Registry 构建函数。
+The system SHALL compose the Tool Registry from deterministic, verified Tool Provider Plugin contributions, and the Agent Runtime SHALL NOT depend on provider-specific Registry builders or imports.
 
 #### Scenario: Register Web and chart tools together
-- **WHEN** 部署启用 Web 与图表能力
-- **THEN** Registry 同时暴露 `web_search`、`web_fetch` 和 `chart.render`，无需修改 AgentLoop
+- **WHEN** the built-in Web and Chart providers are enabled
+- **THEN** the Registry exposes `web_search`, `web_fetch`, and `chart.render` through provider contributions without modifying AgentLoop
+
+#### Scenario: Register a managed third-party tool
+- **WHEN** an administrator enables a trusted provider that contributes a uniquely named tool
+- **THEN** the tool is added through the same CatalogBuilder path used by built-in tools
 
 ### Requirement: Policy-driven tool resolution
-Tool Router and the execution-time capability selector SHALL resolve tools according to semantic task capability, manifest security capability, permissions, risk, execution backend, frozen catalog, current Run policy, and budget rather than a Plan-level concrete tool name or hardcoded tool-name allowlist.
+Tool Router SHALL resolve tools according to the frozen catalog binding, manifest capability, permissions, risk, execution backend, current Run policy, provider health, and budget rather than a hardcoded tool-name allowlist.
 
 #### Scenario: Resolve an allowed sandboxed chart tool
-- **WHEN** an active node requires `data.visualize`, `chart.render` declares that semantic task capability, and the Run allows its sandboxed compute and artifact effects
-- **THEN** the selector offers the manifest and Router validates its concrete invocation
+- **WHEN** `chart.render` is registered, its provider is healthy, and Run policy allows `sandboxed_compute` and `artifact_write`
+- **THEN** Router validates the invocation and returns the frozen tool and executor binding
 
 #### Scenario: Reject a disallowed capability
-- **WHEN** a matching tool is registered but its security capability is not allowed by the Run policy
-- **THEN** the tool is excluded or Router returns an auditable `tool_not_allowed` or `permission_denied`
-- **THEN** the tool is not executed
+- **WHEN** a registered tool requires a capability not allowed by the Run policy
+- **THEN** Router returns an auditable `tool_not_allowed` or `permission_denied` outcome and does not execute the tool
 
-#### Scenario: Resolve equivalent provider tools
-- **WHEN** multiple eligible tools declare the semantic capability required by the active node
-- **THEN** the runtime exposes all matching candidates without requiring a Plan change
+#### Scenario: Provider becomes unavailable before a new Run
+- **WHEN** a provider is disabled or unhealthy before Run catalog creation
+- **THEN** its tools are unavailable to that Run and do not enter model context
 
 ### Requirement: Only eligible manifests enter model context
-Context assembler SHALL expose only tool manifests that are present in the Run's frozen catalog, currently eligible under Run policy and backend availability, and matched by the active node's semantic requirements; it SHALL expose safe resolution metadata separately from tool inputs and secrets.
+Context assembler SHALL expose only tool manifests that are present in the Run's frozen catalog and currently eligible under Run policy, plan capability requirements, budgets, and bound backend availability.
 
 #### Scenario: Sandbox backend unavailable
-- **WHEN** a visualization tool is configured but its Sandbox Executor is unavailable
-- **THEN** the model context does not contain that tool
-- **THEN** resolution metadata records a safe capability-unavailable reason
+- **WHEN** a chart capability is configured but its bound Sandbox Executor is unavailable before Run creation
+- **THEN** model context does not include `chart.render` and records the safe capability-unavailable reason
 
-#### Scenario: Active node has multiple providers
-- **WHEN** multiple healthy and allowed provider tools satisfy the same active semantic requirement
-- **THEN** every matching manifest enters the execution decision context in deterministic order
-- **THEN** no provider credential or secret configuration enters the resolution metadata
+#### Scenario: Ineligible plugin metadata contains instructions
+- **WHEN** a disabled or untrusted plugin manifest contains instruction-like descriptions
+- **THEN** none of that plugin's tool metadata enters model context
 
 ### Requirement: Generic tool result envelope
-所有工具执行结果 SHALL 转换为统一 envelope，至少包含状态、结构化数据、warnings、metrics 和 Artifact 引用，AgentLoop 不得按具体工具名解释原始输出。
+Every tool executor SHALL return a versioned Tool Result Envelope containing status, structured data, warnings, metrics, and Artifact references, and InvocationPipeline SHALL validate the envelope and declared output schema before producing observations. AgentLoop MUST NOT interpret raw output according to a concrete tool name.
 
 #### Scenario: Process a chart result
-- **WHEN** `chart.render` 成功生成 PNG Artifact
-- **THEN** AgentLoop 接收通用成功 observation 和 ArtifactRef，而无需 Matplotlib、Seaborn 或 ECharts 专用分支
+- **WHEN** `chart.render` successfully generates a PNG Artifact
+- **THEN** the generic pipeline validates its envelope and the registered Chart processor emits an Artifact observation without a Chart branch in AgentLoop
+
+#### Scenario: Tool returns an invalid envelope
+- **WHEN** a provider returns a result that violates the envelope or ToolSpec output schema
+- **THEN** the ToolCall fails with a bounded invalid-result error and no unvalidated data enters completion context
 
 ### Requirement: Auditable tool execution context
-Agent Runtime SHALL 为每次工具调用构造 `ToolExecutionContext`，包含 Run、ToolCall、Step、trace 及已授权 Artifact/Sandbox service；工具不得通过全局数据库状态推断这些关联。
+InvocationPipeline SHALL construct a ToolExecutionContext for each call containing Run, ToolCall, Step, trace, frozen component identities, and only the authorized Artifact, Sandbox, Workspace, credential, and transport services. Tools MUST NOT infer these associations from global database state.
 
 #### Scenario: Execute a sandboxed chart tool
-- **WHEN** AgentLoop 已创建 `chart.render` ToolCall 并开始执行工具
-- **THEN** 工具收到包含该 ToolCall ID 的 context，且其 SandboxJob 和输出 Artifact 均关联同一 Run 与 ToolCall
+- **WHEN** InvocationPipeline creates a `chart.render` ToolCall and invokes its bound executor
+- **THEN** the executor receives the same ToolCall ID and its SandboxJob and output Artifacts are associated with that Run and ToolCall
 
-#### Scenario: Execute a legacy Web tool
-- **WHEN** AgentLoop 调用不需要运行服务的只读 Web 工具
-- **THEN** 工具可忽略 execution context，并保持既有输入输出行为
+#### Scenario: Execute an isolated external tool
+- **WHEN** a third-party provider tool is authorized
+- **THEN** its transport receives a capability-limited serialized execution context without unrestricted host service objects
 
 ### Requirement: Domain-specific processing remains pluggable
-系统 SHALL 通过可注册 processor 和 validator 处理 Web Evidence Pack、图表验证及其他领域规则，并由通用完成门控汇总结论。
+The system SHALL select zero or more registered result processors and validators through frozen applicability bindings, SHALL aggregate all applicable validation outcomes in the general Completion Gate, and SHALL NOT select validators through concrete tool-name branches in AgentLoop.
 
 #### Scenario: Complete a non-Web chart task
-- **WHEN** 图表 Artifact 验证成功且任务不要求外部来源
-- **THEN** 完成门控不得因缺少 Web fetched sources 而阻塞 Run
+- **WHEN** Chart Artifact validation succeeds and no Web tool or Web evidence requirement applies
+- **THEN** Completion Gate does not require Web fetched sources and can complete the Run
+
+#### Scenario: Run uses Web and chart tools
+- **WHEN** one Run produces both Web evidence and a Chart Artifact
+- **THEN** both applicable validator outcomes are recorded and aggregated rather than selecting only one domain adapter
+
+#### Scenario: New provider contributes a validator
+- **WHEN** a trusted plugin validator applies to an invocation result
+- **THEN** the validator participates through its frozen binding without an AgentLoop code change
 
 ### Requirement: Preserve existing Web tool behavior during migration
-系统 MUST 在迁移期间保持 `web_search`、`web_fetch` 的名称、输入契约、审计记录和 Web 证据验证语义。
+The system MUST preserve `web_search` and `web_fetch` names, input contracts, audit records, Web evidence semantics, and safe output behavior while migrating them into the built-in Web provider plugin.
 
 #### Scenario: Execute an existing Web query
-- **WHEN** 用户发起此前由 Web Agent 支持的查询
-- **THEN** 通用工具路径产生与既有路径等价的搜索、抓取、Evidence Pack 和验证结果
+- **WHEN** a user initiates a query previously handled by the Web Agent path
+- **THEN** the plugin-based invocation pipeline produces equivalent search, fetch, Evidence Pack, citation validation, and safe failure behavior
+
+#### Scenario: Read a historical Web ToolCall
+- **WHEN** a client reads a ToolCall created before the plugin migration
+- **THEN** the API continues to deserialize and present its existing tool identity and audit data
 
 ### Requirement: Result processors emit canonical evidence fragments
 Applicable result processors SHALL convert tool-specific output into schema-validated canonical evidence fragments without persisting directly or expanding permissions.
@@ -91,4 +108,37 @@ The system SHALL read permission identities, grants, and audit records only from
 #### Scenario: Read obsolete authorization data
 - **WHEN** a persisted grant or identity lacks the current binding and scope fields
 - **THEN** the record is rejected or treated as unauthorized without constructing a compatibility view
+
+### Requirement: Tool-name-independent invocation pipeline
+The system SHALL execute every tool through a fixed InvocationPipeline covering resolution, schema validation, trusted effect analysis, authorization, execution, envelope validation, persistence, processing, and validation dispatch.
+
+#### Scenario: Built-in Bash invocation modifies workspace
+- **WHEN** `bash_execute` is authorized and produces Workspace changes
+- **THEN** its registered analyzer, approval presenter, processor, and completion signal handle the invocation without a Bash-specific AgentLoop branch
+
+#### Scenario: Effect analyzer is unavailable
+- **WHEN** an invocation has neither a valid bound analyzer nor a valid conservative host fallback
+- **THEN** the invocation fails closed before authorization or execution
+
+### Requirement: 工具候选按实际 Agent execution 衰减
+系统 SHALL 为每个 AgentExecution 从父级冻结 Tool Catalog、显式 delegated scope、Task/Run policy 和当前基础设施状态解析候选，并 SHALL NOT 因 root Agent 可用而向 child 暴露工具。
+
+#### Scenario: child Catalog 构建
+- **WHEN** 子 Agent 启动或从 checkpoint 恢复
+- **THEN** Runtime 提供带版本和 digest 的衰减 Catalog，并拒绝恢复期间发生的权限扩大
+
+#### Scenario: child 选择非候选工具
+- **WHEN** 模型提出未出现在当前 child Catalog 的工具调用
+- **THEN** Tool Router 拒绝执行、记录 identity 和原因，并不把该选择转为隐式审批
+
+### Requirement: 子 Agent 工具调用保留完整委派执行上下文
+系统 SHALL 在 ToolExecutionContext 和 PermissionRequest 中包含 child identity、agent execution、delegation chain、budget envelope、Context/DataFlow state 和 Workspace scope。
+
+#### Scenario: 授权子 Agent 工具调用
+- **WHEN** child 调用一个候选工具
+- **THEN** `authorize_invocation()` 基于实际 child subject 和冻结 effect plan 返回唯一 allow、ask 或 deny 决策
+
+#### Scenario: 工具 provider 尝试使用 root 身份
+- **WHEN** child invocation 的 provider 或 adapter 丢弃 child identity 并尝试以 root subject 执行
+- **THEN** Runtime fail closed 并记录 execution-context integrity 错误
 

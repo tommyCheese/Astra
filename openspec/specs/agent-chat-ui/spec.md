@@ -4,16 +4,16 @@
 TBD - created by archiving change implement-core-web-agent-loop. Update Purpose after archive.
 ## Requirements
 ### Requirement: Chat UI is the primary Agent interface
-The system SHALL present the Agent frontend as a chat-style interface with user messages, Agent messages, tool events, reflections, source evidence, and final answers.
+The system SHALL present both runtime kinds in one chat interface while projecting their actual capabilities: Fast Runs show user messages, compact tool activity, approvals and streamed answers; Trusted Runs additionally show plans, reflections, evidence and verification results.
 
-#### Scenario: User submits a message
-- **WHEN** the user sends a task from the chat composer
-- **THEN** the UI appends a user message to the conversation
-- **THEN** the system creates a run and streams or polls Agent progress into the same conversation
+#### Scenario: User submits a fast message
+- **WHEN** the user sends a task with quick mode selected
+- **THEN** the UI appends the user message and streams Fast Runtime events into the conversation
+- **THEN** the UI does not create empty plan, reflection or verification placeholders
 
-#### Scenario: Agent returns final answer
-- **WHEN** a run completes
-- **THEN** the UI displays the final answer as an Agent message with findings, sources, caveats, and verification notes
+#### Scenario: Trusted Agent returns final answer
+- **WHEN** a Trusted Run completes
+- **THEN** the UI displays the final answer with its actual verification and evidence state
 
 ### Requirement: Tool activity is visible but compact
 The system SHALL display Web tool calls as compact tool event rows inside the conversation and allow users to expand details.
@@ -152,12 +152,12 @@ The system SHALL render a recoverable approval card immediately above the chat i
 - **THEN** 控件提供可访问名称和键盘操作
 
 ### Requirement: 对话策略按回答模式渐进呈现
-系统 SHALL 仅在可信模式下提供推理强度、工具预算、规划和反思等详细对话策略控制，并 SHALL 在快速模式下保留模型与执行审批控制。
+系统 SHALL 仅在可信模式下提供推理强度、工具预算、计划、反思和验证策略控制。快速模式 SHALL 只展示模型、执行审批及其独立 Fast Runtime 设置，并 MUST NOT 将可信策略保存或发送给 Fast Run。
 
 #### Scenario: 快速回答打开模型菜单
 - **WHEN** standard 模式用户打开模型菜单
-- **THEN** UI 允许选择模型
-- **THEN** UI 不把详细可信策略表现为当前快速回答的生效设置
+- **THEN** UI 允许选择模型并展示适用的最小 Fast Runtime 设置
+- **THEN** UI 不显示或提交可信推理、计划、反思和验证字段
 
 #### Scenario: 可信模式打开模型菜单
 - **WHEN** trusted 模式用户打开模型菜单
@@ -332,22 +332,43 @@ The system SHALL describe the sidebar history limit as the maximum number of con
 
 ### Requirement: 界面思考过程独立于模型思考参数
 
-系统 SHALL 将聊天中的“思考”定义为 Astra 运行阶段和可公开审计摘要的展示，并 MUST NOT 使用模型思考开关或深度决定过程面板的产生、可见性、展开状态或事件内容来源。界面 MUST NOT 展示或依赖 Provider 隐藏思维链。
+系统 SHALL 将聊天中的 Astra“思考”定义为运行阶段和可公开审计摘要，并 SHALL 将供应商在用户开启模型思考后明确公开返回的思考正文显示为独立的“模型思考”条目。模型思考开关或深度 MUST NOT 决定 Astra 过程面板本身的产生、可见性或展开偏好；界面 MUST NOT 展示供应商未公开、加密或推断出的隐藏思维链。
 
 #### Scenario: 用户关闭模型思考
 - **WHEN** 当前模型思考被关闭且 Run 正在执行
 - **THEN** 界面仍根据运行事件显示“思考中”、阶段、工具活动和公开摘要
-- **THEN** Run 结束后仍显示对应的完成状态
+- **THEN** 界面不显示模型思考正文条目，Run 结束后仍显示对应的 Astra 完成状态
+
+#### Scenario: 用户开启模型思考且供应商返回正文
+- **WHEN** 当前模型思考开启且供应商返回可见思考增量
+- **THEN** 过程面板实时追加一个与 Astra 摘要分离的“模型思考”条目
+- **THEN** 展开条目后按原始顺序、换行和完整性状态展示供应商公开返回的全部正文
 
 #### Scenario: 用户切换模型思考深度
 - **WHEN** 用户从低深度切换到高深度或反向切换
-- **THEN** 过程面板的显示规则、折叠偏好和事件协议保持不变
-- **THEN** 界面不会把 Provider 隐藏推理 token 渲染为过程摘要
+- **THEN** Astra 过程面板的显示规则、折叠偏好和公开摘要事件协议保持不变
+- **THEN** 后续 Run 的模型思考条目只展示该 Run 实际收到的供应商可见内容
 
 #### Scenario: 用户查看思考说明
 - **WHEN** 用户查看模型思考控件或过程面板说明
 - **THEN** 界面明确说明模型思考控制模型生成行为
-- **THEN** 界面明确说明聊天中的“思考”是 Astra 的公开执行过程摘要
+- **THEN** 界面区分 Astra 的公开执行摘要、供应商公开思考正文或摘要，以及不可获得的隐藏思维链
+
+#### Scenario: 用户展开正在生成的模型思考
+- **WHEN** 用户展开一个仍在接收增量的模型思考条目
+- **THEN** 正文区域以独立、清晰的流式卡片展示 Provider、操作和生成状态
+- **THEN** 正文内部滚动位置随最新思考增量移动到底部，且不会强制改变已折叠条目或对话主区域的滚动位置
+
+#### Scenario: 高频流式增量到达
+- **WHEN** 回答或模型思考在短时间内连续收到多个增量
+- **THEN** 界面按浏览器动画帧合并更新，同一思考流在单帧内只执行一次正文拼接，并避免重新渲染未发生变化的过程条目
+- **THEN** 可见输出使用独立于网络分片频率的帧级缓冲平滑追赶最新内容，同时保持事件游标、去重、增量顺序与正文完整性
+- **THEN** 跟随最新内容所需的滚动测量在绘制后合并执行，不阻塞当前文本帧
+
+#### Scenario: Run 思考完成
+- **WHEN** 一个 Run 已完成且后端提供了固定的处理耗时
+- **THEN** 过程面板标题在“思考完成”后显示紧凑的“已处理 X 秒/分钟/小时”
+- **THEN** 历史对话刷新后显示相同耗时，运行中的对话不显示未固定时长
 
 ### Requirement: 模型菜单提示回答模式中的思考影响
 
@@ -536,14 +557,142 @@ The chat UI SHALL show meaningful files created, modified, and deleted by the cu
 - **THEN** 菜单说明两种回答模式仍受平台硬性安全边界限制
 
 ### Requirement: 审计视图只展示真实 DAG
-系统 SHALL 仅在 Run 存在规范 Plan DAG 时展示计划版本、节点与依赖，并 MUST NOT 为 standard Run 展示虚构的 Plan 版本或空 DAG 占位。
+系统 SHALL 仅为实际持久化 Plan DAG 的 Trusted Run 展示图谱工作台。Fast Run SHALL 展示独立的简洁动作时间线，并 MUST NOT 根据工具事件推断或合成 DAG、验证或反思状态。
 
-#### Scenario: 查看快速响应过程
-- **WHEN** 用户展开已完成 standard Run 的过程
-- **THEN** UI 展示真实决策和工具事件
-- **THEN** UI 不展示 Plan 版本或 Plan 节点区域
+#### Scenario: 快速运行调用多个工具
+- **WHEN** Fast Runtime 连续调用多个工具
+- **THEN** UI 按时间顺序展示紧凑工具活动
+- **THEN** UI 不创建 Plan node、可信执行图或“已校验”标记
 
-#### Scenario: 查看可信执行过程
-- **WHEN** 用户展开已完成 trusted Run 的过程
-- **THEN** UI 展示真实 Plan 版本、节点状态和依赖
+#### Scenario: 可信运行存在 DAG
+- **WHEN** Trusted Run 已持久化规范 Plan DAG
+- **THEN** UI 展示对应图谱、节点执行与验证关联
+
+### Requirement: Chat UI 清晰展示并发子 Agent 和 Join 状态
+系统 SHALL 同时展示多个 child 的目标、父级、运行/等待/终态、Join 关系、预算和关键等待原因，并 SHALL 使用户能够区分并发执行与串行步骤而不暴露隐藏推理。
+
+#### Scenario: 两个 child 同时运行
+- **WHEN** Run snapshot 包含两个 running child
+- **THEN** 子 Agent 面板和执行图谱同时显示两个活动分支及各自状态
+- **THEN** 汇总计数、预算和等待信息与权威快照一致
+
+#### Scenario: 一个 child 等待而另一个完成
+- **WHEN** sibling child 分别处于 waiting_approval 和 completed
+- **THEN** UI 分别展示等待原因和完成摘要
+- **THEN** UI 不把整个 Run 错误显示为只能等待该 child
+
+#### Scenario: Join 已 ready 但尚未消费
+- **WHEN** child 已完成且 Join 处于 ready 或 merging
+- **THEN** UI 将其显示为正在汇合而不是根任务已经完成
+
+### Requirement: 工具设置展示并控制 Swarm
+系统 SHALL 在工具设置界面展示 `swarm` 的名称、子 Agent 用途、当前开关状态、可用性和不可用原因，并 SHALL 通过与其他工具一致的键盘可操作 switch 保存用户选择。
+
+工具设置 SHALL NOT 展示无法由用户操作解决的部署执行提示或解释既有子 Agent 生命周期的常驻说明；这些约束由运行时执行并记录在运维文档中。
+
+#### Scenario: 用户在设置中关闭 Swarm
+- **WHEN** 用户操作 `swarm` switch 从 enabled 变为 disabled 且保存成功
+- **THEN** UI 通过 switch 本身展示关闭状态，不额外显示成功说明
+- **THEN** 刷新设置后仍读取到 disabled 状态
+
+#### Scenario: 工具设置保持面向用户操作
+- **WHEN** 用户查看可用的 `swarm` 工具设置
+- **THEN** UI 不显示“需要先启用受治理子 Agent 执行”提示
+- **THEN** UI 不显示关闭开关对既有 child 生命周期的常驻说明
+- **THEN** UI 不显示工具已启用、已停用或设置已保存的重复成功提示
+
+### Requirement: 用户可以在 Chat UI 管理自动化
+系统 SHALL 提供全局“已安排任务”管理入口，展示定时任务和唯一 heartbeat 的启用状态、结果对话、计划摘要、下一次运行、最近结果与历史。
+
+#### Scenario: 查看自动化列表
+- **WHEN** 用户打开自动化管理界面
+- **THEN** UI 将普通定时任务与 heartbeat 分区、分别计数，并提供一个“新建”入口在配置页选择类型，同时显示各自的状态、时区、下一触发和最近结果
+
+#### Scenario: 两种自动化保持独立语义
+- **WHEN** 用户分别创建 heartbeat 和普通定时任务
+- **THEN** heartbeat 仅配置固定检查间隔、活动时间窗与静默检查指令，普通定时任务配置 once、interval 或 cron 触发计划及正常执行指令
+- **THEN** UI 不将 heartbeat 计入普通定时任务数量，也不向普通定时任务展示 `HEARTBEAT_OK` 语义
+
+#### Scenario: 从统一入口选择创建类型
+- **WHEN** 用户点击自动化管理页的“新建”按钮
+- **THEN** 配置页先提供“定时任务”与“Heartbeat”类型选择，并根据所选类型显示对应且互不混用的字段
+
+#### Scenario: 编辑计划
+- **WHEN** 用户创建或编辑计划
+- **THEN** UI 校验结果对话、计划类型、cron/间隔、时区、错过策略、重叠策略和权限包后提交版本化更新
+- **THEN** 用户可选择已有结果对话，或创建新的专用对话并完成绑定
+
+#### Scenario: 可视化配置重复计划
+- **WHEN** 用户选择定时重复执行
+- **THEN** UI 使用每天、工作日、每周或每月以及日期、星期、小时和分钟轮盘生成计划，不要求用户书写 cron 表达式
+- **THEN** 对无法映射的旧版自定义 cron，UI 默认保留原计划，直到用户明确选择新的可视化重复方式
+
+#### Scenario: 查看关联 Run
+- **WHEN** 用户从运行历史选择一个已创建 Astra Run 的执行
+- **THEN** 普通定时任务 UI 导航到绑定的结果对话及完整审计 timeline，生成文件同时进入现有 Artifact/资料库链路；heartbeat UI 导航到其目标对话
+
+#### Scenario: 查看定时任务制品
+- **WHEN** 用户打开已产生执行结果的定时任务详情
+- **THEN** UI 在“制品”区域按执行展示最终结果文本和该次执行产生的可交付文件
+- **THEN** 没有文件的简单输出仍显示为结果制品，并可导航到目标对话查看完整内容
+
+#### Scenario: 查看扩展制品
+- **WHEN** 一次执行生成 JSON、表格、图片、HTML 或完成外部写入
+- **THEN** UI 区分结构化数据和操作回执，提供数据打开、图片预览、隔离 HTML 预览及安全外部链接
+- **THEN** 操作回执不展示原始工具输入、凭据、完整输出或只读调试日志
+
+#### Scenario: 资料库与任务详情展示同一制品
+- **WHEN** 定时任务或 heartbeat 产生结果、文件、数据或操作回执
+- **THEN** 资料库与对应任务详情从同一制品目录读取，并展示一致的制品 ID、来源、目标对话和内容地址
+- **THEN** 资料库可按类型、时间或对话合理展示这些制品，任务详情仅展示属于该任务运行的制品
+
+### Requirement: 用户可以配置低噪音 heartbeat
+系统 SHALL 在 Chat UI 提供 heartbeat 启停、周期、活动时间窗、时区和 prompt 配置，并解释静默确认语义。
+
+#### Scenario: 启用 heartbeat
+- **WHEN** 用户保存有效 heartbeat 配置
+- **THEN** UI 显示下一检查时间和 `HEARTBEAT_OK` 不会产生提醒的说明
+
+#### Scenario: Heartbeat 周期越界
+- **WHEN** 用户输入少于 5 分钟或超过 24 小时的检查间隔
+- **THEN** UI 使用易读语言说明允许范围、提示如何调整，并在修正前禁用保存操作
+
+#### Scenario: Heartbeat 被阻塞或延后
+- **WHEN** 最近 heartbeat 因权限失效、非活动时间或会话繁忙未执行
+- **THEN** UI 显示可区分的 blocked、skipped 或 deferred 状态及可操作原因
+
+### Requirement: 快速 Subagent 使用紧凑过程呈现
+系统 SHALL 在 standard Run 创建 child 后显示共享 Subagent 活动摘要和可折叠详情，并 MUST NOT 为 standard Run 创建、展示或占位可信执行 DAG。
+
+#### Scenario: 快速 Subagent 正在运行
+- **WHEN**standard Run 的 `subagent_summary.total` 大于零
+- **THEN**聊天过程显示 running、waiting、completed 数量及关键等待原因
+- **THEN**用户可以查看 child 目标、状态、预算摘要、结果或失败
+
+#### Scenario: 快速 Subagent Run 完成
+- **WHEN**standard Run 的 children 和 Join 已收敛并生成最终答案
+- **THEN**紧凑 Subagent 记录保留在对应对话过程内
+- **THEN**对话级可信 DAG 窗格保持隐藏
+
+### Requirement: Chat UI 展示子 Agent 协作而不分裂主会话
+系统 SHALL 保持 root Agent 为主对话发言者，并以紧凑、可展开的过程组件展示 children 的目标、状态、等待、预算、Artifacts 和结果。
+
+#### Scenario: child 开始执行
+- **WHEN** Run 创建一个或多个 child executions
+- **THEN** Chat UI 在当前 Run 内显示子 Agent 汇总，而不创建伪造的独立用户会话或让 child 直接发布最终答案
+
+#### Scenario: child 请求父级输入
+- **WHEN** child 进入 waiting_parent
+- **THEN** UI 默认显示父级正在处理该请求，只有父级将 Run 转为 waiting_user 时才向用户呈现澄清卡片
+
+### Requirement: 用户可下钻子 Agent 审计和控制
+系统 SHALL 允许用户从过程流或执行图查看 child lineage、委派契约摘要、能力/权限摘要、usage、工具和交付物，并在授权范围内取消目标 child。
+
+#### Scenario: 查看 child 详情
+- **WHEN** 用户展开一个 child execution
+- **THEN** UI 显示经过清洗的结构化详情、父级关系、join policy 和取消影响，且不暴露隐藏 reasoning 或 secret
+
+#### Scenario: 历史 Run 重放
+- **WHEN** 用户打开已完成或中断的多 Agent Run
+- **THEN** UI 从持久化快照重建相同的 Agent 树、关键时间线和终态，不依赖原 SSE 连接
 

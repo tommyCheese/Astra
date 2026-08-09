@@ -52,22 +52,12 @@ def prepare_run_configuration(
     AgentProfile.from_snapshot(snapshot)
     return PreparedRunConfiguration(
         answer_mode=profile.answer_mode.value,
-        runtime_kind=(profile.runtime_kind or _legacy_runtime_kind(profile.answer_mode)).value,
+        runtime_kind=profile.runtime_kind.value,
         runtime_version=profile.runtime_version,
         execution_profile=profile.model_dump(mode="json"),
         reasoning_policy=frozen_reasoning.model_dump(mode="json"),
         model_policy=_model_policy(model_policy),
         agent_profile_snapshot=deepcopy(snapshot),
-    )
-
-
-def _legacy_runtime_kind(answer_mode: AnswerMode):
-    from app.common.schemas.agent.types import RuntimeKind
-
-    return (
-        RuntimeKind.legacy_standard_v1
-        if answer_mode == AnswerMode.standard
-        else RuntimeKind.trusted_v1
     )
 
 

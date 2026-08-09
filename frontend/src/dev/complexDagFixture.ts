@@ -129,6 +129,7 @@ export const complexDagRunFixture: RunView = {
   task_id: 'verification-complex-dag-task',
   status: 'executing',
   mode: 'web_agent',
+  runtime_kind: 'trusted-v1',
   answer_mode: 'trusted',
   result: null,
   steps: [],

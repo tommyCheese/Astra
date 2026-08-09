@@ -62,7 +62,6 @@ export function createOptimisticProcessState(
 
 export function reconcileProcessSnapshot(_state: ProcessStreamState | null, run: RunView): ProcessStreamState {
   const answerMode: ProcessStreamState['answerMode'] = run.runtime_kind === 'trusted-v1'
-    || (!run.runtime_kind && run.answer_mode === 'trusted')
     ? 'trusted'
     : 'standard';
   // A Run snapshot is authoritative and already contains the persisted events.

@@ -7,8 +7,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
-from app.application.agent_runtime.services.tooling.plugin_runtime import PluginRuntimeState
 from app.application.agent_runtime.services.tooling.approval import input_hash
+from app.application.agent_runtime.services.tooling.plugin_runtime import PluginRuntimeState
 from app.common.schemas.agent.execution_state import AgentObservation
 from app.infrastructure.db.models.permissions import ToolCallRecord
 from app.infrastructure.db.models.plans import PlanRecord
@@ -55,23 +55,16 @@ class RunRecoveryStage:
     async def load(
         self,
         run_id: str,
-        *,
-        initial_run: RunRecord | None,
-        fresh_run: bool,
     ) -> LoadedAgentRunState:
         current_task = asyncio.current_task()
         if current_task is not None and current_task.cancelling():
             raise asyncio.CancelledError
-        run = initial_run or await self._repository.require_run_runtime(run_id)
-        active_plan = (
-            None
-            if run.answer_mode == "standard"
-            else await PlanRepository(self._repository.session).active_for_run(run_id)
-        )
+        run = await self._repository.require_run_runtime(run_id)
+        active_plan = await PlanRepository(self._repository.session).active_for_run(run_id)
         return LoadedAgentRunState(
             run=run,
-            tool_calls=[] if fresh_run else list(run.tool_calls),
-            turns=[] if fresh_run else list(run.turns),
+            tool_calls=list(run.tool_calls),
+            turns=list(run.turns),
             active_plan=active_plan,
         )
 

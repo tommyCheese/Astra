@@ -17,8 +17,6 @@ from app.common.core.config import AstraRuntimeSettings
 from app.common.schemas.agent.types import PlanNodeStatus
 from app.domain.execution.contracts import SubagentSupervisorPort
 from app.infrastructure.db.models.plans import PlanNodeRecord
-from app.infrastructure.db.models.runs import RunRecord
-from app.infrastructure.db.models.skills import RunSkillSnapshotRecord
 from app.infrastructure.model_clients.contracts import ModelClient
 from app.infrastructure.repositories.plans import PlanRepository
 from app.infrastructure.repositories.run_unit_of_work import RunUnitOfWork
@@ -50,10 +48,6 @@ class RootTurnPreparationStage:
         tool_registry: AstraToolRegistry,
         tool_router: ToolRouter,
         progress: ExecutionProgress,
-        initial_run: RunRecord,
-        initial_skill_snapshot: RunSkillSnapshotRecord | None,
-        fresh_run: bool,
-        legacy_standard_mode: bool,
         subagent_supervisor: SubagentSupervisorPort | None,
     ) -> None:
         self._repository = repository
@@ -65,10 +59,6 @@ class RootTurnPreparationStage:
         self._tool_registry = tool_registry
         self._tool_router = tool_router
         self._progress = progress
-        self._initial_run = initial_run
-        self._initial_skill_snapshot = initial_skill_snapshot
-        self._fresh_run = fresh_run
-        self._quick_mode = legacy_standard_mode
         self._subagents = subagent_supervisor
 
     async def execute(self, *, run_id: str, goal: str) -> PreparedRootTurn:
@@ -150,9 +140,6 @@ class RootTurnPreparationStage:
             tool_registry=self._tool_registry,
             tool_router=self._tool_router,
             observations=self._progress.observations,
-            legacy_standard_mode=self._quick_mode,
-            initial_run=self._initial_run if self._fresh_run else None,
-            initial_skill_snapshot=(self._initial_skill_snapshot if self._fresh_run else None),
         )
         return await compact_root_context(
             repo=self._repository,

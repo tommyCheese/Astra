@@ -55,7 +55,7 @@ class GraphErrorBoundary extends Component<{ children: ReactNode; fallback: Reac
 const terminalStatuses = new Set(['completed', 'completed_with_warnings', 'failed', 'blocked', 'waiting_user', 'cancelled']);
 const completedConversationStatuses = new Set(['completed', 'completed_with_warnings']);
 const isTrustedRuntime = (run: RunView | null | undefined) => Boolean(
-  run && (run.runtime_kind === 'trusted-v1' || (!run.runtime_kind && run.answer_mode === 'trusted'))
+  run?.runtime_kind === 'trusted-v1'
 );
 const STORAGE_KEYS = {
   conversations: 'astra.conversations.v2',

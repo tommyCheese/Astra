@@ -59,14 +59,14 @@
 
 ## 4. P0：先解决主链路真实性与安全闭环
 
-### 4.1 Fast / Trusted / Legacy Runtime 收敛
+### 4.1 Fast / Trusted Runtime 收敛
 
 **现状**
 
 - 新 standard Run 使用 `fast-v1`，trusted Run 使用 `trusted-v1`。
-- `legacy-standard-v1` 仍保留读取、恢复和开关。
+- 旧 standard runtime、兼容读取与回滚开关已删除。
 - `application/fast_agent_runtime`、`application/agent_runtime`、`application/runner` 和 `application/run_management` 共同承担运行编排。
-- 当前默认同时启用 Fast 和 Legacy standard runtime。
+- standard 与 trusted 仅分别进入 `fast-v1` 和 `trusted-v1`。
 - 主规格仍要求 standard/trusted 使用同一个 Agent Loop，并明确不得维护第二套 Agent runtime；这与当前独立 Fast Runtime 的实现和运维文档不一致。
 
 **TODO**
@@ -74,14 +74,13 @@
 - [ ] 以真实调用图列出新建、续跑、审批恢复、调度恢复和历史 Run 分别进入哪个 Runtime。
 - [ ] 决定规范事实：共享一个执行内核，还是正式承认两套 Runtime；不得继续让规格和代码各自正确。
 - [ ] 若保留双 Runtime，抽取唯一的 Tool/permission/sandbox/artifact/cancellation 执行管线，并用契约测试证明语义一致。
-- [ ] 统计仍可恢复的 `legacy-standard-v1` Run，定义兼容窗口和删除条件。
-- [ ] 删除无消费者的 Legacy 分支、配置和投影，避免永久三轨运行。
+- [x] 清空历史对话后删除旧 standard 分支、配置和投影，结束三轨运行。
 - [ ] 为 mode × approval × recovery × cancellation × memory × skill 建立配对行为矩阵。
 
 **完成条件**
 
 - 每类 Run 只有一个无歧义 owner；主规格、配置和代码一致。
-- Legacy 有明确移除日期或被正式定义为长期兼容产品，而不是无限期保留。
+- 运行时身份是必填字段，不再对缺失或旧 runtime kind 做兼容推断。
 
 ### 4.2 Durable Run 调度与跨进程恢复
 

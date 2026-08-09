@@ -28,11 +28,9 @@ class SkillActionStage:
         run_id: str,
         turn: AgentTurnRecord,
         decision: AgentDecision,
-        *,
-        legacy_standard_mode: bool,
     ) -> bool:
         if decision.decision_type == "activate_skill":
-            observation = await self._activate(run_id, decision, legacy_standard_mode=legacy_standard_mode)
+            observation = await self._activate(run_id, decision)
         elif decision.decision_type == "read_skill_resource":
             observation = await self._read_resource(run_id, decision)
         else:
@@ -50,8 +48,6 @@ class SkillActionStage:
         self,
         run_id: str,
         decision: AgentDecision,
-        *,
-        legacy_standard_mode: bool,
     ) -> AgentObservation:
         identity = decision.skill_identity or ""
         run = await self._repository.require_run_core(run_id)
@@ -60,7 +56,7 @@ class SkillActionStage:
             for item in (run.task_contract or {}).get("skill_revisions", [])
             if isinstance(item, dict)
         }
-        if not legacy_standard_mode and identity not in contract_skills:
+        if identity not in contract_skills:
             observation = AgentObservation(
                 kind="skill_replan_required",
                 status="failed",

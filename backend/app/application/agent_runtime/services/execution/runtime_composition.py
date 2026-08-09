@@ -11,35 +11,40 @@ from app.application.agent_runtime.policies.reasoning import (
     AgentObservationEvaluator,
     AgentReflectionGate,
 )
-from app.application.agent_runtime.services.tooling.approval import ApprovalRoutingStage
-from app.application.agent_runtime.services.tooling.authorization import PermissionAuthorizationStage
-from app.application.agent_runtime.services.completion.verification import CompletionVerificationStage
-from app.application.agent_runtime.services.context.assembler import AgentContextAssembler
-from app.application.agent_runtime.services.decisions.control import ControlDecisionStage
-from app.application.agent_runtime.services.tooling.failure import ToolFailureStage
 from app.application.agent_runtime.services.completion.finalization import AgentFinalizationStage
-from app.application.agent_runtime.services.tooling.invocation import ToolInvocationStage
-from app.application.agent_runtime.services.completion.memory_candidates import MemoryCandidateWriter
-from app.application.agent_runtime.services.completion.node_completion import NodeCompletionStage
-from app.application.agent_runtime.services.tooling.observation import ObservationNormalizationStage
-from app.application.agent_runtime.services.tooling.plugin_runtime import PluginRuntimeState
-from app.application.agent_runtime.services.shared.progress import (
-    ExecutionProgress,
-    ProgressEvaluationStage,
+from app.application.agent_runtime.services.completion.memory_candidates import (
+    MemoryCandidateWriter,
 )
+from app.application.agent_runtime.services.completion.node_completion import NodeCompletionStage
+from app.application.agent_runtime.services.completion.verification import (
+    CompletionVerificationStage,
+)
+from app.application.agent_runtime.services.context.assembler import AgentContextAssembler
+from app.application.agent_runtime.services.context.turn_preparation import RootTurnPreparationStage
+from app.application.agent_runtime.services.decisions.control import ControlDecisionStage
 from app.application.agent_runtime.services.decisions.root import RootDecisionStage
+from app.application.agent_runtime.services.decisions.skills import SkillActionStage
 from app.application.agent_runtime.services.execution.root_iteration import (
     RootAgentIterationStage,
     RootRuntimeState,
 )
-from app.application.agent_runtime.services.decisions.skills import SkillActionStage
 from app.application.agent_runtime.services.execution.tool_action import InvocationPipeline
-from app.application.agent_runtime.services.context.turn_preparation import RootTurnPreparationStage
+from app.application.agent_runtime.services.shared.progress import (
+    ExecutionProgress,
+    ProgressEvaluationStage,
+)
+from app.application.agent_runtime.services.tooling.approval import ApprovalRoutingStage
+from app.application.agent_runtime.services.tooling.authorization import (
+    PermissionAuthorizationStage,
+)
+from app.application.agent_runtime.services.tooling.failure import ToolFailureStage
+from app.application.agent_runtime.services.tooling.invocation import ToolInvocationStage
+from app.application.agent_runtime.services.tooling.observation import ObservationNormalizationStage
+from app.application.agent_runtime.services.tooling.plugin_runtime import PluginRuntimeState
 from app.application.planning.scheduler import PlanScheduler
 from app.application.skills.activation import SkillActivationService
 from app.common.core.config import AstraRuntimeSettings
 from app.common.schemas.agent.run_policy import EffectiveReasoningPolicy
-from app.common.schemas.agent.types import RuntimeKind
 from app.infrastructure.model_clients.contracts import ModelClient
 from app.infrastructure.repositories.plans import PlanRepository
 from app.infrastructure.repositories.run_unit_of_work import RunUnitOfWork
@@ -264,9 +269,6 @@ class RootRuntimeComposer:
         state = RootRuntimeState(
             run=run,
             profile=values["profile"],
-            legacy_standard_mode=(
-                values["profile"].runtime_kind == RuntimeKind.legacy_standard_v1
-            ),
             approved_tool_call=recovered.approved_tool_call,
             approved_turn=recovered.approved_turn,
             approved_request_snapshot=recovered.approved_request_snapshot,
@@ -282,7 +284,6 @@ class RootRuntimeComposer:
             skill_action_stage=collaborators["skill"],
             ensure_permission_runtime=values["permission_runtime"].ensure,
             answer_mode=values["profile"].answer_mode,
-            legacy_standard_mode=state.legacy_standard_mode,
             on_answer_delta=values["on_answer_delta"],
         )
         iteration = RootAgentIterationStage(
@@ -332,10 +333,6 @@ class RootRuntimeComposer:
             tool_registry=self._tool_registry,
             tool_router=self._tool_router,
             progress=progress,
-            initial_run=values["run"],
-            initial_skill_snapshot=values["initial_skill_snapshot"],
-            fresh_run=values["fresh_run"],
-            legacy_standard_mode=state.legacy_standard_mode,
             subagent_supervisor=values["supervisor"],
         )
 

@@ -7,11 +7,11 @@ import logging
 from dataclasses import dataclass
 
 from app.application.agent_runtime.policies.reasoning import failure_fingerprint
-from app.application.agent_runtime.services.tooling.plugin_runtime import PluginRuntimeState
 from app.application.agent_runtime.services.shared.progress import (
     ExecutionProgress,
     ProgressEvaluationStage,
 )
+from app.application.agent_runtime.services.tooling.plugin_runtime import PluginRuntimeState
 from app.common.schemas.agent.execution_state import AgentDecision, AgentObservation
 from app.infrastructure.db.models.runs import AgentTurnRecord
 from app.infrastructure.repositories.run_unit_of_work import RunUnitOfWork
@@ -27,7 +27,6 @@ class ToolFailureInput:
     turn: AgentTurnRecord
     decision: AgentDecision
     error: ToolExecutionError
-    legacy_standard_mode: bool
 
 
 class ToolFailureStage:
@@ -75,16 +74,12 @@ class ToolFailureStage:
             decision.tool_input,
             stage_input.error.to_payload(),
         )
-        reflection = (
-            await self._progress_stage.reflect(
-                "tool_failed",
-                {
-                    "last_observation": observation.model_dump(),
-                    "retry_count": self._retry_counts[tool_name],
-                },
-            )
-            if not stage_input.legacy_standard_mode
-            else None
+        reflection = await self._progress_stage.reflect(
+            "tool_failed",
+            {
+                "last_observation": observation.model_dump(),
+                "retry_count": self._retry_counts[tool_name],
+            },
         )
         await self._repository.update_agent_turn(
             stage_input.turn.id,
@@ -98,15 +93,14 @@ class ToolFailureStage:
             ),
             phase="failed",
         )
-        if not stage_input.legacy_standard_mode:
-            await self._repository.add_event(
-                stage_input.run_id,
-                "reasoning.failure_fingerprinted",
-                {
-                    "fingerprint": fingerprint,
-                    "attempt_count": self._attempt_counts[action_signature],
-                },
-            )
+        await self._repository.add_event(
+            stage_input.run_id,
+            "reasoning.failure_fingerprinted",
+            {
+                "fingerprint": fingerprint,
+                "attempt_count": self._attempt_counts[action_signature],
+            },
+        )
         await self._repository.session.commit()
 
     def _observation(

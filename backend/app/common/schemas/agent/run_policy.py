@@ -154,7 +154,7 @@ class RunExecutionProfile(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     answer_mode: AnswerMode
-    runtime_kind: RuntimeKind | None = None
+    runtime_kind: RuntimeKind
     runtime_version: int = Field(default=1, ge=1)
     fast_runtime_policy: FastRuntimePolicy | None = None
     contract_mode: ContractMode
@@ -167,23 +167,6 @@ class RunExecutionProfile(BaseModel):
     subagent_mode: Literal["auto", "required"] = "auto"
     version: Literal[2] = 2
 
-    @model_validator(mode="before")
-    @classmethod
-    def populate_legacy_runtime_identity(cls, value: Any) -> Any:
-        if not isinstance(value, dict) or value.get("runtime_kind") is not None:
-            return value
-        answer_mode = value.get("answer_mode")
-        answer_mode_value = getattr(answer_mode, "value", answer_mode)
-        return {
-            **value,
-            "runtime_kind": (
-                RuntimeKind.legacy_standard_v1.value
-                if answer_mode_value == AnswerMode.standard.value
-                else RuntimeKind.trusted_v1.value
-            ),
-            "runtime_version": 1,
-        }
-
     @model_validator(mode="after")
     def validate_mode_shape(self) -> RunExecutionProfile:
         if self.answer_mode == AnswerMode.standard and self.plan_execution is not None:
@@ -192,8 +175,8 @@ class RunExecutionProfile(BaseModel):
             raise ValueError("trusted runs require plan_execution")
         if self.answer_mode == AnswerMode.trusted and self.runtime_kind != RuntimeKind.trusted_v1:
             raise ValueError("trusted runs require trusted-v1 runtime")
-        if self.answer_mode == AnswerMode.standard and self.runtime_kind == RuntimeKind.trusted_v1:
-            raise ValueError("standard runs cannot use trusted-v1 runtime")
+        if self.answer_mode == AnswerMode.standard and self.runtime_kind != RuntimeKind.fast_v1:
+            raise ValueError("standard runs require fast-v1 runtime")
         if self.runtime_kind == RuntimeKind.fast_v1 and self.fast_runtime_policy is None:
             raise ValueError("fast-v1 runs require fast_runtime_policy")
         if self.runtime_kind != RuntimeKind.fast_v1 and self.fast_runtime_policy is not None:

@@ -37,7 +37,6 @@ from app.domain.agent_profile import (
     AgentProfileConfigurationError,
 )
 from app.infrastructure.db.models.runs import RunRecord
-from app.infrastructure.db.models.skills import RunSkillSnapshotRecord
 from app.infrastructure.db.session import SessionLocal
 from app.infrastructure.model_clients.contracts import (
     ModelConfigurationError,
@@ -50,8 +49,8 @@ from app.infrastructure.repositories.plans import PlanRepository, plan_to_view
 from app.infrastructure.repositories.run_unit_of_work import RunUnitOfWork
 from app.infrastructure.tools.base import AstraToolRegistry
 from app.infrastructure.tools.registry import build_application_tool_registry
-from app.infrastructure.tools.selection import forbidden_plan_bindings, task_capability_catalog
 from app.infrastructure.tools.router import ToolRouter
+from app.infrastructure.tools.selection import forbidden_plan_bindings, task_capability_catalog
 
 logger = logging.getLogger("astra.engine")
 
@@ -202,20 +201,6 @@ class RunEngine(PlanPreparationMixin, AnswerStreamMixin):
         if execution_profile.runtime_kind == RuntimeKind.fast_v1:
             await self._execute_fast_runtime(repo, run_id, goal)
             return
-        if execution_profile.runtime_kind == RuntimeKind.legacy_standard_v1:
-            if not self.settings.agent_legacy_standard_runtime_enabled:
-                raise RuntimeError(
-                    "Legacy standard runtime is retired; this historical Run cannot be resumed"
-                )
-            await self._execute_legacy_standard_runtime(
-                repo,
-                run_id,
-                goal,
-                initial_run=run,
-                fresh_run=run.status == "created" and not run.state_version,
-                initial_skill_snapshot=skill_snapshot,
-            )
-            return
         if run.state_version and run.agent_state:
             await repo.session.commit()
             await self._execute_trusted_runtime(repo, run_id, goal)
@@ -223,10 +208,6 @@ class RunEngine(PlanPreparationMixin, AnswerStreamMixin):
         if await self._prepare_trusted_run(repo, run, goal, execution_profile):
             return
         await self._execute_trusted_runtime(repo, run_id, goal)
-
-    async def _execute_legacy_standard_runtime(self, repo, run_id, goal, **kwargs) -> None:
-        """Compatibility-only path for standard Runs created before fast-v1."""
-        await self._execute_agent_loop(repo, run_id, goal, **kwargs)
 
     async def _execute_fast_runtime(
         self,
@@ -563,27 +544,18 @@ class RunEngine(PlanPreparationMixin, AnswerStreamMixin):
         repo: RunUnitOfWork,
         run_id: str,
         goal: str,
-        *,
-        initial_run: RunRecord | None = None,
-        fresh_run: bool = False,
-        initial_skill_snapshot: RunSkillSnapshotRecord | None = None,
     ) -> None:
-        run = initial_run or await repo.require_run_core(run_id)
-        quick_mode = run.answer_mode == AnswerMode.standard.value
-        logger.info("run.phase run_id=%s phase=executing quick=%s", run_id, quick_mode)
+        run = await repo.require_run_core(run_id)
+        logger.info("run.phase run_id=%s phase=executing", run_id)
         await repo.add_event(
             run_id,
             "reasoning.phase.started",
             {
                 "phase": "executing",
-                "label": "正在快速回答" if quick_mode else "正在执行计划",
+                "label": "正在执行计划",
             },
         )
-        await repo.update_run_status(
-            run_id,
-            "executing",
-            loaded_run=run if fresh_run else None,
-        )
+        await repo.update_run_status(run_id, "executing")
         agent_loop = AstraAgentLoop(
             self.settings,
             model_client=self.model_client,
@@ -601,9 +573,6 @@ class RunEngine(PlanPreparationMixin, AnswerStreamMixin):
                     delta,
                     background_verification=run.answer_mode == AnswerMode.trusted.value,
                 ),
-                initial_run=run if fresh_run else None,
-                fresh_run=fresh_run,
-                initial_skill_snapshot=initial_skill_snapshot if fresh_run else None,
             )
         except Exception:
             self._answer_buffers.pop(run_id, None)

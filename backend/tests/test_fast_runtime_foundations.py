@@ -7,7 +7,6 @@ from app.common.schemas.agent.run_policy import (
     FastPendingAction,
     FastRuntimeSnapshot,
     RequestedReasoningPolicy,
-    RunExecutionProfile,
 )
 from app.common.schemas.agent.types import AnswerMode, PlanExecution, RuntimeKind
 from app.infrastructure.repositories.run_unit_of_work import RunUnitOfWork
@@ -28,33 +27,6 @@ def test_run_profiles_freeze_distinct_runtime_identities():
     assert trusted.runtime_kind == RuntimeKind.trusted_v1
     assert trusted.runtime_version == 1
     assert trusted.fast_runtime_policy is None
-
-
-def test_fast_runtime_rollout_switch_routes_only_new_standard_profiles():
-    legacy = resolve_run_profile(
-        AnswerMode.standard,
-        RequestedReasoningPolicy(),
-        fast_runtime_enabled=False,
-    )
-    current = resolve_run_profile(AnswerMode.standard, RequestedReasoningPolicy())
-
-    assert legacy.runtime_kind == RuntimeKind.legacy_standard_v1
-    assert legacy.fast_runtime_policy is None
-    assert current.runtime_kind == RuntimeKind.fast_v1
-
-
-def test_legacy_standard_profile_is_read_without_becoming_fast_v1():
-    current = resolve_run_profile(AnswerMode.standard, RequestedReasoningPolicy()).model_dump(
-        mode="json"
-    )
-    current.pop("runtime_kind")
-    current.pop("runtime_version")
-    current.pop("fast_runtime_policy")
-
-    restored = RunExecutionProfile.model_validate(current)
-
-    assert restored.runtime_kind == RuntimeKind.legacy_standard_v1
-    assert restored.fast_runtime_policy is None
 
 
 def test_fast_snapshot_forbids_trusted_lifecycle_fields():

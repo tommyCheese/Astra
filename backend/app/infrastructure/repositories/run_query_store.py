@@ -7,7 +7,6 @@ from app.domain.agent_profile import AgentProfile
 from app.infrastructure.db.model_base import utc_now
 from app.infrastructure.db.models.conversations import TaskRecord
 from app.infrastructure.db.models.executions import NodeExecutionRecord
-from app.infrastructure.db.models.memory import PersistedMemoryRecord
 from app.infrastructure.db.models.plans import PlanRecord
 from app.infrastructure.db.models.runs import AgentTurnRecord, RunRecord
 from app.infrastructure.db.models.skills import RunSkillSnapshotRecord
@@ -134,45 +133,6 @@ class RunQueryStore:
         if run is None:
             raise ValueError(f"Run not found: {run_id}")
         return run
-
-    async def require_run_quick_context(
-        self,
-        run_id: str,
-        *,
-        include_skills: bool,
-        memory_limit: int = 8,
-    ) -> tuple[RunRecord, list[PersistedMemoryRecord], RunSkillSnapshotRecord | None]:
-        """Load standard-mode context inputs in one database round trip."""
-        query = (
-            select(RunRecord, PersistedMemoryRecord, RunSkillSnapshotRecord)
-            .outerjoin(
-                PersistedMemoryRecord,
-                and_(
-                    PersistedMemoryRecord.run_id == RunRecord.id,
-                    PersistedMemoryRecord.confidence >= 0.0,
-                ),
-            )
-            .outerjoin(
-                RunSkillSnapshotRecord,
-                and_(
-                    RunSkillSnapshotRecord.run_id == RunRecord.id,
-                    include_skills,
-                ),
-            )
-            .where(RunRecord.id == run_id)
-            .order_by(PersistedMemoryRecord.updated_at.desc())
-            .limit(memory_limit)
-        )
-        rows = (await self.session.execute(query)).all()
-        if not rows:
-            raise ValueError(f"Run not found: {run_id}")
-        run = rows[0][0]
-        memories = list(dict.fromkeys(memory for _, memory, _ in rows if memory is not None))
-        skill_snapshot = next(
-            (snapshot for _, _, snapshot in rows if snapshot is not None),
-            None,
-        )
-        return run, memories, skill_snapshot
 
     async def count_agent_turns(self, run_id: str) -> int:
         count = await self.session.scalar(

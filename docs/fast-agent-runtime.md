@@ -1,6 +1,6 @@
-# Fast Agent Runtime operations and migration
+# Fast Agent Runtime operations
 
-## Ownership and compatibility
+## Ownership
 
 New `standard` Runs freeze `runtime_kind=fast-v1`; new `trusted` Runs freeze
 `runtime_kind=trusted-v1`. The former is owned by
@@ -13,9 +13,7 @@ permissions, approvals, Sandbox, Workspace, Artifact access, cancellation and
 safe error envelopes are platform boundaries shared by both runtimes. They are
 not optional Fast policy features.
 
-Historical standard Runs without an explicit runtime identity are read as
-`legacy-standard-v1`; they are never rewritten as Fast. Integrations that used
-`answer_mode=standard` to infer missing plans or quick-mode branches must now:
+Every Run must carry an explicit runtime identity. Integrations must:
 
 1. dispatch and render by explicit `runtime_kind` and `runtime_version`;
 2. treat plan, reflection, verification and completion objects as absent by
@@ -38,34 +36,12 @@ restart:
 - an interrupted non-idempotent action becomes `result_unknown` and waits for
   user direction; it is never replayed automatically.
 
-## Rollout, shadow gates and rollback
+## Version rollout and rollback
 
-Run paired shadow traffic against two deployments with identical model/tool
-configuration:
-
-```bash
-cd backend
-python -m benchmarks.fast_runtime_performance \
-  --fast-base-url http://127.0.0.1:8000 \
-  --legacy-base-url http://127.0.0.1:8001 \
-  --runs-per-case 3
-```
-
-Promotion requires all of the following over a representative sample:
-
-- p50 first-token ratio `fast / legacy <= 0.75`;
-- p95 total-latency ratio `<= 0.90`;
-- model-call and cost mean no higher than legacy;
-- error-rate delta `<= +1 percentage point`;
-- task-success delta `>= -2 percentage points`;
-- approval, cancellation, restart and non-idempotent unknown-outcome recovery
-  deterministic suites at 100%.
-
-Set `AGENT_FAST_RUNTIME_ENABLED=false` to route only newly created standard Runs
-to the compatibility executor. Existing Fast Runs continue under their frozen
-runtime. Keep `AGENT_LEGACY_STANDARD_RUNTIME_ENABLED=true` until no resumable
-legacy Runs remain and the longest approval/schedule continuation window has
-expired. Rollback does not rewrite data.
+New Fast protocol versions must use a new explicit `runtime_kind` or
+`runtime_version`. Existing Runs continue under their frozen version. A rollback
+may stop assigning a new version to subsequently created Runs, but it must not
+reinterpret or rewrite existing runtime state.
 
 ## Observability and incident response
 
@@ -76,6 +52,6 @@ runtime version, first-token and elapsed latency, model-call count and tool-acti
 count without conversation content.
 
 For rising errors, first separate model protocol failures, authorization denials,
-Sandbox/tool failures and recovery unknown outcomes. Disable new Fast routing if
-the rollout gates fail; do not bypass permissions, approvals or Sandbox as a
-mitigation. Preserve Run rows and event cursors for replay diagnostics.
+Sandbox/tool failures and recovery unknown outcomes. Do not bypass permissions,
+approvals or Sandbox as a mitigation. Preserve Run rows and event cursors for
+replay diagnostics.

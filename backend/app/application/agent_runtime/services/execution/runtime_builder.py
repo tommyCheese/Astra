@@ -16,10 +16,10 @@ from app.application.agent_runtime.policies.reasoning import (
     AgentObservationEvaluator,
     AgentReflectionGate,
 )
-from app.application.agent_runtime.services.tooling.plugin_runtime import PluginRuntimeState
-from app.application.agent_runtime.services.shared.progress import ExecutionProgress
 from app.application.agent_runtime.services.execution.recovery import RunRecoveryStage
 from app.application.agent_runtime.services.execution.runtime_composition import RootRuntimeComposer
+from app.application.agent_runtime.services.shared.progress import ExecutionProgress
+from app.application.agent_runtime.services.tooling.plugin_runtime import PluginRuntimeState
 from app.application.memory.tool_service import MemoryToolService
 from app.application.permissions.governance import ExtensionTrustPolicy
 from app.application.subagents.eligibility import subagent_execution_eligibility
@@ -32,11 +32,10 @@ from app.common.schemas.agent.run_policy import (
     ReasoningPolicySnapshot,
     RunExecutionProfile,
 )
-from app.common.schemas.agent.types import AnswerMode, ReasoningEffort, RuntimeKind
+from app.common.schemas.agent.types import AnswerMode, ReasoningEffort
 from app.common.schemas.permissions import ExtensionDescriptor
 from app.infrastructure.db.models.permissions import AgentIdentityRecord
 from app.infrastructure.db.models.runs import RunRecord
-from app.infrastructure.db.models.skills import RunSkillSnapshotRecord
 from app.infrastructure.model_clients.contracts import ModelClient
 from app.infrastructure.model_clients.factory import build_model_client
 from app.infrastructure.repositories.agent_executions import AgentExecutionRepository
@@ -158,24 +157,14 @@ class AgentRuntimeBuilder:
         run_id: str,
         goal: str,
         on_answer_delta: Callable[[str], Awaitable[None]] | None,
-        initial_run: RunRecord | None,
-        fresh_run: bool,
-        initial_skill_snapshot: RunSkillSnapshotRecord | None,
     ) -> RootRuntimeAssembly:
-        loaded, recovery = await self._load_run(
-            repository,
-            run_id,
-            initial_run,
-            fresh_run,
-        )
+        loaded, recovery = await self._load_run(repository, run_id)
         run = loaded.run
         profile = RunExecutionProfile.model_validate(run.execution_profile)
         policy = ReasoningPolicySnapshot.model_validate(run.reasoning_policy or {}).effective
-        legacy_standard_mode = profile.runtime_kind == RuntimeKind.legacy_standard_v1
         permissions, permission_runtime = self._permission_runtime(repository, run, run_id)
         await permission_runtime.freeze_catalog()
-        if not legacy_standard_mode:
-            await permission_runtime.ensure()
+        await permission_runtime.ensure()
         infrastructure = self._infrastructure(repository, permissions)
         supervisor = await self._subagent_supervisor(
             repository,
@@ -203,8 +192,6 @@ class AgentRuntimeBuilder:
                 "permission_runtime": permission_runtime,
                 "infrastructure": infrastructure,
                 "supervisor": supervisor,
-                "fresh_run": fresh_run,
-                "initial_skill_snapshot": initial_skill_snapshot,
             }
         )
 
@@ -225,8 +212,6 @@ class AgentRuntimeBuilder:
         self,
         repository: RunUnitOfWork,
         run_id: str,
-        initial_run: RunRecord | None,
-        fresh_run: bool,
     ):
         recovery = RunRecoveryStage(
             repository,
@@ -234,11 +219,7 @@ class AgentRuntimeBuilder:
             self._tool_registry,
             self._normalize_tool_output,
         )
-        loaded = await recovery.load(
-            run_id,
-            initial_run=initial_run,
-            fresh_run=fresh_run,
-        )
+        loaded = await recovery.load(run_id)
         return loaded, recovery
 
     def _permission_runtime(

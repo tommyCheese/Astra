@@ -10,12 +10,12 @@ from app.application.agent_runtime.policies.reasoning import (
     AgentObservationEvaluator,
     AgentReflectionGate,
 )
-from app.application.agent_runtime.services.tooling.plugin_runtime import PluginRuntimeState
 from app.application.agent_runtime.services.completion.finalization import FinalizationInput
 from app.application.agent_runtime.services.execution.runtime_builder import (
     AgentRuntimeBuilder,
     RootRuntimeAssembly,
 )
+from app.application.agent_runtime.services.tooling.plugin_runtime import PluginRuntimeState
 from app.common.core.config import AstraRuntimeSettings
 from app.domain.execution.contracts import (
     BlockedOutcome,
@@ -27,8 +27,6 @@ from app.domain.execution.contracts import (
     StageOutcome,
     WaitingOutcome,
 )
-from app.infrastructure.db.models.runs import RunRecord
-from app.infrastructure.db.models.skills import RunSkillSnapshotRecord
 from app.infrastructure.model_clients.contracts import ModelClient
 from app.infrastructure.repositories.run_unit_of_work import RunUnitOfWork
 from app.infrastructure.tools.base import AstraToolRegistry
@@ -89,19 +87,12 @@ class AstraAgentLoop:
         run_id: str,
         goal: str,
         on_answer_delta: Callable[[str], Awaitable[None]] | None = None,
-        *,
-        initial_run: RunRecord | None = None,
-        fresh_run: bool = False,
-        initial_skill_snapshot: RunSkillSnapshotRecord | None = None,
     ) -> dict[str, Any]:
         runtime = await self._runtime_builder().build(
             repository=repo,
             run_id=run_id,
             goal=goal,
             on_answer_delta=on_answer_delta,
-            initial_run=initial_run,
-            fresh_run=fresh_run,
-            initial_skill_snapshot=initial_skill_snapshot,
         )
         await self._record_runtime_limits(repo, run_id, runtime)
         start_turn = (
@@ -140,7 +131,6 @@ class AstraAgentLoop:
                 terminal_status=runtime.state.terminal_status,
                 terminal_summary=runtime.state.terminal_summary,
                 required_subagent_missing=runtime.state.required_subagent_missing,
-                legacy_standard_mode=runtime.state.legacy_standard_mode,
                 workspace_changed=runtime.state.workspace_changed,
                 workspace_path=runtime.state.workspace_path,
             )
@@ -179,8 +169,6 @@ class AstraAgentLoop:
             limits.max_reflections,
             limits.max_replans,
         )
-        if runtime.state.legacy_standard_mode:
-            return
         await repo.add_event(
             run_id,
             "reasoning.runtime_limits",

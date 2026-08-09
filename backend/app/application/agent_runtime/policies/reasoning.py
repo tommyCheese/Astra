@@ -172,33 +172,6 @@ def compile_subagent_policy(settings: Any) -> EffectiveSubagentPolicy:
     )
 
 
-def quick_subagent_policy(policy: EffectiveSubagentPolicy) -> EffectiveSubagentPolicy:
-    """Clamp the shared deployment policy to the lightweight quick-mode envelope."""
-    budgets = policy.budgets
-    return policy.model_copy(
-        update={
-            "read_only": True,
-            "budgets": budgets.model_copy(
-                update={
-                    "max_children_total": min(budgets.max_children_total, 2),
-                    "max_children_per_parent": min(budgets.max_children_per_parent, 2),
-                    "max_parallel_children": min(budgets.max_parallel_children, 2),
-                    "max_depth": 1,
-                    "max_parent_round_trips": min(budgets.max_parent_round_trips, 1),
-                    "max_wall_time_seconds": min(budgets.max_wall_time_seconds, 120),
-                    "max_tokens": min(budgets.max_tokens, 8_000),
-                    "max_model_calls": min(budgets.max_model_calls, 4),
-                    "max_tool_calls": min(budgets.max_tool_calls, 6),
-                    "max_cost_usd": min(budgets.max_cost_usd, 1.0),
-                }
-            ),
-            "model_routing": policy.model_routing.model_copy(
-                update={"max_reasoning_effort": ReasoningEffort.fast}
-            ),
-        }
-    )
-
-
 STANDARD_VALIDATORS = ("artifact_reference",)
 TRUSTED_VALIDATORS = ("task_adapter", "artifact_reference")
 
@@ -212,7 +185,6 @@ def resolve_run_profile(
     complexity: str = "normal",
     subagent_policy: EffectiveSubagentPolicy | None = None,
     subagent_mode: Literal["auto", "required"] = "auto",
-    fast_runtime_enabled: bool = True,
 ) -> RunExecutionProfile:
     """Resolve product answer modes into immutable runtime facts."""
     if answer_mode == AnswerMode.standard:
@@ -229,17 +201,9 @@ def resolve_run_profile(
         assurance_level = AssuranceLevel.basic
         validators = STANDARD_VALIDATORS
         resolved_plan_execution = None
-        effective_subagent_policy = (
-            EffectiveSubagentPolicy()
-            if fast_runtime_enabled
-            else quick_subagent_policy(subagent_policy or EffectiveSubagentPolicy())
-        )
-        runtime_kind = (
-            RuntimeKind.fast_v1
-            if fast_runtime_enabled
-            else RuntimeKind.legacy_standard_v1
-        )
-        fast_runtime_policy = FastRuntimePolicy() if fast_runtime_enabled else None
+        effective_subagent_policy = EffectiveSubagentPolicy()
+        runtime_kind = RuntimeKind.fast_v1
+        fast_runtime_policy = FastRuntimePolicy()
     else:
         effective_request = requested.model_copy(
             update={"verification_level": VerificationLevel.strict}

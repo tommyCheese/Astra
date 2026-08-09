@@ -83,7 +83,7 @@ describe('process stream reducer', () => {
 
   it('restores provider summaries, unavailable states, and truncation from snapshot events', () => {
     const state = reconcileProcessSnapshot(null, {
-      id: 'run-thinking', task_id: 'task-1', status: 'completed', mode: 'agent', summary: 'done', result: null,
+      id: 'run-thinking', task_id: 'task-1', status: 'completed', mode: 'agent', runtime_kind: 'trusted-v1', summary: 'done', result: null,
       steps: [], tool_calls: [], artifacts: [], memories: [], chat_messages: [], turns: [],
       events: [
         { id: 1, type: 'model_thinking.started', payload: { stream_id: 'summary-1', provider: 'anthropic', operation: 'contract', content_level: 'summary' }, created_at: 'now' },
@@ -108,7 +108,7 @@ describe('process stream reducer', () => {
     live = reduceProcessEvent(live, { id: 2, type: 'model_thinking.delta', payload: { ...base, delta: '只显示一次' } });
 
     const reconciled = reconcileProcessSnapshot(live, {
-      id: 'run-thinking', task_id: 'task-1', status: 'executing', mode: 'agent', answer_mode: 'standard', summary: null, result: null,
+      id: 'run-thinking', task_id: 'task-1', status: 'executing', mode: 'agent', answer_mode: 'standard', runtime_kind: 'fast-v1', summary: null, result: null,
       steps: [], tool_calls: [], artifacts: [], memories: [], chat_messages: [], turns: [],
       events: [
         { id: 1, type: 'model_thinking.started', payload: base, created_at: 'now' },
@@ -305,7 +305,7 @@ describe('process stream reducer', () => {
       cursorGap: true,
     };
     const reconciled = reconcileProcessSnapshot(gapped, {
-      id: 'run-1', task_id: 'task-1', status: 'executing', mode: 'agent', summary: null, result: null,
+      id: 'run-1', task_id: 'task-1', status: 'executing', mode: 'agent', runtime_kind: 'trusted-v1', summary: null, result: null,
       steps: [], tool_calls: [], artifacts: [], events: [{
         id: 20, run_sequence: 1, type: 'reasoning.phase.started', payload: { phase: 'executing' }, created_at: 'now',
       }],

@@ -50,56 +50,6 @@ def normalize_final_answer_artifact_references(
     )
 
 
-def quick_workspace_change_completes_goal(
-    goal: str,
-    workspace_changes: list[dict[str, Any]],
-) -> bool:
-    if not workspace_changes:
-        return False
-    normalized_goal = goal.casefold()
-    if _requires_multiple_steps(normalized_goal):
-        return False
-    return _requested_file_changed(normalized_goal, workspace_changes) or (
-        _workspace_deletion_requested(normalized_goal)
-        and all(change.get("kind") == "deleted" for change in workspace_changes)
-    )
-
-
-def _requires_multiple_steps(normalized_goal: str) -> bool:
-    return any(
-        marker in normalized_goal
-        for marker in (
-            "图表",
-            "绘图",
-            "可视化",
-            "渲染",
-            "图片",
-            "chart",
-            "plot",
-            "visuali",
-            "render",
-            "image",
-        )
-    )
-
-
-def _requested_file_changed(
-    normalized_goal: str,
-    workspace_changes: list[dict[str, Any]],
-) -> bool:
-    filenames = (
-        str(change.get("path") or "").rsplit("/", 1)[-1].casefold() for change in workspace_changes
-    )
-    return any(filename and filename in normalized_goal for filename in filenames)
-
-
-def _workspace_deletion_requested(normalized_goal: str) -> bool:
-    return any(
-        marker in normalized_goal
-        for marker in ("删除工作区", "清空工作区", "delete workspace", "clear workspace")
-    )
-
-
 class CompletionVerificationStage:
     def verify(
         self,

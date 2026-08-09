@@ -8,6 +8,7 @@ function waitingRun(overrides: Partial<RunView> = {}): RunView {
     task_id: 'task-waiting',
     status: 'waiting_user',
     mode: 'general-agent',
+    runtime_kind: 'fast-v1',
     answer_mode: 'standard',
     result: null,
     steps: [],

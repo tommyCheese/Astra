@@ -1,7 +1,9 @@
 from sqlalchemy import select
 
+from app.application.agent_runtime.services.completion.memory_candidates import (
+    MemoryCandidateWriter,
+)
 from app.application.agent_runtime.services.context.assembler import AgentContextAssembler
-from app.application.agent_runtime.services.completion.memory_candidates import MemoryCandidateWriter
 from app.common.core.config import AstraRuntimeSettings
 from app.common.schemas.agent.run_result import AgentRunMemoryCandidate
 from app.infrastructure.db.models.memory import MemoryRecallEventRecord
@@ -56,8 +58,6 @@ async def test_cross_session_retrieval_injects_task_memory_and_persists_safe_aud
         goal="项目使用什么数据库？",
         tool_registry=AstraToolRegistry(),
         observations=[],
-        legacy_standard_mode=True,
-        initial_run=target_run,
     )
 
     assert [item["id"] for item in context["memory_reads"]] == [source_memory.id]
@@ -113,8 +113,6 @@ async def test_session_retrieval_crosses_tasks_with_matching_identity(session):
         goal="用户有什么偏好？",
         tool_registry=AstraToolRegistry(),
         observations=[],
-        legacy_standard_mode=True,
-        initial_run=target_run,
     )
 
     assert context["memory_context"][0]["content"] == memory.content
@@ -142,8 +140,6 @@ async def test_session_retrieval_crosses_tasks_with_matching_identity(session):
         goal="用户有什么偏好？",
         tool_registry=AstraToolRegistry(),
         observations=[],
-        legacy_standard_mode=True,
-        initial_run=isolated_run,
     )
     assert isolated_context["memory_context"] == []
 

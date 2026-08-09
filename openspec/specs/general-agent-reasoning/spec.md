@@ -84,20 +84,17 @@ TBD - created by archiving change add-general-reasoning-reflection-core. Update 
 * **THEN** 无需仅因具体工具变化而重写逻辑计划节点
 
 ### Requirement: 观察结果统一归一化并依据预期进行评估
-
-系统 SHALL 归一化所有模式的工具结果与失败。trusted Run SHALL 针对活动节点预期生成 Evaluation；standard Run SHALL 将规范化结果直接提供给下一次快速决策而不创建可信 Evaluation。
+系统 SHALL 通过共享工具边界归一化所有模式的工具结果与失败。Trusted Runtime SHALL 针对活动节点预期生成 Evaluation；Fast Runtime SHALL 将规范化结果直接提供给下一次模型决策，不创建可信 Evaluation。
 
 #### Scenario: 可信工具成功但未满足节点意图
-
-* **WHEN** trusted 工具调用成功但观察未满足活动节点预期
-* **THEN** Evaluation 为 mismatch、partial 或 inconclusive
-* **THEN** 活动节点不被标记为完成
+- **WHEN** trusted 工具调用成功但观察未满足活动节点预期
+- **THEN** Evaluation 为 mismatch、partial 或 inconclusive
+- **THEN** 活动节点不被标记为完成
 
 #### Scenario: 快速工具结果返回循环
-
-* **WHEN** standard 工具调用产生规范化结果
-* **THEN** 结果返回共享 Agent Loop 的快速决策上下文
-* **THEN** 系统不运行节点完成评估
+- **WHEN** Fast Runtime 的工具调用产生规范化结果
+- **THEN** 结果返回独立 Fast Agent loop
+- **THEN** 系统不运行节点完成评估或可信进度更新
 
 ### Requirement: 推理记录保持可审计且安全
 
@@ -110,20 +107,17 @@ TBD - created by archiving change add-general-reasoning-reflection-core. Update 
 * **THEN** 不显示隐藏的思维链，也无需依赖隐藏思维链即可复现该状态转换
 
 ### Requirement: 运行时控制 Agent Loop 的节点顺序
-
-系统 SHALL 通过同一个 Agent Loop 执行 standard 和 trusted 模式。trusted MUST 经过 DAG 调度、状态持久化、节点评估和 CompletionGate；standard 可以跳过这些可信节点，但 MUST NOT 跳过 ToolRouter、输入校验、权限门或执行安全边界。
+系统 SHALL 仅通过 Trusted Agent Runtime 执行 TaskContract、DAG 调度、AgentState、节点评估、Reflection 和 CompletionGate。Fast Agent Runtime SHALL 使用独立的模型驱动动作循环，并 MUST NOT 调用或模拟可信节点生命周期；两者只共享工具与平台边界。
 
 #### Scenario: 可信模型尝试跳过完成处理
-
-* **WHEN** trusted 模型决策尝试从行动选择直接进入 completed
-* **THEN** 运行时拒绝该转换
-* **THEN** 最终状态仍由节点状态和 CompletionGate 判定
+- **WHEN** trusted 模型决策尝试从行动选择直接进入 completed
+- **THEN** Trusted Runtime 拒绝该转换
+- **THEN** 最终状态仍由节点状态和 CompletionGate 判定
 
 #### Scenario: 快速行动轮次完成
-
-* **WHEN** standard 已授权行动返回结果
-* **THEN** 运行时归一化工具结果并进入下一次回答或工具选择
-* **THEN** 不执行 DAG 节点评估或可信完成验证
+- **WHEN** Fast Runtime 的已授权行动返回结果
+- **THEN** 运行时将规范化观察交回 Fast Agent 模型
+- **THEN** 系统不执行 DAG 节点评估、Reflection 或可信完成验证
 
 ### Requirement: 每个节点返回类型化转换结果
 
@@ -233,4 +227,66 @@ The system SHALL deserialize Agent state, plan graphs, decisions, and final resu
 #### Scenario: Load a legacy Agent state or plan graph
 - **WHEN** a persisted reasoning structure uses an earlier schema version or removed field
 - **THEN** validation fails explicitly and no compatibility transformation is applied
+
+### Requirement: Trusted 根 Agent 使用 Swarm 内建能力委派
+系统 SHALL 向 eligible trusted 根控制器提供 Astra `swarm` runtime built-in，其中包含有界 DelegationRequest 集合和一个 Join 规范；系统 MUST NOT 将该能力交给第三方插件或 sandbox 执行，也 MUST NOT 允许其绕过 SubagentSupervisor。
+
+#### Scenario: 控制器识别独立并行工作
+- **WHEN** trusted 根控制器识别出两个相互独立、预期收益为正且符合策略的子任务
+- **THEN** 控制器可在一次 `swarm` 调用中提交两个完整 DelegationRequest 和 Join policy
+- **THEN** 运行时在执行前验证目标、成功标准、范围、输入、输出 schema、能力、预算和去重信息
+
+#### Scenario: Standard 控制器尝试调用 Swarm
+- **WHEN** standard Run 的控制器构造或请求 `swarm` 调用
+- **THEN** 运行时拒绝该决策且不创建 child
+
+### Requirement: 根 Agent 仅消费验证后的合并观察
+系统 SHALL 将已消费 Join 的合并结果作为类型化 parent Observation 提供给后续根决策，并 MUST NOT 注入 child 隐藏推理、完整对话或私有 scratchpad。
+
+#### Scenario: 多个 child 返回相互冲突的结论
+- **WHEN** Join Merger 检测到两个已验证 child 对同一事实或声明给出不同值
+- **THEN** parent Observation 保留各来源、Evidence 和结构化 conflict
+- **THEN** 根控制器处理冲突而不是任意覆盖一个结果
+
+### Requirement: 快速控制器直接决定轻量委派
+系统 SHALL 允许 eligible standard 根控制器依据任务独立性、预期并发收益、上下文压力、共享资源冲突、风险和剩余预算直接选择 `swarm`，并 SHALL 在 `subagent_mode = auto` 且收益不足时继续单 Agent 回答。
+
+#### Scenario: 快速任务适合并发
+- **WHEN**standard 请求包含多个独立、只读且可分别验证的子问题并且预算充足
+- **THEN**根控制器可以在当前 AgentTurn 选择一个有界 `swarm` group
+- **THEN**每个 child 收到结果导向的目标、输出合同和衰减后的能力范围
+
+#### Scenario: 快速任务不适合并发
+- **WHEN**standard 请求简单、强顺序、存在共享写热点或估计收益不足
+- **THEN**根控制器继续当前快速循环而不创建 child
+- **THEN**系统不为了展示 Subagent 而生成虚假 fan-out
+
+### Requirement: Agent 只在委派产生可验证收益时创建子 Agent
+系统 SHALL 要求父 Agent 将委派决策绑定到顶层成功准则，并说明独立工作范围、预期收益、成功标准和停止条件；Runtime SHALL 在创建前执行确定性适用性门控。
+
+#### Scenario: 父 Agent 提出并行委派
+- **WHEN** 多个子问题可以独立完成和验证且结果将在明确 fan-in 汇合
+- **THEN** 父 Agent 可提出多个 DelegationContracts，并保持最终合成责任
+
+#### Scenario: 委派不能帮助成功准则
+- **WHEN** child 目标无法映射到任何未满足的顶层成功准则
+- **THEN** Runtime 拒绝委派并要求父 Agent 继续现有计划或重规划
+
+### Requirement: 父 Agent 验证并合并子 Agent 结果
+系统 SHALL 将 SubagentResult 视为带 provenance 的观察而非可信最终事实，并 SHALL 在合并前验证 schema、完成决定、证据引用、冲突和 join 完整性。
+
+#### Scenario: siblings 结果一致
+- **WHEN** required children 返回 schema 有效、证据充分且互不冲突的结果
+- **THEN** 父级可把验证后的结果提升为共享事实并用于顶层完成评估
+
+#### Scenario: siblings 结果冲突
+- **WHEN** children 对同一关键声明给出不兼容结果
+- **THEN** 父级保留结构化 conflict set，并在预算内验证、改派或向最终结果披露不确定性
+
+### Requirement: 子 Agent 的推理状态彼此隔离
+系统 SHALL 阻止父子或 sibling 直接修改对方的 AgentState、plan revision、scratchpad 和局部事实，并 SHALL 仅通过版本化委派输入、问题回答和 SubagentResult 交换状态。
+
+#### Scenario: child 发现新线索
+- **WHEN** child 在执行中发现超出自身范围但可能有价值的信息
+- **THEN** 它将线索作为 open issue 或 evidence ref 返回父级，而不是直接修改 sibling 计划
 

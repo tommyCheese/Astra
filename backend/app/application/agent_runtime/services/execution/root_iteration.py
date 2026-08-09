@@ -4,16 +4,19 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from app.application.agent_runtime.services.decisions.control import ControlDecisionStage
 from app.application.agent_runtime.services.completion.node_completion import NodeCompletionStage
+from app.application.agent_runtime.services.context.turn_preparation import (
+    PreparedRootTurn,
+    RootTurnPreparationStage,
+)
+from app.application.agent_runtime.services.decisions.control import ControlDecisionStage
 from app.application.agent_runtime.services.decisions.root import (
     RootDecisionResult,
     RootDecisionStage,
 )
-from app.application.agent_runtime.services.execution.tool_action import InvocationPipeline, InvocationRequest
-from app.application.agent_runtime.services.context.turn_preparation import (
-    PreparedRootTurn,
-    RootTurnPreparationStage,
+from app.application.agent_runtime.services.execution.tool_action import (
+    InvocationPipeline,
+    ToolActionInput,
 )
 from app.common.schemas.agent.execution_state import AgentDecision
 from app.common.schemas.agent.run_policy import RunExecutionProfile
@@ -37,7 +40,6 @@ class RootRuntimeState:
 
     run: RunRecord
     profile: RunExecutionProfile
-    legacy_standard_mode: bool
     approved_tool_call: ToolCallRecord | None = None
     approved_turn: AgentTurnRecord | None = None
     approved_request_snapshot: dict | None = None
@@ -119,7 +121,6 @@ class RootAgentIterationStage:
             model_context=model_context,
             subagent_supervisor=self._subagents,
             subagent_mode=self._state.profile.subagent_mode,
-            legacy_standard_mode=self._state.legacy_standard_mode,
         )
         if completion.action == "continue":
             self._state.required_subagent_missing |= completion.required_subagent_missing
@@ -178,7 +179,7 @@ class RootAgentIterationStage:
             terminal_status,
             terminal_summary,
         ) = await self._tools.execute(
-            InvocationRequest(
+            ToolActionInput(
                 run=self._state.run,
                 run_id=context.run_id,
                 goal=context.goal,
@@ -190,7 +191,6 @@ class RootAgentIterationStage:
                 active_node_execution_id=prepared.active_node_execution_id,
                 model_context=model_context,
                 execution_mode=self._execution_mode,
-                legacy_standard_mode=self._state.legacy_standard_mode,
                 is_approved_resume=resolved.is_approved_resume,
                 approved_request_snapshot=self._state.approved_request_snapshot,
                 approved_tool_call=self._state.approved_tool_call,

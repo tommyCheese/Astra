@@ -176,6 +176,7 @@ vi.mock('../src/api', () => ({
     mode: 'web_agent',
     processing_duration_ms: 84_000,
     answer_mode: 'standard',
+    runtime_kind: 'fast-v1',
     summary: '完成',
     result: {
       summary: '已完成查询',
@@ -2795,7 +2796,7 @@ describe('App', () => {
       last_run_status: 'completed',
       last_message_preview: '',
       has_active_share: false,
-      runs: [{ ...trustedRunSnapshot, id: 'trusted-run', task_id: 'trusted-chat', answer_mode: 'trusted' }],
+      runs: [{ ...trustedRunSnapshot, id: 'trusted-run', task_id: 'trusted-chat', answer_mode: 'trusted', runtime_kind: 'trusted-v1' }],
     });
     render(<App />);
 
@@ -2845,6 +2846,7 @@ describe('App', () => {
       id: 'run-trusted',
       task_id: 'task-trusted',
       answer_mode: 'trusted',
+      runtime_kind: 'trusted-v1',
       status: 'completed_with_warnings',
       result: snapshot.result ? { ...snapshot.result, answer_mode: 'trusted', assurance_level: 'full' } : null,
     });
@@ -2962,6 +2964,7 @@ describe('App', () => {
       id: 'run-plan',
       task_id: 'task-plan',
       answer_mode: 'trusted' as const,
+      runtime_kind: 'trusted-v1' as const,
       status: 'waiting_user',
       result: null,
       pending_approval: null,
@@ -3067,6 +3070,7 @@ describe('App', () => {
       id,
       task_id: 'task-graph-history',
       answer_mode: 'trusted' as const,
+      runtime_kind: 'trusted-v1' as const,
       summary: nodeTitle,
       plan_graph: {
         schema_version: 2 as const,
@@ -3117,6 +3121,7 @@ describe('App', () => {
       id: 'run-revision',
       task_id: 'task-revision',
       answer_mode: 'trusted' as const,
+      runtime_kind: 'trusted-v1' as const,
       status: 'waiting_user',
       result: null,
       state_version: 4,
@@ -3185,6 +3190,7 @@ describe('App', () => {
       id: 'run-stale',
       task_id: 'task-stale',
       answer_mode: 'trusted' as const,
+      runtime_kind: 'trusted-v1' as const,
       status: 'waiting_user',
       result: null,
       state_version: 2,

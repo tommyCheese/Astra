@@ -13,7 +13,6 @@ from app.application.agent_runtime.services.context.memory import (
 from app.application.subagents.eligibility import subagent_execution_eligibility
 from app.common.core.config import AstraRuntimeSettings
 from app.common.schemas.agent.run_policy import EffectiveSubagentPolicy
-from app.common.schemas.agent.types import AnswerMode
 from app.infrastructure.db.models.executions import AgentJoinRecord
 from app.infrastructure.db.models.runs import RunRecord
 from app.infrastructure.db.models.skills import RunSkillSnapshotRecord
@@ -27,17 +26,6 @@ from app.infrastructure.repositories.tool_settings import (
 from app.infrastructure.tools.base import AstraToolRegistry, AstraToolSpec
 from app.infrastructure.tools.router import ToolRouter
 from app.infrastructure.tools.selection import CapabilityToolResolver
-
-QUICK_TOOL_MANIFEST_FIELDS = {
-    "description",
-    "input_schema",
-    "permission",
-    "side_effect_level",
-    "task_capabilities",
-    "capabilities",
-    "permissions",
-    "risk",
-}
 
 
 def active_plan_node_id(agent_state: dict[str, Any]) -> str | None:
@@ -79,23 +67,10 @@ def active_node_execution_id(
 async def _load_conversation(
     repository: RunUnitOfWork,
     run_id: str,
-    *,
-    skills_enabled: bool,
-    legacy_standard_mode: bool,
-    initial_run: RunRecord | None,
-    initial_skill_snapshot: RunSkillSnapshotRecord | None,
-) -> tuple[RunRecord, list[Any], RunSkillSnapshotRecord | None]:
-    if legacy_standard_mode and initial_run is not None:
-        return initial_run, [], initial_skill_snapshot
-    if legacy_standard_mode:
-        run, memories, snapshot = await repository.require_run_quick_context(
-            run_id,
-            include_skills=skills_enabled,
-        )
-        return run, list(memories), snapshot
+) -> tuple[RunRecord, list[Any]]:
     run = await repository.require_run_core(run_id)
     memories = await repository.list_memories(run_id=run_id, min_confidence=0.0, limit=8)
-    return run, list(memories), None
+    return run, list(memories)
 
 
 async def _load_plan(
@@ -103,11 +78,7 @@ async def _load_plan(
     run_id: str,
     run: RunRecord,
 ) -> tuple[dict[str, Any], str | None, dict[str, Any] | None]:
-    plan = (
-        None
-        if run.answer_mode == AnswerMode.standard.value
-        else await PlanRepository(repository.session).active_for_run(run_id)
-    )
+    plan = await PlanRepository(repository.session).active_for_run(run_id)
     graph = plan_to_view(plan).model_dump(mode="json") if plan else run.plan_graph or {}
     node_id = active_plan_node_id(run.agent_state or {})
     node = next((item for item in graph.get("nodes", []) if item.get("id") == node_id), None)
@@ -139,31 +110,23 @@ def _load_tools(
     )
     specs = {candidate.tool_name: candidate.spec for candidate in resolution.candidates}
     _, unavailable = router.eligible_specs()
-    manifests = {
-        name: spec.model_dump(
-            include=(
-                QUICK_TOOL_MANIFEST_FIELDS
-                if run.answer_mode == AnswerMode.standard.value
-                else None
-            )
-        )
-        for name, spec in specs.items()
-    }
+    manifests = {name: spec.model_dump() for name, spec in specs.items()}
     return manifests, resolution.audit_payload(), unavailable, specs
 
 
 async def _load_skills(
     repository: RunUnitOfWork,
     run_id: str,
-    snapshot: RunSkillSnapshotRecord | None,
     *,
     enabled: bool,
-    legacy_standard_mode: bool,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], bool]:
-    if enabled and not legacy_standard_mode:
-        snapshot = await repository.session.scalar(
+    snapshot = (
+        await repository.session.scalar(
             select(RunSkillSnapshotRecord).where(RunSkillSnapshotRecord.run_id == run_id)
         )
+        if enabled
+        else None
+    )
     if snapshot is None:
         return [], [], False
     active_identities = {
@@ -298,19 +261,9 @@ class AgentContextAssembler:
         tool_router: ToolRouter | None = None,
         observations: list[dict[str, Any]],
         evidence_pack: dict[str, Any] | None = None,
-        legacy_standard_mode: bool = False,
-        initial_run: RunRecord | None = None,
-        initial_skill_snapshot: RunSkillSnapshotRecord | None = None,
     ) -> dict[str, Any]:
         del sandbox_provider
-        run, memories, skill_snapshot = await _load_conversation(
-            self._repository,
-            run_id,
-            skills_enabled=self._skills_enabled,
-            legacy_standard_mode=legacy_standard_mode,
-            initial_run=initial_run,
-            initial_skill_snapshot=initial_skill_snapshot,
-        )
+        run, memories = await _load_conversation(self._repository, run_id)
         memory = await self._memory.project(run_id, goal, memories)
         plan_graph, active_node_id, active_node = await _load_plan(
             self._repository, run_id, run
@@ -335,9 +288,7 @@ class AgentContextAssembler:
         skill_catalog, active_skills, is_draft_test = await _load_skills(
             self._repository,
             run_id,
-            skill_snapshot,
             enabled=self._skills_enabled,
-            legacy_standard_mode=legacy_standard_mode,
         )
         context = {
             "run_id": run_id,
@@ -391,11 +342,10 @@ class AgentContextAssembler:
             }
         if is_draft_test:
             context["skill_draft_test"] = True
-        if run.answer_mode != AnswerMode.standard.value:
-            context.update(
-                agent_profile_snapshot=run.agent_profile_snapshot or {},
-                evidence_pack=evidence_pack or {},
-                reasoning_policy=run.reasoning_policy or {},
-                execution_profile=run.execution_profile or {},
-                agent_state=run.agent_state or {},
-            )
+        context.update(
+            agent_profile_snapshot=run.agent_profile_snapshot or {},
+            evidence_pack=evidence_pack or {},
+            reasoning_policy=run.reasoning_policy or {},
+            execution_profile=run.execution_profile or {},
+            agent_state=run.agent_state or {},
+        )
