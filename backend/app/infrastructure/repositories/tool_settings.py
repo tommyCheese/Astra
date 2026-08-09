@@ -57,8 +57,8 @@ def apply_provider_states(
 
 
 def default_tool_states(settings: AstraRuntimeSettings) -> dict[str, bool]:
+    from app.infrastructure.tools.delegation import build_runtime_tool_registry
     from app.infrastructure.tools.registry import build_plugin_inventory
-    from app.infrastructure.tools.runtime import build_runtime_tool_registry
 
     specs = {
         **{name: tool.spec for name, tool in build_plugin_inventory(settings).tools.items()},

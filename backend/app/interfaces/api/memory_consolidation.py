@@ -5,7 +5,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.application.memory.consolidation.models import (
+from app.application.memory.consolidation.contracts import (
     ConsolidationConflictError,
     ConsolidationValidationError,
 )

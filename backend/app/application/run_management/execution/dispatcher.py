@@ -6,7 +6,7 @@ import asyncio
 import logging
 from dataclasses import dataclass, field
 
-from app.application.run_management.execution.service import execute_run_in_process
+from app.application.run_management.execution.run_execution import execute_run_in_process
 from app.application.run_management.lifecycle.contracts import RunCompletionCallback, RunStarter
 from app.common.core.config import AstraRuntimeSettings
 

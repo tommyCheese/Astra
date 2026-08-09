@@ -7,13 +7,13 @@ from app.interfaces.api.evolution import router as evolution_router
 from app.interfaces.api.memories import recall_router as memory_recall_router
 from app.interfaces.api.memories import router as memories_router
 from app.interfaces.api.memory_consolidation import router as memory_consolidation_router
-from app.interfaces.api.models import router as models_router
+from app.interfaces.api.model_providers import router as models_router
 from app.interfaces.api.permissions import router as permissions_router
 from app.interfaces.api.preferences import router as preferences_router
 from app.interfaces.api.runs import router as runs_router
-from app.interfaces.api.runtime import router as runtime_router
+from app.interfaces.api.runtime_profiles import router as runtime_router
 from app.interfaces.api.schedules import router as schedules_router
-from app.interfaces.api.skills import router as skills_router
+from app.interfaces.api.skills.routes import router as skills_router
 from app.interfaces.api.tools import provider_router as tool_providers_router
 from app.interfaces.api.tools import router as tools_router
 from app.interfaces.api.usage import router as usage_router

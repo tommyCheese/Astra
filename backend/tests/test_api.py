@@ -27,7 +27,7 @@ from app.infrastructure.repositories.memories import MemoryRepository
 from app.infrastructure.repositories.plans import PlanRepository, plan_to_view
 from app.infrastructure.repositories.run_unit_of_work import RunUnitOfWork
 from app.interfaces.api import runs as runs_api
-from app.interfaces.api.models import get_runtime_default_model
+from app.interfaces.api.model_providers import get_runtime_default_model
 from app.main import create_app
 
 
@@ -1721,7 +1721,7 @@ async def test_run_event_stream_starts_with_ready_signal(app_client, monkeypatch
 
 
 async def test_create_run_stream_returns_identity_before_starting_engine(app_client, monkeypatch):
-    from app.application.run_management.lifecycle.service import RunApplicationService
+    from app.application.run_management.lifecycle.commands import RunApplicationService
     from app.common.schemas.agent.api_views import CreateRunRequest
 
     scheduled: list[str] = []

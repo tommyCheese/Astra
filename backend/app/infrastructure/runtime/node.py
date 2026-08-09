@@ -5,7 +5,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, cast
 
-from app.application.agent_runtime.action import ActionBoundary
 from app.application.agent_runtime.composition import (
     CapabilityRegistration,
     RuntimePorts,
@@ -26,25 +25,28 @@ from app.application.agent_runtime.contracts import (
     LoopOutcome,
     LoopState,
     ModelDecision,
-    PortIdentity,
     SafetyInvariant,
     WaitLoop,
+    canonical_observation,
+    consume_outcome,
+    port_identity,
 )
 from app.application.agent_runtime.loop import run_loop
+from app.application.agent_runtime.services.tooling.action_boundary import ActionBoundary
+from app.application.planning.node_worker import ReadOnlyAgentNodeExecutor
 from app.common.schemas.agent.types import NodeExecutionStatus
 from app.infrastructure.repositories.run_unit_of_work import RunUnitOfWork
 
 
-def _identity(name: str, marker: str, *coverage: SafetyInvariant) -> PortIdentity:
-    return PortIdentity(
-        name=name,
-        version=1,
-        digest=marker * 64,
-        safety_coverage=frozenset(coverage),
+def build_node_executor(settings: Any, model_client: Any, tool_registry: Any) -> ReadOnlyAgentNodeExecutor:
+    return ReadOnlyAgentNodeExecutor(
+        settings,
+        model_client=model_client,
+        tool_registry=tool_registry,
+        runtime_runner=run_node_runtime,
     )
 
-
-NODE_STATE = _identity(
+NODE_STATE = port_identity(
     "node-state",
     "3",
     SafetyInvariant.persistence,
@@ -57,7 +59,7 @@ NODE_CONTEXT = CapabilityIdentity(
     slots=(CapabilitySlot.context,),
     order=0,
 )
-NODE_MODEL = _identity("node-model", "5")
+NODE_MODEL = port_identity("node-model", "5")
 NODE_DECISION = CapabilityIdentity(
     name="node-completion-policy",
     version=1,
@@ -79,13 +81,13 @@ NODE_COMPLETION = CapabilityIdentity(
     slots=(CapabilitySlot.completion,),
     order=0,
 )
-NODE_CANCELLATION = _identity("node-cancellation", "9", SafetyInvariant.cancellation)
-NODE_EVENTS = _identity("node-events", "0")
+NODE_CANCELLATION = port_identity("node-cancellation", "9", SafetyInvariant.cancellation)
+NODE_EVENTS = port_identity("node-events", "0")
 
 
 @dataclass
 class NodeRuntimeAdapter:
-    executor: Any
+    executor: ReadOnlyAgentNodeExecutor
     repository: RunUnitOfWork
     context: Any
     runtime: Any
@@ -110,7 +112,7 @@ class NodeRuntimeAdapter:
             task_id=self.runtime.run.task_id,
             goal=self.runtime.goal,
             max_turns=self.runtime.maximum_turns,
-            observations=tuple(_observation(value) for value in self.runtime.observations),
+            observations=tuple(canonical_observation(value, status_aliases=NODE_STATUS_ALIASES) for value in self.runtime.observations),
         )
 
     async def recover(self, state: LoopState) -> tuple[LoopState, LoopOutcome | None]:
@@ -132,7 +134,7 @@ class NodeRuntimeAdapter:
         return ContextContribution(source="plan-node", items=(cast(dict[str, Any], self.context.node),))
 
     async def decide(self, state: LoopState, _context: tuple[ContextContribution, ...]) -> ModelDecision:
-        prepared = await self.executor._prepare_turn(self.repository, self.context, self.runtime, state.turn_index)
+        prepared = await self.executor.prepare_turn(self.repository, self.context, self.runtime, state.turn_index)
         (
             self.resolution,
             self.allowed_tools,
@@ -161,7 +163,7 @@ class NodeRuntimeAdapter:
     ) -> ModelDecision:
         selected = self.decision
         if selected.decision_type in {"complete_node", "finalize"}:
-            self.result = await self.executor._complete_node(
+            self.result = await self.executor.complete_node(
                 self.repository,
                 self.context,
                 self.runtime,
@@ -210,7 +212,7 @@ class NodeRuntimeAdapter:
         _action: LoopAction,
         _providers: tuple[ActionProvider, ...],
     ) -> LoopObservation:
-        tool = await self.executor._select_tool(
+        tool = await self.executor.select_tool(
             self.repository,
             self.context,
             self.runtime,
@@ -222,7 +224,7 @@ class NodeRuntimeAdapter:
         )
         if tool is None:
             return _last_observation(self.runtime)
-        prepared = await self.executor._prepare_tool_execution(
+        prepared = await self.executor.prepare_tool_execution(
             self.repository,
             self.context,
             self.runtime,
@@ -247,7 +249,7 @@ class NodeRuntimeAdapter:
                 status="waiting" if status == NodeExecutionStatus.waiting else "rejected",
                 summary=str(prepared.early_result.failure or status.value),
             )
-        await self.executor._invoke_tool(
+        await self.executor.invoke_tool(
             self.repository,
             self.context,
             self.runtime,
@@ -259,12 +261,11 @@ class NodeRuntimeAdapter:
         return _last_observation(self.runtime)
 
     async def outcome(self, *_args: object) -> LoopOutcome | None:
-        outcome = self.selected_outcome
-        self.selected_outcome = None
+        self.selected_outcome, outcome = consume_outcome(self.selected_outcome)
         return outcome
 
 
-async def run_node_runtime(executor: Any, repository: RunUnitOfWork, context: Any) -> Any:
+async def run_node_runtime(executor: ReadOnlyAgentNodeExecutor, repository: RunUnitOfWork, context: Any) -> Any:
     from app.application.planning.node_runtime import prepare_parallel_node_runtime
 
     runtime = await prepare_parallel_node_runtime(executor.settings, repository, context)
@@ -311,20 +312,10 @@ def _handled(decision: ModelDecision) -> ModelDecision:
 def _last_observation(runtime: Any) -> LoopObservation:
     if not runtime.observations:
         return LoopObservation(kind="tool_result", status="failed")
-    return _observation(runtime.observations[-1])
+    return canonical_observation(runtime.observations[-1], status_aliases=NODE_STATUS_ALIASES)
 
 
-def _observation(value: dict[str, Any]) -> LoopObservation:
-    status = str(value.get("status", "failed"))
-    normalized = {"success": "succeeded", "completed": "succeeded", "blocked": "rejected"}.get(status, status)
-    if normalized not in {"succeeded", "waiting", "rejected", "failed", "unknown"}:
-        normalized = "failed"
-    return LoopObservation(
-        kind=str(value.get("kind", "system")),
-        status=cast(Any, normalized),
-        summary=str(value.get("summary", "")),
-        data=cast(dict[str, Any], value.get("data") or {}),
-    )
+NODE_STATUS_ALIASES = {"success": "succeeded", "completed": "succeeded", "blocked": "rejected"}
 
 
 def _node_result(context: Any, **values: Any) -> Any:

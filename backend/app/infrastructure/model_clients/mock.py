@@ -158,11 +158,6 @@ class MockModelClient(ModelClient):
             retry=context.get("retry_count", 0) < 1,
         )
 
-    async def finalize(
-        self, goal: str, context: dict[str, Any], *, on_delta: AnswerDeltaCallback | None = None
-    ) -> AgentFinalAnswer:
-        return await self.synthesize(goal, [{"evidence_pack": context.get("evidence_pack", {})}], on_delta=on_delta)
-
     async def extract_memory_candidates(
         self,
         goal: str,

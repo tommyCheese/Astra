@@ -13,7 +13,7 @@ from app.application.agent_runtime.policies.reasoning import (
 )
 from app.application.permissions.governance import verify_permission_bundle
 from app.application.run_management.conversations.context import ConversationContextManager
-from app.application.run_management.lifecycle.contracts import PreparedRunExecution
+from app.application.run_management.lifecycle.contracts import PreparedRunExecution, run_response
 from app.application.run_management.lifecycle.settings import RunSettingsResolver
 from app.application.skills.activation import SkillActivationService
 from app.application.skills.catalog import SkillCatalogBuilder
@@ -24,7 +24,7 @@ from app.common.core.errors import (
     AstraInputValidationError,
     AstraResourceNotFoundError,
 )
-from app.common.schemas.agent.api_views import CreateRunRequest, CreateRunResponse
+from app.common.schemas.agent.api_views import CreateRunRequest
 from app.common.schemas.agent.run_policy import RunExecutionProfile
 from app.common.schemas.permissions import PermissionBundle
 from app.domain.agent_profile import AgentProfileConfigurationError, load_agent_profile
@@ -88,7 +88,7 @@ class RunCreator:
             if str(error).startswith("Task not found"):
                 raise AstraResourceNotFoundError("TASK_NOT_FOUND", "找不到指定任务。") from error
             raise AstraInputValidationError("RUN_REQUEST_INVALID", "无法创建任务。") from error
-        response = self._response_for_run(run)
+        response = run_response(run)
         logger.info(
             "run.create.accepted run_id=%s conversation_id=%s status=%s",
             run.id,
@@ -261,12 +261,3 @@ class RunCreator:
         if settings.sandbox_enabled:
             capabilities.add("sandbox")
         return capabilities
-
-    @staticmethod
-    def _response_for_run(run: RunRecord) -> CreateRunResponse:
-        return CreateRunResponse(
-            task_id=run.task_id,
-            run_id=run.id,
-            status=run.status,
-            answer_mode=run.answer_mode,
-        )

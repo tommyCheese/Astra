@@ -3,7 +3,6 @@ import pytest
 from app.application.agent_runtime.policies.completion import AgentCompletionGate
 from app.application.agent_runtime.policies.loop import (
     record_progress_signature,
-    recovery_action,
     validate_transition,
 )
 from app.application.agent_runtime.policies.reasoning import (
@@ -281,12 +280,6 @@ def test_no_progress_detection():
     assert record_progress_signature(
         signatures, threshold=2, evidence_refs=[], criterion_changes={}, completed_steps=[], plan_version=1
     )
-
-
-def test_checkpoint_recovery_does_not_repeat_unknown_non_idempotent_action():
-    assert recovery_action(phase="prepared", idempotent=False, result_recorded=False) == "execute"
-    assert recovery_action(phase="executing", idempotent=False, result_recorded=False) == "waiting_user"
-    assert recovery_action(phase="executing", idempotent=True, result_recorded=True) == "replay_result"
 
 
 def test_reflection_gate_modes_and_exhaustion():

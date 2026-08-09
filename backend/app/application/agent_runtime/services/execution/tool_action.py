@@ -6,7 +6,6 @@ import logging
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from app.application.agent_runtime.models import ToolActionInput
 from app.application.agent_runtime.policies.loop import (
     record_progress_signature,
     validate_transition,
@@ -26,6 +25,7 @@ from app.application.agent_runtime.services.tooling.approval import (
 from app.application.agent_runtime.services.tooling.authorization import (
     AuthorizedInvocation,
     PermissionAuthorizationStage,
+    ToolActionInput,
 )
 from app.application.agent_runtime.services.tooling.failure import ToolFailureStage
 from app.application.agent_runtime.services.tooling.invocation import ToolInvocationStage

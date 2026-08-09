@@ -89,15 +89,14 @@ CORE_LOOP_MODULES = (
     "app/application/agent_runtime/contracts.py",
     "app/application/agent_runtime/composition.py",
     "app/application/agent_runtime/loop.py",
-    "app/application/agent_runtime/action.py",
 )
 
 
 def test_runtime_dispatch_and_action_path_remain_readable():
     backend = Path(__file__).parents[1]
-    engine = (backend / "app/application/run_management/execution/service.py").read_text()
-    standard = (backend / "app/infrastructure/bootstrap/standard_runtime.py").read_text()
-    trusted = (backend / "app/infrastructure/bootstrap/trusted_runtime.py").read_text()
+    engine = (backend / "app/application/run_management/execution/run_execution.py").read_text()
+    standard = (backend / "app/infrastructure/runtime/standard.py").read_text()
+    trusted = (backend / "app/infrastructure/runtime/trusted.py").read_text()
     loop = (backend / "app/application/agent_runtime/loop.py").read_text()
 
     assert "run_standard_runtime(" in engine

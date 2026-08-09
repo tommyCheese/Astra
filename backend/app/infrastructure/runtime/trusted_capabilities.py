@@ -2,15 +2,11 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from functools import partial
 from typing import Any
 
-from app.application.agent_runtime.models import (
-    RootRuntimeAssembly,
-    RootRuntimeState,
-)
 from app.application.agent_runtime.policies.completion import AgentCompletionGate
 from app.application.agent_runtime.policies.reasoning import (
     AgentObservationEvaluator,
@@ -47,12 +43,60 @@ from app.common.schemas.agent.run_policy import EffectiveReasoningPolicy
 from app.infrastructure.model_clients.contracts import ModelClient
 from app.infrastructure.repositories.plans import PlanRepository
 from app.infrastructure.repositories.run_unit_of_work import RunUnitOfWork
+from app.infrastructure.runtime.trusted_state import (
+    TrustedRuntime,
+    TrustedRuntimeState,
+)
 from app.infrastructure.tools.base import AstraToolRegistry
 from app.infrastructure.tools.router import ToolRouter
 
 
+@dataclass(frozen=True)
+class RuntimeInfrastructure:
+    permissions: Any
+    artifact_service: Any
+    workspace_repository: Any
+    workspace_service: Any
+    sandbox_service: Any
+    memory_service: Any
+
+
+@dataclass(frozen=True)
+class RuntimeBuildValues:
+    repository: RunUnitOfWork
+    run_id: str
+    goal: str
+    on_answer_delta: Callable[[str], Awaitable[None]] | None
+    run: Any
+    initial_turn_count: int
+    profile: Any
+    policy: EffectiveReasoningPolicy
+    limits: tuple[int, int | None, int, int]
+    progress: ExecutionProgress
+    approved_call: Any
+    approved_turn: Any
+    approved_snapshot: dict[str, Any] | None
+    terminal: tuple[str | None, str | None]
+    permission_runtime: Any
+    infrastructure: RuntimeInfrastructure
+    supervisor: Any
+
+
+@dataclass(frozen=True)
+class RuntimeCollaborators:
+    authorization: PermissionAuthorizationStage
+    approval: ApprovalRoutingStage
+    invocation: ToolInvocationStage
+    observation: ObservationNormalizationStage
+    failure: ToolFailureStage
+    tool_outputs: list[dict[str, Any]]
+    skill: SkillActionStage
+    progress_stage: ProgressEvaluationStage
+    memory_writer: MemoryCandidateWriter
+
+
 @dataclass
-class RootRuntimeComposer:
+class TrustedCapabilityFactory:
     _settings: AstraRuntimeSettings
     _model_client: ModelClient
     _tool_registry: AstraToolRegistry
@@ -63,8 +107,8 @@ class RootRuntimeComposer:
     _completion_gate: AgentCompletionGate
     _normalize_tool_output: Callable[[str, dict[str, Any]], dict[str, Any]]
 
-    def compose(self, values: dict[str, Any]) -> RootRuntimeAssembly:
-        repository: RunUnitOfWork = values["repository"]
+    def compose(self, values: RuntimeBuildValues) -> TrustedRuntime:
+        repository: RunUnitOfWork = values.repository
         activation = SkillActivationService(
             repository.session,
             max_active=self._settings.skills_max_active,
@@ -82,7 +126,7 @@ class RootRuntimeComposer:
             collaborators,
             plans,
             scheduler,
-            values["infrastructure"],
+            values.infrastructure,
         )
 
     def _scheduler(self, plans: PlanRepository) -> PlanScheduler:
@@ -96,17 +140,17 @@ class RootRuntimeComposer:
 
     def _execution_collaborators(
         self,
-        values: dict[str, Any],
+        values: RuntimeBuildValues,
         plans: PlanRepository,
         activation: SkillActivationService,
-    ) -> dict[str, Any]:
-        repository: RunUnitOfWork = values["repository"]
-        progress: ExecutionProgress = values["progress"]
-        policy: EffectiveReasoningPolicy = values["policy"]
-        _, _, max_reflections, _ = values["limits"]
+    ) -> RuntimeCollaborators:
+        repository: RunUnitOfWork = values.repository
+        progress: ExecutionProgress = values.progress
+        policy: EffectiveReasoningPolicy = values.policy
+        _, _, max_reflections, _ = values.limits
         progress_stage = ProgressEvaluationStage(
-            _run_id=values["run_id"],
-            _goal=values["goal"],
+            _run_id=values.run_id,
+            _goal=values.goal,
             _repository=repository,
             _plan_repository=plans,
             _model_client=self._model_client,
@@ -122,19 +166,19 @@ class RootRuntimeComposer:
             repository,
             self._model_client,
         )
-        stages = self._leaf_stages(values, activation, progress_stage)
-        return {**stages, "progress_stage": progress_stage, "memory_writer": memory_writer}
+        return self._leaf_stages(values, activation, progress_stage, memory_writer)
 
     def _leaf_stages(
         self,
-        values: dict[str, Any],
+        values: RuntimeBuildValues,
         activation: SkillActivationService,
         progress_stage: ProgressEvaluationStage,
-    ) -> dict[str, Any]:
-        repository: RunUnitOfWork = values["repository"]
-        progress: ExecutionProgress = values["progress"]
-        infrastructure = values["infrastructure"]
-        permissions = infrastructure["permissions"]
+        memory_writer: MemoryCandidateWriter,
+    ) -> RuntimeCollaborators:
+        repository: RunUnitOfWork = values.repository
+        progress: ExecutionProgress = values.progress
+        infrastructure = values.infrastructure
+        permissions = infrastructure.permissions
         authorization = PermissionAuthorizationStage(
             self._settings,
             repository,
@@ -145,50 +189,52 @@ class RootRuntimeComposer:
         invocation = ToolInvocationStage(
             repository,
             permissions,
-            infrastructure["workspace_repository"],
-            infrastructure["workspace_service"],
-            infrastructure["artifact_service"],
-            infrastructure["sandbox_service"],
+            infrastructure.workspace_repository,
+            infrastructure.workspace_service,
+            infrastructure.artifact_service,
+            infrastructure.sandbox_service,
             activation,
             self._plugin_runtime,
-            infrastructure["memory_service"],
+            infrastructure.memory_service,
         )
-        return {
-            "authorization": authorization,
-            "approval": ApprovalRoutingStage(
+        return RuntimeCollaborators(
+            authorization=authorization,
+            approval=ApprovalRoutingStage(
                 self._settings,
                 repository,
                 self._plugin_runtime,
             ),
-            "invocation": invocation,
-            "observation": ObservationNormalizationStage(
+            invocation=invocation,
+            observation=ObservationNormalizationStage(
                 self._settings,
                 self._plugin_runtime,
                 self._normalize_tool_output,
             ),
-            "failure": ToolFailureStage(
+            failure=ToolFailureStage(
                 repository,
                 self._plugin_runtime,
                 self._tool_registry,
                 progress,
                 progress_stage,
             ),
-            "tool_outputs": [],
-            "skill": SkillActionStage(repository, activation, self._model_client, progress),
-        }
+            tool_outputs=[],
+            skill=SkillActionStage(repository, activation, self._model_client, progress),
+            progress_stage=progress_stage,
+            memory_writer=memory_writer,
+        )
 
     def _assembly_result(
         self,
-        values: dict[str, Any],
-        collaborators: dict[str, Any],
+        values: RuntimeBuildValues,
+        collaborators: RuntimeCollaborators,
         plans: PlanRepository,
         scheduler: PlanScheduler,
-        infrastructure: dict[str, Any],
-    ) -> RootRuntimeAssembly:
-        repository: RunUnitOfWork = values["repository"]
-        progress: ExecutionProgress = values["progress"]
-        _, max_tool_calls, _, max_replans = values["limits"]
-        progress_stage = collaborators["progress_stage"]
+        infrastructure: RuntimeInfrastructure,
+    ) -> TrustedRuntime:
+        repository: RunUnitOfWork = values.repository
+        progress: ExecutionProgress = values.progress
+        _, max_tool_calls, _, max_replans = values.limits
+        progress_stage = collaborators.progress_stage
         control = ControlDecisionStage(
             repository,
             plans,
@@ -221,45 +267,45 @@ class RootRuntimeComposer:
         repository: RunUnitOfWork,
         progress: ExecutionProgress,
         progress_stage: ProgressEvaluationStage,
-        collaborators: dict[str, Any],
+        collaborators: RuntimeCollaborators,
     ) -> InvocationPipeline:
         return InvocationPipeline(
             _repository=repository,
             _tool_registry=self._tool_registry,
-            _authorization=collaborators["authorization"],
-            _approval=collaborators["approval"],
-            _invocation=collaborators["invocation"],
-            _observation=collaborators["observation"],
-            _failure=collaborators["failure"],
+            _authorization=collaborators.authorization,
+            _approval=collaborators.approval,
+            _invocation=collaborators.invocation,
+            _observation=collaborators.observation,
+            _failure=collaborators.failure,
             _progress=progress,
             _progress_stage=progress_stage,
-            _memory_writer=collaborators["memory_writer"],
+            _memory_writer=collaborators.memory_writer,
             _evaluator=self._evaluator,
-            _tool_outputs=collaborators["tool_outputs"],
+            _tool_outputs=collaborators.tool_outputs,
         )
 
     def _compose_root(
         self,
-        values: dict[str, Any],
-        collaborators: dict[str, Any],
+        values: RuntimeBuildValues,
+        collaborators: RuntimeCollaborators,
         plans: PlanRepository,
         scheduler: PlanScheduler,
         control: ControlDecisionStage,
         completion: NodeCompletionStage,
         tool_stage: InvocationPipeline,
-        infrastructure: dict[str, Any],
-    ) -> RootRuntimeAssembly:
-        repository: RunUnitOfWork = values["repository"]
-        run = values["run"]
-        progress: ExecutionProgress = values["progress"]
-        terminal_status, terminal_summary = values["terminal"]
-        max_turns, max_tool_calls, max_reflections, max_replans = values["limits"]
-        state = RootRuntimeState(
+        infrastructure: RuntimeInfrastructure,
+    ) -> TrustedRuntime:
+        repository: RunUnitOfWork = values.repository
+        run = values.run
+        progress: ExecutionProgress = values.progress
+        terminal_status, terminal_summary = values.terminal
+        max_turns, max_tool_calls, max_reflections, max_replans = values.limits
+        state = TrustedRuntimeState(
             run=run,
-            profile=values["profile"],
-            approved_tool_call=values["approved_call"],
-            approved_turn=values["approved_turn"],
-            approved_request_snapshot=values["approved_snapshot"],
+            profile=values.profile,
+            approved_tool_call=values.approved_call,
+            approved_turn=values.approved_turn,
+            approved_request_snapshot=values.approved_snapshot,
             terminal_status=terminal_status,
             terminal_summary=terminal_summary,
         )
@@ -268,18 +314,18 @@ class RootRuntimeComposer:
             _repository=repository,
             _model_client=self._model_client,
             _progress=progress,
-            _progress_stage=collaborators["progress_stage"],
-            _skills=collaborators["skill"],
-            _ensure_permissions=values["permission_runtime"].ensure,
-            _answer_mode=values["profile"].answer_mode,
-            _on_answer_delta=values["on_answer_delta"],
+            _progress_stage=collaborators.progress_stage,
+            _skills=collaborators.skill,
+            _ensure_permissions=values.permission_runtime.ensure,
+            _answer_mode=values.profile.answer_mode,
+            _on_answer_delta=values.on_answer_delta,
         )
         finalization = self._finalization(values, plans, collaborators, infrastructure)
-        return RootRuntimeAssembly(
+        return TrustedRuntime(
             run=run,
-            initial_turn_count=values["initial_turn_count"],
-            profile=values["profile"],
-            policy=values["policy"],
+            initial_turn_count=values.initial_turn_count,
+            profile=values.profile,
+            policy=values.policy,
             max_turns=max_turns,
             max_tool_calls=max_tool_calls,
             max_reflections=max_reflections,
@@ -291,21 +337,21 @@ class RootRuntimeComposer:
             completion_stage=completion,
             control_stage=control,
             tool_stage=tool_stage,
-            subagent_supervisor=values["supervisor"],
-            execution_mode=values["policy"].execution_mode,
+            subagent_supervisor=values.supervisor,
+            execution_mode=values.policy.execution_mode,
             finalization_stage=finalization,
-            tool_outputs=collaborators["tool_outputs"],
+            tool_outputs=collaborators.tool_outputs,
         )
 
     def _preparation(
         self,
-        values: dict[str, Any],
+        values: RuntimeBuildValues,
         plans: PlanRepository,
         scheduler: PlanScheduler,
         progress: ExecutionProgress,
-        state: RootRuntimeState,
+        state: TrustedRuntimeState,
     ) -> RootTurnPreparationStage:
-        repository: RunUnitOfWork = values["repository"]
+        repository: RunUnitOfWork = values.repository
         return RootTurnPreparationStage(
             _repository=repository,
             _plans=plans,
@@ -321,25 +367,25 @@ class RootRuntimeComposer:
             _tool_registry=self._tool_registry,
             _tool_router=self._tool_router,
             _progress=progress,
-            _subagents=values["supervisor"],
+            _subagents=values.supervisor,
         )
 
     def _finalization(
         self,
-        values: dict[str, Any],
+        values: RuntimeBuildValues,
         plans: PlanRepository,
-        collaborators: dict[str, Any],
-        infrastructure: dict[str, Any],
+        collaborators: RuntimeCollaborators,
+        infrastructure: RuntimeInfrastructure,
     ) -> AgentFinalizationStage:
         return AgentFinalizationStage(
-            _repository=values["repository"],
+            _repository=values.repository,
             _plan_repository=plans,
             _model_client=self._model_client,
             _plugin_runtime=self._plugin_runtime,
-            _memory_writer=collaborators["memory_writer"],
+            _memory_writer=collaborators.memory_writer,
             _verifier=verify_completion,
             _completion_gate=self._completion_gate,
-            _progress_stage=collaborators["progress_stage"],
-            _workspace_service=infrastructure["workspace_service"],
-            _on_answer_delta=values["on_answer_delta"],
+            _progress_stage=collaborators.progress_stage,
+            _workspace_service=infrastructure.workspace_service,
+            _on_answer_delta=values.on_answer_delta,
         )

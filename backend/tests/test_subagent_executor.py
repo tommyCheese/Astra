@@ -12,7 +12,7 @@ from app.application.context_compaction.child import compact_child_context
 from app.application.subagents.executor import AgentExecutorRuntime, LocalAstraAgentExecutor
 from app.application.subagents.governance import FrozenChildCatalog
 from app.application.subagents.lifecycle import SubagentCancellationService
-from app.application.subagents.runtime import SubagentRuntimeOperations
+from app.application.subagents.operations import SubagentRuntimeOperations
 from app.application.subagents.scope import DelegationAuthorizationError
 from app.application.subagents.supervisor import SubagentSupervisor
 from app.common.core.config import AstraRuntimeSettings

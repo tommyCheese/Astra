@@ -5,7 +5,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, cast
 
-from app.application.agent_runtime.action import ActionBoundary
 from app.application.agent_runtime.composition import (
     CapabilityRegistration,
     RuntimePorts,
@@ -24,39 +23,32 @@ from app.application.agent_runtime.contracts import (
     LoopOutcome,
     LoopState,
     ModelDecision,
-    PortIdentity,
     SafetyInvariant,
     WaitLoop,
+    canonical_observation,
+    consume_outcome,
+    port_identity,
 )
 from app.application.agent_runtime.loop import run_loop
-from app.application.agent_runtime.models import RootRuntimeAssembly
 from app.application.agent_runtime.policies.completion import AgentCompletionGate
 from app.application.agent_runtime.policies.reasoning import (
     AgentObservationEvaluator,
     AgentReflectionGate,
 )
 from app.application.agent_runtime.services.context.turn_preparation import PreparedRootTurn
-from app.application.agent_runtime.services.execution.runtime_builder import AgentRuntimeBuilder
 from app.application.agent_runtime.services.execution.tool_action import ToolActionInput
+from app.application.agent_runtime.services.tooling.action_boundary import ActionBoundary
 from app.application.agent_runtime.services.tooling.plugin_runtime import PluginRuntimeState
 from app.common.core.config import AstraRuntimeSettings
 from app.common.schemas.agent.run_result import AgentFinalAnswer
 from app.infrastructure.model_clients.contracts import AnswerDeltaCallback, ModelClient
 from app.infrastructure.repositories.run_unit_of_work import RunUnitOfWork
+from app.infrastructure.runtime.trusted_factory import TrustedRuntimeFactory
+from app.infrastructure.runtime.trusted_state import TrustedRuntime
 from app.infrastructure.tools.base import AstraToolRegistry
 from app.infrastructure.tools.router import ToolRouter
 
-
-def _identity(name: str, marker: str, *coverage: SafetyInvariant) -> PortIdentity:
-    return PortIdentity(
-        name=name,
-        version=1,
-        digest=marker * 64,
-        safety_coverage=frozenset(coverage),
-    )
-
-
-TRUSTED_STATE = _identity(
+TRUSTED_STATE = port_identity(
     "trusted-state",
     "b",
     SafetyInvariant.persistence,
@@ -69,7 +61,7 @@ TRUSTED_CONTEXT = CapabilityIdentity(
     slots=(CapabilitySlot.context,),
     order=0,
 )
-TRUSTED_MODEL = _identity("trusted-model", "d")
+TRUSTED_MODEL = port_identity("trusted-model", "d")
 TRUSTED_DECISION = CapabilityIdentity(
     name="trusted-reasoning-policy",
     version=1,
@@ -91,13 +83,13 @@ TRUSTED_COMPLETION = CapabilityIdentity(
     slots=(CapabilitySlot.completion,),
     order=0,
 )
-TRUSTED_CANCELLATION = _identity("trusted-cancellation", "1", SafetyInvariant.cancellation)
-TRUSTED_EVENTS = _identity("trusted-events", "2")
+TRUSTED_CANCELLATION = port_identity("trusted-cancellation", "1", SafetyInvariant.cancellation)
+TRUSTED_EVENTS = port_identity("trusted-events", "2")
 
 
 @dataclass
 class TrustedRuntimeAdapter:
-    runtime: RootRuntimeAssembly
+    runtime: TrustedRuntime
     run_id: str
     goal: str
     prepared: PreparedRootTurn | None = None
@@ -126,7 +118,7 @@ class TrustedRuntimeAdapter:
             goal=self.goal,
             turn_index=start_turn,
             max_turns=self.runtime.max_turns,
-            observations=tuple(_canonical_observation(item) for item in self.runtime.progress.observations),
+            observations=tuple(canonical_observation(item, status_aliases=TRUSTED_STATUS_ALIASES) for item in self.runtime.progress.observations),
         )
 
     async def recover(self, state: LoopState) -> tuple[LoopState, LoopOutcome | None]:
@@ -278,12 +270,11 @@ class TrustedRuntimeAdapter:
             self.selected_outcome = self.select_terminal(status, summary)
             return LoopObservation(kind="system", status="waiting", summary=summary or "")
         if self.runtime.progress.observations:
-            return _canonical_observation(self.runtime.progress.observations[-1])
+            return canonical_observation(self.runtime.progress.observations[-1], status_aliases=TRUSTED_STATUS_ALIASES)
         return LoopObservation(kind="tool_result", status="succeeded")
 
     async def outcome(self, *_args: object) -> LoopOutcome | None:
-        outcome = self.selected_outcome
-        self.selected_outcome = None
+        self.selected_outcome, outcome = consume_outcome(self.selected_outcome)
         return outcome
 
 
@@ -307,7 +298,7 @@ async def run_trusted_runtime(
             *({"sandbox.remote"} if settings.sandbox_enabled else set()),
         },
     )
-    runtime = await AgentRuntimeBuilder(
+    runtime = await TrustedRuntimeFactory(
         settings,
         model_client,
         tool_registry,
@@ -366,22 +357,12 @@ def _routing_decision(decision: ModelDecision) -> ModelDecision:
     )
 
 
-def _canonical_observation(value: dict[str, Any]) -> LoopObservation:
-    status = str(value.get("status", "failed"))
-    normalized = {
-        "success": "succeeded",
-        "completed": "succeeded",
-        "denied": "rejected",
-        "blocked": "rejected",
-    }.get(status, status)
-    if normalized not in {"succeeded", "waiting", "rejected", "failed", "unknown"}:
-        normalized = "failed"
-    return LoopObservation(
-        kind=str(value.get("kind", "system")),
-        status=cast(Any, normalized),
-        summary=str(value.get("summary", "")),
-        data=cast(dict[str, Any], value.get("data") or {}),
-    )
+TRUSTED_STATUS_ALIASES = {
+    "success": "succeeded",
+    "completed": "succeeded",
+    "denied": "rejected",
+    "blocked": "rejected",
+}
 
 
 def _normalize_tool_output(tool_name: str, output: dict[str, Any]) -> dict[str, Any]:
@@ -391,7 +372,7 @@ def _normalize_tool_output(tool_name: str, output: dict[str, Any]) -> dict[str, 
 async def _record_runtime_limits(
     repository: RunUnitOfWork,
     run_id: str,
-    runtime: RootRuntimeAssembly,
+    runtime: TrustedRuntime,
 ) -> None:
     await repository.add_event(
         run_id,

@@ -14,13 +14,13 @@ from app.application.agent_runtime.contracts import (
     PortIdentity,
     SafetyInvariant,
 )
-from app.application.agent_runtime.models import ToolActionInput
 from app.application.agent_runtime.services.tooling.approval import (
     ApprovalRoutingStage,
     ApprovalStageInput,
 )
 from app.application.agent_runtime.services.tooling.authorization import (
     PermissionAuthorizationStage,
+    ToolActionInput,
 )
 from app.application.agent_runtime.services.tooling.invocation import ToolInvocationStage
 from app.application.agent_runtime.services.tooling.plugin_runtime import (

@@ -59,24 +59,24 @@ from app.infrastructure.db.models.skills import (
 from app.infrastructure.db.session import get_session
 from app.infrastructure.model_clients.reasoning import normalize_model_thinking
 from app.infrastructure.repositories.run_unit_of_work import RunUnitOfWork
-from app.interfaces.api.skill_diff import skill_git_diff as _git_diff
-from app.interfaces.api.skill_metrics import build_skill_metrics
-from app.interfaces.api.skill_views import (
+from app.interfaces.api.skills.diff import skill_git_diff as _git_diff
+from app.interfaces.api.skills.metrics import build_skill_metrics
+from app.interfaces.api.skills.views import (
     skill_detail_view as _detail,
 )
-from app.interfaces.api.skill_views import (
+from app.interfaces.api.skills.views import (
     skill_diagnostics as _diagnostics,
 )
-from app.interfaces.api.skill_views import (
+from app.interfaces.api.skills.views import (
     skill_file_view as _file_view,
 )
-from app.interfaces.api.skill_views import (
+from app.interfaces.api.skills.views import (
     skill_revision_file_view as _revision_file_view,
 )
-from app.interfaces.api.skill_views import (
+from app.interfaces.api.skills.views import (
     skill_revision_view as _revision_view,
 )
-from app.interfaces.api.skill_views import (
+from app.interfaces.api.skills.views import (
     skill_summary_view as _summary,
 )
 from app.interfaces.platform.http.dependencies import (

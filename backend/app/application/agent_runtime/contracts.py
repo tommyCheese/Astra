@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from enum import StrEnum
 from functools import partial
-from typing import Literal, TypeAlias
+from typing import Any, Literal, TypeAlias, cast
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, model_validator
 
@@ -55,6 +55,15 @@ class PortIdentity(RuntimeValue):
     trusted: bool = True
 
 
+def port_identity(name: str, digest_character: str, *coverage: SafetyInvariant) -> PortIdentity:
+    return PortIdentity(
+        name=name,
+        version=1,
+        digest=digest_character * 64,
+        safety_coverage=frozenset(coverage),
+    )
+
+
 class LoopAction(RuntimeValue):
     kind: Literal["tool", "answer", "ask_user", "stop"]
     name: str | None = None
@@ -94,6 +103,23 @@ class LoopObservation(RuntimeValue):
     data: JsonObject = Field(default_factory=dict)
 
 
+def canonical_observation(
+    value: Mapping[str, Any],
+    *,
+    status_aliases: Mapping[str, str] | None = None,
+) -> LoopObservation:
+    status = str(value.get("status", "failed"))
+    normalized = (status_aliases or {}).get(status, status)
+    if normalized not in {"succeeded", "waiting", "rejected", "failed", "unknown"}:
+        normalized = "failed"
+    return LoopObservation(
+        kind=str(value.get("kind", "system")),
+        status=cast(Any, normalized),
+        summary=str(value.get("summary", "")),
+        data=cast(JsonObject, value.get("data") or {}),
+    )
+
+
 class LoopState(RuntimeValue):
     run_id: str = Field(min_length=1)
     task_id: str = Field(min_length=1)
@@ -116,6 +142,10 @@ class LoopOutcome(RuntimeValue):
     retryable: bool = False
     data: JsonObject = Field(default_factory=dict)
     state: JsonObject = Field(default_factory=dict)
+
+
+def consume_outcome(outcome: LoopOutcome | None) -> tuple[None, LoopOutcome | None]:
+    return None, outcome
 
 
 ContinueLoop = partial(LoopOutcome, kind="continue")

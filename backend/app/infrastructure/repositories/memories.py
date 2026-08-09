@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Any
 
 from sqlalchemy import select, update
@@ -19,7 +19,7 @@ from app.domain.memory import (
     normalize_memory_kind,
     validate_memory_transition,
 )
-from app.infrastructure.db.model_base import utc_now, uuid_str
+from app.infrastructure.db.model_base import as_utc, utc_now, uuid_str
 from app.infrastructure.db.models.conversations import TaskRecord
 from app.infrastructure.db.models.memory import (
     MemoryAuditRecord,
@@ -41,14 +41,6 @@ def _canonical_digest(value: Any) -> str:
         default=str,
     )
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
-
-
-def _as_utc(value: datetime | None) -> datetime | None:
-    if value is None:
-        return None
-    if value.tzinfo is None:
-        return value.replace(tzinfo=timezone.utc)
-    return value.astimezone(timezone.utc)
 
 
 def _copied_memory_source(source, memory_id: str, now: datetime) -> MemorySourceRecord:
@@ -287,12 +279,12 @@ class MemoryRepository:
             confidence=confidence,
             importance=importance,
             utility_score=utility_score,
-            observed_at=_as_utc(observed_at) or now,
-            valid_from=_as_utc(valid_from) or now,
-            valid_to=_as_utc(valid_to),
+            observed_at=as_utc(observed_at) or now,
+            valid_from=as_utc(valid_from) or now,
+            valid_to=as_utc(valid_to),
             created_at=now,
             updated_at=now,
-            expires_at=_as_utc(expires_at),
+            expires_at=as_utc(expires_at),
         )
         self.session.add(record)
         await self.session.flush()
@@ -464,7 +456,7 @@ class MemoryRepository:
             importance=current.importance if importance is None else importance,
             utility_score=current.utility_score,
             observed_at=now,
-            valid_from=_as_utc(valid_from) or now,
+            valid_from=as_utc(valid_from) or now,
             supersedes_id=current.id,
             consolidation_generation=current.consolidation_generation,
             created_at=now,

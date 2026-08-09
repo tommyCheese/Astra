@@ -7,13 +7,13 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.application.run_management.lifecycle.commands import RunApplicationService
 from app.application.run_management.lifecycle.contracts import RunExecutionDispatcher
-from app.application.run_management.lifecycle.service import RunApplicationService
 from app.common.core.config import AstraRuntimeSettings
 from app.common.core.errors import AstraError
 from app.common.schemas.agent.api_views import CreateRunRequest
 from app.common.schemas.agent.types import AnswerMode
-from app.common.schemas.models import RunModelConfig
+from app.common.schemas.model_providers import RunModelConfig
 from app.common.schemas.schedules import ScheduledExecutionConfig
 from app.infrastructure.db.model_base import utc_now
 from app.infrastructure.db.models.runs import RunRecord

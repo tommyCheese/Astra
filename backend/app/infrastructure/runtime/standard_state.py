@@ -12,22 +12,13 @@ from app.application.agent_runtime.contracts import (
     LoopOutcome,
     LoopState,
     PendingAction,
-    PortIdentity,
     SafetyInvariant,
+    port_identity,
 )
-from app.infrastructure.bootstrap.standard_recovery import recover_standard_checkpoint
 from app.infrastructure.db.models.permissions import ToolCallRecord
 from app.infrastructure.db.models.runs import RunRecord
 from app.infrastructure.repositories.run_unit_of_work import RunUnitOfWork
-
-
-def _port_identity(name: str, digest_character: str, *coverage: SafetyInvariant) -> PortIdentity:
-    return PortIdentity(
-        name=name,
-        version=1,
-        digest=digest_character * 64,
-        safety_coverage=frozenset(coverage),
-    )
+from app.infrastructure.runtime.standard_recovery import recover_standard_checkpoint
 
 
 @dataclass
@@ -44,7 +35,7 @@ class StandardRuntimeMetrics:
 
 @dataclass
 class StandardStatePort:
-    identity = _port_identity(
+    identity = port_identity(
         "standard-state",
         "1",
         SafetyInvariant.persistence,

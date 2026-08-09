@@ -1,21 +1,13 @@
 from datetime import UTC, datetime, timedelta
 
-import pytest
-
-from app.application.subagents.observability import (
-    DELEGATION_BEHAVIOR_CASES,
-    BenchmarkResult,
-    ReleaseThresholds,
-    RolloutState,
-    SubagentTelemetryRepository,
-    evaluate_delegation_behavior,
-    evaluate_release_gate,
-)
 from app.common.schemas.subagents import DelegationContract, DelegationRequest
 from app.infrastructure.db.models.executions import ModelInvocationRecord
 from app.infrastructure.db.models.runs import RunEventRecord
 from app.infrastructure.repositories.agent_executions import AgentExecutionRepository
 from app.infrastructure.repositories.run_unit_of_work import RunUnitOfWork
+from app.infrastructure.repositories.subagent_telemetry import (
+    SubagentTelemetryRepository,
+)
 
 
 async def test_telemetry_is_aggregate_and_does_not_expose_sensitive_content(session):
@@ -88,54 +80,3 @@ async def test_telemetry_is_aggregate_and_does_not_expose_sensitive_content(sess
     assert "secret tool input" not in serialized
     assert "secret prompt" not in serialized
     assert "private objective" not in serialized
-
-
-def test_behavior_eval_covers_positive_and_negative_delegation_cases():
-    predictions = {str(case["id"]): bool(case["should_delegate"]) for case in DELEGATION_BEHAVIOR_CASES}
-    assert evaluate_delegation_behavior(predictions)["passed"] is True
-
-    predictions["simple_question"] = True
-    failed = evaluate_delegation_behavior(predictions)
-    assert failed["passed"] is False
-    assert failed["incorrect"] == ["simple_question"]
-
-
-def test_release_gates_control_staged_rollout_and_automatic_kill_switch():
-    baseline = BenchmarkResult(
-        quality=0.8,
-        latency_ms=1_000,
-        tokens=1_000,
-        cost_usd=0.1,
-        recovery_rate=1,
-    )
-    candidate = BenchmarkResult(
-        quality=0.85,
-        latency_ms=1_400,
-        tokens=1_800,
-        cost_usd=0.18,
-        failure_rate=0.01,
-        recovery_rate=1,
-        cancellation_p95_ms=500,
-    )
-    decision = evaluate_release_gate(baseline=baseline, candidate=candidate)
-    assert decision.passed is True
-    assert RolloutState().promote(decision).stage == "administrator_canary"
-
-    unsafe = evaluate_release_gate(
-        baseline=baseline,
-        candidate=BenchmarkResult(
-            quality=0.9,
-            latency_ms=1_000,
-            tokens=1_000,
-            cost_usd=0.1,
-            failure_rate=0.2,
-            recovery_rate=0.5,
-            safety_failures=1,
-        ),
-        thresholds=ReleaseThresholds(),
-    )
-    assert unsafe.passed is False
-    assert unsafe.activate_kill_switch is True
-    with pytest.raises(ValueError, match="cannot advance"):
-        RolloutState().promote(unsafe)
-    assert RolloutState(stage="trusted_read_only").rollback().kill_switch is True

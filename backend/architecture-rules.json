@@ -99,6 +99,10 @@
       "imported": "app.application.agent_runtime.loop"
     },
     {
+      "importer": "app.application.planning",
+      "imported": "app.infrastructure.runtime"
+    },
+    {
       "importer": "app.application.run_management",
       "imported": "app.application.agent_runtime.loop"
     },
@@ -109,6 +113,7 @@
   ],
   "typed_module_prefixes": [
     "app.infrastructure.bootstrap",
+    "app.infrastructure.runtime",
     "app.domain.execution",
     "app.application.planning",
     "app.application.run_management"

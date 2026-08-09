@@ -14,7 +14,7 @@ from app.common.schemas.agent.execution_state import AgentDecision, AgentReflect
 from app.common.schemas.agent.planning import PlanDraft, TaskContract
 from app.common.schemas.agent.run_result import AgentFinalAnswer, AgentRunMemoryCandidate
 from app.common.schemas.agent.types import ReasoningEffort
-from app.common.schemas.models import ModelThinkingSnapshot
+from app.common.schemas.model_providers import ModelThinkingSnapshot
 from app.domain.agent_profile import AgentProfile, ModelOperation, load_agent_profile
 from app.domain.agent_profile.prompts import PromptComposer
 from app.infrastructure.model_clients.contracts import (
@@ -473,11 +473,6 @@ class OpenAICompatibleModelClient(ModelClient):
             return AgentReflection.model_validate(normalize_reflection_payload(payload))
         except Exception as exc:
             raise ModelOutputError(f"Invalid reflection output: {exc}") from exc
-
-    async def finalize(
-        self, goal: str, context: dict[str, Any], *, on_delta: AnswerDeltaCallback | None = None
-    ) -> AgentFinalAnswer:
-        return await self.synthesize(goal, [{"evidence_pack": context.get("evidence_pack", {})}], on_delta=on_delta)
 
     async def extract_memory_candidates(
         self,

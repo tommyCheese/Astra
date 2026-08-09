@@ -71,18 +71,6 @@ def validate_transition(current_node: str, result: NodeResult) -> None:
             raise RuntimeError(f"Error {category} cannot exit to {result.next_node}")
 
 
-def recovery_action(*, phase: str, idempotent: bool, result_recorded: bool) -> str:
-    if result_recorded:
-        return "replay_result"
-    if phase == "prepared":
-        return "execute"
-    if phase == "executing" and idempotent:
-        return "retry_same_idempotency_key"
-    if phase == "executing":
-        return "waiting_user"
-    return "blocked"
-
-
 def record_progress_signature(
     signatures: list[str],
     *,

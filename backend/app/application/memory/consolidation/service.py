@@ -10,14 +10,14 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.application.memory.consolidation.generation import deterministic_duplicate_proposal
-from app.application.memory.consolidation.models import (
+from app.application.memory.consolidation.contracts import (
     ConsolidationInputManifest,
     ConsolidationValidationError,
     FrozenMemoryInput,
     canonical_digest,
     canonical_json,
 )
+from app.application.memory.consolidation.generation import deterministic_duplicate_proposal
 from app.application.memory.consolidation.validation import validate_proposal
 from app.common.core.config import AstraRuntimeSettings
 from app.domain.agent_profile import AgentProfile, ModelOperation, load_agent_profile

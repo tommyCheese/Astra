@@ -3,7 +3,7 @@
 from collections.abc import Awaitable, Callable
 from typing import Any
 
-from app.infrastructure.bootstrap.trusted_runtime import run_trusted_runtime
+from app.infrastructure.runtime.trusted import run_trusted_runtime
 
 
 class TrustedRuntimeHarness:

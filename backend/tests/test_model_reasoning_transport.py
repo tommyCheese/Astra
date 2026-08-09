@@ -5,13 +5,13 @@ import pytest
 
 from app.common.core.config import AstraRuntimeSettings
 from app.domain.agent_profile import ModelOperation
-from app.infrastructure.bootstrap.runtime_dependencies import (
+from app.infrastructure.model_clients.anthropic import AnthropicModelClient
+from app.infrastructure.model_clients.openai_compatible import OpenAICompatibleModelClient
+from app.infrastructure.runtime.dependencies import (
     close_shared_model_http_clients,
     shared_model_http_client,
     shared_tool_registry,
 )
-from app.infrastructure.model_clients.anthropic import AnthropicModelClient
-from app.infrastructure.model_clients.openai_compatible import OpenAICompatibleModelClient
 from app.infrastructure.tools.base import AstraToolRegistry
 
 
@@ -511,7 +511,7 @@ async def test_server_reuses_model_connections_across_runs(monkeypatch, provider
     FakeOpenAIAsyncClient.closes = 0
     FakeOpenAIAsyncClient.options = []
     monkeypatch.setattr(
-        "app.infrastructure.bootstrap.runtime_dependencies.httpx.AsyncClient",
+        "app.infrastructure.runtime.dependencies.httpx.AsyncClient",
         FakeOpenAIAsyncClient,
     )
     settings = AstraRuntimeSettings(
@@ -546,7 +546,7 @@ async def test_server_reuses_tool_registry_across_model_overrides(monkeypatch):
         return AstraToolRegistry()
 
     monkeypatch.setattr(
-        "app.infrastructure.bootstrap.runtime_dependencies.build_application_tool_registry",
+        "app.infrastructure.runtime.dependencies.build_application_tool_registry",
         build_registry,
     )
     settings = AstraRuntimeSettings(

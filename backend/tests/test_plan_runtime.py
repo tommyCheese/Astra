@@ -9,6 +9,7 @@ from app.application.planning.service import (
     PlanValidator,
     canonical_agent_state,
 )
+from app.application.run_management.projections.run_view import run_payload
 from app.common.schemas.agent.planning import (
     ExpectedObservation,
     PlanDraft,
@@ -25,7 +26,6 @@ from app.infrastructure.repositories.plans import (
     plan_to_view,
 )
 from app.infrastructure.repositories.run_unit_of_work import RunUnitOfWork
-from app.infrastructure.repositories.run_view_projection import run_payload
 
 
 def weather_plan() -> PlanDraft:

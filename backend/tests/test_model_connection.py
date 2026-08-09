@@ -4,8 +4,8 @@ import httpx
 import pytest
 from pydantic import ValidationError
 
-from app.common.schemas.models import ModelConnectionTestRequest
-from app.interfaces.api.models import probe_model_connection
+from app.common.schemas.model_providers import ModelConnectionTestRequest
+from app.interfaces.api.model_providers import probe_model_connection
 
 
 async def test_openai_compatible_connection_probe_sends_current_configuration():

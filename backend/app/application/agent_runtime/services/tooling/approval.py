@@ -5,7 +5,6 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-import shlex
 import uuid
 from dataclasses import dataclass
 from typing import Any
@@ -25,7 +24,6 @@ from app.infrastructure.repositories.executions import NodeExecutionRepository
 from app.infrastructure.repositories.run_unit_of_work import RunUnitOfWork
 from app.infrastructure.tools.base import AstraTool, ToolExecutionError
 
-SHELL_META = re.compile(r"(?:&&|\|\||[|;&<>`]|\$\(|\$\{|\n|\r)")
 SECRET_VALUE = re.compile(r"(?i)\b(api[_-]?key|token|authorization|password)\s*[:=]\s*(?:bearer\s+)?\S+")
 
 
@@ -40,26 +38,6 @@ def input_hash(tool_input: dict[str, Any]) -> str:
 def _default_safe_preview(tool_input: dict[str, Any], limit: int = 1000) -> str:
     value = canonical_input(tool_input)
     return SECRET_VALUE.sub(r"\1=[REDACTED]", value)[:limit]
-
-
-def matcher_matches(matcher: dict[str, Any], tool_input: dict[str, Any]) -> bool:
-    if matcher.get("kind") == "exact":
-        return matcher.get("input_hash") == input_hash(tool_input)
-    if matcher.get("kind") != "command_prefix":
-        return False
-    tokens = _safe_shell_tokens(tool_input)
-    prefix = matcher.get("tokens")
-    return bool(tokens and isinstance(prefix, list) and prefix and tokens[: len(prefix)] == prefix)
-
-
-def _safe_shell_tokens(tool_input: dict[str, Any]) -> list[str] | None:
-    command = str(tool_input.get("command", "")).strip()
-    if not command or SHELL_META.search(command):
-        return None
-    try:
-        return shlex.split(command, posix=True)
-    except ValueError:
-        return None
 
 
 @dataclass(frozen=True)

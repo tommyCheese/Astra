@@ -5,7 +5,6 @@ from dataclasses import dataclass
 import pytest
 from pydantic import TypeAdapter, ValidationError
 
-from app.application.agent_runtime.action import ActionBoundary
 from app.application.agent_runtime.composition import (
     CapabilityRegistration,
     CompositionError,
@@ -25,6 +24,7 @@ from app.application.agent_runtime.contracts import (
     PortIdentity,
     SafetyInvariant,
 )
+from app.application.agent_runtime.services.tooling.action_boundary import ActionBoundary
 
 
 @dataclass(frozen=True)

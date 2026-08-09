@@ -36,7 +36,7 @@ Agent runtime、Subagent、权限、Workspace/Artifact 和外部 provider 边界
 
 2026-08-09 的 single-Loop 收敛进一步删除 `application.runner`、`fast_agent_runtime`、Fast/Trusted
 镜像结果类型和 Run projector/query facade。standard、trusted root 与 trusted node 均调用同一个
-`run_loop`；差异只存在于冻结策略与 capability registration。最终结构为 61,167 行、302 个模块、
+`run_loop`；差异只存在于冻结策略与 capability registration。清理前结构为 61,167 行、302 个模块、
 764 个类、2,461 个函数/方法和 1,190 个公共 symbol，全部低于重构前基线。
 
 ## 第二轮去碎片化

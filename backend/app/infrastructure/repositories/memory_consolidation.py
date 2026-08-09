@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from typing import Any
 
 from sqlalchemy import and_, func, or_, select, update
@@ -11,7 +11,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.application.memory.consolidation.models import (
+from app.application.memory.consolidation.contracts import (
     ConsolidationConflictError,
     ConsolidationInputManifest,
     ConsolidationProposal,
@@ -20,7 +20,7 @@ from app.application.memory.consolidation.models import (
     canonical_digest,
 )
 from app.domain.memory import MemoryNamespaceType, MemoryStatus
-from app.infrastructure.db.model_base import utc_now, uuid_str
+from app.infrastructure.db.model_base import as_utc, utc_now, uuid_str
 from app.infrastructure.db.models.memory import (
     MemoryConsolidationJobRecord,
     MemorySourceRecord,
@@ -37,14 +37,6 @@ TERMINAL_JOB_STATUSES = frozenset(
         "rolled_back",
     }
 )
-
-
-def _as_utc(value: datetime | None) -> datetime | None:
-    if value is None:
-        return None
-    if value.tzinfo is None:
-        return value.replace(tzinfo=timezone.utc)
-    return value.astimezone(timezone.utc)
 
 
 def _validate_namespace(namespace_type: str, namespace_id: str) -> tuple[str, str]:
@@ -212,8 +204,8 @@ class MemoryConsolidationRepository:
         now = utc_now()
         expired = (
             job.status == "running"
-            and _as_utc(job.lease_expires_at) is not None
-            and _as_utc(job.lease_expires_at) <= _as_utc(now)
+            and as_utc(job.lease_expires_at) is not None
+            and as_utc(job.lease_expires_at) <= as_utc(now)
         )
         if job.status != "queued" and not expired:
             return None
@@ -591,8 +583,8 @@ def cooldown_elapsed(
 ) -> bool:
     if latest is None or cooldown_seconds == 0:
         return True
-    created_at = _as_utc(latest.created_at)
-    return created_at is None or created_at + timedelta(seconds=cooldown_seconds) <= _as_utc(now)
+    created_at = as_utc(latest.created_at)
+    return created_at is None or created_at + timedelta(seconds=cooldown_seconds) <= as_utc(now)
 
 
 def model_usage_for_job(

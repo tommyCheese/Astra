@@ -7,10 +7,8 @@ from typing import Any
 from sqlalchemy import or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.application.subagents.governance import DelegationContractService
 from app.common.schemas.subagents import (
     DelegationContract,
-    DelegationRequest,
     SubagentExecutionStatus,
     SubagentJoinPolicy,
     SubagentResult,
@@ -495,36 +493,3 @@ def _merge_claim(claims, conflicts, claim, source) -> None:
         previous["source_agent_execution_ids"].append(source)
     else:
         claims[key] = normalized
-
-
-async def retry_subagent(
-    service: DelegationContractService,
-    execution_id: str,
-    *,
-    retry_safe: bool,
-) -> AgentExecutionRecord:
-    execution = await service.executions.require(execution_id)
-    if execution.status not in {"failed", "blocked"}:
-        raise ValueError("Only failed or blocked child executions can be retried")
-    if not retry_safe:
-        raise ValueError("Child retry is not proven safe")
-    parent = await service.executions.require(str(execution.parent_execution_id))
-    if parent.identity_id is None:
-        raise ValueError("Parent identity is unavailable for retry")
-    contract = DelegationContract.model_validate(execution.contract)
-    attempt = int((execution.checkpoint or {}).get("attempt", 1)) + 1
-    request_payload = contract.request.model_dump(mode="python")
-    request_payload["request_id"] = f"{contract.request.request_id}:retry:{attempt}"
-    request_payload["dedupe_key"] = f"{contract.request.dedupe_key}:retry:{attempt}"
-    retry = await service.authorize_and_create(
-        parent_execution_id=parent.id,
-        parent_identity_id=parent.identity_id,
-        request=DelegationRequest.model_validate(request_payload),
-    )
-    retry.checkpoint = {
-        "retry_of_execution_id": execution.id,
-        "attempt": attempt,
-        "preserved_failure": deepcopy(execution.error or execution.result),
-    }
-    await service.session.commit()
-    return retry

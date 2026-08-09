@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Literal
 
 from fastapi import APIRouter, Depends, Query
@@ -6,18 +6,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.common.core.errors import AstraInputValidationError
 from app.common.schemas.usage import UsageSummary
+from app.infrastructure.db.model_base import as_utc
 from app.infrastructure.db.session import get_session
 from app.infrastructure.repositories.usage import UsageRepository
 
 router = APIRouter(prefix="/api/usage", tags=["usage"])
-
-
-def _as_utc(value: datetime | None) -> datetime | None:
-    if value is None:
-        return None
-    if value.tzinfo is None:
-        return value.replace(tzinfo=timezone.utc)
-    return value.astimezone(timezone.utc)
 
 
 @router.get("/summary", response_model=UsageSummary, response_model_by_alias=True)
@@ -29,8 +22,8 @@ async def get_usage_summary(
     to_time: datetime | None = Query(default=None, alias="to"),
     session: AsyncSession = Depends(get_session),
 ) -> UsageSummary:
-    from_time = _as_utc(from_time)
-    to_time = _as_utc(to_time)
+    from_time = as_utc(from_time)
+    to_time = as_utc(to_time)
     if scope == "task" and not task_id:
         raise AstraInputValidationError("TASK_ID_REQUIRED", "查询当前对话用量时必须提供 task_id。")
     if scope == "run" and not run_id:

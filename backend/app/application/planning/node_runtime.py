@@ -1,5 +1,6 @@
 """Runtime resources and observation projections for one parallel Plan node."""
 
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
 
@@ -13,6 +14,17 @@ from app.infrastructure.repositories.run_unit_of_work import RunUnitOfWork
 from app.infrastructure.repositories.workspaces import WorkspaceRepository
 from app.infrastructure.sandbox.docker_provider import build_sandbox_provider
 from app.infrastructure.sandbox.runtime import SandboxJobService, SandboxSupervisor
+
+NodeRuntimeRunner = Callable[[Any, Any, NodeContextSnapshot], Awaitable[Any]]
+
+
+@dataclass
+class PreparedNodeTool:
+    effect_plan: Any
+    mount_mode: str
+    workspace_path: Any
+    executions: Any
+    early_result: Any = None
 
 
 @dataclass

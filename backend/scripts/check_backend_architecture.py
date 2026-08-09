@@ -451,6 +451,29 @@ def check_runtime_surface(inventory: ArchitectureInventory) -> Iterable[str]:
             yield f"implementation module must move into a capability package: {module_path}"
 
 
+def check_runtime_package_ownership(source_root: Path) -> Iterable[str]:
+    """Keep core Loop, bootstrap, runtime adapters, and projections in role-accurate packages."""
+    runtime_root = source_root / "application" / "agent_runtime"
+    allowed_runtime_root = {"composition.py", "contracts.py", "loop.py"}
+    actual_runtime_root = {path.name for path in runtime_root.glob("*.py") if path.name != "__init__.py"}
+    for unexpected in sorted(actual_runtime_root - allowed_runtime_root):
+        yield f"Agent Runtime root contains concrete implementation: {unexpected}"
+
+    bootstrap_root = source_root / "infrastructure" / "bootstrap"
+    allowed_bootstrap = {"application.py", "container.py", "lifecycle.py", "routes.py"}
+    actual_bootstrap = {path.name for path in bootstrap_root.glob("*.py") if path.name != "__init__.py"}
+    for unexpected in sorted(actual_bootstrap - allowed_bootstrap):
+        yield f"bootstrap contains non-lifecycle implementation: {unexpected}"
+
+    repository_root = source_root / "infrastructure" / "repositories"
+    for name in ("run_view_projection.py", "conversation_process_projection.py"):
+        if (repository_root / name).exists():
+            yield f"read projection must not live under repositories: {name}"
+
+    if any((runtime_root / "models").glob("*.py")):
+        yield "Agent Runtime models package duplicates canonical contracts or environment state"
+
+
 def check_architecture(
     inventory: ArchitectureInventory,
     rules: ArchitectureRules,
@@ -467,6 +490,7 @@ def check_architecture(
         *check_runtime_representations(source_root),
         *check_structural_budget(inventory, rules, baseline, source_root),
         *check_runtime_surface(inventory),
+        *check_runtime_package_ownership(source_root),
     ]
     current_forbidden = forbidden_edges(dependency_edges(inventory), rules)
     baseline_forbidden = {tuple(edge) for edge in baseline["forbidden_edges"]}

@@ -1,16 +1,16 @@
 {
   "baseline_module_lines": {
-    "app.application.memory.consolidation.models": 770,
+    "app.application.memory.consolidation.contracts": 770,
     "app.application.memory.retrieval": 664,
     "app.application.permissions.effects": 566,
     "app.application.planning.coordinator": 691,
     "app.application.planning.scheduler": 537,
-    "app.application.run_management.execution.service": 584,
+    "app.application.run_management.execution.run_execution": 584,
     "app.application.skills.storage": 533,
     "app.application.subagents.context": 571,
     "app.application.subagents.fan_in": 530,
     "app.application.subagents.governance": 571,
-    "app.application.subagents.runtime": 538,
+    "app.application.subagents.operations": 538,
     "app.domain.evolution": 555,
     "app.infrastructure.model_clients.openai_compatible": 642,
     "app.infrastructure.model_clients.reasoning": 660,
@@ -20,7 +20,7 @@
     "app.infrastructure.repositories.memory_consolidation": 613,
     "app.infrastructure.repositories.plans": 529,
     "app.infrastructure.repositories.schedules": 541,
-    "app.interfaces.api.skills": 758
+    "app.interfaces.api.skills.routes": 758
   },
   "baseline_functions": {
     "app.application.agent_runtime.loop:_select_outcome": {
@@ -87,7 +87,7 @@
       "lines": 15,
       "complexity": 13
     },
-    "app.application.memory.consolidation.models:_normalize_json": {
+    "app.application.memory.consolidation.contracts:_normalize_json": {
       "lines": 24,
       "complexity": 13
     },
@@ -187,11 +187,11 @@
       "lines": 83,
       "complexity": 10
     },
-    "app.application.run_management.execution.service:RunExecution._bind_skills": {
+    "app.application.run_management.execution.run_execution:RunExecution._bind_skills": {
       "lines": 54,
       "complexity": 13
     },
-    "app.application.run_management.execution.service:RunExecution._prepare_trusted_run": {
+    "app.application.run_management.execution.run_execution:RunExecution._prepare_trusted_run": {
       "lines": 98,
       "complexity": 12
     },
@@ -251,7 +251,7 @@
       "lines": 86,
       "complexity": 9
     },
-    "app.application.subagents.runtime:SubagentRuntimeOperations.delegate_tasks": {
+    "app.application.subagents.operations:SubagentRuntimeOperations.delegate_tasks": {
       "lines": 86,
       "complexity": 12
     },
@@ -291,11 +291,11 @@
       "lines": 18,
       "complexity": 13
     },
-    "app.infrastructure.bootstrap.standard_recovery:_recover_action": {
+    "app.infrastructure.runtime.standard_recovery:_recover_action": {
       "lines": 22,
       "complexity": 12
     },
-    "app.infrastructure.bootstrap.trusted_runtime:run_trusted_runtime": {
+    "app.infrastructure.runtime.trusted:run_trusted_runtime": {
       "lines": 70,
       "complexity": 4
     },
@@ -491,7 +491,7 @@
       "lines": 28,
       "complexity": 13
     },
-    "app.interfaces.api.models:probe_model_connection": {
+    "app.interfaces.api.model_providers:probe_model_connection": {
       "lines": 67,
       "complexity": 9
     },
@@ -507,11 +507,11 @@
       "lines": 67,
       "complexity": 15
     },
-    "app.interfaces.api.skills:create_skill_test_run": {
+    "app.interfaces.api.skills.routes:create_skill_test_run": {
       "lines": 71,
       "complexity": 6
     },
-    "app.interfaces.api.skills:diff_skill": {
+    "app.interfaces.api.skills.routes:diff_skill": {
       "lines": 42,
       "complexity": 11
     },
@@ -538,7 +538,7 @@
     "app.application.planning.coordinator:PlanNodeWorker",
     "app.application.planning.node_worker:ReadOnlyAgentNodeExecutor",
     "app.application.planning.service:PlanValidator",
-    "app.application.run_management.execution.service:RunExecution",
+    "app.application.run_management.execution.run_execution:RunExecution",
     "app.application.scheduling.dispatcher:ScheduledRunDispatcher",
     "app.application.subagents.context:SubagentContextComposer",
     "app.application.subagents.coordinator:HierarchicalSemaphoreRegistry",
@@ -564,7 +564,7 @@
     "app.infrastructure.tools.chart:ChartRenderTool",
     "app.infrastructure.tools.memory:ForgetTool",
     "app.infrastructure.tools.memory:RememberTool",
-    "app.infrastructure.tools.runtime:SwarmTool",
+    "app.infrastructure.tools.delegation:SwarmTool",
     "app.infrastructure.tools.workspace:WorkspaceEditTool",
     "app.infrastructure.tools.workspace:WorkspaceListTool",
     "app.infrastructure.tools.workspace:WorkspaceReadTool",

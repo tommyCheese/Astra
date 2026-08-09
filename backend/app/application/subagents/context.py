@@ -7,11 +7,7 @@ from collections.abc import Callable
 from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import datetime
-from pathlib import PurePosixPath
 from typing import Any
-
-from sqlalchemy import update
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.application.subagents.governance import FrozenChildCatalog, stable_digest
 from app.common.schemas.subagents import (
@@ -25,14 +21,7 @@ from app.common.schemas.subagents import (
     SubagentContinuationAnswer,
     SubagentQuestion,
 )
-from app.domain.grounding.schemas import GroundingEvidenceFragment
 from app.infrastructure.db.model_base import utc_now
-from app.infrastructure.db.models.executions import AgentExecutionRecord
-from app.infrastructure.db.models.runs import EvidenceRecord
-from app.infrastructure.db.models.workspaces import ArtifactRecord
-from app.infrastructure.repositories.evidence import EvidenceRepository
-from app.infrastructure.repositories.run_unit_of_work import RunUnitOfWork
-from app.infrastructure.repositories.workspaces import WorkspaceRepository
 
 FORBIDDEN_CONTEXT_KEYS = frozenset(
     {
@@ -298,25 +287,6 @@ class SubagentContextComposer:
         return accepted, total
 
 
-def create_context_checkpoint(
-    *,
-    composed: ComposedSubagentContext,
-    local_summary: str,
-    local_facts: list[dict[str, Any]],
-    prior: SubagentContextCheckpoint | None = None,
-) -> SubagentContextCheckpoint:
-    """Compatibility constructor retained for persisted child continuations."""
-    return SubagentContextCheckpoint(
-        agent_execution_id=composed.manifest.agent_execution_id,
-        manifest_hash=composed.manifest_hash,
-        local_summary=local_summary,
-        local_facts=tuple(deepcopy(local_facts)),
-        continuation_round_trips=(prior.continuation_round_trips if prior else 0),
-        continuation_answers=(prior.continuation_answers if prior else ()),
-        created_at=utc_now(),
-    )
-
-
 class SubagentContinuationService:
     def __init__(self, secret: str, *, max_round_trips: int):
         if not secret:
@@ -403,145 +373,6 @@ class SubagentContinuationService:
         return f"v1.{hmac.new(self.secret, payload, hashlib.sha256).hexdigest()}"
 
 
-class SubagentExchangeService:
-    """Stages child-owned references and performs explicit verified promotion."""
-
-    def __init__(self, session: AsyncSession):
-        self.session = session
-        self.runs = RunUnitOfWork(session)
-
-    async def stage_artifact(
-        self,
-        *,
-        agent_execution_id: str,
-        relative_name: str,
-        artifact_type: str,
-        content_ref: str,
-        mime_type: str,
-        size_bytes: int,
-        checksum: str,
-        provenance: dict[str, Any],
-    ) -> ArtifactRecord:
-        execution = await self._child(agent_execution_id)
-        safe_name = _safe_relative_path(relative_name)
-        staging_root = _staging_root(execution)
-        return await self.runs.create_artifact(
-            execution.run_id,
-            artifact_type,
-            agent_execution_id=execution.id,
-            path=f"{staging_root}/{safe_name}",
-            content_ref=content_ref,
-            mime_type=mime_type,
-            size_bytes=size_bytes,
-            checksum=checksum,
-            security_status="pending",
-            provenance={
-                **deepcopy(provenance),
-                "agent_execution_id": execution.id,
-                "source_agent_execution_id": execution.id,
-                "promotion_status": "private_staging",
-            },
-            metadata={"private": True, "staging_root": staging_root},
-        )
-
-    async def stage_evidence(
-        self,
-        *,
-        agent_execution_id: str,
-        fragment: GroundingEvidenceFragment,
-    ) -> EvidenceRecord:
-        execution = await self._child(agent_execution_id)
-        return await EvidenceRepository(self.session).append(
-            execution.run_id,
-            fragment,
-            agent_execution_id=execution.id,
-        )
-
-    async def promote_artifact(
-        self,
-        *,
-        parent_execution_id: str,
-        artifact_id: str,
-        public_path: str,
-    ) -> ArtifactRecord:
-        parent = await self.session.get(AgentExecutionRecord, parent_execution_id)
-        artifact = await self.session.get(ArtifactRecord, artifact_id)
-        if parent is None or artifact is None or artifact.agent_execution_id is None:
-            raise ValueError("Promotion source or parent execution is unavailable")
-        child = await self.session.get(AgentExecutionRecord, artifact.agent_execution_id)
-        if child is None or child.parent_execution_id != parent.id or child.run_id != parent.run_id:
-            raise ValueError("Only a direct child's Artifact can be promoted by this parent")
-        if artifact.security_status != "verified":
-            raise ValueError("Only a verified child Artifact can be promoted")
-        artifact.path = _safe_relative_path(public_path)
-        artifact.metadata_ = {**artifact.metadata_, "private": False, "promoted_by": parent.id}
-        artifact.provenance = {
-            **artifact.provenance,
-            "promotion_status": "promoted",
-            "promoted_by_execution_id": parent.id,
-        }
-        workspace = await WorkspaceRepository(self.session).get_or_create(parent.task_id)
-        await WorkspaceRepository(self.session).upsert_file(
-            workspace.id,
-            artifact.path,
-            mime_type=artifact.mime_type,
-            size_bytes=artifact.size_bytes,
-            checksum=artifact.checksum,
-            security_status="verified",
-            deliverable_candidate=True,
-            metadata={
-                "artifact_id": artifact.id,
-                "promoted_by_agent_execution_id": parent.id,
-            },
-        )
-        await self.session.commit()
-        return artifact
-
-    async def promote_verified_facts(
-        self,
-        *,
-        parent_execution_id: str,
-        child_execution_id: str,
-        facts: list[dict[str, Any]],
-        expected_parent_state_version: int,
-    ) -> AgentExecutionRecord:
-        parent = await self.session.get(AgentExecutionRecord, parent_execution_id)
-        child = await self._child(child_execution_id)
-        if parent is None or child.parent_execution_id != parent.id:
-            raise ValueError("Fact promotion must follow direct Agent lineage")
-        verified = [deepcopy(item) for item in facts if item.get("verified") is True and item.get("evidence_refs")]
-        if len(verified) != len(facts):
-            raise ValueError("Only verified child facts with Evidence can be promoted")
-        checkpoint = deepcopy(parent.checkpoint or {})
-        checkpoint["promoted_child_facts"] = [
-            *(checkpoint.get("promoted_child_facts") or []),
-            *[{**item, "source_agent_execution_id": child.id} for item in verified],
-        ]
-        outcome = await self.session.execute(
-            update(AgentExecutionRecord)
-            .where(
-                AgentExecutionRecord.id == parent.id,
-                AgentExecutionRecord.state_version == expected_parent_state_version,
-            )
-            .values(
-                checkpoint=checkpoint,
-                state_version=expected_parent_state_version + 1,
-                updated_at=utc_now(),
-            )
-        )
-        if outcome.rowcount != 1:
-            raise ValueError("Parent AgentExecution changed during fact promotion")
-        await self.session.commit()
-        await self.session.refresh(parent)
-        return parent
-
-    async def _child(self, execution_id: str) -> AgentExecutionRecord:
-        execution = await self.session.get(AgentExecutionRecord, execution_id)
-        if execution is None or execution.parent_execution_id is None:
-            raise ValueError("A child AgentExecution is required")
-        return execution
-
-
 def _contains_forbidden(value: Any) -> bool:
     if isinstance(value, dict):
         return any(str(key).lower() in FORBIDDEN_CONTEXT_KEYS or _contains_forbidden(item) for key, item in value.items())
@@ -554,18 +385,3 @@ def _patterns_cover(children: tuple[str, ...], parents: tuple[str, ...]) -> bool
     from fnmatch import fnmatchcase
 
     return bool(parents) and all(any(parent == "*" or fnmatchcase(child, parent) for parent in parents) for child in children)
-
-
-def _safe_relative_path(value: str) -> str:
-    path = PurePosixPath(value)
-    if path.is_absolute() or not path.parts or ".." in path.parts:
-        raise ValueError("Subagent Artifact path is unsafe")
-    if any(part in {".git", ".astra", ".codex"} for part in path.parts):
-        raise ValueError("Subagent Artifact path targets protected metadata")
-    return path.as_posix()
-
-
-def _staging_root(execution: AgentExecutionRecord) -> str:
-    scope = ((execution.contract or {}).get("request") or {}).get("resource_scope") or {}
-    configured = scope.get("private_staging_root")
-    return str(configured or f".astra/subagents/{execution.id}/staging")

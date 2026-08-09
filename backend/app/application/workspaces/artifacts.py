@@ -4,7 +4,7 @@ import mimetypes
 import shutil
 import uuid
 import zipfile
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import ClassVar, Protocol
 
@@ -222,14 +222,3 @@ class ArtifactService:
                 raise
             refs.append(artifact_ref(record))
         return refs
-
-
-def prune_store(store: LocalArtifactStore, records: list, retention_days: int) -> int:
-    cutoff = datetime.now(timezone.utc) - timedelta(days=retention_days)
-    removed = 0
-    for record in records:
-        if record.created_at < cutoff and record.storage_key:
-            store.delete(record.storage_key)
-            record.security_status = "expired"
-            removed += 1
-    return removed

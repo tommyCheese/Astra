@@ -6,7 +6,7 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from app.common.schemas.agent.types import ApprovalDecision
-from app.common.schemas.models import RunModelConfig
+from app.common.schemas.model_providers import RunModelConfig
 
 
 class ApprovalDecisionRequest(BaseModel):

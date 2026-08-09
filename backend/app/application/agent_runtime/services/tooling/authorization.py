@@ -5,8 +5,8 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Any
 
-from app.application.agent_runtime.models import ToolActionInput
 from app.application.agent_runtime.services.tooling.plugin_runtime import PluginRuntimeState
 from app.application.permissions.effects import effect_plan_hash
 from app.application.permissions.engine import PermissionEngine
@@ -18,11 +18,38 @@ from app.common.schemas.permissions import (
     PermissionPolicySet,
     PermissionSubject,
 )
+from app.domain.execution.contracts import SubagentSupervisorPort
 from app.infrastructure.db.models.permissions import AgentIdentityRecord
 from app.infrastructure.repositories.permissions import PermissionRepository
 from app.infrastructure.repositories.run_unit_of_work import RunUnitOfWork
 from app.infrastructure.tools.base import AstraTool, ToolExecutionError
 from app.infrastructure.tools.router import ToolRouter
+
+if TYPE_CHECKING:
+    from app.common.schemas.agent.execution_state import AgentDecision
+    from app.infrastructure.db.models.permissions import ToolCallRecord
+    from app.infrastructure.db.models.plans import PlanNodeRecord
+    from app.infrastructure.db.models.runs import AgentTurnRecord, RunRecord
+
+
+@dataclass(frozen=True)
+class ToolActionInput:
+    run: RunRecord
+    run_id: str
+    goal: str
+    turn_index: int
+    turn: AgentTurnRecord
+    decision: AgentDecision
+    main_identity: AgentIdentityRecord
+    active_node: PlanNodeRecord | None
+    active_node_execution_id: str | None
+    model_context: dict[str, Any]
+    execution_mode: str
+    is_approved_resume: bool
+    approved_request_snapshot: dict[str, Any] | None
+    approved_tool_call: ToolCallRecord | None
+    workspace_path: str | None
+    subagent_supervisor: SubagentSupervisorPort | None
 
 AuthorizedInvocation = tuple[
     AstraTool,

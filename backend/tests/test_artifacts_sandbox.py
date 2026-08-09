@@ -1,10 +1,9 @@
 import asyncio
-from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import pytest
 
-from app.application.workspaces.artifacts import ArtifactCollector, LocalArtifactStore, prune_store
+from app.application.workspaces.artifacts import ArtifactCollector, LocalArtifactStore
 from app.infrastructure.sandbox.runtime import (
     SandboxError,
     SandboxHandle,
@@ -38,25 +37,6 @@ def test_artifact_collector_rejects_symlink_and_fake_png(tmp_path):
     with pytest.raises(ToolExecutionError) as symlink_error:
         ArtifactCollector(output, max_files=2, max_bytes=100).collect()
     assert symlink_error.value.category == "sandbox_policy_violation"
-
-
-def test_artifact_retention_removes_content_but_preserves_record(tmp_path):
-    store = LocalArtifactStore(str(tmp_path / "store"))
-    source = tmp_path / "chart.png"
-    source.write_bytes(b"\x89PNG\r\n\x1a\nmock")
-    key = store.put(source, ".png")
-    record = type(
-        "Record",
-        (),
-        {
-            "created_at": datetime.now(timezone.utc) - timedelta(days=31),
-            "storage_key": key,
-            "security_status": "verified",
-        },
-    )()
-    assert prune_store(store, [record], 30) == 1
-    assert record.security_status == "expired"
-    assert not store.resolve(key).exists()
 
 
 @pytest.mark.parametrize(

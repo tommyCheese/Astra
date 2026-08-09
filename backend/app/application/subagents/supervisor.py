@@ -11,7 +11,7 @@ from app.application.subagents.coordinator import AgentCoordinator, Hierarchical
 from app.application.subagents.eligibility import subagent_execution_eligibility
 from app.application.subagents.executor import LocalAstraAgentExecutor
 from app.application.subagents.fan_in import SubagentJoinService, merge_subagent_results
-from app.application.subagents.runtime import SubagentRuntimeOperations
+from app.application.subagents.operations import SubagentRuntimeOperations
 from app.application.workspaces.artifacts import ArtifactService, LocalArtifactStore
 from app.common.core.config import AstraRuntimeSettings
 from app.common.schemas.agent.run_policy import EffectiveSubagentPolicy

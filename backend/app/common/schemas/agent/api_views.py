@@ -22,7 +22,7 @@ from app.common.schemas.agent.types import (
     PlanExecution,
     RuntimeKind,
 )
-from app.common.schemas.models import RunModelConfig
+from app.common.schemas.model_providers import RunModelConfig
 
 SKILL_QUALIFIED_IDENTITY_RE = re.compile(r"^(?:builtin|custom):[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$")
 

@@ -1,7 +1,7 @@
 import pytest
 from pydantic import ValidationError
 
-from app.common.schemas.models import (
+from app.common.schemas.model_providers import (
     MODEL_THINKING_CAPABILITY_VERSION,
     ModelThinkingSelection,
 )

@@ -6,7 +6,7 @@ from sqlalchemy import event as sqlalchemy_event
 from sqlalchemy import func, select
 
 from app.application.agent_runtime.policies.reasoning import resolve_run_profile
-from app.application.run_management.execution.service import RunExecution as RunEngine
+from app.application.run_management.execution.run_execution import RunExecution as RunEngine
 from app.application.skills.activation import SkillActivationService
 from app.application.skills.builtin_catalog import ensure_builtin_skills
 from app.application.skills.catalog import SkillCatalogBuilder

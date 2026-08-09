@@ -7,7 +7,7 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
-from app.application.memory.consolidation.models import (
+from app.application.memory.consolidation.contracts import (
     ConsolidationAction,
     ConsolidationInputManifest,
     ConsolidationOperation,

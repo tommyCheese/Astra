@@ -9,7 +9,7 @@ from app.infrastructure.plugins.contracts import PluginRuntimeBackendContributio
 from app.infrastructure.plugins.diagnostics import plugin_diagnostics
 from app.infrastructure.plugins.discovery import BuiltinDiscoverySource, PluginDiscoverySource
 from app.infrastructure.tools.base import AstraToolRegistry
-from app.infrastructure.tools.runtime import build_runtime_tool_registry
+from app.infrastructure.tools.delegation import build_runtime_tool_registry
 
 
 def build_application_tool_registry(

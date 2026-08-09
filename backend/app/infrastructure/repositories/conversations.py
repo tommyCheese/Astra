@@ -8,6 +8,8 @@ from sqlalchemy import delete, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.application.run_management.projections.conversation_process import build_public_process
+from app.application.run_management.projections.run_view import run_payload
 from app.infrastructure.db.model_base import utc_now
 from app.infrastructure.db.models.conversations import ConversationShareRecord, TaskRecord
 from app.infrastructure.db.models.evolution import (
@@ -58,10 +60,8 @@ from app.infrastructure.db.models.workspaces import (
     WorkspaceCheckpointRecord,
     WorkspaceFileRecord,
 )
-from app.infrastructure.repositories.conversation_process_projection import build_public_process
 from app.infrastructure.repositories.run_chat_projection import build_chat_messages
 from app.infrastructure.repositories.run_query_store import run_detail_options
-from app.infrastructure.repositories.run_view_projection import run_payload
 
 TERMINAL_STATUSES = {"completed", "completed_with_warnings", "blocked", "failed", "cancelled"}
 

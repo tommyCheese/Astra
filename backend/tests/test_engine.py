@@ -12,8 +12,8 @@ from app.application.agent_runtime.policies.reasoning import (
 )
 from app.application.planning.scheduler import PlanScheduler
 from app.application.planning.service import PlanService, canonical_agent_state
-from app.application.run_management.execution import service as engine_module
-from app.application.run_management.execution.service import RunExecution as RunEngine
+from app.application.run_management.execution import run_execution as engine_module
+from app.application.run_management.execution.run_execution import RunExecution as RunEngine
 from app.common.core.config import AstraRuntimeSettings
 from app.common.schemas.agent.execution_state import AgentDecision
 from app.common.schemas.agent.planning import ExpectedObservation, PlanDraft, PlanNodeDraft
@@ -499,11 +499,12 @@ async def test_trusted_skill_checks_become_provenanced_completion_criteria():
             "metadata": {"mandatory_checks": ["Confirm the generated artifact exists."]},
         }
     ]
-    contract, plan = await engine._prepare_plan(
+    contract, plan = await engine.plan_preparation.prepare_plan(
         "run-skill-check",
         "create an artifact",
         profile.reasoning_policy.model_dump(mode="json"),
         profile.model_dump(mode="json"),
+        active_skill_blocks=engine._active_skill_blocks,
     )
     criterion = next(item for item in contract.success_criteria if item.id.startswith("skill-check-"))
     assert criterion.mandatory is True

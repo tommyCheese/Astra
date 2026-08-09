@@ -9,7 +9,6 @@ from dataclasses import dataclass, field
 from hashlib import sha256
 from typing import Any, ClassVar, cast
 
-from app.application.agent_runtime.action import ActionBoundary
 from app.application.agent_runtime.composition import (
     CapabilityRegistration,
     RuntimePorts,
@@ -30,19 +29,15 @@ from app.application.agent_runtime.contracts import (
     PortIdentity,
     SafetyInvariant,
     WaitLoop,
+    port_identity,
 )
 from app.application.agent_runtime.loop import run_loop
+from app.application.agent_runtime.services.tooling.action_boundary import ActionBoundary
 from app.application.agent_runtime.services.tooling.plugin_runtime import (
     PluginRuntimeState,
 )
 from app.common.core.config import AstraRuntimeSettings
 from app.common.schemas.agent.run_policy import RunExecutionProfile
-from app.infrastructure.bootstrap.standard_state import (
-    StandardRuntimeMetrics,
-    StandardStatePort,
-    _observation_payload,
-    _port_identity,
-)
 from app.infrastructure.db.models.permissions import ToolCallRecord
 from app.infrastructure.model_clients.contracts import (
     AnswerDeltaCallback,
@@ -51,6 +46,11 @@ from app.infrastructure.model_clients.contracts import (
 )
 from app.infrastructure.repositories.permissions import PermissionRepository
 from app.infrastructure.repositories.run_unit_of_work import RunUnitOfWork
+from app.infrastructure.runtime.standard_state import (
+    StandardRuntimeMetrics,
+    StandardStatePort,
+    _observation_payload,
+)
 from app.infrastructure.tools.base import AstraToolRegistry
 from app.infrastructure.tools.router import ToolRouter
 
@@ -78,7 +78,7 @@ class StandardModelPort:
     on_answer_delta: AnswerDeltaCallback | None
     metrics: StandardRuntimeMetrics
     max_retries: int
-    identity: ClassVar[PortIdentity] = _port_identity("standard-model", "2")
+    identity: ClassVar[PortIdentity] = port_identity("standard-model", "2")
 
     async def decide(self, state: LoopState, _context: tuple[ContextContribution, ...]) -> ModelDecision:
         resumed = self.state_port.take_resume_action()
@@ -182,7 +182,7 @@ class StandardActionPort:
         )
 
 
-STANDARD_CANCELLATION_IDENTITY = _port_identity("standard-cancellation", "4", SafetyInvariant.cancellation)
+STANDARD_CANCELLATION_IDENTITY = port_identity("standard-cancellation", "4", SafetyInvariant.cancellation)
 
 
 @dataclass(frozen=True)

@@ -7,8 +7,6 @@ import pytest
 from app.application.subagents.context import (
     SubagentContextComposer,
     SubagentContinuationService,
-    SubagentExchangeService,
-    create_context_checkpoint,
 )
 from app.application.subagents.governance import FrozenChildCatalog
 from app.common.schemas.subagents import (
@@ -18,11 +16,8 @@ from app.common.schemas.subagents import (
     DelegationScope,
     EffectiveDelegationScope,
     SubagentBudgetEnvelope,
+    SubagentContextCheckpoint,
 )
-from app.domain.grounding.ledger import GroundingEvidenceConflictError
-from app.domain.grounding.schemas import GroundingEvidenceFragment, GroundingEvidenceKind
-from app.infrastructure.repositories.agent_executions import AgentExecutionRepository
-from app.infrastructure.repositories.run_unit_of_work import RunUnitOfWork
 
 NOW = datetime(2026, 1, 1, tzinfo=timezone.utc)
 
@@ -189,10 +184,12 @@ def test_context_checkpoint_and_continuation_are_child_local_bounded_and_version
         catalog=_catalog(),
         created_at=NOW,
     )
-    checkpoint = create_context_checkpoint(
-        composed=composed,
+    checkpoint = SubagentContextCheckpoint(
+        agent_execution_id=composed.manifest.agent_execution_id,
+        manifest_hash=composed.manifest_hash,
         local_summary="Inspected the delegated sources.",
-        local_facts=[{"text": "local only"}],
+        local_facts=({"text": "local only"},),
+        created_at=NOW,
     )
     continuation = SubagentContinuationService("test-secret", max_round_trips=1)
     question = continuation.question(
@@ -220,104 +217,4 @@ def test_context_checkpoint_and_continuation_are_child_local_bounded_and_version
             checkpoint=resumed,
             question=question,
             values={"jurisdiction": "EU"},
-        )
-
-
-async def test_child_artifact_evidence_staging_and_explicit_parent_promotion(session):
-    run = await RunUnitOfWork(session).create_task_run("Child exchange", {})
-    executions = AgentExecutionRepository(session)
-    root = await executions.root_for_run(run.id)
-    assert root is not None
-    contract = _contract().model_copy(
-        update={
-            "task_id": run.task_id,
-            "run_id": run.id,
-            "parent_execution_id": root.id,
-        }
-    )
-    child = await executions.create_child(contract=contract)
-    sibling_contract = contract.model_copy(
-        update={
-            "contract_id": "dc-sibling",
-            "contract_hash": "sha256:sibling",
-            "request": contract.request.model_copy(update={"request_id": "context-sibling", "dedupe_key": "context:sibling"}),
-        }
-    )
-    sibling = await executions.create_child(contract=sibling_contract)
-    await session.commit()
-    exchange = SubagentExchangeService(session)
-    artifact = await exchange.stage_artifact(
-        agent_execution_id=child.id,
-        relative_name="report.md",
-        artifact_type="child_report",
-        content_ref="object://child/report",
-        mime_type="text/markdown",
-        size_bytes=120_000,
-        checksum="sha256:report",
-        provenance={"tool_call_id": "tool-1"},
-    )
-    evidence = await exchange.stage_evidence(
-        agent_execution_id=child.id,
-        fragment=GroundingEvidenceFragment(
-            id="ev-1",
-            kind=GroundingEvidenceKind.claim,
-            evidence_key="child:claim:1",
-            payload_digest="digest-1",
-            payload={"claim": "Verified"},
-        ),
-    )
-    with pytest.raises(GroundingEvidenceConflictError, match="AgentExecution isolation"):
-        await exchange.stage_evidence(
-            agent_execution_id=sibling.id,
-            fragment=GroundingEvidenceFragment(
-                id="ev-1",
-                kind=GroundingEvidenceKind.claim,
-                evidence_key="child:claim:1",
-                payload_digest="digest-1",
-                payload={"claim": "Verified"},
-            ),
-        )
-    with pytest.raises(ValueError, match="unsafe"):
-        await exchange.stage_artifact(
-            agent_execution_id=child.id,
-            relative_name="../escape.md",
-            artifact_type="child_report",
-            content_ref="object://child/escape",
-            mime_type="text/markdown",
-            size_bytes=1,
-            checksum="sha256:escape",
-            provenance={},
-        )
-    artifact.security_status = "verified"
-    await session.commit()
-    promoted = await exchange.promote_artifact(
-        parent_execution_id=root.id,
-        artifact_id=artifact.id,
-        public_path="reports/final.md",
-    )
-    parent_version = root.state_version
-    parent = await exchange.promote_verified_facts(
-        parent_execution_id=root.id,
-        child_execution_id=child.id,
-        facts=[
-            {
-                "text": "Verified",
-                "verified": True,
-                "evidence_refs": [evidence.id],
-            }
-        ],
-        expected_parent_state_version=parent_version,
-    )
-
-    assert artifact.path.startswith(".astra/subagents/") is False
-    assert promoted.path == "reports/final.md"
-    assert promoted.provenance["source_agent_execution_id"] == child.id
-    assert evidence.agent_execution_id == child.id
-    assert parent.checkpoint["promoted_child_facts"][0]["source_agent_execution_id"] == child.id
-    with pytest.raises(ValueError, match="verified"):
-        await exchange.promote_verified_facts(
-            parent_execution_id=root.id,
-            child_execution_id=child.id,
-            facts=[{"text": "Unverified", "verified": False}],
-            expected_parent_state_version=parent.state_version,
         )

@@ -15,8 +15,8 @@ from app.infrastructure.repositories.tool_settings import (
     ToolSettingsRepository,
 )
 from app.infrastructure.tools.base import AstraToolSpec, validate_json_schema
+from app.infrastructure.tools.delegation import build_runtime_tool_registry
 from app.infrastructure.tools.registry import build_plugin_inventory, sandbox_available
-from app.infrastructure.tools.runtime import build_runtime_tool_registry
 
 router = APIRouter(prefix="/api/tools", tags=["tools"])
 provider_router = APIRouter(prefix="/api/tool-providers", tags=["tool-providers"])

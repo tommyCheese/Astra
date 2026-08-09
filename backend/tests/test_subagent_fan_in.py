@@ -19,23 +19,19 @@ from app.application.subagents.fan_in import (
     SubagentResultValidationError,
     SubagentResultValidator,
     merge_subagent_results,
-    retry_subagent,
 )
-from app.application.subagents.governance import DelegationContractService
 from app.application.subagents.supervisor import SubagentSupervisor
 from app.common.core.config import AstraRuntimeSettings
 from app.common.schemas.agent.execution_state import AgentState
 from app.common.schemas.agent.run_policy import (
     EffectiveSubagentPolicy,
     RequestedReasoningPolicy,
-    SubagentBudgetPolicy,
 )
 from app.common.schemas.agent.run_result import (
     AgentAnswerVerificationReport,
     AgentValidationOutcome,
 )
 from app.common.schemas.agent.types import AnswerMode, PlanExecution, TerminalState
-from app.common.schemas.permissions import PermissionPolicySet, PermissionRule
 from app.common.schemas.subagents import (
     DelegationContract,
     DelegationRequest,
@@ -49,7 +45,6 @@ from app.common.schemas.subagents import (
 from app.infrastructure.db.models.runs import EvidenceRecord
 from app.infrastructure.model_clients.mock import MockModelClient
 from app.infrastructure.repositories.agent_executions import AgentExecutionRepository
-from app.infrastructure.repositories.permissions import PermissionRepository
 from app.infrastructure.repositories.plans import PlanRepository
 from app.infrastructure.repositories.run_unit_of_work import RunUnitOfWork
 from app.infrastructure.tools.base import AstraToolRegistry
@@ -447,64 +442,3 @@ async def test_persisted_root_completion_barrier_waits_through_join_consumption(
     await session.commit()
     after_consumption = await stage.evaluate(run.id, profile, progress, None, verification)
     assert after_consumption.state == TerminalState.completed
-
-
-async def test_safe_retry_preserves_failed_attempt_and_creates_new_identity(session):
-    run = await RunUnitOfWork(session).create_task_run("Retry child", {})
-    root = await AgentExecutionRepository(session).root_for_run(run.id)
-    permissions = PermissionRepository(session)
-    parent = await permissions.create_identity(
-        identity_type="main_agent",
-        principal="parent",
-        run_id=run.id,
-        attributes={"permission_scope": {"actions": ["*"], "resources": ["*"]}},
-    )
-    root.identity_id = parent.id
-    await permissions.freeze_tool_catalog(run.id, catalog=[], digest="sha256:empty")
-    failed = await _child(session, root, "retry")
-    failed.status = "failed"
-    failed.phase = "terminal"
-    failed.result = {"status": "failed", "summary": "transient"}
-    failed.checkpoint = {"attempt": 1}
-    await session.commit()
-    policy = EffectiveSubagentPolicy(
-        enabled=True,
-        read_only=True,
-        budgets=SubagentBudgetPolicy(
-            max_children_total=3,
-            max_children_per_parent=3,
-            max_parallel_children=1,
-            max_depth=1,
-            max_parent_round_trips=0,
-            max_wall_time_seconds=300,
-            max_tokens=8_000,
-            max_model_calls=4,
-            max_tool_calls=8,
-            max_cost_usd=0.5,
-        ),
-    )
-    service = DelegationContractService(
-        session,
-        policy=policy,
-        permission_policies=PermissionPolicySet(
-            version="retry",
-            rules=[
-                PermissionRule(
-                    id="allow",
-                    source="test",
-                    tier="run",
-                    decision="allow",
-                    actions=["delegation_create"],
-                    resources=["identity://*"],
-                    reason_code="retry_allowed",
-                )
-            ],
-        ),
-    )
-    retry = await retry_subagent(service, failed.id, retry_safe=True)
-    assert retry.id != failed.id
-    assert retry.identity_id is not None
-    assert retry.checkpoint["retry_of_execution_id"] == failed.id
-    assert retry.checkpoint["attempt"] == 2
-    await session.refresh(failed)
-    assert failed.status == "failed"

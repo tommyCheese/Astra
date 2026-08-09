@@ -11,7 +11,7 @@ from app.common.schemas.agent.execution_state import AgentDecision, AgentReflect
 from app.common.schemas.agent.planning import PlanDraft, TaskContract
 from app.common.schemas.agent.run_result import AgentFinalAnswer, AgentRunMemoryCandidate
 from app.common.schemas.agent.types import ReasoningEffort
-from app.common.schemas.models import ModelThinkingSnapshot
+from app.common.schemas.model_providers import ModelThinkingSnapshot
 from app.domain.agent_profile import AgentProfile
 
 logger = logging.getLogger("astra.model")
@@ -226,11 +226,10 @@ class ModelClient(ABC):
     async def reflect(self, goal: str, context: dict[str, Any]) -> AgentReflection:
         raise NotImplementedError
 
-    @abstractmethod
     async def finalize(
         self, goal: str, context: dict[str, Any], *, on_delta: AnswerDeltaCallback | None = None
     ) -> AgentFinalAnswer:
-        raise NotImplementedError
+        return await self.synthesize(goal, [{"evidence_pack": context.get("evidence_pack", {})}], on_delta=on_delta)
 
     @abstractmethod
     async def extract_memory_candidates(

@@ -2,6 +2,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
+from app.application.run_management.projections.run_view import run_payload
 from app.application.subagents.lifecycle import SubagentCancellationService
 from app.application.subagents.recovery import SubagentExecutionRecovery
 from app.common.schemas.subagents import DelegationContract, DelegationRequest
@@ -17,7 +18,6 @@ from app.infrastructure.repositories.agent_executions import (
 )
 from app.infrastructure.repositories.approval_contracts import ApprovalRequestCreate
 from app.infrastructure.repositories.run_unit_of_work import RunUnitOfWork
-from app.infrastructure.repositories.run_view_projection import run_payload
 
 
 def _contract(run, root, request_id: str) -> DelegationContract:

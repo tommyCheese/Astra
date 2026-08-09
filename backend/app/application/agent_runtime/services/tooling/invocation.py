@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from app.application.agent_runtime.models import ToolActionInput
+from app.application.agent_runtime.services.tooling.authorization import ToolActionInput
 from app.application.agent_runtime.services.tooling.plugin_runtime import PluginRuntimeState
 from app.application.permissions.effects import workspace_mount_mode
 from app.application.skills.activation import SkillActivationService

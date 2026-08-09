@@ -15,7 +15,7 @@ from app.application.run_management.conversations.context import (
 from app.common.core.config import AstraRuntimeSettings
 from app.common.core.errors import AstraStateConflictError
 from app.common.schemas.context_compaction import CompactionLifecycleStatus
-from app.common.schemas.models import RunModelConfig
+from app.common.schemas.model_providers import RunModelConfig
 from app.infrastructure.db.model_base import utc_now
 from app.infrastructure.db.models.conversations import TaskRecord
 from app.infrastructure.db.models.runs import RunRecord

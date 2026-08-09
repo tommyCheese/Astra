@@ -11,14 +11,12 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
-from app.application.agent_runtime.models import AgentRuntimeLimits, RootRuntimeAssembly
 from app.application.agent_runtime.policies.completion import AgentCompletionGate
 from app.application.agent_runtime.policies.reasoning import (
     AgentObservationEvaluator,
     AgentReflectionGate,
 )
 from app.application.agent_runtime.services.execution.recovery import RunRecoveryStage
-from app.application.agent_runtime.services.execution.runtime_composition import RootRuntimeComposer
 from app.application.agent_runtime.services.shared.progress import ExecutionProgress
 from app.application.agent_runtime.services.tooling.plugin_runtime import PluginRuntimeState
 from app.application.memory.tool_service import MemoryToolService
@@ -47,6 +45,12 @@ from app.infrastructure.repositories.tool_settings import (
     default_tool_states,
 )
 from app.infrastructure.repositories.workspaces import WorkspaceRepository
+from app.infrastructure.runtime.trusted_capabilities import (
+    RuntimeBuildValues,
+    RuntimeInfrastructure,
+    TrustedCapabilityFactory,
+)
+from app.infrastructure.runtime.trusted_state import TrustedRuntime
 from app.infrastructure.sandbox.docker_provider import build_sandbox_provider
 from app.infrastructure.sandbox.runtime import SandboxJobService, SandboxSupervisor
 from app.infrastructure.tools.base import AstraToolRegistry, ToolExecutionError
@@ -110,7 +114,7 @@ class RootPermissionRuntime:
 
 
 @dataclass
-class AgentRuntimeBuilder:
+class TrustedRuntimeFactory:
     """Build named runtime collaborators without embedding execution policy."""
 
     _settings: AstraRuntimeSettings
@@ -132,7 +136,7 @@ class AgentRuntimeBuilder:
         run_id: str,
         goal: str,
         on_answer_delta: Callable[[str], Awaitable[None]] | None,
-    ) -> RootRuntimeAssembly:
+    ) -> TrustedRuntime:
         (run, active_plan), recovery = await self._load_run(repository, run_id)
         profile = RunExecutionProfile.model_validate(run.execution_profile)
         policy = ReasoningPolicySnapshot.model_validate(run.reasoning_policy or {}).effective
@@ -151,29 +155,29 @@ class AgentRuntimeBuilder:
         progress = self._progress(active_plan, run, list(run.tool_calls))
         approved_call, approved_turn, approved_snapshot, terminal = await recovery.recover(run_id, run, progress.observations)
         return self._composer().compose(
-            {
-                "repository": repository,
-                "run_id": run_id,
-                "goal": goal,
-                "on_answer_delta": on_answer_delta,
-                "run": run,
-                "initial_turn_count": len(run.turns),
-                "profile": profile,
-                "policy": policy,
-                "limits": limits,
-                "progress": progress,
-                "approved_call": approved_call,
-                "approved_turn": approved_turn,
-                "approved_snapshot": approved_snapshot,
-                "terminal": terminal,
-                "permission_runtime": permission_runtime,
-                "infrastructure": infrastructure,
-                "supervisor": supervisor,
-            }
+            RuntimeBuildValues(
+                repository=repository,
+                run_id=run_id,
+                goal=goal,
+                on_answer_delta=on_answer_delta,
+                run=run,
+                initial_turn_count=len(run.turns),
+                profile=profile,
+                policy=policy,
+                limits=limits,
+                progress=progress,
+                approved_call=approved_call,
+                approved_turn=approved_turn,
+                approved_snapshot=approved_snapshot,
+                terminal=terminal,
+                permission_runtime=permission_runtime,
+                infrastructure=infrastructure,
+                supervisor=supervisor,
+            )
         )
 
-    def _composer(self) -> RootRuntimeComposer:
-        return RootRuntimeComposer(
+    def _composer(self) -> TrustedCapabilityFactory:
+        return TrustedCapabilityFactory(
             self._settings,
             self._model_client,
             self._tool_registry,
@@ -255,7 +259,7 @@ class AgentRuntimeBuilder:
         self,
         repository: RunUnitOfWork,
         permissions: PermissionRepository,
-    ) -> dict[str, Any]:
+    ) -> RuntimeInfrastructure:
         artifact_service = ArtifactService(
             repository,
             LocalArtifactStore(self._settings.artifact_store_path),
@@ -278,17 +282,17 @@ class AgentRuntimeBuilder:
             artifact_service,
             workspace_service,
         )
-        return {
-            "permissions": permissions,
-            "artifact_service": artifact_service,
-            "workspace_repository": workspace_repository,
-            "workspace_service": workspace_service,
-            "sandbox_service": sandbox_service,
-            "memory_service": MemoryToolService(
+        return RuntimeInfrastructure(
+            permissions=permissions,
+            artifact_service=artifact_service,
+            workspace_repository=workspace_repository,
+            workspace_service=workspace_service,
+            sandbox_service=sandbox_service,
+            memory_service=MemoryToolService(
                 repository,
                 writes_enabled=self._settings.agent_memory_write_enabled,
             ),
-        }
+        )
 
     async def _subagent_supervisor(
         self,
@@ -389,7 +393,11 @@ class AgentRuntimeBuilder:
 
         owner_task.add_done_callback(close)
 
-    def _limits(self, profile: RunExecutionProfile, policy: EffectiveReasoningPolicy) -> AgentRuntimeLimits:
+    def _limits(
+        self,
+        profile: RunExecutionProfile,
+        policy: EffectiveReasoningPolicy,
+    ) -> tuple[int, int | None, int, int]:
         max_turns = self._bounded(policy.budgets.max_turns, self._settings.agent_max_turns)
         unlimited_tools = (
             profile.answer_mode == AnswerMode.trusted

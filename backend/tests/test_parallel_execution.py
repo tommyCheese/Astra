@@ -17,6 +17,7 @@ from app.application.planning.coordinator import NodeExecutionResult, RunCoordin
 from app.application.planning.scheduler import PlanScheduler
 from app.application.planning.service import PlanService
 from app.application.run_management.execution.recovery import scan_run_recovery
+from app.application.run_management.projections.run_view import run_payload
 from app.common.schemas.agent.execution_state import AgentState
 from app.common.schemas.agent.planning import (
     ExpectedObservation,
@@ -36,7 +37,6 @@ from app.infrastructure.repositories.executions import (
 )
 from app.infrastructure.repositories.plans import PlanRepository
 from app.infrastructure.repositories.run_unit_of_work import RunUnitOfWork
-from app.infrastructure.repositories.run_view_projection import run_payload
 
 
 def parallel_plan() -> PlanDraft:

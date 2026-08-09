@@ -9,7 +9,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.infrastructure.db.model_base import utc_now
+from app.infrastructure.db.model_base import require_record, utc_now
 from app.infrastructure.db.models.conversations import TaskRecord
 from app.infrastructure.db.models.runs import RunRecord
 from app.infrastructure.db.models.workspaces import (
@@ -77,7 +77,7 @@ class WorkspaceRepository:
         return workspace
 
     async def for_run(self, run_id: str) -> TaskWorkspaceRecord:
-        run = await self._require_run(run_id)
+        run = await require_record(self.session, RunRecord, run_id, "Run")
         return await self.get_or_create(run.task_id)
 
     async def upsert_file(
@@ -143,7 +143,7 @@ class WorkspaceRepository:
         metadata: dict[str, Any] | None = None,
     ) -> WorkspaceChangeRecord:
         workspace = await self._require_workspace(workspace_id)
-        run = await self._require_run(run_id)
+        run = await require_record(self.session, RunRecord, run_id, "Run")
         if run.task_id != workspace.task_id:
             raise ValueError("Workspace change cannot cross Task boundaries")
         if change_kind not in {"created", "modified", "deleted"}:
@@ -207,7 +207,7 @@ class WorkspaceRepository:
         checksum: str,
         storage_key: str,
     ) -> ArtifactRecord:
-        run = await self._require_run(run_id)
+        run = await require_record(self.session, RunRecord, run_id, "Run")
         path = validate_workspace_path(relative_path)
         artifact = ArtifactRecord(
             run_id=run.id,
@@ -248,7 +248,7 @@ class WorkspaceRepository:
         status: str = "valid",
     ) -> WorkspaceCheckpointRecord:
         workspace = await self._require_workspace(workspace_id)
-        run = await self._require_run(run_id)
+        run = await require_record(self.session, RunRecord, run_id, "Run")
         if run.task_id != workspace.task_id:
             raise ValueError("Workspace checkpoint cannot cross Task boundaries")
         checkpoint = WorkspaceCheckpointRecord(
@@ -267,9 +267,3 @@ class WorkspaceRepository:
         if workspace is None or workspace.deleted_at is not None:
             raise ValueError(f"Task Workspace not found: {workspace_id}")
         return workspace
-
-    async def _require_run(self, run_id: str) -> RunRecord:
-        run = await self.session.get(RunRecord, run_id)
-        if run is None:
-            raise ValueError(f"Run not found: {run_id}")
-        return run

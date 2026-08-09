@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from app.common.schemas.agent.types import ReasoningEffort
-from app.common.schemas.models import (
+from app.common.schemas.model_providers import (
     MODEL_THINKING_CAPABILITY_VERSION,
     EffectiveModelThinking,
     ModelThinkingAdjustment,

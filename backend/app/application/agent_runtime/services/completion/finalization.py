@@ -33,7 +33,7 @@ from app.infrastructure.repositories.run_unit_of_work import RunUnitOfWork
 AnswerDeltaHandler = Callable[[str], Awaitable[None]]
 
 if TYPE_CHECKING:
-    from app.application.agent_runtime.models import RootRuntimeAssembly
+    from app.infrastructure.runtime.trusted_state import TrustedRuntime
 
 _PreparedAnswer = tuple[
     AgentFinalAnswer,
@@ -59,7 +59,7 @@ class AgentFinalizationStage:
     _workspace_service: WorkspaceRuntimeService
     _on_answer_delta: AnswerDeltaHandler | None
 
-    async def execute(self, runtime: RootRuntimeAssembly, goal: str) -> dict[str, Any]:
+    async def execute(self, runtime: TrustedRuntime, goal: str) -> dict[str, Any]:
         prepared = await self._prepare_answer(runtime, goal)
         answer, evidence_pack, artifact, invalid_refs, artifact_ids, status, summary = prepared
         final_context = self._final_context(runtime, evidence_pack)
@@ -92,7 +92,7 @@ class AgentFinalizationStage:
             completion_reflection,
         )
 
-    async def _prepare_answer(self, runtime: RootRuntimeAssembly, goal: str) -> _PreparedAnswer:
+    async def _prepare_answer(self, runtime: TrustedRuntime, goal: str) -> _PreparedAnswer:
         state = runtime.state
         terminal_status = state.terminal_status
         terminal_summary = state.terminal_summary
@@ -125,7 +125,7 @@ class AgentFinalizationStage:
 
     async def _evidence_pack(
         self,
-        runtime: RootRuntimeAssembly,
+        runtime: TrustedRuntime,
         goal: str,
     ) -> tuple[dict[str, Any], ArtifactRecord | None]:
         evidence_pack = self._plugin_runtime.evidence_pack(goal)
@@ -152,7 +152,7 @@ class AgentFinalizationStage:
 
     async def _select_answer(
         self,
-        runtime: RootRuntimeAssembly,
+        runtime: TrustedRuntime,
         goal: str,
         terminal_status: str | None,
         terminal_summary: str | None,
@@ -251,7 +251,7 @@ class AgentFinalizationStage:
 
     async def _persist_full_result(
         self,
-        runtime: RootRuntimeAssembly,
+        runtime: TrustedRuntime,
         answer: AgentFinalAnswer,
         evidence_artifact: ArtifactRecord | None,
         referenced_artifact_ids: list[str],
@@ -294,7 +294,7 @@ class AgentFinalizationStage:
 
     def _audit_refs(
         self,
-        runtime: RootRuntimeAssembly,
+        runtime: TrustedRuntime,
         evidence_artifact: ArtifactRecord | None,
         referenced_artifact_ids: list[str],
     ) -> dict[str, Any]:
@@ -309,7 +309,7 @@ class AgentFinalizationStage:
 
     async def _checkpoint_workspace(
         self,
-        runtime: RootRuntimeAssembly,
+        runtime: TrustedRuntime,
         final_status: str,
     ) -> None:
         if (
@@ -330,7 +330,7 @@ class AgentFinalizationStage:
 
     @staticmethod
     def _final_context(
-        runtime: RootRuntimeAssembly,
+        runtime: TrustedRuntime,
         evidence_pack: dict[str, Any],
     ) -> dict[str, Any]:
         return {

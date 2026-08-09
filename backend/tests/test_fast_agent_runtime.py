@@ -4,16 +4,16 @@ from pathlib import Path
 import pytest
 
 from app.application.agent_runtime.policies.reasoning import resolve_run_profile
-from app.application.run_management.execution.service import RunExecution as RunEngine
+from app.application.run_management.execution.run_execution import RunExecution as RunEngine
 from app.common.core.config import AstraRuntimeSettings
 from app.common.schemas.agent.run_policy import RequestedReasoningPolicy
 from app.common.schemas.agent.types import AnswerMode
-from app.infrastructure.bootstrap.standard_runtime import (
+from app.infrastructure.model_clients.mock import MockModelClient
+from app.infrastructure.repositories.run_unit_of_work import RunUnitOfWork
+from app.infrastructure.runtime.standard import (
     _canonical_model_action,
     standard_compatible_skills,
 )
-from app.infrastructure.model_clients.mock import MockModelClient
-from app.infrastructure.repositories.run_unit_of_work import RunUnitOfWork
 from app.infrastructure.tools.base import (
     AstraTool,
     AstraToolRegistry,

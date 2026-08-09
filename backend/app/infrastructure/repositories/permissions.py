@@ -16,7 +16,7 @@ from app.common.schemas.permissions import (
     PermissionRequest,
     PermissionSubject,
 )
-from app.infrastructure.db.model_base import utc_now
+from app.infrastructure.db.model_base import require_record, utc_now
 from app.infrastructure.db.models.conversations import TaskRecord
 from app.infrastructure.db.models.permissions import (
     AgentDelegationRecord,
@@ -45,7 +45,7 @@ class PermissionRepository:
         commit: bool = True,
     ) -> AgentIdentityRecord:
         if run_id is not None:
-            run = await self._require_run(run_id)
+            run = await require_record(self.session, RunRecord, run_id, "Run")
             if task_id is None:
                 task_id = run.task_id
             elif task_id != run.task_id:
@@ -165,7 +165,7 @@ class PermissionRepository:
         behavioral_digest: str | None = None,
         display_digest: str | None = None,
     ) -> ToolCatalogSnapshotRecord:
-        await self._require_run(run_id)
+        await require_record(self.session, RunRecord, run_id, "Run")
         existing = await self.session.scalar(
             select(ToolCatalogSnapshotRecord).where(ToolCatalogSnapshotRecord.run_id == run_id)
         )
@@ -213,7 +213,7 @@ class PermissionRepository:
         actions: list[str] | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> CredentialGrantRecord:
-        run = await self._require_run(run_id)
+        run = await require_record(self.session, RunRecord, run_id, "Run")
         identity = await self._require_identity(agent_identity_id)
         if identity.run_id not in {None, run_id} or identity.task_id not in {None, run.task_id}:
             raise ValueError("Credential Grant identity is outside the Run boundary")
@@ -255,7 +255,7 @@ class PermissionRepository:
         prohibited_destinations: list[str] | None = None,
         retention: dict[str, Any] | None = None,
     ) -> DataFlowStateRecord:
-        await self._require_run(run_id)
+        await require_record(self.session, RunRecord, run_id, "Run")
         state = await self.session.scalar(select(DataFlowStateRecord).where(DataFlowStateRecord.run_id == run_id))
         if state is None:
             if expected_version not in {None, 0}:
@@ -282,12 +282,6 @@ class PermissionRepository:
 
     async def get_data_flow_state(self, run_id: str) -> DataFlowStateRecord | None:
         return await self.session.scalar(select(DataFlowStateRecord).where(DataFlowStateRecord.run_id == run_id))
-
-    async def _require_run(self, run_id: str) -> RunRecord:
-        run = await self.session.get(RunRecord, run_id)
-        if run is None:
-            raise ValueError(f"Run not found: {run_id}")
-        return run
 
     async def _require_task(self, task_id: str) -> TaskRecord:
         task = await self.session.get(TaskRecord, task_id)

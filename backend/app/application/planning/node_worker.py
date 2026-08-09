@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import Any
 
 from app.application.permissions.effects import DefaultEffectAnalyzer, workspace_mount_mode
@@ -10,6 +9,8 @@ from app.application.planning.concurrency import (
 )
 from app.application.planning.coordinator import NodeContextSnapshot, NodeExecutionResult
 from app.application.planning.node_runtime import (
+    NodeRuntimeRunner,
+    PreparedNodeTool,
     evidence_pack,
     observation_from_output,
 )
@@ -27,15 +28,6 @@ from app.infrastructure.tools.router import ToolRouter
 from app.infrastructure.tools.selection import CapabilityToolResolver
 
 
-@dataclass
-class PreparedNodeTool:
-    effect_plan: Any
-    mount_mode: str
-    workspace_path: Any
-    executions: NodeExecutionRepository
-    early_result: NodeExecutionResult | None = None
-
-
 class ReadOnlyAgentNodeExecutor:
     def __init__(
         self,
@@ -43,10 +35,12 @@ class ReadOnlyAgentNodeExecutor:
         *,
         model_client: ModelClient,
         tool_registry: AstraToolRegistry,
+        runtime_runner: NodeRuntimeRunner | None = None,
     ):
         self.settings = settings
         self.model_client = model_client
         self.tool_registry = tool_registry
+        self.runtime_runner = runtime_runner
         backends = {"in_process"}
         if settings.sandbox_enabled:
             backends.add("sandbox.remote")
@@ -63,11 +57,13 @@ class ReadOnlyAgentNodeExecutor:
         return capabilities
 
     async def __call__(self, repository: RunUnitOfWork, context: NodeContextSnapshot) -> NodeExecutionResult:
-        from app.infrastructure.bootstrap.node_runtime import run_node_runtime
+        if self.runtime_runner is None:
+            raise RuntimeError("Node runtime runner is not configured")
+        return await self.runtime_runner(self, repository, context)
 
-        return await run_node_runtime(self, repository, context)
-
-    async def _invoke_tool(self, repository, context, runtime, turn, tool, decision, prepared_tool) -> None:
+    async def invoke_tool(
+        self, repository: Any, context: Any, runtime: Any, turn: Any, tool: Any, decision: Any, prepared_tool: Any
+    ) -> None:
         call = await repository.start_tool_call(
             context.run_id,
             None,
@@ -183,7 +179,9 @@ class ReadOnlyAgentNodeExecutor:
             tool_call_id=call.id,
         )
 
-    async def _prepare_tool_execution(self, repository, context, runtime, local_turn, turn, tool, decision) -> PreparedNodeTool:
+    async def prepare_tool_execution(
+        self, repository: Any, context: Any, runtime: Any, local_turn: Any, turn: Any, tool: Any, decision: Any
+    ) -> PreparedNodeTool:
         effect_plan = DefaultEffectAnalyzer().analyze(tool.spec, decision.tool_input, task_id=runtime.run.task_id)
         mount_mode = workspace_mount_mode(effect_plan)
         workspace_path = await runtime.workspace_service.prepare(runtime.run.task_id) if mount_mode != "none" else None
@@ -254,7 +252,17 @@ class ReadOnlyAgentNodeExecutor:
             checkpoint={"wait_reason": "resource_conflict", "resource_summaries": resources},
         )
 
-    async def _select_tool(self, repository, context, runtime, local_turn, turn, resolution, allowed_tools, decision):
+    async def select_tool(
+        self,
+        repository: Any,
+        context: Any,
+        runtime: Any,
+        local_turn: Any,
+        turn: Any,
+        resolution: Any,
+        allowed_tools: Any,
+        decision: Any,
+    ) -> Any:
         candidate = allowed_tools.get(decision.tool_name)
         if candidate is None:
             await self._reject_tool_selection(
@@ -311,7 +319,17 @@ class ReadOnlyAgentNodeExecutor:
         await repository.update_agent_turn(turn.id, status="failed", phase="failed", observation=observation)
         await repository.add_event(context.run_id, "tool.selection.rejected", observation)
 
-    async def _complete_node(self, repository, context, runtime, local_turn, turn, resolution, decision, candidate_answer):
+    async def complete_node(
+        self,
+        repository: Any,
+        context: Any,
+        runtime: Any,
+        local_turn: Any,
+        turn: Any,
+        resolution: Any,
+        decision: Any,
+        candidate_answer: Any,
+    ) -> NodeExecutionResult | None:
         if resolution.unresolved_capabilities:
             observation = {
                 "plan_node_id": context.plan_node_id,
@@ -353,7 +371,7 @@ class ReadOnlyAgentNodeExecutor:
             checkpoint={"node_result": observation, "idempotent": True},
         )
 
-    async def _prepare_turn(self, repository, context, runtime, local_turn):
+    async def prepare_turn(self, repository: Any, context: Any, runtime: Any, local_turn: Any) -> Any:
         resolution = self.resolver.resolve(
             context.node.get("required_capabilities") or [],
             observations=runtime.observations,

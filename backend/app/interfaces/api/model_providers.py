@@ -4,7 +4,7 @@ import httpx
 from fastapi import APIRouter, Depends
 
 from app.common.core.config import AstraRuntimeSettings, get_settings
-from app.common.schemas.models import (
+from app.common.schemas.model_providers import (
     ModelConnectionTestRequest,
     ModelConnectionTestResponse,
     ModelContextCapabilitiesRequest,

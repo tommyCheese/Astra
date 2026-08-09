@@ -3,7 +3,7 @@ from datetime import timedelta
 import pytest
 from sqlalchemy import select
 
-from app.application.memory.consolidation.models import ConsolidationConflictError
+from app.application.memory.consolidation.contracts import ConsolidationConflictError
 from app.application.memory.consolidation.service import AutoDreamProcessor
 from app.common.core.config import AstraRuntimeSettings
 from app.domain.memory import MemoryNamespace, MemoryNamespaceType

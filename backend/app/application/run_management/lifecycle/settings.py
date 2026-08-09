@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.common.contracts.json_values import JsonObject
 from app.common.core.config import AstraRuntimeSettings
 from app.common.core.errors import AstraInputValidationError
-from app.common.schemas.models import RunModelConfig
+from app.common.schemas.model_providers import RunModelConfig
 from app.infrastructure.db.models.runs import RunRecord
 from app.infrastructure.model_clients.providers import (
     API_KEY_OPTIONAL_MODEL_PROVIDERS,

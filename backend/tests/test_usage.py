@@ -1,11 +1,10 @@
 from datetime import datetime, timedelta, timezone
 
-from app.infrastructure.db.model_base import utc_now
+from app.infrastructure.db.model_base import as_utc, utc_now
 from app.infrastructure.db.models.permissions import ToolCallRecord
 from app.infrastructure.db.models.runs import AgentTurnRecord
 from app.infrastructure.repositories.run_unit_of_work import RunUnitOfWork
 from app.infrastructure.repositories.usage import UsageRepository, normalize_usage
-from app.interfaces.api.usage import _as_utc
 
 
 async def test_usage_summary_persists_exact_provider_tokens(session):
@@ -86,8 +85,8 @@ def test_usage_range_boundaries_are_normalized_to_utc():
     naive = datetime(2026, 7, 15, 8, 30)
     offset = datetime(2026, 7, 15, 16, 30, tzinfo=timezone(timedelta(hours=8)))
 
-    assert _as_utc(naive) == datetime(2026, 7, 15, 8, 30, tzinfo=timezone.utc)
-    assert _as_utc(offset) == datetime(2026, 7, 15, 8, 30, tzinfo=timezone.utc)
+    assert as_utc(naive) == datetime(2026, 7, 15, 8, 30, tzinfo=timezone.utc)
+    assert as_utc(offset) == datetime(2026, 7, 15, 8, 30, tzinfo=timezone.utc)
 
 
 async def test_reconcile_interrupted_invocations(session):

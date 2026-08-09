@@ -14,7 +14,7 @@ from app.application.run_management.execution.dispatcher import InProcessRunDisp
 from app.application.scheduling.service import SchedulerService
 from app.common.core.config import AstraRuntimeSettings
 from app.domain.agent_profile import configure_agent_profile_resolver
-from app.infrastructure.bootstrap.runtime_dependencies import (
+from app.infrastructure.runtime.dependencies import (
     close_shared_model_http_clients,
     shared_model_http_client,
     shared_tool_registry,

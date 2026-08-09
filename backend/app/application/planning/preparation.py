@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+from dataclasses import dataclass
 from typing import Any
 
 from app.application.agent_runtime.policies.reasoning import (
@@ -56,23 +57,28 @@ def _mandatory_skill_criteria(blocks):
     return criteria
 
 
-class PlanPreparationMixin:
-    async def _prepare_plan(
+@dataclass
+class PlanPreparation:
+    settings: Any
+    model_client: Any
+
+    async def prepare_plan(
         self,
         run_id: str,
         goal: str,
         reasoning_policy: dict[str, Any],
         execution_profile: dict[str, Any] | None = None,
+        active_skill_blocks: list[dict[str, Any]] | None = None,
     ) -> tuple[TaskContract, PlanDraft]:
         ReasoningPolicySnapshot.model_validate(reasoning_policy)
         RunExecutionProfile.model_validate(execution_profile or {})
-        public_goal = self._public_plan_text(goal)
+        public_goal = self.public_plan_text(goal)
         try:
             contract_result = await self.model_client.contract(public_goal)
         except ModelOutputError as exc:
             contract_result = exc
-        contract = self._resolve_contract(run_id, public_goal, contract_result)
-        contract, skill_revisions = self._enrich_contract_with_skills(contract)
+        contract = self.resolve_contract(run_id, public_goal, contract_result)
+        contract, skill_revisions = self.enrich_contract_with_skills(contract, active_skill_blocks or [])
         try:
             plan_result = await self.model_client.plan(
                 goal,
@@ -80,7 +86,7 @@ class PlanPreparationMixin:
             )
         except ModelOutputError as exc:
             plan_result = exc
-        plan = self._resolve_plan(
+        plan = self.resolve_plan(
             run_id,
             plan_result,
             contract=contract,
@@ -97,8 +103,7 @@ class PlanPreparationMixin:
             )
         return contract, plan
 
-    def _enrich_contract_with_skills(self, contract):
-        blocks = getattr(self, "_active_skill_blocks", [])
+    def enrich_contract_with_skills(self, contract: TaskContract, blocks: list[dict[str, Any]]) -> tuple[TaskContract, list[dict[str, Any]]]:
         revisions = [{key: item[key] for key in ("qualified_identity", "revision_id", "digest")} for item in blocks]
         if not revisions:
             return contract, revisions
@@ -121,7 +126,7 @@ class PlanPreparationMixin:
             }
         ), revisions
 
-    def _resolve_contract(self, run_id: str, goal: str, result: TaskContract | Exception | None) -> TaskContract:
+    def resolve_contract(self, run_id: str, goal: str, result: TaskContract | Exception | None) -> TaskContract:
         contract = result
         if isinstance(result, Exception):
             if not isinstance(result, ModelOutputError):
@@ -136,7 +141,7 @@ class PlanPreparationMixin:
                 raise ModelOutputError(f"Invalid task contract: {exc}") from exc
         return contract or build_default_contract(goal)
 
-    def _resolve_plan(
+    def resolve_plan(
         self,
         run_id: str,
         result: PlanDraft | Exception,
@@ -147,7 +152,7 @@ class PlanPreparationMixin:
             if result.nodes:
                 return result
             logger.warning("run.plan.fallback run_id=%s reason=empty plan nodes", run_id)
-            return self._default_plan(
+            return self.default_plan(
                 "生成回复",
                 "直接回应用户当前请求",
                 contract=contract,
@@ -155,14 +160,14 @@ class PlanPreparationMixin:
         if not isinstance(result, ModelOutputError):
             raise result
         logger.warning("run.plan.fallback run_id=%s reason=%s", run_id, str(result))
-        return self._default_plan(
+        return self.default_plan(
             "生成回复",
             "直接回应用户当前请求",
             contract=contract,
         )
 
     @staticmethod
-    def _default_plan(
+    def default_plan(
         title: str,
         intent: str,
         *,
@@ -185,7 +190,7 @@ class PlanPreparationMixin:
         )
 
     @staticmethod
-    def _public_plan_text(text: str) -> str:
+    def public_plan_text(text: str) -> str:
         context_marker = "Conversation context:\n"
         request_marker = "\nCurrent user request: "
         if context_marker not in text or request_marker not in text:
@@ -194,7 +199,7 @@ class PlanPreparationMixin:
         _, current_request = contextual.rsplit(request_marker, 1)
         return prefix + current_request
 
-    async def _conversation_goal(self, repo: RunUnitOfWork, run: RunRecord) -> str:
+    async def conversation_goal(self, repo: RunUnitOfWork, run: RunRecord) -> str:
         current_goal = run.model_policy.get("conversation_goal")
         if not current_goal:
             current_goal = (await repo.require_run(run.id)).task.description

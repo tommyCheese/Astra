@@ -28,7 +28,7 @@
 | Planning | `app.application.planning` | Plan 校验/变更、ready-node 调度、租约、心跳、fan-in 与节点生命周期 | 第二套 Agent loop、HTTP 映射 |
 | Model clients | `app.infrastructure.model_clients` | provider transport、thinking 能力、请求映射与响应归一化 | Run 生命周期、权限决策 |
 | Run 持久化 | `app.infrastructure.repositories.run_unit_of_work:RunUnitOfWork` | 组合窄 store、显式 commit/rollback | 自动提交、公共 read-model 拼装 |
-| Run 查询 | `app.infrastructure.repositories.run_view_projection:run_view` | ORM 直接到 typed public projection | 修改 ORM、触发事务提交、引入 projector wrapper |
+| Run 查询 | `app.application.run_management.projections.run_view:run_view` | ORM 直接到 typed public projection | 修改 ORM、触发事务提交、引入 projector wrapper |
 | 权限 | `app.application.permissions` | effect analysis、allow/ask/deny、grant 与 credential scope | 工具执行 |
 | Subagent | `app.application.subagents.supervisor:SubagentSupervisor` | 委派、谱系、预算、权限衰减、join/cancel | facade 转发层、反向依赖 root runner 实现 |
 | Workspace / Artifact | `app.application.workspaces` / `app.application.workspaces.artifacts` | 受控可变工作区 / 不可变交付物 | 互相替代概念 |

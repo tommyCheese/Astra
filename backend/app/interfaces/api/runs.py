@@ -7,15 +7,15 @@ from fastapi import APIRouter, Depends, Header, Query
 from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.application.run_management.lifecycle.service import RunApplicationService
+from app.application.run_management.lifecycle.commands import RunApplicationService
 from app.application.run_management.projections.events import run_event_broker
 from app.application.run_management.projections.query_service import (
     initial_run,
     recent_runs,
     run_detail,
 )
+from app.application.run_management.projections.run_view import run_view
 from app.application.subagents.lifecycle import SubagentCancellationService
-from app.application.subagents.observability import SubagentTelemetryRepository
 from app.application.workspaces.artifacts import LocalArtifactStore
 from app.common.core.config import AstraRuntimeSettings, get_settings
 from app.common.core.errors import AstraInputValidationError, AstraResourceNotFoundError
@@ -36,7 +36,7 @@ from app.infrastructure.repositories.plans import (
     plan_to_view,
 )
 from app.infrastructure.repositories.run_unit_of_work import RunUnitOfWork
-from app.infrastructure.repositories.run_view_projection import run_view
+from app.infrastructure.repositories.subagent_telemetry import SubagentTelemetryRepository
 from app.interfaces.platform.http.dependencies import (
     AstraApplicationServices,
     get_application_container,

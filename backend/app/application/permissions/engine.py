@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
-from datetime import datetime, timezone
+from datetime import datetime
 from fnmatch import fnmatchcase
 from typing import Any
 
@@ -15,7 +15,7 @@ from app.common.schemas.permissions import (
     PolicyMatch,
     PolicyTier,
 )
-from app.infrastructure.db.model_base import utc_now
+from app.infrastructure.db.model_base import as_utc, utc_now
 from app.infrastructure.db.models.permissions import ApprovalGrantRecord
 
 PROTECTED_RESOURCE_PATTERNS = (
@@ -86,7 +86,7 @@ def _lease_matches(
 def _grant_state_reason(grant, now) -> str | None:
     if grant.status != "active" or grant.revoked_at is not None:
         return "grant_inactive"
-    if grant.expires_at is not None and _as_utc(grant.expires_at) <= _as_utc(now):
+    if grant.expires_at is not None and as_utc(grant.expires_at) <= as_utc(now):
         return "grant_expired"
     if grant.max_uses is not None and grant.use_count >= grant.max_uses:
         return "grant_usage_exhausted"
@@ -247,7 +247,7 @@ class PermissionEngine(InvocationAuthorizationMixin):
 def _rule_matches(rule: Any, request: PermissionRequest, *, now: datetime) -> bool:
     if not rule.enabled:
         return False
-    if rule.expires_at is not None and _as_utc(rule.expires_at) <= _as_utc(now):
+    if rule.expires_at is not None and as_utc(rule.expires_at) <= as_utc(now):
         return False
     if not any(fnmatchcase(request.action, pattern) for pattern in rule.actions):
         return False
@@ -324,9 +324,3 @@ def _invocation_matches(constraints: dict[str, Any], request: PermissionRequest)
 
 def _is_mutating_action(action: str) -> bool:
     return any(marker in action for marker in ("write", "delete", "modify", "create", "grant", "revoke", "execute"))
-
-
-def _as_utc(value: datetime) -> datetime:
-    if value.tzinfo is None:
-        return value.replace(tzinfo=timezone.utc)
-    return value.astimezone(timezone.utc)

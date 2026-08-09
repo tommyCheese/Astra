@@ -10,8 +10,7 @@ from app.application.agent_runtime.policies.reasoning import (
     build_default_contract,
 )
 from app.application.planning.coordinator import RunCoordinator
-from app.application.planning.node_worker import ReadOnlyAgentNodeExecutor
-from app.application.planning.preparation import PlanPreparationMixin
+from app.application.planning.preparation import PlanPreparation
 from app.application.planning.service import PlanService, PlanValidationError, canonical_agent_state
 from app.application.run_management.execution.recovery import scan_run_recovery
 from app.application.run_management.lifecycle.answer_stream import AnswerStream
@@ -31,20 +30,11 @@ from app.common.schemas.agent.planning import (
 )
 from app.common.schemas.agent.run_policy import ReasoningPolicySnapshot, RunExecutionProfile
 from app.common.schemas.agent.types import AnswerMode, PlanExecution, RuntimeKind
-from app.common.schemas.models import ModelThinkingSnapshot
+from app.common.schemas.model_providers import ModelThinkingSnapshot
 from app.domain.agent_profile import (
     AgentProfile,
     AgentProfileConfigurationError,
 )
-from app.infrastructure.bootstrap.runtime_dependencies import (
-    shared_model_http_client,
-    shared_tool_registry,
-)
-from app.infrastructure.bootstrap.standard_runtime import (
-    run_standard_runtime,
-    standard_compatible_skills,
-)
-from app.infrastructure.bootstrap.trusted_runtime import run_trusted_runtime
 from app.infrastructure.db.models.runs import RunRecord
 from app.infrastructure.db.session import SessionLocal
 from app.infrastructure.model_clients.contracts import (
@@ -55,6 +45,16 @@ from app.infrastructure.model_clients.factory import build_model_client
 from app.infrastructure.model_clients.usage_metering import DatabaseUsageRecorder
 from app.infrastructure.repositories.plans import PlanRepository, plan_to_view
 from app.infrastructure.repositories.run_unit_of_work import RunUnitOfWork
+from app.infrastructure.runtime.dependencies import (
+    shared_model_http_client,
+    shared_tool_registry,
+)
+from app.infrastructure.runtime.node import build_node_executor
+from app.infrastructure.runtime.standard import (
+    run_standard_runtime,
+    standard_compatible_skills,
+)
+from app.infrastructure.runtime.trusted import run_trusted_runtime
 from app.infrastructure.tools.base import AstraToolRegistry
 from app.infrastructure.tools.router import ToolRouter
 from app.infrastructure.tools.selection import forbidden_plan_bindings, task_capability_catalog
@@ -62,7 +62,7 @@ from app.infrastructure.tools.selection import forbidden_plan_bindings, task_cap
 logger = logging.getLogger("astra.engine")
 
 
-class RunExecution(PlanPreparationMixin):
+class RunExecution:
     def __init__(
         self,
         settings: AstraRuntimeSettings,
@@ -76,6 +76,7 @@ class RunExecution(PlanPreparationMixin):
             http_client=shared_model_http_client(settings),
         )
         self.tool_registry = tool_registry or shared_tool_registry(settings)
+        self.plan_preparation = PlanPreparation(settings, self.model_client)
         self.answers = AnswerStream()
 
     async def run(self, run_id: str) -> None:
@@ -154,7 +155,7 @@ class RunExecution(PlanPreparationMixin):
         self._bind_reasoning_effort(run)
         self._bind_model_thinking(repo, run)
         skill_snapshot = await self._bind_skills(repo, run, skill_snapshot)
-        goal = await self._conversation_goal(repo, run)
+        goal = await self.plan_preparation.conversation_goal(repo, run)
         execution_profile = RunExecutionProfile.model_validate(run.execution_profile or {})
         if execution_profile.runtime_kind == RuntimeKind.fast_v1:
             await self._execute_standard_runtime(repo, run, goal)
@@ -277,17 +278,12 @@ class RunExecution(PlanPreparationMixin):
     async def _prepare_trusted_run(self, repo, run, goal, execution_profile) -> bool:
         run_id = run.id
         await self._announce_planning(repo, run_id)
-        contract, plan = await self._prepare_plan(
+        contract, plan = await self.plan_preparation.prepare_plan(
             run_id,
             goal,
             run.reasoning_policy or {},
             run.execution_profile or {},
-        )
-        logger.info(
-            "run.plan.ready run_id=%s nodes=%s capabilities=%s",
-            run_id,
-            len(plan.nodes),
-            len({capability for node in plan.nodes for capability in node.required_capabilities}),
+            active_skill_blocks=getattr(self, "_active_skill_blocks", []),
         )
         run = await repo.require_run_core(run_id)
         snapshot = ReasoningPolicySnapshot.model_validate(run.reasoning_policy or {})
@@ -312,7 +308,7 @@ class RunExecution(PlanPreparationMixin):
                 run_id,
                 str(exc),
             )
-            plan = self._default_plan(
+            plan = self.plan_preparation.default_plan(
                 "生成回复",
                 "在当前可用能力范围内回应用户请求",
                 contract=contract,
@@ -405,11 +401,7 @@ class RunExecution(PlanPreparationMixin):
         goal: str,
     ) -> None:
         if self.settings.agent_parallel_execution_enabled:
-            executor = ReadOnlyAgentNodeExecutor(
-                self.settings,
-                model_client=self.model_client,
-                tool_registry=self.tool_registry,
-            )
+            executor = build_node_executor(self.settings, self.model_client, self.tool_registry)
             session_factory = async_sessionmaker(
                 repo.session.bind,
                 expire_on_commit=False,

@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.application.planning.revision import PlanRevisionError, revise_waiting_plan
-from app.application.run_management.lifecycle.contracts import RunExecutionDispatcher
+from app.application.run_management.lifecycle.contracts import RunExecutionDispatcher, run_response
 from app.application.run_management.lifecycle.settings import RunSettingsResolver
 from app.common.core.config import AstraRuntimeSettings
 from app.common.core.errors import AstraInputValidationError, AstraStateConflictError
@@ -55,7 +55,7 @@ class RunContinuationService:
         await repository.commit()
         if request.action != ContinuationAction.revise_plan:
             self._dispatcher.start(run.id, run_settings)
-        return self._response_for_run(run)
+        return run_response(run)
 
     async def decide_approval_and_start(
         self,
@@ -91,7 +91,7 @@ class RunContinuationService:
         await repository.commit()
         run = await repository.require_run(run_id)
         self._dispatcher.start(run_id, run_settings)
-        return self._response_for_run(run)
+        return run_response(run)
 
     @staticmethod
     async def _resume(
@@ -164,14 +164,6 @@ class RunContinuationService:
             continuation_token=request.continuation_token,
         )
 
-    @staticmethod
-    def _response_for_run(run: RunRecord) -> CreateRunResponse:
-        return CreateRunResponse(
-            task_id=run.task_id,
-            run_id=run.id,
-            status=run.status,
-            answer_mode=run.answer_mode,
-        )
 
     @staticmethod
     def _raise_resume_error(error: ValueError) -> None:

@@ -6,7 +6,7 @@ from typing import Any
 
 from sqlalchemy import func, select, update
 
-from app.application.memory.consolidation.models import (
+from app.application.memory.consolidation.contracts import (
     ConsolidationConflictError,
     ConsolidationInputManifest,
     ConsolidationOperation,
