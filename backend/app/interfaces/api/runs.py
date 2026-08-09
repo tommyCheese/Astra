@@ -9,12 +9,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.application.run_management.lifecycle.commands import RunApplicationService
 from app.application.run_management.projections.events import run_event_broker
-from app.application.run_management.projections.query_service import (
+from app.application.run_management.projections.run_view import (
     initial_run,
     recent_runs,
     run_detail,
+    run_view,
 )
-from app.application.run_management.projections.run_view import run_view
 from app.application.subagents.lifecycle import SubagentCancellationService
 from app.application.workspaces.artifacts import LocalArtifactStore
 from app.common.core.config import AstraRuntimeSettings, get_settings

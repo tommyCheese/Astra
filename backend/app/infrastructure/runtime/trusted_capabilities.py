@@ -39,16 +39,53 @@ from app.application.agent_runtime.services.tooling.plugin_runtime import Plugin
 from app.application.planning.scheduler import PlanScheduler
 from app.application.skills.activation import SkillActivationService
 from app.common.core.config import AstraRuntimeSettings
-from app.common.schemas.agent.run_policy import EffectiveReasoningPolicy
+from app.common.schemas.agent.run_policy import EffectiveReasoningPolicy, RunExecutionProfile
+from app.domain.execution.contracts import SubagentSupervisorPort
+from app.infrastructure.db.models.runs import RunRecord
 from app.infrastructure.model_clients.contracts import ModelClient
 from app.infrastructure.repositories.plans import PlanRepository
 from app.infrastructure.repositories.run_unit_of_work import RunUnitOfWork
-from app.infrastructure.runtime.trusted_state import (
-    TrustedRuntime,
-    TrustedRuntimeState,
-)
 from app.infrastructure.tools.base import AstraToolRegistry
 from app.infrastructure.tools.router import ToolRouter
+
+
+@dataclass
+class _TrustedRuntimeState:
+    run: RunRecord
+    profile: RunExecutionProfile
+    approved_tool_call: Any = None
+    approved_turn: Any = None
+    approved_request_snapshot: dict | None = None
+    workspace_path: str | None = None
+    workspace_changed: bool = False
+    required_subagent_missing: bool = False
+    final_turn_id: str | None = None
+    streamed_final_answer: Any = None
+    terminal_status: str | None = None
+    terminal_summary: str | None = None
+
+
+@dataclass(frozen=True)
+class TrustedRuntime:
+    run: RunRecord
+    initial_turn_count: int
+    profile: RunExecutionProfile
+    policy: EffectiveReasoningPolicy
+    max_turns: int
+    max_tool_calls: int | None
+    max_reflections: int
+    max_replans: int
+    progress: ExecutionProgress
+    state: _TrustedRuntimeState
+    preparation_stage: RootTurnPreparationStage
+    decision_stage: RootDecisionStage
+    completion_stage: NodeCompletionStage
+    control_stage: ControlDecisionStage
+    tool_stage: InvocationPipeline
+    subagent_supervisor: SubagentSupervisorPort | None
+    execution_mode: str
+    finalization_stage: AgentFinalizationStage
+    tool_outputs: list[dict[str, Any]]
 
 
 @dataclass(frozen=True)
@@ -300,7 +337,7 @@ class TrustedCapabilityFactory:
         progress: ExecutionProgress = values.progress
         terminal_status, terminal_summary = values.terminal
         max_turns, max_tool_calls, max_reflections, max_replans = values.limits
-        state = TrustedRuntimeState(
+        state = _TrustedRuntimeState(
             run=run,
             profile=values.profile,
             approved_tool_call=values.approved_call,
@@ -349,7 +386,7 @@ class TrustedCapabilityFactory:
         plans: PlanRepository,
         scheduler: PlanScheduler,
         progress: ExecutionProgress,
-        state: TrustedRuntimeState,
+        state: _TrustedRuntimeState,
     ) -> RootTurnPreparationStage:
         repository: RunUnitOfWork = values.repository
         return RootTurnPreparationStage(

@@ -46,7 +46,7 @@ from app.infrastructure.model_clients.contracts import (
 )
 from app.infrastructure.repositories.permissions import PermissionRepository
 from app.infrastructure.repositories.run_unit_of_work import RunUnitOfWork
-from app.infrastructure.runtime.standard_state import (
+from app.infrastructure.runtime.standard_checkpoint import (
     StandardRuntimeMetrics,
     StandardStatePort,
     _observation_payload,

@@ -43,8 +43,8 @@ from app.common.core.config import AstraRuntimeSettings
 from app.common.schemas.agent.run_result import AgentFinalAnswer
 from app.infrastructure.model_clients.contracts import AnswerDeltaCallback, ModelClient
 from app.infrastructure.repositories.run_unit_of_work import RunUnitOfWork
+from app.infrastructure.runtime.trusted_capabilities import TrustedRuntime
 from app.infrastructure.runtime.trusted_factory import TrustedRuntimeFactory
-from app.infrastructure.runtime.trusted_state import TrustedRuntime
 from app.infrastructure.tools.base import AstraToolRegistry
 from app.infrastructure.tools.router import ToolRouter
 

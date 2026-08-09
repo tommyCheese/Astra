@@ -49,8 +49,8 @@ from app.infrastructure.runtime.trusted_capabilities import (
     RuntimeBuildValues,
     RuntimeInfrastructure,
     TrustedCapabilityFactory,
+    TrustedRuntime,
 )
-from app.infrastructure.runtime.trusted_state import TrustedRuntime
 from app.infrastructure.sandbox.docker_provider import build_sandbox_provider
 from app.infrastructure.sandbox.runtime import SandboxJobService, SandboxSupervisor
 from app.infrastructure.tools.base import AstraToolRegistry, ToolExecutionError

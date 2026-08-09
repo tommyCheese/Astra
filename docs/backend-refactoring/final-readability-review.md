@@ -47,3 +47,9 @@ invocation pipeline、两个纯多重继承 Store 壳、重复 Runtime Profile R
 离线 Memory 评估。性能 benchmark 也移到生产包之外。Plan 统一归 `app.application.planning`，Agent 策略与
 执行阶段归 `app.application.agent_runtime`，provider thinking 归 `app.infrastructure.model_clients`；当前 import graph 没有
 生产模块循环或登记的 forbidden edge。
+
+2026-08-10 的导航成本复核进一步把 Standard checkpoint 序列化与恢复合并到
+`infrastructure/runtime/standard_checkpoint.py`，将 Trusted 运行组合值归还
+`trusted_capabilities.py`，并让 Run API 直接使用 `projections/run_view.py`。三条高频路径各删除一个
+无策略跳转，生产规模由 60,619 行、302 模块和 1,189 个公共符号降至 60,580 行、299 模块和
+1,187 个公共符号。详见 `docs/backend-refactoring/navigation-cost-review.md`。

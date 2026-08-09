@@ -11,7 +11,7 @@ from app.application.run_management.projections.run_view import run_payload
 from app.common.schemas.agent.run_policy import RequestedReasoningPolicy
 from app.common.schemas.agent.types import AnswerMode, PlanExecution, RuntimeKind
 from app.infrastructure.repositories.run_unit_of_work import RunUnitOfWork
-from app.infrastructure.runtime.standard_state import (
+from app.infrastructure.runtime.standard_checkpoint import (
     StandardStatePort,
     _checkpoint_payload,
 )

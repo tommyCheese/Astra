@@ -33,7 +33,7 @@ from app.infrastructure.repositories.run_unit_of_work import RunUnitOfWork
 AnswerDeltaHandler = Callable[[str], Awaitable[None]]
 
 if TYPE_CHECKING:
-    from app.infrastructure.runtime.trusted_state import TrustedRuntime
+    from app.infrastructure.runtime.trusted_capabilities import TrustedRuntime
 
 _PreparedAnswer = tuple[
     AgentFinalAnswer,
