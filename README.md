@@ -1,23 +1,40 @@
 # Astra
 
-**A general-purpose, AI-native agent platform for work that must actually get done.**
+**Move agents from “able to call tools” to “able to finish work under constraints.”**
 
 [English](README.md) · [简体中文](README.zh-CN.md) · [日本語](README.ja.md)
 
-Astra is an open-source agent runtime built on top of frontier language models. It turns a user goal into a durable run: understanding context, planning work, selecting tools, executing actions, validating results, and preserving an auditable history.
+Astra is an open-source agent runtime for real task execution. It does not reduce an agent to a “model + prompt + tools” loop. Instead, every user goal becomes a durable, recoverable, and auditable Run whose full lifecycle—from context and planning to execution and evidence-based verification—is managed by the runtime.
 
-It is designed as a task operating system rather than a coding-only assistant. Astra can work with web information, files, sandboxed computation, structured artifacts, memory, scheduled tasks, and governed subagents while keeping permissions and evidence visible.
+Astra's generality does not come from accumulating preset roles or fixed workflows. It comes from applying one execution kernel to web research, files, sandboxed computation, structured artifacts, memory, schedules, and subagents. Across task types, permissions, budgets, evidence, recovery, and completion criteria remain first-class concerns.
 
 > Astra is currently at `v0.1.0` and evolving quickly. Interfaces and deployment contracts may change between releases.
 
-## Why Astra
+## How Astra differs from general-purpose agent platforms
 
-- **Quick and trusted execution** — use a lightweight agent loop for everyday work, or create a versioned Plan DAG with stricter verification and completion gates.
-- **Capability-driven tools** — plans describe what the task needs; the runtime resolves an eligible implementation at execution time and applies policy, permission, risk, approval, and budget checks.
-- **Traceable by design** — turns, tool calls, artifacts, evidence, plan revisions, and verification results are persisted as part of the run timeline.
-- **Governed memory and identity** — Agent Profile instructions are separated from user memory, runtime permissions, and tool authority. Run snapshots keep historical behavior reproducible.
-- **Safe delegation** — subagents receive bounded goals, budgets, permissions, and isolated execution contexts, with supervisor-controlled join, cancellation, and recovery.
-- **Extensible runtime** — use built-in web and chart capabilities, sandboxed workloads, Skills, plugins, scheduled tasks, and OpenAI-compatible model providers.
+Many agent platforms start with “how can a model call more tools and orchestrate more roles?” Astra starts with “how can an execution remain controlled when failures, permission boundaries, and uncertain results are real?” This comparison describes architectural emphasis rather than making a universal claim about every other project.
+
+| Dimension | Common platform emphasis | Astra's emphasis |
+| --- | --- | --- |
+| Unit of execution | A conversation or workflow invocation | A durable Run whose state, events, and checkpoints support recovery and replay |
+| Planning | A temporary task list or in-memory orchestration | A Plan DAG with stable node IDs, dependencies, versions, and lineage |
+| Tool access | Expose tools directly to the model | Declare capabilities, then resolve eligible implementations through policy, authority, risk, approval, and budget gates |
+| Completion | The model answers or a tool returns success | Artifacts, Evidence, Evaluation, and a Completion Gate determine whether the work is complete |
+| Multi-agent | Role conversations or open-ended delegation | Frozen delegation contracts, attenuated authority, hierarchical budgets, isolated context, and supervisor-controlled Join |
+| Memory | More context or long-term storage | Namespaces, immutable versions, provenance, lifecycle, and deletion propagation; memory never carries authority |
+| Observability | Logs, tokens, and call traces | A semantic timeline connecting Plans, Turns, ToolCalls, Approvals, Artifacts, and Evidence |
+
+## Differentiating capabilities
+
+- **One kernel, two execution strengths** — everyday work uses a lightweight quick agent loop; complex or high-risk work uses a versioned trusted Plan DAG, dependency-aware execution, and stricter completion verification. Both share the same tools, Workspace, artifacts, approvals, and security pipeline.
+- **Plans are separate from execution facts** — the Plan Graph says what should happen, the Runtime Trace records what did happen, and Evidence records why a result should be accepted. Plans can be revised and compared without rewriting execution history.
+- **Capabilities are separate from tool implementations** — agents plan for a required capability rather than binding to a specific tool. At execution time, the runtime resolves an eligible implementation and checks authority, data boundaries, approvals, budgets, and risk before effects occur.
+- **Durable execution designed for failure** — events are persisted before streaming; parallel nodes coordinate through leases, attempts, heartbeats, and checkpoints. Non-idempotent operations with unknown outcomes are not silently retried.
+- **Governed multi-agent execution, not an unbounded swarm** — every child works within a frozen goal, tool catalog, permission scope, data boundary, and budget. A child cannot publish the final answer or amplify its parent's authority; the root retains merge and completion ownership.
+- **Auditable without exposing hidden chain of thought** — Astra presents structured decisions, tool effects, user-facing reasoning summaries, artifacts, evidence, and verification results while isolating hidden reasoning, credentials, and private scratchpads.
+- **Extensibility without governance bypasses** — Skills, plugins, sandboxed workloads, schedules, and OpenAI-compatible model providers enter through the same runtime boundary instead of creating side-channel execution paths.
+
+Astra is a strong fit for work that spans multiple steps and tools, must recover from failure, crosses permission or budget boundaries, and needs to deliver verifiable artifacts. If you only need a short-lived chatbot or a simple deterministic workflow, a lighter framework will usually be more direct.
 
 ## How it works
 
