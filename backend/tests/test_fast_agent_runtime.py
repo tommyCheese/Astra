@@ -21,6 +21,7 @@ from app.infrastructure.tools.base import (
     ToolExecutionError,
     ToolResultEnvelope,
 )
+from app.infrastructure.tools.registry import build_application_tool_registry
 
 
 class ScriptedFastClient(MockModelClient):
@@ -146,6 +147,54 @@ async def test_fast_runtime_observes_tool_result_then_answers(session, tmp_path)
     assert len(loaded.tool_calls) == 1
     assert loaded.fast_state_version >= 2
     assert client.contexts[1]["recent_observations"][0]["kind"] == "tool_result"
+
+
+async def test_fast_runtime_completes_workspace_write_read_search_edit_read_list_sequence(session, tmp_path):
+    settings = AstraRuntimeSettings(
+        model_provider="mock",
+        sandbox_enabled=False,
+        artifact_store_path=str(tmp_path / "artifacts"),
+        task_workspace_store_path=str(tmp_path / "workspaces"),
+    )
+    goal = (
+        "创建 regression/files/sample.txt，内容为 alpha beta\\nTARGET_TEXT\\ngamma；"
+        "读取文件；搜索 TARGET_TEXT；将 gamma 精确替换为 delta；再次读取；列出目录。"
+    )
+    repo = RunUnitOfWork(session)
+    run = await create_fast_run(repo, settings, goal)
+
+    await RunEngine(
+        settings,
+        model_client=MockModelClient(),
+        tool_registry=build_application_tool_registry(settings),
+    )._run_with_repo(repo, run.id)
+
+    loaded = await repo.require_run(run.id)
+    assert loaded.status == "completed"
+    assert [call.tool_name for call in loaded.tool_calls] == [
+        "workspace.write",
+        "workspace.read",
+        "workspace.search",
+        "workspace.edit",
+        "workspace.read",
+        "workspace.list",
+    ]
+    assert all(call.status == "succeeded" for call in loaded.tool_calls)
+    assert loaded.tool_calls[1].output["data"]["content"] == "alpha beta\nTARGET_TEXT\ngamma"
+    assert loaded.tool_calls[2].output["data"]["matches"] == [
+        {
+            "path": "regression/files/sample.txt",
+            "line": 2,
+            "column": 1,
+            "text": "TARGET_TEXT",
+        }
+    ]
+    assert loaded.tool_calls[4].output["data"]["content"] == "alpha beta\nTARGET_TEXT\ndelta"
+    assert loaded.tool_calls[5].output["data"]["entries"] == [
+        {"path": "regression/files/sample.txt", "type": "file", "size_bytes": 28}
+    ]
+    result_path = tmp_path / "workspaces" / "tasks" / run.task_id / "regression" / "files" / "sample.txt"
+    assert result_path.read_text(encoding="utf-8") == "alpha beta\nTARGET_TEXT\ndelta"
 
 
 async def test_fast_runtime_pauses_at_shared_approval_boundary(session, tmp_path):

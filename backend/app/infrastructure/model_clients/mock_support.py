@@ -176,16 +176,29 @@ def mock_workspace_decision(goal: str, context: dict[str, Any]) -> AgentDecision
     normalized = goal.casefold()
     manifests = context.get("tool_manifests", {})
     observations = context.get("observations", [])
-    names = {item.get("data", {}).get("tool_name") for item in observations if isinstance(item, dict)}
+    names = [
+        item.get("tool_name") or item.get("data", {}).get("tool_name")
+        for item in observations
+        if isinstance(item, dict)
+    ]
+
+    def call_count(name: str) -> int:
+        return names.count(name)
 
     def has_tool(name: str) -> bool:
         return name in manifests
 
     path_match = re.search(r"([\w./-]+\.(?:txt|md|json|csv|py|ts|tsx|js|yaml|yml))", goal, re.I)
     path = path_match.group(1) if path_match else "result.txt"
-    if any(marker in normalized for marker in ("创建", "写入", "create", "write")) and has_tool("workspace.write") and "workspace.write" not in names:
-        content_match = re.search(r"(?:内容为|content(?:\s+is|:)?)[\s：:]*[“\"]?([^”\"。\n，,]+)", goal, re.I)
-        content = content_match.group(1).strip() if content_match else "Astra workspace smoke test"
+    write_requested = any(marker in normalized for marker in ("创建", "写入", "create", "write"))
+    read_requested = any(marker in normalized for marker in ("读取", "确认文件", "read", "confirm"))
+    search_requested = any(marker in normalized for marker in ("搜索", "查找", "search", "find"))
+    edit_requested = any(marker in normalized for marker in ("替换", "编辑", "replace", "edit"))
+    list_requested = any(marker in normalized for marker in ("浏览", "列出", "list"))
+
+    if write_requested and has_tool("workspace.write") and call_count("workspace.write") == 0:
+        content_match = re.search(r"(?:内容为|content(?:\s+is|:)?)[\s：:]*[“\"]?([^”\"；;。，,]+)", goal, re.I)
+        content = content_match.group(1).strip().replace("\\n", "\n") if content_match else "Astra workspace smoke test"
         return AgentDecision(
             decision_type="call_tool",
             reasoning_summary="任务明确要求创建文件，先写入受限任务工作区。",
@@ -193,7 +206,7 @@ def mock_workspace_decision(goal: str, context: dict[str, Any]) -> AgentDecision
             tool_input={"path": path, "content": content},
             expected_observation="文件被原子写入任务工作区。",
         )
-    if any(marker in normalized for marker in ("读取", "确认文件", "read", "confirm")) and has_tool("workspace.read") and "workspace.read" not in names:
+    if read_requested and has_tool("workspace.read") and call_count("workspace.read") == 0:
         return AgentDecision(
             decision_type="call_tool",
             reasoning_summary="读取刚创建或指定的文件，以验证其内容。",
@@ -201,16 +214,8 @@ def mock_workspace_decision(goal: str, context: dict[str, Any]) -> AgentDecision
             tool_input={"path": path},
             expected_observation="返回文件文本内容。",
         )
-    if any(marker in normalized for marker in ("浏览", "列出", "list")) and has_tool("workspace.list") and "workspace.list" not in names:
-        return AgentDecision(
-            decision_type="call_tool",
-            reasoning_summary="列出任务工作区中的文件。",
-            tool_name="workspace.list",
-            tool_input={"path": "."},
-            expected_observation="返回受限的目录条目。",
-        )
-    if any(marker in normalized for marker in ("搜索", "查找", "search", "find")) and has_tool("workspace.search") and "workspace.search" not in names:
-        query_match = re.search(r"(?:搜索|查找|search|find)[\s：:]*[“\"]?([^”\"。\n]+)", goal, re.I)
+    if search_requested and has_tool("workspace.search") and call_count("workspace.search") == 0:
+        query_match = re.search(r"(?:搜索|查找|search|find)[\s：:]*[“\"]?([\w.-]+)", goal, re.I)
         query = query_match.group(1).strip() if query_match else "Astra"
         return AgentDecision(
             decision_type="call_tool",
@@ -218,6 +223,33 @@ def mock_workspace_decision(goal: str, context: dict[str, Any]) -> AgentDecision
             tool_name="workspace.search",
             tool_input={"query": query},
             expected_observation="返回匹配位置。",
+        )
+    if edit_requested and has_tool("workspace.edit") and call_count("workspace.edit") == 0:
+        replacement = re.search(r"(?:将|把)?\s*[“\"]?([^”\"，,；;\s]+)[”\"]?\s*(?:精确)?替换为\s*[“\"]?([^”\"，,；;。\s]+)", goal, re.I)
+        old_text, new_text = replacement.groups() if replacement else ("old", "new")
+        return AgentDecision(
+            decision_type="call_tool",
+            reasoning_summary="精确替换任务文件中的指定文本。",
+            tool_name="workspace.edit",
+            tool_input={"path": path, "old_text": old_text, "new_text": new_text},
+            expected_observation="指定文本被原子替换一次。",
+        )
+    if read_requested and edit_requested and has_tool("workspace.read") and call_count("workspace.edit") > 0 and call_count("workspace.read") < 2:
+        return AgentDecision(
+            decision_type="call_tool",
+            reasoning_summary="再次读取文件，验证精确替换后的内容。",
+            tool_name="workspace.read",
+            tool_input={"path": path},
+            expected_observation="返回替换后的文件文本内容。",
+        )
+    if list_requested and has_tool("workspace.list") and call_count("workspace.list") == 0:
+        directory = path.rsplit("/", 1)[0] if "/" in path else "."
+        return AgentDecision(
+            decision_type="call_tool",
+            reasoning_summary="列出任务工作区中的目标目录。",
+            tool_name="workspace.list",
+            tool_input={"path": directory},
+            expected_observation="返回受限的目录条目。",
         )
     return None
 

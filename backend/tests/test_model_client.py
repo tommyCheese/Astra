@@ -114,6 +114,50 @@ async def test_mock_model_client_executes_requested_workspace_write_then_read():
     assert read.tool_input == {"path": "hello.txt"}
 
 
+async def test_mock_model_client_advances_through_workspace_regression_sequence():
+    client = MockModelClient()
+    manifests = {
+        name: {"task_capabilities": [name]}
+        for name in (
+            "workspace.write",
+            "workspace.read",
+            "workspace.search",
+            "workspace.edit",
+            "workspace.list",
+        )
+    }
+    goal = (
+        "创建 regression/files/sample.txt，内容为 alpha beta\\nTARGET_TEXT\\ngamma；"
+        "读取文件；搜索 TARGET_TEXT；将 gamma 精确替换为 delta；再次读取；列出目录。"
+    )
+    observations = []
+    decisions = []
+    for _ in range(6):
+        decision = await client.decide(goal, {"observations": observations, "tool_manifests": manifests})
+        decisions.append(decision)
+        observations.append({"kind": "tool_result", "status": "succeeded", "tool_name": decision.tool_name, "data": {}})
+
+    assert [decision.tool_name for decision in decisions] == [
+        "workspace.write",
+        "workspace.read",
+        "workspace.search",
+        "workspace.edit",
+        "workspace.read",
+        "workspace.list",
+    ]
+    assert decisions[0].tool_input == {
+        "path": "regression/files/sample.txt",
+        "content": "alpha beta\nTARGET_TEXT\ngamma",
+    }
+    assert decisions[2].tool_input == {"query": "TARGET_TEXT"}
+    assert decisions[3].tool_input == {
+        "path": "regression/files/sample.txt",
+        "old_text": "gamma",
+        "new_text": "delta",
+    }
+    assert decisions[5].tool_input == {"path": "regression/files"}
+
+
 async def test_mock_model_client_does_not_retry_failed_fetch_url():
     client = MockModelClient()
     context = {
