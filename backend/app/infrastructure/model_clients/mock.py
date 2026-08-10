@@ -22,6 +22,7 @@ from app.infrastructure.model_clients.mock_support import (
     infer_mock_capabilities,
     mock_fetch_decision,
     mock_search_decision,
+    mock_workspace_decision,
     mock_terminal_decision,
     parse_mock_planning_goal,
     summarize_mock_evidence,
@@ -134,7 +135,12 @@ class MockModelClient(ModelClient):
         return answer
 
     async def decide(self, goal: str, context: dict[str, Any]) -> AgentDecision:
-        decision = mock_terminal_decision(context) or mock_search_decision(goal, context) or mock_fetch_decision(goal, context)
+        decision = (
+            mock_workspace_decision(goal, context)
+            or mock_terminal_decision(context)
+            or mock_search_decision(goal, context)
+            or mock_fetch_decision(goal, context)
+        )
         if decision is not None:
             return decision
         if context.get("active_node") is not None:

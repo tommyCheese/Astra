@@ -94,6 +94,26 @@ async def test_mock_model_client_agent_decisions():
     assert final.decision_type == "finalize"
 
 
+async def test_mock_model_client_executes_requested_workspace_write_then_read():
+    client = MockModelClient()
+    manifests = {
+        "workspace.write": {"task_capabilities": ["workspace.write"]},
+        "workspace.read": {"task_capabilities": ["workspace.read"]},
+    }
+    goal = "请创建 hello.txt 文件，内容为 hello Astra，然后读取并确认文件内容。"
+
+    write = await client.decide(goal, {"observations": [], "tool_manifests": manifests})
+    read = await client.decide(
+        goal,
+        {"observations": [{"data": {"tool_name": "workspace.write"}}], "tool_manifests": manifests},
+    )
+
+    assert write.tool_name == "workspace.write"
+    assert write.tool_input == {"path": "hello.txt", "content": "hello Astra"}
+    assert read.tool_name == "workspace.read"
+    assert read.tool_input == {"path": "hello.txt"}
+
+
 async def test_mock_model_client_does_not_retry_failed_fetch_url():
     client = MockModelClient()
     context = {

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -164,6 +165,61 @@ def mock_fetch_decision(goal: str, context: dict[str, Any]) -> AgentDecision | N
         expected_observation="返回正文、质量评分、抓取策略和 warning。",
         stop_condition="抓取足够来源后进行综合验证。",
     )
+
+
+def mock_workspace_decision(goal: str, context: dict[str, Any]) -> AgentDecision | None:
+    """Provide deterministic local file actions for browser and smoke-test runs.
+
+    The mock is intentionally small, but it must not claim a file task succeeded
+    without exercising the file tool that the task explicitly requests.
+    """
+    normalized = goal.casefold()
+    manifests = context.get("tool_manifests", {})
+    observations = context.get("observations", [])
+    names = {item.get("data", {}).get("tool_name") for item in observations if isinstance(item, dict)}
+
+    def has_tool(name: str) -> bool:
+        return name in manifests
+
+    path_match = re.search(r"([\w./-]+\.(?:txt|md|json|csv|py|ts|tsx|js|yaml|yml))", goal, re.I)
+    path = path_match.group(1) if path_match else "result.txt"
+    if any(marker in normalized for marker in ("创建", "写入", "create", "write")) and has_tool("workspace.write") and "workspace.write" not in names:
+        content_match = re.search(r"(?:内容为|content(?:\s+is|:)?)[\s：:]*[“\"]?([^”\"。\n，,]+)", goal, re.I)
+        content = content_match.group(1).strip() if content_match else "Astra workspace smoke test"
+        return AgentDecision(
+            decision_type="call_tool",
+            reasoning_summary="任务明确要求创建文件，先写入受限任务工作区。",
+            tool_name="workspace.write",
+            tool_input={"path": path, "content": content},
+            expected_observation="文件被原子写入任务工作区。",
+        )
+    if any(marker in normalized for marker in ("读取", "确认文件", "read", "confirm")) and has_tool("workspace.read") and "workspace.read" not in names:
+        return AgentDecision(
+            decision_type="call_tool",
+            reasoning_summary="读取刚创建或指定的文件，以验证其内容。",
+            tool_name="workspace.read",
+            tool_input={"path": path},
+            expected_observation="返回文件文本内容。",
+        )
+    if any(marker in normalized for marker in ("浏览", "列出", "list")) and has_tool("workspace.list") and "workspace.list" not in names:
+        return AgentDecision(
+            decision_type="call_tool",
+            reasoning_summary="列出任务工作区中的文件。",
+            tool_name="workspace.list",
+            tool_input={"path": "."},
+            expected_observation="返回受限的目录条目。",
+        )
+    if any(marker in normalized for marker in ("搜索", "查找", "search", "find")) and has_tool("workspace.search") and "workspace.search" not in names:
+        query_match = re.search(r"(?:搜索|查找|search|find)[\s：:]*[“\"]?([^”\"。\n]+)", goal, re.I)
+        query = query_match.group(1).strip() if query_match else "Astra"
+        return AgentDecision(
+            decision_type="call_tool",
+            reasoning_summary="在任务文件中检索指定文本。",
+            tool_name="workspace.search",
+            tool_input={"query": query},
+            expected_observation="返回匹配位置。",
+        )
+    return None
 
 
 def _search_observation(observations: list[dict[str, Any]]) -> dict[str, Any] | None:
