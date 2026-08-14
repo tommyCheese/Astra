@@ -26,6 +26,7 @@ from app.infrastructure.db.models.permissions import AgentIdentityRecord, ToolCa
 from app.infrastructure.db.models.workspaces import TaskWorkspaceRecord, WorkspaceCheckpointRecord
 from app.infrastructure.model_clients.contracts import ModelOutputError
 from app.infrastructure.model_clients.mock import MockModelClient
+from app.infrastructure.repositories.agent_executions import AgentExecutionRepository
 from app.infrastructure.repositories.plans import PlanRepository, plan_to_view
 from app.infrastructure.repositories.run_unit_of_work import RunUnitOfWork
 from app.infrastructure.tools.base import (
@@ -148,7 +149,7 @@ async def test_engine_run_commits_terminal_status_for_a_new_session(monkeypatch,
     async with session_factory() as verification_session:
         completed = await RunUnitOfWork(verification_session).require_run(run_id)
         assert completed.status == "completed"
-        assert completed.summary == "已围绕目标完成 Web 数据查询：你好"
+        assert completed.summary == "已完成任务：你好"
 
     await database_engine.dispose()
 
@@ -442,6 +443,10 @@ async def test_engine_completes_mock_web_query(session):
 
     loaded = await repo.require_run(run.id)
     assert loaded.status == "completed"
+    root_execution = await AgentExecutionRepository(session).root_for_run(run.id)
+    assert root_execution is not None
+    assert root_execution.status == "completed"
+    assert root_execution.phase == "terminal"
     assert loaded.result["verification_notes"]
     assert loaded.steps == []
     canonical_plan = await PlanRepository(session).active_for_run(run.id)
@@ -563,6 +568,9 @@ async def test_trusted_confirmation_activates_exact_plan_once_before_execution(s
     engine = RunEngine(settings, model_client=WeatherPlanClient(), tool_registry=registry)
 
     await engine._run_with_repo(repo, run.id)
+    # The waiting boundary must survive the engine session transaction ending;
+    # the browser reads it from a separate request/session.
+    await session.rollback()
     waiting = await repo.require_run(run.id)
     binding = dict(waiting.waiting_state or {})
     assert waiting.status == "waiting_user"

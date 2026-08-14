@@ -240,8 +240,9 @@ Stop               → run.before_complete
 
 回滚时关闭 external Hook Catalog，只保留空 registry 或平台内建 observation；已冻结 Run 若缺失强制安全 Hook则 fail closed 或由管理员显式取消，不能静默绕过。新增表和事件保留可读，旧 Run 无 Hook snapshot 时按空集合恢复。
 
-## Open Questions
+## Review Decisions Before Implementation
 
-- 第一版是否允许 user-scope HTTP observation Hook，还是仅允许 deployment-managed Hook？建议先 managed-only，稳定后开放带 destination allowlist 的 user scope。
-- completion admission 达到 block cap 后默认应标记 `blocked` 等待用户，还是直接 `failed`？建议交互 Run 为 blocked、unattended Run 为 failed。
-- 兼容导入是否第一版支持 Claude 的 matcher 正则/permission-rule 子集？建议只支持精确 tool name 与显式列表，其他模式在 preview 中标记需人工转换。
+- 第一版 HTTP observation 与全部 admission handler 仅允许 deployment-managed scope。user-scope HTTP 留到 destination allowlist、tenant quota 与 abuse review 完成后的独立阶段。
+- completion block 达到上限时，交互 Run 进入可解释的 `blocked` 并等待用户处理；unattended Run 进入 `failed`。两者都必须保留 remediation 与 Hook provenance。
+- Claude/Copilot 兼容导入第一版只接受精确 tool name 与显式列表；正则、permission-rule 和无法同义映射的 matcher 只展示 preview 警告，不自动近似。
+- 实现审核还需确认事件目录与同步/异步分类；其余默认决策不得在编码时扩展为通用 middleware、任意模型 handler 或 Workspace 自动执行。

@@ -2,6 +2,13 @@
 
 Astra 当前只在新 Run 前把旧 Run 摘要按字符拼接截断，root/child Agent loop 内仍累积未压缩 observations；子 Agent 虽有 `SubagentContextCheckpoint`，却没有自动触发、摘要生成或压缩后上下文重建。长工具循环因此可能溢出或丢失关键状态，现有行为也未达到 Codex式长循环 checkpoint、LangChain 独立 Agent summarization 与 Anthropic artifact-first handoff 所体现的最新实践。
 
+## Current Implementation Baseline (2026-08-12)
+
+- 共享压缩策略、Token accounting、root/conversation/child checkpoint V2、语义生成与 deterministic emergency、CAS 安装、工具输出外置以及 pre-model/post-tool 接入已经落在 `backend/app/application/context_compaction/`。
+- conversation 接入现位于 `backend/app/application/run_management/conversations/context.py`；root 运行时使用统一 `agent_runtime` composition/loop；child 接入位于 `backend/app/application/subagents/`。旧 `runner/` 与顶层 `conversation_context.py` 路径已经失效。
+- 当前剩余范围集中在 child 引用的数据标签/用途校验、protected context 无法容纳时的分类结果、损坏 checkpoint 恢复、生命周期遥测、竞态/崩溃测试、长期质量评测和分阶段上线。
+- 本提案不再负责运行时包结构迁移；它必须复用已经收敛的 canonical runtime、Run 管理与 Subagent 契约。
+
 ## What Changes
 
 - 引入共享、角色感知的 Agent 上下文压缩生命周期，统一真实/估算 Token 计量、阈值检查、pre-model 与 post-tool 触发、checkpoint 持久化、恢复、审计和失败处理。
@@ -27,8 +34,8 @@ Astra 当前只在新 Run 前把旧 Run 摘要按字符拼接截断，root/child
 
 ## Impact
 
-- 后端：`conversation_context.py`、root Agent loop、subagent executor/context/recovery、通用模型客户端、usage 记录、Artifact/Evidence 管线和数据库 checkpoint schema。
+- 后端：`application/context_compaction/`、`application/run_management/conversations/context.py`、canonical Agent Runtime、`application/subagents/`、通用模型端口、usage 记录、Artifact/Evidence 管线和数据库 checkpoint schema。
 - API/UI：上下文状态增加压缩实现、窗口编号、压缩前后 Token、质量/失败状态；现有 `/compact` 与容量面板保持兼容。
 - 数据：需要版本化迁移 `TaskRecord.context_state`、root AgentState 和 `AgentExecutionRecord.checkpoint`，不得删除原始 Run、Turn、ToolCall、Artifact 或 Evidence。
 - 运行成本：Astra 管理的语义压缩会增加普通模型调用；必须单独计量、预算、限流和缓存，但不得切换到 Provider 专有压缩路径。
-- 变更协调：需与已完成但尚未归档的 `add-governed-subagent-runtime` 中 ContextManifest/checkpoint 契约对齐，并与正在进行的并行执行和 subagent supervision 变更避免状态字段冲突。
+- 变更协调：复用现有 `common/schemas/subagents.py`、Subagent ContextManifest/checkpoint、并行 NodeExecution 与 canonical runtime contracts；后续 Hook 只能在既有压缩边界观察或做受限 admission，不得改写 protected prefix/checkpoint。

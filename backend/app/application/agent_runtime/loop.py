@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Awaitable, Callable
 from typing import TypeVar, cast
 
@@ -26,6 +27,7 @@ from app.application.agent_runtime.contracts import (
 
 Contribution = TypeVar("Contribution")
 _OUTCOME_ADAPTER = TypeAdapter(LoopOutcome)
+logger = logging.getLogger("astra.agent_runtime.loop")
 
 
 class LoopContractError(ValueError):
@@ -46,6 +48,7 @@ async def run_loop(composition: RuntimeComposition) -> LoopOutcome:
             error_code="RUNTIME_CONTRACT_VIOLATION",
         )
     except Exception as exc:  # adapters classify provider details at their boundary
+        logger.exception("runtime.loop.failed run_id=%s", state.run_id)
         outcome = FailLoop(
             reason=str(exc),
             error_code="RUNTIME_FAILURE",
@@ -75,6 +78,7 @@ async def _iterate(composition: RuntimeComposition, state: LoopState) -> tuple[L
         except LoopContractError as exc:
             return FailLoop(reason=str(exc), error_code="RUNTIME_CONTRACT_VIOLATION"), state
         except Exception as exc:  # adapters classify provider details at their boundary
+            logger.exception("runtime.turn.failed run_id=%s turn=%s", state.run_id, state.turn_index)
             return FailLoop(reason=str(exc), error_code="RUNTIME_FAILURE"), state
         if outcome.kind != "continue":
             return outcome, state

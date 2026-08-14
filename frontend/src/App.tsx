@@ -18,6 +18,7 @@ import { citationsForClaim, sourceAnchor, validatedCitations, type PresentedCita
 import { ScheduledTasksView } from './ScheduledTasksView';
 import { ModelThinkingContent } from './ModelThinkingContent';
 import { usePacedStreamingText } from './pacedStreamingText';
+import { AgUiChatPage } from './agui/AgUiChatPage';
 
 const QUESTION_SUBMIT_MARK = 'astra.question.submit';
 const FIRST_TOKEN_COMMIT_MARK = 'astra.answer.first_token_commit';
@@ -220,7 +221,8 @@ function reflectionTriggerLabel(value: ConversationStrategyPreferences['reflecti
 }
 
 export function App() {
-  return <I18nProvider><ThemeProvider><AppContent /></ThemeProvider></I18nProvider>;
+  const agUiFirstParty = import.meta.env.MODE !== 'test' && import.meta.env.VITE_AG_UI_ENABLED !== 'false';
+  return <I18nProvider><ThemeProvider>{agUiFirstParty ? <AgUiChatPage /> : <AppContent />}</ThemeProvider></I18nProvider>;
 }
 
 export function DocumentationPage() {
@@ -1403,10 +1405,14 @@ function AppContent() {
     };
   }
 
-  async function reconcileResumedRun(optimistic: RunView) {
+  async function reconcileResumedRun(optimistic: RunView, resolvedApprovalId?: string) {
     setRun(optimistic);
     rememberConversation(optimistic);
-    const snapshot = normalizeRunView(await getRun(optimistic.id));
+    let snapshot = normalizeRunView(await getRun(optimistic.id));
+    for (let attempt = 1; resolvedApprovalId && snapshot.pending_approval?.id === resolvedApprovalId && attempt < 8; attempt += 1) {
+      await new Promise((resolve) => window.setTimeout(resolve, attempt * 40));
+      snapshot = normalizeRunView(await getRun(optimistic.id));
+    }
     setRun(snapshot);
     setProcessState((state) => reconcileProcessSnapshot(state, snapshot));
     rememberConversation(snapshot);
@@ -1421,7 +1427,7 @@ function AppContent() {
     try {
       const resumed = await decideToolApproval(run.id, approval.id, decision, token, selectedRunModel(run));
       const optimistic = { ...run, status: resumed.status, pending_approval: null, waiting_state: null };
-      await reconcileResumedRun(optimistic);
+      await reconcileResumedRun(optimistic, approval.id);
     } catch (err) {
       setError(err instanceof AstraApiError ? err.payload : { type: 'runtime.internal_error', code: 'APPROVAL_FAILED', message: t('提交批准决定失败，请刷新后重试。'), retryable: true, trace_id: 'unavailable' });
     } finally {
@@ -1711,7 +1717,11 @@ function AppContent() {
     const currentMessages = buildPresentation(effectiveRun)
       .filter((message) => !streamingAnswer || message.metadata.presentation !== 'answer')
       .map((message) => ({ ...message, id: `${run?.id ?? 'idle'}:${priorMessages.length}:${message.id}` }));
-    const streamed = visibleStreamingAnswer ? [{ id: answerMessageId, role: 'assistant', content: visibleStreamingAnswer, status: answerContentComplete ? 'completed' : 'streaming', metadata: {} }] : [];
+    const hasPersistedWaitingResponse = effectiveRun?.status === 'waiting_user'
+      && currentMessages.some((message) => message.role === 'assistant' && message.status === 'waiting_user');
+    const streamed = visibleStreamingAnswer && !hasPersistedWaitingResponse
+      ? [{ id: answerMessageId, role: 'assistant', content: visibleStreamingAnswer, status: answerContentComplete ? 'completed' : 'streaming', metadata: {} }]
+      : [];
     return [...priorMessages, ...currentMessages, ...trailingCommandMessages, ...streamed];
   }, [priorMessages, effectiveRun, trailingCommandMessages, streamingAnswer, visibleStreamingAnswer, answerContentComplete]);
   const activeProcessItemId = [...(processState?.items ?? [])].reverse().find((item) => item.status === 'running')?.id;

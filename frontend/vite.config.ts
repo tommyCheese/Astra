@@ -18,6 +18,9 @@ export default defineConfig({
   test: {
     environment: 'jsdom',
     testTimeout: 10_000,
+    env: {
+      VITE_AG_UI_ENABLED: 'false',
+    },
     environmentOptions: {
       jsdom: { url: 'http://localhost/' },
     },

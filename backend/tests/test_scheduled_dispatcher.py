@@ -5,12 +5,14 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
+from app.application.agent_runtime.policies.reasoning import resolve_run_profile
 from app.application.run_management.execution.dispatcher import InProcessRunDispatcher
 from app.application.run_management.lifecycle.contracts import PreparedRunExecution
-from app.application.scheduling.dispatcher import ScheduledRunDispatcher
+from app.application.scheduling.dispatcher import ScheduledRunDispatcher, _model_config
 from app.common.core.config import AstraRuntimeSettings
 from app.common.core.errors import AstraInputValidationError
 from app.common.schemas.agent.api_views import CreateRunResponse
+from app.common.schemas.agent.run_policy import RequestedReasoningPolicy, RunExecutionProfile
 from app.common.schemas.agent.types import AnswerMode
 from app.common.schemas.schedules import ScheduledJobCreate
 from app.infrastructure.db.model_base import AstraOrmRecordBase
@@ -21,6 +23,28 @@ from app.infrastructure.repositories.schedules import ScheduleRepository
 from app.infrastructure.repositories.workspaces import WorkspaceRepository
 
 UTC = timezone.utc
+
+
+def test_scheduled_model_config_ignores_resolved_thinking_snapshot():
+    model = _model_config(
+        {
+            "provider": "mock",
+            "model": "mock",
+            "base_url": "https://api.openai.com/v1",
+            "thinking": {
+                "requested": None,
+                "effective": {"enabled": False, "depth": None},
+                "source": "model_default",
+                "adapter": "unsupported-provider",
+                "adjustments": [],
+                "capability_version": 2,
+            },
+        }
+    )
+
+    assert model is not None
+    assert model.name == "mock"
+    assert model.thinking is None
 
 
 async def _finished_run(_run_id, _settings):
@@ -72,7 +96,10 @@ async def test_dispatcher_reuses_target_conversation_workspace(tmp_path, monkeyp
             task_id=payload.task_id,
             status="completed",
             answer_mode=payload.answer_mode.value,
-            execution_profile={},
+            execution_profile=resolve_run_profile(
+                AnswerMode.standard,
+                RequestedReasoningPolicy(),
+            ).model_dump(mode="json"),
             model_policy={},
             summary="Created report.txt",
         )
@@ -108,6 +135,7 @@ async def test_dispatcher_reuses_target_conversation_workspace(tmp_path, monkeyp
         assert captured_task_ids == [target.id]
         assert captured_answer_modes == [AnswerMode.standard]
         assert run.task_id == target.id
+        assert RunExecutionProfile.model_validate(run.execution_profile).trigger == run.execution_profile["trigger"]
         assert stored_schedule_run.task_id == target.id
         assert reused_workspace.id == target_workspace.id
         assert run.execution_profile["trigger"]["workspace_id"] == target_workspace.id

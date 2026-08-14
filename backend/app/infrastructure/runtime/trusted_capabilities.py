@@ -67,6 +67,7 @@ class _TrustedRuntimeState:
 
 @dataclass(frozen=True)
 class TrustedRuntime:
+    run_id: str
     run: RunRecord
     initial_turn_count: int
     profile: RunExecutionProfile
@@ -359,6 +360,7 @@ class TrustedCapabilityFactory:
         )
         finalization = self._finalization(values, plans, collaborators, infrastructure)
         return TrustedRuntime(
+            run_id=values.run_id,
             run=run,
             initial_turn_count=values.initial_turn_count,
             profile=values.profile,

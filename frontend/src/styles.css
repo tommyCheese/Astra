@@ -5991,6 +5991,42 @@ html[data-theme="dark"] .question-preview p {
   }
 }
 
+/* AG-UI first-party chat. Native chat remains available with VITE_AG_UI_ENABLED=false. */
+.ag-ui-chat {
+  background: var(--app-canvas);
+  color: var(--app-text);
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  height: 100dvh;
+  margin: 0 auto;
+  max-width: 960px;
+  min-width: 0;
+}
+.ag-ui-chat__header { align-items: center; border-bottom: 1px solid var(--app-line); display: flex; justify-content: space-between; padding: 14px 22px; }
+.ag-ui-chat__header > div:first-child { display: grid; gap: 2px; }
+.ag-ui-chat__header span, .ag-ui-chat__status, .ag-ui-message__role { color: var(--app-text-muted); font-size: 12px; }
+.ag-ui-chat__timeline { min-width: 0; overflow: auto; padding: 28px 22px 120px; }
+.ag-ui-chat__empty { margin: 18vh auto 0; max-width: 560px; text-align: center; }
+.ag-ui-chat__empty h1 { font-size: clamp(28px, 5vw, 42px); margin-bottom: 8px; }
+.ag-ui-message, .ag-ui-reasoning, .ag-ui-tool, .ag-ui-chat__timeline > section, .ag-ui-chat__timeline > form {
+  border: 1px solid var(--app-line); border-radius: 14px; margin: 12px auto; max-width: 720px; overflow-wrap: anywhere; padding: 14px 16px;
+}
+.ag-ui-message--user { background: var(--app-surface-raised); margin-right: max(0px, calc((100% - 720px) / 2)); max-width: min(620px, 88%); }
+.ag-ui-message p, .ag-ui-reasoning p, .ag-ui-chat__timeline section p { margin: 6px 0 0; white-space: pre-wrap; }
+.ag-ui-tool pre { max-height: 240px; overflow: auto; white-space: pre-wrap; }
+.ag-ui-chat__error { color: var(--app-danger, #b42318); margin: 12px auto; max-width: 720px; }
+.ag-ui-composer { background: color-mix(in srgb, var(--app-canvas) 92%, transparent); border: 1px solid var(--app-line); border-radius: 16px; display: grid; gap: 8px; margin: 0 22px 20px; padding: 12px; }
+.ag-ui-composer label { font-size: 0; }
+.ag-ui-composer textarea { background: transparent; border: 0; color: inherit; min-height: 54px; outline: 0; resize: vertical; width: 100%; }
+.ag-ui-composer__actions { display: flex; gap: 8px; justify-content: flex-end; }
+.ag-ui-composer button, .ag-ui-chat__timeline form button, .ag-ui-chat__timeline form select, .ag-ui-chat__timeline form textarea { min-height: 40px; }
+.ag-ui-chat__timeline form textarea, .ag-ui-chat__timeline form select { box-sizing: border-box; display: block; margin: 10px 0; width: 100%; }
+@media (max-width: 620px) {
+  .ag-ui-chat__header, .ag-ui-chat__timeline { padding-inline: 14px; }
+  .ag-ui-composer { margin-inline: 10px; }
+  .ag-ui-composer__actions { flex-wrap: wrap; }
+}
+
 /* Main window: restrained ChatGPT reading rhythm with macOS material hierarchy. */
 :root {
   --workspace-content-width: 920px;

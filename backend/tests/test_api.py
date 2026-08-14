@@ -11,12 +11,14 @@ from app.application.agent_runtime.policies.reasoning import (
     build_default_contract,
     resolve_run_profile,
 )
+from app.application.permissions.governance import verify_permission_bundle
 from app.application.planning import revision as plan_revision_module
 from app.application.planning.service import PlanService, canonical_agent_state
 from app.common.core.config import AstraRuntimeSettings, get_settings
 from app.common.schemas.agent.planning import ExpectedObservation, PlanDraft, PlanNodeDraft
 from app.common.schemas.agent.run_policy import RequestedReasoningPolicy
 from app.common.schemas.agent.types import AnswerMode, PlanExecution, PlanNodeStatus
+from app.common.schemas.permissions import PermissionBundle
 from app.domain.memory import MemoryStatus
 from app.infrastructure.db.model_base import AstraOrmRecordBase, utc_now
 from app.infrastructure.db.models.conversations import TaskRecord
@@ -218,6 +220,35 @@ async def test_scheduled_tasks_api_binds_result_conversation_and_resolves_execut
     )
     assert rejected_binding.status_code == 404
     assert rejected_binding.json()["error"]["code"] == "CONVERSATION_NOT_FOUND"
+
+
+async def test_schedule_management_falls_back_to_signed_model_only_execution(app_client):
+    target = await app_client.post(
+        "/api/conversations",
+        json={"title": "Model-only scheduled result"},
+    )
+
+    created = await app_client.post(
+        "/api/schedules",
+        json={
+            "name": "No privileged run required",
+            "target_task_id": target.json()["id"],
+            "prompt": "Reply with a fixed marker",
+            "schedule": {"type": "interval", "interval_seconds": 3600},
+            "timezone": "Asia/Shanghai",
+        },
+    )
+
+    assert created.status_code == 201
+    execution = created.json()["execution"]
+    bundle = PermissionBundle.model_validate(execution["permission_bundle"])
+    assert execution["model"] is None
+    assert bundle.allowed_actions == []
+    assert bundle.allowed_resources == []
+    assert bundle.allowed_effect_kinds == []
+    assert bundle.allowed_tool_identities == []
+    assert bundle.network_destinations == []
+    assert verify_permission_bundle(bundle, app_client._astra_settings.permission_bundle_signing_secret)
 
 
 async def test_heartbeat_api_uses_one_global_desired_state(app_client):
@@ -2267,7 +2298,7 @@ def test_model_config_accepts_supported_cloud_providers(provider):
     assert configured.model_provider == provider
 
 
-@pytest.mark.parametrize("provider", ["ollama", "lmstudio", "vllm", "localai", "compatible"])
+@pytest.mark.parametrize("provider", ["ollama", "lmstudio", "vllm", "localai", "compatible", "mock"])
 def test_model_config_allows_keyless_local_providers(provider):
     from app.application.run_management.lifecycle.settings import RunSettingsResolver
 

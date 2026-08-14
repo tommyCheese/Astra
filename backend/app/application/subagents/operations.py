@@ -347,14 +347,16 @@ class SubagentRuntimeOperations:
                 },
                 agent_execution_id=parent_execution_id,
             )
+            join_id = join.id
+            child_execution_ids = tuple(item.id for item in children)
             await self.session.commit()
         except Exception:
             await self.session.rollback()
             raise
         return SubagentFanoutResult(
             group_id=fanout.group_id,
-            join_id=join.id,
-            child_execution_ids=tuple(item.id for item in children),
+            join_id=join_id,
+            child_execution_ids=child_execution_ids,
         )
 
     async def inspect_delegation(self, execution_id: str) -> dict[str, Any]:

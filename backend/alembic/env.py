@@ -27,6 +27,7 @@ SUPPORTED_REVISIONS = {
     "0010_remove_builtin_web_tools",
     "0011_fast_agent_runtime",
     "0012_fast_runtime_only",
+    "0013_ag_ui_bindings",
 }
 
 

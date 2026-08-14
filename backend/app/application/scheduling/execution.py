@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from uuid import uuid4
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.application.permissions.governance import verify_permission_bundle
+from app.application.permissions.governance import permission_bundle_digest, verify_permission_bundle
 from app.common.core.config import AstraRuntimeSettings
 from app.common.core.errors import AstraInputValidationError
 from app.common.schemas.permissions import PermissionBundle
@@ -35,6 +36,53 @@ class ScheduledExecutionResolver:
         except AstraInputValidationError:
             return await self.from_workspace()
 
+    async def for_management(self, task_id: str, *, workspace_fallback: bool = True) -> ScheduledExecutionConfig:
+        """Resolve an existing unattended grant or create a signed no-tool profile.
+
+        The management API is an explicit local-user action, so a model-only
+        schedule can be created without first running a privileged tool. Tool
+        access remains fail-closed because the fallback bundle grants no tool
+        identities, actions, effects, resources, network, credentials, or outputs.
+        """
+
+        try:
+            if workspace_fallback:
+                return await self.from_task_or_workspace(task_id)
+            return await self.from_task(task_id)
+        except AstraInputValidationError as exc:
+            if exc.payload.code != "AUTOMATION_PERMISSION_BUNDLE_REQUIRED":
+                raise
+            return self._model_only_execution()
+
+    def _model_only_execution(self) -> ScheduledExecutionConfig:
+        bundle = PermissionBundle(
+            id=f"pb_{uuid4().hex}",
+            version="1",
+            allowed_actions=[],
+            allowed_resources=[],
+            allowed_effect_kinds=[],
+            allowed_tool_identities=[],
+            network_destinations=[],
+            allowed_data_labels=[],
+            allowed_credential_scopes=[],
+            output_destinations=[],
+            max_tool_calls=1,
+            max_runtime_seconds=600,
+            expires_at=datetime.now(timezone.utc) + timedelta(days=365),
+            digest="",
+        )
+        bundle = bundle.model_copy(
+            update={
+                "digest": permission_bundle_digest(
+                    bundle,
+                    self.settings.permission_bundle_signing_secret,
+                )
+            }
+        )
+        return ScheduledExecutionConfig(
+            permission_bundle=bundle.model_dump(mode="json"),
+        )
+
     async def _from_query(self, query) -> ScheduledExecutionConfig:
         runs = list((await self.session.scalars(query)).all())
         now = datetime.now(timezone.utc)
@@ -59,7 +107,7 @@ class ScheduledExecutionResolver:
                 continue
             model = {
                 key: run.model_policy.get(key)
-                for key in ("provider", "model", "base_url", "thinking")
+                for key in ("provider", "model", "base_url")
                 if run.model_policy.get(key) is not None
             }
             return ScheduledExecutionConfig(

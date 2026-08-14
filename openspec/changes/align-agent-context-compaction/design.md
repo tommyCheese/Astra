@@ -226,10 +226,10 @@ checkpoint 校验失败不会安装；原活动历史和审计记录保持不变
 
 回滚时关闭 V2 feature flags，继续读取完整审计历史并恢复 V1 conversation 投影；V2 checkpoint 保留但不注入。不得通过回滚删除 V2 期间产生的 Run、Turn、ToolCall、Artifact、Evidence 或 AgentExecution。
 
-## Open Questions
+## Review Decisions Based on the Current Implementation
 
-- root/conversation 默认 64K recent tail 是否对所有 128K 小窗口过大？设计已要求取 `min(configured, 20% usable_input)`，仍需通过模型族 eval 校准。
-- 是否允许部署方选择独立的普通 compaction model route？若允许，需要定义最低能力、数据驻留和费用策略，默认仍使用活动模型。
-- deterministic emergency checkpoint 是否默认允许安装，还是仅用于 protected prefix/verified facts 足以继续的角色？建议按角色策略显式启用。
-- UI 是否向用户展示完整可读 checkpoint，还是只展示经过安全裁剪的摘要与审计元数据？建议将模型 continuation data 与用户可读摘要分开。
-- `add-governed-subagent-runtime` 归档前如何合并 checkpoint schema？实现前应先同步/归档其完成规格，或在本变更中明确迁移所有已落地字段。
+- recent tail 已按 `min(configured, 20% usable_input)` 计算；64K 只是配置上限，不是所有模型的固定保留量。最终默认值仍由 10.6 模型族评测校准。
+- 默认继续使用当前活动模型的通用生成端口。独立 compaction model route 只有在补齐最低能力、数据驻留、成本归属和 fallback 策略后才能开放。
+- deterministic emergency 按角色策略显式启用，并且只在 protected prefix 与 verified facts 足以安全继续时安装；不得用它摘要权限、契约或未知事实。
+- UI 只展示经过安全裁剪的摘要与审计元数据，不直接渲染模型 continuation checkpoint。
+- Subagent checkpoint schema 已进入现有 common/application 边界；本变更直接兼容当前 `ContextManifest`、contract/manifest hash 与 continuation 字段，不再依赖旧变更的归档顺序。

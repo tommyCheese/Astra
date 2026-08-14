@@ -223,6 +223,55 @@ async def test_fast_runtime_pauses_at_shared_approval_boundary(session, tmp_path
     assert loaded.tool_calls[0].status == "awaiting_approval"
 
 
+async def test_fast_runtime_replays_the_frozen_tool_action_after_approval(session, tmp_path):
+    settings = AstraRuntimeSettings(
+        model_provider="mock",
+        sandbox_enabled=False,
+        artifact_store_path=str(tmp_path / "artifacts"),
+        task_workspace_store_path=str(tmp_path / "workspaces"),
+    )
+    repo = RunUnitOfWork(session)
+    run = await create_fast_run(repo, settings, "write after approval", "request_approval")
+    client = ScriptedFastClient(
+        [
+            {
+                "protocol_version": 1,
+                "action": "call_tool",
+                "tool_name": "workspace.write",
+                "tool_input": {"path": "approval/replayed.txt", "content": "frozen action"},
+            },
+            {"protocol_version": 1, "action": "answer", "content": "write completed"},
+        ]
+    )
+    registry = build_application_tool_registry(settings)
+    engine = RunEngine(settings, model_client=client, tool_registry=registry)
+
+    await engine._run_with_repo(repo, run.id)
+    waiting = await repo.require_run(run.id)
+    approval = waiting.approval_requests[-1]
+    await repo.decide_approval(
+        run.id,
+        approval.id,
+        "approve_once",
+        continuation_token=waiting.waiting_state["continuation_token"],
+    )
+
+    await engine._run_with_repo(repo, run.id)
+
+    loaded = await repo.require_run(run.id)
+    assert loaded.status == "completed"
+    assert len(loaded.tool_calls) == 1
+    assert loaded.tool_calls[0].status == "succeeded"
+    assert loaded.tool_calls[0].input == {
+        "path": "approval/replayed.txt",
+        "content": "frozen action",
+    }
+    assert loaded.result["summary"] == "write completed"
+    assert len(client.contexts) == 2
+    result_path = tmp_path / "workspaces" / "tasks" / run.task_id / "approval" / "replayed.txt"
+    assert result_path.read_text(encoding="utf-8") == "frozen action"
+
+
 async def test_fast_runtime_multi_tool_failure_recovery_and_terminal_convergence(session, tmp_path):
     settings = AstraRuntimeSettings(
         model_provider="mock",

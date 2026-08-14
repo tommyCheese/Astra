@@ -618,6 +618,57 @@ describe('App', () => {
     expect(Number(document.documentElement.dataset.astraQuestionToFirstTokenMs)).toBeGreaterThan(0);
   });
 
+  it('does not duplicate a streamed clarification after the waiting snapshot is persisted', async () => {
+    const completed = await vi.mocked(getRun)('fixture');
+    const clarification = '请说明你想创建的文件名和内容。';
+    vi.mocked(getRun).mockResolvedValueOnce({
+      ...completed,
+      status: 'waiting_user',
+      result: null,
+      summary: clarification,
+      waiting_state: {
+        paused_node: 'select_action',
+        continuation_token: 'continue-clarification',
+        request: clarification,
+      },
+      events: [
+        { id: 1, type: 'reasoning.summary.completed', payload: { summary: '需要澄清用户意图' }, created_at: 'now' },
+        { id: 2, type: 'run.waiting_user', payload: { request: clarification }, created_at: 'now' },
+      ],
+      chat_messages: [
+        { id: 'clarification-user', role: 'user', content: '创建另外一个工具', status: 'completed', metadata: {} },
+        { id: 'clarification-answer', role: 'assistant', content: clarification, status: 'waiting_user', metadata: {} },
+      ],
+    });
+    vi.mocked(takeCreatedRunStream).mockReturnValueOnce({
+      created: Promise.resolve({
+        run_id: 'run-1',
+        task_id: 'task-1',
+        status: 'created',
+        answer_mode: 'standard',
+      }),
+      subscribe(onEvent) {
+        onEvent({ type: 'answer.started', payload: {} });
+        onEvent({ id: 1, type: 'answer.delta', payload: { delta: clarification } });
+        onEvent({ id: 2, type: 'run.waiting_user', payload: { request: clarification } });
+        return () => undefined;
+      },
+      close: vi.fn(),
+    });
+
+    render(<App />);
+    await userEvent.type(screen.getByRole('textbox'), '创建另外一个工具');
+    await userEvent.click(screen.getByRole('button', { name: '发送' }));
+
+    await waitFor(() => expect(getRun).toHaveBeenCalledWith('run-1', expect.any(AbortSignal)));
+    await waitFor(() => expect(screen.getAllByText(clarification)).toHaveLength(1));
+    const processPanel = document.querySelector('.process-panel');
+    const answer = screen.getByText(clarification).closest('article');
+    expect(processPanel).not.toBeNull();
+    expect(answer).not.toBeNull();
+    expect(processPanel!.compareDocumentPosition(answer!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
   it('selects a Skill through slash commands, highlights it, and submits a clean explicit binding', async () => {
     vi.mocked(listSkills).mockResolvedValueOnce([helloSkill]);
     render(<App />);
@@ -3274,6 +3325,51 @@ describe('App', () => {
       expect.objectContaining({ provider: 'openai', name: 'gpt-5' }),
     );
     await waitFor(() => expect(screen.queryByRole('group', { name: '需要你的确认' })).not.toBeInTheDocument());
+  });
+
+  it('replaces a stale decided approval with the next approval from the same run', async () => {
+    const completed = await vi.mocked(getRun)('fixture');
+    const firstApproval = {
+      ...completed,
+      status: 'waiting_user',
+      result: null,
+      pending_approval: {
+        id: 'approval-write', tool_call_id: 'call-write', tool_name: 'workspace.write',
+        preview: '{"path":"old.txt"}', permission: 'workspace_write', impact: 'moderate',
+        decisions: ['approve_once', 'allow_similar', 'reject'] as Array<'approve_once' | 'allow_similar' | 'reject'>,
+        affected_resources: ['task://task-1/workspace/old.txt'], effect_kinds: ['workspace_write'], created_at: 'now',
+      },
+      waiting_state: { kind: 'tool_approval', continuation_token: 'continue-write' },
+      chat_messages: [{ id: 'u-approval-sequence', role: 'user', content: '依次写入并编辑', status: 'completed', metadata: {} }],
+    };
+    const nextApproval = {
+      ...firstApproval,
+      pending_approval: {
+        ...firstApproval.pending_approval,
+        id: 'approval-edit',
+        tool_call_id: 'call-edit',
+        tool_name: 'workspace.edit',
+        preview: '{"path":"current.txt"}',
+        affected_resources: ['task://task-1/workspace/current.txt'],
+      },
+      waiting_state: { kind: 'tool_approval', continuation_token: 'continue-edit' },
+    };
+    vi.mocked(createRun).mockResolvedValueOnce({ run_id: 'run-1', task_id: 'task-1', status: 'waiting_user' });
+    vi.mocked(getRun).mockReset();
+    vi.mocked(getRun)
+      .mockResolvedValueOnce(firstApproval)
+      .mockResolvedValueOnce(firstApproval)
+      .mockResolvedValue(nextApproval);
+
+    render(<App />);
+    await userEvent.type(screen.getByRole('textbox'), '依次写入并编辑');
+    await userEvent.click(screen.getByRole('button', { name: '发送' }));
+    await userEvent.click(await screen.findByRole('button', { name: '当前运行内允许' }));
+
+    const approvalCard = await screen.findByRole('group', { name: '需要你的确认' });
+    await waitFor(() => expect(approvalCard).toHaveTextContent('current.txt'));
+    expect(approvalCard).not.toHaveTextContent('old.txt');
+    expect(getRun).toHaveBeenCalledTimes(3);
   });
 
   it('omits similar-command approval when the backend does not offer it', async () => {

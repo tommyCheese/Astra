@@ -38,6 +38,25 @@ describe('conversation presentation', () => {
     ]));
   });
 
+  it('places the thinking process before a persisted clarification response', () => {
+    const messages = buildPresentation(waitingRun({
+      events: [
+        { id: 1, type: 'reasoning.summary.completed', payload: { summary: '需要澄清用户意图' }, created_at: 'now' },
+        { id: 2, type: 'run.waiting_user', payload: { request: '请告诉我你希望我完成的具体任务或问题。' }, created_at: 'now' },
+      ],
+      chat_messages: [
+        { id: 'user-1', role: 'user', content: '！', status: 'completed', metadata: {} },
+        { id: 'assistant-1', role: 'assistant', content: '请告诉我你希望我完成的具体任务或问题。', status: 'waiting_user', metadata: {} },
+      ],
+    }));
+
+    expect(messages.map((message) => message.metadata.presentation ?? message.role)).toEqual([
+      'user',
+      'process',
+      'assistant',
+    ]);
+  });
+
   it('does not duplicate waiting text when a dedicated approval UI is present', () => {
     const messages = buildPresentation(waitingRun({
       pending_approval: {

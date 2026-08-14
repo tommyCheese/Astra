@@ -355,6 +355,7 @@ class RunExecution:
                     "request": "计划已生成，确认后执行。",
                 },
             )
+            await repo.session.commit()
             return True
         if contract.ambiguity_status != "clear":
             await repo.set_waiting_state(
@@ -366,6 +367,7 @@ class RunExecution:
                     "request": contract.clarification_question,
                 },
             )
+            await repo.session.commit()
             return True
         return False
 
@@ -483,6 +485,7 @@ class RunExecution:
         goal: str,
     ) -> None:
         run = await repo.require_run_core(run_id)
+        background_verification = run.answer_mode == AnswerMode.trusted.value
         logger.info("run.phase run_id=%s phase=executing", run_id)
         await repo.add_event(
             run_id,
@@ -507,7 +510,7 @@ class RunExecution:
                     repo,
                     run_id,
                     delta,
-                    background_verification=run.answer_mode == AnswerMode.trusted.value,
+                    background_verification=background_verification,
                 ),
             )
         except Exception:

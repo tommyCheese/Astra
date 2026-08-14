@@ -36,6 +36,11 @@ def _model_config(raw: dict | None) -> RunModelConfig | None:
     values = dict(raw)
     if "model" in values and "name" not in values:
         values["name"] = values.pop("model")
+    thinking = values.get("thinking")
+    if isinstance(thinking, dict) and "enabled" not in thinking:
+        # Older schedules may contain the resolved model-policy snapshot here;
+        # it is not a user-facing ModelThinkingSelection and must not be replayed.
+        values.pop("thinking")
     return RunModelConfig.model_validate(values)
 
 

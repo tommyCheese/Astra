@@ -116,7 +116,8 @@
     "app.infrastructure.runtime",
     "app.domain.execution",
     "app.application.planning",
-    "app.application.run_management"
+    "app.application.run_management",
+    "app.interfaces.ag_ui"
   ],
   "forbidden_generic_module_names": [
     "helpers",
@@ -219,10 +220,10 @@
     "compatibility"
   ],
   "complexity_budget": {
-    "production_lines": 61478,
-    "modules": 302,
-    "classes": 764,
-    "functions": 2470,
-    "public_symbols": 1205
+    "production_lines": 62560,
+    "modules": 314,
+    "classes": 778,
+    "functions": 2527,
+    "public_symbols": 1242
   }
 }

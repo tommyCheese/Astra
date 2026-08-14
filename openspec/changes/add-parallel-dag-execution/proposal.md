@@ -2,6 +2,13 @@
 
 Astra 的可信计划已经能够表达 fan-out/fan-in DAG，调度器也能识别多个同时 ready 的节点，但当前 Run 仍只有一个 `active_node_id`，并按稳定顺序逐个执行，因此图谱展示的并行结构没有转化为实际吞吐和响应速度。现在需要把预留的多 ready-node 边界升级为受控并行执行，并让用户清楚看到哪些节点正在并行、等待什么资源以及如何在汇合点继续。
 
+## Current Implementation Baseline (2026-08-12)
+
+- 持久化 NodeExecution、原子批量认领、独立 Worker session、资源租约、预算预留、审批暂停、恢复、fan-in/CompletionGate 屏障、并发事件和前端多活动节点投影均已落地。
+- 已有代码允许已知且互不重叠的 Workspace 写资源并行，对层级重叠路径、未知资源和非幂等外部写保持串行；provider/capability 并发上限当前在单 Run 调度范围内执行。
+- OpenSpec 任务仅剩真实浏览器验收。该验收应与可信执行图谱工作台的最后浏览器任务合并执行，避免两份重复证据。
+- 进程级或部署级 provider quota 属于后续容量治理，不应在本变更收尾时隐式扩大范围。
+
 ## What Changes
 
 - 为 trusted Run 增加有界并行 DAG 调度：每个调度周期原子认领一批满足依赖、预算、能力和并发策略的 ready 节点，而不是固定选择 `ready[0]`。

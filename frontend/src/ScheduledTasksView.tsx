@@ -161,16 +161,26 @@ export function ScheduledTasksView({ onClose, onOpenConversation }: Props) {
   const scheduledTasks = tasks.filter((task) => task.kind === 'agent');
   const conversationById = useMemo(() => new Map(conversations.map((item) => [item.id, item])), [conversations]);
 
+  async function refreshDetails(taskId: string, signal?: AbortSignal) {
+    const [nextRuns, nextDeliverables] = await Promise.all([
+      listScheduledTaskRuns(taskId, signal),
+      listScheduledDeliverables(taskId, signal),
+    ]);
+    setRuns(nextRuns);
+    setDeliverables(nextDeliverables);
+  }
+
   async function refresh(preferredId?: string | null) {
     setLoading(true);
     try {
       const [nextTasks, nextConversations] = await Promise.all([listScheduledTasks(), listConversations()]);
       setTasks(nextTasks);
       setConversations(nextConversations);
-      setSelectedId((current) => {
-        const wanted = preferredId ?? current;
-        return nextTasks.some((item) => item.id === wanted) ? wanted : nextTasks[0]?.id ?? null;
-      });
+      const wanted = preferredId ?? selectedId;
+      const nextSelectedId = nextTasks.some((item) => item.id === wanted) ? wanted : nextTasks[0]?.id ?? null;
+      setSelectedId(nextSelectedId);
+      if (nextSelectedId) await refreshDetails(nextSelectedId);
+      else { setRuns([]); setDeliverables([]); }
       setMessage('');
     } catch (error) {
       setMessage(error instanceof Error ? error.message : '无法读取已安排任务');
@@ -183,13 +193,7 @@ export function ScheduledTasksView({ onClose, onOpenConversation }: Props) {
   useEffect(() => {
     if (!selectedId) { setRuns([]); setDeliverables([]); return; }
     const controller = new AbortController();
-    void Promise.all([
-      listScheduledTaskRuns(selectedId, controller.signal),
-      listScheduledDeliverables(selectedId, controller.signal),
-    ]).then(([nextRuns, nextDeliverables]) => {
-      setRuns(nextRuns);
-      setDeliverables(nextDeliverables);
-    }).catch((error) => {
+    void refreshDetails(selectedId, controller.signal).catch((error) => {
       if (!(error instanceof DOMException && error.name === 'AbortError')) setMessage(error instanceof Error ? error.message : '无法读取运行历史');
     });
     return () => controller.abort();
@@ -375,7 +379,7 @@ function CreateScheduleEditor({ conversations, busy, onTypeChange, onCancel, onC
       : { type: 'once', at: onceAt ? new Date(onceAt).toISOString() : '' };
   const validTarget = targetChoice === '__new__' ? Boolean(newConversationTitle.trim()) : Boolean(targetChoice);
   const valid = Boolean(name.trim() && prompt.trim() && timezone.trim() && validTarget && (scheduleType !== 'once' || onceAt) && (scheduleType !== 'interval' || intervalMinutes >= 1));
-  return <section className="scheduled-task-editor scheduled-create-editor"><header><h3>{t('新建定时任务')}</h3><p>{t('任务会直接使用结果对话的工作空间和工具权限；输出、生成文件和运行记录都保存在该对话中。')}</p></header>
+  return <section className="scheduled-task-editor scheduled-create-editor"><header><h3>{t('新建定时任务')}</h3><p>{t('任务会复用结果对话中仍有效的无人值守权限；如果没有，将以无工具权限运行。输出和记录都保存在该对话中。')}</p></header>
     <div className="scheduled-editor-grid">
       <AutomationTypeField value="schedule" onChange={onTypeChange} />
       <label><span>{t('名称')}</span><input autoFocus value={name} onChange={(event) => setName(event.target.value)} /></label>
@@ -427,7 +431,7 @@ function CreateHeartbeatEditor({ task, conversations, busy, onTypeChange, onCanc
   const [end, setEnd] = useState(task?.heartbeat.active_hours?.end ?? '22:00');
   const [prompt, setPrompt] = useState(task?.prompt ?? '检查明确记录的未完成事项与后台结果。不要从旧对话推断重复任务。如果没有需要用户关注的内容，只回复 HEARTBEAT_OK。');
   const intervalInvalid = !Number.isFinite(intervalMinutes) || intervalMinutes < 5 || intervalMinutes > 1440;
-  return <section className="scheduled-task-editor scheduled-create-editor heartbeat-editor"><header><h3>{task ? t('配置 Heartbeat') : t('新建 Heartbeat')}</h3><p>{t('Heartbeat 会直接使用目标会话的工作空间和工具权限；仅返回 HEARTBEAT_OK 的检查会保持静默。')}</p></header>
+  return <section className="scheduled-task-editor scheduled-create-editor heartbeat-editor"><header><h3>{task ? t('配置 Heartbeat') : t('新建 Heartbeat')}</h3><p>{t('Heartbeat 会复用目标会话中仍有效的无人值守权限；如果没有，将以无工具权限运行。仅返回 HEARTBEAT_OK 的检查会保持静默。')}</p></header>
     <div className="scheduled-editor-grid">
       <AutomationTypeField value="heartbeat" onChange={onTypeChange} />
       <label><span>{t('目标会话')}</span><select autoFocus value={targetChoice} onChange={(event) => setTargetChoice(event.target.value)}>{conversations.map((item) => <option value={item.id} key={item.id}>{item.title}</option>)}<option value="__new__">{t('创建新对话')}</option></select></label>

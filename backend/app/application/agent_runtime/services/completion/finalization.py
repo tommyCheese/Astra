@@ -64,13 +64,13 @@ class AgentFinalizationStage:
         answer, evidence_pack, artifact, invalid_refs, artifact_ids, status, summary = prepared
         final_context = self._final_context(runtime, evidence_pack)
         memory_writes = await self._memory_writer.write_candidates(
-            run_id=runtime.run.id,
+            run_id=runtime.run_id,
             goal=goal,
             context=final_context,
         )
         verification = self._verification(runtime.profile, answer, evidence_pack, invalid_refs)
         gate_decision = await CompletionGateStage(self._repository, self._plan_repository, self._completion_gate).evaluate(
-            runtime.run.id,
+            runtime.run_id,
             runtime.profile,
             runtime.progress,
             status,
@@ -111,7 +111,7 @@ class AgentFinalizationStage:
         answer = project_grounded_answer(answer, self._plugin_runtime.grounding)
         answer, invalid_count, artifact_ids = normalize_final_answer_artifact_references(
             answer,
-            await self._repository.list_artifacts(runtime.run.id),
+            await self._repository.list_artifacts(runtime.run_id),
         )
         return (
             answer,
@@ -131,7 +131,7 @@ class AgentFinalizationStage:
         evidence_pack = self._plugin_runtime.evidence_pack(goal)
         records = self._plugin_runtime.grounding.records()
         artifact = await self._repository.create_artifact(
-            runtime.run.id,
+            runtime.run_id,
             "evidence_pack",
             content_ref=json.dumps(evidence_pack, ensure_ascii=False),
             metadata={
@@ -144,7 +144,7 @@ class AgentFinalizationStage:
         )
         evidence_pack["artifact_id"] = artifact.id
         await EvidenceRepository(self._repository.session).append_with_lineage(
-            runtime.run.id,
+            runtime.run_id,
             records,
             artifact_ids=[artifact.id],
         )
@@ -270,7 +270,7 @@ class AgentFinalizationStage:
             completion_decision=gate_decision.model_dump(mode="json"),
         )
         await self._repository.add_event(
-            runtime.run.id,
+            runtime.run_id,
             "reasoning.completion_decided",
             gate_decision.model_dump(mode="json"),
         )
@@ -284,7 +284,7 @@ class AgentFinalizationStage:
                 reflection=(completion_reflection.model_dump() if completion_reflection else None),
             )
         await self._repository.add_event(
-            runtime.run.id,
+            runtime.run_id,
             "verification.created",
             verification.model_dump(),
         )
@@ -319,11 +319,11 @@ class AgentFinalizationStage:
         ):
             return
         checkpoint = await self._workspace_service.create_checkpoint(
-            run_id=runtime.run.id,
+            run_id=runtime.run_id,
             workspace_dir=runtime.state.workspace_path,
         )
         await self._repository.add_event(
-            runtime.run.id,
+            runtime.run_id,
             "workspace.checkpoint_created",
             checkpoint,
         )
@@ -334,7 +334,7 @@ class AgentFinalizationStage:
         evidence_pack: dict[str, Any],
     ) -> dict[str, Any]:
         return {
-            "run_id": runtime.run.id,
+            "run_id": runtime.run_id,
             "observations": runtime.progress.observations,
             "tool_outputs": runtime.tool_outputs,
             "evidence_pack": evidence_pack,

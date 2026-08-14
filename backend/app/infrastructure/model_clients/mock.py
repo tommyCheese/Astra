@@ -19,11 +19,13 @@ from app.infrastructure.model_clients.contracts import (
     ModelOutputError,
 )
 from app.infrastructure.model_clients.mock_support import (
+    current_mock_request,
     infer_mock_capabilities,
+    mock_explicit_tool_decision,
     mock_fetch_decision,
     mock_search_decision,
-    mock_workspace_decision,
     mock_terminal_decision,
+    mock_workspace_decision,
     parse_mock_planning_goal,
     summarize_mock_evidence,
 )
@@ -52,7 +54,7 @@ class MockModelClient(ModelClient):
         contract: TaskContract,
     ) -> PlanDraft:
         criterion_ids = [item.id for item in contract.success_criteria]
-        public_goal, planning_goal = parse_mock_planning_goal(goal)
+        public_goal, planning_goal = parse_mock_planning_goal(current_mock_request(goal))
         task_capabilities = infer_mock_capabilities(planning_goal)
         definitions = [
             {
@@ -99,6 +101,7 @@ class MockModelClient(ModelClient):
         *,
         on_delta: AnswerDeltaCallback | None = None,
     ) -> AgentFinalAnswer:
+        goal = current_mock_request(goal)
         evidence = summarize_mock_evidence(tool_outputs)
         artifact_ids = [
             str(artifact["id"])
@@ -121,7 +124,7 @@ class MockModelClient(ModelClient):
             evidence.findings[0] = evidence.findings[0].model_copy(update={"artifact_ids": list(dict.fromkeys(artifact_ids))})
 
         answer = AgentFinalAnswer(
-            summary=f"已围绕目标完成 Web 数据查询：{goal}",
+            summary=f"已完成任务：{goal}",
             findings=evidence.findings,
             sources=evidence.sources,
             failed_sources=evidence.failed_sources,
@@ -135,8 +138,10 @@ class MockModelClient(ModelClient):
         return answer
 
     async def decide(self, goal: str, context: dict[str, Any]) -> AgentDecision:
+        goal = current_mock_request(goal)
         decision = (
-            mock_workspace_decision(goal, context)
+            mock_explicit_tool_decision(goal, context)
+            or mock_workspace_decision(goal, context)
             or mock_terminal_decision(context)
             or mock_search_decision(goal, context)
             or mock_fetch_decision(goal, context)
@@ -169,6 +174,7 @@ class MockModelClient(ModelClient):
         goal: str,
         context: dict[str, Any],
     ) -> list[AgentRunMemoryCandidate]:
+        goal = current_mock_request(goal)
         evidence_pack = context.get("evidence_pack") or {}
         fetched_sources = evidence_pack.get("fetched_sources", [])
         if not fetched_sources:

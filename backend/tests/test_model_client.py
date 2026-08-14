@@ -94,6 +94,56 @@ async def test_mock_model_client_agent_decisions():
     assert final.decision_type == "finalize"
 
 
+async def test_mock_model_client_finalizes_delegated_plan_with_schema_shaped_outputs():
+    client = MockModelClient()
+    decision = await client.decide(
+        "独立分析边界条件",
+        {
+            "active_node": None,
+            "plan": {"nodes": [{"id": "child-step-1", "status": "completed"}]},
+            "delegation_contract": {
+                "request": {
+                    "output_schema": {
+                        "type": "object",
+                        "additionalProperties": False,
+                        "required": ["summary", "checks", "confidence", "accepted"],
+                        "properties": {
+                            "summary": {"type": "string"},
+                            "checks": {
+                                "type": "array",
+                                "minItems": 2,
+                                "items": {
+                                    "type": "object",
+                                    "required": ["name", "severity"],
+                                    "properties": {
+                                        "name": {"type": "string"},
+                                        "severity": {"enum": ["high", "low"]},
+                                    },
+                                },
+                            },
+                            "confidence": {"type": "number", "minimum": 0.5},
+                            "accepted": {"type": "boolean"},
+                        },
+                    }
+                }
+            },
+            "observations": [],
+            "tool_manifests": {},
+        },
+    )
+
+    assert decision.decision_type == "finalize"
+    assert decision.node_result["outputs"] == {
+        "summary": "Mock delegated result.",
+        "checks": [
+            {"name": "Mock delegated result.", "severity": "high"},
+            {"name": "Mock delegated result.", "severity": "high"},
+        ],
+        "confidence": 0.5,
+        "accepted": True,
+    }
+
+
 async def test_mock_model_client_executes_requested_workspace_write_then_read():
     client = MockModelClient()
     manifests = {
@@ -156,6 +206,158 @@ async def test_mock_model_client_advances_through_workspace_regression_sequence(
         "new_text": "delta",
     }
     assert decisions[5].tool_input == {"path": "regression/files"}
+
+
+async def test_mock_workspace_decision_uses_the_current_request_in_conversation_context():
+    client = MockModelClient()
+    manifests = {
+        "workspace.write": {"task_capabilities": ["workspace.write"]},
+        "workspace.read": {"task_capabilities": ["workspace.read"]},
+    }
+    goal = (
+        "Conversation context:\n"
+        "User: 创建 history/old.txt，内容为 old\n"
+        "Assistant: 已创建旧文件。\n"
+        "Current user request: 创建 current/new.txt，内容为 new，然后读取文件。"
+    )
+
+    write = await client.decide(goal, {"observations": [], "tool_manifests": manifests})
+    read = await client.decide(
+        goal,
+        {"observations": [{"data": {"tool_name": "workspace.write"}}], "tool_manifests": manifests},
+    )
+
+    assert write.tool_input == {"path": "current/new.txt", "content": "new"}
+    assert read.tool_input == {"path": "current/new.txt"}
+
+
+async def test_mock_synthesis_does_not_echo_recursive_conversation_context():
+    client = MockModelClient()
+    rendered_goal = (
+        "Conversation context:\n"
+        "User: 历史问题\n"
+        "Assistant: 历史回答\n"
+        "Current user request: 当前文件问题"
+    )
+
+    answer = await client.synthesize(rendered_goal, [])
+
+    assert answer.summary == "已完成任务：当前文件问题"
+    assert "Conversation context" not in answer.summary
+    assert "历史回答" not in answer.summary
+
+
+async def test_mock_plan_uses_only_the_current_request_from_conversation_context():
+    client = MockModelClient()
+    contract = await client.contract("当前请求")
+    plan = await client.plan(
+        "Conversation context:\nUser: 历史请求\nAssistant: 历史回答\n"
+        "Current user request: 保存记忆 current-only",
+        contract=contract,
+    )
+
+    assert "当前请求" not in plan.nodes[0].intent
+    assert "历史请求" not in plan.nodes[0].intent
+    assert "历史回答" not in plan.nodes[0].intent
+    assert "保存记忆 current-only" in plan.nodes[0].intent
+    assert plan.nodes[1].required_capabilities == ["memory.remember"]
+
+
+async def test_mock_workspace_decision_supports_strict_path_content_range_and_replace_all_inputs():
+    client = MockModelClient()
+    manifests = {
+        name: {"task_capabilities": [name]}
+        for name in ("workspace.write", "workspace.read", "workspace.edit")
+    }
+    goal = (
+        "创建文件，文件路径为 `regression/深层 目录/样本.txt`，内容为<<<"
+        "第一行：中文, commas; semicolons\n第二行：🧪\\path\n重复 TOKEN TOKEN"
+        ">>>；读取第 2 行到第 3 行；将 TOKEN 全部替换为 DONE。"
+    )
+    observations = []
+
+    write = await client.decide(goal, {"observations": observations, "tool_manifests": manifests})
+    observations.append({"tool_name": "workspace.write"})
+    read = await client.decide(goal, {"observations": observations, "tool_manifests": manifests})
+    observations.append({"tool_name": "workspace.read"})
+    edit = await client.decide(goal, {"observations": observations, "tool_manifests": manifests})
+
+    assert write.tool_input == {
+        "path": "regression/深层 目录/样本.txt",
+        "content": "第一行：中文, commas; semicolons\n第二行：🧪\\path\n重复 TOKEN TOKEN",
+    }
+    assert read.tool_input == {
+        "path": "regression/深层 目录/样本.txt",
+        "line_start": 2,
+        "line_end": 3,
+    }
+    assert edit.tool_input == {
+        "path": "regression/深层 目录/样本.txt",
+        "old_text": "TOKEN",
+        "new_text": "DONE",
+        "replace_all": True,
+    }
+
+
+async def test_mock_explicit_tool_decision_routes_any_manifest_tool_with_strict_json():
+    client = MockModelClient()
+    goal = (
+        '调用工具 chart.render，参数为<<<'
+        '{"chart_type":"bar","x":"name","y":["value"],'
+        '"data":{"columns":["name","value"],"rows":[["A",1]]}}'
+        '>>>；必须真实执行。'
+    )
+    context = {
+        "observations": [],
+        "tool_manifests": {"chart.render": {"task_capabilities": ["data.visualize"]}},
+    }
+
+    decision = await client.decide(goal, context)
+
+    assert decision.decision_type == "call_tool"
+    assert decision.tool_name == "chart.render"
+    assert decision.tool_input == {
+        "chart_type": "bar",
+        "x": "name",
+        "y": ["value"],
+        "data": {"columns": ["name", "value"], "rows": [["A", 1]]},
+    }
+
+
+async def test_mock_explicit_tool_decision_is_manifest_bounded_and_not_repeated():
+    client = MockModelClient()
+    goal = '调用工具 bash_execute，参数为<<<{"command":"printf ok"}>>>'
+    manifests = {"bash_execute": {"task_capabilities": ["workspace.execute"]}}
+
+    repeated = await client.decide(
+        goal,
+        {
+            "observations": [{"data": {"tool_name": "bash_execute"}}],
+            "tool_manifests": manifests,
+        },
+    )
+    unavailable = await client.decide(goal, {"observations": [], "tool_manifests": {}})
+
+    assert repeated.decision_type == "finalize"
+    assert unavailable.decision_type == "finalize"
+
+
+async def test_non_workspace_explicit_tool_json_does_not_trigger_workspace_keywords():
+    client = MockModelClient()
+    goal = (
+        '调用工具 swarm，参数为<<<{"resource_scope":'
+        '{"workspace_read_roots":[],"workspace_write_roots":[]}}>>>'
+    )
+    context = {
+        "observations": [],
+        "tool_manifests": {
+            "workspace.read": {"task_capabilities": ["workspace.read"]},
+        },
+    }
+
+    decision = await client.decide(goal, context)
+
+    assert decision.decision_type == "finalize"
 
 
 async def test_mock_model_client_does_not_retry_failed_fetch_url():

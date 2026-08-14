@@ -2,6 +2,7 @@
 
 from fastapi import FastAPI
 
+from app.interfaces.ag_ui.routes import router as ag_ui_router
 from app.interfaces.api.conversations import router as conversations_router
 from app.interfaces.api.evolution import router as evolution_router
 from app.interfaces.api.memories import recall_router as memory_recall_router
@@ -20,6 +21,7 @@ from app.interfaces.api.usage import router as usage_router
 from app.interfaces.platform.http.system import router as system_router
 
 APPLICATION_ROUTERS = (
+    ag_ui_router,
     runs_router,
     conversations_router,
     evolution_router,

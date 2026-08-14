@@ -5,6 +5,7 @@ from importlib import import_module
 from app.infrastructure.db.model_base import AstraOrmRecordBase
 
 MODEL_MODULES = (
+    "ag_ui",
     "conversations",
     "evolution",
     "executions",

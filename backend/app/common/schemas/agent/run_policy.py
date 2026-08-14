@@ -138,6 +138,7 @@ class RunExecutionProfile(BaseModel):
     validators: list[str] = Field(default_factory=list)
     interactive: bool = True
     permission_bundle: dict[str, Any] | None = None
+    trigger: dict[str, Any] | None = None
     subagent_mode: Literal["auto", "required"] = "auto"
     version: Literal[2] = 2
 

@@ -29,7 +29,8 @@ SUPPORTED_MODEL_PROVIDERS = frozenset(
         "vllm",
         "localai",
         "compatible",
+        "mock",
     }
 )
 
-API_KEY_OPTIONAL_MODEL_PROVIDERS = frozenset({"ollama", "lmstudio", "vllm", "localai", "compatible"})
+API_KEY_OPTIONAL_MODEL_PROVIDERS = frozenset({"ollama", "lmstudio", "vllm", "localai", "compatible", "mock"})

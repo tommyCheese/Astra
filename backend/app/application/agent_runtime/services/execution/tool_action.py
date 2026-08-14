@@ -164,7 +164,13 @@ class InvocationPipeline:
         step: PlanNodeRecord | StepRecord | None,
     ) -> tuple[Literal["continue", "stop"], str | None, bool]:
         tool, _, _, _, _, _ = authorized
+        tool_call_id = tool_call.id
         tool_output, workspace_path, workspace_changed = await self._invoke(action, authorized, tool_call, step)
+        await self._repository.session.refresh(tool_call)
+        if action.active_node is not None:
+            await self._repository.session.refresh(action.active_node)
+        if step is not None and step is not action.active_node:
+            await self._repository.session.refresh(step)
         normalized = await self._normalize(action, authorized, tool_call, tool_output)
         self._tool_outputs.append(normalized.tool_output)
         self._progress.observations.append(normalized.context_observation.model_dump())
@@ -180,7 +186,7 @@ class InvocationPipeline:
             action.run_id,
             action.turn_index,
             tool.spec.name,
-            tool_call.id,
+            tool_call_id,
         )
         return result_action, workspace_path, workspace_changed
 
@@ -192,18 +198,22 @@ class InvocationPipeline:
         step: PlanNodeRecord | StepRecord | None,
     ):
         tool, _, runtime_identity, effect_plan, _, _ = authorized
+        tool_call_id = tool_call.id
+        turn_id = action.turn.id
+        step_id = step.id if step is not None else None
+        runtime_identity_id = runtime_identity.id
         invocation = await self._invocation.execute(
             action,
             tool_call=tool_call,
-            step_id=step.id if step is not None else None,
+            step_id=step_id,
             tool=tool,
             effect_plan=effect_plan,
-            runtime_identity_id=runtime_identity.id,
+            runtime_identity_id=runtime_identity_id,
         )
         await self._repository.update_agent_turn(
-            action.turn.id,
+            turn_id,
             phase="result_recorded",
-            tool_call_id=tool_call.id,
+            tool_call_id=tool_call_id,
         )
         return invocation
 

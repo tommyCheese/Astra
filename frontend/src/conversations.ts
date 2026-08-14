@@ -77,13 +77,19 @@ export function buildPresentation(run: RunView | null): ChatMessage[] {
   const presented: ChatMessage[] = conversation
     .filter((message) => message.role === 'user'
       || (message.role === 'assistant'
-        && (message.status === 'waiting_user' || (!hasCurrentWaitingMessage && message.status === 'ask_user'))))
+        && !hasCurrentWaitingMessage
+        && message.status === 'ask_user'))
     .map((message) => ({
       ...message,
       metadata: message.role === 'user'
         ? { ...message.metadata, presentation: 'user' }
         : { ...message.metadata },
     }));
+  const waitingMessages = hasCurrentWaitingMessage
+    ? conversation
+      .filter((message) => message.role === 'assistant' && message.status === 'waiting_user')
+      .map((message) => ({ ...message, metadata: { ...message.metadata } }))
+    : [];
   const hasProcessEvents = snapshot.events.some((event) => event.type.startsWith('fast.') || event.type.startsWith('reasoning.') || ['agent_turn.created', 'tool_call.started', 'tool_call.completed', 'reflection.created', 'verification.created'].includes(event.type));
   const isActive = !['completed', 'completed_with_warnings', 'failed', 'blocked', 'waiting_user', 'cancelled'].includes(snapshot.status);
   if (isActive || hasProcessEvents || (snapshot.turns?.length ?? 0) > 0 || snapshot.tool_calls.length > 0) {
@@ -95,6 +101,7 @@ export function buildPresentation(run: RunView | null): ChatMessage[] {
       metadata: { presentation: 'process', run_snapshot: snapshot },
     });
   }
+  presented.push(...waitingMessages);
   if (snapshot.result) {
     presented.push({
       id: `${run.id}-answer`,

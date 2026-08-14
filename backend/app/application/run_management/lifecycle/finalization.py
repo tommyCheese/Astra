@@ -10,6 +10,7 @@ from app.application.agent_runtime.contracts import (
     LoopOutcome,
 )
 from app.common.schemas.agent.run_result import AgentFinalAnswer
+from app.infrastructure.repositories.agent_executions import AgentExecutionRepository
 from app.infrastructure.repositories.run_unit_of_work import RunUnitOfWork
 
 logger = logging.getLogger("astra.run_finalization")
@@ -63,6 +64,7 @@ async def finalize_trusted_run(
             status,
             summary=final_answer.summary,
         )
+        await _sync_root_execution(repository, run_id)
         await repository.session.commit()
         return
     await repository.add_event(
@@ -97,7 +99,14 @@ async def finalize_trusted_run(
         summary=final_answer.summary,
         result=result,
     )
+    await _sync_root_execution(repository, run_id)
     await repository.session.commit()
+
+
+async def _sync_root_execution(repository: RunUnitOfWork, run_id: str) -> None:
+    """Keep the root AgentExecution projection aligned with the persisted Run."""
+    run = await repository.require_run_core(run_id)
+    await AgentExecutionRepository(repository.session).sync_root_from_run(run)
 
 
 async def _persist_verification(

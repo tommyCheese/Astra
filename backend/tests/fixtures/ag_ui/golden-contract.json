@@ -1,0 +1,45 @@
+{
+  "input": {
+    "threadId": "thread-1",
+    "runId": "protocol-run-1",
+    "state": {},
+    "messages": [{"id": "user-1", "role": "user", "content": "Hello"}],
+    "tools": [],
+    "context": [],
+    "forwardedProps": {"astra": {"profileVersion": "astra-ag-ui-v1"}}
+  },
+  "capabilities": {
+    "profileVersion": "astra-ag-ui-v1",
+    "identity": {"name": "Astra", "type": "astra", "description": "Governed general-purpose Agent runtime", "version": "astra-ag-ui-v1"},
+    "transport": {"streaming": true, "websocket": false, "httpBinary": false, "pushNotifications": false, "resumable": false},
+    "tools": {"supported": true, "parallelCalls": true, "clientProvided": false},
+    "state": {"snapshots": true, "deltas": false, "memory": true, "persistentState": true},
+    "multiAgent": {"supported": true, "delegation": true, "handoffs": false},
+    "reasoning": {"supported": true, "streaming": true, "encrypted": false},
+    "humanInTheLoop": {"supported": true, "approvals": true, "interventions": true, "interrupts": true, "approveWithEdits": false},
+    "custom": {"astra": {"activitySchemas": {"astra.plan": 1, "astra.agent_tree": 1, "astra.verification": 1, "astra.artifact": 1, "astra.tool_activity": 1}, "answerModes": ["standard", "trusted"], "crossConnectionDeltas": false, "activities": true, "cancellation": {"supported": true, "endpointTemplate": "/api/ag-ui/runs/{runId}/cancel?threadId={threadId}"}}}
+  },
+  "events": {
+    "runStarted": {"type": "RUN_STARTED", "threadId": "thread-1", "runId": "protocol-run-1"},
+    "textStart": {"type": "TEXT_MESSAGE_START", "messageId": "message-1", "role": "assistant"},
+    "textContent": {"type": "TEXT_MESSAGE_CONTENT", "messageId": "message-1", "delta": "Hello"},
+    "textEnd": {"type": "TEXT_MESSAGE_END", "messageId": "message-1"},
+    "toolStart": {"type": "TOOL_CALL_START", "toolCallId": "tool-1", "toolCallName": "search"},
+    "toolArgs": {"type": "TOOL_CALL_ARGS", "toolCallId": "tool-1", "delta": "{}"},
+    "toolEnd": {"type": "TOOL_CALL_END", "toolCallId": "tool-1"},
+    "toolResult": {"type": "TOOL_CALL_RESULT", "messageId": "tool-result-1", "toolCallId": "tool-1", "content": "ok"},
+    "reasoningStart": {"type": "REASONING_START", "messageId": "reasoning-1"},
+    "reasoningMessageStart": {"type": "REASONING_MESSAGE_START", "messageId": "reasoning-1", "role": "reasoning"},
+    "reasoningContent": {"type": "REASONING_MESSAGE_CONTENT", "messageId": "reasoning-1", "delta": "Checking"},
+    "reasoningMessageEnd": {"type": "REASONING_MESSAGE_END", "messageId": "reasoning-1"},
+    "reasoningEnd": {"type": "REASONING_END", "messageId": "reasoning-1"},
+    "stateSnapshot": {"type": "STATE_SNAPSHOT", "snapshot": {"schemaVersion": 1, "revision": 1}},
+    "stateDelta": {"type": "STATE_DELTA", "delta": [{"op": "replace", "path": "/revision", "value": 2}]},
+    "messagesSnapshot": {"type": "MESSAGES_SNAPSHOT", "messages": []},
+    "activitySnapshot": {"type": "ACTIVITY_SNAPSHOT", "messageId": "activity-1", "activityType": "astra.plan", "content": {"schemaVersion": 1, "revision": 1, "fallbackText": "Plan"}},
+    "activityDelta": {"type": "ACTIVITY_DELTA", "messageId": "activity-1", "activityType": "astra.plan", "patch": [{"op": "replace", "path": "/revision", "value": 2}]},
+    "interrupt": {"type": "RUN_FINISHED", "threadId": "thread-1", "runId": "protocol-run-1", "outcome": {"type": "interrupt", "interrupts": [{"id": "interrupt-1", "reason": "confirmation", "message": "Continue?"}]}},
+    "runError": {"type": "RUN_ERROR", "message": "Run failed", "code": "RUN_FAILED"},
+    "runFinished": {"type": "RUN_FINISHED", "threadId": "thread-1", "runId": "protocol-run-1", "outcome": {"type": "success"}}
+  }
+}

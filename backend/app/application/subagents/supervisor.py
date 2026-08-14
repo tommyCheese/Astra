@@ -15,6 +15,7 @@ from app.application.subagents.operations import SubagentRuntimeOperations
 from app.application.workspaces.artifacts import ArtifactService, LocalArtifactStore
 from app.common.core.config import AstraRuntimeSettings
 from app.common.schemas.agent.run_policy import EffectiveSubagentPolicy
+from app.common.schemas.permissions import PermissionPolicySet, PermissionRule
 from app.common.schemas.subagents import (
     DelegationContract,
     SubagentContextManifest,
@@ -61,7 +62,24 @@ class SubagentSupervisor:
         self.policy = policy
         self.tool_registry = tool_registry
         self.model_client_factory = model_client_factory
-        self.operations = SubagentRuntimeOperations(session, policy=policy)
+        self.operations = SubagentRuntimeOperations(
+            session,
+            policy=policy,
+            permission_policies=PermissionPolicySet(
+                version="swarm-approved-boundary-v1",
+                rules=[
+                    PermissionRule(
+                        id="allow-approved-swarm-delegation",
+                        source="astra.runtime",
+                        tier="run",
+                        decision="allow",
+                        actions=["delegation_create"],
+                        resources=["identity://*"],
+                        reason_code="approved_swarm_boundary",
+                    )
+                ],
+            ),
+        )
         self.coordinator = AgentCoordinator(
             session_factory,
             deployment_max_agents=settings.agent_provider_concurrency_limit,
@@ -134,29 +152,29 @@ class SubagentSupervisor:
         execution: AgentExecutionRecord,
         _fencing_token: int,
     ) -> None:
-        model_client = self.model_client_factory()
-        if hasattr(model_client, "usage_recorder"):
-            model_client.usage_recorder = DatabaseUsageRecorder(execution.run_id, agent_execution_id=execution.id)
-        executor = LocalAstraAgentExecutor(
-            model_client=model_client,
-            tool_registry=self.tool_registry,
-            settings=self.settings,
-        )
-        operations = SubagentRuntimeOperations(session, policy=self.policy)
-        runtime = await operations.executor_runtime(
-            execution.id,
-            worker_id=execution.worker_id or f"subagent:{execution.id}",
-            artifact_service=ArtifactService(
-                RunUnitOfWork(session),
-                LocalArtifactStore(self.settings.artifact_store_path),
-                max_files=self.settings.artifact_max_files,
-                max_bytes=self.settings.artifact_max_bytes,
-            ),
-        )
-        stored = execution.context_manifest or {}
-        contract = DelegationContract.model_validate(execution.contract)
-        manifest = SubagentContextManifest.model_validate(stored["manifest"])
         try:
+            model_client = self.model_client_factory()
+            if hasattr(model_client, "usage_recorder"):
+                model_client.usage_recorder = DatabaseUsageRecorder(execution.run_id, agent_execution_id=execution.id)
+            executor = LocalAstraAgentExecutor(
+                model_client=model_client,
+                tool_registry=self.tool_registry,
+                settings=self.settings,
+            )
+            operations = SubagentRuntimeOperations(session, policy=self.policy)
+            runtime = await operations.executor_runtime(
+                execution.id,
+                worker_id=execution.worker_id or f"subagent:{execution.id}",
+                artifact_service=ArtifactService(
+                    RunUnitOfWork(session),
+                    LocalArtifactStore(self.settings.artifact_store_path),
+                    max_files=self.settings.artifact_max_files,
+                    max_bytes=self.settings.artifact_max_bytes,
+                ),
+            )
+            stored = execution.context_manifest or {}
+            contract = DelegationContract.model_validate(execution.contract)
+            manifest = SubagentContextManifest.model_validate(stored["manifest"])
             await executor.execute(
                 contract=contract,
                 context_manifest=manifest,

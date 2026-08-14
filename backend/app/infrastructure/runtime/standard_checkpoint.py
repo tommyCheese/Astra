@@ -299,7 +299,7 @@ async def _recover_action(
             updated = await _recorded_failure(state, call, persist)
             return updated, None, None, None
         if call.status == "approved":
-            return state, None, None, call
+            return state, None, pending.action, call
         if call.status == "awaiting_approval":
             return state, WaitLoop(reason="等待批准先前的工具调用。"), None, None
     if pending.phase == "decided" or pending.idempotent is True:

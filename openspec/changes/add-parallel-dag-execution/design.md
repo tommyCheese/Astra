@@ -161,8 +161,8 @@ Coordinator 可使用结构化 `asyncio` 并发运行 Worker，但持久化 Node
 6. 发布图谱快照/事件扩展和多活动节点 UI，再开启默认并行。
 7. 通过功能开关将单 Run 并发度降回 1 作为回滚；已持久化 NodeExecution 仍可由串行 Coordinator 排空。
 
-## Open Questions
+## Review Decisions Based on the Current Implementation
 
-- 第一版是否允许不同目标文件的工作区写并行，还是所有 workspace write 统一独占？
-- provider 并发限制是仅按 Run，还是同时遵守进程级 provider 配额？
-- 对已等待审批的 execution 是否保留资源写租约，需根据工具 effect 的可变性进一步细化。
+- 已知且层级不重叠的 Workspace 写可以并行；相同或祖先/后代路径冲突、未知资源、非幂等外部写与 exclusive provider action 必须串行。
+- provider/capability 并发限制当前按 Run 执行。进程级或部署级 provider quota 是独立容量治理需求，不阻塞本变更浏览器验收与归档。
+- execution 等待审批时释放普通并发槽；冻结 action、attempt、版本和 continuation 完整性继续保留。是否保留写租约由已冻结 effect/resource claim 决定，不能在恢复时重新推断成更宽资源。

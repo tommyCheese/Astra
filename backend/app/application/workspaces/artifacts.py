@@ -3,6 +3,7 @@ import json
 import mimetypes
 import shutil
 import uuid
+import xml.etree.ElementTree as ET
 import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
@@ -126,20 +127,23 @@ class ArtifactCollector:
 
     @staticmethod
     def _validate_svg(data: bytes) -> None:
-        lowered = data.lower()
-        contains_active_content = any(
-            token in lowered
-            for token in (
-                b"<script",
-                b"javascript:",
-                b"onload=",
-                b"onerror=",
-                b"http://",
-                b"https://",
-            )
-        )
-        if contains_active_content:
+        if b"<!doctype" in data.lower():
             raise ToolExecutionError("invalid_artifact", "SVG contains active or external content")
+        try:
+            root = ET.fromstring(data)
+        except (ET.ParseError, UnicodeError) as exc:
+            raise ToolExecutionError("invalid_artifact", "SVG is malformed") from exc
+        for element in root.iter():
+            local_name = element.tag.rsplit("}", 1)[-1].casefold()
+            if local_name == "script":
+                raise ToolExecutionError("invalid_artifact", "SVG contains active or external content")
+            for raw_name, raw_value in element.attrib.items():
+                name = raw_name.rsplit("}", 1)[-1].casefold()
+                value = raw_value.strip().casefold()
+                if name.startswith("on") or (
+                    name == "href" and value.startswith(("http://", "https://", "javascript:", "//"))
+                ):
+                    raise ToolExecutionError("invalid_artifact", "SVG contains active or external content")
 
     @staticmethod
     def _validate_html(data: bytes) -> None:

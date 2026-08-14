@@ -1,0 +1,19 @@
+{
+  "profileVersion": "astra-ag-ui-v1",
+  "agUiPackages": {
+    "@ag-ui/core": "0.0.57",
+    "@ag-ui/client": "0.0.57"
+  },
+  "transport": "http-sse",
+  "endpoint": "/api/ag-ui",
+  "capabilitiesEndpoint": "/api/ag-ui/capabilities",
+  "activitySchemas": {
+    "astra.plan": 1,
+    "astra.agent_tree": 1,
+    "astra.verification": 1,
+    "astra.artifact": 1,
+    "astra.tool_activity": 1
+  },
+  "clientProvidedTools": false,
+  "crossConnectionDeltas": false
+}

@@ -55,6 +55,26 @@ def test_artifact_collector_rejects_active_svg_and_html_without_csp(tmp_path, na
     assert exc_info.value.category == "invalid_artifact"
 
 
+def test_artifact_collector_allows_standard_svg_namespace_but_rejects_external_href(tmp_path):
+    output = tmp_path / "output"
+    output.mkdir()
+    safe = output / "safe.svg"
+    safe.write_bytes(
+        b'<svg xmlns="http://www.w3.org/2000/svg"><rect width="10" height="10"/></svg>'
+    )
+
+    collected = ArtifactCollector(output, max_files=2, max_bytes=1000).collect()
+
+    assert collected[0]["mime_type"] == "image/svg+xml"
+    safe.unlink()
+    (output / "external.svg").write_bytes(
+        b'<svg xmlns="http://www.w3.org/2000/svg"><image href="https://example.com/a.png"/></svg>'
+    )
+    with pytest.raises(ToolExecutionError) as exc_info:
+        ArtifactCollector(output, max_files=2, max_bytes=1000).collect()
+    assert exc_info.value.category == "invalid_artifact"
+
+
 @pytest.mark.parametrize(
     ("name", "body"),
     [

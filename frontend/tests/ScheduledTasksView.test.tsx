@@ -97,7 +97,7 @@ describe('ScheduledTasksView', () => {
     render(<I18nProvider><ScheduledTasksView onClose={() => undefined} onOpenConversation={() => undefined} /></I18nProvider>);
 
     fireEvent.click(await screen.findByRole('button', { name: '新建' }));
-    expect(screen.getByText(/直接使用结果对话的工作空间和工具权限/)).toBeInTheDocument();
+    expect(screen.getByText(/如果没有，将以无工具权限运行/)).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText('名称'), { target: { value: '晨间摘要' } });
     fireEvent.change(screen.getByLabelText('任务指令'), { target: { value: '整理今天的重点' } });
     fireEvent.click(screen.getByRole('button', { name: '创建并启用' }));

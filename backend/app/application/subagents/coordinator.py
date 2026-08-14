@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
@@ -17,6 +18,7 @@ from app.infrastructure.repositories.agent_executions import (
 )
 
 AgentWorker = Callable[[AsyncSession, AgentExecutionRecord, int], Awaitable[Any]]
+logger = logging.getLogger("astra.subagents.coordinator")
 
 
 class HierarchicalSemaphoreRegistry:
@@ -155,6 +157,12 @@ class AgentCoordinator:
         failed: list[str] = []
         for selected_item, result in zip(selected, results, strict=True):
             if isinstance(result, BaseException):
+                logger.error(
+                    "subagent.coordinator.failed run_id=%s execution_id=%s",
+                    run_id,
+                    selected_item.id,
+                    exc_info=(type(result), result, result.__traceback__),
+                )
                 failed.append(selected_item.id)
             elif result[1]:
                 completed.append(result[0])

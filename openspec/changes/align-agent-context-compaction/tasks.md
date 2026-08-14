@@ -1,6 +1,6 @@
 ## 1. Change Coordination and Data Contracts
 
-- [x] 1.1 Reconcile and archive or sync the completed `add-governed-subagent-runtime` ContextManifest/checkpoint specs before changing their persisted schema
+- [x] 1.1 Reconcile the landed Subagent ContextManifest/checkpoint contracts and preserve their persisted fields before changing the V2 schema
 - [x] 1.2 Inventory context construction, observation persistence, generic model generation, usage accounting and recovery call sites for conversation, standard root, trusted root, quick child and trusted child paths
 - [x] 1.3 Add versioned `ContextEnvelope`, `ContinuationManifest`, compaction metadata and Astra-owned root/child checkpoint schemas
 - [x] 1.4 Add `RootContextCheckpointV2` with global continuity fields, validated Evidence/Artifact/result references and explicit untrusted-summary metadata

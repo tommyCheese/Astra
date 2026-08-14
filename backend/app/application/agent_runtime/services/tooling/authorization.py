@@ -70,7 +70,7 @@ class PermissionAuthorizationStage:
     _permission_repository: PermissionRepository
     _tool_router: ToolRouter
     _plugin_runtime: PluginRuntimeState
-    _provider_identities: dict[str, AgentIdentityRecord] = field(default_factory=dict)
+    _provider_identity_ids: dict[str, str] = field(default_factory=dict)
 
     async def execute(self, action: ToolActionInput, *, tool_call_count: int) -> AuthorizedInvocation:
         tool = self._tool_router.resolve(
@@ -128,9 +128,12 @@ class PermissionAuthorizationStage:
         action: ToolActionInput,
         tool: AstraTool,
     ) -> AgentIdentityRecord:
-        existing = self._provider_identities.get(tool.spec.provider_id)
-        if existing is not None:
-            return existing
+        existing_id = self._provider_identity_ids.get(tool.spec.provider_id)
+        if existing_id is not None:
+            existing = await self._permission_repository.session.get(AgentIdentityRecord, existing_id)
+            if existing is not None:
+                await self._permission_repository.session.refresh(existing)
+                return existing
         identity = await self._permission_repository.get_or_create_identity(
             identity_type=("external_provider" if tool.spec.provider_id != "astra.builtin" else "tool_provider"),
             principal=tool.spec.provider_id,
@@ -140,7 +143,7 @@ class PermissionAuthorizationStage:
             trust_level=tool.spec.trust_level,
             attributes={"provider_digest": tool.spec.provider_digest},
         )
-        self._provider_identities[tool.spec.provider_id] = identity
+        self._provider_identity_ids[tool.spec.provider_id] = identity.id
         return identity
 
     async def _runtime_identity(

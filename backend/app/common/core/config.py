@@ -1,7 +1,37 @@
+import secrets
 from functools import lru_cache
+from pathlib import Path
 
 from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+def _local_permission_bundle_signing_secret() -> str:
+    """Load or create the installation-local key used for unattended grants."""
+
+    key_path = Path.home() / ".astra" / "permission-bundle.key"
+    try:
+        existing = key_path.read_text(encoding="utf-8").strip()
+    except FileNotFoundError:
+        existing = ""
+    if existing:
+        key_path.chmod(0o600)
+        return existing
+
+    key_path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    key_path.parent.chmod(0o700)
+    generated = secrets.token_urlsafe(48)
+    try:
+        descriptor = key_path.open("x", encoding="utf-8")
+    except FileExistsError as exc:
+        persisted = key_path.read_text(encoding="utf-8").strip()
+        if persisted:
+            return persisted
+        raise RuntimeError(f"Permission bundle signing key is empty: {key_path}") from exc
+    with descriptor:
+        descriptor.write(generated)
+    key_path.chmod(0o600)
+    return generated
 
 
 class AstraRuntimeSettings(BaseSettings):
@@ -29,7 +59,7 @@ class AstraRuntimeSettings(BaseSettings):
     tool_managed_plugin_discovery_enabled: bool = False
     tool_external_plugin_discovery_enabled: bool = False
     tool_plugin_rollout_mode: str = "builtin_only"
-    permission_bundle_signing_secret: str = ""
+    permission_bundle_signing_secret: str = Field(default_factory=_local_permission_bundle_signing_secret)
     agent_max_turns: int = 60
     agent_max_tool_calls: int = 50
     agent_max_reflections: int = 6
@@ -52,7 +82,7 @@ class AstraRuntimeSettings(BaseSettings):
     agent_subagent_max_parent_round_trips: int = Field(default=1, ge=0, le=8)
     agent_subagent_max_wall_time_seconds: int = Field(default=300, ge=10, le=86_400)
     agent_subagent_max_tokens: int = Field(default=16_000, ge=1_000, le=2_000_000)
-    agent_subagent_max_model_calls: int = Field(default=8, ge=1, le=1_000)
+    agent_subagent_max_model_calls: int = Field(default=13, ge=1, le=1_000)
     agent_subagent_max_tool_calls: int = Field(default=12, ge=0, le=10_000)
     agent_subagent_max_cost_usd: float = Field(default=2.0, ge=0, le=100_000)
     agent_subagent_parent_token_reserve: int = Field(default=4_000, ge=0, le=2_000_000)
@@ -79,6 +109,9 @@ class AstraRuntimeSettings(BaseSettings):
     allow_network_read: bool = True
     cors_origins: str = "http://localhost:5173"
     api_allow_remote: bool = False
+    ag_ui_enabled: bool = True
+    ag_ui_profile_version: str = "astra-ag-ui-v1"
+    ag_ui_max_request_bytes: int = Field(default=256_000, ge=1_024, le=4_000_000)
     artifact_store_path: str = "./astra-artifacts"
     task_workspace_store_path: str = "./astra-workspaces"
     conversation_retention_enabled: bool = False

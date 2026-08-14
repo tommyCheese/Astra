@@ -192,7 +192,7 @@ trusted Run 的当前图谱在聊天表面只挂载一次，默认停靠在对�
 5. 完成桌面、移动、暗色、键盘、屏幕阅读器、reduced-motion、断流恢复和大图视觉验证。
 6. 若图谱出现严重回归，可通过前端 feature flag 回退到现有线性 Plan 投影；后台新增快照和事件保持向后兼容。
 
-## Open Questions
+## Review Decisions Based on the Current Implementation
 
-- 若后续需要跨 Run 比较或复杂版本分析，再评估独立路由；当前不增加与半屏窗格语义重复的全屏层。
-- checkpoint replay/fork、层级子图、多 Agent 所属关系和关键路径预测保留为后续独立变更，不阻塞当前实现。
+- 当前不增加与半屏窗格语义重复的全屏层；跨 Run 比较或复杂版本分析若有明确用例，再以独立路由提案处理。
+- checkpoint replay/fork、层级子图、多 Agent 所属关系和关键路径预测均保留为后续独立变更，不阻塞当前浏览器验收与归档。
