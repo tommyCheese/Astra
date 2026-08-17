@@ -13,6 +13,7 @@ import {
   ASTRA_AG_UI_PROFILE_VERSION,
 } from '../src/agui/compatibility';
 import { selectAstraTransport, type AstraAgentTransport } from '../src/agui/transport';
+import { shouldRenderAgUiPreview } from '../src/agui/entryMode';
 
 describe('Astra AG-UI compatibility contract', () => {
   it('pins one reviewed profile and exact package set', () => {
@@ -38,5 +39,12 @@ describe('Astra AG-UI compatibility contract', () => {
     const native = { name: 'native' } as unknown as AstraAgentTransport;
     expect(selectAstraTransport(true, agUi, native)).toBe(agUi);
     expect(selectAstraTransport(false, agUi, native)).toBe(native);
+  });
+
+  it('never replaces the product UI on an ordinary application route', () => {
+    expect(shouldRenderAgUiPreview({ mode: 'development', enabled: 'true', pathname: '/' })).toBe(false);
+    expect(shouldRenderAgUiPreview({ mode: 'production', enabled: 'true', pathname: '/__dev/ag-ui' })).toBe(false);
+    expect(shouldRenderAgUiPreview({ mode: 'development', enabled: undefined, pathname: '/__dev/ag-ui' })).toBe(false);
+    expect(shouldRenderAgUiPreview({ mode: 'development', enabled: 'true', pathname: '/__dev/ag-ui' })).toBe(true);
   });
 });

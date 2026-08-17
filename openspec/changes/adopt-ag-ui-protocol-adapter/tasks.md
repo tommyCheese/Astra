@@ -58,9 +58,9 @@
 
 - [x] 7.1 Project allowed `reasoning.summary` events into a valid AG-UI reasoning-message lifecycle distinct from assistant answer content.
 - [x] 7.2 Suppress provider-hidden reasoning and expose only bounded safe availability or truncation metadata where appropriate.
-- [x] 7.3 Project a sanitized Astra tool start into `TOOL_CALL_START`, complete JSON `TOOL_CALL_ARGS`, and `TOOL_CALL_END` with stable correlation.
+- [ ] 7.3 Project a sanitized Astra tool start into `TOOL_CALL_START`, complete JSON `TOOL_CALL_ARGS`, and `TOOL_CALL_END` with stable correlation.
 - [x] 7.4 Project tool completion, failure, and allowed public output into exactly one correlated `TOOL_CALL_RESULT` or safe failure representation.
-- [x] 7.5 Add ordering and sanitization tests for streamed reasoning, unavailable reasoning, tool success/failure, malformed tool args, duplicate results, and results arriving after terminal state.
+- [ ] 7.5 Add ordering and sanitization tests for streamed reasoning, unavailable reasoning, tool success/failure, malformed tool args, duplicate results, and results arriving after terminal state.
 
 ## 8. Interrupt, Resume, and Cancellation Compatibility
 
@@ -93,12 +93,12 @@
 
 ## 11. React Component Integration
 
-- [x] 11.1 Move stream orchestration and protocol-event routing out of the main chat component into the transport and projection-store boundary without changing established visual behavior.
+- [ ] 11.1 Move stream orchestration and protocol-event routing out of the main chat component into the transport and projection-store boundary without changing established visual behavior.
 - [x] 11.2 Add an Activity renderer registry for Astra plan, Agent tree, verification, artifact, and tool-activity view models using existing specialized components where possible.
 - [x] 11.3 Add an accessible generic Activity fallback for unknown types or unsupported schema versions.
 - [x] 11.4 Add interrupt renderers for tool approval, input-required, confirmation, and safe generic response-schema forms.
 - [x] 11.5 Ensure the Composer sends projected user intent, blocks incompatible input while interrupts are open, distinguishes transport close from explicit cancellation, and remains usable after terminal outcomes.
-- [x] 11.6 Add browser tests for progressive answer rendering, live plan updates, Subagent updates, approval/resume, unknown Activity, unknown interrupt, narrow viewport, keyboard operation, reconnect, and native-transport rollback.
+- [ ] 11.6 Add browser tests for progressive answer rendering, live plan updates, Subagent updates, approval/resume, unknown Activity, unknown interrupt, narrow viewport, keyboard operation, reconnect, and native-transport rollback.
 
 ## 12. Conformance, Performance, Rollout, and Documentation
 
@@ -107,5 +107,5 @@
 - [x] 12.3 Measure first-content adapter overhead, event sizes, snapshot-to-delta ratios, frame commits, resynchronizations, and dual-stream visible-outcome parity against explicit acceptance thresholds.
 - [x] 12.4 Add metrics and structured logs for protocol/profile version, active streams, projection errors, suppressed unsafe events, payload truncation, patch fallback, interrupt outcomes, reconnects, and cancellation.
 - [x] 12.5 Document the supported profile, capability semantics, Astra extension schemas, security boundaries, cancellation behavior, recovery guarantees, feature flag, and rollback procedure.
-- [x] 12.6 Enable development-only AG-UI rollout, complete security/accessibility/latency review, and record evidence before enabling any production cohort.
-- [x] 12.7 Make AG-UI the first-party default only after conformance, parity, recovery, and latency gates pass; retain native transport removal for a separate breaking proposal.
+- [ ] 12.6 Enable development-only AG-UI rollout, complete security/accessibility/latency review, and record evidence before enabling any production cohort.
+- [ ] 12.7 Make AG-UI the first-party default only after conformance, parity, recovery, and latency gates pass; retain native transport removal for a separate breaking proposal.

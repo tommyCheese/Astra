@@ -109,7 +109,7 @@ class AstraRuntimeSettings(BaseSettings):
     allow_network_read: bool = True
     cors_origins: str = "http://localhost:5173"
     api_allow_remote: bool = False
-    ag_ui_enabled: bool = True
+    ag_ui_enabled: bool = False
     ag_ui_profile_version: str = "astra-ag-ui-v1"
     ag_ui_max_request_bytes: int = Field(default=256_000, ge=1_024, le=4_000_000)
     artifact_store_path: str = "./astra-artifacts"

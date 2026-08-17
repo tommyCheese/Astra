@@ -18,7 +18,7 @@ import { citationsForClaim, sourceAnchor, validatedCitations, type PresentedCita
 import { ScheduledTasksView } from './ScheduledTasksView';
 import { ModelThinkingContent } from './ModelThinkingContent';
 import { usePacedStreamingText } from './pacedStreamingText';
-import { AgUiChatPage } from './agui/AgUiChatPage';
+import { shouldRenderAgUiPreview } from './agui/entryMode';
 
 const QUESTION_SUBMIT_MARK = 'astra.question.submit';
 const FIRST_TOKEN_COMMIT_MARK = 'astra.answer.first_token_commit';
@@ -38,6 +38,9 @@ const DocumentationCenter = lazy(() => import('./DocumentationCenter').then((mod
   default: module.DocumentationCenter,
 })));
 const MarkdownRenderer = lazy(() => import('./MarkdownRenderer'));
+const AgUiChatPage = lazy(() => import('./agui/AgUiChatPage').then((module) => ({
+  default: module.AgUiChatPage,
+})));
 
 type AppView = 'chat' | 'settings' | 'shares' | 'library' | 'skills' | 'scheduled';
 
@@ -221,8 +224,14 @@ function reflectionTriggerLabel(value: ConversationStrategyPreferences['reflecti
 }
 
 export function App() {
-  const agUiFirstParty = import.meta.env.MODE !== 'test' && import.meta.env.VITE_AG_UI_ENABLED !== 'false';
-  return <I18nProvider><ThemeProvider>{agUiFirstParty ? <AgUiChatPage /> : <AppContent />}</ThemeProvider></I18nProvider>;
+  const agUiPreview = shouldRenderAgUiPreview({
+    mode: import.meta.env.MODE,
+    enabled: import.meta.env.VITE_AG_UI_ENABLED,
+    pathname: window.location.pathname,
+  });
+  return <I18nProvider><ThemeProvider>{agUiPreview
+    ? <Suspense fallback={null}><AgUiChatPage /></Suspense>
+    : <AppContent />}</ThemeProvider></I18nProvider>;
 }
 
 export function DocumentationPage() {
