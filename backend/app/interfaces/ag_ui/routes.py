@@ -8,6 +8,7 @@ from collections.abc import AsyncIterator, Callable
 
 from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import StreamingResponse
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.application.run_management.lifecycle.commands import RunApplicationService
@@ -15,7 +16,7 @@ from app.application.run_management.projections.events import run_event_broker
 from app.common.core.config import AstraRuntimeSettings, get_settings
 from app.common.core.errors import AstraInputValidationError, AstraResourceNotFoundError
 from app.infrastructure.db.models.conversations import TaskRecord
-from app.infrastructure.db.models.permissions import ApprovalRequestRecord
+from app.infrastructure.db.models.permissions import ApprovalRequestRecord, ToolCallRecord
 from app.infrastructure.db.session import SessionLocal, get_session
 from app.infrastructure.repositories.ag_ui_bindings import (
     AgUiBindingRepository,
@@ -210,8 +211,36 @@ async def cancel_protocol_run(
 async def _database_events(run_id: str, after_id: int) -> tuple[list[dict[str, object]], str | None]:
     async with SessionLocal() as session:
         events, status = await RunUnitOfWork(session).list_events_with_status(run_id, after_id)
+        tool_call_ids = {
+            str(event.payload.get("tool_call_id"))
+            for event in events
+            if event.type in {"tool_call.started", "tool_call.proposed"}
+            and isinstance(event.payload, dict)
+            and event.payload.get("tool_call_id")
+        }
+        tool_inputs: dict[str, dict] = {}
+        if tool_call_ids:
+            rows = await session.execute(
+                select(ToolCallRecord.id, ToolCallRecord.input).where(
+                    ToolCallRecord.run_id == run_id,
+                    ToolCallRecord.id.in_(tool_call_ids),
+                )
+            )
+            tool_inputs = {tool_call_id: tool_input for tool_call_id, tool_input in rows if isinstance(tool_input, dict)}
         return [
-            {"id": event.id, "type": event.type, "payload": event.payload, "created_at": event.created_at.isoformat()}
+            {
+                "id": event.id,
+                "type": event.type,
+                "payload": {
+                    **event.payload,
+                    **(
+                        {"tool_input": tool_inputs[str(event.payload.get("tool_call_id"))]}
+                        if str(event.payload.get("tool_call_id")) in tool_inputs
+                        else {}
+                    ),
+                },
+                "created_at": event.created_at.isoformat(),
+            }
             for event in events
         ], status
 

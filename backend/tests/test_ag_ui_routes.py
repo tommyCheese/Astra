@@ -135,3 +135,33 @@ async def test_explicit_cancellation_is_authorized_and_concurrently_idempotent(a
     assert first.json()["status"] == second.json()["status"] == "cancelled"
     hidden = await ag_ui_client.post(f"/api/ag-ui/runs/cancel-run/cancel?threadId={ag_ui_client.other_thread}")
     assert hidden.status_code == 404
+
+
+async def test_database_projection_enriches_tool_start_without_copying_input_to_run_event(ag_ui_client) -> None:
+    async with ag_ui_client.sessions() as session:
+        run = RunRecord(task_id=ag_ui_client.local_thread)
+        session.add(run)
+        await session.flush()
+        repository = RunUnitOfWork(session)
+        tool_call = await repository.start_tool_call(
+            run.id,
+            None,
+            "search",
+            "1",
+            {"query": "Astra", "api_key": "secret"},
+            "network",
+            "read",
+        )
+        await session.commit()
+        run_id = run.id
+        tool_call_id = tool_call.id
+
+    events, _ = await ag_ui_routes._database_events(run_id, 0)
+    started = next(event for event in events if event["type"] == "tool_call.started")
+    assert started["payload"]["tool_input"] == {"query": "Astra", "api_key": "secret"}
+
+    async with ag_ui_client.sessions() as session:
+        persisted, _ = await RunUnitOfWork(session).list_events_with_status(run_id, 0)
+    raw_started = next(event for event in persisted if event.type == "tool_call.started")
+    assert raw_started.payload["tool_call_id"] == tool_call_id
+    assert "tool_input" not in raw_started.payload

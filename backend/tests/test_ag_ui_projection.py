@@ -4,7 +4,7 @@ import pytest
 
 from app.interfaces.ag_ui.delta import bounded_patch, escape_pointer, json_patch
 from app.interfaces.ag_ui.projector import AgUiProjectionState, AgUiRunProjection
-from app.interfaces.ag_ui.sanitization import MAX_TOOL_CHARS, sanitize_public
+from app.interfaces.ag_ui.sanitization import MAX_TOOL_CHARS, safe_tool_arguments, sanitize_public
 from app.interfaces.ag_ui.schemas import validate_public_event
 
 
@@ -64,7 +64,15 @@ def test_reasoning_summary_is_separate_bounded_and_hidden_reasoning_is_suppresse
 
 def test_tool_lifecycle_is_correlated_sanitized_and_idempotent() -> None:
     projector = projection()
-    started = projector.project(source(1, "tool_call.started", tool_call_id="call-1", tool_name="search"))
+    started = projector.project(
+        source(
+            1,
+            "tool_call.started",
+            tool_call_id="call-1",
+            tool_name="search",
+            tool_input={"query": "Astra", "api_key": "secret", "path": "/Users/alice/private"},
+        )
+    )
     completed = projector.project(
         source(2, "tool_call.completed", tool_call_id="call-1", tool_name="search", status="failed", error={"token": "x"})
     )
@@ -78,9 +86,77 @@ def test_tool_lifecycle_is_correlated_sanitized_and_idempotent() -> None:
         "TOOL_CALL_END",
         "TOOL_CALL_RESULT",
     ]
+    arguments = next(event for event in started if event["type"] == "TOOL_CALL_ARGS")
+    assert json.loads(arguments["delta"]) == {"query": "Astra", "path": "[private path removed]"}
     result = next(event for event in completed if event["type"] == "TOOL_CALL_RESULT")
     assert json.loads(result["content"]) == {"status": "failed", "error": {}}
     assert duplicate == []
+
+
+def test_tool_arguments_are_complete_bounded_json_and_malformed_input_falls_back() -> None:
+    oversized = safe_tool_arguments({"keep": "visible", "large": "界" * MAX_TOOL_CHARS})
+    encoded = json.dumps(oversized, ensure_ascii=False, separators=(",", ":"))
+    assert len(encoded.encode("utf-8")) <= MAX_TOOL_CHARS
+    assert oversized == {"_truncated": True, "keep": "visible"}
+
+    malformed = projection().project(
+        source(1, "tool_call.started", tool_call_id="call-malformed", tool_name="search", tool_input="not-json")
+    )
+    arguments = next(event for event in malformed if event["type"] == "TOOL_CALL_ARGS")
+    assert json.loads(arguments["delta"]) == {}
+
+
+def test_reasoning_and_tool_events_preserve_order_across_success_failure_and_terminal_state() -> None:
+    projector = projection()
+    assert projector.project(source(1, "reasoning.summary.unavailable", reason="provider_hidden")) == []
+    events = projector.project(source(2, "reasoning.summary.delta", turn_index=1, delta="摘要"))
+    events += projector.project(source(3, "reasoning.summary.completed", turn_index=1, summary="摘要"))
+    events += projector.project(
+        source(4, "tool_call.started", tool_call_id="success", tool_name="search", tool_input={"query": "safe"})
+    )
+    events += projector.project(
+        source(5, "tool_call.completed", tool_call_id="success", tool_name="search", status="succeeded")
+    )
+    events += projector.project(
+        source(6, "tool_call.started", tool_call_id="failure", tool_name="shell", tool_input={"token": "hidden"})
+    )
+    events += projector.project(
+        source(
+            7,
+            "tool_call.completed",
+            tool_call_id="failure",
+            tool_name="shell",
+            status="failed",
+            error={"message": "/home/alice/private", "authorization": "secret"},
+        )
+    )
+    events += projector.project(source(8, "run.status_changed", status="completed"))
+    after_terminal = projector.project(
+        source(9, "tool_call.completed", tool_call_id="late", tool_name="search", status="succeeded")
+    )
+
+    protocol = [event for event in events if not event["type"].startswith("ACTIVITY_")]
+    assert event_types(protocol) == [
+        "REASONING_START",
+        "REASONING_MESSAGE_START",
+        "REASONING_MESSAGE_CONTENT",
+        "REASONING_MESSAGE_END",
+        "REASONING_END",
+        "TOOL_CALL_START",
+        "TOOL_CALL_ARGS",
+        "TOOL_CALL_END",
+        "TOOL_CALL_RESULT",
+        "TOOL_CALL_START",
+        "TOOL_CALL_ARGS",
+        "TOOL_CALL_END",
+        "TOOL_CALL_RESULT",
+        "RUN_FINISHED",
+    ]
+    failure_args = [event for event in protocol if event["type"] == "TOOL_CALL_ARGS"][1]
+    assert json.loads(failure_args["delta"]) == {}
+    failure_result = [event for event in protocol if event["type"] == "TOOL_CALL_RESULT"][1]
+    assert json.loads(failure_result["content"]) == {"status": "failed", "error": {"message": "[private path removed]"}}
+    assert after_terminal == []
 
 
 def test_activity_uses_snapshot_then_sanitized_delta_or_replacement() -> None:

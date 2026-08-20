@@ -58,9 +58,9 @@
 
 - [x] 7.1 Project allowed `reasoning.summary` events into a valid AG-UI reasoning-message lifecycle distinct from assistant answer content.
 - [x] 7.2 Suppress provider-hidden reasoning and expose only bounded safe availability or truncation metadata where appropriate.
-- [ ] 7.3 Project a sanitized Astra tool start into `TOOL_CALL_START`, complete JSON `TOOL_CALL_ARGS`, and `TOOL_CALL_END` with stable correlation.
+- [x] 7.3 Project a sanitized Astra tool start into `TOOL_CALL_START`, complete JSON `TOOL_CALL_ARGS`, and `TOOL_CALL_END` with stable correlation.
 - [x] 7.4 Project tool completion, failure, and allowed public output into exactly one correlated `TOOL_CALL_RESULT` or safe failure representation.
-- [ ] 7.5 Add ordering and sanitization tests for streamed reasoning, unavailable reasoning, tool success/failure, malformed tool args, duplicate results, and results arriving after terminal state.
+- [x] 7.5 Add ordering and sanitization tests for streamed reasoning, unavailable reasoning, tool success/failure, malformed tool args, duplicate results, and results arriving after terminal state.
 
 ## 8. Interrupt, Resume, and Cancellation Compatibility
 

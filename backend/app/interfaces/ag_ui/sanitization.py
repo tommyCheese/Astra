@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 from typing import Any
 from urllib.parse import urlsplit
@@ -96,3 +97,27 @@ def safe_reasoning(payload: dict[str, Any]) -> tuple[str, bool]:
     value = payload.get("delta") if "delta" in payload else payload.get("summary", "")
     text, truncated = bounded_text(value, MAX_REASONING_CHARS)
     return str(sanitize_public(text)), truncated
+
+
+def safe_tool_arguments(value: Any) -> dict[str, Any]:
+    """Return complete, bounded JSON arguments without exposing invalid inputs."""
+    if not isinstance(value, dict):
+        return {}
+    sanitized = sanitize_public(value)
+    if not isinstance(sanitized, dict):
+        return {}
+    if _json_size(sanitized) <= MAX_TOOL_CHARS:
+        return sanitized
+
+    ag_ui_metrics.increment("payload_truncations", event_type="tool_arguments")
+    bounded: dict[str, Any] = {"_truncated": True}
+    for key, item in sanitized.items():
+        candidate = {**bounded, key: item}
+        if _json_size(candidate) > MAX_TOOL_CHARS:
+            continue
+        bounded[key] = item
+    return bounded
+
+
+def _json_size(value: Any) -> int:
+    return len(json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))

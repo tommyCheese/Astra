@@ -22,7 +22,7 @@ from app.interfaces.ag_ui.identifiers import (
     tool_call_id,
     waiting_interrupt_id,
 )
-from app.interfaces.ag_ui.sanitization import safe_error, safe_reasoning, sanitize_public
+from app.interfaces.ag_ui.sanitization import safe_error, safe_reasoning, safe_tool_arguments, sanitize_public
 
 TERMINAL_STATUSES = {"completed", "completed_with_warnings", "failed", "blocked", "cancelled"}
 
@@ -106,6 +106,8 @@ class AgUiRunProjection:
     def _project_tool_with_activity(
         self, event_type: str, payload: dict[str, Any], source_id: int
     ) -> list[dict[str, Any]] | None:
+        if event_type.startswith("tool_call.") and self.state.terminal_emitted:
+            return []
         tool_events = self._project_tool(event_type, payload)
         if tool_events is None:
             return None
@@ -176,17 +178,20 @@ class AgUiRunProjection:
         public_id = tool_call_id(internal_id)
         name = str(payload.get("tool_name") or "astra_tool")[:200]
         events: list[dict[str, Any]] = []
-        events.extend(self._tool_start_events(event_type, public_id, name))
+        events.extend(self._tool_start_events(event_type, payload, public_id, name))
         events.extend(self._tool_result_events(event_type, payload, internal_id, public_id))
         return events
 
-    def _tool_start_events(self, event_type: str, public_id: str, name: str) -> list[dict[str, Any]]:
+    def _tool_start_events(
+        self, event_type: str, payload: dict[str, Any], public_id: str, name: str
+    ) -> list[dict[str, Any]]:
         if event_type not in {"tool_call.started", "tool_call.proposed"} or public_id in self.state.tools_started:
             return []
         self.state.tools_started.add(public_id)
+        arguments = json.dumps(safe_tool_arguments(payload.get("tool_input")), ensure_ascii=False, separators=(",", ":"))
         return [
             {"type": "TOOL_CALL_START", "toolCallId": public_id, "toolCallName": name},
-            {"type": "TOOL_CALL_ARGS", "toolCallId": public_id, "delta": "{}"},
+            {"type": "TOOL_CALL_ARGS", "toolCallId": public_id, "delta": arguments},
             {"type": "TOOL_CALL_END", "toolCallId": public_id},
         ]
 
